@@ -24,6 +24,27 @@ pub struct BvVar {
     width: u32,
 }
 
+/// A bit inside a blasted circuit: one of the two reserved constant SAT
+/// variables, or an ordinary signal variable.
+///
+/// The bit-blaster builds every circuit out of [`Sig`]s instead of raw
+/// [`Var`]s so each gate constructor can constant-fold before emitting any
+/// clause – the same shape as Z3's bit-blaster, whose `mk_and` / `mk_xor` /
+/// `mk_full_adder` run over a rewriting layer (`bit_blaster_tpl_def.h`).
+/// Folding at gate granularity is what degenerates `bvmul(x, 65599)` into a
+/// six-row shift-add chain and lets a `zero_extend`'s padding ripple through
+/// adders and comparators as pure constants instead of pinned variables the
+/// SAT solver has to propagate through tens of thousands of clauses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Sig {
+    /// The reserved constant-true variable.
+    True,
+    /// The reserved constant-false variable.
+    False,
+    /// An ordinary signal variable.
+    Var(Var),
+}
+
 /// Comparison tracking for conflict detection
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ComparisonKey {
@@ -94,6 +115,27 @@ pub struct BvSolver {
     /// truth value, used when bit-blasting `ite` conditions and the boolean
     /// connectives that build them (so `not(c)` stays the negation of `c`).
     bool_node: FxHashMap<TermId, Var>,
+    /// The two reserved SAT variables carrying the constant bit values.
+    ///
+    /// Every constant input to a blasted circuit – the bits of a `BitVecConst`,
+    /// the zero padding of a `zero_extend`, the fixed addend of an
+    /// `encode_add_const` – is one of these two variables instead of a fresh
+    /// one, and every gate constructor folds on them (`and x false = false`,
+    /// `xor x true = not x`, …) exactly like Z3's simplifying bit-blaster
+    /// (`bit_blaster_tpl_def.h` builds its circuits through `mk_and`/`mk_xor`
+    /// over a rewriting layer that performs these folds).  Without the fold a
+    /// `bvmul(x, 65599)` blasts the full 32×32 partial-product array even
+    /// though 26 of the constant's 32 bits are zero; with it the multiplier
+    /// degenerates to the six-row shift-add chain the constant actually needs,
+    /// which is the difference between a ~2 000-gate and a ~190 000-clause
+    /// encoding on the Sage2 hash-chain family.
+    ///
+    /// Both variables are created *before* any theory scope opens and pinned
+    /// by level-0 unit clauses, so their value survives every `push`/`pop`.
+    /// They are re-created in [`Theory::reset`], the one place the embedded
+    /// SAT solver's variable space is rebuilt from scratch.
+    const_true: Var,
+    const_false: Var,
     /// Truth values the *outer* CDCL(T) search has fixed for Bool-sorted terms,
     /// so that a bit-blasted `ite` selector agrees with the enclosing solver
     /// instead of floating free. See [`Self::assert_bool_value`].
@@ -120,8 +162,10 @@ impl BvSolver {
     /// Create a new BitVector solver with custom configuration
     #[must_use]
     pub fn with_config(config: BvConfig) -> Self {
+        let mut sat = SatSolver::with_config(Self::embedded_sat_config());
+        let (const_true, const_false) = Self::reserve_const_bits(&mut sat);
         Self {
-            sat: SatSolver::with_config(Self::embedded_sat_config()),
+            sat,
             term_to_bv: FxHashMap::default(),
             assertions: Vec::new(),
             context_stack: Vec::new(),
@@ -134,7 +178,25 @@ impl BvSolver {
             bool_node: FxHashMap::default(),
             outer_bool: FxHashMap::default(),
             outer_bool_journal: Vec::new(),
+            const_true,
+            const_false,
         }
+    }
+
+    /// Create the two reserved constant bit variables in `sat` and pin them
+    /// with level-0 unit clauses.
+    ///
+    /// Called from [`Self::with_config`] (fresh solver, empty solver state) and
+    /// from [`Theory::reset`] (the embedded SAT solver was just rebuilt, so the
+    /// previous constants' variables no longer exist).  In both cases no theory
+    /// scope is open, so the pinning units land at the base assertion level and
+    /// are never retracted by a `pop`.
+    fn reserve_const_bits(sat: &mut SatSolver) -> (Var, Var) {
+        let const_true = sat.new_var();
+        let const_false = sat.new_var();
+        sat.add_clause([Lit::pos(const_true)]);
+        sat.add_clause([Lit::neg(const_false)]);
+        (const_true, const_false)
     }
 
     /// SAT-solver configuration for the embedded bit-blasting engine.
@@ -277,15 +339,10 @@ impl BvSolver {
     pub fn assert_eq(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
             for i in 0..va.width as usize {
-                // a[i] <=> b[i]
-                // (a[i] => b[i]) and (b[i] => a[i])
-                // (~a[i] or b[i]) and (~b[i] or a[i])
-
-                self.sat
-                    .add_clause([Lit::neg(va.bits[i]), Lit::pos(vb.bits[i])]);
-
-                self.sat
-                    .add_clause([Lit::neg(vb.bits[i]), Lit::pos(va.bits[i])]);
+                // a[i] <=> b[i], folded on constant bits: equal constants
+                // need nothing, different constants are an honest conflict,
+                // and a constant against a signal is a single unit.
+                self.encode_bit_eq(va.bits[i], vb.bits[i]);
             }
             return true;
         }
@@ -298,37 +355,30 @@ impl BvSolver {
     /// bit-blasted or the two have different widths.
     pub fn assert_neq(&mut self, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
-            // At least one bit must differ
-            // Introduce auxiliary variables for XOR of each bit pair
+            // At least one bit must differ, with the differences computed by
+            // the folding XOR gates: a bit pair that is constant-unequal
+            // satisfies the disequality outright, a constant-equal pair
+            // contributes nothing, and only genuine signals reach the clause.
             let mut diff_lits: SmallVec<[Lit; 32]> = SmallVec::new();
 
             for i in 0..va.width as usize {
-                // diff[i] = a[i] XOR b[i]
-                let diff = self.sat.new_var();
-                diff_lits.push(Lit::pos(diff));
-
-                let ai = va.bits[i];
-                let bi = vb.bits[i];
-
-                // diff <=> (a XOR b)
-                // diff => (a or b) and (~a or ~b)
-                // ~diff => (~a or b) and (a or ~b)
-
-                self.sat
-                    .add_clause([Lit::neg(diff), Lit::pos(ai), Lit::pos(bi)]);
-
-                self.sat
-                    .add_clause([Lit::neg(diff), Lit::neg(ai), Lit::neg(bi)]);
-
-                self.sat
-                    .add_clause([Lit::pos(diff), Lit::neg(ai), Lit::pos(bi)]);
-
-                self.sat
-                    .add_clause([Lit::pos(diff), Lit::pos(ai), Lit::neg(bi)]);
+                match self.gate_xor(self.sig(va.bits[i]), self.sig(vb.bits[i])) {
+                    Sig::True => {
+                        // This bit is provably different: a != b already holds.
+                        return true;
+                    }
+                    Sig::False => {}
+                    Sig::Var(v) => diff_lits.push(Lit::pos(v)),
+                }
             }
 
-            // At least one diff bit must be true
-            self.sat.add_clause(diff_lits);
+            // At least one diff bit must be true; none left means every bit
+            // pair folded equal - an honest conflict.
+            if diff_lits.is_empty() {
+                self.sat.add_clause([]);
+            } else {
+                self.sat.add_clause(diff_lits);
+            }
             return true;
         }
         false
@@ -431,19 +481,39 @@ impl BvSolver {
     /// in the little-endian encoding – not a fallback.  See
     /// [`Self::assert_const`] for the return value.
     pub fn assert_const_limbs(&mut self, term: TermId, limbs: &[u64], width: u32) -> bool {
-        let bv = self.new_bv(term, width).clone();
-        if bv.width != width {
-            return false;
+        // A constant term that has not been blasted yet gets its bits
+        // *installed* as the two reserved constant variables: no fresh
+        // variables, no pinning units, and every gate that consumes a bit
+        // folds on it (see [`Sig`]).  A term that already carries signal
+        // variables (blasted as a free vector earlier in this scope) keeps
+        // them and is pinned the classical way.
+        if let Some(existing) = self.term_to_bv.get(&term) {
+            if existing.width != width {
+                return false;
+            }
+            let existing = existing.clone();
+            for (i, &bit_var) in existing.bits.iter().enumerate() {
+                let bit = limbs.get(i / 64).map_or(0, |limb| (limb >> (i % 64)) & 1);
+                if bit == 1 {
+                    self.sat.add_clause([Lit::pos(bit_var)]);
+                } else {
+                    self.sat.add_clause([Lit::neg(bit_var)]);
+                }
+            }
+            return true;
         }
 
-        for (i, &bit_var) in bv.bits.iter().enumerate() {
-            let bit = limbs.get(i / 64).map_or(0, |limb| (limb >> (i % 64)) & 1);
-            if bit == 1 {
-                self.sat.add_clause([Lit::pos(bit_var)]);
-            } else {
-                self.sat.add_clause([Lit::neg(bit_var)]);
-            }
-        }
+        let bits: SmallVec<[Var; 32]> = (0..width as usize)
+            .map(|i| {
+                let bit = limbs.get(i / 64).map_or(0, |limb| (limb >> (i % 64)) & 1);
+                if bit == 1 {
+                    self.const_true
+                } else {
+                    self.const_false
+                }
+            })
+            .collect();
+        self.term_to_bv.insert(term, BvVar { bits, width });
         true
     }
 
@@ -459,23 +529,27 @@ impl BvSolver {
             self.term_to_bv.get(&low).cloned(),
         ) {
             let result_width = h.width + l.width;
-            let r = self.new_bv(result, result_width).clone();
-            if r.width != result_width {
-                return false;
+            if let Some(existing) = self.term_to_bv.get(&result) {
+                return existing.width == result_width;
             }
 
-            // Copy low bits
-            for i in 0..l.width as usize {
-                self.encode_bit_eq(r.bits[i], l.bits[i]);
-            }
-
-            // Copy high bits
-            for i in 0..h.width as usize {
-                self.encode_bit_eq(r.bits[l.width as usize + i], h.bits[i]);
-            }
-            return true;
+            // Alias the operands' bits (low part first, then the high part):
+            // a concatenation denotes exactly those bits, so no fresh
+            // variables and no per-bit equivalence clauses are needed.
+            let mut bits: SmallVec<[Var; 32]> = SmallVec::new();
+            bits.extend_from_slice(&l.bits);
+            bits.extend_from_slice(&h.bits);
+            self.term_to_bv.insert(
+                result,
+                BvVar {
+                    bits,
+                    width: result_width,
+                },
+            );
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Extract a bit range from a bit vector: result = bv\[high:low\]
@@ -491,18 +565,31 @@ impl BvSolver {
             }
 
             let result_width = high - low + 1;
-            let r = self.new_bv(result, result_width).clone();
-            if r.width != result_width {
-                return false;
+            if let Some(existing) = self.term_to_bv.get(&result) {
+                // Already blasted: keep the existing bits (the caller may have
+                // constrained them); only a width clash is unencodable.
+                return existing.width == result_width;
             }
 
-            for i in 0..result_width {
-                let src_idx = (low + i) as usize;
-                self.encode_bit_eq(r.bits[i as usize], v.bits[src_idx]);
-            }
-            return true;
+            // Alias the source bits directly: an extraction denotes exactly
+            // those bits, so no fresh variables and no equivalence clauses are
+            // needed.  This is the structural sharing Z3's blaster gets for
+            // free from hash-consing expressions; without it, a
+            // slice-heavy formula (bruttomesso `ext_con`: 8 extractions per
+            // 512-bit vector) pays a fresh variable plus two clauses per bit
+            // for what is a rename.
+            let bits: SmallVec<[Var; 32]> = v.bits[low as usize..=(high as usize)].to_vec().into();
+            self.term_to_bv.insert(
+                result,
+                BvVar {
+                    bits,
+                    width: result_width,
+                },
+            );
+            true
+        } else {
+            false
         }
-        false
     }
 
     /// Bit-blast a BV-sorted `ite(cond, then, else)`: a fresh result BV whose
@@ -565,6 +652,46 @@ impl BvSolver {
     fn pin_bool_var(&mut self, var: Var, value: bool) {
         let lit = if value { Lit::pos(var) } else { Lit::neg(var) };
         self.sat.add_clause([lit]);
+    }
+
+    /// Pin the truth variable of an already-encoded Bool term to `value`.
+    ///
+    /// Unlike [`Self::assert_bool_value`] this records nothing in the outer
+    /// replay journal: it is the *assertion* of a Bool-sorted formula inside
+    /// this solver (the eager QF\_BV dispatch pins each top-level assertion
+    /// this way), not the echo of an outer CDCL(T) decision.
+    pub fn pin_bool_term(&mut self, term: TermId, value: bool) {
+        if let Some(&var) = self.bool_node.get(&term) {
+            self.pin_bool_var(var, value);
+        }
+    }
+
+    /// Concrete values of every bit-blasted term in the latest model, for
+    /// building a term-valued model after a `Sat` verdict.
+    ///
+    /// Reads the model snapshot captured at the most recent successful
+    /// [`Theory::check`], so it stays valid after the embedded trail is rolled
+    /// back. Every entry's bits are fully defined: a term the solver left
+    /// partially free has no honest concrete value and is omitted.
+    pub fn model_bv_values(&self) -> Vec<(TermId, num_bigint::BigUint)> {
+        let terms: Vec<TermId> = self
+            .term_to_bv
+            .keys()
+            .copied()
+            .filter(|&term| self.bits_all_determined(term))
+            .collect();
+        terms
+            .into_iter()
+            .filter_map(|term| self.get_value_big(term).map(|v| (term, v)))
+            .collect()
+    }
+
+    /// Concrete values of every encoded Bool term in the latest model.
+    pub fn model_bool_values(&self) -> Vec<(TermId, bool)> {
+        self.bool_node
+            .iter()
+            .map(|(&term, &var)| (term, self.read_model_bit(var)))
+            .collect()
     }
 
     /// Encode a Bool-sorted term into a single SAT truth variable, recursively
@@ -660,31 +787,12 @@ impl BvSolver {
             }
             TermKind::Eq(lhs, rhs) => {
                 // Operands are pre-bit-blasted by the caller; `out <=> AND_i
-                // (lhs[i] <=> rhs[i])`.
-                let (va, vb) = match (
-                    self.term_to_bv.get(&lhs).cloned(),
-                    self.term_to_bv.get(&rhs).cloned(),
-                ) {
-                    (Some(va), Some(vb)) if va.width == vb.width => (va, vb),
-                    _ => return None,
-                };
-                let mut acc: Option<Var> = None;
-                for i in 0..va.width as usize {
-                    // bit_eq <=> (a[i] <=> b[i])
-                    let bit_eq = self.sat.new_var();
-                    let xor = self.sat.new_var();
-                    self.encode_xor(xor, va.bits[i], vb.bits[i]);
-                    self.encode_not(bit_eq, xor);
-                    acc = Some(match acc {
-                        None => bit_eq,
-                        Some(prev) => {
-                            let v = self.sat.new_var();
-                            self.encode_and(v, prev, bit_eq);
-                            v
-                        }
-                    });
-                }
-                acc?
+                // (lhs[i] <=> rhs[i])`, encoded flat (4 clauses per bit, no
+                // intermediate XNOR/AND gate chain): the gate chain cost 9
+                // clauses per bit, which on wide-vector equality families
+                // (bruttomesso `ext_con`: 256 192-bit equalities) multiplied
+                // the circuit by ~2 against the whole rest of the formula.
+                self.encode_eq_node(lhs, rhs)?
             }
             TermKind::BvUlt(lhs, rhs) => self.bool_ult(lhs, rhs, manager, false)?,
             TermKind::BvUle(lhs, rhs) => self.bool_ule(lhs, rhs, manager, false)?,
@@ -698,6 +806,188 @@ impl BvSolver {
             self.pin_bool_var(out, value);
         }
         Some(out)
+    }
+
+    /// Encode `out <=> (lhs = rhs)` over bit-blasted operands, flat.
+    ///
+    /// Four clauses per bit (`out -> lhs[i] <=> rhs[i]` twice, `lhs[i] != rhs[i]
+    /// -> !out` twice) instead of a per-bit XNOR-plus-AND gate chain (nine
+    /// clauses per bit plus two auxiliary variables). Constant bits fold:
+    /// equal constants drop out, unequal constants refute `out` on the spot,
+    /// and one constant against a signal degenerates to the bit equivalence.
+    ///
+    /// Returns the result variable, or `None` when an operand has not been
+    /// bit-blasted or the widths differ.
+    fn encode_eq_node(&mut self, lhs: TermId, rhs: TermId) -> Option<Var> {
+        let (va, vb) = match (
+            self.term_to_bv.get(&lhs).cloned(),
+            self.term_to_bv.get(&rhs).cloned(),
+        ) {
+            (Some(va), Some(vb)) if va.width == vb.width => (va, vb),
+            _ => return None,
+        };
+        let out = self.sat.new_var();
+        // Difference literals (one per non-constant bit pair): the equality is
+        // true exactly when none of them holds, hence the big clause
+        // `out or d_1 or ... or d_n` for the reverse direction.
+        let mut diff_lits: SmallVec<[Lit; 32]> = SmallVec::new();
+        for i in 0..va.width as usize {
+            let l = self.sig(va.bits[i]);
+            let r = self.sig(vb.bits[i]);
+            match (l, r) {
+                (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
+                (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
+                    // Constant-unequal bits falsify the equality outright.
+                    let _ = self.sat.add_clause([Lit::neg(out)]);
+                    return Some(out);
+                }
+                (Sig::True, Sig::Var(v)) | (Sig::Var(v), Sig::True) => {
+                    // This bit is equal to `v`'s value: out -> v, and `!v`
+                    // is a "differing bit" for the reverse direction.
+                    let lit = Lit::pos(v);
+                    let _ = self.sat.add_clause([Lit::neg(out), lit]);
+                    diff_lits.push(lit.negate());
+                }
+                (Sig::False, Sig::Var(v)) | (Sig::Var(v), Sig::False) => {
+                    // This bit is equal to `!v`: out -> !v, and `v` differs.
+                    let lit = Lit::neg(v);
+                    let _ = self.sat.add_clause([Lit::neg(out), lit]);
+                    diff_lits.push(lit.negate());
+                }
+                (Sig::Var(x), Sig::Var(y)) => {
+                    if x == y {
+                        continue;
+                    }
+                    // d_i <=> (x XOR y); collected for the big clause below.
+                    let d = self.sat.new_var();
+                    self.emit_xor(d, x, y);
+                    // out -> bits equal at i: !out or !d_i
+                    self.sat.add_clause([Lit::neg(out), Lit::neg(d)]);
+                    diff_lits.push(Lit::pos(d));
+                }
+            }
+        }
+        // Reverse direction: any differing bit must be able to falsify `out`.
+        if diff_lits.is_empty() {
+            // Every bit pair folded equal (constants, or aliased bits after
+            // extract/concat sharing): the equality is a tautology.
+            let _ = self.sat.add_clause([Lit::pos(out)]);
+        } else {
+            let mut clause: SmallVec<[Lit; 33]> = SmallVec::with_capacity(diff_lits.len() + 1);
+            clause.push(Lit::pos(out));
+            clause.extend(diff_lits);
+            let _ = self.sat.add_clause(clause);
+        }
+        Some(out)
+    }
+
+    /// Assert a Bool-sorted formula **true** in the embedded solver, using the
+    /// direct literal encodings wherever the top-level polarity is known.
+    ///
+    /// This is the assertion-side counterpart of [`Self::encode_bool_node`]:
+    /// where the node encoder must build an equivalence circuit for *any*
+    /// sub-formula (its truth value is not yet known), an asserted formula
+    /// known to be true can be fed straight into the solver's constraint
+    /// assertions – an equality becomes [`Self::assert_eq`]'s two clauses per
+    /// bit (no result variable at all), a comparison becomes
+    /// [`Self::assert_ult`]'s cached circuit, and a conjunction recurses.
+    /// Disjunctions, negations-of-non-literals and free Booleans fall back to
+    /// [`Self::encode_bool_node`] plus a unit pin.
+    ///
+    /// Returns `false` when the formula reaches a construct outside the
+    /// blastable fragment (nothing is asserted for that sub-formula; the
+    /// caller must then decline to decide the goal here).
+    pub fn assert_formula_true(
+        &mut self,
+        term: TermId,
+        manager: &oxiz_core::ast::TermManager,
+    ) -> bool {
+        use oxiz_core::ast::TermKind;
+        // Explicit work stack: assertion DAGs from real inputs nest `and`
+        // hundreds deep, and this walk must not recurse natively.
+        let mut stack = vec![term];
+        let mut visited = rustc_hash::FxHashSet::default();
+        while let Some(tid) = stack.pop() {
+            if !visited.insert(tid) {
+                continue;
+            }
+            let Some(data) = manager.get(tid) else {
+                return false;
+            };
+            match &data.kind {
+                TermKind::True => {}
+                TermKind::False => {
+                    let _ = self.sat.add_clause([]);
+                }
+                TermKind::And(args) => {
+                    for &a in args.iter().rev() {
+                        stack.push(a);
+                    }
+                }
+                TermKind::Not(inner) => {
+                    if !self.assert_formula_false(*inner, manager) {
+                        return false;
+                    }
+                }
+                TermKind::Eq(l, r) if self.both_bv_blasted(*l, *r) && self.assert_eq(*l, *r) => {}
+                TermKind::BvUlt(l, r)
+                    if self.both_bv_blasted(*l, *r) && self.assert_ult(*l, *r) => {}
+                TermKind::BvUle(l, r)
+                    if self.both_bv_blasted(*l, *r) && self.assert_ule(*l, *r) => {}
+                TermKind::BvSlt(l, r)
+                    if self.both_bv_blasted(*l, *r) && self.assert_slt(*l, *r) => {}
+                TermKind::BvSle(l, r)
+                    if self.both_bv_blasted(*l, *r) && self.assert_sle(*l, *r) => {}
+                _ => match self.encode_bool_node(tid, manager) {
+                    Some(v) => self.pin_bool_var(v, true),
+                    None => return false,
+                },
+            }
+        }
+        true
+    }
+
+    /// Assert a Bool-sorted formula **false** (the negation handling of
+    /// [`Self::assert_formula_true`]).
+    fn assert_formula_false(
+        &mut self,
+        term: TermId,
+        manager: &oxiz_core::ast::TermManager,
+    ) -> bool {
+        use oxiz_core::ast::TermKind;
+        let Some(data) = manager.get(term) else {
+            return false;
+        };
+        match &data.kind {
+            TermKind::False => true,
+            TermKind::True => {
+                let _ = self.sat.add_clause([]);
+                true
+            }
+            TermKind::Not(inner) => self.assert_formula_true(*inner, manager),
+            // a != b  (BV): the disequality assertion.
+            TermKind::Eq(l, r) if self.both_bv_blasted(*l, *r) => self.assert_neq(*l, *r),
+            // !(a <u b)  ==  b <=u a, and symmetrically for the rest.
+            TermKind::BvUlt(l, r) if self.both_bv_blasted(*l, *r) => self.assert_ule(*r, *l),
+            TermKind::BvUle(l, r) if self.both_bv_blasted(*l, *r) => self.assert_ult(*r, *l),
+            TermKind::BvSlt(l, r) if self.both_bv_blasted(*l, *r) => self.assert_sle(*r, *l),
+            TermKind::BvSle(l, r) if self.both_bv_blasted(*l, *r) => self.assert_slt(*r, *l),
+            _ => match self.encode_bool_node(term, manager) {
+                Some(v) => {
+                    self.pin_bool_var(v, false);
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+
+    /// Whether both terms are bit-blasted bit-vectors of equal width.
+    fn both_bv_blasted(&self, l: TermId, r: TermId) -> bool {
+        matches!(
+            (self.term_to_bv.get(&l), self.term_to_bv.get(&r)),
+            (Some(a), Some(b)) if a.width == b.width
+        )
     }
 
     /// Encode a strict less-than (signed or unsigned) comparison result var.
@@ -719,25 +1009,18 @@ impl BvSolver {
         let width = va.width as usize;
         let result = self.sat.new_var();
         if signed {
-            // Signed: if sign bits differ, lhs<rhs iff sign_lhs=1; else unsigned.
-            let sign_a = va.bits[width - 1];
-            let sign_b = vb.bits[width - 1];
-            let diff_sign = self.sat.new_var();
-            self.encode_xor(diff_sign, sign_a, sign_b);
+            // Signed: if the sign bits differ, lhs<rhs iff sign_lhs=1; else
+            // the unsigned comparison decides.  Composed from the folding
+            // gates, so constant sign bits collapse the whole mux.
+            let sign_a = self.sig(va.bits[width - 1]);
+            let sign_b = self.sig(vb.bits[width - 1]);
+            let diff_sign = self.gate_xor(sign_a, sign_b);
 
-            self.sat
-                .add_clause([Lit::neg(diff_sign), Lit::neg(sign_a), Lit::pos(result)]);
-
-            self.sat
-                .add_clause([Lit::neg(diff_sign), Lit::pos(sign_a), Lit::neg(result)]);
             let ult = self.sat.new_var();
             self.encode_ult_result(&va.bits, &vb.bits, ult);
 
-            self.sat
-                .add_clause([Lit::pos(diff_sign), Lit::neg(ult), Lit::pos(result)]);
-
-            self.sat
-                .add_clause([Lit::pos(diff_sign), Lit::pos(ult), Lit::neg(result)]);
+            let folded = self.gate_mux(diff_sign, sign_a, Sig::Var(ult));
+            self.wire(result, folded);
         } else {
             self.encode_ult_result(&va.bits, &vb.bits, result);
         }
@@ -753,10 +1036,11 @@ impl BvSolver {
         manager: &oxiz_core::ast::TermManager,
         signed: bool,
     ) -> Option<Var> {
-        // a <= b  ≡  not(b < a).
+        // a <= b  ≡  not(b < a), folded through the NOT gate.
         let gt = self.bool_ult(rhs, lhs, manager, signed)?;
         let v = self.sat.new_var();
-        self.encode_not(v, gt);
+        let folded = self.gate_not(self.sig(gt));
+        self.wire(v, folded);
         Some(v)
     }
 
@@ -978,41 +1262,26 @@ impl BvSolver {
             // If sign bits differ: a < b iff a is negative (a[n-1] = 1)
             // If sign bits same: compare as unsigned
 
-            let sign_a = va.bits[width - 1];
-            let sign_b = vb.bits[width - 1];
+            // Signed: if the sign bits differ, a < b iff a is negative
+            // (sign_a = 1); otherwise the unsigned comparison decides.  Built
+            // from the folding gates, so constant sign bits collapse the mux.
+            let sign_a = self.sig(va.bits[width - 1]);
+            let sign_b = self.sig(vb.bits[width - 1]);
+            let diff_sign = self.gate_xor(sign_a, sign_b);
 
-            // diff_sign = sign_a XOR sign_b
-            let diff_sign = self.sat.new_var();
-            self.encode_xor(diff_sign, sign_a, sign_b);
-
-            // If signs differ, result = sign_a
-            // If signs same, result = unsigned comparison of remaining bits
-
-            // Create result variable
-            let result = self.sat.new_var();
-
-            // Case 1: diff_sign => result = sign_a
-            // diff_sign => (sign_a <=> result)
-
-            self.sat
-                .add_clause([Lit::neg(diff_sign), Lit::neg(sign_a), Lit::pos(result)]);
-
-            self.sat
-                .add_clause([Lit::neg(diff_sign), Lit::pos(sign_a), Lit::neg(result)]);
-
-            // Case 2: ~diff_sign => result = ult(a, b)
-            // We need to compute unsigned less than and assert it when signs are equal
             let ult_result = self.sat.new_var();
             self.encode_ult_result(&va.bits, &vb.bits, ult_result);
 
-            self.sat
-                .add_clause([Lit::pos(diff_sign), Lit::neg(ult_result), Lit::pos(result)]);
-
-            self.sat
-                .add_clause([Lit::pos(diff_sign), Lit::pos(ult_result), Lit::neg(result)]);
-
-            // Assert that result is true
-            self.sat.add_clause([Lit::pos(result)]);
+            let result = self.gate_mux(diff_sign, sign_a, Sig::Var(ult_result));
+            match result {
+                Sig::True => {}
+                Sig::False => {
+                    self.sat.add_clause([]);
+                }
+                Sig::Var(v) => {
+                    self.sat.add_clause([Lit::pos(v)]);
+                }
+            }
             return true;
         }
         false
@@ -1067,88 +1336,315 @@ impl BvSolver {
 
     // ======== Helper encoding functions ========
 
-    /// Encode bit equality: a <=> b
-    fn encode_bit_eq(&mut self, a: Var, b: Var) {
+    // The layer below comes in two flavours.
+    //
+    // * `gate_*` combinators take and return [`Sig`]s and constant-fold before
+    //   allocating anything: `gate_and(x, Sig::False)` is `Sig::False` with no
+    //   variable and no clause.  Every circuit builder in this file composes
+    //   these, so constant inputs anywhere in a circuit collapse it
+    //   transitively - the same shape as Z3's bit-blaster, whose
+    //   `mk_and`/`mk_xor`/`mk_full_adder` (`bit_blaster_tpl_def.h`) run over a
+    //   rewriting layer that performs exactly these folds.
+    // * `encode_*` functions keep the historical `Var`-based signatures for
+    //   callers that pre-allocate their result bits (`bv_add`, `concat`, ...).
+    //   They classify their inputs with [`Self::sig`] and delegate to the
+    //   `gate_*` layer, then [`Self::wire`] the pre-allocated output to
+    //   whatever the folded result is (a pinned unit for a constant, an
+    //   equivalence pair for a signal).
+    //
+    // The raw clause emitters (`emit_*`) are therefore only reached with
+    // ordinary signal variables and never emit a clause that unit propagation
+    // would immediately subsume.
+
+    /// Classify a bit variable as one of the reserved constants or a signal.
+    #[inline]
+    fn sig(&self, v: Var) -> Sig {
+        if v == self.const_true {
+            Sig::True
+        } else if v == self.const_false {
+            Sig::False
+        } else {
+            Sig::Var(v)
+        }
+    }
+
+    /// The variable carrying `s` (`const_true` / `const_false` for constants).
+    #[inline]
+    fn sig_var(&self, s: Sig) -> Var {
+        match s {
+            Sig::True => self.const_true,
+            Sig::False => self.const_false,
+            Sig::Var(v) => v,
+        }
+    }
+
+    /// Constrain the pre-allocated output bit `out` to equal `s`.
+    ///
+    /// * constant: a single unit clause pins `out` (the same mechanism
+    ///   [`Self::assert_const_limbs`] has always used for constant bits);
+    /// * signal: an equivalence pair, skipped when `out` already *is* that
+    ///   signal.
+    ///
+    /// `out` is always a freshly allocated bit of a result vector, so the pin
+    /// can never contradict a prior definition of `out` itself.
+    fn wire(&mut self, out: Var, s: Sig) {
+        match s {
+            Sig::True => {
+                self.sat.add_clause([Lit::pos(out)]);
+            }
+            Sig::False => {
+                self.sat.add_clause([Lit::neg(out)]);
+            }
+            Sig::Var(v) => {
+                if v != out {
+                    self.emit_bit_eq(out, v);
+                }
+            }
+        }
+    }
+
+    /// Emit the raw equivalence clauses `a <=> b` for two distinct signals.
+    fn emit_bit_eq(&mut self, a: Var, b: Var) {
         self.sat.add_clause([Lit::neg(a), Lit::pos(b)]);
         self.sat.add_clause([Lit::pos(a), Lit::neg(b)]);
     }
 
-    /// Encode NOT gate: out = ~in
-    fn encode_not(&mut self, out: Var, input: Var) {
+    /// Encode bit equality between two arbitrary bit variables, folding on
+    /// the reserved constants.
+    ///
+    /// Two equal constants need no clause; two *different* constants make the
+    /// equality unsatisfiable, which is reported honestly through the empty
+    /// clause (the SAT solver latches `trivially_unsat` and the next
+    /// `BvSolver::check` reports the conflict).
+    fn encode_bit_eq(&mut self, a: Var, b: Var) {
+        match (self.sig(a), self.sig(b)) {
+            (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
+            (Sig::Var(x), Sig::Var(y)) => {
+                if x != y {
+                    self.emit_bit_eq(x, y);
+                }
+            }
+            (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
+                let _ = self.sat.add_clause([]);
+            }
+            (Sig::True, Sig::Var(v)) | (Sig::Var(v), Sig::True) => {
+                let _ = self.sat.add_clause([Lit::pos(v)]);
+            }
+            (Sig::False, Sig::Var(v)) | (Sig::Var(v), Sig::False) => {
+                let _ = self.sat.add_clause([Lit::neg(v)]);
+            }
+        }
+    }
+
+    /// Raw NOT emitter for two signals: `out <=> not input`.
+    fn emit_not(&mut self, out: Var, input: Var) {
         self.sat.add_clause([Lit::pos(out), Lit::pos(input)]);
         self.sat.add_clause([Lit::neg(out), Lit::neg(input)]);
     }
 
-    /// Encode AND gate: out = a & b
-    fn encode_and(&mut self, out: Var, a: Var, b: Var) {
+    /// NOT with constant folding.
+    fn gate_not(&mut self, a: Sig) -> Sig {
+        match a {
+            Sig::True => Sig::False,
+            Sig::False => Sig::True,
+            Sig::Var(v) => {
+                let out = self.sat.new_var();
+                self.emit_not(out, v);
+                Sig::Var(out)
+            }
+        }
+    }
+
+    /// Encode NOT gate: out = ~in
+    fn encode_not(&mut self, out: Var, input: Var) {
+        let folded = self.gate_not(self.sig(input));
+        self.wire(out, folded);
+    }
+
+    /// Raw AND emitter for two signals.
+    fn emit_and(&mut self, out: Var, a: Var, b: Var) {
         // out <=> (a AND b)
         // out => a, out => b, (a AND b) => out
         self.sat.add_clause([Lit::neg(out), Lit::pos(a)]);
         self.sat.add_clause([Lit::neg(out), Lit::pos(b)]);
-
         self.sat
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
     }
 
-    /// Encode OR gate: out = a | b
-    fn encode_or(&mut self, out: Var, a: Var, b: Var) {
-        // out <=> (a OR b)
+    /// AND with constant folding.
+    fn gate_and(&mut self, a: Sig, b: Sig) -> Sig {
+        match (a, b) {
+            (Sig::False, _) | (_, Sig::False) => Sig::False,
+            (Sig::True, x) | (x, Sig::True) => x,
+            (Sig::Var(x), Sig::Var(y)) => {
+                if x == y {
+                    a
+                } else {
+                    let out = self.sat.new_var();
+                    self.emit_and(out, x, y);
+                    Sig::Var(out)
+                }
+            }
+        }
+    }
 
+    /// Encode AND gate: out = a & b
+    fn encode_and(&mut self, out: Var, a: Var, b: Var) {
+        let folded = self.gate_and(self.sig(a), self.sig(b));
+        self.wire(out, folded);
+    }
+
+    /// Raw OR emitter for two signals.
+    fn emit_or(&mut self, out: Var, a: Var, b: Var) {
+        // out <=> (a OR b)
         self.sat
             .add_clause([Lit::neg(out), Lit::pos(a), Lit::pos(b)]);
         self.sat.add_clause([Lit::pos(out), Lit::neg(a)]);
         self.sat.add_clause([Lit::pos(out), Lit::neg(b)]);
     }
 
-    /// Encode XOR gate: out = a ^ b
-    fn encode_xor(&mut self, out: Var, a: Var, b: Var) {
-        // out <=> (a XOR b)
+    /// OR with constant folding.
+    fn gate_or(&mut self, a: Sig, b: Sig) -> Sig {
+        match (a, b) {
+            (Sig::True, _) | (_, Sig::True) => Sig::True,
+            (Sig::False, x) | (x, Sig::False) => x,
+            (Sig::Var(x), Sig::Var(y)) => {
+                if x == y {
+                    a
+                } else {
+                    let out = self.sat.new_var();
+                    self.emit_or(out, x, y);
+                    Sig::Var(out)
+                }
+            }
+        }
+    }
 
+    /// Encode OR gate: out = a | b
+    fn encode_or(&mut self, out: Var, a: Var, b: Var) {
+        let folded = self.gate_or(self.sig(a), self.sig(b));
+        self.wire(out, folded);
+    }
+
+    /// Raw XOR emitter for two signals.
+    fn emit_xor(&mut self, out: Var, a: Var, b: Var) {
+        // out <=> (a XOR b)
         self.sat
             .add_clause([Lit::neg(out), Lit::neg(a), Lit::neg(b)]);
-
         self.sat
             .add_clause([Lit::neg(out), Lit::pos(a), Lit::pos(b)]);
-
         self.sat
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::pos(b)]);
-
         self.sat
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::neg(b)]);
     }
 
-    /// Encode multiplexer: out = sel ? if_true : if_false
-    fn encode_mux(&mut self, out: Var, sel: Var, if_true: Var, if_false: Var) {
-        // out = (sel AND if_true) OR (~sel AND if_false)
+    /// XOR with constant folding.
+    fn gate_xor(&mut self, a: Sig, b: Sig) -> Sig {
+        match (a, b) {
+            (Sig::False, x) | (x, Sig::False) => x,
+            (Sig::True, x) | (x, Sig::True) => self.gate_not(x),
+            (Sig::Var(x), Sig::Var(y)) => {
+                if x == y {
+                    Sig::False
+                } else {
+                    let out = self.sat.new_var();
+                    self.emit_xor(out, x, y);
+                    Sig::Var(out)
+                }
+            }
+        }
+    }
 
+    /// Encode XOR gate: out = a ^ b
+    fn encode_xor(&mut self, out: Var, a: Var, b: Var) {
+        let folded = self.gate_xor(self.sig(a), self.sig(b));
+        self.wire(out, folded);
+    }
+
+    /// XNOR with constant folding (`a = b`).
+    fn gate_xnor(&mut self, a: Sig, b: Sig) -> Sig {
+        let x = self.gate_xor(a, b);
+        self.gate_not(x)
+    }
+
+    /// `~a & b` with constant folding.
+    fn gate_and_not_a(&mut self, a: Sig, b: Sig) -> Sig {
+        match (a, b) {
+            (Sig::True, _) | (_, Sig::False) => Sig::False,
+            (Sig::False, x) => x,
+            (Sig::Var(x), Sig::True) => self.gate_not(Sig::Var(x)),
+            (Sig::Var(x), Sig::Var(y)) => {
+                if x == y {
+                    // a & ~a = 0
+                    Sig::False
+                } else {
+                    let out = self.sat.new_var();
+                    // out <=> (~a & b)
+                    self.sat.add_clause([Lit::neg(out), Lit::neg(x)]);
+                    self.sat.add_clause([Lit::neg(out), Lit::pos(y)]);
+                    self.sat
+                        .add_clause([Lit::pos(out), Lit::pos(x), Lit::neg(y)]);
+                    Sig::Var(out)
+                }
+            }
+        }
+    }
+
+    /// Raw multiplexer emitter for three signals.
+    fn emit_mux(&mut self, out: Var, sel: Var, if_true: Var, if_false: Var) {
+        // out = (sel AND if_true) OR (~sel AND if_false)
         self.sat
             .add_clause([Lit::neg(sel), Lit::neg(if_true), Lit::pos(out)]);
-
         self.sat
             .add_clause([Lit::neg(sel), Lit::pos(if_true), Lit::neg(out)]);
-
         self.sat
             .add_clause([Lit::pos(sel), Lit::neg(if_false), Lit::pos(out)]);
-
         self.sat
             .add_clause([Lit::pos(sel), Lit::pos(if_false), Lit::neg(out)]);
     }
 
-    /// Encode full adder: (sum, carry_out) = a + b + carry_in
-    fn encode_full_adder(&mut self, sum: Var, carry_out: Var, a: Var, b: Var, carry_in: Var) {
-        // sum = a XOR b XOR carry_in
-        let xor_ab = self.sat.new_var();
-        self.encode_xor(xor_ab, a, b);
-        self.encode_xor(sum, xor_ab, carry_in);
+    /// Multiplexer with constant folding.
+    fn gate_mux(&mut self, sel: Sig, if_true: Sig, if_false: Sig) -> Sig {
+        match sel {
+            Sig::True => if_true,
+            Sig::False => if_false,
+            Sig::Var(s) => {
+                if if_true == if_false {
+                    return if_true;
+                }
+                match (if_true, if_false) {
+                    (Sig::True, Sig::False) => Sig::Var(s),
+                    (Sig::False, Sig::True) => self.gate_not(Sig::Var(s)),
+                    _ => {
+                        let out = self.sat.new_var();
+                        self.emit_mux(out, s, self.sig_var(if_true), self.sig_var(if_false));
+                        Sig::Var(out)
+                    }
+                }
+            }
+        }
+    }
 
-        // carry_out = (a AND b) OR (carry_in AND (a XOR b))
-        let and_ab = self.sat.new_var();
-        self.encode_and(and_ab, a, b);
+    /// Encode multiplexer: out = sel ? if_true : if_false
+    fn encode_mux(&mut self, out: Var, sel: Var, if_true: Var, if_false: Var) {
+        let folded = self.gate_mux(self.sig(sel), self.sig(if_true), self.sig(if_false));
+        self.wire(out, folded);
+    }
 
-        let and_cin_xor = self.sat.new_var();
-        self.encode_and(and_cin_xor, carry_in, xor_ab);
-
-        self.encode_or(carry_out, and_ab, and_cin_xor);
+    /// Full adder over [`Sig`]s: `(sum, carry_out) = a + b + carry_in`, with
+    /// constant folding at every gate.
+    ///
+    /// A constant operand degenerates this into a half adder (or a pure wire)
+    /// exactly as in Z3's `mk_full_adder`, which runs over the rewriting
+    /// layer's `mk_xor`/`mk_and`/`mk_or`.
+    fn gate_full_adder(&mut self, a: Sig, b: Sig, carry_in: Sig) -> (Sig, Sig) {
+        let axb = self.gate_xor(a, b);
+        let sum = self.gate_xor(axb, carry_in);
+        let aab = self.gate_and(a, b);
+        let caxb = self.gate_and(carry_in, axb);
+        let cout = self.gate_or(aab, caxb);
+        (sum, cout)
     }
 
     /// Encode ripple-carry adder: result = a + b
@@ -1158,51 +1654,64 @@ impl BvSolver {
     }
 
     /// Encode a ripple-carry adder `result = a + b` and return the final
-    /// carry-out variable (true iff the unsigned sum overflows `width` bits).
+    /// carry-out as a [`Sig`] (true iff the unsigned sum overflows `width`
+    /// bits; already folded to a constant when the operands determine it).
     ///
     /// Callers that must forbid wrap-around (e.g. the division/remainder
-    /// equation `a = q*b + r`) constrain the returned carry-out to 0.
-    fn encode_adder_carry(&mut self, result: &[Var], a: &[Var], b: &[Var]) -> Var {
+    /// equation `a = q*b + r`) constrain the returned carry-out to 0 via
+    /// [`Self::sig_require_false`].
+    fn encode_adder_carry(&mut self, result: &[Var], a: &[Var], b: &[Var]) -> Sig {
         assert_eq!(result.len(), a.len());
         assert_eq!(result.len(), b.len());
 
         let width = result.len();
-        let mut carry = self.sat.new_var();
-        self.sat.add_clause([Lit::neg(carry)]); // Initial carry = 0
+        let mut carry = Sig::False;
 
         for i in 0..width {
-            let next_carry = self.sat.new_var();
-            self.encode_full_adder(result[i], next_carry, a[i], b[i], carry);
+            let (sum, next_carry) = self.gate_full_adder(self.sig(a[i]), self.sig(b[i]), carry);
+            self.wire(result[i], sum);
             carry = next_carry;
         }
 
         carry
     }
 
+    /// Emit the guarded non-wrap clause `guard ∨ ¬s` used by the division
+    /// circuits (`b_is_zero ∨ ¬carry_out`), folding on a constant `s`:
+    /// the clause vanishes when `s` is false and degenerates to the unit
+    /// `guard` when `s` is true.
+    fn add_guarded_not(&mut self, guard: Var, s: Sig) {
+        match s {
+            Sig::False => {}
+            Sig::True => {
+                self.sat.add_clause([Lit::pos(guard)]);
+            }
+            Sig::Var(v) => {
+                self.sat.add_clause([Lit::pos(guard), Lit::neg(v)]);
+            }
+        }
+    }
+
     /// Encode addition with constant: result = a + const
+    ///
+    /// The constant enters the full adders as [`Sig`] constants, so each bit
+    /// position degenerates to a half adder (or a bare wire) with no extra
+    /// pinned variables or clauses.
     fn encode_add_const(&mut self, result: &[Var], a: &[Var], constant: u64) {
         assert_eq!(result.len(), a.len());
 
         let width = result.len();
-        let mut carry = self.sat.new_var();
-        self.sat.add_clause([Lit::neg(carry)]); // Initial carry = 0
+        let mut carry = Sig::False;
 
         for i in 0..width {
             let const_bit = ((constant >> i) & 1) == 1;
-            let next_carry = self.sat.new_var(); // Overflow carry ignored for last iteration
-
-            if const_bit {
-                // Half adder with constant 1
-                let one = self.sat.new_var();
-                self.sat.add_clause([Lit::pos(one)]);
-                self.encode_full_adder(result[i], next_carry, a[i], one, carry);
-            } else {
-                // Half adder with constant 0
-                let zero = self.sat.new_var();
-                self.sat.add_clause([Lit::neg(zero)]);
-                self.encode_full_adder(result[i], next_carry, a[i], zero, carry);
-            }
-
+            // Overflow carry of the top bit is ignored: width-only wrapping.
+            let (sum, next_carry) = self.gate_full_adder(
+                self.sig(a[i]),
+                if const_bit { Sig::True } else { Sig::False },
+                carry,
+            );
+            self.wire(result[i], sum);
             carry = next_carry;
         }
     }
@@ -1230,91 +1739,61 @@ impl BvSolver {
 
         // Start with LSB (bit 0)
         // lt_0 = ~a[0] & b[0]
-        let mut lt_prev = self.sat.new_var();
-        self.encode_and_not_a(lt_prev, a_bits[0], b_bits[0]);
+        let mut lt_prev = self.gate_and_not_a(self.sig(a_bits[0]), self.sig(b_bits[0]));
 
         // Process bits from 1 to MSB
         for i in 1..width {
-            let ai = a_bits[i];
-            let bi = b_bits[i];
+            let ai = self.sig(a_bits[i]);
+            let bi = self.sig(b_bits[i]);
 
             // lt_at_i = ~ai & bi (a < b at this specific bit)
-            let lt_at_i = self.sat.new_var();
-            self.encode_and_not_a(lt_at_i, ai, bi);
+            let lt_at_i = self.gate_and_not_a(ai, bi);
 
             // eq_i = (ai ⇔ bi) (bits are equal)
-            let eq_i = self.sat.new_var();
-            self.encode_xnor(eq_i, ai, bi);
+            let eq_i = self.gate_xnor(ai, bi);
 
             // carry_prev = eq_i & lt_prev (propagate from lower bits)
-            let carry_prev = self.sat.new_var();
-            self.encode_and(carry_prev, eq_i, lt_prev);
+            let carry_prev = self.gate_and(eq_i, lt_prev);
 
             // lt_next = lt_at_i | carry_prev
-            let lt_next = self.sat.new_var();
-            self.encode_or(lt_next, lt_at_i, carry_prev);
-
-            lt_prev = lt_next;
+            lt_prev = self.gate_or(lt_at_i, carry_prev);
         }
 
-        self.encode_bit_eq(result, lt_prev);
-    }
-
-    /// Encode out = ~a & b (AND with first input negated)
-    fn encode_and_not_a(&mut self, out: Var, a: Var, b: Var) {
-        // out ⇔ (~a & b)
-        // out → ~a: ~out | ~a
-        self.sat.add_clause([Lit::neg(out), Lit::neg(a)]);
-        // out → b: ~out | b
-        self.sat.add_clause([Lit::neg(out), Lit::pos(b)]);
-        // (~a & b) → out: a | ~b | out
-
-        self.sat
-            .add_clause([Lit::pos(a), Lit::neg(b), Lit::pos(out)]);
-    }
-
-    /// Encode out = (a ⇔ b) (XNOR gate)
-    fn encode_xnor(&mut self, out: Var, a: Var, b: Var) {
-        // out ⇔ (a ⇔ b)
-        // out is true when a = b
-        // Clauses:
-        // ~out | ~a | b    (out & a → b)
-        // ~out | a | ~b    (out & ~a → ~b)
-        // out | ~a | ~b    (~out → a ≠ b, i.e., ~a & ~b → out, or a | b → ~out)
-        // out | a | b      (~out → a ≠ b, i.e., a & b → out, or ~a | ~b → ~out)
-
-        self.sat
-            .add_clause([Lit::neg(out), Lit::neg(a), Lit::pos(b)]);
-
-        self.sat
-            .add_clause([Lit::neg(out), Lit::pos(a), Lit::neg(b)]);
-
-        self.sat
-            .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
-
-        self.sat
-            .add_clause([Lit::pos(out), Lit::pos(a), Lit::pos(b)]);
+        // Constant operands fold the whole chain: `wire` pins the result.
+        self.wire(result, lt_prev);
     }
 
     // ======== Additional helper encoding functions ========
 
     /// Encode: out = 1 iff all bits in the list are 0
     fn encode_all_zero(&mut self, out: Var, bits: &[Var]) {
-        if bits.is_empty() {
+        let mut signals: SmallVec<[Var; 32]> = SmallVec::new();
+        for &bit in bits {
+            match self.sig(bit) {
+                Sig::True => {
+                    // One true bit falsifies "all zero" unconditionally.
+                    self.sat.add_clause([Lit::neg(out)]);
+                    return;
+                }
+                Sig::False => {}
+                Sig::Var(v) => signals.push(v),
+            }
+        }
+        if signals.is_empty() {
             self.sat.add_clause([Lit::pos(out)]);
             return;
         }
 
         // out = AND(~bits[i] for all i)
         // out => ~bits[i] for all i
-        for &bit in bits {
+        for &bit in &signals {
             self.sat.add_clause([Lit::neg(out), Lit::neg(bit)]);
         }
 
         // (~bits[0] AND ... AND ~bits[n-1]) => out
         let mut clause: SmallVec<[Lit; 32]> = SmallVec::new();
         clause.push(Lit::pos(out));
-        for &bit in bits {
+        for &bit in &signals {
             clause.push(Lit::pos(bit));
         }
         self.sat.add_clause(clause);
@@ -1325,36 +1804,58 @@ impl BvSolver {
         assert_eq!(result.len(), a.len());
 
         // ~a
-        let mut not_a: SmallVec<[Var; 32]> = SmallVec::new();
-        for &bit in a {
-            let not_bit = self.sat.new_var();
-            self.encode_not(not_bit, bit);
-            not_a.push(not_bit);
-        }
+        let not_a: SmallVec<[Sig; 32]> =
+            a.iter().map(|&bit| self.gate_not(self.sig(bit))).collect();
 
-        // ~a + 1
-        self.encode_add_const(result, &not_a, 1);
+        // ~a + 1: ripple the initial carry of 1 through the inverted bits.
+        let mut carry = Sig::True;
+        for (i, &nb) in not_a.iter().enumerate() {
+            let (sum, next) = self.gate_full_adder(nb, Sig::False, carry);
+            self.wire(result[i], sum);
+            carry = next;
+        }
     }
 
     /// Encode multiplication using symmetric schoolbook method: result = a * b
     /// This encoding is symmetric with respect to a and b, allowing solving for either operand.
     /// Uses Wallace tree-style carry propagation with proper column tracking.
+    /// Multiplication with constant folding on the partial products.
+    ///
+    /// Z3's `mk_multiplier` builds the same partial-product array, but every
+    /// `mk_and`/`mk_full_adder` runs over a rewriting layer that folds
+    /// constants (`bit_blaster_tpl_def.h`).  Encoding the fold here is what
+    /// keeps `bvmul(x, 65599)` - the Sage2 hash-chain shape - at the six-row
+    /// shift-add chain the constant needs instead of a full 32x32 array:
+    /// the partial products against the constant's zero bits are dropped
+    /// before any variable exists, and the ones against its one bits are the
+    /// multiplicand bits themselves.
     fn encode_mul(&mut self, result: &[Var], a: &[Var], b: &[Var]) {
         assert_eq!(result.len(), a.len());
         assert_eq!(result.len(), b.len());
 
         let width = result.len();
 
-        // Create partial products: columns[k] contains all bits that contribute to result[k]
-        // Initially, columns[k] = { a[i] AND b[j] | i + j = k }
-        let mut columns: Vec<Vec<Var>> = vec![Vec::new(); width];
+        // Create partial products: columns[k] contains all bits that
+        // contribute to result[k].  Initially,
+        // columns[k] = { a[i] AND b[j] | i + j = k }, with constant-zero
+        // products omitted and constant-one products passed through.
+        let mut columns: Vec<Vec<Sig>> = vec![Vec::new(); width];
 
         for (i, &a_bit) in a.iter().enumerate().take(width) {
+            let a_sig = self.sig(a_bit);
+            if a_sig == Sig::False {
+                // A zero multiplicand bit contributes nothing to any column.
+                continue;
+            }
             for (j, &b_bit) in b.iter().enumerate().take(width) {
                 let sum_pos = i + j;
-                if sum_pos < width {
-                    let pp = self.sat.new_var();
-                    self.encode_and(pp, a_bit, b_bit);
+                if sum_pos >= width {
+                    break;
+                }
+                let pp = self.gate_and(a_sig, self.sig(b_bit));
+                // gate_and folds: Sig::False adds nothing (no variable, no
+                // clause was created for it), Sig::True is the other operand.
+                if pp != Sig::False {
                     columns[sum_pos].push(pp);
                 }
             }
@@ -1365,10 +1866,23 @@ impl BvSolver {
         self.reduce_columns_and_add(result, &mut columns);
     }
 
-    /// Reduce columns using 3:2 compressors until each column has at most 2 bits,
-    /// then use a final ripple-carry adder to produce the result.
-    fn reduce_columns_and_add(&mut self, result: &[Var], columns: &mut Vec<Vec<Var>>) {
+    /// Reduce columns using 3:2 compressors until each column has at most 2
+    /// bits, then use a final ripple-carry adder to produce the result.
+    ///
+    /// Columns hold [`Sig`]s, so a constant-heavy product reduces through
+    /// constant-folding full adders: an adder over three constants emits
+    /// nothing, and one with a single constant input degenerates to a half
+    /// adder.
+    fn reduce_columns_and_add(&mut self, result: &[Var], columns: &mut Vec<Vec<Sig>>) {
         let width = columns.len();
+
+        // Push `s` into column `k`, treating the constant false as "no
+        // contribution" (it never had a variable allocated).
+        fn push_sig(columns: &mut [Vec<Sig>], k: usize, s: Sig) {
+            if s != Sig::False && k < columns.len() {
+                columns[k].push(s);
+            }
+        }
 
         // Repeatedly reduce columns using 3:2 compressors
         // Each full adder takes 3 bits from column k and produces:
@@ -1380,27 +1894,22 @@ impl BvSolver {
                 break;
             }
 
-            let mut new_columns: Vec<Vec<Var>> = vec![Vec::new(); width];
+            let mut new_columns: Vec<Vec<Sig>> = vec![Vec::new(); width];
 
-            for k in 0..width {
-                let bits = &columns[k];
+            for (k, bits) in columns.iter().enumerate() {
                 let mut i = 0;
 
                 while i + 2 < bits.len() {
                     // Full adder: sum stays in column k, carry goes to column k+1
-                    let sum = self.sat.new_var();
-                    let carry = self.sat.new_var();
-                    self.encode_full_adder_bit(sum, carry, bits[i], bits[i + 1], bits[i + 2]);
-                    new_columns[k].push(sum);
-                    if k + 1 < width {
-                        new_columns[k + 1].push(carry);
-                    }
+                    let (sum, carry) = self.gate_full_adder(bits[i], bits[i + 1], bits[i + 2]);
+                    push_sig(&mut new_columns, k, sum);
+                    push_sig(&mut new_columns, k + 1, carry);
                     i += 3;
                 }
 
                 // Pass through remaining bits (0, 1, or 2)
                 for &bit in &bits[i..] {
-                    new_columns[k].push(bit);
+                    push_sig(&mut new_columns, k, bit);
                 }
             }
 
@@ -1409,24 +1918,18 @@ impl BvSolver {
 
         // Now each column has at most 2 bits
         // Create two operands for final addition
-        let mut operand_a: SmallVec<[Var; 32]> = SmallVec::new();
-        let mut operand_b: SmallVec<[Var; 32]> = SmallVec::new();
+        let mut operand_a: SmallVec<[Sig; 32]> = SmallVec::new();
+        let mut operand_b: SmallVec<[Sig; 32]> = SmallVec::new();
 
         for column in columns.iter().take(width) {
             match column.len() {
                 0 => {
-                    let zero = self.sat.new_var();
-                    self.sat.add_clause([Lit::neg(zero)]);
-                    operand_a.push(zero);
-                    let zero2 = self.sat.new_var();
-                    self.sat.add_clause([Lit::neg(zero2)]);
-                    operand_b.push(zero2);
+                    operand_a.push(Sig::False);
+                    operand_b.push(Sig::False);
                 }
                 1 => {
                     operand_a.push(column[0]);
-                    let zero = self.sat.new_var();
-                    self.sat.add_clause([Lit::neg(zero)]);
-                    operand_b.push(zero);
+                    operand_b.push(Sig::False);
                 }
                 2 => {
                     operand_a.push(column[0]);
@@ -1436,29 +1939,13 @@ impl BvSolver {
             }
         }
 
-        // Final ripple-carry addition
-        self.encode_adder(result, &operand_a, &operand_b);
-    }
-
-    /// Full adder for single bits: sum = a XOR b XOR cin, cout = (a AND b) OR (cin AND (a XOR b))
-    fn encode_full_adder_bit(&mut self, sum: Var, cout: Var, a: Var, b: Var, cin: Var) {
-        // a XOR b
-        let a_xor_b = self.sat.new_var();
-        self.encode_xor(a_xor_b, a, b);
-
-        // sum = a_xor_b XOR cin
-        self.encode_xor(sum, a_xor_b, cin);
-
-        // a AND b
-        let a_and_b = self.sat.new_var();
-        self.encode_and(a_and_b, a, b);
-
-        // cin AND (a XOR b)
-        let cin_and_axorb = self.sat.new_var();
-        self.encode_and(cin_and_axorb, cin, a_xor_b);
-
-        // cout = (a AND b) OR (cin AND (a XOR b))
-        self.encode_or(cout, a_and_b, cin_and_axorb);
+        // Final ripple-carry addition (wrapping: carry-out discarded)
+        let mut carry = Sig::False;
+        for (i, (&x, &y)) in operand_a.iter().zip(operand_b.iter()).enumerate() {
+            let (sum, next_carry) = self.gate_full_adder(x, y, carry);
+            self.wire(result[i], sum);
+            carry = next_carry;
+        }
     }
 
     /// Encode full multiplication: result = a * b with double-width result
@@ -1472,15 +1959,21 @@ impl BvSolver {
 
         let double_width = 2 * width;
 
-        // Create partial products: columns[k] contains all bits that contribute to result[k]
-        let mut columns: Vec<Vec<Var>> = vec![Vec::new(); double_width];
+        // Partial products over [`Sig`]s, constant-folded exactly like
+        // [`Self::encode_mul`]: zero products contribute nothing, one
+        // products pass the other bit through.
+        let mut columns: Vec<Vec<Sig>> = vec![Vec::new(); double_width];
 
         for (i, &a_bit) in a.iter().enumerate().take(width) {
+            let a_sig = self.sig(a_bit);
+            if a_sig == Sig::False {
+                continue;
+            }
             for (j, &b_bit) in b.iter().enumerate().take(width) {
-                let sum_pos = i + j;
-                let pp = self.sat.new_var();
-                self.encode_and(pp, a_bit, b_bit);
-                columns[sum_pos].push(pp);
+                let pp = self.gate_and(a_sig, self.sig(b_bit));
+                if pp != Sig::False {
+                    columns[i + j].push(pp);
+                }
             }
         }
 
@@ -1611,108 +2104,7 @@ impl Theory for BvSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
-        // `BvSolver::check()` is driven incrementally by the theory manager:
-        // assert more clauses, then `check()` again.  Each `check()` runs a full
-        // `solve()`, but the embedded SAT solver does NOT reset its persisted
-        // search state on entry, so without the cleanup below a single probe can
-        // leave two kinds of unsound residue that poison the next probe and turn
-        // a genuinely-SATISFIABLE formula into a false `Unsat`:
-        //
-        //   1. The satisfying *model* itself.  `solve()` returns with the model
-        //      on the trail; some assignments (even a branch `Decision`) land at
-        //      decision level 0.  A model value chosen arbitrarily for one probe
-        //      then contradicts a constant asserted before the next probe.
-        //      Fixed by `restore_to_trail_size`, rolling the trail back to the
-        //      committed (asserted) prefix captured here.
-        //
-        //   2. Clauses *learned* during the solve.  `assert_const` / `assert_eq`
-        //      install their unit constraints as level-0 trail assignments with
-        //      `reason = Decision` and no backing clause, so a clause learned
-        //      while such a literal is on the trail implicitly depends on it;
-        //      once the trail is rolled back that learned clause is missing a
-        //      hypothesis and can spuriously force `Unsat`.  Fixed by
-        //      `forget_learned_since`, dropping exactly this probe's learned
-        //      clauses (the asserted clauses remain as the sound core).
-        let committed_trail = self.sat.trail_size();
-        let learned_before = self.sat.learned_clause_count();
-
-        let mut solve_result = self.sat.solve();
-
-        // Defensive re-verification of an `Unsat` verdict.
-        //
-        // Audit regression (theories-bv): the SAME unsound-learned-clause
-        // hazard documented above for *cross-probe* contamination can also
-        // corrupt THIS probe's own verdict, within a single `solve()` call:
-        // conflict analysis resolves through the bare, clause-less level-0
-        // decision literals that `assert_const`/`assert_eq` install (see
-        // `Solver::forget_learned_since`'s doc comment), and an internal
-        // restart can expose a learned clause that implicitly -- and
-        // unsoundly -- depended on one of them. This has been observed to
-        // turn a genuinely SATISFIABLE bit-blasted formula (e.g. an
-        // inverse `bvudiv` constraint with a free divisor) into a `solve()`
-        // call that reports `Unsat` on its FIRST attempt, even though
-        // discarding this probe's learned clauses and solving again -- on
-        // nothing but the original, honestly-asserted clauses -- finds a
-        // model. Clause learning is sound only if every learned clause is
-        // logically entailed by the original clauses; discarding learned
-        // clauses can therefore only WEAKEN the formula (never strengthen
-        // it), so retrying after `forget_learned_since` can never turn a
-        // truly UNSAT formula into a false `Sat` -- it can only correct a
-        // false `Unsat` back to the true `Sat`, or confirm the `Unsat`.
-        if matches!(solve_result, SolverResult::Unsat) {
-            self.sat.restore_to_trail_size(committed_trail);
-            self.sat.forget_learned_since(learned_before);
-            solve_result = self.sat.solve();
-        }
-
-        let result = match solve_result {
-            SolverResult::Sat => {
-                // Snapshot the satisfying assignment BEFORE rolling the trail
-                // back – the rollback discards the model, so `get_value` must
-                // consult this captured copy to recover real values.
-                self.last_sat_model = self.sat.model().to_vec();
-                Ok(TheoryResult::Sat)
-            }
-            SolverResult::Unsat => {
-                // Return all constraint-level terms recorded via
-                // `record_constraint_term` as the conflict explanation.
-                // This is a sound (superset) conflict clause: the UNSAT is
-                // caused by the conjunction of all asserted constraints.
-                // If no guard terms were recorded (e.g. in unit tests that
-                // call the solver directly), fall back to the assertions list.
-                let conflict = if !self.assertion_guard_terms.is_empty() {
-                    self.collect_conflict_terms()
-                } else {
-                    // Fallback: use terms from the assertions list
-                    self.assertions.iter().map(|(t, _)| *t).collect()
-                };
-                Ok(TheoryResult::Unsat(conflict))
-            }
-            SolverResult::Unknown => Ok(TheoryResult::Unknown),
-        };
-
-        // Keep this probe's satisfying *model* on the trail so the next
-        // `check()` resumes incrementally from it – `solve()` does not reset
-        // the trail on entry, so a freshly asserted clause the model already
-        // satisfies is decided with zero re-propagation, instead of re-walking
-        // the whole bit-blasted formula from the level-0 prefix every probe.
-        // The level-0 unit facts (constants, pinned selectors) are part of the
-        // committed prefix either way; a search decision the model made at
-        // level ≥ 1 that a later probe's new clause contradicts is simply
-        // backtracked by the next `solve()`, so retaining the trail cannot
-        // manufacture a false verdict.  Learned clauses are likewise kept: they
-        // are entailed by the asserted (permanent) clauses, and the level-0
-        // units they may resolve through sit inside the committed prefix.
-        //
-        // Together with the `lucky_phases` / gate-congruence disables in
-        // `embedded_sat_config`, this is the QF_BV perf lever: 394 incremental
-        // resumes vs 394 full re-propagations of a ~100 k-clause formula on
-        // `millionaires.t1.i28` (2.3 s → 0.2 s).  The defensive re-solve block
-        // above still `restore_to_trail_size`s + `forget_learned_since`s on an
-        // `Unsat` first verdict, preserving that soundness guard.
-        let _ = (committed_trail, learned_before);
-
-        result
+        self.check_body()
     }
 
     fn push(&mut self) {
@@ -1744,6 +2136,12 @@ impl Theory for BvSolver {
 
     fn reset(&mut self) {
         self.sat.reset();
+        // `sat.reset()` rebuilds the variable space from index 0, so the
+        // reserved constant bits must be re-created (and re-pinned) or every
+        // subsequently blasted constant would alias an unrelated variable.
+        let (const_true, const_false) = Self::reserve_const_bits(&mut self.sat);
+        self.const_true = const_true;
+        self.const_false = const_false;
         self.term_to_bv.clear();
         self.assertions.clear();
         self.context_stack.clear();
@@ -1848,6 +2246,112 @@ impl TheoryCombination for BvSolver {
 }
 
 impl BvSolver {
+    /// Body of [`Theory::check`].
+    fn check_body(&mut self) -> Result<TheoryResult> {
+        // `BvSolver::check()` is driven incrementally by the theory manager:
+        // assert more clauses, then `check()` again.  Each `check()` runs a full
+        // `solve()`, but the embedded SAT solver does NOT reset its persisted
+        // search state on entry, so without the cleanup below a single probe can
+        // leave two kinds of unsound residue that poison the next probe and turn
+        // a genuinely-SATISFIABLE formula into a false `Unsat`:
+        //
+        //   1. The satisfying *model* itself.  `solve()` returns with the model
+        //      on the trail; some assignments (even a branch `Decision`) land at
+        //      decision level 0.  A model value chosen arbitrarily for one probe
+        //      then contradicts a constant asserted before the next probe.
+        //      Fixed by `restore_to_trail_size`, rolling the trail back to the
+        //      committed (asserted) prefix captured here.
+        //
+        //   2. Clauses *learned* during the solve.  `assert_const` / `assert_eq`
+        //      install their unit constraints as level-0 trail assignments with
+        //      `reason = Decision` and no backing clause, so a clause learned
+        //      while such a literal is on the trail implicitly depends on it;
+        //      once the trail is rolled back that learned clause is missing a
+        //      hypothesis and can spuriously force `Unsat`.  Fixed by
+        //      `forget_learned_since`, dropping exactly this probe's learned
+        //      clauses (the asserted clauses remain as the sound core).
+        let committed_trail = self.sat.trail_size();
+        let learned_before = self.sat.learned_clause_count();
+
+        let mut solve_result = self.sat.solve();
+
+        // Defensive re-verification of an `Unsat` verdict.
+        //
+        // Audit regression (theories-bv): the SAME unsound-learned-clause
+        // hazard documented above for *cross-probe* contamination can also
+        // corrupt THIS probe's own verdict, within a single `solve()` call:
+        // conflict analysis resolves through the bare, clause-less level-0
+        // decision literals that `assert_const`/`assert_eq` install (see
+        // `Solver::forget_learned_since`'s doc comment), and an internal
+        // restart can expose a learned clause that implicitly -- and
+        // unsoundly -- depended on one of them. This has been observed to
+        // turn a genuinely SATISFIABLE bit-blasted formula (e.g. an
+        // inverse `bvudiv` constraint with a free divisor) into a `solve()`
+        // call that reports `Unsat` on its FIRST attempt, even though
+        // discarding this probe's learned clauses and solving again -- on
+        // nothing but the original, honestly-asserted clauses -- finds a
+        // model. Clause learning is sound only if every learned clause is
+        // logically entailed by the original clauses; discarding learned
+        // clauses can therefore only WEAKEN the formula (never strengthen
+        // it), so retrying after `forget_learned_since` can never turn a
+        // truly UNSAT formula into a false `Sat` -- it can only correct a
+        // false `Unsat` back to the true `Sat`, or confirm the `Unsat`.
+        if matches!(solve_result, SolverResult::Unsat) {
+            self.sat.restore_to_trail_size(committed_trail);
+            self.sat.forget_learned_since(learned_before);
+            solve_result = self.sat.solve();
+        }
+
+        let result = match solve_result {
+            SolverResult::Sat => {
+                // Snapshot the satisfying assignment BEFORE rolling the trail
+                // back – the rollback discards the model, so `get_value` must
+                // consult this captured copy to recover real values.
+                self.last_sat_model = self.sat.model().to_vec();
+                Ok(TheoryResult::Sat)
+            }
+            SolverResult::Unsat => {
+                // Return all constraint-level terms recorded via
+                // `record_constraint_term` as the conflict explanation.
+                // This is a sound (superset) conflict clause: the UNSAT is
+                // caused by the conjunction of all asserted constraints.
+                // If no guard terms were recorded (e.g. in unit tests that
+                // call the solver directly), fall back to the assertions list.
+                let conflict = if !self.assertion_guard_terms.is_empty() {
+                    self.collect_conflict_terms()
+                } else {
+                    // Fallback: use terms from the assertions list
+                    self.assertions.iter().map(|(t, _)| *t).collect()
+                };
+                Ok(TheoryResult::Unsat(conflict))
+            }
+            SolverResult::Unknown => Ok(TheoryResult::Unknown),
+        };
+
+        // Keep this probe's satisfying *model* on the trail so the next
+        // `check()` resumes incrementally from it – `solve()` does not reset
+        // the trail on entry, so a freshly asserted clause the model already
+        // satisfies is decided with zero re-propagation, instead of re-walking
+        // the whole bit-blasted formula from the level-0 prefix every probe.
+        // The level-0 unit facts (constants, pinned selectors) are part of the
+        // committed prefix either way; a search decision the model made at
+        // level ≥ 1 that a later probe's new clause contradicts is simply
+        // backtracked by the next `solve()`, so retaining the trail cannot
+        // manufacture a false verdict.  Learned clauses are likewise kept: they
+        // are entailed by the asserted (permanent) clauses, and the level-0
+        // units they may resolve through sit inside the committed prefix.
+        //
+        // Together with the `lucky_phases` / gate-congruence disables in
+        // `embedded_sat_config`, this is the QF_BV perf lever: 394 incremental
+        // resumes vs 394 full re-propagations of a ~100 k-clause formula on
+        // `millionaires.t1.i28` (2.3 s → 0.2 s).  The defensive re-solve block
+        // above still `restore_to_trail_size`s + `forget_learned_since`s on an
+        // `Unsat` first verdict, preserving that soundness guard.
+        let _ = (committed_trail, learned_before);
+
+        result
+    }
+
     /// Extract equalities from the current BV model.
     ///
     /// BV is a finite-domain theory, so we use model-based combination:

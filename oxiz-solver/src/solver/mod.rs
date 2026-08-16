@@ -1136,6 +1136,18 @@ impl Solver {
             return SolverResult::Unknown;
         }
 
+        // Pure QF_BV fast path (Z3's `qfbv` pipeline shape): when every
+        // assertion lives in the quantifier-free Bool+BV fragment, blast the
+        // whole formula into the BV solver's embedded SAT instance and decide
+        // it with a single run, instead of the lazy atom-replay interaction
+        // loop below (which re-solves a ~100 k-clause instance per probe and
+        // only ever sees the real constraints one atom assignment at a time).
+        // `None` = outside the fragment or cannot decide honestly: fall
+        // through to the general CDCL(T) loop.
+        if let Some(result) = self.dispatch_pure_bv_solve(manager) {
+            return result;
+        }
+
         // Check resource limits before starting
         if self.config.max_conflicts > 0 && self.statistics.conflicts >= self.config.max_conflicts {
             return SolverResult::Unknown;
@@ -2623,6 +2635,7 @@ impl Solver {
 }
 
 mod branch_priority;
+mod dispatch_pure_bv;
 #[cfg(test)]
 mod scope_rebase_tests;
 #[cfg(test)]

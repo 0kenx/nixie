@@ -77,8 +77,7 @@ impl BvSolver {
 
             // No wrap: q*b + r must fit in width when b != 0, else the
             // equation would only hold modulo 2^width and admit false quotients.
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::neg(carry_out)]);
+            self.add_guarded_not(b_is_zero, carry_out);
 
             // Enforce: a = sum (the division equation)
             for i in 0..width {
@@ -165,8 +164,7 @@ impl BvSolver {
             let carry_out = self.encode_adder_carry(&sum_bits, &prod_bits, &rem_bits);
 
             // No wrap: q*b + r must fit in width when b != 0.
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::neg(carry_out)]);
+            self.add_guarded_not(b_is_zero, carry_out);
 
             // Enforce: a = sum (the division equation a = q*b + r)
             for i in 0..width {
@@ -278,8 +276,7 @@ impl BvSolver {
             let carry_out = self.encode_adder_carry(&sum, &prod, &rem_abs);
 
             // No wrap: quot_abs*abs_b + rem_abs must fit in width when b != 0.
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::neg(carry_out)]);
+            self.add_guarded_not(b_is_zero, carry_out);
 
             // Enforce abs_a = sum (unconditionally - division equation always holds)
             for i in 0..width {
@@ -432,8 +429,7 @@ impl BvSolver {
             let carry_out = self.encode_adder_carry(&sum, &prod, &rem_abs);
 
             // No wrap: quot_abs*abs_b + rem_abs must fit in width when b != 0.
-            self.sat
-                .add_clause([Lit::pos(b_is_zero), Lit::neg(carry_out)]);
+            self.add_guarded_not(b_is_zero, carry_out);
 
             // Enforce abs_a = sum (unconditionally - division equation always holds)
             for i in 0..width {

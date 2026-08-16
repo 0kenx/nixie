@@ -1949,12 +1949,14 @@ impl Solver {
         clause_lits.sort_by_key(|l| l.code());
         clause_lits.dedup();
 
-        // Check for tautology (x and ~x in same clause)
-        for i in 0..clause_lits.len() {
-            for j in (i + 1)..clause_lits.len() {
-                if clause_lits[i] == clause_lits[j].negate() {
-                    return true; // Tautology - always satisfied
-                }
+        // Check for tautology (x and ~x in same clause).  Complementary
+        // literals have adjacent codes (`2*var` / `2*var + 1`), so after the
+        // sort a tautological pair is always adjacent: one linear pass.  The
+        // previous all-pairs scan was quadratic in the clause length and
+        // dominated `add_clause` on bit-blasted CNFs with long clauses.
+        for w in clause_lits.windows(2) {
+            if w[0] == w[1].negate() {
+                return true; // Tautology - always satisfied
             }
         }
 

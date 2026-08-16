@@ -1682,7 +1682,7 @@ impl Solver {
     /// asserts while user scopes are open keeps the lazy blast (and the
     /// narrow pop-decapitation window it carries) rather than silently
     /// installing a circuit at the wrong level.
-    fn blast_bv_circuits_at_base_scope(&mut self, term: TermId, manager: &TermManager) {
+    pub(super) fn blast_bv_circuits_at_base_scope(&mut self, term: TermId, manager: &TermManager) {
         if !self.bv.at_base_scope() {
             return;
         }
