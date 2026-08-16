@@ -194,3 +194,17 @@ two confident, entirely real, entirely meaningless measurements.
 - Reference solvers (read-only spec): [`../temp/z3`](../temp/z3),
   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)
   (C++ SAT core; binary `../temp/cadical/build/cadical`).
+
+### Benchmarks live in-repo – search them, not the disk
+
+Benchmark corpora referenced in parity runs, regressions, and issue reports are checked
+in under the repo root. Look for files here first (e.g. via `rg --files <dir> | rg <name>`
+or `fd <name> <dir>`); do **not** `find /` over the whole disk:
+
+- `bench/` – `z3_parity` (Z3 differential parity suite + `run_parity.sh`), `differential`,
+  `extended_theories`, `regression`, `suite`, `profile`, `qf_ania_ce`.
+- `smt-lib/` – SMT-LIB corpus tarballs (`QF_BV`, `QF_LIA`, `QF_NIA`, `QF_UF`, …) and
+  `non-incremental/` extracts. Files like `459.smt2`, `1527.smt2`, `1659.smt2` come
+  from these.
+- `satcomp2024/`, `satcomp2025/` – SAT Competition inputs (`bench/`, `main_easy_mid/`).
+- `satlib/` – SATLIB instances (`RND3SAT`).
