@@ -58,6 +58,11 @@ pub(super) struct ArithRegions {
     pub(super) pure: bool,
     /// True iff emptiness of `outer` can be trusted (roots fully isolated).
     pub(super) reliable: bool,
+    /// Every arithmetic variable mentioned by an intersected (blame)
+    /// constraint.  On a greedy cell failure these are the only variables
+    /// whose re-sampling can possibly fix the cell, so the chronological
+    /// resampler jumps straight to the newest of them.
+    pub(super) blame_vars: Vec<Var>,
 }
 
 impl NlsatSolver {
@@ -168,12 +173,40 @@ impl NlsatSolver {
     /// **not** report global unsat: running out of rational samples is
     /// incompleteness, not a proof.
     pub(super) fn resample_previous_arith(&mut self) -> bool {
+        // Conflict-directed backjumping: the failing cell can only be
+        // repaired by re-sampling a variable that appears in one of its
+        // blame constraints (`last_blame_vars`).  Skip trail frames whose
+        // variable is unrelated instead of unwinding them one by one –
+        // with the VeryMax coupled-monomial goals, chronological unwinding
+        // burns the whole resample budget before reaching the culprit
+        // (observed: 10 001 identical `GreedyEmpty` escapes).
+        let blame = std::mem::take(&mut self.last_blame_vars);
         while !self.arith_trail.is_empty() {
             if self.arith_resample_budget == 0 {
+                self.last_blame_vars = blame;
                 return false;
             }
             let frame = self.arith_trail.last_mut().expect("trail non-empty");
             let var = frame.var;
+            // When blame information is available, only stop at a blamable
+            // frame (or when the trail is exhausted).  Without blame info,
+            // keep the original chronological behaviour.
+            //
+            // A frame that has already been re-sampled several times without
+            // resolving the failure is also skipped: unbounded regions
+            // (`sample_excluding` enumerates 0, 1, 2, … forever on a ray)
+            // would otherwise pin the resampler to the newest blamable
+            // variable indefinitely, and the *older* blame variables – often
+            // the real culprits – are never revisited.
+            const MAX_FRAME_RETRIES: usize = 6;
+            if !blame.is_empty()
+                && (!blame.contains(&var) || frame.tried.len() >= MAX_FRAME_RETRIES)
+            {
+                self.assignment.unset_arith(var);
+                self.eval_cache.clear();
+                self.arith_trail.pop();
+                continue;
+            }
             self.assignment.unset_arith(var);
             // Also drop any later arith assignments not on the trail (none
             // expected) and clear dependent theory state.
@@ -183,11 +216,13 @@ impl NlsatSolver {
                 self.arith_resample_budget -= 1;
                 frame.tried.push(next.clone());
                 self.assignment.set_arith(var, next);
+                self.last_blame_vars = blame;
                 return true;
             }
             // This cell is exhausted – pop and try the parent sample.
             self.arith_trail.pop();
         }
+        self.last_blame_vars = blame;
         false
     }
 
@@ -199,6 +234,13 @@ impl NlsatSolver {
     /// of collapsing every failure into a wrong `Unsat`.
     pub(super) fn pick_arith_value(&mut self, var: Var) -> ArithDecision {
         let regions = self.compute_arith_regions(var);
+        // Remember which *other* variables the intersected (blame)
+        // constraints mention: a cell failure here can only be repaired by
+        // re-sampling one of them, which lets the chronological resampler
+        // backjump instead of unwinding the whole trail one frame at a time
+        // (the VeryMax coupled-monomial goals otherwise burn their entire
+        // resample budget walking back through unrelated variables).
+        self.last_blame_vars = regions.blame_vars.clone();
 
         // A rational witness inside `inner` satisfies every intersected
         // constraint by construction, so it is always safe to commit to it.
@@ -412,11 +454,43 @@ impl NlsatSolver {
     /// If `x > a ≥ 0`, `y > b ≥ 0` and `c ≤ a·b` (strict bounds), or
     /// `x ≥ a > 0`, `y ≥ b > 0` and `c < a·b`, then `x·y = c` is impossible
     /// over the reals. Returns a lemma negating the three participating atoms.
+    /// Certify infeasibility of a two-variable *product* atom against sign-
+    /// compatible variable bounds, and return the valid theory lemma.
+    ///
+    /// Covered patterns (all sound over ℝ):
+    /// * `x ≥ a ≥ 0 ∧ y ≥ b ≥ 0 ⟹ x·y ≥ a·b` (strict variant when a bound is
+    ///   strict and the other side's bound is nonzero);
+    /// * the mirrored `x ≤ a ≤ 0 ∧ y ≤ b ≤ 0 ⟹ x·y ≥ a·b`;
+    ///
+    /// so an atom asserting `x·y < c` (or `≤`, `=`) with `c ≤ a·b` (with the
+    /// matching strictness) is jointly infeasible with those bounds, and the
+    /// clause `¬product ∨ ¬lower_x ∨ ¬lower_y` is a valid lemma. This is the
+    /// classic VeryMax ITS monomial shape (`Nl2CT1 * lam0n7` products against
+    /// `lam ≥ 0` bounds) that neither the sign fixpoint nor the pure
+    /// single-variable regions can refute.
     pub(super) fn certify_product_bound_conflict(&self) -> Option<Vec<Literal>> {
-        // Collect simple lower bounds: var ↦ (bound, strict, lit).
-        let mut lowers: FxHashMap<Var, (BigRational, bool, Literal)> = FxHashMap::default();
-        // Product equalities: (x, y, c, lit) meaning x*y = c with c > 0.
-        let mut products: Vec<(Var, Var, BigRational, Literal)> = Vec::new();
+        /// One currently-assigned bound literal: `v ≥/≤ bound` (strict flag).
+        struct Bound {
+            bound: BigRational,
+            strict: bool,
+            lit: Literal,
+        }
+        // Relation of the product atom, normalized to `x·y rel c` with the
+        // coefficient's sign already folded into both.
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Rel {
+            Lt,
+            Le,
+            Eq,
+            /// `x·y ≥ c` – product bounded below; no conflict from below.
+            Ge,
+            /// `x·y > c` – product bounded strictly below; no conflict.
+            Gt,
+        }
+
+        let mut lowers: FxHashMap<Var, Bound> = FxHashMap::default();
+        let mut uppers: FxHashMap<Var, Bound> = FxHashMap::default();
+        let mut products: Vec<(Var, Var, Rel, BigRational, Literal)> = Vec::new();
 
         for atom in &self.atoms {
             let Atom::Ineq(ineq) = atom else {
@@ -439,85 +513,152 @@ impl NlsatSolver {
             else {
                 continue;
             };
+            if coeff.is_zero() {
+                continue;
+            }
+            let pos = coeff.is_positive();
 
-            // Lower bound: ±1 · v + k  with kind giving v ≥/≥ -k/coeff.
+            // --- single-variable bound: coeff·v + k OP 0 ⇔ v OP −k/coeff ---
             if vars.len() == 1 && vars[0].1 == 1 {
                 let v = vars[0].0;
-                // poly = coeff*v + constant OP 0 ⇒ coeff*v OP -constant
-                if coeff.is_zero() {
-                    continue;
-                }
                 let bound = -&constant / &coeff;
-                // Effective relation of v against `bound`.
-                let (want_lower, strict) = match (ineq.kind, is_true, coeff.is_positive()) {
-                    // coeff > 0: v OP bound. OP in {>,>=,<,<=,=}
-                    (AtomKind::Gt, true, true) => (true, true), // v > bound
-                    (AtomKind::Lt, false, true) => (true, false), // v >= bound
-                    (AtomKind::Lt, true, false) => (true, true), // -v < -bound ⇒ v > bound
-                    (AtomKind::Gt, false, false) => (true, false), // -v >= -bound ⇒ v <= ... wait
-                    // coeff < 0 flips inequalities:
-                    // coeff*v > t with coeff<0 ⇒ v < t/coeff = bound... not a lower bound.
-                    (AtomKind::Lt, true, true) => (false, true),
-                    (AtomKind::Gt, false, true) => (false, false),
-                    (AtomKind::Gt, true, false) => (false, true), // coeff<0, Gt: v < bound
-                    (AtomKind::Lt, false, false) => (false, false),
-                    _ => continue,
+                // (is_lower, strict) for `v` under (kind, is_true, pos-coeff).
+                let rel: Option<(bool, bool)> = match (ineq.kind, is_true, pos) {
+                    (AtomKind::Gt, true, true) => Some((true, true)), // v > b
+                    (AtomKind::Lt, false, true) => Some((true, false)), // v ≥ b
+                    (AtomKind::Lt, true, false) => Some((true, true)), // v > b
+                    (AtomKind::Gt, false, false) => Some((true, false)), // v ≥ b
+                    (AtomKind::Lt, true, true) => Some((false, true)), // v < b
+                    (AtomKind::Gt, false, true) => Some((false, false)), // v ≤ b
+                    (AtomKind::Gt, true, false) => Some((false, true)), // v < b
+                    (AtomKind::Lt, false, false) => Some((false, false)), // v ≤ b
+                    _ => None, // equalities / disequalities: no half-line
                 };
-                if !want_lower {
+                let Some((is_lower, strict)) = rel else {
                     continue;
-                }
-                // Keep the strongest lower bound per variable.
-                let entry = lowers.entry(v).or_insert((bound.clone(), strict, lit));
-                let stronger = bound > entry.0 || (bound == entry.0 && strict && !entry.1);
-                if stronger {
-                    *entry = (bound, strict, lit);
+                };
+                let stronger = |new: &Bound, old: &Bound| -> bool {
+                    // A stronger lower bound is larger; a stronger upper bound
+                    // is smaller; strict beats non-strict at equality.
+                    if is_lower {
+                        new.bound > old.bound
+                            || (new.bound == old.bound && new.strict && !old.strict)
+                    } else {
+                        new.bound < old.bound
+                            || (new.bound == old.bound && new.strict && !old.strict)
+                    }
+                };
+                let table = if is_lower { &mut lowers } else { &mut uppers };
+                let entry = Bound {
+                    bound: bound.clone(),
+                    strict,
+                    lit,
+                };
+                match table.get(&v) {
+                    Some(old) if !stronger(&entry, old) => {}
+                    _ => {
+                        table.insert(v, entry);
+                    }
                 }
                 continue;
             }
 
-            // Product equality: c1*x*y + k = 0 with is_true Eq ⇒ x*y = -k/c1.
-            if vars.len() == 2
-                && vars[0].1 == 1
-                && vars[1].1 == 1
-                && matches!((ineq.kind, is_true), (AtomKind::Eq, true))
-            {
-                if coeff.is_zero() {
-                    continue;
-                }
+            // --- two-variable product: coeff·x·y + k OP 0 ⇔ x·y rel −k/coeff
+            //     (the relation flips when the coefficient is negative) ---
+            if vars.len() == 2 && vars[0].1 == 1 && vars[1].1 == 1 {
                 let c = -&constant / &coeff;
-                if !c.is_negative() {
-                    products.push((vars[0].0, vars[1].0, c, lit));
+                let rel = match (ineq.kind, is_true) {
+                    (AtomKind::Lt, true) => Rel::Lt,  // p < 0
+                    (AtomKind::Gt, false) => Rel::Le, // ¬(p>0) = p ≤ 0
+                    (AtomKind::Gt, true) => Rel::Gt,  // p > 0
+                    (AtomKind::Lt, false) => Rel::Ge, // ¬(p<0) = p ≥ 0
+                    (AtomKind::Eq, true) => Rel::Eq,  // p = 0
+                    _ => continue,                    // ¬(p=0): unbounded shape
+                };
+                // p = coeff·xy + k. With coeff > 0: p OP 0 ⇔ xy OP −k/coeff.
+                // With coeff < 0 the relation direction flips.
+                let rel = if pos {
+                    rel
+                } else {
+                    match rel {
+                        Rel::Lt => Rel::Gt,
+                        Rel::Gt => Rel::Lt,
+                        Rel::Le => Rel::Ge,
+                        Rel::Ge => Rel::Le,
+                        Rel::Eq => Rel::Eq,
+                    }
+                };
+                if matches!(rel, Rel::Ge | Rel::Gt) {
+                    continue; // product bounded *below*: no conflict against lower bounds
                 }
+                products.push((vars[0].0, vars[1].0, rel, c, lit));
             }
         }
 
-        for (x, y, c, prod_lit) in &products {
-            let Some((bx, sx, lx)) = lowers.get(x) else {
-                continue;
-            };
-            let Some((by, sy, ly)) = lowers.get(y) else {
-                continue;
-            };
-            // Need nonnegative lower bounds for the product inequality direction.
-            if bx.is_negative() || by.is_negative() {
-                continue;
+        /// Derive the product's implied lower behaviour from two same-sign
+        /// bounds: returns Some((ab, strict)) meaning `x·y ≥ ab` (strictly
+        /// `>` when `strict`), or None when the sign combination carries no
+        /// sound product bound (mixed signs, or a bound on the wrong side).
+        fn product_lower(
+            a: &BigRational,
+            sx: bool,
+            b: &BigRational,
+            sy: bool,
+        ) -> Option<(BigRational, bool)> {
+            let ab = a * b;
+            if a.is_zero() && b.is_zero() {
+                // x ≥ 0 ∧ y ≥ 0 ⟹ xy ≥ 0; xy > 0 needs both strict.
+                return Some((ab, sx && sy));
             }
-            let ab = bx * by;
-            let unsat = if c.is_zero() {
-                // x·y = 0 with both factors forced strictly positive (lower
-                // bound ≥ 0 and at least one side strict, or both ≥ with a>0).
-                (*sx || *sy || bx.is_positive() || by.is_positive())
-                    && (*sx || bx.is_positive())
-                    && (*sy || by.is_positive())
-            } else {
-                match (sx, sy) {
-                    // x > a, y > b ⇒ xy > ab; unsat when c ≤ ab
-                    (true, true) => *c <= ab,
-                    // one strict: xy > ab still when the other bound is ≥ 0
-                    (true, false) | (false, true) => *c <= ab,
-                    // both non-strict: xy ≥ ab; unsat when c < ab
-                    (false, false) => *c < ab,
+            // Nonneg pair: x ≥ a ≥ 0, y ≥ b ≥ 0 ⟹ xy ≥ ab, strict when either
+            // bound is strict (the other side's bound is nonzero).
+            if !a.is_negative() && !b.is_negative() {
+                let strict = (sx && !b.is_zero()) || (sy && !a.is_zero());
+                return Some((ab, strict));
+            }
+            None
+        }
+
+        for (x, y, rel, c, prod_lit) in &products {
+            // Same-side bound pairs only: (lower, lower, both ≥ 0) or
+            // (upper, upper, both ≤ 0). The latter mirrors signs: x ≤ a ≤ 0,
+            // y ≤ b ≤ 0 ⟹ xy ≥ ab.
+            let implied = match (lowers.get(x), lowers.get(y)) {
+                (Some(bx), Some(by)) if !bx.bound.is_negative() && !by.bound.is_negative() => {
+                    product_lower(&bx.bound, bx.strict, &by.bound, by.strict)
+                        .map(|(ab, s)| (ab, s, bx.lit, by.lit))
                 }
+                _ => match (uppers.get(x), uppers.get(y)) {
+                    (Some(bx), Some(by)) if !bx.bound.is_positive() && !by.bound.is_positive() => {
+                        // Mirror: bounds are v ≤ a ≤ 0; strictness on `≤` means
+                        // v < a. |v| ≥ |a| gives xy ≥ ab (a·b ≥ 0).
+                        let a = &bx.bound;
+                        let b = &by.bound;
+                        let ab = a * b;
+                        if a.is_zero() && b.is_zero() {
+                            Some((ab, bx.strict && by.strict))
+                        } else {
+                            let strict = (bx.strict && !b.is_zero()) || (by.strict && !a.is_zero());
+                            Some((ab, strict))
+                        }
+                        .map(|(ab, s)| (ab, s, bx.lit, by.lit))
+                    }
+                    _ => None,
+                },
+            };
+            let Some((ab, strict, lx, ly)) = implied else {
+                continue;
+            };
+            // `xy ≥ ab` (or `>`) against `xy rel c`.
+            let unsat = match rel {
+                // xy ≥ ab (or >) versus xy < c / xy ≤ c / xy = c.
+                Rel::Lt => ab >= *c || (strict && ab == *c),
+                Rel::Le => ab > *c || (strict && ab >= *c),
+                Rel::Eq => ab > *c || (strict && ab >= *c),
+                // Ge/Gt are filtered before this point; arms for
+                // exhaustiveness so a future variant cannot fall through
+                // silently (unsound-default protection).
+                Rel::Ge | Rel::Gt => false,
             };
             if unsat {
                 let mut lemma = vec![prod_lit.negate(), lx.negate(), ly.negate()];
@@ -609,6 +750,53 @@ impl NlsatSolver {
 
         if sign_atoms.len() < 2 {
             return None;
+        }
+
+        // Same-monomial sign-set intersection: two assigned atoms over the
+        // *same* monomial (up to the coefficient's sign, folded into the
+        // target set) jointly constrain that monomial's sign; an empty
+        // intersection is a direct contradiction.  This catches the
+        // `p > 0 ∧ p ≤ 0` pattern on nonlinear products (e.g. `x·y > 0 ∧
+        // ¬(−x·y < 0)`) that the per-variable fixpoint below cannot see,
+        // because neither variable's sign is determined alone.
+        {
+            use std::collections::BTreeMap;
+            // Normalized key: sorted variable powers with the coefficient's
+            // sign removed; the sign itself flips the target set when negative.
+            /// Accumulator for the same-monomial sign-set intersection:
+            /// monomial key → (intersected sign set, contributing atom ids).
+            type MonoSigns = BTreeMap<Vec<(Var, u32)>, (u8, Vec<usize>)>;
+            let mut per_monomial: MonoSigns = BTreeMap::new();
+            for (ai, sa) in sign_atoms.iter().enumerate() {
+                let mut key = sa.vars.clone();
+                key.sort_unstable();
+                let target = if sa.coeff_sign < 0 {
+                    // ¬ sign-flip: negating the monomial mirrors the sign set
+                    // around zero.  SIGN_POS/SIGN_NEG swap; SIGN_POS|SIGN_NEG
+                    // (both) stays; zero bits are unaffected by negation only
+                    // for the zero itself – handled via the same bit mirror.
+                    mirror_signset(sa.target)
+                } else {
+                    sa.target
+                };
+                let e = per_monomial.entry(key).or_insert((target, Vec::new()));
+                e.0 &= target;
+                e.1.push(ai);
+            }
+            for (_key, (set, atoms)) in per_monomial {
+                if set == 0 {
+                    let mut lemma: Vec<Literal> = Vec::new();
+                    for &idx in &atoms {
+                        let neg = sign_atoms[idx].lit.negate();
+                        if !lemma.contains(&neg) {
+                            lemma.push(neg);
+                        }
+                    }
+                    if lemma.len() >= 2 {
+                        return Some(lemma);
+                    }
+                }
+            }
         }
 
         // Monotone fixpoint: each variable's sign-set starts full and only ever
@@ -711,6 +899,7 @@ impl NlsatSolver {
         let mut inner = IntervalSet::reals();
         let mut outer = IntervalSet::reals();
         let mut blame = Vec::new();
+        let mut blame_vars = Vec::new();
         let mut pure = true;
         let mut reliable = true;
 
@@ -750,6 +939,13 @@ impl NlsatSolver {
                             };
                             if !blame.contains(&lit) {
                                 blame.push(lit);
+                                for f in &ineq.factors {
+                                    for bv in f.poly.vars() {
+                                        if bv != var && !blame_vars.contains(&bv) {
+                                            blame_vars.push(bv);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -784,6 +980,11 @@ impl NlsatSolver {
                     };
                     if !blame.contains(&lit) {
                         blame.push(lit);
+                        for bv in root.poly.vars() {
+                            if bv != var && !blame_vars.contains(&bv) {
+                                blame_vars.push(bv);
+                            }
+                        }
                     }
                 }
             }
@@ -793,6 +994,7 @@ impl NlsatSolver {
             inner,
             outer,
             blame,
+            blame_vars,
             pure,
             reliable,
         }
@@ -1592,6 +1794,15 @@ fn monomial_target_signset(kind: AtomKind, is_true: bool, threshold: &BigRationa
 
 /// Parsed shape of a `coeff·(single monomial) + constant` polynomial:
 /// `(leading coefficient, variable powers of the monomial, constant term)`.
+/// Mirror a sign-set bit pattern through negation: positive ↔ negative,
+/// zero stays zero.  Used to normalize a monomial's coefficient sign into
+/// its target sign-set (backing `certify_sign_conflict`).
+fn mirror_signset(set: u8) -> u8 {
+    // Layout convention (see SIGN_* constants): bit0 = negative, bit1 = zero,
+    // bit2 = positive.  Negation swaps the negative and positive bits.
+    (set & 0b010) | ((set & 0b100) >> 2) | ((set & 0b001) << 2)
+}
+
 type MonomialPlusConst = (BigRational, Vec<(Var, u32)>, BigRational);
 
 /// Parse a polynomial of the shape `coeff·(single non-constant monomial) +

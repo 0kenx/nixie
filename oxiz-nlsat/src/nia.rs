@@ -36,6 +36,11 @@ pub enum VarType {
 pub struct NiaConfig {
     /// Maximum number of branch-and-bound nodes to explore.
     pub max_nodes: usize,
+    /// Arithmetic re-sampling budget handed to the underlying NLSAT search
+    /// (see `NlsatSolver::set_arith_resample_budget`). DPLL case-split
+    /// callers use a small value so a leaf the engine cannot decide concedes
+    /// quickly instead of burning the full default budget per case.
+    pub arith_resample_budget: u32,
     /// Maximum depth of the branch-and-bound tree.
     pub max_depth: usize,
     /// Enable cutting planes.
@@ -63,6 +68,7 @@ impl Default for NiaConfig {
     fn default() -> Self {
         Self {
             max_nodes: 10_000,
+            arith_resample_budget: 10_000,
             max_depth: 100,
             enable_cutting_planes: true,
             branching_strategy: BranchingStrategy::MostFractional,
@@ -179,8 +185,10 @@ impl NiaSolver {
 
     /// Create a new NIA solver with custom configuration.
     pub fn with_config(config: NiaConfig) -> Self {
+        let mut nlsat = NlsatSolver::new();
+        nlsat.set_arith_resample_budget(config.arith_resample_budget);
         Self {
-            nlsat: NlsatSolver::new(),
+            nlsat,
             var_types: Vec::new(),
             config,
             stats: NiaStats::default(),
@@ -1383,6 +1391,57 @@ mod tests {
             solver.select_branching_variable(&model2),
             None,
             "an exactly-integer value must not be selected for further branching"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dbg_tests {
+    use super::*;
+    use crate::solver::NlsatSolver;
+    use crate::types::AtomKind;
+
+    /// Regression for the product-vs-bounds conflict certifier: the VeryMax
+    /// monomial shape `x ≥ 1 ∧ y ≥ 1 ∧ x·y < 1` is infeasible (x·y ≥ 1), and
+    /// the theory must learn the lemma instead of reporting Unknown.
+    #[test]
+    fn dbg_xy_lt1_with_lower_bounds_unsat() {
+        let mut s = NlsatSolver::new();
+        let x = s.new_arith_var();
+        let y = s.new_arith_var();
+        // atom: x - 1 < 0, asserted FALSE  ⇒  x >= 1
+        let a0 = s.new_ineq_atom(
+            Polynomial::sub(
+                &Polynomial::from_var(x),
+                &Polynomial::constant(BigRational::from_integer(1.into())),
+            ),
+            AtomKind::Lt,
+        );
+        s.add_clause(vec![s.atom_literal(a0, false)]);
+        // atom: y - 1 < 0, asserted FALSE  ⇒  y >= 1
+        let a1 = s.new_ineq_atom(
+            Polynomial::sub(
+                &Polynomial::from_var(y),
+                &Polynomial::constant(BigRational::from_integer(1.into())),
+            ),
+            AtomKind::Lt,
+        );
+        s.add_clause(vec![s.atom_literal(a1, false)]);
+        // atom: x*y - 1 < 0, asserted TRUE  ⇒  x*y < 1
+        let xy = Polynomial::mul(&Polynomial::from_var(x), &Polynomial::from_var(y));
+        let a2 = s.new_ineq_atom(
+            Polynomial::sub(
+                &xy,
+                &Polynomial::constant(BigRational::from_integer(1.into())),
+            ),
+            AtomKind::Lt,
+        );
+        s.add_clause(vec![s.atom_literal(a2, true)]);
+        let r = s.solve();
+        assert_eq!(
+            r,
+            crate::solver::SolverResult::Unsat,
+            "x,y>=1 with x*y<1 is UNSAT"
         );
     }
 }

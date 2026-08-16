@@ -24,6 +24,7 @@ fn main() {
     // Create NIA solver with custom configuration
     let config = NiaConfig {
         max_nodes: 10000,
+        arith_resample_budget: 10_000,
         max_depth: 100,
         enable_cutting_planes: true,
         branching_strategy: oxiz_nlsat::nia::BranchingStrategy::MostFractional,

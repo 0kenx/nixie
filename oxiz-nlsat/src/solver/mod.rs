@@ -62,6 +62,11 @@ pub struct SolverConfig {
     pub early_termination: bool,
     /// Restart strategy.
     pub restart_strategy: RestartStrategy,
+    /// Arithmetic re-sampling budget per search: bounds the chronological
+    /// backjump search over greedy cell failures (see `resample_previous_arith`).
+    /// Smaller values concede faster on goals the engine cannot decide
+    /// anyway; larger values give the cell search more room.
+    pub arith_resample_budget: u32,
 }
 
 impl Default for SolverConfig {
@@ -78,6 +83,7 @@ impl Default for SolverConfig {
             reorder_frequency: 1000,
             early_termination: true,
             restart_strategy: RestartStrategy::default(),
+            arith_resample_budget: 10_000,
         }
     }
 }
@@ -114,6 +120,13 @@ pub struct SolverStats {
     pub vivified_literals: u64,
     /// Number of in-search inprocessing passes (subsumption/strengthening).
     pub inprocess_passes: u64,
+    /// Number of times the search escaped through the uncertifiable
+    /// theory-conflict path (`TheoryPropagation::Unknown`).
+    pub escapes_theory_unknown: u64,
+    /// Number of `IrrationalOnly` cell failures.
+    pub escapes_irrational: u64,
+    /// Number of `GreedyEmpty` cell failures.
+    pub escapes_greedy: u64,
 }
 
 /// One greedy arithmetic assignment that can be re-sampled on cell failure.
@@ -222,6 +235,10 @@ pub struct NlsatSolver {
     /// Cap on arithmetic re-samples across the whole search (prevents
     /// unbounded enumeration on infinite cells).
     pub(super) arith_resample_budget: u32,
+    /// Variables mentioned by the blame constraints of the most recent
+    /// `pick_arith_value` call; consumed by `resample_previous_arith` for
+    /// conflict-directed backjumping over the arithmetic trail.
+    pub(super) last_blame_vars: Vec<Var>,
 }
 
 impl NlsatSolver {
@@ -273,7 +290,14 @@ impl NlsatSolver {
             has_empty_clause: false,
             arith_trail: Vec::new(),
             arith_resample_budget: 10_000,
+            last_blame_vars: Vec::new(),
         }
+    }
+
+    /// Override the arithmetic re-sampling budget for this solver.
+    pub fn set_arith_resample_budget(&mut self, budget: u32) {
+        self.config.arith_resample_budget = budget;
+        self.arith_resample_budget = budget;
     }
 
     /// Enable or disable unsat core extraction.
@@ -620,7 +644,8 @@ impl NlsatSolver {
         self.eval_cache.clear();
         self.conflict_clause = None;
         self.arith_trail.clear();
-        self.arith_resample_budget = 10_000;
+        self.arith_resample_budget = self.config.arith_resample_budget;
+        self.last_blame_vars.clear();
 
         // Re-derive the level-0 unit assignments from every unit clause. Learned
         // clauses are entailed by the originals, so replaying their units is
@@ -827,6 +852,8 @@ impl NlsatSolver {
                     // re-explores arithmetic space – and bounded by the resample
                     // budget; if every sample is exhausted we still report
                     // `Unknown` exactly as before.
+                    self.stats.escapes_theory_unknown =
+                        self.stats.escapes_theory_unknown.saturating_add(1);
                     if self.resample_previous_arith() {
                         continue;
                     }
@@ -851,7 +878,8 @@ impl NlsatSolver {
 
             // Need to assign arithmetic variables
             if let Some(var) = self.next_arith_var() {
-                match self.pick_arith_value(var) {
+                let decision = self.pick_arith_value(var);
+                match decision {
                     ArithDecision::Value(value) => {
                         self.commit_arith_sample(var, value);
                         // New propagations may follow the arithmetic assignment.
@@ -877,6 +905,12 @@ impl NlsatSolver {
                         // Never promote this to global Unsat – emptiness is
                         // conditional on earlier free samples (bare `x*y=12`
                         // with `x=0` is the canonical false-Unsat).
+                        if matches!(decision, ArithDecision::IrrationalOnly) {
+                            self.stats.escapes_irrational =
+                                self.stats.escapes_irrational.saturating_add(1);
+                        } else {
+                            self.stats.escapes_greedy = self.stats.escapes_greedy.saturating_add(1);
+                        }
                         if self.resample_previous_arith() {
                             continue;
                         }

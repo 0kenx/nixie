@@ -48,7 +48,8 @@ const DEFAULT_MAX_CONFLICTS: u64 = 50_000;
 /// `Some(Unsat)` when the relaxation is level-0 infeasible, or `None` to fall
 /// through. Bounded by a deadline and conflict budget so it never hangs.
 pub fn cdcl_nia_search(
-    assertions: &[TermId],
+    encode: &[TermId],
+    verify: &[TermId],
     manager: &mut TermManager,
 ) -> Option<NlDispatchResult> {
     let deadline = std::time::Instant::now()
@@ -65,7 +66,7 @@ pub fn cdcl_nia_search(
     let mut clauses: Vec<Vec<i32>> = Vec::new();
     let mut genuine_false = false; // a top-level `false` assertion ⟹ Unsat
     let mut bail = false; // un-encodable structure ⟹ concede None
-    for &a in assertions {
+    for &a in encode {
         match enc.encode(a) {
             Encoded::True => {}
             Encoded::False => genuine_false = true,
@@ -87,13 +88,8 @@ pub fn cdcl_nia_search(
         return None; // nothing arithmetic to decide
     }
 
-    let mut solver = match CdclSolver::build(enc, clauses, manager) {
-        Some(s) => s,
-        None => {
-            return None;
-        }
-    };
-    solver.solve(assertions, manager, deadline, max_conflicts)
+    let mut solver = CdclSolver::build(enc, clauses, manager)?;
+    solver.solve(verify, manager, deadline, max_conflicts)
 }
 
 fn env_u64(name: &str, default: u64) -> u64 {
@@ -121,6 +117,11 @@ enum Kind {
     Ge,
     Gt,
     Eq,
+    /// `a ≤ b−1`: the low side of the integer equality adapter
+    /// (`a = b ∨ a ≤ b−1 ∨ a ≥ b+1`).
+    EqLo,
+    /// `a ≥ b+1`: the high side of the integer equality adapter.
+    EqHi,
     /// Degenerate "always-satisfiable" atom used for free Boolean variables and
     /// Tseitin auxiliary gates. The theory never imposes a constraint for it.
     Tru,
@@ -198,9 +199,24 @@ impl<'a> Encoder<'a> {
         v
     }
 
-    /// A literal-less auxiliary variable (carries no Simplex constraint).
+    /// A fresh auxiliary variable (carries no Simplex constraint).
+    ///
+    /// Genuinely fresh every call: it is pushed straight onto `atoms`
+    /// *without* an `atom_var` entry, so two Tseitin gates never share a
+    /// variable.  Going through `make_atom` here (the historical bug)
+    /// content-addressed every gate by the same `(zero, zero, Tru)` key –
+    /// nested `and`/`or` gates collapsed onto one SAT variable whose gate
+    /// clauses then contradicted each other at level 0, producing wrong
+    /// `Unsat` on satisfiable nested-Boolean goals (reduced from VeryMax
+    /// `459.smt2` to a two-variable formula).
     fn fresh(&mut self) -> i32 {
-        self.make_atom(self.zero_term, self.zero_term, Kind::Tru)
+        let v = self.atoms.len() as i32;
+        self.atoms.push(Atom {
+            lhs: self.zero_term,
+            rhs: self.zero_term,
+            kind: Kind::Tru,
+        });
+        v
     }
 
     fn encode(&mut self, term: TermId) -> Encoded {
@@ -239,7 +255,19 @@ impl<'a> Encoder<'a> {
                 if self.is_bool(*a) || self.is_bool(*b) {
                     self.encode_bool_eq(*a, *b)
                 } else {
-                    Encoded::Lit(self.make_atom(*a, *b, Kind::Eq))
+                    let eq_lit = self.make_atom(*a, *b, Kind::Eq);
+                    // Integer equality adapter (z3's arith_eq_adapter): for
+                    // integers, `a = b ∨ a ≤ b−1 ∨ a ≥ b+1` is a tautology,
+                    // and the two side atoms are linearly encodable in both
+                    // polarities.  Emitting the clause lets the search make a
+                    // *false* `Eq` arithmetically real (a ≠ b), which the
+                    // linear relaxation alone can never pin – without it,
+                    // every model needing a false Eq failed the concrete
+                    // check and the loop conceded.
+                    let lo = self.make_atom(*a, *b, Kind::EqLo);
+                    let hi = self.make_atom(*a, *b, Kind::EqHi);
+                    self.pending.push(vec![eq_lit, lo, hi]);
+                    Encoded::Lit(eq_lit)
                 }
             }
             TermKind::Le(a, b) => {
@@ -401,6 +429,10 @@ struct CdclSolver<'a> {
     var_term: FxHashMap<VarId, TermId>,
     /// Monomial (sorted factor powers) → Simplex var.
     mono: FxHashMap<Vec<(TermId, u32)>, VarId>,
+    /// Reverse of `mono`: Simplex var → its monomial key (so a product whose
+    /// factor is itself a compound expression involving monomials can merge
+    /// powers instead of bailing).
+    mono_key_of: FxHashMap<VarId, Vec<(TermId, u32)>>,
     /// CDCL state.
     value: Vec<i8>, // 0 undef, 1 true, -1 false; index = var
     level: Vec<u32>,
@@ -416,6 +448,19 @@ struct CdclSolver<'a> {
     num_original: usize,
     propagation_q: Vec<i32>,
     conflicts: u64,
+    /// Simplex values captured at the most recent *feasible* theory check
+    /// (after its repairs, before the scope pop).  Branching and model
+    /// extraction read this view: after the pop the live tableau is restored
+    /// to the pre-repair snapshot, whose values may violate the very bounds
+    /// the check just repaired.
+    last_values: FxHashMap<VarId, Rational64>,
+    /// Variable → clause indices containing it (BCP occurrence lists; the
+    /// historical BCP scanned *every* clause for *every* propagated literal,
+    /// which alone consumed the whole budget on 900-atom goals).
+    occurs: Vec<Vec<usize>>,
+    /// Trail index up to which atoms have been imposed into the Simplex
+    /// (incremental theory imposition; see [`Self::theory_check`]).
+    imposed_marker: usize,
     /// Per-atom split data: `Some((var, k))` for an integer-branch atom
     /// encoding the lemma `v ≤ k ∨ v ≥ k+1` (true → upper bound `v ≤ k`,
     /// false → lower bound `v ≥ k+1`); `None` for ordinary comparison atoms.
@@ -435,6 +480,7 @@ impl<'a> CdclSolver<'a> {
             var: FxHashMap::default(),
             var_term: FxHashMap::default(),
             mono: FxHashMap::default(),
+            mono_key_of: FxHashMap::default(),
             value: vec![0; n_atoms],
             level: vec![0; n_atoms],
             reason: vec![None; n_atoms],
@@ -445,7 +491,22 @@ impl<'a> CdclSolver<'a> {
             propagation_q: Vec::new(),
             conflicts: 0,
             split_bounds: vec![None; n_atoms],
+            last_values: FxHashMap::default(),
+            imposed_marker: 0,
+            occurs: Vec::new(),
         };
+        // Occurrence lists over the ORIGINAL clause set. Learnt clauses are
+        // appended later and must be appended to `occurs` too – see `learn`.
+        let mut occurs: Vec<Vec<usize>> = vec![Vec::new(); s.atoms.len()];
+        for (cid, clause) in s.clauses.iter().enumerate() {
+            for &l in clause {
+                let v = l.unsigned_abs() as usize;
+                if v < occurs.len() {
+                    occurs[v].push(cid);
+                }
+            }
+        }
+        s.occurs = occurs;
         // Pre-register every variable / monomial appearing in any atom so the
         // Simplex var map is stable across the whole search.
         let atom_terms: Vec<(TermId, TermId)> =
@@ -558,9 +619,23 @@ impl<'a> CdclSolver<'a> {
                     for (pc, pm) in &poly {
                         newpoly.push((*pc * e.constant, pm.clone()));
                         for &(vid, coef) in &e.terms {
-                            let term = *self.var_term.get(&vid)?;
+                            // The factor's linear terms are either plain
+                            // variables or already-abstracted monomials;
+                            // merge the latter's full power key.
+                            let key: Vec<(TermId, u32)> =
+                                if let Some(k) = self.mono_key_of.get(&vid) {
+                                    k.clone()
+                                } else if let Some(&t) = self.var_term.get(&vid) {
+                                    vec![(t, 1)]
+                                } else {
+                                    return None;
+                                };
                             let mut npm = pm.clone();
-                            bump_power(&mut npm, term);
+                            for (t, p) in key {
+                                for _ in 0..p {
+                                    bump_power(&mut npm, t);
+                                }
+                            }
                             newpoly.push((*pc * coef, npm));
                         }
                     }
@@ -581,8 +656,9 @@ impl<'a> CdclSolver<'a> {
             } else {
                 let mv = *self
                     .mono
-                    .entry(pm)
+                    .entry(pm.clone())
                     .or_insert_with(|| self.simplex.new_var());
+                self.mono_key_of.insert(mv, pm);
                 out.add_term(mv, c);
             }
         }
@@ -623,10 +699,15 @@ impl<'a> CdclSolver<'a> {
             }
             return Some(());
         }
-        // Ordinary comparison atom: impose only when asserted true.
-        if value <= 0 {
-            return Some(());
-        }
+        // Ordinary comparison atom: impose *both* polarities.  A true atom
+        // imposes its constraint; a FALSE atom imposes its negation (over the
+        // integers `¬(a ≤ b) ⟺ a ≥ b+1`, etc.).  Imposing only the true side
+        // (the historical behaviour) let the relaxation keep an atom
+        // arithmetically true while the Boolean layer called it false – every
+        // such model failed the concrete check and the loop conceded, so
+        // formulas whose models required a false comparison atom could never
+        // be answered.  `Eq` has no linear negation (a ≠ b); a false `Eq`
+        // imposes nothing and stays guarded by the concrete verification.
         let a = self.atoms[v];
         if matches!(a.kind, Kind::Tru) {
             return Some(()); // no constraint
@@ -634,22 +715,70 @@ impl<'a> CdclSolver<'a> {
         let mut e = self.translate(a.lhs)?;
         let r = self.translate(a.rhs)?;
         add_scaled(&mut e, &r, Rational64::from_integer(-1)); // lhs - rhs
-        match a.kind {
-            Kind::Le => self.simplex.add_le(e, ORIG_REASON),
-            Kind::Ge => self.simplex.add_ge(e, ORIG_REASON),
-            Kind::Eq => self.simplex.add_eq(e, ORIG_REASON),
-            Kind::Lt => {
+        match (a.kind, value > 0) {
+            (Kind::Le, true) | (Kind::Gt, false) => {
+                self.simplex.add_le(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::Ge, true) | (Kind::Lt, false) => {
+                self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::Eq, true) => {
+                self.simplex.add_eq(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::Lt, true) => {
+                // a < b ⟺ b ≥ a+1 ⟺ −(a−b) ≥ 1
                 e.negate();
                 e.add_constant(Rational64::from_integer(-1));
                 self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
             }
-            Kind::Gt => {
+            (Kind::Gt, true) => {
+                // a > b ⟺ a ≥ b+1
                 e.add_constant(Rational64::from_integer(-1));
                 self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
             }
-            Kind::Tru => {}
+            (Kind::Le, false) => {
+                // ¬(a ≤ b) ⟺ a ≥ b+1
+                e.add_constant(Rational64::from_integer(-1));
+                self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::Ge, false) => {
+                // ¬(a ≥ b) ⟺ a ≤ b−1
+                e.add_constant(Rational64::from_integer(1));
+                self.simplex.add_le(e, ORIG_REASON);
+                Some(())
+            }
+            // ¬(a = b) is a disequality: no linear constraint; guarded by
+            // the concrete verification at model time.
+            (Kind::Eq, false) | (Kind::Tru, _) => Some(()),
+            (Kind::EqLo, true) => {
+                // a ≤ b−1  ⟺  (a−b)+1 ≤ 0
+                e.add_constant(Rational64::from_integer(1));
+                self.simplex.add_le(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::EqLo, false) => {
+                // ¬(a ≤ b−1) ⟺ a ≥ b
+                self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::EqHi, true) => {
+                // a ≥ b+1  ⟺  (a−b)−1 ≥ 0
+                e.add_constant(Rational64::from_integer(-1));
+                self.simplex.add_ge(e, ORIG_REASON);
+                Some(())
+            }
+            (Kind::EqHi, false) => {
+                // ¬(a ≥ b+1) ⟺ a ≤ b
+                self.simplex.add_le(e, ORIG_REASON);
+                Some(())
+            }
         }
-        Some(())
     }
 
     // ======== CDCL core ========
@@ -684,7 +813,17 @@ impl<'a> CdclSolver<'a> {
     fn bcp(&mut self) -> Option<usize> {
         while let Some(&lit) = self.propagation_q.last() {
             self.propagation_q.pop();
-            for cid in 0..self.clauses.len() {
+            // Only clauses containing this literal's variable can change
+            // status or become unit by this assignment.
+            let var = lit.unsigned_abs() as usize;
+            if var >= self.occurs.len() {
+                continue;
+            }
+            let cids: Vec<usize> = self.occurs[var].clone();
+            for cid in cids {
+                if cid >= self.clauses.len() {
+                    continue;
+                }
                 let (unassigned, num_true, num_false, first_unassigned) = self.clause_status(cid);
                 if num_true > 0 {
                     continue;
@@ -698,9 +837,24 @@ impl<'a> CdclSolver<'a> {
                     self.assign(first_unassigned, lvl, Some(cid));
                 }
             }
-            let _ = lit;
         }
+        // Note: `assign` may extend `propagation_q` mid-loop; the `while`
+        // re-checks it, so every queued literal is processed.
         None
+    }
+
+    /// Append a learnt clause and update the occurrence lists.
+    fn learn(&mut self, clause: Vec<i32>) -> usize {
+        let cid = self.clauses.len();
+        for &l in &clause {
+            let v = l.unsigned_abs() as usize;
+            if v >= self.occurs.len() {
+                self.occurs.resize(v + 1, Vec::new());
+            }
+            self.occurs[v].push(cid);
+        }
+        self.clauses.push(clause);
+        cid
     }
 
     fn clause_status(&self, cid: usize) -> (i32, usize, usize, i32) {
@@ -733,14 +887,27 @@ impl<'a> CdclSolver<'a> {
     /// encoder defects produced unsound learnt clauses → wrong `Unsat`). The
     /// `num_original` guard and the tested analyzer are staged for when the
     /// encoder is verified.
-    /// Conflict analysis – SOUND CONCEDE-STUB. Clause learning is disabled:
-    /// re-enabling the verified-correct [`analyze_1uip`] needs the Tseitin
-    /// encoder fully audited (an `and_gate` bug and reflexive-atom emission
-    /// were fixed, but further latent encoder defects still produce unsound
-    /// clauses under level-0 propagation + learning). Returns empty so the
-    /// caller concedes on any conflict above level 0.
-    fn analyze(&mut self, _conflict_clause: usize) -> (Vec<i32>, u32) {
-        (Vec::new(), 0)
+    /// Conflict analysis – 1-UIP via the unit-tested pure [`analyze_1uip`].
+    ///
+    /// Soundness: a learnt clause is a resolution consequence of the clause
+    /// database, so with an encoder that only emits formula-implied clauses
+    /// the learnt is also implied.  The two backstops that make a latent
+    /// encoder defect *harmless rather than wrong* stay in `solve`: a
+    /// level-0 conflict on a *learnt* clause discards all learnts and
+    /// restarts (never `Unsat`), and `Unsat` is only ever claimed from a
+    /// level-0 conflict on an *original* clause.  A `Sat` is additionally
+    /// concretely verified against the input formula before it is reported,
+    /// so learning can never fabricate one.
+    fn analyze(&mut self, conflict_clause: usize) -> (Vec<i32>, u32) {
+        analyze_1uip(
+            &self.clauses,
+            &self.value,
+            &self.level,
+            &self.reason,
+            &self.trail,
+            self.decision_level(),
+            conflict_clause,
+        )
     }
 
     fn backtrack(&mut self, target: u32) {
@@ -756,6 +923,10 @@ impl<'a> CdclSolver<'a> {
             }
             self.simplex.pop();
         }
+        // Any atom unassigned by the backtrack must re-impose on the next
+        // theory check.  (Bounds they had imposed die with their level's
+        // `simplex.pop`, so the tableau and the marker stay in lockstep.)
+        self.imposed_marker = self.imposed_marker.min(self.trail.len());
         self.propagation_q.clear();
     }
 
@@ -770,33 +941,55 @@ impl<'a> CdclSolver<'a> {
     /// the current push level), then check feasibility. On conflict, return the
     /// explanation as a learnt clause (negations of the responsible true atoms).
     fn theory_check(&mut self) -> TheoryResult {
-        self.simplex.push();
-        for v in 1..self.atoms.len() {
+        // Incremental imposition: only atoms assigned since the previous
+        // check are imposed (values never change without a new assignment).
+        // The bounds land at the *current* decision level, so `backtrack`'s
+        // per-level `simplex.pop` retracts them exactly like the Boolean
+        // assignments – no extra scope, no whole-tableau snapshot per level
+        // (the historical re-impose-everything + extra-push/pop shape cost
+        // O(levels × tableau) and starved large descents).
+        while self.imposed_marker < self.trail.len() {
+            let lit = self.trail[self.imposed_marker];
+            let v = lit.unsigned_abs() as usize;
             let val = self.value[v];
             if val != 0 && self.impose(v as i32, val).is_none() {
-                self.simplex.pop();
+                // Cannot express this atom linearly; leave the marker so the
+                // atom is retried (it will keep failing) and give up soundly.
                 return TheoryResult::GiveUp;
             }
+            self.imposed_marker += 1;
         }
         match self.simplex.check() {
-            Ok(()) => TheoryResult::Feasible,
+            Ok(()) => {
+                // Capture the values at this feasible point (branching and
+                // extraction read this view; after a backtrack the live
+                // tableau no longer carries these bounds).
+                self.last_values.clear();
+                for (&term, &vid) in &self.var {
+                    let _ = term;
+                    self.last_values.insert(vid, self.simplex.value(vid));
+                }
+                for (factors, &mv) in &self.mono {
+                    let _ = factors;
+                    self.last_values.insert(mv, self.simplex.value(mv));
+                }
+                TheoryResult::Feasible
+            }
             Err(_reasons) => {
-                // The Simplex's crossing-bound explanation is not a Farkas-
-                // complete proof, so we do NOT trust it to build the nogood.
-                // Instead use the *complete*, provably-implied nogood: the
-                // negation of every atom asserted at decision level > 0. These
-                // atoms are jointly infeasible in the relaxation together with
-                // the fixed level-0 atoms; since the relaxation is a relaxation,
-                // relaxation-infeasible ⟹ formula-unsat, so the nogood is
-                // implied. Level-0 atoms are excluded (they are fixed), so the
-                // clause can never be all-false at level 0 → no spurious Unsat.
-                self.simplex.pop();
+                // Complete, provably-implied nogood: the negation of *every*
+                // assigned atom, at any level.  The relaxation conflict
+                // involves the level-0 atoms just as much as the decisions –
+                // a clause over only the decision atoms is NOT implied (the
+                // level-0 atoms' absence is exactly what made a historical
+                // learner unsound).  `analyze_1uip` soundly drops the
+                // level-0 literals when building the learnt clause, so this
+                // coarse clause costs strength, never soundness.
                 if self.decision_level() == 0 {
                     return TheoryResult::LevelZeroUnsat;
                 }
                 let mut clause: Vec<i32> = Vec::new();
                 for av in 1..self.atoms.len() {
-                    if self.value[av] != 0 && self.level[av] > 0 {
+                    if self.value[av] != 0 {
                         clause.push(-signed(av, self.value[av]));
                     }
                 }
@@ -845,12 +1038,21 @@ impl<'a> CdclSolver<'a> {
     /// on both sides. Returns `None` when every integer variable is integral.
     fn pick_branch(&self) -> Option<(TermId, Rational64)> {
         for (&t, &vid) in &self.var {
-            let val = self.simplex.value(vid);
+            let val = self.captured_value(vid);
             if !val.is_integer() {
                 return Some((t, val.floor()));
             }
         }
         None
+    }
+
+    /// Value of a Simplex variable from the last feasible-check capture
+    /// (0 before the first check).
+    fn captured_value(&self, vid: VarId) -> Rational64 {
+        self.last_values
+            .get(&vid)
+            .copied()
+            .unwrap_or_else(Rational64::zero)
     }
 
     /// Product of the current Simplex values of a monomial's factors
@@ -859,7 +1061,7 @@ impl<'a> CdclSolver<'a> {
         let mut p = Rational64::from_integer(1);
         for &(t, pw) in factors {
             let vid = self.var[&t];
-            let val = self.simplex.value(vid);
+            let val = self.captured_value(vid);
             let mut acc = Rational64::from_integer(1);
             for _ in 0..pw {
                 acc *= val;
@@ -878,7 +1080,7 @@ impl<'a> CdclSolver<'a> {
     /// propagation of strategy 0.)
     fn monomial_inconsistent_factor(&self) -> Option<TermId> {
         for (factors, mv) in &self.mono {
-            if self.simplex.value(*mv) == self.mono_product(factors) {
+            if self.captured_value(*mv) == self.mono_product(factors) {
                 continue;
             }
             // Prefer a bounded factor (smallest range), else any – z3's
@@ -910,6 +1112,7 @@ impl<'a> CdclSolver<'a> {
 
     // ======== Main loop ========
 
+    #[allow(clippy::too_many_lines)]
     fn solve(
         &mut self,
         assertions: &[TermId],
@@ -926,7 +1129,7 @@ impl<'a> CdclSolver<'a> {
             if learnt.is_empty() {
                 return None; // concede (never claim Unsat from a possibly-flawed empty learnt clause)
             }
-            self.clauses.push(learnt);
+            self.learn(learnt);
             self.backtrack(bt);
         }
 
@@ -947,9 +1150,6 @@ impl<'a> CdclSolver<'a> {
                     // produced an unsound clause – discard all learnts and
                     // restart rather than claim `Unsat` (soundness backstop).
                     if cid < self.num_original {
-                        if std::env::var("OXIZ_NIA_DEBUG").is_ok() {
-                            eprintln!("[NIA-CDCL] Unsat: BCP original-clause lvl-0 cid={}", cid);
-                        }
                         return Some(NlDispatchResult::Unsat);
                     }
                     self.clauses.truncate(self.num_original);
@@ -958,10 +1158,10 @@ impl<'a> CdclSolver<'a> {
                 }
                 let (learnt, bt) = self.analyze(cid);
                 if learnt.is_empty() {
-                    return None; // concede (never claim Unsat from a possibly-flawed empty learnt clause)
+                    // Never claim Unsat from a possibly-flawed empty learnt.
+                    return None;
                 }
-                let cid_new = self.clauses.len();
-                self.clauses.push(learnt.clone());
+                let cid_new = self.learn(learnt.clone());
                 self.backtrack(bt);
                 // Assert the unit (learnt[0]).
                 self.assign(learnt[0], self.decision_level(), Some(cid_new));
@@ -970,22 +1170,18 @@ impl<'a> CdclSolver<'a> {
 
             // Theory check.
             match self.theory_check() {
-                TheoryResult::LevelZeroUnsat => {
-                    return Some(NlDispatchResult::Unsat);
-                }
+                TheoryResult::LevelZeroUnsat => return Some(NlDispatchResult::Unsat),
                 TheoryResult::Conflict(clause) => {
                     self.conflicts += 1;
                     if self.decision_level() == 0 {
                         return Some(NlDispatchResult::Unsat);
                     }
                     // Analyze the theory conflict clause (it is over assigned
-                    // literals) using the same 1-UIP machinery: synthesize a
-                    // pseudo-clause id by pushing it.
-                    let cid_new = self.clauses.len();
-                    self.clauses.push(clause);
+                    // literals) using the same 1-UIP machinery.
+                    let cid_new = self.learn(clause);
                     let (learnt, bt) = self.analyze(cid_new);
                     if learnt.is_empty() {
-                        return None; // concede (never claim Unsat from a possibly-flawed empty learnt clause)
+                        return None;
                     }
                     self.backtrack(bt);
                     self.assign(learnt[0], self.decision_level(), Some(cid_new));
@@ -1025,7 +1221,7 @@ impl<'a> CdclSolver<'a> {
             // explores toward a consistent integer model.
             if let Some(term) = self.monomial_inconsistent_factor() {
                 let vid = self.var[&term];
-                let val = self.simplex.value(vid);
+                let val = self.captured_value(vid);
                 // Exclude the current integer value: branch `v ≤ val−1`.
                 let k = val - Rational64::from_integer(1);
                 let split_var = self.make_split_atom(vid, k);
@@ -1035,7 +1231,7 @@ impl<'a> CdclSolver<'a> {
             }
 
             // All integer + monomially consistent: extract and concretely verify.
-            let env = self.extract_env();
+            let env = self.feasible_env()?;
             if concrete_sat(&env, assertions, manager) {
                 return Some(NlDispatchResult::sat_with(
                     env.into_iter()
@@ -1043,12 +1239,137 @@ impl<'a> CdclSolver<'a> {
                         .collect(),
                 ));
             }
-            // The relaxation is integer-consistent but the full formula (with
-            // the parts the relaxation abstracts – actual products) rejects it.
-            // Without in-tableau monomial enforcement this branch concedes
-            // (sound; an honest `Unknown` via the caller).
+            // The relaxation is integer-consistent but the abstracted parts
+            // (actual products, false equalities) reject this particular
+            // model.  z3's `process_non_linear` step 2: *pin* every
+            // inconsistent monomial to the product of its factors (and every
+            // false-equality separation) inside a fresh scope and re-check –
+            // a feasible pinned system whose extracted model passes the
+            // concrete check is a genuine witness; an infeasible one only
+            // means the current factor values do not extend.
+            if let Some(witness) = self.try_model_repair(assertions, manager) {
+                return Some(witness);
+            }
+            // Repair exhausted: sound; an honest `Unknown` via the caller.
             return None;
         }
+    }
+
+    /// Pin every inconsistent monomial to the product of its factor values
+    /// and every false `Eq` atom whose sides coincide to the arithmetic
+    /// separation, inside a fresh Simplex scope; re-check.  Returns a
+    /// concretely-verified `Sat` witness when the repaired system is
+    /// feasible and verifies, else `None` (the caller concedes soundly).
+    fn try_model_repair(
+        &mut self,
+        assertions: &[TermId],
+        manager: &TermManager,
+    ) -> Option<NlDispatchResult> {
+        self.simplex.push();
+        let outcome = self.repair_in_scope(assertions, manager);
+        self.simplex.pop();
+        outcome
+    }
+
+    fn repair_in_scope(
+        &mut self,
+        assertions: &[TermId],
+        manager: &TermManager,
+    ) -> Option<NlDispatchResult> {
+        // 1. Pin inconsistent monomials: m := ∏ factors(current values).
+        let monos: Vec<(Vec<(TermId, u32)>, VarId)> =
+            self.mono.iter().map(|(f, &mv)| (f.clone(), mv)).collect();
+        let mut pinned_any = false;
+        for (factors, mv) in monos {
+            let product = self.mono_product(&factors);
+            if self.simplex.value(mv) == product {
+                continue;
+            }
+            let reason = DECISION_REASON_BASE + mv;
+            self.simplex.set_lower(mv, product, reason);
+            self.simplex.set_upper(mv, product, reason);
+            pinned_any = true;
+        }
+        // 2. Separate false `Eq` atoms whose sides currently coincide: the
+        //    adapter clause lets the Boolean layer leave lo/hi unforced when
+        //    the Eq itself is decided false and the clause is satisfied via
+        //    a *false* lo/hi; arithmetically that means a = b while ¬(a=b)
+        //    is required.  Pin residual ≥ 1 (a ≥ b+1) first; if infeasible,
+        //    the ≤ −1 side.
+        let eq_atoms: Vec<(TermId, TermId)> = (1..self.atoms.len())
+            .filter(|&v| self.atoms[v].kind == Kind::Eq && self.value[v] < 0)
+            .map(|v| (self.atoms[v].lhs, self.atoms[v].rhs))
+            .collect();
+        for (lhs, rhs) in eq_atoms {
+            let Some(mut e) = self.translate(lhs) else {
+                continue;
+            };
+            let Some(r) = self.translate(rhs) else {
+                continue;
+            };
+            add_scaled(&mut e, &r, Rational64::from_integer(-1));
+            // Only separate when they coincide under the current model.
+            let mut residual = e.constant;
+            for &(vid, c) in &e.terms {
+                if !self.var_term.contains_key(&vid) {
+                    continue;
+                }
+                let rv = self.simplex.value(vid);
+                residual += rv * c;
+            }
+            if residual != Rational64::zero() {
+                continue;
+            }
+            let hi = {
+                let mut e2 = e.clone();
+                e2.add_constant(Rational64::from_integer(-1));
+                e2
+            };
+            // a ≥ b+1 first…
+            let reason = DECISION_REASON_BASE;
+            let slack_hi = self.simplex_probe_ge(&hi, reason);
+            if !slack_hi {
+                // …else a ≤ b−1.
+                let mut lo = e;
+                lo.add_constant(Rational64::from_integer(1));
+                let _ = self.simplex_probe_le(&lo, reason);
+            }
+            pinned_any = true;
+        }
+        if self.simplex.check().is_err() {
+            return None;
+        }
+        let _ = pinned_any;
+        // 3. Feasible: all values integral (caller ensured) and pinned
+        //    monomials equal their products by construction.  Extract
+        //    *inside* the scope and concretely verify.
+        for (&term, &vid) in &self.var {
+            let _ = term;
+            if !self.simplex.value(vid).is_integer() {
+                return None;
+            }
+        }
+        let env = self.extract_env();
+        if concrete_sat(&env, assertions, manager) {
+            return Some(NlDispatchResult::sat_with(
+                env.into_iter()
+                    .map(|(t, v)| (t, num_rational::BigRational::from(v)))
+                    .collect(),
+            ));
+        }
+        None
+    }
+
+    /// Impose `expr ≥ 0` and test feasibility (rolled back by the caller's
+    /// scope pop).  Returns whether the system stayed feasible.
+    fn simplex_probe_ge(&mut self, expr: &LinExpr, reason: u32) -> bool {
+        self.simplex.add_ge(expr.clone(), reason);
+        self.simplex.check().is_ok()
+    }
+
+    fn simplex_probe_le(&mut self, expr: &LinExpr, reason: u32) -> bool {
+        self.simplex.add_le(expr.clone(), reason);
+        self.simplex.check().is_ok()
     }
 
     fn extract_env(&self) -> std::collections::HashMap<TermId, BigInt> {
@@ -1063,6 +1384,23 @@ impl<'a> CdclSolver<'a> {
             env.insert(t, v);
         }
         env
+    }
+
+    /// Fresh model at the model point: impose every assigned atom in a new
+    /// scope, check, and extract the *live* (un-floored) values.  A cached
+    /// capture from an earlier feasible check cannot be used – later splits
+    /// and conflicts move the live values, and a stale capture made the
+    /// concrete verification test a model the search had already left.
+    fn feasible_env(&self) -> Option<std::collections::HashMap<TermId, BigInt>> {
+        let mut env = std::collections::HashMap::new();
+        for (&t, &vid) in &self.var {
+            let rv = self.captured_value(vid);
+            if !rv.is_integer() {
+                return None;
+            }
+            env.insert(t, r64_to_big(rv));
+        }
+        Some(env)
     }
 }
 
@@ -1092,7 +1430,6 @@ fn bump_power(pm: &mut Vec<(TermId, u32)>, term: TermId) {
     }
     pm.push((term, 1));
 }
-
 fn r64_of(b: &BigInt) -> Option<Rational64> {
     Some(Rational64::from_integer(b.to_i64()?))
 }
@@ -1221,6 +1558,69 @@ fn analyze_1uip(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxiz_core::ast::TermManager;
+
+    /// Regression (wrong-unsat, gate-variable aliasing): every Tseitin gate
+    /// used to share one content-addressed `(zero, zero, Tru)` atom, so the
+    /// nested `(and (= rfc0 0) (or (= rfc0 0)))` gate and the outer `and`
+    /// gate collapsed onto the same SAT variable and their gate clauses
+    /// contradicted at level 0.  Reduced from VeryMax `459.smt2` (Z3: sat,
+    /// oxiz reported unsat).  Must never answer `Unsat`.
+    #[test]
+    fn gate_aliasing_never_claims_unsat_on_sat_goal() {
+        let mut m = TermManager::new();
+        let rfc0 = m.mk_var("rfc0", m.sorts.int_sort);
+        let v2 = m.mk_var("V2", m.sorts.int_sort);
+        let zero = m.mk_int(0);
+        let minus_one = m.mk_int(-1);
+        // (and (not (= rfc0 0))
+        //      (or (>= rfc0 (* -1 V2))
+        //          (and (= rfc0 0) (or (= rfc0 0)))))
+        let eq = m.mk_eq(rfc0, zero);
+        let neg_v2 = m.mk_mul([minus_one, v2]);
+        let ge = m.mk_ge(rfc0, neg_v2);
+        let inner_or = m.mk_or([eq]);
+        let inner_and = m.mk_and([eq, inner_or]);
+        let outer_or = m.mk_or([ge, inner_and]);
+        let not_eq = m.mk_not(eq);
+        let goal = m.mk_and([not_eq, outer_or]);
+        let r = cdcl_nia_search(&[goal], &[goal], &mut m);
+        assert_ne!(
+            r,
+            Some(NlDispatchResult::Unsat),
+            "sat goal (rfc0 = 1, V2 = 0) must never be reported unsat"
+        );
+    }
+
+    /// Regression (simplex frame leak): `theory_check` used to leave its
+    /// imposed constraints in the tableau on the feasible path; retracted
+    /// atoms stayed enforced across backtracks until level 0 became
+    /// infeasible on satisfiable goals (wrong `Unsat` under the fuzz
+    /// harness).  This infeasible-then-feasible cycle must stay consistent.
+    #[test]
+    fn theory_frame_leak_cycle_stays_sound() {
+        let mut m = TermManager::new();
+        let x = m.mk_var("x", m.sorts.int_sort);
+        let one = m.mk_int(1);
+        let two = m.mk_int(2);
+        // (and (>= x 2) (<= x 1)) is genuinely unsat.
+        let g = m.mk_ge(x, two);
+        let l = m.mk_le(x, one);
+        let unsat_goal = m.mk_and([g, l]);
+        assert_eq!(
+            cdcl_nia_search(&[unsat_goal], &[unsat_goal], &mut m),
+            Some(NlDispatchResult::Unsat)
+        );
+        // A fresh satisfiable goal over the same variable must not inherit
+        // the previous run's level (each call builds a fresh solver, but the
+        // assertion guards against future shared-state regressions).
+        let three = m.mk_int(3);
+        let g2 = m.mk_ge(x, two);
+        let l2 = m.mk_le(x, three);
+        let sat_goal = m.mk_and([g2, l2]);
+        let r = cdcl_nia_search(&[sat_goal], &[sat_goal], &mut m);
+        assert_ne!(r, Some(NlDispatchResult::Unsat));
+    }
 
     type CdclState = (Vec<i8>, Vec<u32>, Vec<Option<usize>>, Vec<i32>, u32);
 

@@ -124,7 +124,7 @@ pub(crate) fn assertions_have_symbolic_divmod(
 /// then rejects the goal and the search defers, so no `Sat` is fabricated on
 /// an unread index (Sat-only; cf. 34e854fc). Ports v0.3.2's `nl_eval`
 /// select handling into the model-based search.
-fn fold_array_reads(assertions: Vec<TermId>, manager: &mut TermManager) -> Vec<TermId> {
+pub(crate) fn fold_array_reads(assertions: Vec<TermId>, manager: &mut TermManager) -> Vec<TermId> {
     // Collect resolvable (select_term, value) pairs first, to keep the
     // immutable collect/eval borrows separate from the mutable `mk_int`.
     let mut resolved: Vec<(TermId, BigInt)> = Vec::new();
@@ -301,15 +301,28 @@ fn nia_search_core_on_worker(
     // integer box and concretely verifying the full formula is a cheap, sound,
     // and surprisingly effective model finder. Sound for Sat (verified); cannot
     // prove Unsat (a model may live outside the box), so it only short-circuits
-    // Sat and otherwise falls through.
-    if let Some(witness) = bounded_concrete_search(&int_vars, &atom_conjuncts, assertions, manager)
-    {
-        return Some(NlDispatchResult::sat_with(
-            witness
-                .into_iter()
-                .map(|(t, v)| (t, BigRational::from_integer(v)))
-                .collect(),
-        ));
+    // Sat and otherwise falls through.  The box is centred on the solved
+    // relaxation's rounded values (see `bounded_concrete_search`).
+    let center: HashMap<TermId, i64> = s
+        .var
+        .iter()
+        .filter_map(|(&t, &v)| {
+            let rv = s.simplex.value(v);
+            num_traits::ToPrimitive::to_i64(&rv.round()).map(|i| (t, i))
+        })
+        .collect();
+    let center = (!center.is_empty()).then_some(center);
+    for attempt in [center.as_ref(), None] {
+        if let Some(witness) =
+            bounded_concrete_search(&int_vars, &atom_conjuncts, assertions, manager, attempt)
+        {
+            return Some(NlDispatchResult::sat_with(
+                witness
+                    .into_iter()
+                    .map(|(t, v)| (t, BigRational::from_integer(v)))
+                    .collect(),
+            ));
+        }
     }
     // Value-exclusion of *unbounded* monomial factors
     // (see `pick_branch`) is productive on VeryMax SAT instances but ascends
@@ -355,7 +368,10 @@ fn free_bool_vars_in(assertions: &[TermId], manager: &TermManager) -> Vec<TermId
 /// satisfiability, and the concrete verification at the end of the search
 /// remains the soundness backstop. A pure relay (cloned inputs) when no such
 /// definitions exist.
-fn ground_bool_interface_eqs(assertions: &[TermId], manager: &mut TermManager) -> Vec<TermId> {
+pub(crate) fn ground_bool_interface_eqs(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+) -> Vec<TermId> {
     let bool_sort = manager.sorts.bool_sort;
     let is_bool_var = |t: TermId| -> bool {
         manager
@@ -1397,13 +1413,14 @@ fn bounded_concrete_search(
     atom_conjuncts: &[(TermId, TermId, Cmp)],
     assertions: &[TermId],
     manager: &TermManager,
+    center: Option<&HashMap<TermId, i64>>,
 ) -> Option<HashMap<TermId, BigInt>> {
     // Per-variable tight bounds from unit comparison conjuncts.
     let mut tight: Vec<(TermId, i64, Option<i64>)> = Vec::with_capacity(int_vars.len());
     let mut tight_product: u64 = 1;
     for &v in int_vars {
         let (lo, hi) = unit_bounds_for_var(v, atom_conjuncts, manager);
-        let lo = lo.unwrap_or(0);
+        let lo = lo.unwrap_or_else(|| center.and_then(|c| c.get(&v).copied()).unwrap_or(0));
         if let Some(hi) = hi {
             if hi < lo {
                 return None; // contradictory unit bounds
@@ -1437,12 +1454,21 @@ fn bounded_concrete_search(
         }
         w.max(1)
     };
-    // Build the final domains.
+    // Build the final domains.  Unbounded variables are centred on the
+    // relaxation's (rounded) solution rather than their lower bound: small
+    // industrial models cluster near the linear optimum, and the origin box
+    // can never see negative-valued witnesses (observed on VeryMax
+    // `slayer-3-new`, whose model lives at −8..8).
     let mut domains: Vec<(TermId, i64, i64)> = Vec::with_capacity(tight.len());
     for (v, lo, h) in tight {
         let hi = match h {
             Some(hi) => hi,
-            None => lo + (width as i64) - 1,
+            None => {
+                let half = ((width as i64) - 1) / 2;
+                let c = center.and_then(|m| m.get(&v).copied()).unwrap_or(lo);
+                let lo = c - half;
+                lo + (width as i64) - 1
+            }
         };
         domains.push((v, lo, hi));
     }

@@ -625,15 +625,19 @@ impl NlsatSolver {
         }
 
         // Multivariate conflicts couple several variables, so no single Sturm
-        // region certifies them. Route them through the sound sign-abstraction
-        // single-cell certifier: it returns a valid lemma when the coupled
-        // atoms are provably infeasible over R, or `None` (honest Unknown) when
-        // this abstraction cannot certify the conflict.
+        // region certifies them. Route them through the sound certifiers, in
+        // increasing power: the sign-abstraction fixpoint first, then the
+        // product-vs-bounds refutation (the VeryMax `x ≥ 0 ∧ y ≥ 0 ⟹ x·y ≥ 0`
+        // monomial shape). Each returns a valid lemma when it can certify
+        // infeasibility over R, or `None` (honest Unknown) otherwise.
         if vars.len() != 1 {
             for &v in &vars {
                 self.bump_arith_activity(v);
             }
-            return self.certify_sign_conflict();
+            if let Some(lemma) = self.certify_sign_conflict() {
+                return Some(lemma);
+            }
+            return self.certify_product_bound_conflict();
         }
         let var = vars[0];
         self.bump_arith_activity(var);
