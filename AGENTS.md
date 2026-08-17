@@ -112,6 +112,59 @@ that discards or overlays uncommitted work in the shared working tree — you wi
 wipe another agent's in-flight changes. If you need a clean tree, create a
 **git worktree** (`git worktree add …`) and work there.
 
+## Git: land every finished step on `main`
+
+After each **meaningful** completed step or experiment, **commit to `main`**.
+Do not leave finished work sitting only in a worktree, a feature branch, or
+uncommitted files. A meaningful step is a finished bug fix, a landed feature
+slice, a measured experiment with a verdict, or a recorded negative result —
+not a half-written function or a mid-debug scratchpad.
+
+- **Positive / productive step:** commit the code (and tests) to `main`.
+- **Negative experiment:** do **not** discard the finding. Write it up (verdict,
+  what was tried, why it failed, what not to retry) under `docs/studies/` and
+  commit that documentation to `main`. A negative result that exists only in
+  chat is wasted work the next agent will repeat.
+- Stage **only your own files**. Never commit another agent's in-flight edits.
+  Inspect `git status` / `git diff` before every commit.
+- If the primary checkout is dirty with someone else's work, commit from **your
+  worktree** and fast-forward `main` (`git push . HEAD:main` when `main` is a
+  strict ancestor; otherwise merge `--ff-only` into `main` from a clean
+  checkout). Never force-push, never rewrite `main`, never stash to make the
+  land possible.
+- Do not skip the verification bar in *How to verify your work* just to land
+  faster. A commit of a known-broken tree is not a finished step.
+
+## Git: clean up after yourself
+
+When a step is landed (or abandoned), **delete every worktree, branch, and
+artifact you created** that is not currently in use by another agent:
+
+- `git worktree list` / `git branch` — remove *your* unused worktrees
+  (`git worktree remove …`) and *your* unused branches. Leave anything another
+  agent still has checked out or that still has uncommitted work.
+- Scratch files, temp corpora, one-off scripts, profile dumps, and similar
+  artifacts you created outside the commit: delete them. Do not leave `/tmp`
+  trees, extra worktrees, or local branches as implicit documentation —
+  if it mattered, it is on `main`.
+- When unsure whether another agent is using it, **leave it**. Cleanup is
+  mandatory for *your idle* leftovers, not a license to garbage-collect the
+  shared tree.
+
+## Git: older binaries for testing
+
+If you need an **older revision's binary** (baseline, bisect, A/B, parity):
+
+1. Check it out in a **throwaway worktree** (never `git checkout` / `restore`
+   on a shared tree).
+2. Build the binary, **copy only that binary** to a stable path
+   (e.g. `/tmp/oxiz-<sha>` or a local `bench/bin/` you will delete later).
+3. **Immediately** delete the worktree, its `target/` dir, and any other
+   source/build artifacts. Do not keep the old checkout around "in case".
+4. Keep **only the binary** for as long as the comparison needs it; delete
+   that too when the experiment is done (or it was already committed as
+   part of a recorded study).
+
 ## How to verify your work
 
 Before declaring a fix done, all of the following must be clean:
