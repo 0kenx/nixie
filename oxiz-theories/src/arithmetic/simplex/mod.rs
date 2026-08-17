@@ -1404,8 +1404,7 @@ impl Simplex {
             self.crash_basis();
             self.assignment_current = true;
         }
-        let r = self.make_feasible();
-        r
+        self.make_feasible()
     }
     /// Crash basis initialization for faster convergence
     ///

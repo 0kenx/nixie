@@ -228,7 +228,7 @@ impl ArithSolver {
     /// Create a new arithmetic solver
     #[must_use]
     pub fn new(is_integer: bool) -> Self {
-        let mut solver = Self {
+        Self {
             simplex: Simplex::new(),
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
@@ -246,9 +246,7 @@ impl ArithSolver {
             int_vars: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
             atom_rows: FxHashMap::default(),
-        };
-
-        solver
+        }
     }
 
     /// Create a new LRA solver
@@ -1733,6 +1731,7 @@ impl ArithSolver {
     ///   infeasible (integer-infeasible);
     /// - `Unknown` if the depth/node budget is exhausted, or a sub-solve hit the
     ///   simplex pivot limit – never a fabricated Sat/Unsat.
+    ///
     /// Branch-and-bound over integer variables, as an EXPLICIT heap stack.
     ///
     /// Two-child DFS: at each node pick a fractional integer variable, explore

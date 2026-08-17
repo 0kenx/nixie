@@ -383,6 +383,17 @@ pub(crate) fn ground_bool_interface_eqs(
 
     let mut defs: FxHashMap<TermId, TermId> = FxHashMap::default();
     {
+        // Collect definitions from **conjunct level only**: the direct
+        // children of the top-level conjunction (or a whole assertion),
+        // descending through `and` and no further.  A `(= spur φ)` there is
+        // the purification/Tseitin interface shape this grounding exists
+        // for.  An `(= b φ)` *nested inside another term* (e.g. the
+        // `(= (= b true) ψ)` guard encoding, or an equality under a
+        // disjunction) is a **constraint on `b`**, not a definition:
+        // substituting `b := φ` from such a site would silently pin the
+        // variable and strengthen the goal, hiding models (observed as a
+        // missed `sat` on a `(= (= b true) (not (= z 0)))` guard whose true
+        // model wants `b = false`).
         let mut stack: Vec<TermId> = assertions.to_vec();
         let mut seen = std::collections::HashSet::new();
         while let Some(id) = stack.pop() {
@@ -390,15 +401,18 @@ pub(crate) fn ground_bool_interface_eqs(
                 continue;
             }
             let Some(n) = manager.get(id) else { continue };
-            if let TermKind::Eq(a, b) = &n.kind {
-                let (va, vb) = (is_bool_var(*a), is_bool_var(*b));
-                if va && is_bool_sorted(*b) {
-                    defs.entry(*a).or_insert(*b);
-                } else if vb && is_bool_sorted(*a) {
-                    defs.entry(*b).or_insert(*a);
+            match &n.kind {
+                TermKind::And(xs) => stack.extend(xs.iter().copied()),
+                TermKind::Eq(a, b) => {
+                    let (va, vb) = (is_bool_var(*a), is_bool_var(*b));
+                    if va && is_bool_sorted(*b) {
+                        defs.entry(*a).or_insert(*b);
+                    } else if vb && is_bool_sorted(*a) {
+                        defs.entry(*b).or_insert(*a);
+                    }
                 }
+                _ => {}
             }
-            push_children(&n.kind, &mut stack);
         }
     }
 
@@ -615,10 +629,20 @@ enum AssertPlan {
     /// the caller must split it into `expr ≤ −1` | `expr ≥ +1` (a two-way
     /// integer branch), since Simplex has no native disequality.
     SplitExpr(LinExpr),
-    /// The term is not a linearizable Boolean shape we handle (nested `or` in
-    /// a conjunction, Boolean disequalities, `ite`, …); skip it. Skipping only
-    /// loses completeness – never soundness – because every reported `Sat` is
-    /// still concretely verified.
+    /// The term is satisfied, under this polarity, by making **any** of the
+    /// listed subterms false (e.g. a negated conjunction `¬(c₁ ∧ … ∧ cₙ)`).
+    /// The caller must try each child under its own push scope – a DPLL case
+    /// split over the disjunction the relaxation cannot see.
+    SplitAnyFalse(Vec<TermId>),
+    /// The term is a disjunction (`or` directly under a forced conjunction,
+    /// the dominant VeryMax `(and … (or A B) …)` guard shape): satisfied by
+    /// making **any** of the listed subterms true. The caller tries each
+    /// child under its own push scope.
+    SplitAnyTrue(Vec<TermId>),
+    /// The term is not a linearizable Boolean shape we handle (a Boolean
+    /// equality between two non-constant formulas, `ite`, `distinct`, …);
+    /// skip it. Skipping only loses completeness – never soundness – because
+    /// every reported `Sat` is still concretely verified.
     Skip,
 }
 
@@ -644,6 +668,13 @@ struct Relaxation<'a> {
     int_vars: Vec<TermId>,
     /// Equality conjuncts (lhs, rhs) used for model repair (solve-for-variable).
     eq_atoms: Vec<(TermId, TermId)>,
+    /// DPLL trail of conjunct `TermId`s already forced true along the current
+    /// branch (see the give-up arm of [`Relaxation::search`]).  A conjunct
+    /// whose linear asserts are already on the tableau can still be
+    /// *concretely* falsified (the relaxation satisfies it through a free
+    /// monomial variable); re-forcing it re-runs an identical subtree, so the
+    /// search must move on to the next falsified conjunct instead of cycling.
+    forced_path: Vec<TermId>,
 }
 
 impl<'a> Relaxation<'a> {
@@ -664,6 +695,7 @@ impl<'a> Relaxation<'a> {
                 .filter(|(_, _, c)| *c == Cmp::Eq)
                 .map(|&(l, r, _)| (l, r))
                 .collect(),
+            forced_path: Vec::new(),
         };
         for &v in int_vars {
             s.var.insert(v, s.simplex.new_var());
@@ -802,19 +834,55 @@ impl<'a> Relaxation<'a> {
             Some(b) => b,
             None => {
                 // No integer/monomial branch exists, yet the concrete check
-                // fails: the culprit must be the Boolean *structure* (a
-                // disjunction the relaxation cannot see – the dominant VeryMax
-                // shape, e.g. `(or (not (= inv 0)) …)` forcing a nonzero
-                // invariant). Case-split a falsified disjunctive conjunct,
-                // asserting each disjunct into the relaxation in turn. This is
-                // DPLL-style Boolean search inlined into the model-based
-                // search; bounded by `nodes` and sound (Sat only on concrete
-                // verify).
+                // fails: the culprit must be the Boolean *structure* the
+                // relaxation cannot see. Case-split a falsified conjunct,
+                // asserting it into the relaxation in turn. This is DPLL-style
+                // Boolean search inlined into the model-based search; bounded
+                // by `nodes` and sound (Sat only on concrete verify).
+                // The concrete check fails on Boolean structure the
+                // relaxation cannot see.  Force *one* falsified conjunct –
+                // disjunctions first (after the bound-chain collapse of
+                // [`Self::try_alternatives`] a disjunction is the cheap
+                // decision), then any other shape (integer disequality,
+                // constant-sided Boolean equality, negated conjunction)
+                // through the `plan_assert_true` machinery – and return its
+                // subtree's outcome.  The `forced_path` trail prevents a
+                // deeper node from re-forcing a conjunct already forced on
+                // this branch (a conjunct can stay *concretely* falsified
+                // after forcing when the relaxation satisfies it through a
+                // free monomial variable; re-forcing re-runs an identical
+                // subtree).  Without any forcing arm the search dead-ends on
+                // the first such conjunct: the box enumeration around the
+                // (arbitrary) relaxation vertex is then the only escape, and
+                // whether it covers the witness is luck, not procedure (the
+                // 510/489 flip: a simplex pivot change moved the vertex, the
+                // box missed the witness, and a previously `sat` goal became
+                // `unknown`).
                 let env = self.round_int_model();
-                if let Some(or_term) = self.find_falsified_disjunction(assertions, &env) {
-                    return self.bool_split(or_term, assertions, manager, nodes, depth);
-                }
-                return None;
+                let base = self.forced_path.len();
+                let Some(conjunct) = self
+                    .find_falsified_conjunct(assertions, &env, &self.forced_path)
+                    .or_else(|| {
+                        self.find_falsified_conjunct_non_or(assertions, &env, &self.forced_path)
+                    })
+                else {
+                    self.forced_path.truncate(base);
+                    return None;
+                };
+                self.forced_path.push(conjunct);
+                self.simplex.push();
+                let r = if self
+                    .manager
+                    .get(conjunct)
+                    .is_some_and(|n| matches!(n.kind, TermKind::Or(_)))
+                {
+                    self.bool_split(conjunct, assertions, manager, nodes, depth)
+                } else {
+                    self.exec_disjunct(conjunct, assertions, manager, nodes, depth)
+                };
+                self.simplex.pop();
+                self.forced_path.truncate(base);
+                return r;
             }
         };
         match branch {
@@ -876,10 +944,43 @@ impl<'a> Relaxation<'a> {
     /// (descending through `and`). The relaxation cannot see disjunctions, so
     /// when the integer/monomial search dead-ends, a falsified `or` is the
     /// natural Boolean split point. Returns the first such `or` term.
-    fn find_falsified_disjunction(
+    /// Find a top-level conjunct of `assertions` that is falsified under
+    /// `env` and not already on the `skip` (forced-path) trail: an integer
+    /// disequality `(not (= v c))`, a constant-sided Boolean equality
+    /// `(= true (and …))`, a negated conjunction, a plain disjunction, …
+    /// Descends through `and`; first falsified conjunct in walk order
+    /// (deterministic – the child lists are `Vec`s).
+    /// First falsified *disjunction* not on the `skip` trail.  A disjunction
+    /// is the cheap decision – after the bound-chain collapse of
+    /// [`Self::try_alternatives`] it is often a single simplex bound.
+    fn find_falsified_conjunct(
         &self,
         assertions: &[TermId],
         env: &HashMap<TermId, BigInt>,
+        skip: &[TermId],
+    ) -> Option<TermId> {
+        self.find_falsified_conjunct_pass(assertions, env, skip, true)
+    }
+
+    /// First falsified *non-disjunction* conjunct not on the `skip` trail.
+    fn find_falsified_conjunct_non_or(
+        &self,
+        assertions: &[TermId],
+        env: &HashMap<TermId, BigInt>,
+        skip: &[TermId],
+    ) -> Option<TermId> {
+        self.find_falsified_conjunct_pass(assertions, env, skip, false)
+    }
+
+    /// One ordered pass of [`Self::find_falsified_conjunct`]: `ors_first`
+    /// restricts the candidates to disjunctions (`true`) or non-disjunctions
+    /// (`false`).  Deterministic walk order either way.
+    fn find_falsified_conjunct_pass(
+        &self,
+        assertions: &[TermId],
+        env: &HashMap<TermId, BigInt>,
+        skip: &[TermId],
+        ors_first: bool,
     ) -> Option<TermId> {
         let arrays: HashMap<TermId, ArrayInterp> = HashMap::new();
         let mut stack: Vec<TermId> = assertions.to_vec();
@@ -889,10 +990,22 @@ impl<'a> Relaxation<'a> {
             };
             match &n.kind {
                 TermKind::And(xs) => stack.extend(xs.iter().copied()),
-                TermKind::Or(_) if !eval_bool(t, self.manager, &arrays, env).unwrap_or(false) => {
-                    return Some(t);
+                TermKind::Or(_) if ors_first => {
+                    if !skip.contains(&t)
+                        && !eval_bool(t, self.manager, &arrays, env).unwrap_or(false)
+                    {
+                        return Some(t);
+                    }
                 }
-                _ => {}
+                TermKind::Or(_) => {}
+                _ if ors_first => {}
+                _ => {
+                    if !skip.contains(&t)
+                        && !eval_bool(t, self.manager, &arrays, env).unwrap_or(false)
+                    {
+                        return Some(t);
+                    }
+                }
             }
         }
         None
@@ -918,15 +1031,169 @@ impl<'a> Relaxation<'a> {
                 _ => None,
             })
             .unwrap_or_default();
-        for d in disjuncts {
-            self.simplex.push();
-            let r = self.exec_disjunct(d, assertions, manager, nodes, depth);
-            self.simplex.pop();
+        self.try_alternatives(&disjuncts, assertions, manager, nodes, depth)
+    }
+
+    /// Case-split a list of alternative disjuncts, trying each under its own
+    /// push scope until one yields a concretely-verified model.
+    ///
+    /// Sound *semantic pre-reduction*: a group of alternatives that are all
+    /// unit bounds on the same variable in the same direction collapses to
+    /// the weakest member – `v ≥ c₁ ∨ … ∨ v ≥ cₖ ≡ v ≥ minᵢ cᵢ` (dually
+    /// `v ≤ maxⱼ dⱼ`).  Industrial VeryMax/T2 goals carry rank-function
+    /// disjunctions with dozens of such bound alternatives (`∨ᵢ v ≥ i`);
+    /// iterating them one-by-one burns the node budget long before the
+    /// witnessing (strongest) alternative is reached, while the collapsed
+    /// weakest bound admits the very same models – any value satisfying some
+    /// original alternative satisfies it, and the concrete verifier still
+    /// checks the *original* disjunction.  This mirrors the reference
+    /// behaviour of Z3's `bool_rewriter::mk_eq_core`/`mk_or` clausification,
+    /// which folds same-variable bound chains before the search sees them.
+    fn try_alternatives(
+        &mut self,
+        children: &[TermId],
+        assertions: &[TermId],
+        manager: &TermManager,
+        nodes: &mut usize,
+        depth: usize,
+    ) -> Option<NlDispatchResult> {
+        /// One reduced alternative: a simplex-enforceable unit bound, or an
+        /// arbitrary term to force through [`Self::exec_disjunct`].
+        enum Alt {
+            Bound {
+                var: TermId,
+                /// `true` ⇔ `v ≥ c`, `false` ⇔ `v ≤ c`.
+                lower: bool,
+                c: Rational64,
+            },
+            Term(TermId),
+        }
+        let mut alts: Vec<Alt> = Vec::with_capacity(children.len());
+        for &d in children {
+            match self.unit_bound_disjunct(d) {
+                Some((var, lower, c)) => {
+                    // Weaken an existing same-var same-direction bound in
+                    // place (keep the larger model set), else record a new one.
+                    let existing = alts.iter_mut().find_map(|a| match a {
+                        Alt::Bound {
+                            var: v,
+                            lower: l,
+                            c: prev,
+                        } if *v == var && *l == lower => Some(prev),
+                        _ => None,
+                    });
+                    match existing {
+                        Some(prev) => {
+                            if lower {
+                                *prev = (*prev).min(c);
+                            } else {
+                                *prev = (*prev).max(c);
+                            }
+                        }
+                        None => alts.push(Alt::Bound { var, lower, c }),
+                    }
+                }
+                None => alts.push(Alt::Term(d)),
+            }
+        }
+        for alt in alts {
+            let r = match alt {
+                Alt::Bound { var, lower, c } => {
+                    let vid = match self.var.get(&var) {
+                        Some(&vid) => vid,
+                        None => continue,
+                    };
+                    self.simplex.push();
+                    if lower {
+                        self.simplex.set_lower(vid, c, REASON);
+                    } else {
+                        self.simplex.set_upper(vid, c, REASON);
+                    }
+                    let r = if self.simplex.check().is_ok() {
+                        self.search(assertions, manager, nodes, depth + 1)
+                    } else {
+                        None
+                    };
+                    self.simplex.pop();
+                    r
+                }
+                Alt::Term(d) => {
+                    self.simplex.push();
+                    let r = self.exec_disjunct(d, assertions, manager, nodes, depth);
+                    self.simplex.pop();
+                    r
+                }
+            };
             if r.is_some() {
                 return r;
             }
         }
         None
+    }
+
+    /// Recognize a *unit bound* alternative `v ≥ c` / `v ≤ c` (integer-tight)
+    /// in the shapes industrial encoders emit: `(≤ (+ (* -1 v) 0 74) 0)`,
+    /// `(≥ v 3)`, negation-free strict variants included.  Returns
+    /// `(var, is_lower_bound, c)` with `c` already rounded so the bound is
+    /// exact over the integers.
+    fn unit_bound_disjunct(&self, t: TermId) -> Option<(TermId, bool, Rational64)> {
+        let n = self.manager.get(t)?;
+        // Normalize to `expr REL 0` with REL ∈ {<, ≤, >, ≥}.
+        let (lhs, rhs, strict, ge): (TermId, TermId, bool, bool) = match &n.kind {
+            TermKind::Le(a, b) => (*a, *b, false, false),
+            TermKind::Lt(a, b) => (*a, *b, true, false),
+            TermKind::Ge(a, b) => (*a, *b, false, true),
+            TermKind::Gt(a, b) => (*a, *b, true, true),
+            _ => return None,
+        };
+        let mut terms: Vec<(BigInt, MonoKey)> = Vec::new();
+        collect_terms(lhs, BigInt::from(1), self.manager, &mut terms);
+        collect_terms(rhs, BigInt::from(-1), self.manager, &mut terms);
+        if terms.is_empty() {
+            return None;
+        }
+        // Merge like monomials.
+        let mut merged: Vec<(BigInt, MonoKey)> = Vec::new();
+        for (c, m) in terms {
+            if let Some((pc, pm)) = merged.iter_mut().find(|(_, pm)| *pm == m) {
+                *pc += c;
+                let _ = pm;
+            } else {
+                merged.push((c, m));
+            }
+        }
+        let mut constant = BigInt::from(0);
+        let mut unit: Option<(TermId, BigInt)> = None;
+        for (c, m) in merged {
+            if m.is_empty() {
+                constant += c;
+                continue;
+            }
+            if m.len() == 1 && m[0].1 == 1 && unit.is_none() {
+                unit = Some((m[0].0, c));
+                continue;
+            }
+            return None; // multi-var / monomial / two var terms: not a unit bound
+        }
+        let (var, k) = unit?;
+        if k.is_zero() {
+            return None;
+        }
+        let kn = k.to_i64()?;
+        let cn = constant.to_i64()?;
+        // k·v + c REL 0  ⇔  v REL' (−c/k) with the direction flipped when k<0.
+        let bound = Rational64::from_integer(-cn) / Rational64::from_integer(kn);
+        // Integer-tighten: v ≥ b ⇒ v ≥ ⌈b⌉; v ≤ b ⇒ v ≤ ⌊b⌋; strict moves one.
+        let lower = if k > BigInt::from(0) { ge } else { !ge };
+        let c = match (lower, strict) {
+            // v ≥ b ⇔ v ≥ ⌈b⌉;  v > b ⇔ v ≥ ⌊b⌋+1  (v integer);
+            // v ≤ b ⇔ v ≤ ⌊b⌋;  v < b ⇔ v ≤ ⌈b⌉−1.
+            (true, false) => bound.ceil(),
+            (true, true) => bound.floor() + Rational64::from_integer(1),
+            (false, false) => bound.floor(),
+            (false, true) => bound.ceil() - Rational64::from_integer(1),
+        };
+        Some((var, lower, c))
     }
 
     /// Assert disjunct `d` true under the current (already-pushed) scope and
@@ -950,36 +1217,107 @@ impl<'a> Relaxation<'a> {
                     None
                 }
             }
-            AssertPlan::SplitExpr(e) => {
-                // child 1: expr ≤ −1  (i.e. expr + 1 ≤ 0)
-                self.simplex.push();
-                let mut lo = e.clone();
-                lo.add_constant(Rational64::from_integer(1));
-                self.simplex.add_le(lo, REASON);
-                let r = if self.simplex.check().is_ok() {
-                    self.search(assertions, manager, nodes, depth + 1)
-                } else {
-                    None
-                };
-                self.simplex.pop();
-                if r.is_some() {
-                    return r;
+            AssertPlan::SplitExpr(e) => self.exec_diseq_split(e, assertions, manager, nodes, depth),
+            AssertPlan::SplitAnyFalse(children) => {
+                // The forced term is a hidden disjunction (e.g. a negated
+                // conjunction): exactly one child needs to become false. Try
+                // each child under its own scope – a DPLL case split the
+                // relaxation cannot perform on its own.
+                for child in children {
+                    self.simplex.push();
+                    let r = self.exec_make_false(child, assertions, manager, nodes, depth);
+                    self.simplex.pop();
+                    if r.is_some() {
+                        return r;
+                    }
                 }
-                // child 2: expr ≥ +1  (i.e. expr − 1 ≥ 0)
-                self.simplex.push();
-                let mut hi = e;
-                hi.add_constant(Rational64::from_integer(-1));
-                self.simplex.add_ge(hi, REASON);
-                let r = if self.simplex.check().is_ok() {
-                    self.search(assertions, manager, nodes, depth + 1)
-                } else {
-                    None
-                };
-                self.simplex.pop();
-                r
+                None
+            }
+            AssertPlan::SplitAnyTrue(children) => {
+                // The forced term is a disjunction: exactly one child needs to
+                // become true. Each child gets its own scope (mirrors
+                // [`Self::bool_split`], reachable from inside a forced
+                // conjunction).
+                for child in children {
+                    self.simplex.push();
+                    let r = self.exec_disjunct(child, assertions, manager, nodes, depth);
+                    self.simplex.pop();
+                    if r.is_some() {
+                        return r;
+                    }
+                }
+                None
             }
             AssertPlan::Infeasible | AssertPlan::Skip => None,
         }
+    }
+
+    /// Make `term` FALSE in the relaxation (one child case of
+    /// [`AssertPlan::SplitAnyFalse`]) and recurse. Mirrors the `Done` /
+    /// `SplitExpr` handling of [`Self::exec_disjunct`] at the negative
+    /// polarity; any other plan skips this child (honest completeness loss).
+    fn exec_make_false(
+        &mut self,
+        term: TermId,
+        assertions: &[TermId],
+        manager: &TermManager,
+        nodes: &mut usize,
+        depth: usize,
+    ) -> Option<NlDispatchResult> {
+        match self.plan_assert_false(term) {
+            AssertPlan::Done => {
+                if self.simplex.check().is_ok() {
+                    self.search(assertions, manager, nodes, depth + 1)
+                } else {
+                    None
+                }
+            }
+            AssertPlan::SplitExpr(e) => {
+                // Making `term` false forces `expr ≠ 0`; split
+                // `expr ≤ −1 | expr ≥ +1` – the same two-way integer branch
+                // as the positive polarity.
+                self.exec_diseq_split(e, assertions, manager, nodes, depth)
+            }
+            _ => None,
+        }
+    }
+
+    /// Two-way integer branch on a disequality `e ≠ 0`: `e ≤ −1 | e ≥ +1`.
+    /// Each side is asserted under its own push scope and searched.
+    fn exec_diseq_split(
+        &mut self,
+        e: LinExpr,
+        assertions: &[TermId],
+        manager: &TermManager,
+        nodes: &mut usize,
+        depth: usize,
+    ) -> Option<NlDispatchResult> {
+        // child 1: expr ≤ −1  (i.e. expr + 1 ≤ 0)
+        self.simplex.push();
+        let mut lo = e.clone();
+        lo.add_constant(Rational64::from_integer(1));
+        self.simplex.add_le(lo, REASON);
+        let r = if self.simplex.check().is_ok() {
+            self.search(assertions, manager, nodes, depth + 1)
+        } else {
+            None
+        };
+        self.simplex.pop();
+        if r.is_some() {
+            return r;
+        }
+        // child 2: expr ≥ +1  (i.e. expr − 1 ≥ 0)
+        self.simplex.push();
+        let mut hi = e;
+        hi.add_constant(Rational64::from_integer(-1));
+        self.simplex.add_ge(hi, REASON);
+        let r = if self.simplex.check().is_ok() {
+            self.search(assertions, manager, nodes, depth + 1)
+        } else {
+            None
+        };
+        self.simplex.pop();
+        r
     }
 
     /// Plan how to make `term` TRUE in the relaxation. Adds the implied linear
@@ -1002,6 +1340,10 @@ impl<'a> Relaxation<'a> {
                 }
                 AssertPlan::Done
             }
+            // A disjunction is satisfied by any disjunct: the caller splits.
+            // (Reaching this case inside a forced conjunction was the hole
+            // that dead-ended the VeryMax `(and … (or A B) …)` shape.)
+            TermKind::Or(xs) => AssertPlan::SplitAnyTrue(xs.to_vec()),
             // Arithmetic comparisons: translate lhs − rhs and bound it.
             TermKind::Le(a, b) => self.assert_cmp(*a, *b, CmpDir::Le),
             TermKind::Ge(a, b) => self.assert_cmp(*a, *b, CmpDir::Ge),
@@ -1009,7 +1351,22 @@ impl<'a> Relaxation<'a> {
             TermKind::Gt(a, b) => self.assert_cmp(*a, *b, CmpDir::Gt),
             TermKind::Eq(a, b) => {
                 if Self::term_is_bool(self.manager, *a) {
-                    AssertPlan::Skip
+                    // Constant-sided Boolean equalities fold to the other
+                    // side (VeryMax spur interface: `(= true (and …))`):
+                    // `(= true φ)` ≡ φ and `(= false φ)` ≡ ¬φ at this
+                    // polarity. A general Boolean equality between two
+                    // non-constant formulas stays `Skip` (honest gap – it
+                    // needs a two-polarity split with no linear plan).
+                    match (
+                        self.manager.get(*a).map(|t| &t.kind),
+                        self.manager.get(*b).map(|t| &t.kind),
+                    ) {
+                        (Some(TermKind::True), _) => self.plan_assert_true(*b),
+                        (_, Some(TermKind::True)) => self.plan_assert_true(*a),
+                        (Some(TermKind::False), _) => self.plan_assert_false(*b),
+                        (_, Some(TermKind::False)) => self.plan_assert_false(*a),
+                        _ => AssertPlan::Skip,
+                    }
                 } else {
                     self.assert_cmp(*a, *b, CmpDir::Eq)
                 }
@@ -1029,6 +1386,10 @@ impl<'a> Relaxation<'a> {
             TermKind::True => AssertPlan::Infeasible,
             TermKind::False => AssertPlan::Done,
             TermKind::Not(x) => self.plan_assert_true(*x),
+            // ¬(∧ xs) = ∨(¬ xs): a *disjunction* of negated children – the
+            // caller case-splits on which child becomes false
+            // ([`AssertPlan::SplitAnyFalse`]).
+            TermKind::And(xs) => AssertPlan::SplitAnyFalse(xs.to_vec()),
             // ¬(∨ xs) = ∧(¬ xs): assert every disjunct false.
             TermKind::Or(xs) => {
                 for &x in xs {
@@ -1045,7 +1406,19 @@ impl<'a> Relaxation<'a> {
             TermKind::Gt(a, b) => self.assert_cmp(*a, *b, CmpDir::Le),
             TermKind::Eq(a, b) => {
                 if Self::term_is_bool(self.manager, *a) {
-                    AssertPlan::Skip
+                    // Constant-sided Boolean equality, negative polarity:
+                    // falsifying `(= true φ)` means falsifying `φ`, and
+                    // falsifying `(= false φ)` means satisfying `φ`.
+                    match (
+                        self.manager.get(*a).map(|t| &t.kind),
+                        self.manager.get(*b).map(|t| &t.kind),
+                    ) {
+                        (Some(TermKind::True), _) => self.plan_assert_false(*b),
+                        (_, Some(TermKind::True)) => self.plan_assert_false(*a),
+                        (Some(TermKind::False), _) => self.plan_assert_true(*b),
+                        (_, Some(TermKind::False)) => self.plan_assert_true(*a),
+                        _ => AssertPlan::Skip,
+                    }
                 } else {
                     // a ≠ b  ⇒  (a−b) ≠ 0  ⇒  split ≤ −1 | ≥ +1
                     match self.diff_expr(*a, *b) {

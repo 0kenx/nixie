@@ -83,9 +83,15 @@ pub fn try_decide_ground_ania(
         return None;
     }
 
-    // Index / free int vars need finite boxes.
+    // Index / free int vars need finite boxes.  Iterate in canonical
+    // (`TermId`) order, NOT `HashSet` order: the set is randomly seeded per
+    // process, and the enumeration order of `domains` decides which corner
+    // of the box the leaf budget meets first – an iteration-order-dependent
+    // sat/unknown verdict is a per-process coin flip on the same binary.
+    let mut ordered_free_ints: Vec<TermId> = free_ints.iter().copied().collect();
+    ordered_free_ints.sort_unstable_by_key(|&t| t.0);
     let mut domains: Vec<(TermId, i64, i64)> = Vec::new();
-    for &v in &free_ints {
+    for &v in &ordered_free_ints {
         // Skip vars determined by interface selects, definitional eqs, or
         // conditional (encoder-lifted `ite`) definitions.
         if interfaces.iter().any(|i| i.const_var == v) {
@@ -105,8 +111,10 @@ pub fn try_decide_ground_ania(
         }
         domains.push((v, lo, hi));
     }
-    // Prefer smaller domains first for stronger early pruning.
-    domains.sort_by_key(|(_, lo, hi)| hi - lo);
+    // Prefer smaller domains first for stronger early pruning.  The tiebreak
+    // on `TermId` makes the order total: a stable sort over a randomly
+    // ordered input would otherwise keep per-process `HashSet` order on ties.
+    domains.sort_by_key(|&(v, lo, hi)| (hi - lo, v.0));
 
     // Recursive search with early pruning: once enough vars are bound to
     // evaluate an atom, reject partial assignments immediately (critical when
@@ -264,9 +272,13 @@ pub fn try_decide_finite_domain_nia(
     }
     // Every free integer variable must carry a small arithmetic box, else the
     // search space is not finite (or too large) – bail to the caller.
+    // Canonical (`TermId`) iteration order for determinism – see the matching
+    // comment in [`try_decide_ground_ania`].
+    let mut ordered_free_ints: Vec<TermId> = free_ints.iter().copied().collect();
+    ordered_free_ints.sort_unstable_by_key(|&t| t.0);
     let mut domains: Vec<(TermId, i64, i64)> = Vec::new();
     let mut total: u64 = 1;
-    for &v in &free_ints {
+    for &v in &ordered_free_ints {
         if interfaces.iter().any(|i| i.const_var == v)
             || definitions.iter().any(|(l, _)| *l == v)
             || cond_defs.iter().any(|(_, var, _)| *var == v)
@@ -286,8 +298,9 @@ pub fn try_decide_finite_domain_nia(
         }
         domains.push((v, lo, hi));
     }
-    // Smaller domains first → stronger early pruning.
-    domains.sort_by_key(|(_, lo, hi)| hi - lo);
+    // Smaller domains first → stronger early pruning (total order – see
+    // [`try_decide_ground_ania`]).
+    domains.sort_by_key(|&(v, lo, hi)| (hi - lo, v.0));
 
     let mut env = HashMap::new();
     let mut leaves = 0u64;
