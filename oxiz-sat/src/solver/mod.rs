@@ -427,14 +427,21 @@ impl Default for SolverConfig {
             walk_nonstable: true,
             walk_effort: 80,
             reuse_trail: true,
-            // Off by default: BOTH probing passes have a proven false-UNSAT on
-            // satisfiable input (`circuit_48in64out_with_700gates…cnf`, CaDiCaL
-            // model verified): running *either* pass alone (everything else
-            // disabled) answers `unsat` on that SATISFIABLE file.  Root cause
-            // not yet isolated; per the "no fabricated answer" rule they stay
-            // disabled until fixed.  The sound pre-search combination is
-            // lucky phases + inprocessing (subsumption round + vivification),
-            // which solves `mrpp_4x4#12_12` in ~5 ms / 335 conflicts.
+            // Off by default: BOTH probing passes previously had a proven
+            // false-UNSAT on satisfiable input (`circuit_48in64out_with_700gates…cnf`,
+            // CaDiCaL model verified): running *either* pass alone (everything
+            // else disabled) answered `unsat` on that SATISFIABLE file.  Root
+            // cause identified and fixed (2026-08 SAT soundness sweep): the
+            // probes propagate through the corrupted second-watch placement
+            // `learn_clause` used to leave in stored clauses (see the
+            // watch-position fix in `learn.rs` / the regression tests in
+            // `tests/watch_position_soundness.rs`); with that fixed, probing
+            // solves that same file `sat` in seconds.  They stay gated behind
+            // `enable_inprocessing` (still off in every preset) until the
+            // separate `inprocess()` watch-rebuild unsoundness is fixed.  The
+            // sound pre-search combination is lucky phases + inprocessing
+            // (subsumption round + vivification), which solves
+            // `mrpp_4x4#12_12` in ~5 ms / 335 conflicts.
             enable_failed_literal_probing: false,
             enable_hyper_binary_probing: false,
             enable_lucky: true,
@@ -972,6 +979,24 @@ pub struct Solver {
     /// Literals marked during minimization, for flag cleanup (`minimized`).
     #[allow(dead_code)]
     pub(super) lrat_minimized: Vec<i32>,
+    /// Per-decision-level count of literals marked `seen` during the current
+    /// conflict analysis (cadical `Level::seen.count`). Feeds Don Knuth's
+    /// `seen.count < 2` gate in clause minimization.
+    pub(super) seen_level_count: Vec<u32>,
+    /// Per-decision-level smallest trail index among `seen` literals of the
+    /// current analysis (cadical `Level::seen.trail`, reset to `u32::MAX`).
+    /// Feeds the `v.trail <= l.seen.trail` early abort in minimization.
+    pub(super) seen_level_trail: Vec<u32>,
+    /// Decision levels that contributed a `seen` literal to the current
+    /// analysis (cadical `levels`), so the two vectors above are reset in
+    /// O(contributing levels), not O(num levels).
+    pub(super) seen_levels: Vec<u32>,
+    /// The genuine conflict level of the analysis in progress (the highest
+    /// decision level among the conflict clause's literals, which under
+    /// chronological backtracking can sit below `decision_level()`).
+    /// Minimization must reject literals at this level (cadical
+    /// `v.level == level`), not at `decision_level()`.
+    pub(super) current_conflict_level: u32,
 }
 
 impl Default for Solver {
@@ -1084,6 +1109,10 @@ impl Solver {
             unit_analyzed: Vec::new(),
             lrat_flags: Vec::new(),
             lrat_minimized: Vec::new(),
+            seen_level_count: Vec::new(),
+            seen_level_trail: Vec::new(),
+            seen_levels: Vec::new(),
+            current_conflict_level: 0,
         }
     }
 
@@ -1737,6 +1766,12 @@ impl Solver {
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
+        }
+        // Per-decision-level `seen` statistics for clause minimization
+        // (cadical `Level::seen`): decision levels are bounded by num_vars.
+        if self.seen_level_count.len() < self.num_vars {
+            self.seen_level_count.resize(self.num_vars, 0);
+            self.seen_level_trail.resize(self.num_vars, u32::MAX);
         }
         // Grow the per-literal tables.  `lrat_flags` holds the
         // KEEP/POISON/REMOVABLE minimization flags (see `conflict.rs`) and is

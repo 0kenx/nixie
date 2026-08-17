@@ -53,6 +53,7 @@ impl Solver {
         if !self.seen[var.index()] && level > 0 {
             self.seen[var.index()] = true;
             vars_to_bump.push(var);
+            self.note_seen_level(var, level);
             if level == current_level {
                 *counter += 1;
             } else {
@@ -69,6 +70,50 @@ impl Solver {
             self.unit_chain
                 .push(self.proof_unit_id(lit.negate().to_dimacs()));
         }
+    }
+
+    /// Record that `var` at decision level `level` (both > 0) was marked
+    /// `seen` during the current analysis, maintaining the per-level
+    /// statistics clause minimization depends on. Faithful port of the tail
+    /// of cadical's `analyze_literal`:
+    /// ```text
+    /// Level &l = control[v.level];
+    /// if (!l.seen.count++) levels.push_back (v.level);
+    /// if (v.trail < l.seen.trail) l.seen.trail = v.trail;
+    /// ```
+    /// Guarded on the table size exactly like `compute_lbd`'s level marks:
+    /// decision levels are bounded by `num_vars`, and a caller above
+    /// `new_var` bookkeeping must degrade to "no statistics" (which only
+    /// makes minimization keep more literals) rather than panic.
+    #[inline]
+    fn note_seen_level(&mut self, var: Var, level: u32) {
+        let lv = level as usize;
+        if lv >= self.seen_level_count.len() {
+            return;
+        }
+        if self.seen_level_count[lv] == 0 {
+            self.seen_levels.push(level);
+        }
+        self.seen_level_count[lv] += 1;
+        let ti = self.trail.trail_index(var);
+        if ti < self.seen_level_trail[lv] {
+            self.seen_level_trail[lv] = ti;
+        }
+    }
+
+    /// Reset the per-level `seen` statistics after an analysis finished
+    /// (cadical `clear_analyzed_levels`: `control[l].reset()` sets
+    /// `seen.count = 0`, `seen.trail = INT_MAX`). Must run *after*
+    /// minimization, which is the only consumer of the statistics.
+    fn clear_analyzed_levels(&mut self) {
+        for &l in &self.seen_levels {
+            let lv = l as usize;
+            if lv < self.seen_level_count.len() {
+                self.seen_level_count[lv] = 0;
+                self.seen_level_trail[lv] = u32::MAX;
+            }
+        }
+        self.seen_levels.clear();
     }
 
     /// Walk the trail backwards for the most recent still-unresolved (`seen`)
@@ -189,6 +234,11 @@ impl Solver {
             self.learnt.clear();
             return (0, SmallVec::new());
         }
+        // Record the genuine conflict level for the minimizer (cadical reads
+        // its `level` member, which always equals the conflict level; here the
+        // two can differ under chronological backtracking, and minimizing
+        // through a conflict-level literal over-strengthens the clause).
+        self.current_conflict_level = current_level;
 
         // Reset seen flags
         for s in &mut self.seen {
@@ -496,6 +546,10 @@ impl Solver {
             "every non-asserting literal must be at or below the backtrack level"
         );
 
+        // Reset the per-level `seen` statistics now that minimization (their
+        // only consumer) has run (cadical `clear_analyzed_levels`).
+        self.clear_analyzed_levels();
+
         (backtrack_level, self.learnt.clone())
     }
 
@@ -636,9 +690,34 @@ impl Solver {
         }
         let reason = self.trail.reason(var);
         let no_reason = !matches!(reason, Reason::Propagation(_));
-        let cur_level = self.trail.decision_level();
-        if no_reason || (f & MF_POISON) != 0 || level == cur_level {
+        // cadical compares against the conflict level (`v.level == level`),
+        // not the current decision level: under chronological backtracking
+        // the two differ, and treating a conflict-level literal as removable
+        // resolves the UIP's own level through the clause – over-strengthening
+        // it into a clause resolution does not derive (false UNSAT on
+        // `circuit_48in64out…dist128_seed1`, SAT verified by CaDiCaL).
+        if no_reason || (f & MF_POISON) != 0 || level == self.current_conflict_level {
             return false;
+        }
+        // Don Knuth's gate (cadical `!depth && l.seen.count < 2`): at the top
+        // of the recursion, a literal whose level contributed only one seen
+        // literal (itself) cannot be resolved out through its own level.
+        if depth == 0 {
+            let lv = level as usize;
+            if lv < self.seen_level_count.len() && self.seen_level_count[lv] < 2 {
+                return false;
+            }
+        }
+        // Early abort (cadical `v.trail <= l.seen.trail`): assigned before
+        // every seen literal of its level, so its reason graph cannot reach
+        // one of them; walking it would only chase lower levels in vain.
+        {
+            let lv = level as usize;
+            if lv < self.seen_level_trail.len()
+                && self.trail.trail_index(var) <= self.seen_level_trail[lv]
+            {
+                return false;
+            }
         }
         if depth > MINIMIZE_DEPTH_LIMIT {
             return false;
@@ -691,9 +770,24 @@ impl Solver {
         }
         let reason = self.trail.reason(var);
         let no_reason = !matches!(reason, Reason::Propagation(_));
-        let cur_level = self.trail.decision_level();
-        if no_reason || (f & MF_POISON) != 0 || level == cur_level {
+        // See `minimize_literal_plain`: the conflict level, not
+        // `decision_level()`.
+        if no_reason || (f & MF_POISON) != 0 || level == self.current_conflict_level {
             return false;
+        }
+        if depth == 0 {
+            let lv = level as usize;
+            if lv < self.seen_level_count.len() && self.seen_level_count[lv] < 2 {
+                return false;
+            }
+        }
+        {
+            let lv = level as usize;
+            if lv < self.seen_level_trail.len()
+                && self.trail.trail_index(var) <= self.seen_level_trail[lv]
+            {
+                return false;
+            }
         }
         if depth > MINIMIZE_DEPTH_LIMIT {
             return false;
@@ -986,6 +1080,9 @@ impl Solver {
         // Collect variables for batch bumping
         let mut vars_to_bump: SmallVec<[Var; 32]> = SmallVec::new();
 
+        // Conflict level for the minimizer (see `analyze`).
+        self.current_conflict_level = current_level;
+
         // Process conflict literals
         let mut all_level_zero = true;
         for &lit in conflict_lits {
@@ -996,6 +1093,7 @@ impl Solver {
                 all_level_zero = false;
                 self.seen[var.index()] = true;
                 vars_to_bump.push(var);
+                self.note_seen_level(var, level);
 
                 if level == current_level {
                     counter += 1;
@@ -1051,7 +1149,9 @@ impl Solver {
                 // Binary-implication-graph propagation does not move the implied
                 // literal to index 0, so a positional `[1..]` skip would drop the
                 // false antecedent at index 0 and yield unsound learned clauses.
-                for &lit in &clause.lits {
+                // (Snapshot: `note_seen_level` takes `&mut self` below.)
+                let reason_lits: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
+                for &lit in &reason_lits {
                     if lit == current_lit {
                         continue;
                     }
@@ -1061,6 +1161,7 @@ impl Solver {
                     if !self.seen[reason_var.index()] && level > 0 {
                         self.seen[reason_var.index()] = true;
                         vars_to_bump.push(reason_var);
+                        self.note_seen_level(reason_var, level);
 
                         if level == current_level {
                             counter += 1;
@@ -1085,6 +1186,7 @@ impl Solver {
                     if !self.seen[reason_var.index()] && level > 0 {
                         self.seen[reason_var.index()] = true;
                         vars_to_bump.push(reason_var);
+                        self.note_seen_level(reason_var, level);
 
                         if level == current_level {
                             counter += 1;
@@ -1166,6 +1268,10 @@ impl Solver {
                 .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
             "theory: every non-asserting literal must be at or below the backtrack level"
         );
+
+        // Reset the per-level `seen` statistics now that minimization (their
+        // only consumer) has run (cadical `clear_analyzed_levels`).
+        self.clear_analyzed_levels();
 
         (backtrack_level, self.learnt.clone())
     }

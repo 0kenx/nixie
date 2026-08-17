@@ -136,7 +136,7 @@ impl Solver {
         }
     }
 
-    pub(super) fn learn_clause(&mut self, learnt_clause: SmallVec<[Lit; 16]>) {
+    pub(super) fn learn_clause(&mut self, mut learnt_clause: SmallVec<[Lit; 16]>) {
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
 
@@ -250,7 +250,31 @@ impl Solver {
                     best = i;
                 }
             }
-            let lit1 = learnt_clause[best];
+            // Soundness: `propagate`'s watcher scan requires the two watched
+            // literals to live at positions [0] and [1] of the stored clause.
+            // When it fires on a falsified watch it swaps that literal to
+            // position 1, reads the other watch from `lits[0]`, and searches
+            // for a replacement only over the tail `j >= 2` — it *never*
+            // examines `lits[1]`. Selecting `best` without moving it to
+            // position 1 therefore leaves the second watch out in the tail:
+            // the day it falsifies, the scan reads some unrelated `lits[0]`
+            // as the "other watch", skips the still-unassigned `lits[1]`, and
+            // assigns `lits[0]` from a clause that is not unit. That
+            // fabricates a trail fact with a reason clause that is already
+            // satisfied, and every conflict resolved through it learns an
+            // unentailed clause — observed as false UNSAT on SATISFIABLE
+            // `si2-b03m-m800-03` / `circuit_48in64out…dist128_seed1`
+            // (CaDiCaL models verified). Swap the chosen literal into place
+            // in the stored clause *and* the local vector (they must remain
+            // identical: `assert_learned_clause` reads `learnt_clause` below),
+            // exactly like `add_clause` and `replace_clause_lits` do.
+            if best != 1 {
+                learnt_clause.swap(1, best);
+                if let Some(clause) = self.clauses.get_mut(clause_id) {
+                    clause.swap(1, best);
+                }
+            }
+            let lit1 = learnt_clause[1];
             self.watches
                 .add(lit0.negate(), Watcher::new(clause_id, lit1));
             self.watches
