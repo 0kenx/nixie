@@ -1,0 +1,101 @@
+# CaDiCaL `elim.cpp` port: sound, big per-family wins, net-negative as a default (2026-08-17)
+
+## Motivation
+
+`bench`-suite differential vs CaDiCaL (`/tmp` run, 94 files: 40× SATLIB `uf100`,
+54× satcomp2024) showed OxiZ's SAT core >1.5× slower than CaDiCaL on 22/94
+files, with the worst gaps (66×, 29×, 25×, 18×) all on instances CaDiCaL
+collapses via inprocessing — its log shows clause counts dropping 13.5k → 2.3k
+through interleaved `e` (elim) / `s` (subsume) / `d` (distill) rounds before
+1.2k conflicts refute the residue. OxiZ ran *no* elimination by default: the
+one-shot `bve.rs` pass was off in every preset, gated behind a documented
+soundness hazard.
+
+## What was done
+
+Full port of CaDiCaL's bounded variable elimination to
+`oxiz-sat/src/solver/eliminate.rs` (~1.1k lines): occurrence-list driven,
+score-ordered work-list schedule with re-entry on clause removal/shrink,
+on-the-fly self-subsumption, backward subsumption of fresh resolvents,
+eager unit propagation through the occurrence lists, growing elimination
+bound (0→1→2→…→16), pre-search fixpoint + mid-search re-arm schedule
+(`eliminating()`), model reconstruction through the existing `bve_def` /
+`bve_order` extension stack. The old one-shot `bve.rs` pass was removed.
+
+## Soundness bugs found and fixed while porting (all with reproducers)
+
+1. **Resolvent built from one side only** — `elim_resolve_clauses` marked the
+   c-side literals but only pushed the d-side into the resolvent; the
+   "resolvents" were over-strong clauses → false UNSAT (fuzz seed 0x60fcfe…,
+   13 vars). Fixed: build from both sides.
+2. **Stale occurrence-list entries after in-place shrink** — a clause shrunk
+   by dropping literal `l` kept its `occs[l]` entry; a later unit assignment
+   then retired it as "satisfied by `l`", deleting a live constraint → false
+   SAT (it143: entailed `(9∨¬10)` deleted after `(9∨¬10∨5)` shrank). Fixed:
+   physically remove the clause from the dropped literal's occurrence list
+   (cadical `remove_occs`).
+3. **Learned clauses over eliminated variables left live** — cadical's
+   `mark_redundant_clauses_with_eliminated_variables_as_garbage` pass was
+   initially dropped from the port. A live learned clause over an eliminated
+   variable is entailed by the formula, so an honest model must satisfy it,
+   but reconstruction assigns that variable from `bve_def` (original clauses
+   only) and can falsify it → false SAT (`crn_11_99_u`: learned `(57∨1101)`
+   survived v57's elimination). Fixed: retire learned clauses with eliminated
+   variables at the end of each round.
+4. **Original clauses subsumed by learned clauses without promotion** —
+   `subsume_round` deleted an original on the word of a *learned* subsumer,
+   which can die later (reduction), leaving the deleted original's obligation
+   uncovered → false SAT. Fixed with cadical `subsume_clause`'s rule: promote
+   the learned subsumer to original (`learned = false`), and make
+   `reduce_clause_database` skip promoted clauses.
+5. **Binary-implication-graph edges outliving their clauses** — the subsume
+   binary fast-path matched dead edges → false subsumption. Fixed: liveness
+   check on the edge's clause id.
+
+Two **pre-existing** bugs surfaced by the work (reproduce on baseline HEAD):
+
+6. `pick_branch_var`'s fallback scan decided *eliminated* variables when the
+   heaps drained → trail values that block ELS model reconstruction → wrong
+   model on reintroduction (`a≡b` then `add_clause(b∨c)`). Fixed: the
+   fallback now skips `var_eliminated` variables like the primary heuristics.
+7. The pre-search fixpoint loop could spin forever when elimination is
+   refused (LRAT attached / theory attached): `eliminate_phase` returns
+   without advancing the phase counter. Fixed: the loop gate checks
+   `elimination_allowed()`.
+
+Differential fuzz harness (4 config variants × verdict cross-check + model
+verification): ~40k iterations clean after the fixes, plus the two real-world
+reproducers above.
+
+## Performance verdict (94-file suite, CPU-time, 25s cap, vs CaDiCaL 4.x)
+
+| config                       | >1.5× vs cadical | total OxiZ time |
+|------------------------------|------------------|-----------------|
+| baseline (HEAD)              | 22/94            | 738 s           |
+| elimination, full schedule   | 53/94            | 807 s           |
+| elimination, pre-search only | 57/94            | 822 s           |
+| new code, elimination off    | 23/94            | 750 s (noise)   |
+
+Per-family the port is dramatic where elimination is the right tool:
+`6s167-opt` 22s → 7.6s (cadical 0.3s), `crn_11_99_u` 3.9s → 1.3s,
+`noL-11-14`… but it regresses previously-fine families (`barman-pfile06`
+1.1× → 38×, `constraints_17` 6.2× → 24×, `si2-b03m` 1.6× → 12×): our search
+lacks the companion techniques that make elimination pay off in CaDiCaL
+(interleaved probing, vivification of originals, transitive reduction,
+distillation). Enabling elimination perturbs CDCL trajectories without those
+amortizers, and the phase cost itself (occurrence-list rescans) is not yet at
+CaDiCaL's efficiency (0.77s pre-search on 6s167 vs ~0.03s for CaDiCaL).
+
+**Decision: `enable_bve` stays `false` in every default.** The port ships as
+an opt-in (`SolverConfig { enable_bve: true, .. }`) — sound, tested, and the
+right tool for elimination-friendly instances. Re-evaluate after interleaved
+vivification and probing land; those are the known missing amortizers.
+
+## What not to retry
+
+- Turning `enable_bve` on by default *without* first landing mid-search
+  vivification + probing: measured net-negative twice (full schedule and
+  pre-search-only).
+- Scheduling the pre-search fixpoint unbounded: phases 2+ eliminate ~50 vars
+  each for a full database rescan (19 phases = 1.5s on 6s167); the
+  productivity gate + 4-phase cap is the shape that works.

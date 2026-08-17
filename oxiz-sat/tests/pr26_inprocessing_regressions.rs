@@ -197,6 +197,7 @@ fn test_pr26_probe_sat_verdict_and_model_agree_on_off() {
 fn test_pr26_bve_model_reconstruction_satisfies_original_clauses() {
     let mut solver = Solver::with_config(SolverConfig {
         enable_bve: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     let clauses = build_and_gate_instance(&mut solver);
@@ -225,6 +226,7 @@ fn test_pr26_bve_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_bve: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     add_pigeonhole(&mut on, 6, 5);
@@ -243,6 +245,7 @@ fn test_pr26_bve_sat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_bve: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     let clauses_on = build_and_gate_instance(&mut on);
@@ -258,6 +261,7 @@ fn test_pr26_bve_sat_verdict_agrees_on_off() {
 fn test_pr26_els_model_reconstruction_satisfies_original_clauses() {
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     let (clauses, a, b, c) = build_equivalence_instance(&mut solver);
@@ -290,6 +294,7 @@ fn test_pr26_els_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     add_pigeonhole(&mut on, 6, 5);
@@ -308,6 +313,7 @@ fn test_pr26_els_sat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     let clauses_on = build_equivalence_instance(&mut on).0;
@@ -321,6 +327,7 @@ fn test_pr26_els_detects_self_contradiction_as_unsat() {
     // independent of any assignment.
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         ..SolverConfig::default()
     });
     let a = solver.new_var();
@@ -344,6 +351,7 @@ fn test_pr26_gates_congruence_model_reconstruction_satisfies_original_clauses() 
     // model must still satisfy every original clause for both gates.
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         enable_gate_congruence: true,
         ..SolverConfig::default()
     });
@@ -379,6 +387,7 @@ fn test_pr26_gates_congruence_model_reconstruction_satisfies_original_clauses() 
 fn test_pr26_gates_unsat_verdict_agrees_on_off() {
     let mut off = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         enable_gate_congruence: false,
         ..SolverConfig::default()
     });
@@ -387,6 +396,7 @@ fn test_pr26_gates_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        enable_lucky: false,
         enable_gate_congruence: true,
         ..SolverConfig::default()
     });

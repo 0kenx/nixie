@@ -263,12 +263,14 @@ impl Solver {
         SubstOutcome::Ok
     }
 
-    /// True if `v` was folded away by equivalent-literal substitution or BVE
-    /// and must not be branched on. Cheap: empty maps mean no pass ran.
+    /// True if `v` was folded away by equivalent-literal substitution or
+    /// BVE/elimination and must not be branched on. Cheap: empty maps mean no
+    /// pass ran.
     #[inline]
     pub fn var_eliminated(&self, v: Var) -> bool {
         (self.equiv_substitution.len() > v.index() && self.equiv_substitution[v.index()].var() != v)
             || (self.bve_def.len() > v.index() && !self.bve_def[v.index()].is_empty())
+            || (self.elim_var_flag.len() > v.index() && self.elim_var_flag[v.index()])
     }
 
     /// Rewrite a literal a later `add_clause`/assumption tries to reintroduce

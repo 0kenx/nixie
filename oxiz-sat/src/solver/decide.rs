@@ -137,9 +137,18 @@ impl Solver {
         // total makes `None` mean what its callers assume it means. With the
         // heaps kept in repair by `backtrack`, this scan is a fallback that
         // essentially never runs.
+        // The fallback must respect elimination exactly like the primary
+        // heuristics: an eliminated variable (ELS-substituted, BVE/eliminator
+        // folded) is not a free decision. Deciding one force-assigns it a
+        // phase-saved polarity that `save_model`'s reconstruction then cannot
+        // overwrite (the trail copy is not `Undef`), handing back a model
+        // that violates clauses over the eliminated variable – reproduced by
+        // ELS-folding `b` in `a≡b`, then `add_clause(b∨c)`: the fallback
+        // decided `¬b` after the heaps drained and the model falsified
+        // `(b∨c)`.
         let fallback = (0..self.num_vars)
             .map(|i| Var::new(i as u32))
-            .find(|&var| !self.trail.is_assigned(var))
+            .find(|&var| !self.trail.is_assigned(var) && !self.var_eliminated(var))
             .inspect(|&var| {
                 if self.config.use_lrb_branching {
                     self.lrb.on_assign(var);

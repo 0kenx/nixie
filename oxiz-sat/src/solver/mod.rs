@@ -4,6 +4,7 @@ mod bve;
 mod conflict;
 mod congruence;
 mod decide;
+mod eliminate;
 mod equiv;
 pub mod heuristic;
 mod incremental;
@@ -225,6 +226,11 @@ pub struct SolverConfig {
     pub enable_bve: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
+    /// Conflict interval between elimination phases (cadical `elimint`,
+    /// default 2000). The next phase is additionally gated on new units or
+    /// newly marked variables, and the interval grows with the phase count
+    /// (`elimint * (phases + 1)`).
+    pub elim_interval: u64,
     /// Enable chronological backtracking
     pub enable_chronological_backtrack: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
@@ -412,6 +418,7 @@ impl Default for SolverConfig {
             enable_gate_congruence: true,
             enable_bve: false,
             inprocessing_interval: 5000,
+            elim_interval: 2000,
             enable_chronological_backtrack: true,
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
@@ -883,8 +890,6 @@ pub struct Solver {
     /// Whether `equiv_substitution` has been identity-initialized (one-time;
     /// subsequent substitution rounds compose onto it).
     pub(super) equiv_subst_inited: bool,
-    /// One-shot latch for BVE (see `did_equiv_subst`).
-    pub(super) did_bve: bool,
     /// Model-reconstruction map for equivalent-literal substitution
     /// (`equiv.rs`): `equiv_substitution[v]` is the representative literal
     /// whose value variable `v` should inherit in the model. For a variable
@@ -901,6 +906,42 @@ pub struct Solver {
     /// reverse, so a variable eliminated later – which may appear in an earlier
     /// variable's recorded clauses – is assigned first).
     pub(super) bve_order: Vec<Var>,
+    /// Inprocessing-elimination state (cadical `elim.cpp` port, see
+    /// `solver/eliminate.rs`). `elim_mark[i]`: variable `i` occurred in a
+    /// removed or shrunken original clause since the last elimination phase
+    /// and is scheduled as a candidate (cadical `flags.elim`).
+    pub(super) elim_mark: Vec<bool>,
+    /// Number of set bits in `elim_mark` (cadical `stats.mark.elim`).
+    pub(super) elim_mark_count: usize,
+    /// Growing elimination bound (cadical `lim.elimbound`): extra resolvents
+    /// allowed beyond the removed-clause count. 0 → 1 → 2 → 4 → … → 16.
+    pub(super) elim_bound: i64,
+    /// Elimination phases run so far (cadical `stats.elimphases`).
+    pub(super) elim_phases: u64,
+    /// Conflict threshold for the next elimination phase (cadical `lim.elim`).
+    pub(super) lim_elim: u64,
+    /// Level-0 trail length at the last elimination phase (cadical
+    /// `last.elim.fixed`): new units re-arm elimination.
+    pub(super) last_elim_fixed: usize,
+    /// Set when the elimination bound saturated and a phase completed with
+    /// nothing eliminated: stop scheduling phases.
+    pub(super) elim_finished: bool,
+    /// Cumulative resolution steps consumed by elimination rounds (cadical
+    /// `stats.elimres`), driving the per-round budget.
+    pub(super) elim_resolutions_total: u64,
+    /// Variables eliminated by the most recent elimination phase; drives the
+    /// pre-search fixpoint loop's productivity gate.
+    pub(super) last_elim_eliminated: u64,
+    /// Variables eliminated by the inprocessing eliminator (`eliminate.rs`).
+    /// Distinct from `bve_def` non-emptiness: a variable can be eliminated
+    /// with an empty positive-side snapshot (all its positive clauses were
+    /// retired as satisfied before elimination), and it must still count as
+    /// eliminated for decision/propagation purposes.
+    pub(super) elim_var_flag: Vec<bool>,
+    /// True while a `solve_with_assumptions` call is in flight: destructive
+    /// inprocessing (elimination) must not fold variables out of the search
+    /// then (cadical freezes assumed variables instead).
+    pub(super) assumptions_active: bool,
     pub(super) interrupt: Option<Arc<AtomicBool>>,
     /// Optional conflict budget. When `Some(n)`, the search loop returns
     /// [`SolverResult::Unknown`] once `n` conflicts have been reached instead of
@@ -1018,6 +1059,7 @@ impl Solver {
         let chrono_enabled = config.enable_chronological_backtrack;
         let chrono_threshold = config.chrono_backtrack_threshold;
         let stabilize_base = config.stabilize_base;
+        let elim_interval = config.elim_interval;
 
         Self {
             restart_threshold: config.restart_interval,
@@ -1091,7 +1133,17 @@ impl Solver {
             equiv_substitution: Vec::new(),
             bve_def: Vec::new(),
             bve_order: Vec::new(),
-            did_bve: false,
+            elim_mark: Vec::new(),
+            elim_mark_count: 0,
+            elim_bound: 0,
+            elim_phases: 0,
+            lim_elim: elim_interval,
+            last_elim_fixed: 0,
+            elim_finished: false,
+            elim_resolutions_total: 0,
+            last_elim_eliminated: 0,
+            elim_var_flag: Vec::new(),
+            assumptions_active: false,
             did_equiv_subst: false,
             equiv_subst_inited: false,
             interrupt: None,
@@ -1783,6 +1835,10 @@ impl Solver {
             self.unit_clauses_idx.resize(2 * self.num_vars, 0);
         }
         self.lrat_flags.resize(2 * self.num_vars, 0);
+        // Elimination state tables (candidates are marked lazily when one of
+        // their clauses is touched; the pre-search phase marks everything).
+        self.elim_mark.resize(self.num_vars, false);
+        self.elim_var_flag.resize(self.num_vars, false);
         var
     }
 
@@ -2288,53 +2344,6 @@ impl Solver {
             return SolverResult::Unsat;
         }
 
-        // Equivalent-literal substitution (SCC on the binary implication graph).
-        // Collapses binary-heavy formulas before search; a no-op (early-out)
-        // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
-        if self.config.enable_bve {
-            if self.bounded_variable_elimination() == equiv::SubstOutcome::Unsat {
-                self.drat_emit_empty(None);
-                return SolverResult::Unsat;
-            }
-            if self.trivially_unsat {
-                self.drat_emit_empty(None);
-                return SolverResult::Unsat;
-            }
-        }
-        if self.config.enable_equiv_substitution {
-            if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
-                self.drat_emit_empty(None);
-                return SolverResult::Unsat;
-            }
-            if self.trivially_unsat {
-                self.drat_emit_empty(None);
-                return SolverResult::Unsat;
-            }
-        }
-        // Forward subsumption + self-subsumption. Skipped when equivalent-
-        // literal substitution rewrote the clause database: the subsumption-
-        // after-substitution sequence has a rare (≈1/15k) wrong-model
-        // interaction still under investigation, so the two are not run
-        // together. Also skipped after BVE: running forward-subsumption over
-        // the BVE-reduced clause set (with BVE-derived units on the level-0
-        // trail) derives a spurious level-0 conflict on some SAT instances
-        // (reproduces on noL-11-14: SAT -> false UNSAT, 0 conflicts). BVE is
-        // currently off in every preset -- with the sound literal-count bound
-        // it eliminates no variables on the benchmarks tried -- so this guard
-        // is preventive, but it documents a real soundness hazard if BVE is
-        // re-enabled without also fixing the subsumption interaction.
-        if (self.config.enable_bve || self.config.enable_equiv_substitution)
-            && !self.did_equiv_subst
-            && !self.did_bve
-        {
-            self.forward_subsumption();
-            self.self_subsumption_pass();
-            if self.trivially_unsat {
-                self.drat_emit_empty(None);
-                return SolverResult::Unsat;
-            }
-        }
-
         // Lucky pre-solving (CaDiCaL `lucky_phases`): try to satisfy the
         // formula without search via a small set of structured phase guesses
         // (uniform / Horn / ordered-with-flip). On by default, matching
@@ -2349,6 +2358,70 @@ impl Solver {
                 }
                 Some(SolverResult::Unsat) => return SolverResult::Unsat,
                 _ => {}
+            }
+        }
+
+        // Bounded variable elimination (cadical `elim.cpp` port,
+        // `solver/eliminate.rs`): collapses the original clause set via
+        // resolution + interleaved subsumption rounds before search, with a
+        // growing elimination bound. Re-armed mid-search from the conflict
+        // handler whenever new units or removed/shrunken original clauses
+        // appear. Runs at level 0 / base scope only. Scheduled *after* lucky
+        // pre-solving: a lucky guess is a pure scan that answers some
+        // structured families (Simon) in microseconds, which the elimination
+        // phase would otherwise bury under seconds of occurrence-list work
+        // before the guess ever runs.
+        if self.config.enable_bve {
+            // Iterate elimination phases to a fixpoint before search
+            // (cadical's preprocessing interleaves elim/subsume rounds
+            // back-to-back; a single bound-0 phase leaves most of the
+            // collapse on the table and the mid-search schedule then waits
+            // `elim_interval * (phases + 1)` conflicts for the next one).
+            // Each completed phase grows the elimination bound and re-marks
+            // every variable, so `eliminate_phase` itself reports when
+            // another phase is worth running via `eliminating()`.
+            while self.eliminating_presearch() {
+                if self.eliminate_phase() == equiv::SubstOutcome::Unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                if self.trivially_unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                if self.elim_finished {
+                    break;
+                }
+            }
+        }
+        // Equivalent-literal substitution (SCC on the binary implication graph).
+        // Collapses binary-heavy formulas before search; a no-op (early-out)
+        // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
+        if self.config.enable_equiv_substitution {
+            if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
+        }
+        // Forward subsumption + self-subsumption for callers that ran neither
+        // elimination nor substitution (both of those already interleave their
+        // own subsumption rounds). Skipped when equivalent-literal substitution
+        // rewrote the clause database: the subsumption-after-substitution
+        // sequence has a rare (≈1/15k) wrong-model interaction still under
+        // investigation, so the two are not run together.
+        if !self.config.enable_bve
+            && (self.config.enable_equiv_substitution || self.config.enable_inprocessing)
+            && !self.did_equiv_subst
+        {
+            self.forward_subsumption();
+            self.self_subsumption_pass();
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
             }
         }
 
@@ -2432,6 +2505,23 @@ impl Solver {
             *l = self.resolve_reintroduced_literal(*l);
         }
         let assumptions = assumptions.as_slice();
+        // While this call is in flight, destructive inprocessing must not
+        // fold assumption variables out of the search (cadical freezes
+        // assumed variables). Cleared on every exit path below via the
+        // epilogue helper.
+        self.assumptions_active = true;
+        let (res, core) = self.solve_with_assumptions_inner(assumptions);
+        self.assumptions_active = false;
+        (res, core)
+    }
+
+    fn solve_with_assumptions_inner(
+        &mut self,
+        assumptions: &[Lit],
+    ) -> (SolverResult, Option<Vec<Lit>>) {
+        if self.fatal_error.is_some() {
+            return (SolverResult::Unknown, None);
+        }
         if self.trivially_unsat {
             return (SolverResult::Unsat, Some(Vec::new()));
         }

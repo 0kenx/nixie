@@ -604,6 +604,13 @@ impl Solver {
                     continue;
                 }
 
+                // Promoted clauses (learned clauses that subsumed an original
+                // – see `subsume_round`) are permanent: they carry the
+                // deletion obligation of the original they replaced.
+                if !clause.learned {
+                    continue;
+                }
+
                 // Don't delete binary clauses (very useful)
                 if clause.lits.len() <= 2 {
                     continue;
@@ -787,6 +794,23 @@ impl Solver {
             self.inprocess();
             self.conflicts_since_inprocessing = 0;
         }
+
+        // Scheduled elimination (cadical `ineliminating` → `elim ()`): runs
+        // when the elimination conflict limit has passed *and* something new
+        // happened (units fixed at level 0, or original clauses removed or
+        // shrunk – which re-marks their variables). Backtracks to the root
+        // itself; refused above decision level 0 / under a real theory /
+        // with proofs attached / in incremental scopes, exactly like the
+        // pre-search phase.
+        if self.try_scheduled_elimination() == super::equiv::SubstOutcome::Unsat {
+            // An empty resolvent was derived: the formula is UNSAT. There is
+            // no falsified clause to seed a proof chain from, so only emit
+            // the empty clause for the plain DRAT path (elimination is gated
+            // off entirely while LRAT is attached).
+            if !self.lrat {
+                self.drat_emit_empty(None);
+            }
+        }
     }
 
     /// Handle clause deletion and restart, but don't backtrack past assumptions
@@ -884,11 +908,22 @@ impl Solver {
         // (The earlier version used "any satisfied" → wrong when some but not
         //  all `A_i` are satisfied: it set v=false and violated the all-false
         //  clause.)
+        //
+        // A variable eliminated by the inprocessing eliminator with an *empty*
+        // recorded positive side (all its positive clauses were retired as
+        // satisfied before it was eliminated) defaults to `false`: that
+        // satisfies every dropped `(¬v ∨ B_j)` and the positive side was
+        // already satisfied by unconditional units.
         if !self.bve_order.is_empty() {
             for &v in self.bve_order.iter().rev() {
                 let clauses = match self.bve_def.get(v.index()) {
                     Some(c) if !c.is_empty() => c,
-                    _ => continue,
+                    _ => {
+                        if v.index() < self.model.len() {
+                            self.model[v.index()] = LBool::False;
+                        }
+                        continue;
+                    }
                 };
                 let lit_true = |l: Lit| {
                     self.model
@@ -1190,12 +1225,31 @@ impl Solver {
         let mut done = 0usize;
 
         // Snapshot candidate ids up front (vivify mutates the clause DB).
-        let candidates: SmallVec<[ClauseId; 64]> = self
+        // Learned clauses first (they drive the search), then – when no proof
+        // is attached, since an in-place strengthening is not logged as an
+        // addition/deletion pair – original clauses (cadical `vivifyirred`):
+        // vivifying the irredundant core is what collapses hard combinatorial
+        // instances (`noL-*`), where there are no learned clauses yet.
+        let mut candidates: SmallVec<[ClauseId; 64]> = self
             .learned_clause_ids
             .iter()
             .copied()
             .take(MAX_CLAUSES)
             .collect();
+        if self.proof.is_none() && !self.lrat {
+            for cid in self.clauses.iter_ids() {
+                if candidates.len() >= 2 * MAX_CLAUSES {
+                    break;
+                }
+                if self
+                    .clauses
+                    .get(cid)
+                    .is_some_and(|c| !c.deleted && !c.learned && c.lits.len() > 2)
+                {
+                    candidates.push(cid);
+                }
+            }
+        }
 
         for cid in candidates {
             if done >= MAX_CLAUSES
@@ -1258,6 +1312,9 @@ impl Solver {
         if new_lits.len() >= lits.len() || new_lits.len() < 2 {
             return false;
         }
+        // Re-arm elimination for the shrunken clause's variables (cadical
+        // marks on `shrink_clause`).
+        self.mark_elim_vars(lits.iter().copied());
         self.replace_clause_lits(cid, &new_lits);
         true
     }
@@ -1606,6 +1663,12 @@ impl Solver {
         // probe-based `strengthen_clauses_inprocessing` is subsumed by the
         // strengthening half of this round (and was capped at 50 clauses).
         let (_subsumed, _strengthened) = self.subsume_round();
+
+        // Vivification round (cadical schedules `vivify` inside its
+        // inprocessing rounds): shortens both learned and – when no proof is
+        // attached – original clauses. The shortened clauses re-arm
+        // elimination (their variables are marked in `vivify_clause`).
+        self.vivify_clauses();
 
         // Rebuild watch lists for any modified clauses
         // This is a simplified approach - in a full implementation,

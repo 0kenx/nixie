@@ -82,6 +82,16 @@ impl Solver {
                 return SolverResult::Unknown;
             }
 
+            // A mid-search inprocessing pass (elimination) can derive the
+            // empty clause without leaving a falsified clause for
+            // propagation to trip over, so poll the flag here.
+            if self.trivially_unsat {
+                if !self.lrat {
+                    self.drat_emit_empty(None);
+                }
+                return SolverResult::Unsat;
+            }
+
             // Boolean propagation
             if let Some(conflict) = self.propagate() {
                 self.stats.conflicts += 1;

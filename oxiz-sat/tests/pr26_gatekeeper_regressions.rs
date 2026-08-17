@@ -22,6 +22,10 @@ use oxiz_sat::{Lit, Solver, SolverConfig, SolverResult, Var};
 fn els_enabled_solver() -> Solver {
     Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Lucky pre-solving runs before every other pass (cadical
+        // `luckyearly`) and would answer this trivially satisfiable
+        // instance outright, so the ELS fold under test would never fire.
+        enable_lucky: false,
         ..SolverConfig::default()
     })
 }

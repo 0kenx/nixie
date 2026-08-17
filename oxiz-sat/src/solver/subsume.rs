@@ -30,8 +30,8 @@ use crate::clause::{ClauseId, ClauseTier};
 
 /// Outcome of one subsumption check of candidate `c` against connected `d`.
 enum SubCheck {
-    /// Every literal of `d` occurs in `c`: `c` is subsumed.
-    Subsumed,
+    /// Every literal of `d` occurs in `c`: `c` is subsumed by `d`.
+    Subsumed { subsumer: ClauseId },
     /// All but one literal of `d` occur in `c`, and that one occurs
     /// complemented: remove `remove` from `c` (self-subsuming resolution).
     Strengthen { remove: Lit },
@@ -132,10 +132,17 @@ impl Solver {
                 // under `l` itself encode `(¬l ∨ other)`, which cannot be a
                 // subset of `c` at all – reading them was a false-subsumption
                 // bug that deleted live clauses and flipped UNSAT to SAT.
-                for &(other, _bin_id) in self.binary_graph.get(l.negate()) {
+                for &(other, bin_id) in self.binary_graph.get(l.negate()) {
+                    // A binary-graph edge may outlive its clause (deletion
+                    // paths that don't scrub the graph). Subsuming against a
+                    // dead edge deletes live clauses on the word of a clause
+                    // the formula no longer contains.
+                    if self.clauses.get(bin_id).is_none_or(|c| c.deleted) {
+                        continue;
+                    }
                     let m = mark[other.code() as usize];
                     if m > 0 {
-                        outcome = Some(SubCheck::Subsumed);
+                        outcome = Some(SubCheck::Subsumed { subsumer: bin_id });
                         break 'candidate;
                     }
                     if m < 0 {
@@ -179,7 +186,7 @@ impl Solver {
                     }
                     match flipped {
                         None => {
-                            outcome = Some(SubCheck::Subsumed);
+                            outcome = Some(SubCheck::Subsumed { subsumer: did });
                             break 'candidate;
                         }
                         // `dl ∉ c` but `¬dl ∈ c`: strengthen by removing
@@ -204,7 +211,32 @@ impl Solver {
             }
 
             match outcome {
-                Some(SubCheck::Subsumed) => {
+                Some(SubCheck::Subsumed { subsumer }) => {
+                    // cadical `subsume_clause`: deleting an *irredundant*
+                    // (original) clause on the word of a *redundant*
+                    // (learned) subsumer is only sound if the subsumer
+                    // becomes permanent – promote it to irredundant. A
+                    // learned subsumer can otherwise die later (database
+                    // reduction, elimination of its variables), leaving the
+                    // deleted original's obligation uncovered: the final
+                    // model then violates an entailed clause and therefore
+                    // an original clause (false SAT; reproduced by
+                    // `crn_11_99_u`, where learned (57∨1101) subsumed
+                    // (37∨57∨1101) and reduction later removed it).
+                    let subsumed_learned = self.clauses.get(cid).is_some_and(|c| c.learned)
+                        && std::env::var("OXIZ_NOPROMOTE").is_err();
+                    if !subsumed_learned
+                        && let Some(s) = self.clauses.get_mut(subsumer)
+                        && s.learned
+                    {
+                        s.learned = false;
+                    }
+                    if let Some(c) = self.clauses.get(cid) {
+                        // Re-arm elimination for the variables of the removed
+                        // clause (cadical `elim_update_removed_clause`).
+                        let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
+                        self.mark_elim_vars(lits.iter().copied());
+                    }
                     if let Some(c) = self.clauses.get_mut(cid) {
                         c.deleted = true;
                     }
@@ -224,6 +256,9 @@ impl Solver {
                 Some(SubCheck::Strengthen { remove }) => {
                     let idx = lits.iter().position(|&l| l == remove);
                     if let Some(idx) = idx {
+                        // Re-arm elimination for the shrunken clause's
+                        // variables (cadical marks on `shrink_clause`).
+                        self.mark_elim_vars(lits.iter().copied());
                         self.strengthen_clause_in_subsume(cid, idx);
                         strengthened += 1;
                     }
@@ -264,7 +299,22 @@ impl Solver {
     /// learned clauses), so binary propagation keeps seeing it.
     fn strengthen_clause_in_subsume(&mut self, clause_id: ClauseId, idx: usize) {
         let len_before = self.clauses.get(clause_id).map_or(0, |c| c.lits.len());
+        let learned = self.clauses.get(clause_id).is_some_and(|c| c.learned);
         self.remove_literal_and_rewatch(clause_id, idx);
+        if learned
+            && let Some(c) = self.clauses.get_mut(clause_id)
+            && !c.deleted
+        {
+            // cadical `shrink_clause`: a shrunken redundant clause's glue is
+            // clamped to `min(size - 1, glue)` (glue only ever decreases).
+            // Without the clamp a learned clause's stale LBD can exceed its
+            // new length, tripping the LBD≤length invariant at the next
+            // consistency check.
+            let cap = (c.lits.len().saturating_sub(1).max(1)) as u32;
+            if c.lbd > cap {
+                c.lbd = cap;
+            }
+        }
         if len_before == 3
             && let Some(c) = self.clauses.get(clause_id)
             && c.lits.len() == 2
