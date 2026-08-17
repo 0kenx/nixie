@@ -112,8 +112,8 @@ pub mod sls;
 // ======== Always-available exports ========
 pub use combination::{Purifier, SharedVar, TheoryCombiner};
 pub use config::{
-    BranchingHeuristic, BvConfig, CombinationConfig, CombinationMode, LiaConfig, PivotingRule,
-    SimplexConfig, TheoryConfig,
+    BranchingHeuristic, BvConfig, CombinationConfig, CombinationMode, LiaConfig, SimplexConfig,
+    TheoryConfig,
 };
 pub use datatype::{Constructor, DatatypeDecl, DatatypeSolver, DatatypeSort, Field, Selector};
 pub use error::{ConflictInfo, ResourceLimit, SolverStats, TheoryError, TheoryResult};

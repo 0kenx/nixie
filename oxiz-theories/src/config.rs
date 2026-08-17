@@ -14,8 +14,6 @@ use core::time::Duration;
 pub struct SimplexConfig {
     /// Maximum number of pivot operations before timeout
     pub max_pivots: usize,
-    /// Pivoting rule to use
-    pub pivoting_rule: PivotingRule,
     /// Enable bound tightening optimizations
     pub enable_bound_tightening: bool,
     /// Enable coefficient normalization
@@ -25,25 +23,11 @@ pub struct SimplexConfig {
 impl Default for SimplexConfig {
     fn default() -> Self {
         Self {
-            max_pivots: 10_000,
-            pivoting_rule: PivotingRule::Bland,
+            max_pivots: 100_000,
             enable_bound_tightening: true,
             enable_normalization: true,
         }
     }
-}
-
-/// Pivoting rule for simplex algorithm
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PivotingRule {
-    /// Bland's rule (anti-cycling, guaranteed termination)
-    Bland,
-    /// Dantzig's rule (greedy, fastest for most problems)
-    Dantzig,
-    /// Steepest edge rule (sophisticated, best for hard problems)
-    SteepestEdge,
-    /// Partial pricing (check subset of candidates, faster for large problems)
-    PartialPricing,
 }
 
 /// Configuration for linear integer arithmetic solver
@@ -183,7 +167,6 @@ impl TheoryConfig {
         Self {
             simplex: SimplexConfig {
                 max_pivots: 50_000,
-                pivoting_rule: PivotingRule::Dantzig,
                 enable_bound_tightening: true,
                 enable_normalization: true,
             },
@@ -219,7 +202,6 @@ impl TheoryConfig {
         Self {
             simplex: SimplexConfig {
                 max_pivots: 1_000,
-                pivoting_rule: PivotingRule::Bland,
                 enable_bound_tightening: false,
                 enable_normalization: false,
             },
@@ -257,7 +239,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = TheoryConfig::default();
-        assert_eq!(config.simplex.max_pivots, 10_000);
+        assert_eq!(config.simplex.max_pivots, 100_000);
         assert_eq!(config.lia.max_depth, 1000);
         assert_eq!(config.combination.max_lemma_cache_size, 10_000);
     }
@@ -267,7 +249,6 @@ mod tests {
         let config = TheoryConfig::fast();
         assert_eq!(config.simplex.max_pivots, 50_000);
         assert_eq!(config.lia.max_depth, 5000);
-        assert_eq!(config.simplex.pivoting_rule, PivotingRule::Dantzig);
     }
 
     #[test]

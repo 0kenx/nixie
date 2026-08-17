@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::delta::DeltaRational;
-use crate::config::{PivotingRule, SimplexConfig};
+use crate::config::SimplexConfig;
 #[allow(unused_imports)]
 use crate::prelude::*;
 use num_rational::Rational64;
@@ -178,30 +178,126 @@ fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
     }
     a
 }
+/// Euclidean GCD on `i64` – hardware division, no software 128-bit path.
+/// `gcd_i128` above stays for the genuine wide case.
+///
+/// Uses the binary (Stein) algorithm on `u64`: the Euclidean loop's chained
+/// `idiv`s have ~40-cycle latency each and dominate the pivot loop when the
+/// tableau is rational-dense; shift/subtract iterations are a few cycles and
+/// the whole gcd runs in a fraction of the divisions' latency for the mixed
+/// magnitudes pivot coefficients take.
+fn gcd_i64(a: i64, b: i64) -> i64 {
+    let mut x = a.unsigned_abs();
+    let mut y = b.unsigned_abs();
+    if x == 0 {
+        return y as i64;
+    }
+    if y == 0 {
+        return x as i64;
+    }
+    let zx = x.trailing_zeros();
+    let zy = y.trailing_zeros();
+    x >>= zx;
+    y >>= zy;
+    let k = zx.min(zy);
+    // Both operands are odd from here on, so their difference is even and
+    // every subtraction is followed by at least one shift.
+    loop {
+        if x > y {
+            std::mem::swap(&mut x, &mut y);
+        }
+        y -= x;
+        if y == 0 {
+            return (x << k) as i64;
+        }
+        y >>= y.trailing_zeros();
+    }
+}
+
+/// Fused `x + f·y` on `Rational64` – the exact operation the pivot
+/// substitution performs per term.  The integer fast path (`f`, `y` and `x`
+/// all integral) is two checked `i64` multiplies/adds and *no gcd at all*;
+/// the general path reduces `f·y` cross-wise (GMP `mpq` shape) and adds via
+/// the least common multiple.  Semantically identical to
+/// `checked_add_r64(x, checked_mul_r64(f, y)?)?` – the fusion only removes
+/// intermediate reductions.
+/// Checked `DeltaRational · Rational64` (both components), used by the
+/// pivot's delta-propagation.  `None` on overflow – callers must re-derive
+/// rather than store a wrapped (wrong) assignment.
+fn checked_mul_delta(d: DeltaRational, c: Rational64) -> Option<DeltaRational> {
+    Some(DeltaRational {
+        real: checked_mul_r64(d.real, c)?,
+        delta: checked_mul_r64(d.delta, c)?,
+    })
+}
+
+/// Checked `DeltaRational + DeltaRational`; see [`checked_mul_delta`].
+fn checked_add_delta(a: DeltaRational, b: DeltaRational) -> Option<DeltaRational> {
+    Some(DeltaRational {
+        real: checked_add_r64(a.real, b.real)?,
+        delta: checked_add_r64(a.delta, b.delta)?,
+    })
+}
+
+fn checked_mul_add_r64(x: Rational64, f: Rational64, y: Rational64) -> Option<Rational64> {
+    if x.denom() == &1 && f.denom() == &1 && y.denom() == &1 {
+        let fy = f.numer().checked_mul(*y.numer())?;
+        return Rational64::new_raw(x.numer().checked_add(fy)?, 1).into();
+    }
+    let prod = checked_mul_r64(f, y)?;
+    checked_add_r64(x, prod)
+}
+
 /// Build a fully-reduced `Rational64` from an `i128` numerator/denominator
 /// pair, returning `None` if the reduced value does not fit back into
 /// `i64`. All of the checked-rational helpers below route through this so
 /// that a value which cannot be represented as a `Rational64` is reported
 /// as `None` (overflow) rather than silently truncated.
+///
+/// Fast path: when both components already fit in `i64` – which is the
+/// overwhelming common case, since tableau coefficients only grow past
+/// `i64` after long pivot chains – the reduction stays entirely in `i64`,
+/// whose Euclidean gcd compiles to hardware `idiv`.  Routing those through
+/// the `i128` gcd instead dominated pivot runtime on dense LIA rows
+/// (CAV_2009: ~75% of cycles in `__umodti3`/`u128_div_rem`, the software
+/// 128-bit division the `i128` gcd lowers to).
 fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
     if denom == 0 {
         return None;
     }
+    // Canonical sign first (numerator carries the sign, denominator > 0):
+    // callers such as `checked_div_r64` build the denominator from another
+    // rational's *numerator*, so negative denominators arrive here
+    // routinely, and every one of them would take the software-128-bit
+    // path even when the magnitude is tiny.
+    let (numer, denom) = if denom < 0 {
+        (-numer, -denom)
+    } else {
+        (numer, denom)
+    };
+    // Fast path when both components already fit `i64` (the common case):
+    // the reduction stays in `i64`, whose Euclidean gcd compiles to
+    // hardware division.  Routing those through the `i128` gcd instead
+    // dominated pivot runtime on dense LIA rows (the software 128-bit
+    // division it lowers to was ~75% of cycles on CAV_2009).
+    if numer >= i64::MIN as i128 && numer <= i64::MAX as i128 && denom <= i64::MAX as i128 {
+        let mut n = numer as i64;
+        let mut d = denom as i64;
+        let g = gcd_i64(n, d);
+        if g > 1 {
+            n /= g;
+            d /= g;
+        }
+        return Some(Rational64::new_raw(n, d));
+    }
     let g = gcd_i128(numer, denom);
     let g = if g == 0 { 1 } else { g };
-    let mut n = numer / g;
-    let mut d = denom / g;
-    if d < 0 {
-        n = -n;
-        d = -d;
-    }
+    let n = numer / g;
+    let d = denom / g;
     if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) || d > i64::MAX as i128 {
         return None;
     }
-    // `new_raw` (not `new`): we already reduced by `g` above and ensured
-    // `d > 0`, so the fraction is in canonical form and `new`'s second gcd
-    // pass would be pure redundant work (`reduce` was ~20% of simplex
-    // runtime).
+    // `new_raw` (not `new`): already reduced above, denominator > 0.
     Some(Rational64::new_raw(n as i64, d as i64))
 }
 /// Checked rational multiplication: `a * b`, via `i128` intermediates.
@@ -210,6 +306,30 @@ fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
 /// check for overflow: it panics in debug builds and silently wraps to a
 /// wrong coefficient in release builds).
 fn checked_mul_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    // Cross-wise pre-reduction (the classic exact-rational multiply, as in
+    // GMP's `mpq_mul`): cancel gcd(an, bd) and gcd(bn, ad) BEFORE the two
+    // multiplies.  The raw cross-products then stay inside `i64` far longer
+    // – with denominators around 10⁹ the naive product already exceeds
+    // `i64` and every multiply fell into the software-128-bit path (47% of
+    // all pivot rationals on CAV_2009), while the reduced products fit.
+    // Every division is exact (by the gcd), so the result is identical up
+    // to the final `new_raw` canonical form; any overflow falls through to
+    // the `i128` general path.
+    let (mut an, mut ad) = (*a.numer(), *a.denom());
+    let (mut bn, mut bd) = (*b.numer(), *b.denom());
+    let g1 = gcd_i64(an, bd);
+    if g1 > 1 {
+        an /= g1;
+        bd /= g1;
+    }
+    let g2 = gcd_i64(bn, ad);
+    if g2 > 1 {
+        bn /= g2;
+        ad /= g2;
+    }
+    if let (Some(n), Some(d)) = (an.checked_mul(bn), ad.checked_mul(bd)) {
+        return Some(Rational64::new_raw(n, d));
+    }
     let numer = (*a.numer() as i128).checked_mul(*b.numer() as i128)?;
     let denom = (*a.denom() as i128).checked_mul(*b.denom() as i128)?;
     checked_ratio_i128(numer, denom)
@@ -226,6 +346,41 @@ fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
 }
 /// Checked rational addition: `a + b`. Returns `None` on overflow.
 fn checked_add_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    // Integer fast path: plain checked `i64` add.
+    if a.denom() == &1 && b.denom() == &1 {
+        return Rational64::new_raw(a.numer().checked_add(*b.numer())?, 1).into();
+    }
+    // Same-denominator fast path: add numerators, keep the denominator.
+    if a.denom() == b.denom() {
+        let numer = a.numer().checked_add(*b.numer())?;
+        let denom = *a.denom();
+        return if denom == 1 {
+            Rational64::new_raw(numer, 1).into()
+        } else {
+            checked_ratio_i128(numer as i128, denom as i128)
+        };
+    }
+    // Least-common-multiple denominators (GMP `mpq_add` shape): scale each
+    // numerator by `lcm/dᵢ` instead of cross-multiplying by the *other*
+    // denominator, so the common case (one denominator divides the other)
+    // needs no product at all and the general case needs products around
+    // `lcm`, not `d₁·d₂`.
+    let (d1, d2) = (*a.denom(), *b.denom());
+    let g = gcd_i64(d1, d2);
+    let l2 = d2 / g;
+    let l1 = d1 / g;
+    if let (Some(s1), Some(s2), Some(denom)) = (
+        a.numer().checked_mul(l2),
+        b.numer().checked_mul(l1),
+        d1.checked_mul(l2),
+    ) && let Some(numer) = s1.checked_add(s2)
+    {
+        let gr = gcd_i64(numer, denom);
+        if gr > 1 {
+            return Some(Rational64::new_raw(numer / gr, denom / gr));
+        }
+        return Some(Rational64::new_raw(numer, denom));
+    }
     let ad = (*a.numer() as i128).checked_mul(*b.denom() as i128)?;
     let cb = (*b.numer() as i128).checked_mul(*a.denom() as i128)?;
     let numer = ad.checked_add(cb)?;
@@ -320,6 +475,34 @@ impl LinExpr {
     /// `false` (leaving `self` unmodified) if the merged coefficient would
     /// not fit back into a `Rational64`, instead of silently wrapping.
     #[must_use]
+    /// Fused `+= f·coef` for one term: avoids materialising `f·coef` as a
+    /// reduced intermediate before adding it to the (possibly absent) existing
+    /// entry.  On integral tableaus (fresh LIA rows) this is plain `i64`
+    /// multiply-add with zero gcds.
+    fn try_add_term_mul(&mut self, var: VarId, f: Rational64, coef: Rational64) -> bool {
+        if coef.is_zero() {
+            return true;
+        }
+        for (v, c) in &mut self.terms {
+            if *v == var {
+                let Some(sum) = checked_mul_add_r64(*c, f, coef) else {
+                    return false;
+                };
+                *c = sum;
+                if c.is_zero() {
+                    self.terms.retain(|(v, _)| *v != var);
+                }
+                return true;
+            }
+        }
+        // Term absent: just f·coef.
+        let Some(prod) = checked_mul_r64(f, coef) else {
+            return false;
+        };
+        self.terms.push((var, prod));
+        true
+    }
+
     fn try_add_term(&mut self, var: VarId, coef: Rational64) -> bool {
         if coef.is_zero() {
             return true;
@@ -413,7 +596,7 @@ pub struct Bound {
 }
 impl Bound {
     /// Iterate over every reason (primary + auxiliary) backing this bound.
-    fn all_reasons(&self) -> impl Iterator<Item = u32> + '_ {
+    pub(super) fn all_reasons(&self) -> impl Iterator<Item = u32> + '_ {
         core::iter::once(self.reason).chain(self.aux_reasons.iter().copied())
     }
 }
@@ -519,7 +702,6 @@ pub struct Simplex {
     /// accumulates trailed bounds/rows needs no full-tableau clone.
     saved_tableaux: Vec<Option<TableauSnapshot>>,
     /// Pivoting rule to use
-    pivoting_rule: PivotingRule,
     /// Maximum number of pivot operations before giving up
     max_pivots: usize,
     /// Set to `true` when the most recent `check()`/`dual_simplex()` aborted
@@ -572,7 +754,6 @@ impl Simplex {
             trail_limits: vec![0],
             cached_assignments: Vec::new(),
             saved_tableaux: Vec::new(),
-            pivoting_rule: config.pivoting_rule,
             max_pivots: config.max_pivots,
             resource_limit: false,
             assignment_current: true,
@@ -697,15 +878,6 @@ impl Simplex {
     #[must_use]
     pub fn resource_limit_reached(&self) -> bool {
         self.resource_limit
-    }
-    /// Set the pivoting rule
-    pub fn set_pivoting_rule(&mut self, rule: PivotingRule) {
-        self.pivoting_rule = rule;
-    }
-    /// Get the current pivoting rule
-    #[must_use]
-    pub fn pivoting_rule(&self) -> PivotingRule {
-        self.pivoting_rule
     }
     /// Grow every per-variable parallel array by exactly one slot, in
     /// lockstep, and return the new (non-basic) variable's id.
@@ -959,6 +1131,23 @@ impl Simplex {
         // bound `slack <= 0`.
         let slack = self.intern_row_cached(&expr);
         self.set_upper(slack, Rational64::zero(), reason);
+    }
+
+    /// Add a constraint `expr <= 0` justified by a *set* of reasons (the
+    /// antecedent atoms whose conjunction implies it – e.g. a Gomory cut
+    /// derived from several asserted bounds).  Any conflict the constraint
+    /// participates in explains back to the full set, never to just one.
+    pub fn add_le_with_reasons(
+        &mut self,
+        expr: LinExpr,
+        reasons: SmallVec<[u32; 4]>,
+    ) -> Option<VarId> {
+        if reasons.is_empty() {
+            return None;
+        }
+        let slack = self.intern_row_cached(&expr);
+        self.set_upper_delta(slack, DeltaRational::zero(), reasons);
+        Some(slack)
     }
 
     /// [`Self::intern_row`] with content addressing: two calls with the same
@@ -1215,7 +1404,8 @@ impl Simplex {
             self.crash_basis();
             self.assignment_current = true;
         }
-        self.make_feasible()
+        let r = self.make_feasible();
+        r
     }
     /// Crash basis initialization for faster convergence
     ///
@@ -1256,6 +1446,16 @@ impl Simplex {
         // immediately before this, and `make_feasible` is private with no other
         // caller – so recomputing again here was a redundant full pass on every
         // theory check.
+        //
+        // Degeneration control (Z3 `lp_primal_core_solver`,
+        // `one_iteration_tableau_rows`): when the same leaving variable has
+        // left the basis more than `BLAND_MODE_THRESHOLD` times in this
+        // feasibility pass, switch the entering-variable rule to Bland's for
+        // the rest of the pass.  Bland's rule guarantees termination, so the
+        // pass can never pivot forever on a degenerate vertex.
+        const BLAND_MODE_THRESHOLD: u32 = 1000;
+        let mut left_basis_count: FxHashMap<VarId, u32> = FxHashMap::default();
+        let mut bland_mode = false;
         for _ in 0..self.max_pivots {
             let violating = self.find_violating();
             if violating.is_none() {
@@ -1263,7 +1463,18 @@ impl Simplex {
             }
             let (basic_var, bound) =
                 violating.expect("violating basic variable must exist after is_none check");
-            let pivot_col = self.find_pivot_col(basic_var, &bound);
+            if !bland_mode {
+                let repeats = left_basis_count.entry(basic_var).or_insert(0);
+                *repeats += 1;
+                if *repeats > BLAND_MODE_THRESHOLD {
+                    bland_mode = true;
+                }
+            }
+            let pivot_col = if bland_mode {
+                self.find_bland_pivot_col(basic_var, &bound)
+            } else {
+                self.find_pivot_col(basic_var, &bound)
+            };
             match pivot_col {
                 Some(nonbasic_var) => {
                     #[cfg(feature = "std")]
@@ -1279,6 +1490,30 @@ impl Simplex {
         }
         self.resource_limit = true;
         Ok(())
+    }
+
+    /// Bland's-rule entering choice: the smallest-indexed eligible non-basic
+    /// variable in the leaving variable's row (termination-guaranteed).
+    fn find_bland_pivot_col(&self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
+        let expr = self.tableau.get(&basic_var)?;
+        let mut best_var: Option<VarId> = None;
+        for (var, coef) in &expr.terms {
+            let eligible = match bound.kind {
+                BoundType::Lower => {
+                    (*coef > Rational64::zero() && self.can_increase(*var))
+                        || (*coef < Rational64::zero() && self.can_decrease(*var))
+                }
+                BoundType::Upper => {
+                    (*coef < Rational64::zero() && self.can_increase(*var))
+                        || (*coef > Rational64::zero() && self.can_decrease(*var))
+                }
+                _ => false,
+            };
+            if eligible && best_var.is_none_or(|cur| *var < cur) {
+                best_var = Some(*var);
+            }
+        }
+        best_var
     }
     /// Dual Simplex: Restore primal feasibility while maintaining dual feasibility
     ///
@@ -1378,165 +1613,101 @@ impl Simplex {
         best_var
     }
     /// Find a basic variable that violates its bounds
+    /// Find the smallest-indexed basic variable violating a bound.
+    ///
+    /// Z3's `find_smallest_inf_column` (see
+    /// `lp_primal_core_solver.h::one_iteration_tableau_rows`): the leaving
+    /// variable is the *smallest-indexed* infeasible basic column, so the
+    /// pivot sequence is deterministic (independent of hash iteration order)
+    /// and degenerate repeats are easy to detect for the Bland-mode switch.
     fn find_violating(&self) -> Option<(VarId, Bound)> {
+        let mut worst: Option<(VarId, Bound)> = None;
         for var in self.tableau.keys() {
             let idx = *var as usize;
             let val = self.assignment[idx];
-            if let Some(lo) = &self.lower[idx]
+            let viol = if let Some(lo) = &self.lower[idx]
                 && val < lo.value
             {
-                return Some((*var, lo.clone()));
-            }
-            if let Some(hi) = &self.upper[idx]
+                Some(lo.clone())
+            } else if let Some(hi) = &self.upper[idx]
                 && val > hi.value
             {
-                return Some((*var, hi.clone()));
+                Some(hi.clone())
+            } else {
+                None
+            };
+            if let Some(bound) = viol
+                && worst.as_ref().is_none_or(|(v, _)| *var < *v)
+            {
+                worst = Some((*var, bound));
             }
         }
-        None
+        worst
     }
-    /// Find a non-basic variable to pivot with using the configured pivoting rule
+    /// Find the entering (non-basic) variable for one feasibility pivot.
+    ///
+    /// Z3's `find_beneficial_entering_tableau_rows`
+    /// (`lp_primal_core_solver.h`): among the eligible non-basic variables in
+    /// the leaving variable's row, prefer the one that keeps the tableau
+    /// sparse – score by (number of *non-free* basic dependents, column
+    /// length), minimum wins, ties broken by the smaller variable id.  Short
+    /// columns make every later pivot touch fewer rows, and non-free (bounded)
+    /// dependents cannot absorb arbitrary value changes, so entering a column
+    /// full of them immediately recreates infeasibility elsewhere.
     fn find_pivot_col(&self, basic_var: VarId, bound: &Bound) -> Option<VarId> {
         let expr = self.tableau.get(&basic_var)?;
-        match self.pivoting_rule {
-            PivotingRule::Bland => {
-                let mut best_var = None;
-                for (var, coef) in &expr.terms {
-                    let can_increase = self.can_increase(*var);
-                    let can_decrease = self.can_decrease(*var);
-                    let is_eligible = match bound.kind {
-                        BoundType::Lower => {
-                            (*coef > Rational64::zero() && can_increase)
-                                || (*coef < Rational64::zero() && can_decrease)
-                        }
-                        BoundType::Upper => {
-                            (*coef < Rational64::zero() && can_increase)
-                                || (*coef > Rational64::zero() && can_decrease)
-                        }
-                        _ => false,
-                    };
-                    if is_eligible {
-                        best_var = match best_var {
-                            None => Some(*var),
-                            Some(current) if *var < current => Some(*var),
-                            Some(current) => Some(current),
-                        };
-                    }
+        // (non-free dependents, column length, variable) – smaller is better.
+        let mut best: Option<(usize, usize, VarId)> = None;
+        for (var, coef) in &expr.terms {
+            let is_eligible = match bound.kind {
+                BoundType::Lower => {
+                    (*coef > Rational64::zero() && self.can_increase(*var))
+                        || (*coef < Rational64::zero() && self.can_decrease(*var))
                 }
-                best_var
+                BoundType::Upper => {
+                    (*coef < Rational64::zero() && self.can_increase(*var))
+                        || (*coef > Rational64::zero() && self.can_decrease(*var))
+                }
+                _ => false,
+            };
+            if !is_eligible {
+                continue;
             }
-            PivotingRule::Dantzig => {
-                let mut best_var = None;
-                let mut best_improvement = Rational64::zero();
-                for (var, coef) in &expr.terms {
-                    let can_increase = self.can_increase(*var);
-                    let can_decrease = self.can_decrease(*var);
-                    let improvement = match bound.kind {
-                        BoundType::Lower if *coef > Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Lower if *coef < Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef < Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef > Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        _ => Rational64::zero(),
-                    };
-                    if improvement > best_improvement {
-                        best_improvement = improvement;
-                        best_var = Some(*var);
-                    }
-                }
-                best_var
-            }
-            PivotingRule::SteepestEdge => {
-                let mut best_var = None;
-                let mut best_score = Rational64::zero();
-                for (var, coef) in &expr.terms {
-                    let can_increase = self.can_increase(*var);
-                    let can_decrease = self.can_decrease(*var);
-                    let score = match bound.kind {
-                        BoundType::Lower if *coef > Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Lower if *coef < Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef < Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef > Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        _ => Rational64::zero(),
-                    };
-                    if score > best_score {
-                        best_score = score;
-                        best_var = Some(*var);
-                    }
-                }
-                best_var
-            }
-            PivotingRule::PartialPricing => {
-                const SAMPLE_RATE: usize = 4;
-                let mut best_var = None;
-                let mut best_improvement = Rational64::zero();
-                let mut count = 0;
-                for (var, coef) in &expr.terms {
-                    count += 1;
-                    if count % SAMPLE_RATE != 0 {
-                        continue;
-                    }
-                    let can_increase = self.can_increase(*var);
-                    let can_decrease = self.can_decrease(*var);
-                    let improvement = match bound.kind {
-                        BoundType::Lower if *coef > Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Lower if *coef < Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef < Rational64::zero() && can_increase => {
-                            coef.abs()
-                        }
-                        BoundType::Upper if *coef > Rational64::zero() && can_decrease => {
-                            coef.abs()
-                        }
-                        _ => Rational64::zero(),
-                    };
-                    if improvement > best_improvement {
-                        best_improvement = improvement;
-                        best_var = Some(*var);
-                    }
-                }
-                if best_var.is_none() {
-                    for (var, coef) in &expr.terms {
-                        let can_increase = self.can_increase(*var);
-                        let can_decrease = self.can_decrease(*var);
-                        let is_eligible = match bound.kind {
-                            BoundType::Lower => {
-                                (*coef > Rational64::zero() && can_increase)
-                                    || (*coef < Rational64::zero() && can_decrease)
-                            }
-                            BoundType::Upper => {
-                                (*coef < Rational64::zero() && can_increase)
-                                    || (*coef > Rational64::zero() && can_decrease)
-                            }
-                            _ => false,
-                        };
-                        if is_eligible {
-                            return Some(*var);
-                        }
-                    }
-                }
-                best_var
+            let non_free_deps = self.num_nonfree_basic_dependents(*var, best.map(|b| b.0));
+            let col_len = self.columns.get(var).map_or(0usize, |c| c.len());
+            let better =
+                best.is_none_or(|(bd, bl, bv)| (non_free_deps, col_len, *var) < (bd, bl, bv));
+            if better {
+                best = Some((non_free_deps, col_len, *var));
             }
         }
+        best.map(|(_, _, v)| v)
     }
+
+    /// Number of *non-free* basic variables (capped at `cap + 1`) whose
+    /// tableau rows reference `var` – Z3's
+    /// `get_num_of_not_free_basic_dependent_vars`.  "Non-free" = carries at
+    /// least one finite bound; a free basic dependent absorbs any value
+    /// change without becoming infeasible, so it does not count against the
+    /// candidate.
+    fn num_nonfree_basic_dependents(&self, var: VarId, cap: Option<usize>) -> usize {
+        let Some(col) = self.columns.get(&var) else {
+            return 0;
+        };
+        let limit = cap.map_or(usize::MAX, |c| c.saturating_add(1));
+        let mut count = 0usize;
+        for &row in col.iter() {
+            let idx = row as usize;
+            if idx < self.lower.len() && (self.lower[idx].is_some() || self.upper[idx].is_some()) {
+                count += 1;
+                if count >= limit {
+                    break;
+                }
+            }
+        }
+        count
+    }
+
     /// Check if a variable can be increased
     #[inline]
     pub(super) fn can_increase(&self, var: VarId) -> bool {
@@ -1654,11 +1825,7 @@ impl Simplex {
                 };
                 new_row.constant = sum;
                 for (v, c) in &new_expr.terms {
-                    let Some(term_c) = checked_mul_r64(sc, *c) else {
-                        self.resource_limit = true;
-                        return false;
-                    };
-                    if !new_row.try_add_term(*v, term_c) {
+                    if !new_row.try_add_term_mul(*v, sc, *c) {
                         self.resource_limit = true;
                         return false;
                     }
@@ -1675,8 +1842,9 @@ impl Simplex {
         // (`row_updates`).  Recomputing every basic – as the old full
         // `update_assignment()` did – was pure waste and the dominant cost:
         // ~40-52% of QF_UFLIA runtime was `Ratio::mul`/`reduce` driven by that
-        // per-pivot full re-evaluation.  This computes identical values.
+        // per-pivot full re-evaluation.
         let leaving = basic_var as usize;
+        let mut snap_delta: Option<DeltaRational> = None;
         if leaving < self.assignment.len() {
             // Snap the now-nonbasic leaving var to a bound, matching
             // `update_assignment`'s lower-preferred rule.
@@ -1692,6 +1860,10 @@ impl Simplex {
                         .map(|b| b.value)
                 });
             if let Some(v) = snapped {
+                let old = self.assignment[leaving];
+                if v != old {
+                    snap_delta = Some(v - old);
+                }
                 self.assignment[leaving] = v;
             }
         }
@@ -1701,14 +1873,48 @@ impl Simplex {
         {
             self.assignment[entering] = v;
         }
-        // Recompute assignments for the edited rows' basic variables (the
-        // entering variable's own row is handled by `new_expr` below).
-        for (var, new_row) in &row_updates {
-            let vi = *var as usize;
-            if vi < self.assignment.len()
-                && let Some(v) = self.eval_expr(new_row)
-            {
-                self.assignment[vi] = v;
+        // Update the edited rows' basic variables by DELTA propagation
+        // instead of re-evaluating each row.  A substituted row is the same
+        // linear function of the same original variables, so at the pre-snap
+        // point its value is unchanged; the only input that moved is the
+        // snapped `basic_var`, so `value += Δ · coef(basic_var in new_row)` –
+        // one multiply-add per row – reproduces `eval_expr(new_row)` exactly
+        // (exact rationals: no rounding) at a fraction of the pivots' cost
+        // (the full re-evaluation was the top arithmetic consumer on dense
+        // CAV/QF_LIA rows).
+        if let Some(delta) = snap_delta {
+            for (var, new_row) in &row_updates {
+                let vi = *var as usize;
+                if vi >= self.assignment.len() {
+                    continue;
+                }
+                if let Some(coef) = new_row
+                    .terms
+                    .iter()
+                    .find(|(v, _)| *v == basic_var)
+                    .map(|(_, c)| *c)
+                {
+                    // Checked delta arithmetic: a silent overflow here would
+                    // corrupt every later decision built on this assignment.
+                    if let Some(d) = checked_mul_delta(delta, coef)
+                        && let Some(sum) = checked_add_delta(self.assignment[vi], d)
+                    {
+                        #[cfg(debug_assertions)]
+                        {
+                            let want = self.eval_expr(new_row);
+                            debug_assert!(
+                                want.is_none_or(|w| w == sum),
+                                "delta propagation mismatch: delta={delta:?} coef={coef:?} got={sum:?} want={want:?}"
+                            );
+                        }
+                        self.assignment[vi] = sum;
+                    } else {
+                        // Overflow: refuse to guess a value.  Mark the
+                        // assignment stale so the next `check()` re-derives
+                        // everything from the tableau.
+                        self.assignment_current = false;
+                    }
+                }
             }
         }
 
@@ -2278,6 +2484,18 @@ impl Simplex {
                 .find(|(v, _)| *v == nonbasic)
                 .map(|(_, c)| *c)
         })
+    }
+    /// Full lower bound (with reasons) for variable at `idx`, if any.
+    /// Used by the Gomory-cut generator, which needs the bound's *reasons*
+    /// to justify the cut as a consequence of the asserted atoms.
+    #[inline]
+    pub(super) fn bound_lower_at(&self, idx: usize) -> Option<&Bound> {
+        self.lower.get(idx).and_then(|b| b.as_ref())
+    }
+    /// Full upper bound (with reasons); see [`Self::bound_lower_at`].
+    #[inline]
+    pub(super) fn bound_upper_at(&self, idx: usize) -> Option<&Bound> {
+        self.upper.get(idx).and_then(|b| b.as_ref())
     }
     /// Real part of the upper bound for variable at `idx`, if any.
     #[inline]

@@ -1230,21 +1230,28 @@ impl<'a> TheoryManager<'a> {
             if members.len() < 2 {
                 continue;
             }
-            for i in 0..members.len() {
-                for j in (i + 1)..members.len() {
-                    let (mut t1, mut t2) = (members[i], members[j]);
-                    if t1 > t2 {
-                        std::mem::swap(&mut t1, &mut t2);
-                    }
-                    if !dedup.insert((t1, t2)) {
-                        continue;
-                    }
-                    // EUF has derived t1 = t2 (same class). Assert the equality
-                    // into the arithmetic solver.  (Batched: no per-equality
-                    // solve; the caller runs one check after this pass, and
-                    // the row's reason ids carry precise attribution.)
-                    self.assert_explained_equality(t1, t2);
+            // Representative chain, not all pairs: every member is asserted
+            // equal to the FIRST member, which transitively equates the whole
+            // class in the tableau (t_i − t_0 = 0 pins every t_i to t_0).
+            // Asserting all C(k,2) pairs instead built C(k,2) permanent rows
+            // per class – on class-heavy inputs (bofill/cmodels scheduling,
+            // where one EUF class can hold hundreds of arith terms) that
+            // ballooned the tableau past 100k rows for a ~250-constraint
+            // problem and every pivot/check walked it all.
+            let rep = members[0];
+            for &member in &members[1..] {
+                let (mut t1, mut t2) = (rep, member);
+                if t1 > t2 {
+                    std::mem::swap(&mut t1, &mut t2);
                 }
+                if !dedup.insert((t1, t2)) {
+                    continue;
+                }
+                // EUF has derived t1 = t2 (same class). Assert the equality
+                // into the arithmetic solver.  (Batched: no per-equality
+                // solve; the caller runs one check after this pass, and
+                // the row's reason ids carry precise attribution.)
+                self.assert_explained_equality(t1, t2);
             }
         }
 

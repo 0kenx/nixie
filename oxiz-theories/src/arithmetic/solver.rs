@@ -121,6 +121,24 @@ pub struct ArithSolver {
     /// Undo trail for `prop_lower`/`prop_upper`, with a `Scope` marker pushed
     /// at every `push()` and replayed at every `pop()`.
     prop_undo: Vec<PropBoundUndo>,
+    /// Variables known to take integer values in every model: the Int-sorted
+    /// terms (all interned terms in LIA mode) plus row slacks whose defining
+    /// linear form is integral over integer variables.  Drives Gomory-cut
+    /// integrality and the branch-and-bound variable scan; treating a genuine
+    /// integer variable as continuous only weakens cuts (sound), so slacks of
+    /// non-integral form are simply absent from this set.
+    int_vars: FxHashSet<VarId>,
+    /// Real-atom reason ids seen in any LP conflict during the current
+    /// branch-and-bound / cut search.  When the search refutes the integer
+    /// problem, this set (not the full reason list) is the unsat core: each
+    /// leaf's Farkas certificate names the atoms whose bounds made that
+    /// branch's relaxation infeasible, the split disjunctions
+    /// `x ≤ k ∨ x ≥ k+1` are integer tautologies that need no reason, and a
+    /// completed tree therefore proves `used_atoms ⊢ no integer solution`.
+    /// Tighter than [`Self::full_unsat_core`] (which cites every atom),
+    /// which made CDCL learn trivially-true clauses and re-derive the same
+    /// refutation thousands of times on conjunction-shaped input (rings).
+    bnb_used_reasons: FxHashSet<u32>,
 }
 
 /// A linear equality over the integers: `sum(coeff_i · var_i) = rhs`.
@@ -158,6 +176,14 @@ enum PropCmp {
 
 /// One directional expression bound paired with the atoms that justify it.
 type ExplainedBound = Option<(DeltaRational, Vec<TermId>)>;
+
+/// Reason id marking a branch-and-bound case-split bound (`x ≤ k` / `x ≥ k+1`
+/// inside [`ArithSolver::bnb_recurse`]).  It names no asserted atom: the split
+/// is an integer tautology, so a conflict citing it stays valid when the
+/// marker is dropped from the core.  `u32::MAX` can never collide with a real
+/// `add_reason` id (bounded by `reasons.len()`), so every reason-id → term
+/// mapping safely yields `None` for it.
+const BRANCH_REASON: u32 = u32::MAX;
 
 /// Outcome of exploring a single branch-and-bound child node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,7 +224,7 @@ impl ArithSolver {
     /// Create a new arithmetic solver
     #[must_use]
     pub fn new(is_integer: bool) -> Self {
-        Self {
+        let mut solver = Self {
             simplex: Simplex::new(),
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
@@ -213,7 +239,11 @@ impl ArithSolver {
             prop_lower: Vec::new(),
             prop_upper: Vec::new(),
             prop_undo: Vec::new(),
-        }
+            int_vars: FxHashSet::default(),
+            bnb_used_reasons: FxHashSet::default(),
+        };
+
+        solver
     }
 
     /// Create a new LRA solver
@@ -310,9 +340,22 @@ impl ArithSolver {
     /// keyed by `key`, interning the row on the first request.
     ///
     /// Every assertion of an atom over a linear form – either polarity, any
-    /// decision level, any number of SAT re-sends – shares ONE row via this
-    /// cache and differs only in the bounds it sets on the slack.  Entries
-    /// are retracted by `pop` (before the simplex recycles their VarIds).
+    /// decision level, any number of SAT re-sends – shares ONE row and
+    /// differs only in the (trailed, pop-rewound) bound it sets on the slack.
+    /// This is Z3's `lar_solver` row representation: the tableau is indexed
+    /// by *distinct linear forms*, not by assertion events.  Sharing is
+    /// content-addressed (the normalized `LinExpr` passed to
+    /// [`Simplex::intern_row_cached`], whose `LinKey` is the canonical form
+    /// with zero coefficients dropped), NOT keyed by TermId: two atoms over
+    /// the same form really do constrain the same row, so a cache hit can
+    /// never import a foreign constraint.
+    ///
+    /// (The historical TermId-keyed cache mentioned below was unsound for a
+    /// different reason – it reused a slack *by atom identity* across scopes
+    /// whose bounds had been popped, so the row carried stale side
+    /// conditions.  Content addressing cannot do that: the row is a pure
+    /// definition `slack = form`, and only the caller's own trailed bound
+    /// ever constrains it.)
     fn cached_row_slack(
         &mut self,
         key: &RowKey,
@@ -320,13 +363,6 @@ impl ArithSolver {
         rhs: Rational64,
         equality: bool,
     ) -> VarId {
-        // NOTE: the TermId-keyed cache is deliberately DISABLED (lookup
-        // removed): same-scope reuse of a slack across different atoms over
-        // the same form produced a spurious refutation on nested
-        // Array+LIA differential instances (see the regression test in
-        // `combined_theories_integration`).  The simplex-level content
-        // cache (`Simplex::intern_row_cached`) still deduplicates the
-        // probe/BNB scratch rows, which was the unbounded-growth culprit.
         let _ = key;
         let mut expr = LinExpr::new();
         for &(term, coef) in lhs {
@@ -341,7 +377,12 @@ impl ArithSolver {
         } else {
             self.normalize_ineq_expr(&mut expr);
         }
-        self.simplex.intern_row(expr)
+        let integral = self.is_integer && self.is_integral_form(&expr);
+        let slack = self.simplex.intern_row_cached(&expr);
+        if integral {
+            self.int_vars.insert(slack);
+        }
+        slack
     }
 
     /// Like [`Self::cached_row_slack`] for strict comparisons: no
@@ -362,7 +403,8 @@ impl ArithSolver {
             expr.add_term(var, coef);
         }
         expr.add_constant(-rhs);
-        self.simplex.intern_row(expr)
+        let slack = self.simplex.intern_row_cached(&expr);
+        slack
     }
 
     /// Intern a term as a variable
@@ -372,9 +414,27 @@ impl ArithSolver {
         }
 
         let var = self.simplex.new_var();
+        // In LIA mode every interned term is Int-sorted, so every term
+        // variable is integer-valued in every model.  The Gomory-cut
+        // generator's integrality test and the branch-variable scan rely on
+        // this set containing them.
+        if self.is_integer {
+            self.int_vars.insert(var);
+        }
         self.term_to_var.insert(term, var);
         self.var_to_term.push(term);
         var
+    }
+
+    /// Whether `expr` is integer-valued in every model: integer constant,
+    /// integer coefficients and every referenced variable known-integer.
+    /// Used to decide whether a fresh row slack is an integer variable.
+    fn is_integral_form(&self, expr: &LinExpr) -> bool {
+        expr.constant.denom() == &1
+            && expr
+                .terms
+                .iter()
+                .all(|(v, c)| c.denom() == &1 && self.int_vars.contains(v))
     }
 
     /// Add a reason and return its ID
@@ -1130,10 +1190,24 @@ impl ArithSolver {
     }
 
     /// Maximum branch-and-bound tree depth for the LIA integrality search.
-    const LIA_MAX_DEPTH: usize = 512;
+    const LIA_MAX_DEPTH: usize = 4096;
     /// Maximum number of branch-and-bound nodes explored before giving up
     /// (returning `Unknown`).  Bounds worst-case exponential search.
     const LIA_MAX_NODES: usize = 20_000;
+    /// Gomory (GMI) cut rounds run at the root of the branch-and-bound
+    /// search before branching starts.  Each round re-solves the LP and
+    /// derives cuts from still-fractional integer basic rows (Z3's
+    /// `theory_arith_int` interleaves `mk_gomory_cut` with the branch
+    /// search the same way).
+    const LIA_MAX_CUT_ROUNDS: usize = 24;
+    /// Per-round cap on cuts: each cut adds a permanent row to the tableau
+    /// for the rest of this B&B search, so a flood of weak cuts costs more
+    /// pivot work than it saves.
+    const LIA_MAX_CUTS_PER_ROUND: usize = 16;
+    /// Coefficient magnitude guard for cuts: numerators/denominators beyond
+    /// this would blow up every later pivot on the cut row, so the cut is
+    /// skipped (branch-and-bound alone remains sound and complete).
+    const LIA_CUT_MAX_DENOM: i64 = 1_000_000;
 
     /// Collect the simplex variable ids of all interned (Int) terms, sorted for
     /// deterministic branching order.  Slack variables are excluded – we only
@@ -1149,15 +1223,70 @@ impl ArithSolver {
         vars
     }
 
-    /// Find the first interned Int variable whose current LP value is fractional.
+    /// Find the interned Int variable to branch on: the fractional one with
+    /// the smallest bound range (Z3's `find_bounded_infeasible_int_base_var`
+    /// – the tightest box closes fastest, and on tool-generated bounded
+    /// problems like `rings` it is the difference between closing the tree
+    /// and never finishing), falling back to the first fractional variable
+    /// when no fractional variable is bounded.
     fn find_fractional_int_var(&self, int_vars: &[VarId]) -> Option<(VarId, Rational64)> {
+        let mut best: Option<(VarId, Rational64)> = None;
+        let mut best_range: Option<Rational64> = None;
         for &var in int_vars {
             let val = self.simplex.value(var);
-            if !val.is_integer() {
-                return Some((var, val));
+            if val.is_integer() {
+                continue;
+            }
+            let idx = var as usize;
+            let lo = self.simplex.lower_real_at(idx);
+            let hi = self.simplex.upper_real_at(idx);
+            match (lo, hi) {
+                (Some(lo), Some(hi)) => {
+                    let range = hi - lo;
+                    if best_range.is_none_or(|r| range < r) {
+                        best_range = Some(range);
+                        best = Some((var, val));
+                    }
+                }
+                _ => {
+                    if best.is_none() {
+                        best = Some((var, val));
+                    }
+                }
             }
         }
-        None
+        best
+    }
+
+    /// Record the real-atom reasons of one LP conflict from the search tree
+    /// ([`BRANCH_REASON`] marks a case-split bound and carries no atom).
+    fn note_bnb_conflict_reasons(&mut self, reasons: &[u32]) {
+        for &r in reasons {
+            if r != BRANCH_REASON {
+                self.bnb_used_reasons.insert(r);
+            }
+        }
+    }
+
+    /// The branch-and-bound unsat core: the collected conflict atoms, falling
+    /// back to the full reason set only when nothing was collected (defensive:
+    /// an over-approximate core is sound, an empty one is not).
+    fn bnb_unsat_core(&self) -> Vec<TermId> {
+        if self.bnb_used_reasons.is_empty() {
+            return self.full_unsat_core();
+        }
+        let mut terms: Vec<TermId> = self
+            .bnb_used_reasons
+            .iter()
+            .filter_map(|&r| self.reasons.get(r as usize).copied())
+            .collect();
+        terms.sort_unstable();
+        terms.dedup();
+        if terms.is_empty() {
+            self.full_unsat_core()
+        } else {
+            terms
+        }
     }
 
     /// Build a sound (over-approximate) unsat core: every assertion reason known
@@ -1165,7 +1294,14 @@ impl ArithSolver {
     /// full conjunction of asserted constraints is genuinely inconsistent, so
     /// returning all of them is a valid (if imprecise) conflict explanation.
     fn full_unsat_core(&self) -> Vec<TermId> {
-        let mut terms = self.reasons.clone();
+        // Index 0 is the reserved \"no external reason\" dummy (see
+        // [`Self::new`]); it names no atom and must never enter a core.
+        let mut terms: Vec<TermId> = self
+            .reasons
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &t)| if i == 0 { None } else { Some(t) })
+            .collect();
         terms.sort_unstable();
         terms.dedup();
         terms
@@ -1298,32 +1434,33 @@ impl ArithSolver {
         false
     }
 
-    /// Entry point for the LIA integrality search (branch-and-bound).
+    /// Entry point for the LIA integrality search (cuts + branch-and-bound).
     ///
     /// Precondition: the LP relaxation is feasible and not resource-limited.
+    /// All live bounds are asserted-atom bounds at entry (branch bounds exist
+    /// only inside [`Self::bnb_recurse`]'s scopes), so Gomory cuts derived
+    /// here are valid for the entire search and their reasons are real atoms.
+    /// Everything the search adds – cut rows and branch bounds – lives inside
+    /// ONE simplex scope popped before returning, so nothing leaks past this
+    /// theory check into a different atom assignment (where a cut would be
+    /// unsound).
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
-        // Branch-and-bound first.  It is the common path: on saturated integer
-        // inputs the LP optimum is almost always already integral, so B&B exits
-        // at its first node (`find_fractional_int_var` returns `None`) and
-        // reports `Sat` without ever touching the equality system.
-        let int_vars = self.interned_int_vars();
-        let mut nodes: usize = 0;
-        let result = self.bnb_recurse(&int_vars, 0, &mut nodes)?;
+        self.simplex.push();
+        let result = self.lia_cuts_then_bnb()?;
+        self.simplex.pop();
         match result {
             TheoryResult::Unknown => {}
             other => return Ok(other),
         }
-        // B&B gave up (unbounded variables, or its node/depth budget).  Try the
-        // sound Diophantine parity check as a fallback: it resolves the
-        // cross-constraint integer-infeasibility that branch-and-bound over
-        // unbounded variables cannot (e.g. `y = 2x ∧ y = 2z + 1`), converting a
-        // would-be `Unknown` into a proven `Unsat`.  It only ever strengthens
-        // (never weakens) the verdict, so running it here instead of ahead of
-        // B&B is sound – and it avoids re-running an O(rows·cols) fraction-free
-        // Gaussian elimination on every theory check when B&B already decided.
-        // The check is a pure function of `int_equalities`, so its result is
-        // memoised in `int_eq_infeasible_cache` (invalidated only when an
-        // equality is asserted or retracted by `pop`).
+        // The search gave up (unbounded variables, or its node/depth budget).
+        // Try the sound Diophantine parity check as a fallback: it resolves
+        // the cross-constraint integer-infeasibility that branch-and-bound
+        // over unbounded variables cannot (e.g. `y = 2x ∧ y = 2z + 1`),
+        // converting a would-be `Unknown` into a proven `Unsat`.  It only
+        // ever strengthens (never weakens) the verdict.  The check is a pure
+        // function of `int_equalities`, so its result is memoised in
+        // `int_eq_infeasible_cache` (invalidated only when an equality is
+        // asserted or retracted by `pop`).
         let infeasible = match self.int_eq_infeasible_cache {
             Some(v) => v,
             None => {
@@ -1336,6 +1473,203 @@ impl ArithSolver {
             return Ok(TheoryResult::Unsat(self.full_unsat_core()));
         }
         Ok(TheoryResult::Unknown)
+    }
+
+    /// Gomory-cut rounds, then branch-and-bound, inside the caller's scope.
+    fn lia_cuts_then_bnb(&mut self) -> Result<TheoryResult> {
+        self.bnb_used_reasons.clear();
+        for _ in 0..Self::LIA_MAX_CUT_ROUNDS {
+            // Re-solve after the previous round's cuts.
+            match self.simplex.check() {
+                Ok(()) => {
+                    if self.simplex.resource_limit_reached() {
+                        return Ok(TheoryResult::Unknown);
+                    }
+                }
+                // The cuts alone refuted the current atom assignment.  The
+                // conflict's reasons (which include the cut's own reason
+                // sets) are the precise core.
+                Err(reasons) => {
+                    self.note_bnb_conflict_reasons(&reasons);
+                    return Ok(TheoryResult::Unsat(self.bnb_unsat_core()));
+                }
+            }
+            let int_vars = self.interned_int_vars();
+            if self.find_fractional_int_var(&int_vars).is_none() {
+                // Cuts closed the integrality gap outright.
+                self.snapshot_lia_model(&int_vars);
+                return Ok(TheoryResult::Sat);
+            }
+            // Derive cuts from fractional integer basic rows.
+            let mut candidates: Vec<VarId> = self
+                .simplex
+                .tableau_keys()
+                .filter(|v| self.int_vars.contains(v) && !self.simplex.value(*v).is_integer())
+                .collect();
+            candidates.sort_unstable();
+            let mut added = 0usize;
+            for var in candidates {
+                if added >= Self::LIA_MAX_CUTS_PER_ROUND {
+                    break;
+                }
+                if let Some((cut, reasons)) = self.gomory_cut(var)
+                    && self.simplex.add_le_with_reasons(cut, reasons).is_some()
+                {
+                    added += 1;
+                }
+            }
+            if added == 0 {
+                break; // no (more) derivable cuts: fall through to B&B
+            }
+        }
+        // Branch-and-bound over the (cut-tightened) relaxation.  It is the
+        // common exit on saturated integer inputs: the LP optimum is already
+        // integral and B&B stops at its first node.
+        let int_vars = self.interned_int_vars();
+        let mut nodes: usize = 0;
+        self.bnb_recurse(&int_vars, 0, &mut nodes)
+    }
+
+    /// Generate a Gomory mixed-integer (GMI) cut from the tableau row of the
+    /// fractional integer basic variable `var`.
+    ///
+    /// Port of Z3 `theory_arith_int::mk_gomory_cut` (and this crate's
+    /// `lia::cuts::tableau_row_cut`, which documents the same derivation):
+    /// rewrite the row
+    ///
+    /// ```text
+    /// x_B = x̄_B + Σ_j â_j · y_j ,   y_j = x_j − l_j ≥ 0 (resting at a lower bound)
+    ///                                  y_j = u_j − x_j ≥ 0 (resting at an upper bound)
+    /// ```
+    ///
+    /// with `f0 = frac(x̄_B) ∈ (0,1)` and emit the valid inequality
+    /// `Σ_j γ_j·y_j ≥ 1`: for integer `y_j` (integer variable resting at an
+    /// integer bound) with `f_j = frac(−â_j)`, `γ_j = f_j/f0` if `f_j ≤ f0`
+    /// else `γ_j = (1−f_j)/(1−f0)`; for continuous `y_j` with `ā_j = −â_j`,
+    /// `γ_j = −ā_j/f0` if `ā_j ≥ 0` else `γ_j = ā_j/(1−f0)`.  The returned
+    /// `LinExpr` encodes the cut in the `C ≤ 0` convention of
+    /// [`Simplex::add_le_with_reasons`], together with the reason ids of
+    /// every bound the derivation consumed – the cut is a consequence of
+    /// exactly those asserted atoms (the row itself is a slack *definition*
+    /// and carries no assertion).
+    ///
+    /// Returns `None` when no sound root-scoped cut is derivable: `var` not
+    /// a fractional integer basic variable; a row variable resting at no
+    /// finite bound; any involved bound being a branch bound (reason 0 –
+    /// such a cut is only valid inside that branch); a coefficient exceeding
+    /// [`Self::LIA_CUT_MAX_DENOM`]; or an empty polynomial.
+    fn gomory_cut(&self, var: VarId) -> Option<(LinExpr, SmallVec<[u32; 4]>)> {
+        if !self.int_vars.contains(&var) {
+            return None;
+        }
+        if !self.simplex.is_basic(var as usize) {
+            return None;
+        }
+        let bar = self.simplex.value(var);
+        let f0 = bar - bar.floor();
+        if f0.is_zero() {
+            return None; // integral value: nothing to cut
+        }
+
+        let row = self
+            .simplex
+            .tableau_iter()
+            .find(|(v, _)| **v == var)
+            .map(|(_, e)| e.clone())?;
+        if row.terms.is_empty() {
+            return None;
+        }
+
+        let one = Rational64::one();
+        let one_minus_f0 = one - f0;
+        let mut reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let mut cut = LinExpr::new();
+        // `Σ γ_j y_j ≥ 1`  ⟺  `R − Σ c_j x_j ≤ 0` with `c_j = ±γ_j` (sign per
+        // resting side) and `R = 1 + Σ γ_j·(± bound)`.
+        let mut rhs = one;
+
+        for (xj, a_j) in &row.terms {
+            let xj = *xj;
+            let a_j = *a_j;
+            if a_j.is_zero() {
+                continue;
+            }
+            let j = xj as usize;
+            let vj = self.simplex.value(xj);
+            let lo = self.simplex.bound_lower_at(j);
+            let hi = self.simplex.bound_upper_at(j);
+            // Which finite bound the non-basic rests at (needed to form the
+            // non-negative slack y_j).  Resting at none ⇒ no sound cut.
+            let (at_lower, bound) = if lo.is_some_and(|b| b.value.real == vj) {
+                (true, lo)
+            } else if hi.is_some_and(|b| b.value.real == vj) {
+                (false, hi)
+            } else {
+                return None;
+            };
+            let bound = bound?;
+            // Branch bounds carry [`BRANCH_REASON`] (no external
+            // justification): a cut using one is only valid inside that
+            // branch, never at the root where cuts are asserted.
+            if bound.reason == BRANCH_REASON {
+                return None;
+            }
+            for r in bound.all_reasons() {
+                if r == BRANCH_REASON {
+                    return None;
+                }
+                if !reasons.contains(&r) {
+                    reasons.push(r);
+                }
+            }
+
+            // Stored row orientation: x_B = x̄_B + Σ â_j y_j with â_j = a_j at
+            // a lower bound and â_j = −a_j at an upper bound; the canonical
+            // GMI coefficient formulas use ā_j = −â_j.
+            let hat_a = if at_lower { a_j } else { -a_j };
+            let bar_a = -hat_a;
+
+            let is_int_here = self.int_vars.contains(&xj) && bound.value.real.is_integer();
+            let gamma = if is_int_here {
+                let fj = bar_a - bar_a.floor();
+                if fj.is_zero() {
+                    continue; // γ_j = 0: the term drops out of the cut
+                }
+                if fj <= f0 {
+                    fj / f0
+                } else {
+                    (one - fj) / one_minus_f0
+                }
+            } else if bar_a >= Rational64::zero() {
+                -bar_a / f0
+            } else {
+                hat_a / one_minus_f0
+            };
+            if gamma.is_zero() {
+                continue;
+            }
+            // Coefficient guard: huge cut coefficients poison every later
+            // pivot on the cut row.
+            if gamma.denom().abs() > Self::LIA_CUT_MAX_DENOM
+                || gamma.numer().abs() > Self::LIA_CUT_MAX_DENOM
+            {
+                return None;
+            }
+
+            if at_lower {
+                cut.add_term(xj, -gamma);
+                rhs += gamma * bound.value.real;
+            } else {
+                cut.add_term(xj, gamma);
+                rhs -= gamma * bound.value.real;
+            }
+        }
+
+        if cut.terms.is_empty() {
+            return None;
+        }
+        cut.add_constant(rhs);
+        Some((cut, reasons))
     }
 
     /// Recursive branch-and-bound over integer variables.
@@ -1381,7 +1715,7 @@ impl ArithSolver {
 
         // Branch down: var <= floor(value).
         self.simplex.push();
-        self.simplex.set_upper(var, floor_v, 0);
+        self.simplex.set_upper(var, floor_v, BRANCH_REASON);
         let down = self.explore_branch(int_vars, depth, nodes)?;
         self.simplex.pop();
         match down {
@@ -1392,7 +1726,7 @@ impl ArithSolver {
 
         // Branch up: var >= ceil(value).
         self.simplex.push();
-        self.simplex.set_lower(var, ceil_v, 0);
+        self.simplex.set_lower(var, ceil_v, BRANCH_REASON);
         let up = self.explore_branch(int_vars, depth, nodes)?;
         self.simplex.pop();
         match up {
@@ -1407,7 +1741,7 @@ impl ArithSolver {
         if saw_unknown {
             Ok(TheoryResult::Unknown)
         } else {
-            Ok(TheoryResult::Unsat(self.full_unsat_core()))
+            Ok(TheoryResult::Unsat(self.bnb_unsat_core()))
         }
     }
 
@@ -1434,8 +1768,12 @@ impl ArithSolver {
                     })
                 }
             }
-            // LP infeasible on this branch: a proven dead end.
-            Err(_) => Ok(BranchOutcome::Infeasible),
+            // LP infeasible on this branch: a proven dead end.  Record the
+            // conflict's atom reasons – they feed the tree-level unsat core.
+            Err(reasons) => {
+                self.note_bnb_conflict_reasons(&reasons);
+                Ok(BranchOutcome::Infeasible)
+            }
         }
     }
 
