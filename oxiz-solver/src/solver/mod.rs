@@ -2701,6 +2701,7 @@ impl Solver {
 }
 
 mod branch_priority;
+mod bv_preprocess;
 mod dispatch_pure_bv;
 #[cfg(test)]
 mod scope_rebase_tests;

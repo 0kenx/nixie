@@ -243,10 +243,18 @@ impl Parser<'_> {
         let outer = PARSE_DEPTH.with(Cell::get);
         let _restore = DepthReset(outer);
         let mut frames: Vec<Frame> = Vec::new();
+        // Count of `Frame::Op` entries in `frames`, maintained incrementally.
+        // Recomputing it per token (the old `frame_depth(&frames)` scan)
+        // made parsing O(depth²) in the frame count – minutes on deeply
+        // nested industrial asserts (e.g. `tacas07/BBB-32`, thousands of
+        // nested `and`/`or` levels) that spent ~25% of solve time just
+        // counting frames.  Semantics are identical: the value equals
+        // `frame_depth(&frames)` at every point it is read.
+        let mut op_depth: u32 = 0;
 
         loop {
             // ======== read one operand ========
-            let depth = outer.saturating_add(frame_depth(&frames)).saturating_add(1);
+            let depth = outer.saturating_add(op_depth).saturating_add(1);
             if depth > MAX_PARSE_DEPTH {
                 return Err(OxizError::ParseError {
                     position: self.lexer.position(),
@@ -267,6 +275,9 @@ impl Parser<'_> {
                 TokenKind::LParen => match self.open_compound()? {
                     Opened::Value(term) => term,
                     Opened::Frame(frame) => {
+                        if matches!(frame, Frame::Op { .. }) {
+                            op_depth = op_depth.saturating_add(1);
+                        }
                         frames.push(frame);
                         continue;
                     }
@@ -276,7 +287,7 @@ impl Parser<'_> {
 
             // ======== hand it to the innermost pending frame ========
             loop {
-                PARSE_DEPTH.with(|d| d.set(outer.saturating_add(frame_depth(&frames))));
+                PARSE_DEPTH.with(|d| d.set(outer.saturating_add(op_depth)));
                 let Some(top) = frames.last_mut() else {
                     return Ok(value);
                 };
@@ -286,6 +297,9 @@ impl Parser<'_> {
                 let Some(frame) = frames.pop() else {
                     break;
                 };
+                if matches!(frame, Frame::Op { .. }) {
+                    op_depth = op_depth.saturating_sub(1);
+                }
                 value = self.close_frame(frame)?;
             }
         }
@@ -1415,13 +1429,6 @@ impl Parser<'_> {
 /// earlier bindings, which chain the DAG – is charged exactly where it is
 /// built, by [`Parser::charge_binding_depth`] at binding completion (the
 /// same mechanism that closes the analogous `define-fun`-inlining hole).
-fn frame_depth(frames: &[Frame]) -> u32 {
-    frames
-        .iter()
-        .filter(|f| matches!(f, Frame::Op { .. }))
-        .count() as u32
-}
-
 /// Spell an indexed identifier the way it is recorded in a generic `Apply`.
 fn indexed_display_name(name: &str, indices: &[String]) -> String {
     if indices.is_empty() {

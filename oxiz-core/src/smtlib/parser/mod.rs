@@ -455,6 +455,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_nary_left_associative_bv_operators() {
+        // SMT-LIB 2.6 declares `bvadd`/`bvmul`/`concat`/… `:left-associative`,
+        // and Z3 accepts `(bvadd a b c)` / the arity-1 identity `(bvadd x)`.
+        // This regressed as "expected ')', found …" parse errors on every
+        // three-or-more-operand application (e.g. UltimateAutomizer's
+        // `cohencu.c_4`).
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-fun a () (_ BitVec 8))
+            (declare-fun b () (_ BitVec 8))
+            (declare-fun c () (_ BitVec 8))
+            (declare-fun y () (_ BitVec 8))
+            (assert (= y (bvadd (_ bv7 8) a (bvmul (_ bv9 8) a))))
+            (assert (= y (bvadd a)))
+            (assert (= y (concat a b c)))
+            (assert (= y (bvand a b c)))
+            (assert (= y (bvudiv a b c)))
+            (assert (let ((_cse0 (bvmul (_ bv3 8) a)))
+              (= y (bvadd (_ bv7 8) _cse0 (bvmul (_ bv9 8) a)))))
+            (check-sat)
+        "#;
+        let commands = parse_script(script, &mut manager).expect("n-ary bv operators must parse");
+        assert_eq!(commands.len(), 12);
+    }
+
+    #[test]
+    fn test_parse_bv_comparison_arity_stays_binary() {
+        // BV comparisons are plain binary in Z3 (not chainable), so a
+        // three-operand `bvult` is an arity error.
+        let mut manager = TermManager::new();
+        let script = "
+            (set-logic QF_BV)
+            (declare-fun a () (_ BitVec 8))
+            (declare-fun b () (_ BitVec 8))
+            (declare-fun c () (_ BitVec 8))
+            (assert (bvult a b c))
+        ";
+        assert!(parse_script(script, &mut manager).is_err());
+    }
+
+    #[test]
     fn test_parse_constants() {
         let mut manager = TermManager::new();
 

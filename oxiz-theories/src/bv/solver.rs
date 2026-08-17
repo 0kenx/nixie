@@ -786,18 +786,99 @@ impl BvSolver {
                 }
             }
             TermKind::Eq(lhs, rhs) => {
-                // Operands are pre-bit-blasted by the caller; `out <=> AND_i
-                // (lhs[i] <=> rhs[i])`, encoded flat (4 clauses per bit, no
-                // intermediate XNOR/AND gate chain): the gate chain cost 9
-                // clauses per bit, which on wide-vector equality families
-                // (bruttomesso `ext_con`: 256 192-bit equalities) multiplied
-                // the circuit by ~2 against the whole rest of the formula.
-                self.encode_eq_node(lhs, rhs)?
+                // Bool-sorted operands compare truth values (not bit-blasted
+                // vectors); BV-sorted operands are pre-bit-blasted by the
+                // caller and take the flat per-bit encoder below.
+                let lhs_bool = manager
+                    .get(lhs)
+                    .is_some_and(|t| t.sort == manager.sorts.bool_sort);
+                if lhs_bool {
+                    let lv = self.encode_bool_node(lhs, manager)?;
+                    let rv = self.encode_bool_node(rhs, manager)?;
+                    let out = self.sat.new_var();
+                    // v <=> (l ↔ r) = ¬(l ⊕ r), folded on constants.
+                    let xored = self.gate_xor(self.sig(lv), self.sig(rv));
+                    let folded = self.gate_not(xored);
+                    self.wire(out, folded);
+                    out
+                } else {
+                    self.encode_eq_node(lhs, rhs)?
+                }
             }
             TermKind::BvUlt(lhs, rhs) => self.bool_ult(lhs, rhs, manager, false)?,
             TermKind::BvUle(lhs, rhs) => self.bool_ule(lhs, rhs, manager, false)?,
             TermKind::BvSlt(lhs, rhs) => self.bool_ult(lhs, rhs, manager, true)?,
             TermKind::BvSle(lhs, rhs) => self.bool_ule(lhs, rhs, manager, true)?,
+            TermKind::Xor(a, b) => {
+                // Boolean XOR through the folding gate: `v <=> a ⊕ b`.
+                let av = self.encode_bool_node(a, manager)?;
+                let bv = self.encode_bool_node(b, manager)?;
+                let out = self.sat.new_var();
+                let folded = self.gate_xor(self.sig(av), self.sig(bv));
+                self.wire(out, folded);
+                out
+            }
+            TermKind::Implies(a, b) => {
+                // `v <=> (¬a ∨ b)`, through the folding gates so constant
+                // operands collapse instead of emitting dead clauses.
+                let av = self.encode_bool_node(a, manager)?;
+                let bv = self.encode_bool_node(b, manager)?;
+                let out = self.sat.new_var();
+                let negated = self.gate_not(self.sig(av));
+                let folded = self.gate_or(negated, self.sig(bv));
+                self.wire(out, folded);
+                out
+            }
+            TermKind::Ite(cond, t, e) => {
+                // Bool-sorted `ite`: a mux over the two branch truth values.
+                let cv = self.encode_bool_node(cond, manager)?;
+                let tv = self.encode_bool_node(t, manager)?;
+                let ev = self.encode_bool_node(e, manager)?;
+                let out = self.sat.new_var();
+                let folded = self.gate_mux(self.sig(cv), self.sig(tv), self.sig(ev));
+                self.wire(out, folded);
+                out
+            }
+            TermKind::Distinct(ref args) => {
+                // `distinct(a_1..a_n)` over bit-vector or Bool operands:
+                // the conjunction of pairwise disequalities, each obtained by
+                // negating the flat equality encoder (Z3's `blast_distinct`).
+                // The n² pairs stay finite: `distinct` arity is bounded by the
+                // input's own breadth.
+                if args.len() < 2 {
+                    // Degenerate `distinct` is vacuously true (and of one
+                    // argument, true by definition).
+                    let v = self.sat.new_var();
+                    self.sat.add_clause([Lit::pos(v)]);
+                    v
+                } else {
+                    let mut pair_lits: SmallVec<[Var; 8]> = SmallVec::new();
+                    for i in 0..args.len() {
+                        for j in (i + 1)..args.len() {
+                            let eq_var = self.encode_eq_node(args[i], args[j])?;
+                            let ne_var = self.sat.new_var();
+                            self.encode_not(ne_var, eq_var);
+                            pair_lits.push(ne_var);
+                        }
+                    }
+                    let mut acc: Option<Var> = None;
+                    for pv in pair_lits {
+                        acc = Some(match acc {
+                            None => pv,
+                            Some(prev) => {
+                                let v = self.sat.new_var();
+                                self.encode_and(v, prev, pv);
+                                v
+                            }
+                        });
+                    }
+                    acc.unwrap_or_else(|| {
+                        let v = self.sat.new_var();
+                        self.sat.add_clause([Lit::pos(v)]);
+                        v
+                    })
+                }
+            }
             _ => return None,
         };
         self.bool_node.insert(term, out);

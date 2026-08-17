@@ -32,8 +32,7 @@ use num_rational::Rational64;
 /// mode – are *not* listed here: their heads need work at open time, so
 /// `Parser::open_compound` handles them before consulting this table.
 pub(super) fn operand_plan(op: &str) -> Option<Plan> {
-    let plan =
-        match op {
+    let plan = match op {
             // ======== one operand ========
             "not" | "abs" | "to_real" | "to_int" | "is_int" | "bvnot" | "bvneg" | "fp.isNormal"
             | "fp.isSubnormal" | "fp.isZero" | "fp.isInfinite" | "fp.isNaN" | "fp.isNegative"
@@ -43,10 +42,14 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "re.opt" | "re.comp" => Plan::Fixed(1),
 
             // ======== two operands ========
-            "mod" | "select" | "bvand" | "bvor" | "bvadd" | "bvsub" | "bvmul" | "bvult"
-            | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvxor"
-            | "bvnand" | "bvnor" | "bvxnor" | "bvcomp" | "bvsmod" | "bvudiv" | "bvsdiv"
-            | "bvurem" | "bvsrem" | "bvshl" | "bvlshr" | "bvashr" | "concat" | "fp.rem"
+            // (Bit-vector operators marked `:left-associative` by the
+            // SMT-LIB 2.6 `FixedSizeBitVectors` theory are listed under the
+            // variadic plans below instead, so `(bvadd a b c)` parses as the
+            // standard's left fold `bvadd(bvadd(a, b), c)` — exactly Z3's
+            // behaviour, including the `(bvadd x)` arity-1 identity.)
+            "mod" | "select" | "bvult"
+            | "bvslt" | "bvule" | "bvsle" | "bvugt" | "bvsgt" | "bvuge" | "bvsge" | "bvcomp"
+            | "fp.rem"
             | "fp.eq" | "fp.lt" | "fp.gt" | "fp.leq" | "fp.geq" | "fp.min" | "fp.max"
             | "str.at" | "str.contains" | "str.prefixof" | "str.suffixof" | "str.in_re"
             | "str.in.re" | "re.diff" | "re.range" => Plan::Fixed(2),
@@ -58,7 +61,29 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // ======== operands until the closing paren ========
             "and" | "or" | "=>" | "xor" | "=" | "distinct" | "+" | "-" | "*" | "div" | "/"
             | "<" | "<=" | ">" | ">=" | "str.++" | "str.<" | "str.<=" | "re.++" | "re.union"
-            | "re.inter" => Plan::Variadic,
+            | "re.inter"
+            // `:left-associative` bit-vector operators (SMT-LIB 2.6
+            // `FixedSizeBitVectors`): `(bvadd a b c)` folds to
+            // `bvadd(bvadd(a, b), c)`; a one-argument application is the
+            // identity, matching Z3.
+            | "bvand"
+            | "bvor"
+            | "bvnand"
+            | "bvnor"
+            | "bvxor"
+            | "bvxnor"
+            | "bvadd"
+            | "bvsub"
+            | "bvmul"
+            | "bvudiv"
+            | "bvurem"
+            | "bvsdiv"
+            | "bvsrem"
+            | "bvsmod"
+            | "bvshl"
+            | "bvlshr"
+            | "bvashr"
+            | "concat" => Plan::Variadic,
 
             _ => return None,
         };
@@ -433,6 +458,29 @@ impl Parser<'_> {
     /// 100 000-deep term while `MAX_PARSE_DEPTH` reported it as depth 2.
     pub(super) fn build_variadic(&mut self, op: &str, args: &[TermId]) -> Result<TermId> {
         let term = match op {
+            // `:left-associative` bit-vector operators (SMT-LIB 2.6):
+            // `(op a)` is the identity and `(op a b c)` folds pairwise as
+            // `(op (op a b) c)`.  Each fold step goes through
+            // [`Parser::build_binary`], so the per-pair width rule for
+            // same-width operators and the `bvugt`/`bvuge` rewrites apply at
+            // every level exactly as they do for the two-operand spelling.
+            "bvand" | "bvor" | "bvnand" | "bvnor" | "bvxor" | "bvxnor" | "bvadd" | "bvsub"
+            | "bvmul" | "bvudiv" | "bvurem" | "bvsdiv" | "bvsrem" | "bvsmod" | "bvshl"
+            | "bvlshr" | "bvashr" | "concat" => {
+                let Some((&first, rest)) = args.split_first() else {
+                    return Err(self.min_arity_err(op, 1, 0));
+                };
+                if rest.is_empty() {
+                    // `(bvadd x)` / `(concat x)` are the identity, as in Z3.
+                    return Ok(first);
+                }
+                self.charge_fold_depth(chain_depth(args.len(), 1))?;
+                let mut result = first;
+                for &next in rest {
+                    result = self.build_binary(op, result, next)?;
+                }
+                result
+            }
             "and" => self.manager.mk_and(args.iter().copied()),
             "or" => self.manager.mk_or(args.iter().copied()),
             "distinct" => self.manager.mk_distinct(args.iter().copied()),
@@ -640,11 +688,6 @@ mod tests {
         // Fixed(2)
         "mod",
         "select",
-        "bvand",
-        "bvor",
-        "bvadd",
-        "bvsub",
-        "bvmul",
         "bvult",
         "bvslt",
         "bvule",
@@ -653,20 +696,7 @@ mod tests {
         "bvsgt",
         "bvuge",
         "bvsge",
-        "bvxor",
-        "bvnand",
-        "bvnor",
-        "bvxnor",
         "bvcomp",
-        "bvsmod",
-        "bvudiv",
-        "bvsdiv",
-        "bvurem",
-        "bvsrem",
-        "bvshl",
-        "bvlshr",
-        "bvashr",
-        "concat",
         "fp.rem",
         "fp.eq",
         "fp.lt",
@@ -715,6 +745,25 @@ mod tests {
         "re.++",
         "re.union",
         "re.inter",
+        // Variadic, `:left-associative` bit-vector operators
+        "bvand",
+        "bvor",
+        "bvnand",
+        "bvnor",
+        "bvxor",
+        "bvxnor",
+        "bvadd",
+        "bvsub",
+        "bvmul",
+        "bvudiv",
+        "bvurem",
+        "bvsdiv",
+        "bvsrem",
+        "bvsmod",
+        "bvshl",
+        "bvlshr",
+        "bvashr",
+        "concat",
     ];
 
     /// The floating-point operators whose head consumes a rounding mode, with

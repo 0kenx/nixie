@@ -28,7 +28,45 @@ use crate::prelude::FxHashSet;
 /// `false` immediately without blasting anything further.  `done` skips a
 /// boolean sub-term that already succeeded, so a shared sub-condition of the
 /// hash-consed DAG is blasted once instead of once per path.
+/// Bit-blast the two operands of a BV comparison, giving each a free bit
+/// vector when its circuit cannot be built (the comparison still constrains
+/// those bits through its own encoding).
+///
+/// Returns `false` only when an operand is not bit-vector sorted at all.
+fn blast_comparison_operands(
+    bv: &mut BvSolver,
+    lhs: TermId,
+    rhs: TermId,
+    mgr: &TermManager,
+) -> bool {
+    let mut encoded: FxHashSet<TermId> = FxHashSet::default();
+    let mut blast_one = |bv: &mut BvSolver, t: TermId| -> bool {
+        if encode_bv_term_recursive(bv, t, mgr, &mut encoded) {
+            return true;
+        }
+        if let Some(w) = mgr
+            .get(t)
+            .and_then(|td| mgr.sorts.get(td.sort))
+            .and_then(|s| s.bitvec_width())
+        {
+            bv.new_bv(t, w);
+            true
+        } else {
+            false
+        }
+    };
+    blast_one(bv, lhs) && blast_one(bv, rhs)
+}
+
 fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -> bool {
+    // A bit-vector-sorted *root* is malformed SMT-LIB (an `ite` condition is
+    // Bool), and "supporting" it would be unsound: `bv_ite` encodes the
+    // selector through `encode_bool_node`, which has no Boolean reading of a
+    // bit-vector term and would silently skip the mux, leaving the result as
+    // free bits.  Refuse up front; the dispatch then falls back.
+    if bv_width(mgr, cond).is_some() {
+        return false;
+    }
     let mut done: FxHashSet<TermId> = FxHashSet::default();
     let mut stack: Vec<TermId> = vec![cond];
     while let Some(cond) = stack.pop() {
@@ -44,43 +82,60 @@ fn bit_blast_cond_operands(bv: &mut BvSolver, cond: TermId, mgr: &TermManager) -
             TermKind::And(args) | TermKind::Or(args) => {
                 stack.extend(args.iter().rev().copied());
             }
+            // The remaining boolean connectives the eager QF_BV path accepts
+            // (`Xor`, `Implies`, bool-`ite`, `distinct`): descend like the
+            // ones above so an `ite` condition built from them (ubiquitous in
+            // `2018-Mann`-style encodings: `(ite (xor p (=> q r)) #b1 #b0)`)
+            // does not silently abort the blast.
+            TermKind::Xor(a, b) | TermKind::Implies(a, b) => {
+                stack.push(*b);
+                stack.push(*a);
+            }
+            TermKind::Ite(c, t, e) => {
+                stack.push(*e);
+                stack.push(*t);
+                stack.push(*c);
+            }
+            TermKind::Distinct(args) => {
+                stack.extend(args.iter().rev().copied());
+            }
             // Comparison/equality leaves: their operands are BV terms.
-            TermKind::Eq(lhs, rhs)
-            | TermKind::BvUlt(lhs, rhs)
+            // A Bool-sorted `=` has no BV operands – it is a leaf here (its
+            // truth value is encoded by `encode_bool_node`, not by bits).
+            TermKind::Eq(lhs, rhs) => {
+                let lhs_is_bool = mgr.get(*lhs).is_some_and(|t| t.sort == mgr.sorts.bool_sort);
+                if lhs_is_bool {
+                    stack.push(*lhs);
+                    stack.push(*rhs);
+                } else if !blast_comparison_operands(bv, *lhs, *rhs, mgr) {
+                    return false;
+                }
+            }
+            TermKind::BvUlt(lhs, rhs)
             | TermKind::BvUle(lhs, rhs)
             | TermKind::BvSlt(lhs, rhs)
             | TermKind::BvSle(lhs, rhs) => {
-                let mut encoded: FxHashSet<TermId> = FxHashSet::default();
-                let lhs_ok = encode_bv_term_recursive(bv, *lhs, mgr, &mut encoded) || {
-                    if let Some(w) = mgr
-                        .get(*lhs)
-                        .and_then(|t| mgr.sorts.get(t.sort))
-                        .and_then(|s| s.bitvec_width())
-                    {
-                        bv.new_bv(*lhs, w);
-                        true
-                    } else {
-                        false
-                    }
-                };
-                let rhs_ok = encode_bv_term_recursive(bv, *rhs, mgr, &mut encoded) || {
-                    if let Some(w) = mgr
-                        .get(*rhs)
-                        .and_then(|t| mgr.sorts.get(t.sort))
-                        .and_then(|s| s.bitvec_width())
-                    {
-                        bv.new_bv(*rhs, w);
-                        true
-                    } else {
-                        false
-                    }
-                };
-                if !(lhs_ok && rhs_ok) {
+                if !blast_comparison_operands(bv, *lhs, *rhs, mgr) {
                     return false;
                 }
             }
             // A bare boolean variable / constant has no BV operands to blast.
             TermKind::Var(_) | TermKind::True | TermKind::False => {}
+            // A bit-vector-sorted *leaf* of the Boolean condition structure
+            // (e.g. an operand of `distinct`, or a comparison operand this
+            // walk reached through mixed shapes): blast its bits so the
+            // condition's own `encode_bool_node` encoding (which reads those
+            // bits through its comparison/equality encoders) is complete.
+            // The root-cond case is refused above, so this arm only ever
+            // sees operands, never the selector itself.
+            _ if bv_width(mgr, cond).is_some() => {
+                let mut encoded: FxHashSet<TermId> = FxHashSet::default();
+                if !encode_bv_term_recursive(bv, cond, mgr, &mut encoded)
+                    && let Some(w) = bv_width(mgr, cond)
+                {
+                    bv.new_bv(cond, w);
+                }
+            }
             // Anything else is outside the supported condition fragment.
             _ => return false,
         }
@@ -168,12 +223,16 @@ pub(super) fn encode_bv_term_recursive(
 
         let term = match mgr.get(tid) {
             Some(t) => t,
-            None => return false,
+            None => {
+                return false;
+            }
         };
 
         let width = match mgr.sorts.get(term.sort).and_then(|s| s.bitvec_width()) {
             Some(w) => w,
-            None => return false,
+            None => {
+                return false;
+            }
         };
 
         if !children_done {

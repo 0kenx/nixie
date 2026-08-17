@@ -2,7 +2,6 @@
 
 use super::*;
 use smallvec::SmallVec;
-use std::time::Instant;
 
 /// How many materialized theory-reason clauses mark a "propagation storm"
 /// workload, after which further theory propagations keep lazy explanations
@@ -1153,14 +1152,17 @@ impl Solver {
     /// prefix. If a later literal of the clause is forced true during the
     /// prefix assignment, the clause (prefix ∨ that-literal) is implied.
     /// Soundness-preserving: the replacement clause is always a consequence of
-    /// the formula. Bounded by a wall-clock budget and a clause count.
+    /// the formula. Bounded by a deterministic propagation-step budget and a
+    /// clause count – *not* wall-clock: a clock-based policy input makes the
+    /// solver nondeterministic under load (breaking `run_parity.sh`
+    /// reproduction) and burned ~11% of solve time on `clock_gettime` calls.
     pub(super) fn vivify_clauses(&mut self) {
         if self.trail.decision_level() != 0 {
             return;
         }
-        const TIME_BUDGET_MS: u128 = 200;
+        const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
-        let t0 = Instant::now();
+        let start_props = self.stats.propagations;
         let mut done = 0usize;
 
         // Snapshot candidate ids up front (vivify mutates the clause DB).
@@ -1172,7 +1174,9 @@ impl Solver {
             .collect();
 
         for cid in candidates {
-            if done >= MAX_CLAUSES || t0.elapsed().as_millis() > TIME_BUDGET_MS {
+            if done >= MAX_CLAUSES
+                || self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS
+            {
                 break;
             }
             // Need len > 2 (binary/unit clauses aren't worth vivifying).
@@ -1306,14 +1310,15 @@ impl Solver {
     ///
     /// Soundness: forced units and derived binaries are all consequences of the
     /// formula (BCP is sound and learned clauses are implied). Bounded by a
-    /// wall-clock budget and a per-probe cap so it never dominates.
+    /// deterministic propagation-step budget and a per-probe cap so it never
+    /// dominates – not wall-clock (see `vivify_clauses`' budget note).
     pub(super) fn probe_hyper_binary(&mut self) -> (usize, usize) {
         if self.trail.decision_level() != 0 {
             return (0, 0);
         }
-        const TIME_BUDGET_MS: u128 = 200;
+        const MAX_PROBE_PROPS: u64 = 10_000_000;
         const PER_PROBE_CAP: u32 = 20_000;
-        let t0 = Instant::now();
+        let start_props = self.stats.propagations;
         let mut failed = 0usize;
         let mut hyper = 0usize;
 
@@ -1322,7 +1327,7 @@ impl Solver {
             if self.trivially_unsat {
                 break;
             }
-            if t0.elapsed().as_millis() > TIME_BUDGET_MS {
+            if self.stats.propagations.saturating_sub(start_props) > MAX_PROBE_PROPS {
                 break;
             }
             let v = Var::new(i as u32);

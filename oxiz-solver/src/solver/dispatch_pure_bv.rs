@@ -1,8 +1,9 @@
 //! Eager single-shot solve for pure QF_BV goals.
 //!
 //! This is the oxiz port of Z3's `qfbv` tactic pipeline (`simplify` →
-//! `bit-blast` → `sat`): when *every* assertion lives in the quantifier-free
-//! Bool+BV fragment, the whole formula is bit-blasted into the BV solver's
+//! `solve-eqs` → `bit-blast` → `sat`): when *every* assertion lives in the
+//! quantifier-free Bool+BV fragment, the whole formula is normalized
+//! (see [`crate::solver::bv_preprocess`]), bit-blasted into the BV solver's
 //! embedded SAT instance up front, each assertion is pinned true, and **one**
 //! CDCL run decides the goal.
 //!
@@ -33,7 +34,8 @@
 //!   return `None` and the caller falls back to the general CDCL(T) loop, so
 //!   a partially-blasted formula is never decided here.
 //! * `Unsat` is a complete SAT refutation of a faithful encoding of the whole
-//!   assertion set.
+//!   assertion set (the preprocessing pass is equivalence-preserving by
+//!   construction).
 //! * `Sat` is only reported after a concrete model built from the embedded
 //!   solver's satisfying assignment passes [`Solver::model_refutes_assertions`]
 //!   (every assertion evaluates to true under it); otherwise the dispatch
@@ -52,8 +54,8 @@ impl crate::solver::Solver {
     /// Solve a pure QF_BV goal with one eager bit-blast + one SAT run.
     ///
     /// Returns `None` when the goal is outside the fragment (or the dispatch
-    /// cannot honestly decide it), signalling the caller to continue with the
-    /// general CDCL(T) path.
+    /// cannot honestly decide it), signalling the caller to continue with
+    /// the general CDCL(T) path.
     pub(super) fn dispatch_pure_bv_solve(
         &mut self,
         manager: &mut TermManager,
@@ -67,12 +69,29 @@ impl crate::solver::Solver {
         // solver (branch facts, per-probe learned clauses).
         self.rebase_theory_state();
 
+        // Rewrite every assertion through the BV normalizer (Z3's `qfbv`
+        // preamble: solve-eqs + simplify-with-som before bit-blast).  Ring
+        // identities become syntactic here – `distrib16`-style goals collapse
+        // to `true`/`false` with no SAT search, and `X±c` comparisons fold to
+        // bounds.  The pass is equivalence-preserving, so the *original*
+        // assertions stay the recorded constraint terms (unsat cores keep
+        // naming the user's input) and remain the fallback if any rewritten
+        // assertion leaves the blastable fragment.
+        let (preprocessed, eliminations) = self.bv_preprocess_assertions(manager);
+        let blastable = preprocessed
+            .iter()
+            .all(|&a| term_in_blastable_fragment(a, manager));
+        let (assertions, eliminations): (Vec<TermId>, Vec<(TermId, TermId)>) = if blastable {
+            (preprocessed, eliminations)
+        } else {
+            (self.assertions.clone(), Vec::new())
+        };
+
         // Bit-blast every BV sub-term of every assertion at the embedded
         // solver's base scope, so the circuits survive the whole search
         // (see `blast_bv_circuits_at_base_scope` for the scope-invariant
         // rationale). After the rebase the memo is empty, so this is the
         // one full blast.
-        let assertions = self.assertions.clone();
         for &assertion in &assertions {
             self.blast_bv_circuits_at_base_scope(assertion, manager);
         }
@@ -84,9 +103,12 @@ impl crate::solver::Solver {
         // reaches a construct outside the blastable fragment: back out
         // entirely (the constraints already added are level-0 facts about
         // faithfully-encoded assertions and are wiped by the next rebase, so
-        // falling through is sound).
-        for &assertion in &assertions {
-            self.bv.record_constraint_term(assertion);
+        // falling through is sound).  Guard terms stay the *original*
+        // assertions so an unsat core names the user's input even when the
+        // blasted form is the normalized one.
+        let originals = self.assertions.clone();
+        for (&assertion, &original) in assertions.iter().zip(originals.iter()) {
+            self.bv.record_constraint_term(original);
             if !self.bv.assert_formula_true(assertion, manager) {
                 return None;
             }
@@ -100,7 +122,28 @@ impl crate::solver::Solver {
                 Some(SolverResult::Unsat)
             }
             Ok(TheoryCheckResult::Sat) => {
-                let model = self.build_pure_bv_model(manager);
+                let mut model = self.build_pure_bv_model(manager);
+                // Solve-eqs eliminated variables carry no bits, so the
+                // satisfying assignment gives them no value; reconstruct
+                // each by evaluating its definition under the model (in
+                // dependency order) before validating against the original
+                // assertions.  Without this, every `sat` instance that had
+                // definitions eliminated paid the eager attempt *and* the
+                // general path's full re-solve.
+                for &(var, def) in &eliminations {
+                    if model.get(var).is_none() {
+                        let value = model.eval(def, manager);
+                        let concrete = manager.get(value).is_some_and(|t| {
+                            matches!(
+                                t.kind,
+                                TermKind::BitVecConst { .. } | TermKind::True | TermKind::False
+                            )
+                        });
+                        if concrete {
+                            model.set(var, value);
+                        }
+                    }
+                }
                 self.model = Some(model);
                 if self.model_refutes_assertions(manager) {
                     // The satisfying assignment does not evaluate to `true`
@@ -130,16 +173,23 @@ impl crate::solver::Solver {
         if self.bv_terms.is_empty() {
             return false;
         }
-        // Integer/Real-sorted terms present: arithmetic owns those atoms and
-        // the CDCL(T) combination is required.
-        // (`var_to_parsed_arith` is *not* a pure-BV signal: unsigned BV
-        // comparisons are additionally relaxed into the arithmetic solver.)
-        if !self.arith_terms.is_empty() {
+        // Word-level arith routing (Z3-`qfbv`-vs-CDCL(T) port): the general
+        // path additionally *relaxes* unsigned BV comparisons into the
+        // linear arithmetic solver (`track_theory_vars` interns the compared
+        // operands as bounded integers), which is a genuinely different
+        // decision procedure – and for arith-dominated formulas the better
+        // one: `Sage2/bench_7140` (489 `bvadd`, 72 comparisons) solves in
+        // 16 ms through the relaxation but needs >0.5 s of bit-blasting.
+        // Bitwise-dominated formulas with comparisons (`stp_samples`:
+        // ~1100 bitwise ops, 70 `bvult`) are the opposite – the eager blast
+        // is 5× faster there – so the route follows the *shape*:
+        // comparison-relaxed AND ring-dominated (adds/subs/muls at least half
+        // of the BV operation nodes) goes to the general path; everything
+        // else stays eager.  (Int/Real-sorted terms are rejected by the
+        // fragment walk below regardless.)
+        if !self.arith_terms.is_empty() && assertions_ring_dominated(&self.assertions, manager) {
             return false;
         }
-        // Arrays, strings, floating point, datatypes or uninterpreted
-        // functions: the blastable-fragment check below would also reject
-        // them, but walking is not free, so cheap flags come first.
         if self.has_array_ops
             || !self.array_select_terms.is_empty()
             || !self.array_store_terms.is_empty()
@@ -185,6 +235,62 @@ impl crate::solver::Solver {
     }
 }
 
+/// Whether `bvadd`/`bvsub`/`bvmul` nodes make up at least half of the
+/// bit-vector operation nodes across the assertions (shared subterms visited
+/// once; iterative walk).
+///
+/// The eager/general routing above uses this as its shape signal: a
+/// ring-dominated formula leans on adder/multiplier circuits the word-level
+/// arithmetic relaxation reasons about natively, while a bitwise-dominated
+/// one is exactly what bit-blasting digests best.
+fn assertions_ring_dominated(assertions: &[TermId], manager: &TermManager) -> bool {
+    let mut visited = rustc_hash::FxHashSet::default();
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    let mut ring = 0usize;
+    let mut total = 0usize;
+    while let Some(tid) = stack.pop() {
+        if !visited.insert(tid) {
+            continue;
+        }
+        let Some(term) = manager.get(tid) else {
+            continue;
+        };
+        let is_ring = matches!(
+            term.kind,
+            TermKind::BvAdd(_, _) | TermKind::BvSub(_, _) | TermKind::BvMul(_, _)
+        );
+        let is_bv_op = is_ring
+            || matches!(
+                term.kind,
+                TermKind::BvAnd(_, _)
+                    | TermKind::BvOr(_, _)
+                    | TermKind::BvXor(_, _)
+                    | TermKind::BvNot(_)
+                    | TermKind::BvUdiv(_, _)
+                    | TermKind::BvSdiv(_, _)
+                    | TermKind::BvUrem(_, _)
+                    | TermKind::BvSrem(_, _)
+                    | TermKind::BvShl(_, _)
+                    | TermKind::BvLshr(_, _)
+                    | TermKind::BvAshr(_, _)
+                    | TermKind::BvConcat(_, _)
+                    | TermKind::BvExtract { .. }
+            );
+        if is_bv_op {
+            total += 1;
+            if is_ring {
+                ring += 1;
+            }
+            stack.extend(oxiz_core::ast::traversal::get_children(&term.kind));
+        } else {
+            // Non-BV nodes can still carry BV subterms (Bool connectives over
+            // BV atoms); keep walking.
+            stack.extend(oxiz_core::ast::traversal::get_children(&term.kind));
+        }
+    }
+    total > 0 && ring * 2 >= total
+}
+
 /// Whether `term` stays inside the fragment `BvSolver::encode_bool_node` /
 /// `encode_bv_term_recursive` can blast completely.
 ///
@@ -192,8 +298,8 @@ impl crate::solver::Solver {
 /// without polluting the embedded solver; the authoritative refusal still
 /// comes from the encoders themselves (`encode_bool_node` returning `None`).
 /// Iterative: the check walks children on an explicit stack (shared
-/// sub-terms are visited once), so a deeply nested input cannot overflow the
-/// native call stack.
+/// sub-terms are visited once), so a deeply nested input cannot overflow
+/// the native call stack.
 fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
     // Bound the total work: the walk visits each distinct sub-term once, so
     // this is a defence against pathologically large inputs rather than a
@@ -221,6 +327,13 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
             TermKind::Var(_) => is_bool || is_bv,
             // Boolean connectives.
             TermKind::Not(_) | TermKind::And(_) | TermKind::Or(_) => is_bool,
+            // Boolean XOR / implication / distinct and Bool-sorted `ite`/
+            // `=`: `encode_bool_node` lowers each through the same gate
+            // primitives (these are common in `bmc-bv-svcomp14` and
+            // `2018-Mann` inputs; without them whole families fell out of
+            // the eager dispatch and into the slow lazy CDCL(T) loop).
+            TermKind::Xor(_, _) | TermKind::Implies(_, _) => is_bool,
+            TermKind::Distinct(_) => is_bool,
             // BV (dis)equalities and comparisons.
             TermKind::Eq(_, _)
             | TermKind::BvUlt(_, _)
@@ -244,12 +357,13 @@ fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
             | TermKind::BvAshr(_, _)
             | TermKind::BvConcat(_, _)
             | TermKind::BvExtract { .. }
+            | TermKind::BvNot(_)
             | TermKind::BitVecConst { .. } => is_bv,
             // `ite` over BV or Bool branches with a blastable condition.
             TermKind::Ite(_, _, _) => is_bv || is_bool,
             // Everything else (arrays, strings, arithmetic, datatypes,
-            // uninterpreted functions, quantifiers, `distinct`, `xor`, ...)
-            // is outside the fragment.
+            // uninterpreted functions, quantifiers, ...) is outside the
+            // fragment.
             _ => false,
         };
         if !ok {

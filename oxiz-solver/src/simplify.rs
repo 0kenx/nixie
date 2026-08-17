@@ -281,17 +281,23 @@ impl Simplifier {
                         }
                     }
 
-                    // Check for contradictions: and(x, not(x)) => false
+                    // Check for contradictions: and(x, not(x)) => false.
+                    // Membership is checked through `seen`, which mirrors
+                    // `simplified_args` exactly (both are updated together
+                    // below and in the nested-flatten branch) – a linear
+                    // `Vec::contains` here made wide `and` nodes quadratic
+                    // (a single 250 kB `tacas07/BBB-32` assert spent >25 s
+                    // in these scans before the check went to the hash set).
                     if let Some(arg_term) = manager.get(simplified)
                         && let TermKind::Not(inner) = arg_term.kind
-                        && (simplified_args.contains(&inner) || seen.contains_key(&inner))
+                        && seen.contains_key(&inner)
                     {
                         self.stats.contradictions_found += 1;
                         return manager.mk_false();
                     }
-                    // Check if we already have not(arg) in the list
+                    // Check if we already have not(arg) in the list.
                     let neg = manager.mk_not(simplified);
-                    if simplified_args.contains(&neg) || seen.contains_key(&neg) {
+                    if seen.contains_key(&neg) {
                         self.stats.contradictions_found += 1;
                         return manager.mk_false();
                     }
@@ -355,16 +361,18 @@ impl Simplifier {
                     }
 
                     // Check for tautologies: or(x, not(x)) => true
+                    // (`seen` mirrors `simplified_args`; see the And arm's
+                    // note on why membership must not scan the Vec).
                     if let Some(arg_term) = manager.get(simplified)
                         && let TermKind::Not(inner) = arg_term.kind
-                        && (simplified_args.contains(&inner) || seen.contains_key(&inner))
+                        && seen.contains_key(&inner)
                     {
                         self.stats.tautologies_detected += 1;
                         return manager.mk_true();
                     }
-                    // Check if we already have not(arg) in the list
+                    // Check if we already have not(arg) in the list.
                     let neg = manager.mk_not(simplified);
-                    if simplified_args.contains(&neg) || seen.contains_key(&neg) {
+                    if seen.contains_key(&neg) {
                         self.stats.tautologies_detected += 1;
                         return manager.mk_true();
                     }
