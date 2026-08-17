@@ -128,6 +128,21 @@ pub struct ArithSolver {
     /// integer variable as continuous only weakens cuts (sound), so slacks of
     /// non-integral form are simply absent from this set.
     int_vars: FxHashSet<VarId>,
+    /// Per-ATOM tableau-row cache: `(linear form, assertion term) -> slack`.
+    ///
+    /// The SAME atom re-asserted (CDCL re-sends a literal after every
+    /// backtrack; the rebase replays the trail) reuses its row instead of
+    /// interning a duplicate – on cmodelsdiff-style inputs the re-sends
+    /// otherwise grow the tableau by hundreds of rows per theory round and
+    /// every pivot walks them all.  Deliberately NOT keyed by form alone:
+    /// two DIFFERENT atoms over one linear form must keep separate rows
+    /// (each atom's bounds then constrain its own slack; sharing one slack
+    /// across atoms measurably changes which equalities the fixed-variable
+    /// analysis derives and, through it, the search trajectory – see the
+    /// regression note in `assert_explained_equality`).  Entries are
+    /// invalidated when the slack's row was pivoted out of the tableau
+    /// (`row_defines_var`) and cleared on `reset`.
+    atom_rows: FxHashMap<(RowKey, TermId), VarId>,
     /// Real-atom reason ids seen in any LP conflict during the current
     /// branch-and-bound / cut search.  When the search refutes the integer
     /// problem, this set (not the full reason list) is the unsat core: each
@@ -185,17 +200,6 @@ type ExplainedBound = Option<(DeltaRational, Vec<TermId>)>;
 /// mapping safely yields `None` for it.
 const BRANCH_REASON: u32 = u32::MAX;
 
-/// Outcome of exploring a single branch-and-bound child node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BranchOutcome {
-    /// An integral assignment satisfying all constraints was found.
-    Sat,
-    /// This branch is proven infeasible (a dead end).
-    Infeasible,
-    /// The branch could not be resolved within the resource budget.
-    Unknown,
-}
-
 /// Canonical key of a linear form over TermIds: terms sorted by TermId
 /// with coefficients merged and zero coefficients dropped, plus the
 /// constant.  Two assertions of the same (or scaled-identical after
@@ -241,6 +245,7 @@ impl ArithSolver {
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
+            atom_rows: FxHashMap::default(),
         };
 
         solver
@@ -336,6 +341,29 @@ impl ArithSolver {
         RowKey { terms, constant }
     }
 
+    /// Canonical key for a STRICT comparison's row: sorted/merged terms and
+    /// constant with zero coefficients dropped – NO GCD division and NO sign
+    /// flip, mirroring exactly what [`Self::cached_row_slack_strict`] interns
+    /// (normalization would be value-preserving but a sign flip would reverse
+    /// the strict inequality's direction, and the key must equal the row).
+    fn row_key_strict(&self, lhs: &[(TermId, Rational64)], rhs: Rational64) -> RowKey {
+        let mut terms: Vec<(TermId, Rational64)> = Vec::with_capacity(lhs.len());
+        for &(term, coef) in lhs {
+            if coef.is_zero() {
+                continue;
+            }
+            match terms.binary_search_by_key(&term, |(t, _)| *t) {
+                Ok(i) => terms[i].1 += coef,
+                Err(i) => terms.insert(i, (term, coef)),
+            }
+        }
+        terms.retain(|(_, c)| !c.is_zero());
+        RowKey {
+            terms,
+            constant: -rhs,
+        }
+    }
+
     /// Return the slack variable whose tableau row defines the linear form
     /// keyed by `key`, interning the row on the first request.
     ///
@@ -362,6 +390,7 @@ impl ArithSolver {
         lhs: &[(TermId, Rational64)],
         rhs: Rational64,
         equality: bool,
+        reason: TermId,
     ) -> VarId {
         let _ = key;
         let mut expr = LinExpr::new();
@@ -378,10 +407,17 @@ impl ArithSolver {
             self.normalize_ineq_expr(&mut expr);
         }
         let integral = self.is_integer && self.is_integral_form(&expr);
-        let slack = self.simplex.intern_row_cached(&expr);
+        let cache_key = (self.row_key(lhs, rhs, equality), reason);
+        if let Some(&slack) = self.atom_rows.get(&cache_key)
+            && self.simplex.row_defines_var(slack)
+        {
+            return slack;
+        }
+        let slack = self.simplex.intern_row(expr);
         if integral {
             self.int_vars.insert(slack);
         }
+        self.atom_rows.insert(cache_key, slack);
         slack
     }
 
@@ -395,6 +431,7 @@ impl ArithSolver {
         key: &RowKey,
         lhs: &[(TermId, Rational64)],
         rhs: Rational64,
+        reason: TermId,
     ) -> VarId {
         let _ = key;
         let mut expr = LinExpr::new();
@@ -403,7 +440,18 @@ impl ArithSolver {
             expr.add_term(var, coef);
         }
         expr.add_constant(-rhs);
-        let slack = self.simplex.intern_row_cached(&expr);
+        let integral = self.is_integer && self.is_integral_form(&expr);
+        let cache_key = (self.row_key_strict(lhs, rhs), reason);
+        if let Some(&slack) = self.atom_rows.get(&cache_key)
+            && self.simplex.row_defines_var(slack)
+        {
+            return slack;
+        }
+        let slack = self.simplex.intern_row(expr);
+        if integral {
+            self.int_vars.insert(slack);
+        }
+        self.atom_rows.insert(cache_key, slack);
         slack
     }
 
@@ -647,7 +695,7 @@ impl ArithSolver {
         // One shared, interned row per linear form; the assertion itself is
         // just the bound `slack <= 0` on it.
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack(&key, lhs, rhs, false);
+        let slack = self.cached_row_slack(&key, lhs, rhs, false, reason);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Le, reason_id);
@@ -670,7 +718,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack(&key, lhs, rhs, false);
+        let slack = self.cached_row_slack(&key, lhs, rhs, false, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
             self.record_prop_bound(var, coef, rhs, PropCmp::Ge, reason_id);
@@ -780,7 +828,7 @@ impl ArithSolver {
         // One shared, interned row per linear form; the equality is the two
         // bounds `slack <= 0` and `slack >= 0` on it.
         let reason_id = self.add_reason(reason);
-        let slack = self.cached_row_slack(&lia_key, lhs, rhs, true);
+        let slack = self.cached_row_slack(&lia_key, lhs, rhs, true, reason);
         self.simplex.set_lower(slack, Rational64::zero(), reason_id);
         self.simplex.set_upper(slack, Rational64::zero(), reason_id);
         // NOTE: no `record_prop_bound` here.  An equality's single-variable
@@ -868,7 +916,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack_strict(&key, lhs, rhs);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs, reason);
         self.simplex
             .set_strict_upper(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
@@ -902,7 +950,7 @@ impl ArithSolver {
 
         let reason_id = self.add_reason(reason);
         let key = self.row_key(lhs, rhs, false);
-        let slack = self.cached_row_slack_strict(&key, lhs, rhs);
+        let slack = self.cached_row_slack_strict(&key, lhs, rhs, reason);
         self.simplex
             .set_strict_lower(slack, Rational64::zero(), reason_id);
         if let Some((var, coef)) = single {
@@ -1527,7 +1575,7 @@ impl ArithSolver {
         // integral and B&B stops at its first node.
         let int_vars = self.interned_int_vars();
         let mut nodes: usize = 0;
-        self.bnb_recurse(&int_vars, 0, &mut nodes)
+        self.bnb_search(&int_vars, &mut nodes)
     }
 
     /// Generate a Gomory mixed-integer (GMI) cut from the tableau row of the
@@ -1685,94 +1733,142 @@ impl ArithSolver {
     ///   infeasible (integer-infeasible);
     /// - `Unknown` if the depth/node budget is exhausted, or a sub-solve hit the
     ///   simplex pivot limit – never a fabricated Sat/Unsat.
-    fn bnb_recurse(
-        &mut self,
-        int_vars: &[VarId],
-        depth: usize,
-        nodes: &mut usize,
-    ) -> Result<TheoryResult> {
-        if depth > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
-            return Ok(TheoryResult::Unknown);
-        }
-        *nodes += 1;
-
-        // Find a fractional Int variable at the current LP optimum.
-        let (var, value) = match self.find_fractional_int_var(int_vars) {
-            None => {
-                // Fully integral leaf: record the model, then report Sat.
-                self.snapshot_lia_model(int_vars);
-                return Ok(TheoryResult::Sat);
-            }
-            Some(vv) => vv,
-        };
-
-        let floor_v = value.floor();
-        let ceil_v = value.ceil();
-
-        // Track whether any explored branch was left unresolved (Unknown) so we
-        // never collapse an Unknown into a spurious Unsat.
-        let mut saw_unknown = false;
-
-        // Branch down: var <= floor(value).
-        self.simplex.push();
-        self.simplex.set_upper(var, floor_v, BRANCH_REASON);
-        let down = self.explore_branch(int_vars, depth, nodes)?;
-        self.simplex.pop();
-        match down {
-            BranchOutcome::Sat => return Ok(TheoryResult::Sat),
-            BranchOutcome::Unknown => saw_unknown = true,
-            BranchOutcome::Infeasible => {}
-        }
-
-        // Branch up: var >= ceil(value).
-        self.simplex.push();
-        self.simplex.set_lower(var, ceil_v, BRANCH_REASON);
-        let up = self.explore_branch(int_vars, depth, nodes)?;
-        self.simplex.pop();
-        match up {
-            BranchOutcome::Sat => return Ok(TheoryResult::Sat),
-            BranchOutcome::Unknown => saw_unknown = true,
-            BranchOutcome::Infeasible => {}
-        }
-
-        // Neither branch produced Sat.  If any branch was left unresolved we must
-        // answer Unknown; only when both branches are proven infeasible may we
-        // conclude integer-infeasibility (Unsat).
-        if saw_unknown {
-            Ok(TheoryResult::Unknown)
-        } else {
-            Ok(TheoryResult::Unsat(self.bnb_unsat_core()))
-        }
-    }
-
-    /// Explore the current (already-constrained) branch: re-solve the LP and, if
-    /// feasible and not resource-limited, recurse into branch-and-bound.
+    /// Branch-and-bound over integer variables, as an EXPLICIT heap stack.
     ///
-    /// The caller is responsible for the surrounding `push`/`pop`.
-    fn explore_branch(
-        &mut self,
-        int_vars: &[VarId],
-        depth: usize,
-        nodes: &mut usize,
-    ) -> Result<BranchOutcome> {
-        match self.simplex.check() {
-            Ok(()) => {
-                if self.simplex.resource_limit_reached() {
-                    // LP unresolved within the pivot budget – Unknown, not Sat.
-                    Ok(BranchOutcome::Unknown)
-                } else {
-                    Ok(match self.bnb_recurse(int_vars, depth + 1, nodes)? {
-                        TheoryResult::Sat => BranchOutcome::Sat,
-                        TheoryResult::Unsat(_) => BranchOutcome::Infeasible,
-                        _ => BranchOutcome::Unknown,
-                    })
+    /// Two-child DFS: at each node pick a fractional integer variable, explore
+    /// `x ≤ ⌊x̄⌋` then `x ≥ ⌈x̄⌉`, short-circuit on the first integral leaf
+    /// (`Sat`), and conclude `Unsat` only when every branch is a *proven*
+    /// dead end (any unresolved branch downgrades the verdict to `Unknown`).
+    /// One simplex scope per live branch, pushed before descending and popped
+    /// when the subtree under it finishes, so no branch bound leaks into a
+    /// sibling; the satisfying assignment is snapshotted at the leaf, inside
+    /// all open scopes.
+    ///
+    /// The recursion is a `Vec` of node frames rather than native calls: tree
+    /// depth is bounded only by [`Self::LIA_MAX_DEPTH`] and the instance, and
+    /// native recursion over user-controlled depth overflows the thread stack
+    /// (observed as SIGABRT on WiSA inputs around depth 4k).  A frame
+    /// `{var, up_done, saw_unknown}` is the node whose DOWN (or UP) branch
+    /// scope is currently open on top of the simplex scope stack; the scope
+    /// and the frame are pushed and popped together, so
+    /// `simplex scopes open == stack.len()` holds at every node body.
+    fn bnb_search(&mut self, int_vars: &[VarId], nodes: &mut usize) -> Result<TheoryResult> {
+        struct Node {
+            var: VarId,
+            up_done: bool,
+            saw_unknown: bool,
+        }
+        /// Take one branch of `var`; on a feasible, unresolved LP return
+        /// `true` with the branch scope left OPEN (the caller descends),
+        /// otherwise pop the scope and return `false` (with `unknown` set
+        /// when the failure was a resource limit rather than infeasibility).
+        fn take_branch(
+            s: &mut ArithSolver,
+            var: VarId,
+            bound: Rational64,
+            upper: bool,
+            unknown: &mut bool,
+        ) -> bool {
+            s.simplex.push();
+            if upper {
+                s.simplex.set_upper(var, bound, BRANCH_REASON);
+            } else {
+                s.simplex.set_lower(var, bound, BRANCH_REASON);
+            }
+            match s.simplex.check() {
+                Ok(()) if !s.simplex.resource_limit_reached() => true,
+                Ok(()) => {
+                    // Pivot budget exhausted: Unknown, never a fabricated Sat.
+                    s.simplex.pop();
+                    *unknown = true;
+                    false
+                }
+                Err(reasons) => {
+                    // LP infeasible: a proven dead end; its atom reasons feed
+                    // the tree-level unsat core.
+                    s.note_bnb_conflict_reasons(&reasons);
+                    s.simplex.pop();
+                    false
                 }
             }
-            // LP infeasible on this branch: a proven dead end.  Record the
-            // conflict's atom reasons – they feed the tree-level unsat core.
-            Err(reasons) => {
-                self.note_bnb_conflict_reasons(&reasons);
-                Ok(BranchOutcome::Infeasible)
+        }
+
+        let mut stack: Vec<Node> = Vec::new();
+        loop {
+            // ===== one node body =====
+            if stack.len() > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
+                for _ in 0..stack.len() {
+                    self.simplex.pop();
+                }
+                return Ok(TheoryResult::Unknown);
+            }
+            *nodes += 1;
+            let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
+                // Fully integral leaf: record the model, unwind, report Sat.
+                self.snapshot_lia_model(int_vars);
+                for _ in 0..stack.len() {
+                    self.simplex.pop();
+                }
+                return Ok(TheoryResult::Sat);
+            };
+            let floor_v = value.floor();
+            let ceil_v = value.ceil();
+            let mut saw_unknown = false;
+
+            // Branch down: var <= floor(value).
+            if take_branch(self, var, floor_v, true, &mut saw_unknown) {
+                stack.push(Node {
+                    var,
+                    up_done: false,
+                    saw_unknown,
+                });
+                continue; // descend into the down subtree
+            }
+            // Branch up: var >= ceil(value).
+            if take_branch(self, var, ceil_v, false, &mut saw_unknown) {
+                stack.push(Node {
+                    var,
+                    up_done: true,
+                    saw_unknown,
+                });
+                continue; // descend into the up subtree
+            }
+            // Both branches concluded at this node without descending.
+            let mut outcome = if saw_unknown {
+                TheoryResult::Unknown
+            } else {
+                TheoryResult::Unsat(self.bnb_unsat_core())
+            };
+
+            // ===== deliver `outcome` up through the ancestor frames =====
+            loop {
+                let Some(mut frame) = stack.pop() else {
+                    return Ok(outcome); // root concluded
+                };
+                // The scope of the branch this subtree ran under.
+                self.simplex.pop();
+                frame.saw_unknown |= matches!(outcome, TheoryResult::Unknown);
+                if !frame.up_done {
+                    // Try this node's up branch.  Its down-branch scope was
+                    // just popped, so the LP state is the node's own again
+                    // and `value(var)` re-reads the original fractional
+                    // optimum.
+                    let ceil_v = self.simplex.value(frame.var).ceil();
+                    let mut saw = frame.saw_unknown;
+                    if take_branch(self, frame.var, ceil_v, false, &mut saw) {
+                        frame.up_done = true;
+                        frame.saw_unknown = saw;
+                        stack.push(frame);
+                        break; // descend into the up subtree (node body next)
+                    }
+                    frame.saw_unknown = saw;
+                }
+                outcome = if frame.saw_unknown {
+                    TheoryResult::Unknown
+                } else {
+                    TheoryResult::Unsat(self.bnb_unsat_core())
+                };
+                // Continue delivering this frame's outcome to ITS parent.
             }
         }
     }
@@ -1936,6 +2032,8 @@ impl Theory for ArithSolver {
     fn reset(&mut self) {
         self.simplex.reset();
         self.term_to_var.clear();
+        self.atom_rows.clear();
+        self.int_vars.clear();
         self.var_to_term.clear();
         self.reason_counter = 0;
         self.reasons.clear();
