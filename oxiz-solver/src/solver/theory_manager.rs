@@ -126,6 +126,16 @@ struct DenseFeed {
     /// `(src, dst, weight)` edges to assert at the fed polarity.
     edges: Vec<(TermId, TermId, i64)>,
 }
+
+/// The TRUE-polarity integer watch of a difference atom, shared by the
+/// assignment-time feed ([`DenseFeed`]) and the eager pre-search interning
+/// ([`TheoryManager::intern_pure_dl_atoms`]): reading `t − s ≤ k`.
+struct DlWatch {
+    watch_s: TermId,
+    watch_t: TermId,
+    watch_k: i64,
+    is_eq: bool,
+}
 /// Parsed arithmetic atom considered for SAT-level bound propagation.
 type ArithPropCandidate = (Var, Vec<(TermId, Rational64)>, Rational64, bool, bool);
 
@@ -683,6 +693,13 @@ impl<'a> TheoryManager<'a> {
         // the base scope before any scoped assertion happens (memo no-op when
         // the circuits are already there).
         this.blast_bv_vocabulary_at_base_scope();
+        // Pure-DL route: intern every difference atom's watch into the active
+        // difference engine BEFORE the search, so closure improvements can
+        // propagate not-yet-assigned atoms (Z3 `internalize_atom` timing).
+        // See [`Self::intern_pure_dl_atoms`].
+        if this.dl_pure {
+            this.intern_pure_dl_atoms();
+        }
         this
     }
 
@@ -1050,7 +1067,6 @@ impl<'a> TheoryManager<'a> {
 
     fn resync_theory_state(&mut self) -> TheoryCheckResult {
         use oxiz_theories::Theory;
-
         // Drop all incremental theory state and derived caches.
         //
         // EUF/BV/DL/arith are rebuilt wholesale (the congruence-loss backstop
@@ -1859,23 +1875,22 @@ impl<'a> TheoryManager<'a> {
     /// exact two-variable differences feed the graph; single-variable bounds
     /// deliberately remain on the simplex path.  SOUND: a DL negative cycle
     /// is a valid refutation.
-    fn diff_primary_check(
-        &mut self,
-        var: Var,
+    ///
+    /// Normalise an atom's linear form to a difference pair `(x, y, c)`
+    /// reading `x − y ○ c` per the caller's constraint type: folds every
+    /// constant sub-term — whether a `purify_numeric_uf_args` proxy
+    /// (`__oxiz_numarg`, recoverable via `numarg_proxies`) or a bare
+    /// `IntConst`/`RealConst` — into the RHS constant `c` (restoring the
+    /// difference-logic shape the global purification substitute destroyed),
+    /// maps a single-variable bound through the canonical zero term
+    /// (`x ≤ k` ≡ `x − 0 ≤ k` — Z3's dense-solver numeral internalization),
+    /// and rejects every non-unit-difference shape (3+ variables, non-unit
+    /// coefficients, pure constants).  `None` = not difference-logic-shaped.
+    fn dl_normalized_pair(
+        &self,
         terms: &[(TermId, Rational64)],
         constant: Rational64,
-        ctype: ArithConstraintType,
-        is_eq: bool,
-        is_positive: bool,
-    ) -> DlPrimaryResult {
-        use oxiz_theories::DiffLogicResult;
-        // Fold every constant sub-term – whether a `purify_numeric_uf_args`
-        // proxy (`__oxiz_numarg`, recoverable via `numarg_proxies`) or a bare
-        // `IntConst`/`RealConst` – into the atom's RHS constant, leaving only
-        // the real variable terms.  This restores the difference-logic shape
-        // that the global purification substitute destroyed (it turned
-        // `(+ x 1)` into `(+ x __oxiz_numarg)`), so the DL solver can feed atoms
-        // it previously rejected as non-DL.
+    ) -> Option<(TermId, TermId, Rational64)> {
         let mut adj_constant = constant;
         let mut real_terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
         for &(t, c) in terms {
@@ -1888,40 +1903,48 @@ impl<'a> TheoryManager<'a> {
                 real_terms.push((t, c));
             }
         }
-        // Normalise the resolved atom to a difference pair `(x, y, c)`
-        // reading `x − y ≤ c`-shaped per `ctype`, where a single-variable
-        // bound uses the canonical zero term as the other endpoint
-        // (`x ≤ k` ≡ `x − 0 ≤ k`) — Z3's dense solver internalises numerals
-        // exactly this way (`internalize_term_core`).
-        let (xt, yt, c) = match real_terms.as_slice() {
-            // Pure constant atom (e.g. `0 ≤ k`): defer to the simplex path.
-            [] => return DlPrimaryResult::NotApplicable,
+        let one = Rational64::from_integer(1);
+        match real_terms.as_slice() {
+            // Pure constant atom (e.g. `0 ≤ k`): nothing for the DL engines.
+            [] => None,
             [(v, coef)] => {
                 // Single-variable bound `coef·v ≤ adj_constant`: only unit
                 // coefficients are difference-logic-shaped.
-                if *coef == Rational64::from_integer(1) {
-                    (*v, self.zero_term, adj_constant)
-                } else if *coef == Rational64::from_integer(-1) {
-                    (self.zero_term, *v, adj_constant)
+                if *coef == one {
+                    Some((*v, self.zero_term, adj_constant))
+                } else if *coef == -one {
+                    Some((self.zero_term, *v, adj_constant))
                 } else {
-                    return DlPrimaryResult::NotApplicable;
+                    None
                 }
             }
             [(a, ca), (b, cb)] => {
                 // Difference `x − y`: one +1 coefficient, one −1.
-                let (x, y) = if *ca == Rational64::from_integer(1)
-                    && *cb == Rational64::from_integer(-1)
-                {
-                    (*a, *b)
-                } else if *cb == Rational64::from_integer(1) && *ca == Rational64::from_integer(-1)
-                {
-                    (*b, *a)
+                if *ca == one && *cb == -one {
+                    Some((*a, *b, adj_constant))
+                } else if *cb == one && *ca == -one {
+                    Some((*b, *a, adj_constant))
                 } else {
-                    return DlPrimaryResult::NotApplicable; // not a unit difference
-                };
-                (x, y, adj_constant)
+                    None // not a unit difference
+                }
             }
-            _ => return DlPrimaryResult::NotApplicable, // 3+ real variables: genuinely non-difference
+            // 3+ real variables: genuinely non-difference.
+            _ => None,
+        }
+    }
+
+    fn diff_primary_check(
+        &mut self,
+        var: Var,
+        terms: &[(TermId, Rational64)],
+        constant: Rational64,
+        ctype: ArithConstraintType,
+        is_eq: bool,
+        is_positive: bool,
+    ) -> DlPrimaryResult {
+        use oxiz_theories::DiffLogicResult;
+        let Some((xt, yt, c)) = self.dl_normalized_pair(terms, constant) else {
+            return DlPrimaryResult::NotApplicable;
         };
         let dla = DlAtom {
             var,
@@ -2002,6 +2025,44 @@ impl<'a> TheoryManager<'a> {
     /// an endpoint that is not a plain numeric Int-sorted term, or a derived
     /// weight outside the exactness envelope.
     fn dense_feed(&self, dla: &DlAtom, pol: bool) -> Option<DenseFeed> {
+        let watch = self.dl_watch_of(dla, &dla.c)?;
+        let edges = if watch.is_eq {
+            if pol {
+                vec![
+                    (watch.watch_s, watch.watch_t, watch.watch_k),
+                    (watch.watch_t, watch.watch_s, -watch.watch_k),
+                ]
+            } else {
+                Vec::new() // disequality: not DL-representable
+            }
+        } else if pol {
+            vec![(watch.watch_s, watch.watch_t, watch.watch_k)]
+        } else {
+            // ¬(t − s ≤ k) ⟺ t − s ≥ k+1 ⟺ s − t ≤ −k−1
+            vec![(watch.watch_t, watch.watch_s, -watch.watch_k - 1)]
+        };
+        Some(DenseFeed {
+            watch_s: watch.watch_s,
+            watch_t: watch.watch_t,
+            watch_k: watch.watch_k,
+            is_eq: watch.is_eq,
+            edges,
+        })
+    }
+
+    /// The TRUE-polarity integer watch `(s, t, k)` of a difference atom
+    /// (shared by [`Self::dense_feed`] and the eager
+    /// [`Self::intern_pure_dl_atoms`] pass):
+    ///
+    /// - `Le: x−y ≤ c` → `(s, t, k) = (y, x, c)`
+    /// - `Lt: x−y < c` → `x−y ≤ c−1` → `(y, x, c−1)`
+    /// - `Ge: x−y ≥ c` → `y−x ≤ −c` → `(x, y, −c)`
+    /// - `Gt: x−y > c` → `y−x ≤ −c−1` → `(x, y, −c−1)`
+    /// - `Eq: x = y` → both directions ≤ `c` (and `−c`)
+    ///
+    /// `None` when an endpoint is not a plain numeric Int-sorted term or the
+    /// tightened weight leaves the dense core's exact i64 envelope.
+    fn dl_watch_of(&self, dla: &DlAtom, c: &Rational64) -> Option<DlWatch> {
         use ArithConstraintType::*;
         if !self.diff.is_integer() {
             return None;
@@ -2016,49 +2077,34 @@ impl<'a> TheoryManager<'a> {
                 return None;
             }
         }
-        let (x, y, c) = (dla.x, dla.y, &dla.c);
+        let (x, y) = (dla.x, dla.y);
         let one = Rational64::from_integer(1);
         let k_of = |r: &Rational64| oxiz_theories::DiffLogicSolver::dense_fit(r);
+        if dla.is_eq {
+            let ck = k_of(c)?;
+            return Some(DlWatch {
+                watch_s: y,
+                watch_t: x,
+                watch_k: ck,
+                is_eq: true,
+            });
+        }
         // The TRUE-polarity reading `t − s ≤ k`:
         //   Le: x−y ≤ c       →  (s, t, k) = (y, x, c)
         //   Lt: x−y < c       →  x−y ≤ c−1 →  (y, x, c−1)
         //   Ge: x−y ≥ c       →  y−x ≤ −c  →  (x, y, −c)
         //   Gt: x−y > c       →  y−x ≤ −c−1 → (x, y, −c−1)
-        //   Eq: x = y         →  both directions ≤ 0
         let (s, t, k) = match dla.ctype {
             Le => (y, x, k_of(c)?),
-            Lt => (y, x, k_of(&(*c - one))?),
+            Lt => (y, x, k_of(&(c - one))?),
             Ge => (x, y, k_of(&(-*c))?),
             Gt => (x, y, k_of(&(-*c - one))?),
         };
-        if dla.is_eq {
-            // Equalities read `x − y = c` (both directions).
-            let ck = k_of(c)?;
-            let edges = if pol {
-                vec![(y, x, ck), (x, y, -ck)]
-            } else {
-                Vec::new() // disequality: not DL-representable
-            };
-            return Some(DenseFeed {
-                watch_s: y,
-                watch_t: x,
-                watch_k: ck,
-                is_eq: true,
-                edges,
-            });
-        }
-        let edges = if pol {
-            vec![(s, t, k)]
-        } else {
-            // ¬(t − s ≤ k) ⟺ t − s ≥ k+1 ⟺ s − t ≤ −k−1
-            vec![(t, s, -k - 1)]
-        };
-        Some(DenseFeed {
+        Some(DlWatch {
             watch_s: s,
             watch_t: t,
             watch_k: k,
             is_eq: false,
-            edges,
         })
     }
 
@@ -2126,6 +2172,64 @@ impl<'a> TheoryManager<'a> {
         // Discard anything queued (unreachable when pure: drained above).
         let _ = self.diff.dense_take_propagations();
         DlPrimaryResult::Consistent
+    }
+
+    /// Pre-search, eager dense-core atom interning for the pure-DL route (Z3
+    /// `internalize_atom`, which runs at clause-assertion time — before any
+    /// decision): register every difference-shaped arithmetic atom's watch in
+    /// the closure's occurrence lists up front, so closure improvements can
+    /// propagate atoms the search has not yet assigned.  Without this, a
+    /// watch exists only after the atom's first assignment, the closure can
+    /// propagate nothing new, and CDCL must decide every atom by hand
+    /// (super_queen37-1: 35k decisions / 1.9k conflicts where Z3's eagerly
+    /// internalized closure needs 66).
+    ///
+    /// Asserts nothing — edges still flow only through assignments (the
+    /// occurrence lists are watch-only).  Idempotent: `intern_atom` keys on
+    /// the SAT variable, and re-constructions of the manager over the same
+    /// vocabulary re-register nothing.  Stops early if the node budget
+    /// degrades the core (assignment-time feeding then degrades exactly as
+    /// before this pass existed).
+    fn intern_pure_dl_atoms(&mut self) {
+        let atoms: Vec<(Var, ParsedArithConstraint, bool)> = self
+            .var_to_parsed_arith
+            .iter()
+            .map(|(var, parsed)| {
+                let is_eq = matches!(self.var_to_constraint.get(var), Some(Constraint::Eq(_, _)));
+                (*var, parsed.clone(), is_eq)
+            })
+            .collect();
+        for (var, parsed, is_eq) in atoms {
+            let Some((x, y, c)) = self.dl_normalized_pair(&parsed.terms, parsed.constant) else {
+                continue;
+            };
+            let dla = DlAtom {
+                var,
+                x,
+                y,
+                c,
+                is_eq,
+                ctype: parsed.constraint_type,
+            };
+            let Some(watch) = self.dl_watch_of(&dla, &dla.c) else {
+                continue;
+            };
+            if !self.diff.dense_exact() {
+                return;
+            }
+            let (Some(s), Some(t)) = (
+                self.diff.dense_intern_term(watch.watch_s),
+                self.diff.dense_intern_term(watch.watch_t),
+            ) else {
+                continue;
+            };
+            let key = var.index() as u32;
+            if let Some(core) = self.diff.dense()
+                && !core.has_atom(key)
+            {
+                core.intern_atom(key, s, t, watch.watch_k, watch.is_eq);
+            }
+        }
     }
 
     /// Break pure-DL routing: the DL engines rejected an atom, so the
@@ -2709,7 +2813,15 @@ impl<'a> TheoryManager<'a> {
         // / BV encodings.  A literal whose scope WAS popped had its guard
         // entry popped with it and re-processes normally.
         let lit_key = (var, is_positive);
-        let _ = lit_key;
+        if self.processed_lits.contains(&lit_key) {
+            // Same-polarity re-send whose effects are still live (see the
+            // comment above): idempotently a no-op.  Skipping here is what
+            // keeps the sparse DL engine from re-adding duplicate edges and
+            // re-running an O(affected) SPFA per re-sent literal — measured
+            // 350k feeds for a ~7k-atom problem on gryzzles.37, with the
+            // re-feeds dominating the whole run.
+            return TheoryCheckResult::Sat;
+        }
         self.processed_lit_trail.push(lit_key);
         match constraint {
             Constraint::Eq(lhs, rhs) => {

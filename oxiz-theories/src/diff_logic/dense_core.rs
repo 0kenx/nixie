@@ -536,6 +536,14 @@ impl DenseDlCore {
     /// Pop one decision scope: restore trailed cells, drop scoped edges.
     pub fn pop(&mut self) {
         let Some((edges_lim, trail_lim)) = self.scopes.pop() else {
+            // Unreachable while the core is created at level 0 and pushed in
+            // lockstep (see `DiffLogicSolver::with_config`): a pop past the
+            // last scope mark would strand every live edge as a phantom
+            // constraint.
+            debug_assert!(
+                false,
+                "dense DL core pop without a matching push (stranded edges!)"
+            );
             return;
         };
         while self.cell_trail.len() > trail_lim {

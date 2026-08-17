@@ -114,10 +114,14 @@ impl Solver {
                 // Pure-DL routing: the simplex never saw these atoms, so the
                 // dense closure is the value provider (its negated-row-minimum
                 // assignment satisfies every asserted edge — see
-                // `DenseDlCore::value`).
+                // `DenseDlCore::value`).  On the sparse engine's pure route
+                // the multi-source distances play the same role (a feasible
+                // potential for every asserted difference constraint,
+                // refreshed by the final-check backstop's full `check()`).
                 self.diff
                     .dense_value(term)
                     .map(num_rational::Rational64::from_integer)
+                    .or_else(|| self.diff.sparse_value_of(term))
             });
             if let Some(value) = arith_value {
                 // Determine whether the term has Int or Real sort, and create the

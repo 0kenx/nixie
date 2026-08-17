@@ -1253,31 +1253,56 @@ impl Solver {
             let features = self
                 .last_features
                 .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions));
-            self.logic.as_deref() == Some("QF_IDL")
+            // Z3's `setup_QF_IDL` gates the dense difference engine on
+            // `st.is_dense()`; measured here, that split LOSES the qlock
+            // family (751-constant graphs, well inside the dense node
+            // budget): qlock-4-10-11.base runs 1.8s unsat on the pure dense
+            // route vs timeout on both the simplex path and a sparse-engine
+            // route.  So the pure dense route serves every QF_IDL input
+            // whose vocabulary fits; the first atom over the
+            // [`DenseDlCore`] node/weight budget degrades purity and
+            // replays into the simplex (see `break_dl_purity`), which
+            // covers the genuinely-too-large sparse graphs (gryzzles).
+            let route = self.logic.as_deref() == Some("QF_IDL")
                 && features.is_diff_logic()
                 && features.has_int
                 && !features.has_real
                 && !features.has_uf()
                 && features.num_quantifiers == 0
-                // The ite-table machinery (lookup-table collapse, domain
-                // splits, triangle axioms) creates aliased duplicate atoms
-                // and mid-search clauses whose interaction with the pure
-                // dense routing is not yet validated — it mis-answers
-                // `ite_table::tests::eq_ite_table_lookup_sat`.  Route such
-                // inputs through the general (simplex-backed) path until
-                // that is root-caused.
-                && self.ite_result_terms.is_empty()
+                && self.ite_result_terms.is_empty();
+            if std::env::var("OXIZ_DL_TRACE").is_ok() {
+                eprintln!(
+                    "oxiz-dl-route\troute={} is_diff_logic={} dense={} has_int={} has_real={} has_uf={} quant={} ite_results={} consts={}",
+                    route,
+                    features.is_diff_logic(),
+                    features.is_dense(),
+                    features.has_int,
+                    features.has_real,
+                    features.has_uf(),
+                    features.num_quantifiers,
+                    self.ite_result_terms.len(),
+                    features.num_uninterpreted_constants
+                );
+            }
+            route
         };
 
-        // Sparse difference engine route: only for the declared DL logics
-        // the dense integer core does not cover (QF_RDL's reals, the
-        // QF_UFIDL combination).  General logics keep arithmetic on the
-        // simplex alone, exactly as Z3 installs difference solvers per
-        // logic.
+        // Sparse difference engine route: the declared DL logics the dense
+        // integer core does not cover (QF_RDL's reals, QF_UFIDL's UF
+        // combination), plus QF_IDL itself — where it serves as a
+        // conflict-lemma layer AFTER the pure dense route degraded (an
+        // over-budget vocabulary broke purity and replayed into the
+        // simplex; Z3's `theory_diff_logic` role in a combination).
+        // Conflict-check-only, no propagation.  The structural
+        // `is_diff_logic` gate at routing time still holds for the whole
+        // input, so the sparse engine only ever sees difference atoms.
+        // Measured neutral on the degraded families (gryzzles TO with or
+        // without it); kept because it is Z3's shape for declared DL
+        // logics and validated by the full suite + parity.
         let sparse_dl = self
             .logic
             .as_deref()
-            .is_some_and(|l| matches!(l, "QF_RDL" | "QF_UFIDL" | "UFIDL"));
+            .is_some_and(|l| matches!(l, "QF_RDL" | "QF_UFIDL" | "UFIDL" | "QF_IDL"));
 
         // Pure-DL completeness: an arithmetic disequality the encoder's
         // structural trichotomy walk missed (an `Eq` under `xor`/`=>`-antecedent

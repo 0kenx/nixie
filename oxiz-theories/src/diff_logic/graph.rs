@@ -310,10 +310,17 @@ impl ConstraintGraph {
         core::iter::once(DiffVar::SOURCE).chain(self.vars())
     }
 
-    /// Push a new decision level.
+    /// Push a new decision level.  The new level's rollback mark starts at
+    /// the CURRENT constraint count — the exact boundary a pop to this level
+    /// must restore.  (It previously started at `0`, so popping back to a
+    /// level that had seen no constraint additions truncated the constraint
+    /// list to zero — silently discarding every lower-level fact, up to and
+    /// including level-0 units.  Under-constraining only: the solver missed
+    /// conflicts, and once the sparse engine could own a verdict (the pure
+    /// QF_IDL route) that became a false `sat` on `qlock-4-10-11.base`.)
     pub fn push(&mut self) {
         self.current_level += 1;
-        self.constraint_marks.push(0);
+        self.constraint_marks.push(self.constraints.len());
     }
 
     /// Pop to a previous decision level: truncates the constraint vector

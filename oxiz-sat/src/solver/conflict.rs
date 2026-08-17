@@ -954,7 +954,6 @@ impl Solver {
         {
             return self.analyze_theory_asserting_lemma(conflict_lits);
         }
-
         self.learnt.clear();
         self.learnt.push(Lit::from_code(0)); // Placeholder
 
@@ -1017,75 +1016,80 @@ impl Solver {
             return (0, SmallVec::new());
         }
 
-        // Find UIP by walking back through trail
+        // Find UIP by walking back through trail.  Only a CONFLICT-LEVEL
+        // seen literal may discharge the counter: the trail is not sorted by
+        // decision level under chronological backtracking, so the walk can
+        // encounter a marked literal from a lower level (already carried in
+        // the learned clause) sitting above the remaining conflict-level
+        // literals.  Discharging on it terminates the 1-UIP loop early and
+        // emits an asserting literal at or below the backtrack level
+        // (`backtrack_level == uip level`, corrupting the trail) — the same
+        // defect `analyze`'s `analyze_scan_pivot` guard exists for (Z3
+        // `sat_solver.cpp` skips marked literals with
+        // `lvl(c_var) != m_conflict_lvl`).  Port that guard here.
         let mut index = self.trail.assignments().len();
         let mut p = None;
 
         while counter > 0 {
-            if index == 0 {
-                break; // Avoid underflow – no more trail entries
-            }
-            index -= 1;
-            if index >= self.trail.assignments().len() {
-                break; // Guard against stale length
-            }
-            let current_lit = self.trail.assignments()[index];
+            let Some(current_lit) =
+                Self::analyze_scan_pivot(&self.seen, &self.trail, &mut index, current_level)
+            else {
+                break; // Trail exhausted (degenerate state) – keep `p` as-is.
+            };
             p = Some(current_lit);
             let var = current_lit.var();
 
-            if self.seen[var.index()] {
-                counter -= 1;
+            counter -= 1;
 
-                if counter > 0
-                    && let Reason::Propagation(reason_clause) = self.trail.reason(var)
-                    && let Some(clause) = self.clauses.get(reason_clause)
-                {
-                    // Get reason and process its literals.
-                    // `current_lit` is the propagated (TRUE) literal being resolved
-                    // out; skip it BY VALUE rather than assuming it sits at index 0.
-                    // Binary-implication-graph propagation does not move the implied
-                    // literal to index 0, so a positional `[1..]` skip would drop the
-                    // false antecedent at index 0 and yield unsound learned clauses.
-                    for &lit in &clause.lits {
-                        if lit == current_lit {
-                            continue;
-                        }
-                        let reason_var = lit.var();
-                        let level = self.trail.level(reason_var);
+            if counter > 0
+                && let Reason::Propagation(reason_clause) = self.trail.reason(var)
+                && let Some(clause) = self.clauses.get(reason_clause)
+            {
+                // Get reason and process its literals.
+                // `current_lit` is the propagated (TRUE) literal being resolved
+                // out; skip it BY VALUE rather than assuming it sits at index 0.
+                // Binary-implication-graph propagation does not move the implied
+                // literal to index 0, so a positional `[1..]` skip would drop the
+                // false antecedent at index 0 and yield unsound learned clauses.
+                for &lit in &clause.lits {
+                    if lit == current_lit {
+                        continue;
+                    }
+                    let reason_var = lit.var();
+                    let level = self.trail.level(reason_var);
 
-                        if !self.seen[reason_var.index()] && level > 0 {
-                            self.seen[reason_var.index()] = true;
-                            vars_to_bump.push(reason_var);
+                    if !self.seen[reason_var.index()] && level > 0 {
+                        self.seen[reason_var.index()] = true;
+                        vars_to_bump.push(reason_var);
 
-                            if level == current_level {
-                                counter += 1;
-                            } else {
-                                // Add the literal itself to the learned clause
-                                self.learnt.push(lit);
-                            }
+                        if level == current_level {
+                            counter += 1;
+                        } else {
+                            // Add the literal itself to the learned clause
+                            self.learnt.push(lit);
                         }
                     }
-                } else if counter > 0
-                    && let Reason::Theory = self.trail.reason(var)
-                    && let Some(tail) = self.theory_reason_tail(var).cloned()
-                {
-                    // Lazily explained theory propagation: resolve through the
-                    // stored tail (exactly the literals a materialized reason
-                    // clause would carry after its head; the head – the TRUE
-                    // literal `current_lit` – is absent, so no skip is needed).
-                    for &lit in &tail {
-                        let reason_var = lit.var();
-                        let level = self.trail.level(reason_var);
+                }
+            } else if counter > 0
+                && let Reason::Theory = self.trail.reason(var)
+                && let Some(tail) = self.theory_reason_tail(var).cloned()
+            {
+                // Lazily explained theory propagation: resolve through the
+                // stored tail (exactly the literals a materialized reason
+                // clause would carry after its head; the head – the TRUE
+                // literal `current_lit` – is absent, so no skip is needed).
+                for &lit in &tail {
+                    let reason_var = lit.var();
+                    let level = self.trail.level(reason_var);
 
-                        if !self.seen[reason_var.index()] && level > 0 {
-                            self.seen[reason_var.index()] = true;
-                            vars_to_bump.push(reason_var);
+                    if !self.seen[reason_var.index()] && level > 0 {
+                        self.seen[reason_var.index()] = true;
+                        vars_to_bump.push(reason_var);
 
-                            if level == current_level {
-                                counter += 1;
-                            } else {
-                                self.learnt.push(lit);
-                            }
+                        if level == current_level {
+                            counter += 1;
+                        } else {
+                            self.learnt.push(lit);
                         }
                     }
                 }

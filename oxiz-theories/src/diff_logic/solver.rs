@@ -103,8 +103,10 @@ pub enum DiffLogicResult {
 enum IncAdd {
     /// Immediate self-conflict (x == y, c < 0).
     Conflict(Vec<TermId>),
-    /// Edge added; run the seeded SPFA from this source node.
-    Ok(DiffVar),
+    /// Edge added for `x − y ≤ w` (w already integer-tightened); the payload
+    /// carries both endpoints and the effective weight for the incremental
+    /// cycle test (see `DiffLogicSolver::check_incremental_from`).
+    Ok((DiffVar, DiffVar, Rational64)),
     /// Distances are stale or a new variable appeared – fall back to a full
     /// [`DiffLogicSolver::check`].
     FullCheck,
@@ -125,8 +127,9 @@ pub struct DiffLogicSolver {
     /// Sparse constraint graph (always present; the active engine unless the
     /// dense core took over).
     graph: ConstraintGraph,
-    /// Dense integer core. `Some` once integer DL with i64-safe weights is
-    /// detected; then it is the primary engine.
+    /// Dense integer core. `Some` from construction on integer solvers (see
+    /// [`DiffLogicSolver::with_config`] for why it must exist before the first
+    /// decision level); the active engine while exact.
     dense: Option<DenseDlCore>,
     /// Dense-core node interning: term → dense node id.
     dense_terms: FxHashMap<TermId, u32>,
@@ -160,10 +163,21 @@ impl DiffLogicSolver {
     }
 
     /// Create a new solver with custom configuration
+    ///
+    /// An integer solver installs its dense core **eagerly** (Z3 creates the
+    /// `theory_dense_diff_logic` object at setup time, before any decision
+    /// level exists).  The core's scope marks must cover every decision level
+    /// from 0 on: they are created only by [`DenseDlCore::push`], so a lazily
+    /// created core would carry no marks for the levels that preceded its
+    /// first use, and the first backtrack past that point would exhaust the
+    /// marks and hit `pop`'s no-mark early return — permanently stranding
+    /// every edge asserted below the oldest mark as an unexplained phantom
+    /// constraint (observed as unexplainable dense conflicts that broke the
+    /// pure-DL route on the DTP/queens/qlock/gryzzles families).
     pub fn with_config(is_integer: bool, config: DiffLogicConfig) -> Self {
         Self {
             graph: ConstraintGraph::new(is_integer),
-            dense: None,
+            dense: is_integer.then(DenseDlCore::new),
             dense_terms: FxHashMap::default(),
             dense_degraded: false,
             bf: BellmanFord::new(),
@@ -196,7 +210,9 @@ impl DiffLogicSolver {
 
     // ======== dense-core routing ========
 
-    /// Whether the dense integer core is installed (active or degraded).
+    /// Whether the dense core is installed (active or degraded). Integer
+    /// solvers install it eagerly at construction (see
+    /// [`DiffLogicSolver::with_config`]); real solvers never do.
     pub fn dense_active(&self) -> bool {
         self.dense.is_some()
     }
@@ -206,12 +222,10 @@ impl DiffLogicSolver {
         self.dense.is_some() && !self.dense_degraded
     }
 
-    /// Mutable access to the dense core (installing it on first use when the
-    /// solver is an integer solver and the core is not degraded).
+    /// Mutable access to the dense core. Installed eagerly at construction
+    /// for integer solvers (see [`Self::with_config`]); `None` only for real
+    /// solvers or after [`Self::dense_disable`].
     pub fn dense(&mut self) -> Option<&mut DenseDlCore> {
-        if self.dense.is_none() && self.graph.is_integer() && !self.dense_degraded {
-            self.dense = Some(DenseDlCore::new());
-        }
         self.dense.as_mut()
     }
 
@@ -261,6 +275,21 @@ impl DiffLogicSolver {
     pub fn dense_value(&self, term: TermId) -> Option<i64> {
         let id = self.dense_terms.get(&term).copied()?;
         self.dense.as_ref().map(|core| core.value(id))
+    }
+
+    /// Model value of a sparse-graph term under the last full multi-source
+    /// distances — a feasible potential: every edge `u → v` of weight `w`
+    /// satisfies `d(v) ≤ d(u) + w`, so `value = d` satisfies every asserted
+    /// difference constraint.  Requires a [`Self::check`] (or a
+    /// `distances_valid` state) no older than the last add/pop; the pure
+    /// route's final-check backstop runs exactly that.  `None` when the term
+    /// is not in the sparse graph or the distances are stale.
+    pub fn sparse_value_of(&self, term: TermId) -> Option<Rational64> {
+        if !self.distances_valid {
+            return None;
+        }
+        let var = self.graph.get_var(term)?;
+        self.distances.get(var.id() as usize).copied().flatten()
     }
 
     /// Whether `weight` (as an exact rational) is an i64 integer in the
@@ -404,6 +433,7 @@ impl DiffLogicSolver {
             self.distances_valid = false;
             return IncAdd::Conflict(vec![origin]);
         }
+        let effective = constraint.effective_bound(self.graph.is_integer());
         let idx = self.graph.add_constraint(constraint);
         self.term_to_constraint.entry(origin).or_default().push(idx);
         self.pending.push(idx);
@@ -411,15 +441,42 @@ impl DiffLogicSolver {
             self.distances_valid = false;
             return IncAdd::FullCheck;
         }
-        IncAdd::Ok(y)
+        IncAdd::Ok((x, y, effective))
     }
 
-    /// Seeded SPFA from `src`: update the cached distances over the asserted
-    /// edges and detect a negative cycle. O(affected nodes), far cheaper than
-    /// a full Bellman-Ford on a sparse graph; on a detected cycle the
-    /// explanation is extracted from the SPFA parent forest directly.
-    fn check_incremental_from(&mut self, src: DiffVar) -> DiffLogicResult {
-        if src.is_source() {
+    /// Sound incremental negative-cycle test for the edge just added for
+    /// `x − y ≤ w` (edge `y → x`).  Every negative cycle newly created by
+    /// the edge passes through it, so a fresh single-source SPFA from `y`
+    /// over the asserted edges is the complete test (previous states were
+    /// cycle-free by induction): a cycle exists iff one is reachable from
+    /// `y`.  O(affected nodes) per added edge.
+    ///
+    /// Soundness of the seeded test (the potential argument): the cached
+    /// multi-source distances `d̂` — from the last [`Self::check`] or seeded
+    /// run; every edge they cover is still asserted, since pops invalidate
+    /// and adds only extend — are shortest-path potentials, so any path
+    /// over the OLD edges obeys `d(x → y) ≥ d̂(y) − d̂(x)` (sum the
+    /// potential inequality `d̂(v) ≤ d̂(u) + w(u,v)` along the path).  A
+    /// cycle through the new edge `y → x` needs an old `x → y` path with
+    /// `d(x→y) + w < 0`, which forces `d̂(y) + w < d̂(x)` — i.e. relaxing
+    /// the new edge IMPROVES `x`.  So a seeded run that relaxes nothing
+    /// through the new edge proves no cycle exists ("absorption" is a
+    /// certificate, not a miss), and when it does relax, the propagated
+    /// fixpoint keeps `d̂` a valid potential set for the extended graph
+    /// (every decrease propagates through out-edges, restoring the
+    /// inequality).  A detected negative cycle (a node enqueued |V|+1
+    /// times) falls back to the full multi-source SPFA for the explanation.
+    ///
+    /// (An earlier revision replaced this with a fresh single-source SPFA
+    /// per added edge on the belief that absorption could hide a cycle —
+    /// the argument above shows it cannot; the observed false-SAT on
+    /// `qlock-4-10-11.base` was the `ConstraintGraph::push` rollback-mark
+    /// bug, fixed separately.  The per-add SPFA never refreshed the cached
+    /// potentials, cost O(affected) per edge, and turned that instance into
+    /// a timeout.)
+    fn check_incremental_from(&mut self, x: DiffVar, y: DiffVar, w: Rational64) -> DiffLogicResult {
+        let _ = (x, w); // the seeded run below embodies the filter+propagation
+        if y.is_source() {
             return DiffLogicResult::Ok;
         }
         let n = self.graph.num_vars() as usize;
@@ -429,7 +486,7 @@ impl DiffLogicSolver {
         let cycle = {
             let graph = &self.graph;
             let distances = &mut self.distances;
-            self.spfa.seed_from(graph, distances, src)
+            self.spfa.seed_from(graph, distances, y)
         };
         if cycle.is_some() {
             // A negative cycle exists, but the seeded run's partial parent
@@ -453,7 +510,7 @@ impl DiffLogicSolver {
     ) -> DiffLogicResult {
         match self.add_constraint_inc(x, y, c, ConstraintType::LeqConst, origin) {
             IncAdd::Conflict(t) => DiffLogicResult::Conflict(t),
-            IncAdd::Ok(src) => self.check_incremental_from(src),
+            IncAdd::Ok((x, y, w)) => self.check_incremental_from(x, y, w),
             IncAdd::FullCheck => self.check(),
         }
     }
@@ -468,7 +525,7 @@ impl DiffLogicSolver {
     ) -> DiffLogicResult {
         match self.add_constraint_inc(x, y, c, ConstraintType::LtConst, origin) {
             IncAdd::Conflict(t) => DiffLogicResult::Conflict(t),
-            IncAdd::Ok(src) => self.check_incremental_from(src),
+            IncAdd::Ok((x, y, w)) => self.check_incremental_from(x, y, w),
             IncAdd::FullCheck => self.check(),
         }
     }
@@ -948,6 +1005,74 @@ mod tests {
     }
 
     // ======== incremental check (add_*_check) tests ========
+
+    /// The potential-certificate case that motivated the seeded check's
+    /// soundness write-up (false-SAT on `qlock-4-10-11.base`): with the cached
+    /// multi-source distances `d(p)=0, d(x)=−200, d(y)=−100/−201` from the
+    /// earlier adds, the closing edge (`y→x, 0`) does NOT absorb (it improves
+    /// `d(x)`), the seeded run propagates the relaxation around `x→y→x`, and
+    /// the negative cycle of weight −1 is detected without a full check.
+    /// The observed false-SAT was never an absorption miss — it was the
+    /// `ConstraintGraph::push` rollback-mark wipe (see
+    /// [`Self::push_without_adds_does_not_wipe_lower_levels`]); this test
+    /// pins that the seeded path stays sound on the shaped case regardless.
+    #[test]
+    fn incremental_check_detects_cycle_over_stale_cache() {
+        let mut s = DiffLogicSolver::new(true);
+        let (p, x, y) = (term(1), term(2), term(3));
+        // Edge p→x (−200): constraint x − p ≤ −200.
+        assert!(matches!(
+            s.add_leq_check(x, p, Rational64::from_integer(-200), term(10)),
+            DiffLogicResult::Ok
+        ));
+        // Edge p→y (−100): constraint y − p ≤ −100.
+        assert!(matches!(
+            s.add_leq_check(y, p, Rational64::from_integer(-100), term(11)),
+            DiffLogicResult::Ok
+        ));
+        // Edge x→y (−1): constraint y − x ≤ −1.
+        assert!(matches!(
+            s.add_leq_check(y, x, Rational64::from_integer(-1), term(12)),
+            DiffLogicResult::Ok
+        ));
+        // Closing edge y→x (0): constraint x − y ≤ 0.  Cycle −1 + 0 < 0.
+        assert!(
+            matches!(
+                s.add_leq_check(x, y, Rational64::from_integer(0), term(13)),
+                DiffLogicResult::Conflict(_)
+            ),
+            "the absorption case must still detect the negative cycle"
+        );
+    }
+
+    /// Regression (constraint wipe on routine backtrack): `ConstraintGraph::push`
+    /// used to initialize the new level's rollback mark to 0, so a pop to a
+    /// level that had seen no constraint additions truncated EVERYTHING —
+    /// including level-0 facts.  A push/pop round-trip must preserve them.
+    #[test]
+    fn push_without_adds_does_not_wipe_lower_levels() {
+        let mut s = DiffLogicSolver::new(true);
+        let (x, y) = (term(1), term(2));
+        assert!(matches!(
+            s.add_leq_check(x, y, Rational64::from_integer(5), term(10)),
+            DiffLogicResult::Ok
+        ));
+        assert_eq!(s.num_constraints(), 1);
+        s.push();
+        assert_eq!(s.num_constraints(), 1, "push alone adds nothing");
+        s.pop(1);
+        assert_eq!(
+            s.num_constraints(),
+            1,
+            "pop to an add-less level must keep lower-level constraints"
+        );
+        // The surviving level-0 edge must still participate in checks:
+        // y − x ≤ −6 closes a cycle of weight −1 with x − y ≤ 5.
+        assert!(matches!(
+            s.add_leq_check(y, x, Rational64::from_integer(-6), term(11)),
+            DiffLogicResult::Conflict(_)
+        ));
+    }
 
     #[test]
     fn incremental_check_detects_negative_cycle() {

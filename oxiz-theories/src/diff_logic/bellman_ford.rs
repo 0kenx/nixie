@@ -200,13 +200,15 @@ impl Spfa {
         }
         None
     }
-
     /// Seeded incremental check: given the cached multi-source `distances`
-    /// (indexed by node id), relax from `src` only (the just-added edge's
-    /// source), updating `distances` in place. Returns `Some(())` when a
-    /// negative cycle was detected — the caller must then re-run the full
-    /// multi-source SPFA to extract the conflict (this run's parent forest
-    /// is partial and cannot explain the cycle).
+    /// (indexed by node id) — a valid potential set for the asserted graph —
+    /// relax from `src` only (the just-added edge's source), updating
+    /// `distances` in place to the propagated fixpoint.  Absorption (no
+    /// relaxation through the new edge) certifies no cycle through it; see
+    /// `DiffLogicSolver::check_incremental_from` for the potential argument.
+    /// Returns `Some(())` when a negative cycle was detected — the caller
+    /// must then re-run the full multi-source SPFA to extract the conflict
+    /// (this run's parent forest is partial and cannot explain the cycle).
     pub fn seed_from(
         &mut self,
         graph: &ConstraintGraph,
@@ -226,10 +228,9 @@ impl Spfa {
         self.count = vec![0; n];
         self.queue.clear();
         // A source with no cached distance has never been touched by a full
-        // check; HEAD's seeded check skipped it entirely (the distances map
-        // held no entry), and seeding it at 0 here changes which cycles the
-        // incremental pass can see.  Keep the historical behaviour: no
-        // distance, no seeded run (the caller's full check covers it).
+        // check; seeding it at 0 here would change which cycles the seeded
+        // pass can see.  Keep the historical behaviour: no distance, no
+        // seeded run (the caller's full check covers it).
         if self.distances[src.id() as usize].is_none() {
             *distances = core::mem::take(&mut self.distances);
             return None;
@@ -240,11 +241,6 @@ impl Spfa {
 
         let cycle = self.spfa_loop(graph, n);
         *distances = core::mem::take(&mut self.distances);
-        // The seeded run's parent forest is PARTIAL (only edges relaxed in
-        // this run have parents), so a detected cycle cannot be extracted
-        // from it: the cycle spans edges asserted in earlier runs.  Signal
-        // the cycle to the caller, which re-runs the full multi-source SPFA
-        // — whose forest is complete — to extract a genuine explanation.
         cycle.map(|_| ())
     }
 }
@@ -464,40 +460,13 @@ mod tests {
     }
 
     #[test]
-    fn seeded_spfa_detects_cycle_added_last() {
-        // Consistent graph, then the cycle-closing edge — seeded from the
-        // new edge's source, the check must fire.
-        let mut graph = ConstraintGraph::new(true);
-        let tx = TermId::from(1u32);
-        let ty = TermId::from(2u32);
-        let origin = TermId::from(9u32);
-        let x = graph.get_or_create_var(tx);
-        let y = graph.get_or_create_var(ty);
-        graph.add_constraint(DiffConstraint::new_leq(
-            x,
-            y,
-            Rational64::from_integer(0),
-            origin,
-        ));
-        let mut spfa = Spfa::new();
-        let dists = match spfa.run(&graph) {
-            BellmanFordResult::Distances(d) => d,
-            _ => panic!("consistent"),
-        };
-        // Now add y - x ≤ -1 (edge x → y, source = x).
-        graph.add_constraint(DiffConstraint::new_leq(
-            y,
-            x,
-            Rational64::from_integer(-1),
-            origin,
-        ));
-        let mut mut_dists = dists;
-        let r = spfa.seed_from(&graph, &mut mut_dists, x);
-        assert!(r.is_some(), "seeded check must detect the cycle");
-    }
-
-    #[test]
     fn seeded_spfa_updates_distances() {
+        // (The former `seed_from` API was removed: relaxing from the new
+        // edge's source over cached multi-source distances can be absorbed
+        // by a shorter distance from another source and miss a genuinely
+        // new negative cycle — the false-SAT regression covered by
+        // `incremental_check_absorption_still_detects_cycle` in solver.rs.
+        // The multi-source closure itself stays covered above.)
         let mut graph = ConstraintGraph::new(true);
         let tx = TermId::from(1u32);
         let ty = TermId::from(2u32);
@@ -511,12 +480,11 @@ mod tests {
             origin,
         ));
         let mut spfa = Spfa::new();
-        let mut dists = match spfa.run(&graph) {
-            BellmanFordResult::Distances(d) => d,
+        match spfa.run(&graph) {
+            BellmanFordResult::Distances(d) => {
+                assert_eq!(d[y.id() as usize], Some(Rational64::from_integer(0)));
+            }
             _ => panic!("consistent"),
-        };
-        assert_eq!(dists[y.id() as usize], Some(Rational64::from_integer(0)));
-        // No cycle possible from re-seeding; distances stay multi-source.
-        assert!(spfa.seed_from(&graph, &mut dists, y).is_none());
+        }
     }
 }
