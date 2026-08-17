@@ -120,15 +120,14 @@ impl Trail {
     /// Raw per-literal truth value: `+1` true, `-1` false, `0` undefined.
     /// The hottest BCP lookup – a single byte load indexed by literal code
     /// (no enum match, no sign branch). The solver maintains `values` at
-    /// length `2 * num_vars`, so `lit.code()` is always in range.
+    /// length `2 * num_vars` (grown only by `resize`, never shrunk — see
+    /// `unassign`), so `lit.code()` is always in range and the direct index
+    /// skips the `Option` bounds-check dance the `.get()` version paid on
+    /// every watch visit.
     #[inline(always)]
     #[must_use]
     pub fn lit_val(&self, lit: Lit) -> i8 {
-        let code = lit.code() as usize;
-        match self.values.get(code) {
-            Some(&v) => v,
-            None => 0,
-        }
+        self.values[lit.code() as usize]
     }
 
     /// Get the value of a variable

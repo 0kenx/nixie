@@ -99,3 +99,54 @@ vivification and probing land; those are the known missing amortizers.
 - Scheduling the pre-search fixpoint unbounded: phases 2+ eliminate ~50 vars
   each for a full database rescan (19 phases = 1.5s on 6s167); the
   productivity gate + 4-phase cap is the shape that works.
+
+## Follow-up (same day): inprocessing soundness + BCP throughput
+
+### Sixth soundness bug: `forward_subsumption` watch-position corruption
+
+Enabling the (pre-existing) inprocessing pipeline reproduced a false UNSAT
+instantly on `noL-11-14` (SAT per CaDiCaL): `forward_subsumption`'s normalize
+prologue sorts every clause's literals in place, but the pass only rebuilt
+the watch lists when it actually subsumed something (`removed > 0`).
+`propagate` requires the two watched literals at stored positions `[0]/[1]`
+(the same invariant class as the `learn_clause` bug fixed in `b0f2db8`), so
+a normalize-only reorder left every watcher pointing at stale positions; BCP
+then propagated never-implied literals and the search concluded UNSAT in 6
+conflicts. Notably the corrupted pass had been *luckily* "solving"
+`mrpp_4x4#12_12` (0.02s, verdict matched) — a reminder that speedups from a
+corrupting pass are worthless. Fix: unconditional watch rebuild after the
+pass. Regression: `tests/fs_watch_position_soundness.rs` (noL under a
+conflict budget must not answer UNSAT).
+
+This also explains the historical "BVE + forward-subsumption reproduces
+noL-11-14 false UNSAT" comment in `SolverConfig`: same defect, misattributed
+to the BVE interaction.
+
+### BCP throughput work (deterministic, no policy change)
+
+Measured on `stable-300` (300 vars / 17.5k clauses), 100k conflicts fixed:
+ours 49.4G instructions vs CaDiCaL 20.3G (2.5x), 3.74M vs 2.91M
+propagations, 570k vs 128k decisions. Per watch visit: ~125 inst vs ~66.
+Visits per propagation: ~105 (blocker hit rate 55%).
+
+Landed: eager watcher detach on clause-database reduction (cadical
+`detach_clause`; deleted clauses no longer sit in the hot lists until their
+literals fire), removal of a full `Clause::clone` per deleted clause in
+`ClauseDatabase::remove`'s stats path, and direct indexing in
+`Trail::lit_val` (the `.get()`+match bounds-check dance on the hottest
+lookup). ~5% on dense random instances.
+
+### Suite effect (94-file CaDiCaL differential, 25s cap, default config)
+
+22/94 → **18/94** above 1.5x; total 738-750s → **653s**; 0 disagreements.
+
+### Where the remaining gap lives (next study)
+
+The residual ~2.9x time gap on the timeout files decomposes into ~1.4x
+instructions per watch visit (SmallVec discriminant + `self→trail→values`
+pointer depth; `#![deny(unsafe_code)]` rules out the raw-pointer fix), ~1.3x
+more propagations, and ~4.5x more decisions per conflict — the last is
+search policy (restart/reuse/branching interplay), which per
+`docs/BENCHMARKING.md` requires the matched-null, ≥10-seed methodology
+before any conclusion. That is the next lever for `stable-300`, `qwh`,
+`frb65`, `summle_*`, `noL-*`.

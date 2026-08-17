@@ -115,8 +115,19 @@ impl Solver {
             }
         }
 
+        // ALWAYS rebuild the watched-literal structures after this pass.
+        // The normalize prologue above reorders literals in place, and
+        // `propagate` requires each clause's two watched literals at stored
+        // positions [0]/[1] (see the `learn_clause` watch-position fix): a
+        // normalize-only reorder with `removed == 0` used to skip the
+        // rebuild, leaving every clause's watches pointing at stale
+        // positions. BCP then "propagated" literals that were never implied
+        // and the search concluded a false UNSAT within a handful of
+        // conflicts (reproducer: `noL-11-14` with `INPROCESS=1`, SAT per
+        // CaDiCaL, 6 conflicts). Tautology deletions in the prologue are
+        // likewise only cleaned out of the watch lists by this rebuild.
+        self.rebuild_watches_and_binary_graph();
         if removed > 0 {
-            self.rebuild_watches_and_binary_graph();
             self.stats.subsumed_removed += removed as u64;
         }
         removed

@@ -395,10 +395,16 @@ impl ClauseDatabase {
     }
 
     /// Update statistics when removing a clause
-    fn update_stats_remove(&mut self, clause: &Clause) {
-        if clause.learned {
+    fn update_stats_remove_fields(
+        &mut self,
+        learned: bool,
+        tier: ClauseTier,
+        lbd: u32,
+        size: usize,
+    ) {
+        if learned {
             // Update tier count
-            let tier_idx = match clause.tier {
+            let tier_idx = match tier {
                 ClauseTier::Core => 0,
                 ClauseTier::Mid => 1,
                 ClauseTier::Local => 2,
@@ -408,22 +414,19 @@ impl ClauseDatabase {
             }
 
             // Update LBD stats
-            if clause.lbd > 0 && self.stats.lbd_count > 0 {
-                self.stats.total_lbd = self.stats.total_lbd.saturating_sub(clause.lbd as u64);
+            if lbd > 0 && self.stats.lbd_count > 0 {
+                self.stats.total_lbd = self.stats.total_lbd.saturating_sub(lbd as u64);
                 self.stats.lbd_count -= 1;
             }
         }
 
         // Update size distribution (only for clauses with 2+ literals)
-        if clause.len() >= 2 {
-            let size_idx = if clause.len() >= 12 {
-                9 // 10+ bucket
-            } else {
-                clause.len() - 2
-            };
-            if self.stats.size_distribution[size_idx] > 0 {
-                self.stats.size_distribution[size_idx] -= 1;
+        if (2..12).contains(&size) {
+            if self.stats.size_distribution[size - 2] > 0 {
+                self.stats.size_distribution[size - 2] -= 1;
             }
+        } else if size >= 12 && self.stats.size_distribution[9] > 0 {
+            self.stats.size_distribution[9] -= 1;
         }
     }
 
@@ -490,11 +493,16 @@ impl ClauseDatabase {
         if let Some(clause) = self.clauses.get_mut(id.index())
             && !clause.deleted
         {
-            // Clone necessary info for stats update
-            let clause_copy = clause.clone();
+            // Stats need only the cheap classification fields – the previous
+            // full `Clause::clone()` (heap SmallVec copy per deleted clause)
+            // was pure overhead on reduction-heavy runs.
+            let learned = clause.learned;
+            let tier = clause.tier;
+            let lbd = clause.lbd;
+            let size = clause.lits.len();
 
             clause.deleted = true;
-            if clause.learned {
+            if learned {
                 self.num_learned -= 1;
             } else {
                 self.num_original -= 1;
@@ -503,7 +511,7 @@ impl ClauseDatabase {
             self.free_list.push(id);
 
             // Update statistics after marking as deleted
-            self.update_stats_remove(&clause_copy);
+            self.update_stats_remove_fields(learned, tier, lbd, size);
         }
     }
 

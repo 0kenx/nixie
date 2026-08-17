@@ -653,6 +653,23 @@ impl Solver {
         // Local: Delete bottom 75% (very aggressive)
         let num_local_delete = (local_candidates.len() * 3) / 4;
 
+        // Eagerly detach the two watchers of every deleted clause (cadical
+        // `detach_clause` in `reduce`). `ClauseDatabase::remove` only flags
+        // the clause deleted, so its watchers otherwise stay in the hot
+        // lists until BCP happens to falsify their literals – every visit
+        // then pays a cache-miss clause load just to discover the flag.
+        // Semantics are identical either way (BCP skips deleted clauses), so
+        // this is pure watch-list hygiene: the search trajectory is
+        // unchanged. The watched literals are at stored positions [0]/[1].
+        let detach = |solver: &mut Solver, cid: ClauseId| {
+            if let Some(c) = solver.clauses.get(cid).filter(|c| !c.deleted) {
+                let w0 = c.lits[0];
+                let w1 = c.lits[1];
+                solver.watches.remove_clause(w0.negate(), cid);
+                solver.watches.remove_clause(w1.negate(), cid);
+            }
+        };
+
         for (cid, _) in core_candidates.iter().take(num_core_delete) {
             // Track clause size for memory pool accounting before removal
             if let Some(clause) = self.clauses.get(*cid) {
@@ -661,6 +678,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            detach(self, *cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -672,6 +690,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            detach(self, *cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
@@ -683,6 +702,7 @@ impl Solver {
                 self.memory_optimizer.free(buf, num_lits);
             }
             self.drat_delete(*cid);
+            detach(self, *cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
         }
