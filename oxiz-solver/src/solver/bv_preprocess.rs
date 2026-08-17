@@ -90,11 +90,81 @@ pub(super) struct BvPreprocessor {
     /// Memo of the distributed polynomial of a term (`None` = not computable
     /// within the bounds).  Populated lazily by `poly_of`.
     poly_memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+    /// Memo of the Boolean reading of a 1-bit expression (`None` = not
+    /// liftable).  Populated lazily by [`BvPreprocessor::to_bool`].
+    bool_memo: rustc_hash::FxHashMap<TermId, Option<TermId>>,
 }
 
 impl BvPreprocessor {
     pub(super) fn new() -> Self {
         Self::default()
+    }
+
+    /// The Boolean reading of a width-1 bit-vector expression, or `None`
+    /// when any node on the way is not liftable (Z3's `mk_bit2bool` /
+    /// `bv1_blaster` idea).
+    ///
+    /// Liftable nodes: the 1-bit constants, `bvnot`, the bitwise boolean
+    /// ops over 1-bit operands, and `ite` with 1-bit branches.  Declared
+    /// 1-bit *variables* deliberately stop the lifting: replacing one with
+    /// a fresh Boolean would orphan its model entry and its bit-blasted
+    /// uses in non-liftable positions; its comparisons still lift through
+    /// the surrounding structure.  `concat` stops it as well (its result
+    /// is not width 1).
+    #[allow(clippy::wrong_self_convention)] // `to_bool` is a conversion on
+    // the *term* argument; the receiver is only the memo carrier.
+    fn to_bool(&mut self, term: &TermId, manager: &mut TermManager) -> Option<TermId> {
+        if let Some(cached) = self.bool_memo.get(term) {
+            return *cached;
+        }
+        let result = self.compute_bool(term, manager);
+        self.bool_memo.insert(*term, result);
+        result
+    }
+
+    fn compute_bool(&mut self, term: &TermId, manager: &mut TermManager) -> Option<TermId> {
+        if bv_width_opt(manager, term) != Some(1) {
+            return None;
+        }
+        let kind = manager.get(*term).map(|t| t.kind.clone())?;
+        let out = match kind {
+            TermKind::BitVecConst { .. } => {
+                let v = const_bits(term, manager)?;
+                if v.is_one() {
+                    manager.mk_true()
+                } else {
+                    manager.mk_false()
+                }
+            }
+            TermKind::BvNot(a) => {
+                let b = self.to_bool(&a, manager)?;
+                manager.mk_not(b)
+            }
+            TermKind::BvAnd(a, b) => {
+                let (x, y) = (self.to_bool(&a, manager)?, self.to_bool(&b, manager)?);
+                manager.mk_and([x, y])
+            }
+            TermKind::BvOr(a, b) => {
+                let (x, y) = (self.to_bool(&a, manager)?, self.to_bool(&b, manager)?);
+                manager.mk_or([x, y])
+            }
+            TermKind::BvXor(a, b) => {
+                let (x, y) = (self.to_bool(&a, manager)?, self.to_bool(&b, manager)?);
+                manager.mk_xor(x, y)
+            }
+            TermKind::Ite(c, t, e) => {
+                // The condition is Bool-sorted already (children were
+                // rewritten; a BV-sorted condition is malformed SMT-LIB and
+                // the fragment walk rejects it before we get here).
+                let (bt, be) = (self.to_bool(&t, manager)?, self.to_bool(&e, manager)?);
+                let bc = self.memo.get(&c).copied().unwrap_or(c);
+                manager.mk_ite(bc, bt, be)
+            }
+            // Declared variables, extracts of wide terms, shifts, arithmetic
+            // on width-1 words: keep the bit-vector representation.
+            _ => return None,
+        };
+        Some(out)
     }
 
     /// Rewrite one assertion.  Returns the original term on any structural
@@ -186,6 +256,33 @@ impl BvPreprocessor {
                 if ra == rb {
                     return manager.mk_true();
                 }
+                // Z3 `mk_bit2bool`: `(= (_ bv1 1) e)` over a liftable
+                // 1-bit expression becomes the Boolean `b(e)` itself (and
+                // `= (_ bv0 1) e` its negation).  Encodings that build
+                // their Boolean structure out of 1-bit vectors
+                // (`brummayerbiere3/maxandminor*`, `countbitssrl*`) then
+                // reach the blaster as real Boolean circuits instead of
+                // per-node mux/equality clauses over 1-bit words.
+                if let Some(value) = const_bits(&ra, manager)
+                    && bv_width_opt(manager, &ra) == Some(1)
+                    && let Some(be) = self.to_bool(&rb, manager)
+                {
+                    return if value.is_one() {
+                        be
+                    } else {
+                        manager.mk_not(be)
+                    };
+                }
+                if let Some(value) = const_bits(&rb, manager)
+                    && bv_width_opt(manager, &rb) == Some(1)
+                    && let Some(be) = self.to_bool(&ra, manager)
+                {
+                    return if value.is_one() {
+                        be
+                    } else {
+                        manager.mk_not(be)
+                    };
+                }
                 // Bool-sorted equality with a constant side folds; with a
                 // bare `not` it inlines (`p = ¬q` → `¬(p = q)`).
                 let lhs_bool = manager
@@ -253,6 +350,16 @@ impl BvPreprocessor {
                 if ra == rb {
                     return manager.mk_false();
                 }
+                // 1-bit comparisons are Boolean formulas: `x <u y` on bits
+                // is `¬x ∧ y`, `x ≤u y` is `x → y`.
+                if common_width(manager, &ra, &rb) == Some(1) {
+                    if let (Some(bx), Some(by)) =
+                        (self.to_bool(&ra, manager), self.to_bool(&rb, manager))
+                    {
+                        let not_x = manager.mk_not(bx);
+                        return manager.mk_and([not_x, by]);
+                    }
+                }
                 if let Some(w) = common_width(manager, &ra, &rb) {
                     if let Some(result) = fold_ult(&ra, &rb, manager) {
                         return result;
@@ -270,6 +377,14 @@ impl BvPreprocessor {
                 let (ra, rb) = (kid(&a), kid(&b));
                 if ra == rb {
                     return manager.mk_true();
+                }
+                if common_width(manager, &ra, &rb) == Some(1) {
+                    if let (Some(bx), Some(by)) =
+                        (self.to_bool(&ra, manager), self.to_bool(&rb, manager))
+                    {
+                        let not_x = manager.mk_not(bx);
+                        return manager.mk_or([not_x, by]);
+                    }
                 }
                 if let Some(w) = common_width(manager, &ra, &rb) {
                     if let Some(result) = fold_ule(&ra, &rb, manager) {
@@ -474,64 +589,84 @@ impl BvPreprocessor {
         width: u32,
         manager: &TermManager,
     ) -> Option<Vec<Mono>> {
-        let modulus = modulus(width);
-        let kind = manager.get(term).map(|t| t.kind.clone())?;
-        let poly = match kind {
-            TermKind::BitVecConst { .. } => vec![Mono {
-                coeff: const_bits(&term, manager)?,
-                factors: Vec::new(),
-            }],
-            TermKind::BvAdd(a, b) => {
-                let mut poly = self.poly_of(a, width, manager)?;
-                poly.extend(self.poly_of(b, width, manager)?);
-                poly
+        ring_poly(term, width, manager, &mut self.poly_memo)
+    }
+}
+
+/// Compute the fully-distributed polynomial of `term` in the monomial
+/// domain (never rebuilt as terms), memoized on `memo`.
+///
+/// `None` when the expansion would exceed [`MAX_MONOMIALS`] monomials or the
+/// term leaves the ring fragment (shifts, division, extracts of wide terms,
+/// foreign theories).  Free function so both the DAG rewriter and the
+/// Gaussian solve-eqs pass share one implementation and memo layout.
+fn ring_poly(
+    term: TermId,
+    width: u32,
+    manager: &TermManager,
+    memo: &mut rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+) -> Option<Vec<Mono>> {
+    if let Some(cached) = memo.get(&term) {
+        return cached.clone();
+    }
+    let modulus = modulus(width);
+    let kind = manager.get(term).map(|t| t.kind.clone())?;
+    let poly = match kind {
+        TermKind::BitVecConst { .. } => vec![Mono {
+            coeff: const_bits(&term, manager)?,
+            factors: Vec::new(),
+        }],
+        TermKind::BvAdd(a, b) => {
+            let mut poly = ring_poly(a, width, manager, memo)?;
+            poly.extend(ring_poly(b, width, manager, memo)?);
+            poly
+        }
+        TermKind::BvSub(a, b) => {
+            let mut poly = ring_poly(a, width, manager, memo)?;
+            for mut m in ring_poly(b, width, manager, memo)? {
+                m.coeff = (&modulus - &m.coeff) % &modulus;
+                poly.push(m);
             }
-            TermKind::BvSub(a, b) => {
-                let mut poly = self.poly_of(a, width, manager)?;
-                for mut m in self.poly_of(b, width, manager)? {
-                    m.coeff = (&modulus - &m.coeff) % &modulus;
-                    poly.push(m);
-                }
-                poly
-            }
-            TermKind::BvMul(a, b) => {
-                let lhs = self.poly_of(a, width, manager)?;
-                let rhs = self.poly_of(b, width, manager)?;
-                let mut out = Vec::with_capacity(lhs.len().saturating_mul(rhs.len()));
-                for l in &lhs {
-                    for r in &rhs {
-                        let coeff = (&l.coeff * &r.coeff) % &modulus;
-                        if coeff.is_zero() {
-                            continue;
-                        }
-                        let mut factors = l.factors.clone();
-                        factors.extend_from_slice(&r.factors);
-                        factors.sort_unstable();
-                        out.push(Mono { coeff, factors });
-                        if out.len() > MAX_MONOMIALS {
-                            return None;
-                        }
+            poly
+        }
+        TermKind::BvMul(a, b) => {
+            let lhs = ring_poly(a, width, manager, memo)?;
+            let rhs = ring_poly(b, width, manager, memo)?;
+            let mut out = Vec::with_capacity(lhs.len().saturating_mul(rhs.len()));
+            for l in &lhs {
+                for r in &rhs {
+                    let coeff = (&l.coeff * &r.coeff) % &modulus;
+                    if coeff.is_zero() {
+                        continue;
+                    }
+                    let mut factors = l.factors.clone();
+                    factors.extend_from_slice(&r.factors);
+                    factors.sort_unstable();
+                    out.push(Mono { coeff, factors });
+                    if out.len() > MAX_MONOMIALS {
+                        return None;
                     }
                 }
-                out
             }
-            TermKind::BvNot(a) => {
-                // ¬a ≡ a ⊕ all_ones ≡ −a − 1 (mod 2ʷ): a polynomial.
-                let mut poly = self.poly_of(a, width, manager)?;
-                for m in poly.iter_mut() {
-                    m.coeff = (&modulus - &m.coeff) % &modulus;
-                }
-                poly.push(Mono {
-                    coeff: (&modulus - BigInt::one()) % &modulus,
-                    factors: Vec::new(),
-                });
-                poly
+            out
+        }
+        TermKind::BvNot(a) => {
+            // ¬a ≡ a ⊕ all_ones ≡ −a − 1 (mod 2ʷ): a polynomial.
+            let mut poly = ring_poly(a, width, manager, memo)?;
+            for m in poly.iter_mut() {
+                m.coeff = (&modulus - &m.coeff) % &modulus;
             }
-            _ if bv_width_opt(manager, &term) == Some(width) => vec![atom_mono(term)],
-            _ => return None,
-        };
-        Some(poly)
-    }
+            poly.push(Mono {
+                coeff: (&modulus - BigInt::one()) % &modulus,
+                factors: Vec::new(),
+            });
+            poly
+        }
+        _ if bv_width_opt(manager, &term) == Some(width) => vec![atom_mono(term)],
+        _ => return None,
+    };
+    memo.insert(term, Some(poly.clone()));
+    Some(poly)
 }
 
 // =====================================================================
@@ -1132,21 +1267,123 @@ impl Solver {
     pub(super) fn bv_preprocess_assertions(
         &mut self,
         manager: &mut TermManager,
-    ) -> (Vec<TermId>, Vec<(TermId, TermId)>) {
-        let mut assertions = self.assertions.clone();
-        let eliminations = solve_equations(&mut assertions, manager);
+    ) -> (Vec<TermId>, Vec<(TermId, TermId)>, Vec<TermId>) {
+        // (assertion, origin) pairs: preprocessing may split an assertion
+        // (a top-level `and` of equations) or drop solved ones, and the
+        // dispatch needs each surviving assertion's *original* for its
+        // constraint-term bookkeeping (unsat cores name the user's input).
+        let mut pairs: Vec<(TermId, TermId)> = self.assertions.iter().map(|&a| (a, a)).collect();
+        normalize_assertions(&mut pairs, manager);
+        let plain = solve_equations(&mut pairs, manager);
+        // Ring (Gaussian) elimination runs after the plain pass (whose
+        // substitutions it would otherwise redo).  Replay order for model
+        // reconstruction: a ring definition never mentions an *earlier*
+        // ring elimination (those were substituted away), so the ring list
+        // replays reversed; a plain definition may mention ring-eliminated
+        // variables (the ring pass runs later), so the plain list replays
+        // *after* the ring list, in its forward (Kahn) order.  The dispatch
+        // additionally retries unresolved definitions to a fixpoint.
+        let mut ring = solve_ring_equations(&mut pairs, manager);
+        ring.reverse();
+        let eliminations: Vec<(TermId, TermId)> = ring.into_iter().chain(plain).collect();
         let mut preprocessor = BvPreprocessor::new();
-        let rewritten = assertions
+        let rewritten = pairs
             .iter()
-            .map(|&a| preprocessor.rewrite(a, manager))
+            .map(|&(a, _)| preprocessor.rewrite(a, manager))
             .collect();
-        (rewritten, eliminations)
+        let origins = pairs.iter().map(|&(_, o)| o).collect();
+        (rewritten, eliminations, origins)
+    }
+
+    /// Reconstruct the model values of preprocess-eliminated variables by
+    /// evaluating their definitions (Z3 `solve_eqs`' model extension).
+    ///
+    /// `Model::eval` has no ground-BV semantics, so the evaluation here is
+    /// *substitute-then-fold*: the model's current assignments are applied
+    /// to the definition and the rewriter constant-folds the result (its
+    /// `mk_bv_*` builders fold constants; the poly-identity rules settle
+    /// `=`/comparison wrappers).  Rounds run to a fixpoint because the two
+    /// elimination phases cannot always linearize their dependency order
+    /// (a plain definition may mention a ring-eliminated variable and vice
+    /// versa).
+    pub(super) fn bv_reconstruct_eliminations(
+        model: &mut crate::solver::types::Model,
+        eliminations: &[(TermId, TermId)],
+        manager: &mut TermManager,
+    ) {
+        let mut rewriter = BvPreprocessor::new();
+        for _round in 0..4 {
+            let assignments: rustc_hash::FxHashMap<TermId, TermId> =
+                model.assignments().iter().map(|(&t, &v)| (t, v)).collect();
+            let mut changed = false;
+            for &(var, def) in eliminations {
+                if model.get(var).is_some() {
+                    continue;
+                }
+                let substituted = if assignments.is_empty() {
+                    def
+                } else {
+                    manager.substitute(def, &assignments)
+                };
+                // Fold: rebuilding through the rewriter's builders turns a
+                // fully-assigned definition into a literal.
+                let folded = rewriter.rewrite(substituted, manager);
+                let concrete = manager.get(folded).is_some_and(|t| {
+                    matches!(
+                        t.kind,
+                        TermKind::BitVecConst { .. } | TermKind::True | TermKind::False
+                    )
+                });
+                if concrete {
+                    model.set(var, folded);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 }
 
 // =====================================================================
 // Variable-definition elimination (Z3 `solve-eqs`)
 // =====================================================================
+
+/// Split top-level conjunctions into separate assertions and strip double
+/// negations, keeping each derived assertion's origin (the user assertion it
+/// came from).
+///
+/// Industrial encodings bundle their equations as one `(and (= …) (= …) …)`
+/// per program point (`2018-Mann`, UltimateAutomizer) and wrap goal atoms in
+/// `(not (not …))`; the solving passes below only look at *top-level*
+/// equalities, so both shapes must be flattened first.  Asserting a
+/// conjunction is asserting each conjunct, and `¬¬x ≡ x` – equivalence- and
+/// core-preserving (each conjunct keeps the parent as its origin).
+fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager) {
+    let mut out: Vec<(TermId, TermId)> = Vec::with_capacity(pairs.len());
+    let mut work: std::collections::VecDeque<(TermId, TermId)> = pairs.drain(..).collect();
+    while let Some((t, origin)) = work.pop_front() {
+        let kind = manager.get(t).map(|td| td.kind.clone());
+        match kind {
+            Some(TermKind::And(args)) => {
+                // Deterministic order: conjuncts in source order.
+                for &a in args.iter() {
+                    work.push_back((a, origin));
+                }
+            }
+            Some(TermKind::Not(inner)) => {
+                if let Some(TermKind::Not(inner2)) = manager.get(inner).map(|td| td.kind.clone()) {
+                    work.push_back((inner2, origin));
+                } else {
+                    out.push((t, origin));
+                }
+            }
+            _ => out.push((t, origin)),
+        }
+    }
+    *pairs = out;
+}
 
 /// Eliminate variable definitions from an assertion list (Z3's
 /// `solve_eqs` tactic, the step that dissolves `wienand-cav2008` and the
@@ -1166,7 +1403,7 @@ impl Solver {
 /// constraints rather than definitions.  Each outer round strictly drops
 /// at least one assertion, so the loop terminates.
 fn solve_equations(
-    assertions: &mut Vec<TermId>,
+    pairs: &mut Vec<(TermId, TermId)>,
     manager: &mut TermManager,
 ) -> Vec<(TermId, TermId)> {
     // Hard bound on outer rounds: each round drops ≥ 1 assertion, so this
@@ -1181,7 +1418,7 @@ fn solve_equations(
         // ---- collect candidate definitions ----
         let mut defs: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
         let mut conflicted: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
-        for &a in assertions.iter() {
+        for &(a, _) in pairs.iter() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind).cloned() {
                 collect_def_candidates(lhs, rhs, &mut defs, &mut conflicted, manager);
                 collect_def_candidates(rhs, lhs, &mut defs, &mut conflicted, manager);
@@ -1194,48 +1431,68 @@ fn solve_equations(
             return eliminations;
         }
 
-        // ---- Kahn resolution ----
+        // ---- Kahn resolution (occurrence-list worklist, linear in edges) ----
+        // The naive loop re-scanned every pending body per iteration and
+        // re-substituted into all of them; on a 13 k-long definition chain
+        // (`uclid/convert-jpg2gif`: x2 = f(x1), x3 = f(x2), …) that is
+        // O(n²) term walks – 9 s of pure preprocessing.  Here each body is
+        // walked once to build `mentions_of` (which pending variables it
+        // references); a body becomes ready when its reference count drops
+        // to zero, and the defining substitution is applied to a body only
+        // when one of *its* variables resolves.
         let mut pending: Vec<(TermId, TermId)> = defs.into_iter().collect();
         let mut resolved: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
-        let mut pending_set: rustc_hash::FxHashSet<TermId> =
-            pending.iter().map(|(x, _)| *x).collect();
-        loop {
-            let mut ready: Vec<usize> = Vec::new();
-            for (i, (_, t)) in pending.iter().enumerate() {
-                if !mentions_any(*t, &pending_set, manager) {
-                    ready.push(i);
+        let index_of: rustc_hash::FxHashMap<TermId, usize> = pending
+            .iter()
+            .enumerate()
+            .map(|(i, (x, _))| (*x, i))
+            .collect();
+        // var -> pending indices whose body mentions it (each list holds
+        // distinct indices; a body never lists the same var twice).
+        let mut occurrences: rustc_hash::FxHashMap<TermId, Vec<usize>> =
+            rustc_hash::FxHashMap::default();
+        // Distinct-pending-variable reference count per body; 0 = ready.
+        let mut unmet: Vec<usize> = vec![0; pending.len()];
+        for (i, (_, t)) in pending.iter().enumerate() {
+            let mut seen_here = rustc_hash::FxHashSet::default();
+            collect_var_mentions(*t, &index_of, manager, &mut seen_here);
+            unmet[i] = seen_here.len();
+            for v in seen_here {
+                occurrences.entry(v).or_default().push(i);
+            }
+        }
+        // Deterministic FIFO worklist of ready bodies (initial pass in
+        // index order).
+        let mut worklist: std::collections::VecDeque<usize> =
+            (0..pending.len()).filter(|&i| unmet[i] == 0).collect();
+        // Eliminations in worklist (topological) order: a body's pending
+        // dependencies are always resolved before it becomes ready, so
+        // replaying this list under a model evaluates each definition with
+        // its dependencies already assigned.  (Recording `resolved.iter()`
+        // instead — HashMap order — broke exactly that.)
+        let mut round_elims: Vec<(TermId, TermId)> = Vec::new();
+        while let Some(i) = worklist.pop_front() {
+            let (x, t) = pending[i];
+            if mentions(t, x, manager) {
+                // Self-referential after substitution: unresolvable.
+                continue;
+            }
+            resolved.insert(x, t);
+            round_elims.push((x, t));
+            let Some(affected) = occurrences.remove(&x) else {
+                continue;
+            };
+            // One single-variable substitution per affected body: exactly
+            // the pass the naive version did for *every* pending body.
+            let single = std::iter::once((x, t)).collect::<rustc_hash::FxHashMap<_, _>>();
+            for j in affected {
+                unmet[j] -= 1;
+                let (_, tj) = pending[j];
+                pending[j].1 = manager.substitute(tj, &single);
+                if unmet[j] == 0 {
+                    worklist.push_back(j);
                 }
             }
-            if ready.is_empty() {
-                break; // cycle or done
-            }
-            // Resolve the ready definitions (in deterministic order).
-            let mut newly: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
-            for &i in &ready {
-                let (x, t) = pending[i];
-                if mentions(t, x, manager) {
-                    // Self-referential after substitution: unresolvable.
-                    continue;
-                }
-                newly.insert(x, t);
-            }
-            if newly.is_empty() {
-                break;
-            }
-            for (x, t) in &newly {
-                pending_set.remove(x);
-                resolved.insert(*x, *t);
-            }
-            // Substitute the newly resolved definitions into the pending
-            // bodies, then drop the resolved entries.
-            let mut kept: Vec<(TermId, TermId)> = Vec::new();
-            for (x, t) in pending.drain(..) {
-                if resolved.contains_key(&x) {
-                    continue;
-                }
-                kept.push((x, manager.substitute(t, &newly)));
-            }
-            pending = kept;
         }
         if resolved.is_empty() {
             return eliminations;
@@ -1244,7 +1501,7 @@ fn solve_equations(
         // ---- apply: substitute everywhere, drop resolved definitions ----
         let resolved_vars: rustc_hash::FxHashSet<TermId> = resolved.keys().copied().collect();
         let mut def_indices: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
-        for (idx, &a) in assertions.iter().enumerate() {
+        for (idx, &(a, _)) in pairs.iter().enumerate() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind) {
                 let lhs = *lhs;
                 let rhs = *rhs;
@@ -1260,21 +1517,231 @@ fn solve_equations(
         if def_indices.is_empty() {
             return eliminations;
         }
-        // Record this round's eliminations in resolution order (the map's
-        // insertion order is the Kahn order).
-        for (&x, &t) in resolved.iter() {
-            eliminations.push((x, t));
-        }
-        let mut new_assertions = Vec::with_capacity(assertions.len());
-        for (idx, &a) in assertions.iter().enumerate() {
+        eliminations.extend(round_elims);
+        let mut new_pairs = Vec::with_capacity(pairs.len());
+        for (idx, &(a, origin)) in pairs.iter().enumerate() {
             if def_indices.contains(&idx) {
                 continue;
             }
-            new_assertions.push(manager.substitute(a, &resolved));
+            new_pairs.push((manager.substitute(a, &resolved), origin));
         }
-        *assertions = new_assertions;
+        *pairs = new_pairs;
     }
     eliminations
+}
+
+/// Z3 `solve_eqs`' Gaussian step over the bit-vector ring: solve asserted
+/// equalities for free variables with invertible (odd) coefficients and
+/// substitute the definition everywhere, dropping the solved equation.
+///
+/// The plain pass above only eliminates syntactic `= x t` shapes; industrial
+/// goals assert general ring identities (`z + y = 7 + 3n² + 9n`, the
+/// UltimateAutomizer `cohencu` translations) from which Z3's `solve-eqs`
+/// isolates variables the same way.  A variable `v` is eliminable from an
+/// equation whose polynomial difference contains the monomial `c·v` with
+/// `c` odd (exactly invertibility in ℤ/2ʷ): the equation is *equivalent*
+/// to `v = c⁻¹·(−(P − c·v))`, so replacing it by the definition and
+/// substituting is answer-preserving, and the same occurrence cap Z3 uses
+/// (`solve_eqs_max_occs`, occurrences in *other* assertions ≤ 2) keeps the
+/// substitution blow-up bounded.
+///
+/// Definitions formed later never mention earlier-eliminated variables
+/// (those were substituted away first), so the returned list replays
+/// **reversed** for model reconstruction; [`bv_preprocess_assertions`]
+/// concatenates it behind the forward-order plain list accordingly.
+fn solve_ring_equations(
+    pairs: &mut Vec<(TermId, TermId)>,
+    manager: &mut TermManager,
+) -> Vec<(TermId, TermId)> {
+    /// Cap on total eliminations: each elimination substitutes into every
+    /// mentioning assertion, so an unbounded run on a definition-chain input
+    /// would be quadratic (the plain pass owns those inputs anyway).
+    const MAX_ELIMS: usize = 4096;
+    /// Monomial cap for one definition body: a wide definition duplicated
+    /// across assertions costs more than the variable it removes.
+    const MAX_DEF_MONOS: usize = 64;
+    /// Z3 `solve_eqs_max_occs`: occurrences in assertions *other than* the
+    /// defining equation.
+    const MAX_OTHER_OCCS: usize = 2;
+
+    let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
+    let mut memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>> =
+        rustc_hash::FxHashMap::default();
+    loop {
+        if eliminations.len() >= MAX_ELIMS {
+            break;
+        }
+        // ---- polynomial difference of every asserted BV equality ----
+        let mut equations: Vec<(usize, u32, Vec<Mono>)> = Vec::new();
+        for (idx, &(a, _)) in pairs.iter().enumerate() {
+            let Some(TermKind::Eq(l, r)) = manager.get(a).map(|t| t.kind.clone()) else {
+                continue;
+            };
+            let (Some(wl), Some(wr)) = (bv_width_opt(manager, &l), bv_width_opt(manager, &r))
+            else {
+                continue;
+            };
+            if wl != wr {
+                continue;
+            }
+            let (Some(pl), Some(pr)) = (
+                ring_poly(l, wl, manager, &mut memo),
+                ring_poly(r, wl, manager, &mut memo),
+            ) else {
+                continue;
+            };
+            let modulus = modulus(wl);
+            let mut diff = pl;
+            for mut m in pr {
+                m.coeff = (&modulus - &m.coeff) % &modulus;
+                diff.push(m);
+            }
+            diff.sort_by(|a, b| a.factors.cmp(&b.factors));
+            let diff = combine_like(diff, &modulus);
+            equations.push((idx, wl, diff));
+        }
+        if equations.is_empty() {
+            break;
+        }
+
+        // ---- per-variable assertion occurrence counts ----
+        let mut occurrences: rustc_hash::FxHashMap<TermId, usize> =
+            rustc_hash::FxHashMap::default();
+        for &(a, _) in pairs.iter() {
+            let mut vars = rustc_hash::FxHashSet::default();
+            collect_free_bv_vars(a, manager, &mut vars);
+            for v in vars {
+                *occurrences.entry(v).or_insert(0) += 1;
+            }
+        }
+
+        // ---- pick the elimination (fewest other occurrences, then the
+        //      smallest TermId for determinism) ----
+        let mut best: Option<(usize, u32, TermId, BigInt, usize)> = None;
+        for (slot, &(_, width, ref poly)) in equations.iter().enumerate() {
+            if poly.len() > MAX_DEF_MONOS + 1 {
+                continue;
+            }
+            for m in poly {
+                let [v] = m.factors.as_slice() else {
+                    continue;
+                };
+                if !m.coeff.is_odd() {
+                    // Even coefficients are not invertible mod 2^w: the
+                    // equation does not determine v.
+                    continue;
+                }
+                if !is_free_bv_var(*v, manager) {
+                    continue;
+                }
+                let other = occurrences.get(v).copied().unwrap_or(1).saturating_sub(1);
+                if other > MAX_OTHER_OCCS {
+                    continue;
+                }
+                match best {
+                    None => best = Some((slot, width, *v, m.coeff.clone(), other)),
+                    Some((_, _, b_var, _, b_other)) => {
+                        let strictly_better = other < b_other || (other == b_other && *v < b_var);
+                        if strictly_better {
+                            best = Some((slot, width, *v, m.coeff.clone(), other));
+                        }
+                    }
+                }
+            }
+        }
+        let Some((slot, width, var, coeff, _)) = best else {
+            break;
+        };
+        let (eq_idx, _, poly) = equations.swap_remove(slot);
+
+        // ---- solve: v = c⁻¹ · (−(P − c·v)) at width w ----
+        let modulus = modulus(width);
+        let inv = mod_inverse_odd(&coeff, &modulus);
+        let mut def_monos = Vec::with_capacity(poly.len());
+        for m in poly {
+            let is_var_mono = m.factors.as_slice() == [var];
+            if is_var_mono {
+                continue;
+            }
+            let negated = (&modulus - &m.coeff) % &modulus;
+            let scaled = (&negated * &inv) % &modulus;
+            if scaled.is_zero() {
+                continue;
+            }
+            def_monos.push(Mono {
+                coeff: scaled,
+                factors: m.factors,
+            });
+        }
+        if def_monos.len() > MAX_DEF_MONOS {
+            continue;
+        }
+        let def = build_sum(def_monos, manager, width);
+
+        // ---- drop the solved equation, substitute everywhere else ----
+        pairs.swap_remove(eq_idx);
+        let single = std::iter::once((var, def)).collect::<rustc_hash::FxHashMap<TermId, TermId>>();
+        for (a, _) in pairs.iter_mut() {
+            if mentions(*a, var, manager) {
+                *a = manager.substitute(*a, &single);
+            }
+        }
+        eliminations.push((var, def));
+    }
+    eliminations
+}
+
+/// Modular inverse of an odd `c` modulo `2ʷ` (Newton iteration: each step
+/// doubles the correct bit count).  Returns 0 for even `c` (not invertible);
+/// callers gate on oddness first.
+fn mod_inverse_odd(c: &BigInt, modulus: &BigInt) -> BigInt {
+    if !c.is_odd() {
+        return BigInt::zero();
+    }
+    let two = BigInt::from(2u8);
+    let mut x = BigInt::one();
+    let mut bits = modulus.bits();
+    // ceil(log2(w)) + 1 iterations suffice; one extra is harmless.
+    while bits > 0 {
+        // x := x * (2 - c*x) mod m
+        let cx = (c * &x) % modulus;
+        let inner = (&two - cx + modulus) % modulus;
+        x = (&x * inner) % modulus;
+        bits /= 2;
+    }
+    x
+}
+
+/// Whether `term` is a free bit-vector-sorted variable.
+fn is_free_bv_var(term: TermId, manager: &TermManager) -> bool {
+    manager.get(term).is_some_and(|t| {
+        matches!(t.kind, TermKind::Var(_))
+            && manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec())
+    })
+}
+
+/// Collect the free bit-vector variables of `term` (one DAG walk).
+fn collect_free_bv_vars(
+    term: TermId,
+    manager: &TermManager,
+    out: &mut rustc_hash::FxHashSet<TermId>,
+) {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut stack = vec![term];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        if let Some(data) = manager.get(t) {
+            if matches!(data.kind, TermKind::Var(_))
+                && manager.sorts.get(data.sort).is_some_and(|s| s.is_bitvec())
+            {
+                out.insert(t);
+                continue;
+            }
+            stack.extend(oxiz_core::ast::traversal::get_children(&data.kind));
+        }
+    }
 }
 
 /// Record `(lhs, rhs)` as a definition candidate when `lhs` is a free
@@ -1329,16 +1796,26 @@ fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
     false
 }
 
-/// Whether `term` mentions any variable in `vars` (one DAG walk).
-fn mentions_any(term: TermId, vars: &rustc_hash::FxHashSet<TermId>, manager: &TermManager) -> bool {
-    if vars.is_empty() {
-        return false;
+/// Collect, in one DAG walk, which of the `tracked` variables `term`
+/// mentions (shared subterms visited once).  Used by the Kahn worklist to
+/// build occurrence lists and reference counts without re-walking bodies.
+fn collect_var_mentions(
+    term: TermId,
+    tracked: &rustc_hash::FxHashMap<TermId, usize>,
+    manager: &TermManager,
+    out: &mut rustc_hash::FxHashSet<TermId>,
+) {
+    if tracked.is_empty() {
+        return;
     }
     let mut seen = rustc_hash::FxHashSet::default();
     let mut stack = vec![term];
     while let Some(t) = stack.pop() {
-        if vars.contains(&t) {
-            return true;
+        if tracked.contains_key(&t) {
+            // A tracked variable's own structure is opaque here: its body
+            // is accounted for by its own pending entry.
+            out.insert(t);
+            continue;
         }
         if !seen.insert(t) {
             continue;
@@ -1347,7 +1824,6 @@ fn mentions_any(term: TermId, vars: &rustc_hash::FxHashSet<TermId>, manager: &Te
             stack.extend(oxiz_core::ast::traversal::get_children(&data.kind));
         }
     }
-    false
 }
 
 /// `(x, t)` when `lhs` is an eliminable free variable and `rhs` does not

@@ -77,15 +77,17 @@ impl crate::solver::Solver {
         // assertions stay the recorded constraint terms (unsat cores keep
         // naming the user's input) and remain the fallback if any rewritten
         // assertion leaves the blastable fragment.
-        let (preprocessed, eliminations) = self.bv_preprocess_assertions(manager);
+        let (preprocessed, eliminations, preprocessed_origins) =
+            self.bv_preprocess_assertions(manager);
         let blastable = preprocessed
             .iter()
             .all(|&a| term_in_blastable_fragment(a, manager));
-        let (assertions, eliminations): (Vec<TermId>, Vec<(TermId, TermId)>) = if blastable {
-            (preprocessed, eliminations)
-        } else {
-            (self.assertions.clone(), Vec::new())
-        };
+        let (assertions, origins, eliminations): (Vec<TermId>, Vec<TermId>, Vec<(TermId, TermId)>) =
+            if blastable {
+                (preprocessed, preprocessed_origins, eliminations)
+            } else {
+                (self.assertions.clone(), self.assertions.clone(), Vec::new())
+            };
 
         // Bit-blast every BV sub-term of every assertion at the embedded
         // solver's base scope, so the circuits survive the whole search
@@ -106,8 +108,7 @@ impl crate::solver::Solver {
         // falling through is sound).  Guard terms stay the *original*
         // assertions so an unsat core names the user's input even when the
         // blasted form is the normalized one.
-        let originals = self.assertions.clone();
-        for (&assertion, &original) in assertions.iter().zip(originals.iter()) {
+        for (&assertion, &original) in assertions.iter().zip(origins.iter()) {
             self.bv.record_constraint_term(original);
             if !self.bv.assert_formula_true(assertion, manager) {
                 return None;
@@ -130,20 +131,7 @@ impl crate::solver::Solver {
                 // assertions.  Without this, every `sat` instance that had
                 // definitions eliminated paid the eager attempt *and* the
                 // general path's full re-solve.
-                for &(var, def) in &eliminations {
-                    if model.get(var).is_none() {
-                        let value = model.eval(def, manager);
-                        let concrete = manager.get(value).is_some_and(|t| {
-                            matches!(
-                                t.kind,
-                                TermKind::BitVecConst { .. } | TermKind::True | TermKind::False
-                            )
-                        });
-                        if concrete {
-                            model.set(var, value);
-                        }
-                    }
-                }
+                Self::bv_reconstruct_eliminations(&mut model, &eliminations, manager);
                 self.model = Some(model);
                 if self.model_refutes_assertions(manager) {
                     // The satisfying assignment does not evaluate to `true`
