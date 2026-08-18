@@ -23,7 +23,12 @@ impl Var {
 }
 
 /// A literal (positive or negative occurrence of a variable)
+///
+/// `#[repr(transparent)]` makes the layout identical to the inner `u32`,
+/// which the clause arena (`memory.rs`) relies on when reading/writing
+/// literal arrays packed after clause headers in a `u64` buffer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
 pub struct Lit(u32);
 
 impl Lit {
