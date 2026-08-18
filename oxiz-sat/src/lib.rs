@@ -22,6 +22,37 @@
 //! - Parallel portfolio solving
 //! - AllSAT enumeration
 //!
+//! # Threading and cancellation model
+//!
+//! The search core is deliberately **single-threaded**, matching CaDiCaL
+//! (see `cadical.cpp`: the parallelism that exists – `parallel/`,
+//! `portfolio` – drives *independent* `Solver` instances share-nothing and
+//! is layered on top of this contract, not inside it).
+//!
+//! * **Reentrant across instances.** A [`Solver`] owns all of its state
+//!   (trail, clause arena, heuristics, proof streams). The crate carries no
+//!   mutable global state – its only static is a write-once `OnceLock<bool>`
+//!   caching the `OXIZ_TRACE_DECISIONS` environment probe – so separate
+//!   `Solver` objects may be constructed and solved from different threads
+//!   concurrently, including in an external portfolio. This is pinned by
+//!   `tests/threading_model.rs`.
+//! * **Not safe for concurrent use of one instance.** Every mutating entry
+//!   point takes `&mut self`, so the compiler rejects concurrent use of a
+//!   single `Solver`; the standalone `oxiz` CLI additionally uses process-
+//!   level machinery (signal handlers, timeout supervision) and, like
+//!   CaDiCaL's `App`, is neither thread-safe nor reentrant.
+//! * **Asynchronous termination is cooperative cancellation, not parallel
+//!   solving.** [`Solver::set_interrupt`] attaches a caller-owned
+//!   `Arc<AtomicBool>`; another thread may set it to `true` at any moment,
+//!   and the current `solve*` call abandons the search and returns
+//!   [`SolverResult::Unknown`] – never a wrong verdict, and the instance
+//!   remains usable once the caller clears the flag. The flag is checked at
+//!   the pre-search entry gate and at the top of every CDCL loop iteration;
+//!   preprocessing passes are propagation-budgeted, so cancellation latency
+//!   is bounded. The flag is **caller-owned**: clearing it between `solve`
+//!   calls is the caller's responsibility (CaDiCaL's `Terminator` has the
+//!   same semantics).
+//!
 //! # Examples
 //!
 //! ## Basic SAT Solving

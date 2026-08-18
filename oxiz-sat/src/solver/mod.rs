@@ -2344,6 +2344,17 @@ impl Solver {
             return SolverResult::Unsat;
         }
 
+        // Cancellation entry gate (cadical `terminated_asynchronously` at
+        // loop top, hoisted to the pre-search phase): a flag already raised
+        // before `solve()` must abandon *before* the preprocessing passes,
+        // not after burning through their budgets. The search loop re-checks
+        // every iteration; the passes themselves are budgeted, so a flag
+        // raised mid-preprocessing is honored at the latest when the loop is
+        // entered.
+        if self.should_stop_search() {
+            return SolverResult::Unknown;
+        }
+
         // Lucky pre-solving (CaDiCaL `lucky_phases`): try to satisfy the
         // formula without search via a small set of structured phase guesses
         // (uniform / Horn / ordered-with-flip). On by default, matching
