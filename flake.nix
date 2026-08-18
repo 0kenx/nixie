@@ -76,6 +76,16 @@
         ];
       };
 
+      # Nightly with Miri (UB / out-of-bounds detection for the arena's
+      # unsafe code) and rust-src. Kept on the same nightly pin as
+      # fuzzRustToolchain so there is exactly one nightly in the closure.
+      miriToolchain = pkgs.rust-bin.nightly."2026-06-11".default.override {
+        extensions = [
+          "rust-src"
+          "miri"
+        ];
+      };
+
       rustCommonArgs = {
         inherit src;
         pname = "oxiz-workspace";
@@ -213,6 +223,46 @@
           pkgs.perf
           pkgs.heaptrack
         ];
+      };
+
+      # Debugging/forensics shell: Miri interpreter plus gdb. Miri pinpoints
+      # UB and out-of-bounds writes in the unsafe arena code with an exact
+      # stack trace (catching the header-corruption class of bug at the write
+      # site instead of from post-hoc dumps); gdb covers the cases Miri cannot
+      # run (FFI, threads beyond its model) and native-code inspection.
+      # Usage (the Miri nightly is already first on PATH inside the shell):
+      #   nix develop .#debug
+      #   cargo miri test -p oxiz-sat --test elimination_soundness_regressions
+      #   gdb --args ./target/debug/<bin>
+      devShells.debug = pkgs.mkShell {
+        name = "oxiz-debug";
+
+        shellHook = ''
+          # Put the Miri-capable nightly first so plain `cargo` inside this
+          # shell targets it; `cargo miri` requires a nightly driver.
+          export PATH="${miriToolchain}/bin:$PATH"
+          export OXIZ_REPO_ROOT="$PWD"
+
+          # Deterministic Miri output (diffable between runs).
+          export MIRIFLAGS="-Zmiri-seed=42"
+
+          echo "oxiz debug shell: cargo miri / gdb available"
+          echo "  MIRIFLAGS='$MIRIFLAGS'"
+        '';
+
+        packages =
+          [
+            miriToolchain
+            pkgs.gdb
+            pkgs.lldb
+            pkgs.python3
+            pkgs.bash
+            pkgs.git
+            pkgs.coreutils
+          ]
+          ++ lib.optionals pkgs.stdenv.isLinux [
+            pkgs.perf
+          ];
       };
     });
 }
