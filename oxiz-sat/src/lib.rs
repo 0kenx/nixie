@@ -219,6 +219,15 @@ pub use cce::{CceStats, CoveredClauseElimination};
 pub use chronological_backtrack::{
     BacktrackDecision, ChronoBacktrackConfig, ChronoBacktrackEngine, ChronoBacktrackStats,
 };
+/// Matched-null switch for the probe-ranking experiment (see
+/// `docs/studies/`): cached env probe, read once per process.
+#[doc(hidden)]
+pub fn probe_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
 pub use clause_maintenance::{ClauseMaintenance, MaintenanceStats};
 pub use clause_size_manager::{ClauseSizeManager, SizeAdjustmentStrategy, SizeManagerStats};

@@ -10,6 +10,7 @@ pub mod heuristic;
 mod incremental;
 mod learn;
 mod lucky;
+mod probe;
 mod propagate;
 mod search_ext;
 mod subsume;
@@ -56,6 +57,10 @@ fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
 /// Binary implication graph for efficient binary clause propagation
 /// For each literal L, stores the list of literals that are implied when L is false
 /// (i.e., for binary clause (~L v M), when L is assigned false, M must be true)
+/// Initial `lim.inprobe`: the first probe round fires once conflicts reach
+/// the base interval (mirrors how `lim_elim` initializes from the config).
+const INPROBE_INIT_LIMIT: u64 = 2_000;
+
 #[derive(Debug, Clone)]
 pub(super) struct BinaryImplicationGraph {
     /// implications[lit] = list of (implied_lit, clause_id) pairs
@@ -938,6 +943,18 @@ pub struct Solver {
     /// retired as satisfied before elimination), and it must still count as
     /// eliminated for decision/propagation purposes.
     pub(super) elim_var_flag: Vec<bool>,
+    /// `propfixed` memoization for failed-literal probing (cadical
+    /// `propfixed`): per-literal count of level-0 assignments at the moment
+    /// that literal last propagated without conflict. Re-probing is skipped
+    /// while no new level-0 facts have appeared. -1 = never probed.
+    pub(super) probe_propfixed: Vec<i64>,
+    /// Probe rounds completed (cadical `stats.probingphases`), driving the
+    /// `25 × interval × log10(rounds+9)` re-arm schedule.
+    pub(super) elim_probes_done: u64,
+    /// Conflict threshold for the next probe round (cadical `lim.inprobe`).
+    pub(super) lim_inprobe: u64,
+    /// Level-0 trail size after the last probe round (re-arm evidence).
+    pub(super) last_probe_units: usize,
     /// True while a `solve_with_assumptions` call is in flight: destructive
     /// inprocessing (elimination) must not fold variables out of the search
     /// then (cadical freezes assumed variables instead).
@@ -1143,6 +1160,10 @@ impl Solver {
             elim_resolutions_total: 0,
             last_elim_eliminated: 0,
             elim_var_flag: Vec::new(),
+            probe_propfixed: Vec::new(),
+            elim_probes_done: 0,
+            lim_inprobe: INPROBE_INIT_LIMIT,
+            last_probe_units: 0,
             assumptions_active: false,
             did_equiv_subst: false,
             equiv_subst_inited: false,
@@ -1873,6 +1894,7 @@ impl Solver {
         // their clauses is touched; the pre-search phase marks everything).
         self.elim_mark.resize(self.num_vars, false);
         self.elim_var_flag.resize(self.num_vars, false);
+        self.probe_propfixed.resize(2 * self.num_vars, -1);
         var
     }
 

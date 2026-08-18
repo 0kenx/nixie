@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.2] - Unreleased
 
+### Added
+
+- **SAT: cadical-parity probe scheduling infrastructure** (`oxiz-sat/src/solver/probe.rs`; study `docs/studies/2026-08-probe-scheduling.md`).  `probe_round` ports CaDiCaL `probe.cpp`'s selection discipline: failed-literal probes are scheduled over **binary-implication-graph roots** (literals occurring in one polarity only, probed on the negative-occurring side), ranked by negated-occurrence count, with `propfixed` memoization (skip re-probing until new level-0 facts — Simons et al. 2002/Boufkhad), failed literals forced to units, and hyper-binary derivation on success.  Wired into the conflict handler as `inprobing()` before elimination (cadical loop order) on the `25·interval·log10(rounds+9)` re-arm schedule.  Off by default (existing `PROBE`/`INPROCESS` flags enable it); the old brute-force pre-search passes remain.  Ships with a matched-null switch (`OXIZ_PROBE_NULL=1` reverses the rank — identical schedule/budgets, scrambled semantics).  **The ranking signal itself was tested and rejected**: 54 files × 8 seeds × 2 arms CRN-paired, instructions-to-verdict, geomean(treatment/null) = 1.0091 — the best-first ordering carries no detectable signal at this power (one real win ak128booth 0.767, one real loss ITC2021 1.529, rest ±7% noise).  Kept as sound, faithful, measured-neutral infrastructure; the decisions/conflict gap remains open with elimination-as-default re-measure, hyper-binary quality (dominator/LCA), and ELS interleaving as the recorded next hypotheses.
+
+
 ### Fixed
 
 - **SAT clause arena: activity-rescale walk desynchronized after in-place clause shrink, zeroing live clause headers (latent since the arena landed, exposed by the f32 header switch)** (`oxiz-sat/src/memory.rs`, `clause.rs`; regression tests in `oxiz-sat/src/memory.rs` and the pre-existing `crn_11_99_u` elimination soundness test).  Found with a gdb hardware watchpoint on the exact zeroed field (new `nix develop .#debug` shell ships nightly+Miri and gdb for exactly this class):

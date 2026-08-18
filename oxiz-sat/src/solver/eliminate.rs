@@ -241,6 +241,14 @@ impl Solver {
         self.eliminate_phase()
     }
 
+    /// Mark every active variable for elimination (cadical's wholesale
+    /// re-arm; used after probe rounds fix units).
+    pub(super) fn mark_elim_all(&mut self) {
+        for idx in 0..self.num_vars {
+            self.mark_elim_one(Var::new(idx as u32));
+        }
+    }
+
     /// Mark every variable of `lits` as an elimination candidate (cadical
     /// `mark_elim`). Called when an original clause is removed or shrunk.
     pub(super) fn mark_elim_vars(&mut self, lits: impl IntoIterator<Item = Lit>) {

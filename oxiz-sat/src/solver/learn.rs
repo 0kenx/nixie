@@ -805,6 +805,18 @@ impl Solver {
             self.conflicts_since_inprocessing = 0;
         }
 
+        // Scheduled probing (cadical `inprobing` → `inprobe ()`): one
+        // budgeted round of failed-literal probing over binary-implication
+        // roots with hyper-binary derivation, before elimination in the
+        // cadical loop order (probing's forced units and hyper-binaries
+        // re-arm the eliminator immediately).
+        if self.inprobing() {
+            let (_, failed, _) = self.probe_round();
+            if failed > 0 {
+                self.mark_elim_all();
+            }
+        }
+
         // Scheduled elimination (cadical `ineliminating` → `elim ()`): runs
         // when the elimination conflict limit has passed *and* something new
         // happened (units fixed at level 0, or original clauses removed or
@@ -1441,7 +1453,7 @@ impl Solver {
 
     /// Add `(¬r ∨ q)` as a learned binary for every literal `q` forced during the
     /// probe of `r` whose reason is a non-binary clause (the hyper-binary case).
-    fn derive_hyper_binaries(&mut self, r: Lit, hyper: &mut usize) {
+    pub(super) fn derive_hyper_binaries(&mut self, r: Lit, hyper: &mut usize) {
         // Walk the literals assigned at the probe level (level >= 1) with a
         // propagation reason; the probe literal itself is a decision, skipped.
         let probe_lits: SmallVec<[Lit; 64]> = self.trail.level_assignments().to_vec().into();
@@ -1550,7 +1562,7 @@ impl Solver {
 
     /// Force a literal as a permanent level-0 fact and propagate. Assumes we
     /// are at decision level 0. Sets `trivially_unsat` if it conflicts.
-    fn force_level0(&mut self, lit: Lit) {
+    pub(super) fn force_level0(&mut self, lit: Lit) {
         use crate::literal::LBool;
         match self.trail.lit_value(lit) {
             LBool::True => return,
