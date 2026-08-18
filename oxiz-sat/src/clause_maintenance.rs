@@ -250,7 +250,7 @@ impl ClauseMaintenance {
         clauses: &ClauseDatabase,
         target_count: usize,
     ) -> Vec<ClauseId> {
-        let mut candidates: Vec<(ClauseId, f64)> = Vec::new();
+        let mut candidates: Vec<(ClauseId, f32)> = Vec::new();
 
         // Collect learned clauses with quality scores
         for i in 0..clauses.num_learned() {
@@ -272,10 +272,10 @@ impl ClauseMaintenance {
                 // - Large size (weight: 0.2)
                 // - Tier (weight: 0.1)
 
-                let activity_score = 1.0 - clause.activity.min(1.0);
-                let lbd_score = (clause.lbd as f64 / 20.0).min(1.0);
-                let size_score = ((clause.len() - 2) as f64 / 20.0).min(1.0);
-                let tier_score = match clause.tier {
+                let activity_score = 1.0_f32 - clause.activity.min(1.0_f32);
+                let lbd_score = (clause.lbd as f32 / 20.0_f32).min(1.0_f32);
+                let size_score = ((clause.len() - 2) as f32 / 20.0_f32).min(1.0_f32);
+                let tier_score: f32 = match clause.tier {
                     ClauseTier::Core => 0.0,  // Protected
                     ClauseTier::Mid => 0.3,   // Less likely to delete
                     ClauseTier::Local => 1.0, // Most likely to delete

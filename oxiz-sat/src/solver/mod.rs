@@ -2306,9 +2306,9 @@ impl Solver {
     /// implicit decay preserves correctness.
     pub(super) fn decay_clause_activity(&mut self) {
         self.clause_bump_increment /= self.config.clause_decay;
-        if self.clause_bump_increment > 1e100 {
-            const FACTOR: f64 = 1e-100;
-            self.clauses.rescale_activity(FACTOR);
+        if self.clause_bump_increment > 1e20 {
+            const FACTOR: f64 = 1e-20;
+            self.clauses.rescale_activity(FACTOR as f32);
             self.clause_bump_increment *= FACTOR;
         }
     }

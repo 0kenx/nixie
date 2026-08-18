@@ -171,3 +171,42 @@ speed claim. The decisions-per-conflict gap vs CaDiCaL (5.7 vs 1.27 on
 `stable-300`) persists and tracks propagation-cascade depth per decision
 (6.5 vs 23) — a search-quality question for the policy study, not a
 mechanical bug.
+
+## Arena follow-up: f32 header + the latent stride-desync bug it exposed
+
+### The bug (gdb hardware watchpoint, exact write caught)
+
+`ClauseArena::scale_live_activities` walked the arena recomputing each slot's
+stride as `slot_size(current_len)` — but a clause's physical slot size is
+fixed at allocation while `shrink` later lowers `len`. After a 4→3-literal
+shrink the walk's stride (32→24) diverged from the real layout, landed
+mid-slot, and collected a bogus offset as "live". The rescale then did an
+f32 read-modify-write 8 bytes past that offset: it read a real clause's
+`len` field (raw `4`) as the denormal `5.6e-45`, multiplied by `1e-20`, and
+the underflow-to-zero result was stored — `len` became bit-pattern zero.
+Propagation later indexed the empty clause; `crn_11_99_u` answered `sat`.
+
+**Latent since the arena commit, not introduced by f32.** The same walk
+existed under the f64 header; it was unreachable at verification scale
+because the rescale trigger sat at `increment > 1e100` (≈230k conflicts),
+above every corpus cap, and `iter_ids` (the only other would-be walker) uses
+the refs table. Lowering the bound to MiniSat's `1e20` — mandatory for f32,
+whose range ends at 3.4e38 — moved the first rescale to ≈46k conflicts and
+exposed it inside the regression suite. Lesson recorded: the trajectory-
+identity corpus (≤30k caps) and the 25s-capped suite could not see a bug
+whose only trigger fires at 46k+ conflicts; soundness gates need at least
+one corpus that crosses every periodic policy trigger.
+
+Fix: refs-driven activity scaling (the refs table is the authoritative slot
+list, exact under shrink by construction); stride-walking deleted.
+
+### f32 activity + 12-byte header
+
+Activity is only the reduce sort key; `1e20`/`1e-20` rescale keeps stored
+values ≈1e23, inside f32 range (the old 1e100 policy would saturate f32 to
+`inf` and collapse the ordering — the bound change was forced, not tuned).
+Pinned: 3-lit slot 24B → two ternaries per cache line (48B); 5-lit slot
+exactly 32B (half a line; 4 was the f64 ceiling). Perf at 300k fixed
+conflicts on stable-300: neutral (18.6s → 18.6s interleaved ×3). f32
+rounding intentionally retires bit-identical trajectories as a regression
+net for future clause-DB changes; verdicts + fuzz + parity carry it.

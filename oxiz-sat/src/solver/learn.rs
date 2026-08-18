@@ -584,9 +584,9 @@ impl Solver {
     pub(super) fn reduce_clause_database(&mut self) {
         use crate::clause::ClauseTier;
 
-        let mut core_candidates: Vec<(ClauseId, f64)> = Vec::new();
-        let mut mid_candidates: Vec<(ClauseId, f64)> = Vec::new();
-        let mut local_candidates: Vec<(ClauseId, f64)> = Vec::new();
+        let mut core_candidates: Vec<(ClauseId, f32)> = Vec::new();
+        let mut mid_candidates: Vec<(ClauseId, f32)> = Vec::new();
+        let mut local_candidates: Vec<(ClauseId, f32)> = Vec::new();
 
         for &cid in &self.learned_clause_ids {
             if let Some(clause) = self.clauses.get(cid) {

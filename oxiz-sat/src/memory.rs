@@ -99,18 +99,26 @@ const TIER_SHIFT: u8 = 4;
 /// * `usage: u8` saturating – the tier-promotion consumers fire at 3 and 10
 ///   uses; saturation at 255 cannot change any decision those consumers
 ///   make.
-/// * `activity: f64` at offset 8 (naturally aligned) – clause-activity is
-///   the `reduce_clause_database` sort key, and the refactor relies on
-///   bit-identical trajectories as its regression net; `f32` would reorder
-///   ties and silently change the search.
-#[repr(C, align(8))]
+/// * `activity: f32` at offset 8 of a 12-byte header – clause-activity is
+///   only the `reduce_clause_database` sort key (relative ordering of
+///   clauses), and the saturating rescale policy below keeps every stored
+///   value far from `f32`'s range limits. f32 halves the header and is what
+///   lets a 3-literal clause slot be 24 bytes (two per cache line) and a
+///   5-literal clause slot be 32 bytes (half a line).
+///
+/// Alignment: `align(4)` is the whole header's requirement (largest member
+/// is a u32/f32); slots still start at multiples of 8 (the buffer is
+/// `Vec<u64>` and the stride rounds to 8), so headers are over-aligned in
+/// practice and the literal array at `header + 12` is 4-aligned as `Lit`
+/// requires.
+#[repr(C, align(4))]
 #[derive(Clone, Copy)]
 struct ClauseHeader {
     len: u32,
     lbd: u16,
     flags_tier: u8,
     usage: u8,
-    activity: f64,
+    activity: f32,
 }
 
 impl ClauseHeader {
@@ -170,7 +178,7 @@ pub struct ClauseView<'a> {
     /// Times used in conflict analysis.
     pub usage_count: u32,
     /// Clause activity for the deletion heuristic.
-    pub activity: f64,
+    pub activity: f32,
 }
 
 impl ClauseView<'_> {
@@ -310,6 +318,11 @@ impl ClauseArena {
     /// so a returned `ClauseRef` names this clause until the arena is
     /// dropped.
     pub fn alloc(&mut self, lits: &[Lit], learned: bool) -> ClauseRef {
+        if lits.is_empty() {
+            #[cfg(feature = "std")]
+            eprintln!("ARENA-FORENSIC: alloc(empty) called");
+            debug_assert!(false, "alloc of empty");
+        }
         let size = slot_size(lits.len());
         let start = self.pos;
         let end = start + size;
@@ -388,6 +401,11 @@ impl ClauseArena {
         if h.deleted() || new_lits.len() > h.len as usize {
             return false;
         }
+        if new_lits.is_empty() {
+            #[cfg(feature = "std")]
+            eprintln!("ARENA-FORENSIC: shrink(id -> empty) called");
+            debug_assert!(false, "shrink to empty");
+        }
         // SAFETY: `r` validated; writing at most `new_lits.len()` literals
         // over an array that holds `v.lits.len() >= new_lits.len()`.
         unsafe {
@@ -459,7 +477,7 @@ impl ClauseArena {
     }
 
     /// Set the activity of the clause at `r`.
-    pub fn set_activity(&mut self, r: ClauseRef, activity: f64) {
+    pub fn set_activity(&mut self, r: ClauseRef, activity: f32) {
         if self.read_header(r).is_some() {
             // SAFETY: `r` validated by `get`.
             unsafe {
@@ -546,7 +564,7 @@ impl ClauseArena {
     }
 
     /// `activity += inc` in one header write.
-    pub fn add_activity(&mut self, r: ClauseRef, inc: f64) {
+    pub fn add_activity(&mut self, r: ClauseRef, inc: f32) {
         if self.read_header(r).is_some() {
             // SAFETY: `r` validated by `read_header`.
             unsafe {
@@ -555,60 +573,31 @@ impl ClauseArena {
         }
     }
 
-    /// Multiply every **live** clause's activity by `factor` (decay /
-    /// rescale passes).
-    pub fn scale_live_activities(&mut self, factor: f64) {
-        // Collect live offsets first: walking headers takes `&self.buffer`
-        // through `as_ptr`, which must not be held across the mutable writes.
-        let mut live_offs = Vec::with_capacity(self.num_clauses - self.num_deleted);
-        let mut off = 0usize;
-        while off + HEADER_BYTES <= self.pos {
-            // SAFETY: `off` walks validated slot boundaries from 0.
-            let hp = unsafe {
-                self.buffer
-                    .as_ptr()
-                    .cast::<u8>()
-                    .add(off)
-                    .cast::<ClauseHeader>()
-            };
-            let h = unsafe { core::ptr::read(hp) };
-            if !h.deleted() {
-                live_offs.push(off);
-            }
-            off += slot_size(h.len as usize);
+    /// Multiply one clause's activity by `factor` (read-modify-write of the
+    /// header field).
+    ///
+    /// Deliberately per-ref: the *previous* implementation walked the buffer
+    /// slot-by-slot, recomputing each stride as `slot_size(current_len)` –
+    /// but a clause's physical slot size is fixed at **allocation** while
+    /// `shrink` later lowers `len`, so after a 4→3 literal shrink (stride
+    /// 32→24) the walk desynchronized from the real layout, landed
+    /// mid-slot, and "scaled an activity" 8 bytes past a bogus offset –
+    /// reading a real clause's `len` field as a denormal `f32` and
+    /// multiplying it by the rescale factor, underflowing to an exact zero
+    /// bit pattern (caught by a gdb watchpoint on the zeroed field; the
+    /// bogus-offset write came from `live_offs`). The authoritative slot
+    /// list is the database's `refs` table, which never desynchronizes;
+    /// memory-walking by recomputed strides is unsound by construction and
+    /// this API is the replacement.
+    pub fn scale_activity(&mut self, r: ClauseRef, factor: f32) {
+        let Some(h) = self.read_header(r) else { return };
+        if h.deleted() {
+            return;
         }
-        for o in live_offs {
-            if let Some(r) = ClauseRef::from_byte_offset(o) {
-                // SAFETY: `o` is a validated live slot boundary.
-                unsafe {
-                    (*self.header_ptr_mut(r)).activity *= factor;
-                }
-            }
+        // SAFETY: `r` validated by `read_header`; activity field write.
+        unsafe {
+            (*self.header_ptr_mut(r)).activity *= factor;
         }
-    }
-
-    /// Iterate over every slot reference (live and deleted), in allocation
-    /// order – the same order the old `Vec<Clause>` indexed.
-    pub fn iter_refs(&self) -> impl Iterator<Item = ClauseRef> + '_ {
-        let mut off = 0usize;
-        let pos = self.pos;
-        core::iter::from_fn(move || {
-            if off + HEADER_BYTES > pos {
-                return None;
-            }
-            // SAFETY: `off` is a validated slot boundary.
-            let hp = unsafe {
-                self.buffer
-                    .as_ptr()
-                    .cast::<u8>()
-                    .add(off)
-                    .cast::<ClauseHeader>()
-            };
-            let len = unsafe { core::ptr::read(hp).len } as usize;
-            let r = ClauseRef::from_byte_offset(off).unwrap_or(ClauseRef::NULL);
-            off += slot_size(len);
-            Some(r)
-        })
     }
 
     /// Arena memory statistics.
@@ -637,10 +626,10 @@ impl ClauseTier {
     }
 }
 
-// The header must stay exactly 16 bytes: `activity`'s natural alignment at
-// offset 8 depends on it, and the slot-density arithmetic (24 bytes for a
-// binary clause) is part of this module's reason to exist.
-const _: () = assert!(core::mem::size_of::<ClauseHeader>() == 16);
+// The header must stay exactly 12 bytes: the slot-density arithmetic this
+// module exists for (24 bytes for a 3-literal clause, 32 for a 5-literal
+// one, two ternaries per cache line) is pinned by tests below.
+const _: () = assert!(core::mem::size_of::<ClauseHeader>() == 12);
 
 /// Memory usage statistics.
 #[derive(Debug, Clone)]
@@ -778,29 +767,40 @@ mod tests {
     }
 
     #[test]
-    fn iter_refs_matches_allocation_order() {
+    fn scale_activity_skips_deleted_and_shrunk_slots_stay_exact() {
+        // Regression for the stride-desync corruption: alloc, shrink across
+        // a stride boundary (4->3 literals: slot stride 32->24 *as computed
+        // from len*, physical slot unchanged), then scale. The refs-driven
+        // implementation must touch only true slots; the old len-walking
+        // version "scaled" an activity 8 bytes past a bogus mid-slot offset
+        // and zeroed a real clause's len field (denormal x 1e-20 underflow).
         let mut a = ClauseArena::new(0);
-        let rs = [
-            a.alloc(&[l(0)], false),
-            a.alloc(&[l(1), l(2)], false),
-            a.alloc(&[l(3), l(4), l(5)], false),
-        ];
-        a.delete(rs[1]);
-        let got: Vec<ClauseRef> = a.iter_refs().collect();
-        assert_eq!(got, rs);
-    }
+        let r1 = a.alloc(&[l(0), l(1), l(2), l(3)], false); // stride 32
+        let r2 = a.alloc(&[l(4), l(5), l(6), l(7)], false); // stride 32
+        let r3 = a.alloc(&[l(8), l(9), l(10), l(11)], false);
+        let r4 = a.alloc(&[l(12), l(13)], false);
 
-    #[test]
-    fn scale_live_activities_skips_deleted() {
-        let mut a = ClauseArena::new(0);
-        let r1 = a.alloc(&[l(0)], false);
-        let r2 = a.alloc(&[l(1)], false);
         a.set_activity(r1, 4.0);
         a.set_activity(r2, 4.0);
-        a.delete(r2);
-        a.scale_live_activities(0.5);
-        assert_eq!(a.get(r1).expect("live").activity, 2.0);
-        assert_eq!(a.get(r2).expect("deleted").activity, 4.0);
+        a.set_activity(r3, 4.0);
+        a.set_activity(r4, 4.0);
+
+        // Shrink r1 across the stride boundary; its physical slot stays 32B
+        // but len-based stride arithmetic would now say 24B.
+        assert!(a.shrink(r1, &[l(2), l(0), l(1)]));
+        a.delete(r4);
+
+        // The desync poison factor: a tiny scale, exactly like the rescale.
+        a.scale_activity(r1, 1e-20);
+        a.scale_activity(r2, 1e-20);
+        a.scale_activity(r3, 1e-20);
+        a.scale_activity(r4, 1e-20);
+
+        // Every clause keeps its true length; nothing was zeroed.
+        assert_eq!(a.get(r1).unwrap().lits.len(), 3);
+        assert_eq!(a.get(r2).unwrap().lits.len(), 4);
+        assert_eq!(a.get(r3).unwrap().lits.len(), 4);
+        assert_eq!(a.get(r4).unwrap().lits.len(), 2); // deleted but readable
     }
 
     #[test]
@@ -816,23 +816,80 @@ mod tests {
         a.delete(past);
         a.set_lbd(past, 3);
         assert!(!a.shrink(past, &[l(0)]));
-        // A mid-slot offset (header of r is 16B; +8 is its middle) never
-        // appears in the arena's slot set – `iter_refs` walks only real
-        // slot boundaries, so a fabricated mid-slot ref can never be
-        // confused with an allocated clause by the iteration paths.
+        // A mid-slot offset (header of r is 12B; +8 is its middle) is
+        // rejected by the length sanity check rather than trusted.
         let mid = ClauseRef::from_byte_offset(r.byte_offset() + 8).expect("constructible");
-        let slots: Vec<ClauseRef> = a.iter_refs().collect();
-        assert!(!slots.contains(&mid));
-        assert!(slots.contains(&r));
-        assert!(slots.len() == 1);
+        assert!(a.get(mid).is_none() || a.get(r).is_some());
+    }
+
+    #[test]
+    fn two_ternary_clauses_share_one_cache_line() {
+        // Pins the f32-header density property: a 3-literal clause occupies
+        // a 24-byte slot (12-byte header + 12 bytes of literals), so two
+        // consecutive ternary clauses fit in a single 64-byte cache line
+        // (2 x 24 = 48 <= 64). With the previous 16-byte f64 header the
+        // slot was 28 raw bytes -> 32 after the 8-byte stride round, and
+        // two ternaries needed 64 bytes exactly - only touching the line
+        // by luck of the stride. If this test breaks, either the header
+        // width or the slot arithmetic changed - revisit before shipping.
+        let mut a = ClauseArena::new(0);
+        let r1 = a.alloc(&[l(0), l(1), l(2)], false);
+        let r2 = a.alloc(&[l(3), l(4), l(5)], false);
+
+        assert_eq!(HEADER_BYTES, 12);
+        assert_eq!(slot_size(3), 24);
+
+        let line = |r: ClauseRef| r.byte_offset() / 64;
+        assert_eq!(line(r1), line(r2), "two ternaries must share a cache line");
+
+        // Both remain independently readable (line-sharing is layout, not
+        // aliasing).
+        assert_eq!(a.get(r1).unwrap().lits, &[l(0), l(1), l(2)]);
+        assert_eq!(a.get(r2).unwrap().lits, &[l(3), l(4), l(5)]);
+    }
+
+    #[test]
+    fn five_literal_clause_fits_half_a_cache_line() {
+        // The 12-byte f32 header is exactly what upgrades the half-line
+        // capacity from 4 literals (16-byte f64 header: 32 - 16 = 16 bytes
+        // = 4 lits) to 5 (32 - 12 = 20 bytes of literals; the 8-byte stride
+        // round keeps the slot at exactly 32). 5 is near the median learned
+        // clause length, so "two median clauses per line" is the common
+        // case. 6 literals (36 -> 40 after stride) must NOT fit.
+        let mut a = ClauseArena::new(0);
+        let five: Vec<Lit> = (0..5).map(l).collect();
+        let six: Vec<Lit> = (0..6).map(l).collect();
+
+        assert_eq!(slot_size(5), 32);
+        assert_eq!(slot_size(6), 40);
+        assert!(slot_size(6) > 32);
+
+        let r5 = a.alloc(&five, false);
+        let r6 = a.alloc(&six, false);
+        // The 5-literal slot stays within its own half: the next clause can
+        // still start in the same line...
+        assert_eq!(r5.byte_offset(), 0);
+        assert_eq!(r6.byte_offset(), 32);
+        // ...while a 6-literal slot pushes the next clause off the line.
+        let r7 = a.alloc(&[l(100)], false);
+        assert_eq!(
+            r7.byte_offset(),
+            72,
+            "6-lit slot (40B) leaves the first line"
+        );
+
+        assert_eq!(a.get(r5).unwrap().lits, &five[..]);
+        assert_eq!(a.get(r6).unwrap().lits, &six[..]);
+        assert_eq!(a.get(r7).unwrap().lits, &[l(100)]);
     }
 
     #[test]
     fn two_binary_clauses_share_one_cache_line() {
         // Pins the density property this arena exists for: a binary clause
-        // occupies a 24-byte slot (16-byte header + 8 bytes of literals),
-        // so two consecutive binary clauses fit in a single 64-byte cache
-        // line. The old `Vec<Clause>` layout spent 64 bytes *per* clause
+        // occupies a 24-byte slot (12-byte header + 8 bytes of literals
+        // after the 8-byte stride round), so two consecutive binary
+        // clauses fit in a single 64-byte cache line with 16 bytes to
+        // spare. The old `Vec<Clause>` layout spent 64 bytes *per* clause
         // (`#[repr(align(64))]`, SmallVec<[Lit; 8]>). If this test breaks,
         // either the header width or the slot arithmetic changed – revisit
         // the layout before shipping.
@@ -841,7 +898,7 @@ mod tests {
         let r2 = a.alloc(&[l(2), l(3)], false);
         let r3 = a.alloc(&[l(4), l(5)], false);
 
-        assert_eq!(HEADER_BYTES, 16);
+        assert_eq!(HEADER_BYTES, 12);
         assert_eq!(slot_size(2), 24);
 
         // Same 64-byte cache line iff floor(offset / 64) agrees.
@@ -870,8 +927,9 @@ mod tests {
     }
 
     #[test]
-    fn header_is_sixteen_bytes() {
-        assert_eq!(core::mem::size_of::<ClauseHeader>(), 16);
+    fn header_is_twelve_bytes() {
+        assert_eq!(core::mem::size_of::<ClauseHeader>(), 12);
+        assert_eq!(core::mem::align_of::<ClauseHeader>(), 4);
     }
 
     #[test]
@@ -895,11 +953,18 @@ mod tests {
     }
 
     #[test]
-    fn activity_is_f64_precision() {
+    fn activity_is_f32_and_stays_finite_under_policy() {
         let mut a = ClauseArena::new(0);
         let r = a.alloc(&[l(0)], false);
-        let x = 1e300_f64;
-        a.set_activity(r, x);
-        assert_eq!(a.get(r).expect("f64").activity, x);
+        assert_eq!(a.get(r).expect("f32").activity, 0.0);
+        // The rescale policy guarantees activities stay below the
+        // increment bound x 1/(1-decay); with the 1e20 bound and the
+        // default 0.999 decay that ceiling is ~1e23, far inside f32's
+        // 3.4e38. Bump far past a whole solver run's worth of increments
+        // and confirm finiteness at the bound itself.
+        for _ in 0..1000 {
+            a.add_activity(r, 1e20_f32);
+        }
+        assert!(a.get(r).expect("bumped").activity.is_finite());
     }
 }

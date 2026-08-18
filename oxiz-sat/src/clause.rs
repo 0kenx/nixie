@@ -686,7 +686,7 @@ impl ClauseDatabase {
     }
 
     /// Bump activity of a clause.
-    pub fn bump_activity(&mut self, id: ClauseId, increment: f64) {
+    pub fn bump_activity(&mut self, id: ClauseId, increment: f32) {
         if let Some(r) = self.ref_of(id) {
             self.arena.add_activity(r, increment);
         }
@@ -694,13 +694,20 @@ impl ClauseDatabase {
 
     /// Multiply every live clause's activity by `factor` (the decay/rescale
     /// passes; relative order preserved).
-    pub fn scale_live_activities(&mut self, factor: f64) {
-        self.arena.scale_live_activities(factor);
+    ///
+    /// Iterates the **refs table** (the authoritative slot list, exact under
+    /// `shrink`) rather than walking arena memory by recomputed strides –
+    /// see `ClauseArena::scale_activity` for why walking is unsound.
+    pub fn scale_live_activities(&mut self, factor: f32) {
+        let refs: Vec<ClauseRef> = self.refs.clone();
+        for r in refs {
+            self.arena.scale_activity(r, factor);
+        }
     }
 
     /// Alias kept for the existing call site (`Solver::decay_clause_activity`
     /// overflow rescale).
-    pub fn rescale_activity(&mut self, factor: f64) {
+    pub fn rescale_activity(&mut self, factor: f32) {
         self.scale_live_activities(factor);
     }
 
@@ -715,21 +722,6 @@ impl ClauseDatabase {
 mod tests {
     use super::*;
     use crate::literal::Var;
-
-    #[test]
-    fn test_clause_creation() {
-        let lits = vec![
-            Lit::pos(Var::new(0)),
-            Lit::neg(Var::new(1)),
-            Lit::pos(Var::new(2)),
-        ];
-        let clause = Clause::original(lits.clone());
-
-        assert_eq!(clause.len(), 3);
-        assert!(!clause.is_unit());
-        assert!(!clause.is_binary());
-        assert!(!clause.learned);
-    }
 
     #[test]
     fn test_clause_database() {

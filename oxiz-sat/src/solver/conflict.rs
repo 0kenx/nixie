@@ -269,9 +269,11 @@ impl Solver {
                 if self.clauses.get(reason_clause).is_some_and(|c| c.lbd <= 2) {
                     self.clauses.promote_to_core(reason_clause);
                 }
-                // Bump clause activity (MapleSAT-style)
+                // Bump clause activity (MapleSAT-style). The increment
+                // schedule stays f64 (precision of the growth/decay cycle);
+                // the accumulated activity itself is f32 in the arena.
                 self.clauses
-                    .bump_activity(reason_clause, self.clause_bump_increment);
+                    .bump_activity(reason_clause, self.clause_bump_increment as f32);
             }
 
             let Some(clause) = self.clauses.get(reason_clause) else {
