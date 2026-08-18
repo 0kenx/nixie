@@ -178,9 +178,7 @@ impl Solver {
             let tautology = lits.windows(2).any(|w| w[0].var() == w[1].var());
 
             if tautology {
-                if let Some(c) = self.clauses.get_mut(cid) {
-                    c.deleted = true;
-                }
+                self.clauses.mark_deleted_raw(cid);
                 continue;
             }
             match lits.len() {
@@ -192,14 +190,10 @@ impl Solver {
                 }
                 1 => {
                     new_units.push(lits[0]);
-                    if let Some(c) = self.clauses.get_mut(cid) {
-                        c.deleted = true;
-                    }
+                    self.clauses.mark_deleted_raw(cid);
                 }
                 _ => {
-                    if let Some(c) = self.clauses.get_mut(cid) {
-                        c.lits = lits.into();
-                    }
+                    self.clauses.shrink(cid, &lits);
                 }
             }
         }

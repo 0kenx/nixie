@@ -95,35 +95,37 @@ impl ClauseMaintenance {
         // Process cleanup queue
         let queue: Vec<_> = self.cleanup_queue.drain(..).collect();
         for clause_id in queue {
-            if let Some(clause) = clauses.get_mut(clause_id) {
-                if clause.deleted {
-                    continue;
-                }
-
-                let old_len = clause.lits.len();
-
-                // Normalize clause (remove duplicates, sort, check tautology)
-                if clause.normalize() {
-                    // Tautology detected - remove clause
-                    clauses.remove(clause_id);
-                    removed_clauses.push(clause_id);
-                    self.stats.tautologies_removed += 1;
-                    continue;
-                }
-
-                // Track if duplicates were removed
-                if clause.lits.len() < old_len {
-                    self.stats.duplicates_removed += old_len - clause.lits.len();
-                }
-
-                // Strengthen clause by removing falsified literals
-                if self.strengthen_clause(clause, assignments) {
-                    self.stats.clauses_strengthened += 1;
-                }
-
-                // Optimize tier based on usage and quality
-                self.optimize_tier(clause);
+            if clauses.get(clause_id).is_none_or(|c| c.deleted) {
+                continue;
             }
+
+            let old_len = clauses.get(clause_id).map_or(0, |c| c.lits.len());
+
+            // Normalize clause (remove duplicates, sort, check tautology)
+            if clauses.normalize(clause_id) {
+                // Tautology detected - remove clause
+                clauses.remove(clause_id);
+                removed_clauses.push(clause_id);
+                self.stats.tautologies_removed += 1;
+                continue;
+            }
+
+            // Track if duplicates were removed
+            if clauses
+                .get(clause_id)
+                .is_some_and(|c| c.lits.len() < old_len)
+            {
+                self.stats.duplicates_removed +=
+                    old_len - clauses.get(clause_id).map_or(0, |c| c.lits.len());
+            }
+
+            // Strengthen clause by removing falsified literals
+            if self.strengthen_clause(clause_id, clauses, assignments) {
+                self.stats.clauses_strengthened += 1;
+            }
+
+            // Optimize tier based on usage and quality
+            self.optimize_tier(clause_id, clauses);
         }
 
         // Compact the database periodically
@@ -135,76 +137,101 @@ impl ClauseMaintenance {
     /// Strengthen a clause by removing falsified literals
     ///
     /// Returns true if the clause was modified
-    fn strengthen_clause(&self, clause: &mut crate::clause::Clause, assignments: &[LBool]) -> bool {
-        let original_len = clause.lits.len();
+    fn strengthen_clause(
+        &self,
+        clause_id: ClauseId,
+        clauses: &mut ClauseDatabase,
+        assignments: &[LBool],
+    ) -> bool {
+        let Some(v) = clauses.get(clause_id) else {
+            return false;
+        };
+        let original_len = v.lits.len();
+        let lits: Vec<crate::literal::Lit> = v
+            .lits
+            .iter()
+            .copied()
+            .filter(|lit| {
+                let var_idx = lit.var().index();
+                if var_idx >= assignments.len() {
+                    return true; // Keep unassigned variables
+                }
 
-        clause.lits.retain(|lit| {
-            let var_idx = lit.var().index();
-            if var_idx >= assignments.len() {
-                return true; // Keep unassigned variables
-            }
+                let value = assignments[var_idx];
 
-            let value = assignments[var_idx];
+                // Keep literal if variable is undefined
+                if value == LBool::Undef {
+                    return true;
+                }
 
-            // Keep literal if variable is undefined
-            if value == LBool::Undef {
-                return true;
-            }
+                // A literal is falsified if:
+                // - Variable is True and literal is negative
+                // - Variable is False and literal is positive
+                let is_falsified = (value == LBool::True && lit.is_neg())
+                    || (value == LBool::False && !lit.is_neg());
 
-            // A literal is falsified if:
-            // - Variable is True and literal is negative
-            // - Variable is False and literal is positive
-            let is_falsified =
-                (value == LBool::True && lit.is_neg()) || (value == LBool::False && !lit.is_neg());
-
-            !is_falsified
-        });
-
-        clause.lits.len() < original_len
+                !is_falsified
+            })
+            .collect();
+        let shrunk = lits.len() < original_len;
+        if shrunk {
+            clauses.shrink(clause_id, &lits);
+        }
+        shrunk
     }
 
     /// Optimize clause tier based on usage and quality metrics
-    fn optimize_tier(&mut self, clause: &mut crate::clause::Clause) {
-        if !clause.learned {
+    fn optimize_tier(&mut self, clause_id: ClauseId, clauses: &mut ClauseDatabase) {
+        let Some(v) = clauses.get(clause_id) else {
+            return;
+        };
+        if !v.learned {
             return;
         }
 
-        let old_tier = clause.tier;
+        let old_tier = v.tier;
+        let (usage, lbd, activity) = (v.usage_count, v.lbd, v.activity);
 
         // Promotion criteria:
         // - High usage count
         // - Low LBD (high quality)
         // - Small size
 
-        if clause.tier == ClauseTier::Local {
+        let new_tier = if old_tier == ClauseTier::Local {
             // Promote Local -> Mid if used frequently or has good LBD
-            if clause.usage_count >= 3 || (clause.lbd <= 3 && clause.usage_count >= 2) {
-                clause.tier = ClauseTier::Mid;
+            if usage >= 3 || (lbd <= 3 && usage >= 2) {
                 self.stats.tier_promotions += 1;
+                ClauseTier::Mid
+            } else {
+                ClauseTier::Local
             }
-        } else if clause.tier == ClauseTier::Mid {
+        } else if old_tier == ClauseTier::Mid {
             // Promote Mid -> Core if very high usage or excellent LBD
-            if clause.usage_count >= 10
-                || clause.lbd <= 2
-                || (clause.lbd <= 3 && clause.usage_count >= 5)
-            {
-                clause.tier = ClauseTier::Core;
+            if usage >= 10 || lbd <= 2 || (lbd <= 3 && usage >= 5) {
                 self.stats.tier_promotions += 1;
+                ClauseTier::Core
+            } else {
+                ClauseTier::Mid
             }
-        }
+        } else {
+            old_tier
+        };
 
         // Demotion criteria:
         // - Low activity for extended period
         // - High LBD with low usage
 
-        if clause.tier == ClauseTier::Mid && clause.activity < 0.1 && clause.usage_count < 2 {
-            clause.tier = ClauseTier::Local;
+        let final_tier = if new_tier == ClauseTier::Mid && activity < 0.1 && usage < 2 {
             self.stats.tier_demotions += 1;
-        }
+            ClauseTier::Local
+        } else {
+            new_tier
+        };
 
-        // Track tier changes in clause
-        if old_tier != clause.tier {
-            clause.usage_count = 0; // Reset usage counter on tier change
+        if final_tier != old_tier {
+            clauses.set_tier(clause_id, final_tier);
+            // Reset usage counter on tier change.
+            clauses.reset_usage(clause_id);
         }
     }
 
@@ -298,22 +325,26 @@ mod tests {
     #[test]
     fn test_tier_optimization() {
         let mut maintenance = ClauseMaintenance::new();
-        let mut clause = Clause::learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        let mut db = ClauseDatabase::new();
+        let id = db.add_learned([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
 
-        clause.usage_count = 3;
-        clause.lbd = 3;
+        db.bump_usage(id);
+        db.bump_usage(id);
+        db.bump_usage(id);
+        db.set_lbd(id, 3);
 
-        maintenance.optimize_tier(&mut clause);
+        maintenance.optimize_tier(id, &mut db);
 
         // Should be promoted from Local to Mid
-        assert_eq!(clause.tier, ClauseTier::Mid);
+        assert_eq!(db.get(id).expect("clause").tier, ClauseTier::Mid);
         assert_eq!(maintenance.stats.tier_promotions, 1);
     }
 
     #[test]
     fn test_clause_strengthening() {
         let maintenance = ClauseMaintenance::new();
-        let mut clause = Clause::learned([
+        let mut db = ClauseDatabase::new();
+        let id = db.add_learned([
             Lit::pos(Var::new(0)),
             Lit::pos(Var::new(1)),
             Lit::pos(Var::new(2)),
@@ -322,10 +353,10 @@ mod tests {
         let mut assignments = vec![LBool::Undef; 3];
         assignments[1] = LBool::False; // Var(1) is false
 
-        // Lit::pos(Var::new(1)) should be removed since Var(1) is false
-        let modified = maintenance.strengthen_clause(&mut clause, &assignments);
+        // Lit::pos(Var(1)) should be removed since Var(1) is false
+        let modified = maintenance.strengthen_clause(id, &mut db, &assignments);
         assert!(modified);
-        assert_eq!(clause.len(), 2);
+        assert_eq!(db.get(id).expect("clause").lits.len(), 2);
     }
 
     #[test]

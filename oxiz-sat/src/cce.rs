@@ -61,7 +61,7 @@ impl CoveredClauseElimination {
 
         for id in clauses.iter_ids() {
             if let Some(clause) = clauses.get(id) {
-                for &lit in &clause.lits {
+                for &lit in clause.lits {
                     self.clause_index.entry(lit).or_default().push(id);
                 }
             }

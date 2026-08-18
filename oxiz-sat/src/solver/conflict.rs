@@ -201,7 +201,7 @@ impl Solver {
         let current_level = {
             let mut lvl = 0;
             if let Some(c) = self.clauses.get(conflict) {
-                for &lit in &c.lits {
+                for &lit in c.lits {
                     let l = self.trail.level(lit.var());
                     if l > lvl {
                         lvl = l;
@@ -263,14 +263,15 @@ impl Solver {
             }
 
             // Record clause usage for tier promotion and bump activity (if it's a learned clause)
-            if is_learned && let Some(clause_mut) = self.clauses.get_mut(reason_clause) {
-                clause_mut.record_usage();
+            if is_learned && self.clauses.get(reason_clause).is_some() {
+                self.clauses.record_usage(reason_clause);
                 // Promote to Core if LBD ≤ 2 (GLUE clause)
-                if clause_mut.lbd <= 2 {
-                    clause_mut.promote_to_core();
+                if self.clauses.get(reason_clause).is_some_and(|c| c.lbd <= 2) {
+                    self.clauses.promote_to_core(reason_clause);
                 }
                 // Bump clause activity (MapleSAT-style)
-                clause_mut.activity += self.clause_bump_increment;
+                self.clauses
+                    .bump_activity(reason_clause, self.clause_bump_increment);
             }
 
             let Some(clause) = self.clauses.get(reason_clause) else {

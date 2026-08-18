@@ -188,6 +188,7 @@ impl ClauseView<'_> {
 }
 
 /// The clause arena itself.
+#[derive(Clone)]
 pub struct ClauseArena {
     /// Backing storage. `u64` elements pin the allocation to 8-byte
     /// alignment; all offsets are byte offsets into this buffer and every
@@ -501,10 +502,57 @@ impl ClauseArena {
         }
     }
 
+    /// Reset the usage counter to zero.
+    pub fn reset_usage(&mut self, r: ClauseRef) {
+        if self.read_header(r).is_some() {
+            // SAFETY: `r` validated by `read_header`.
+            unsafe {
+                (*self.header_ptr_mut(r)).usage = 0;
+            }
+        }
+    }
+
     /// Read the usage count.
     #[must_use]
     pub fn usage_count(&self, r: ClauseRef) -> u32 {
         self.get(r).map_or(0, |v| v.usage_count)
+    }
+
+    /// Mutable literal slice for a **live** (non-deleted) clause, or `None`.
+    /// Single header read validates both the slot and the deleted flag –
+    /// this is the propagation hot path's entry point.
+    #[must_use]
+    pub fn live_lits_mut(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
+        let h = self.read_header(r)?;
+        if h.deleted() {
+            return None;
+        }
+        // SAFETY: `r` validated by `read_header`; the literal array holds
+        // `h.len` initialised elements (a shrunk slot's tail is unreachable).
+        Some(unsafe {
+            core::slice::from_raw_parts_mut(
+                Self::lits_ptr_mut(self.header_ptr_mut(r)),
+                h.len as usize,
+            )
+        })
+    }
+
+    /// Whether the clause at `r` exists and is deleted. Invalid refs read as
+    /// not-deleted (callers pair this with `get`/`live_lits_mut`, which
+    /// already refuse invalid refs).
+    #[must_use]
+    pub fn is_deleted(&self, r: ClauseRef) -> bool {
+        self.read_header(r).is_some_and(|h| h.deleted())
+    }
+
+    /// `activity += inc` in one header write.
+    pub fn add_activity(&mut self, r: ClauseRef, inc: f64) {
+        if self.read_header(r).is_some() {
+            // SAFETY: `r` validated by `read_header`.
+            unsafe {
+                (*self.header_ptr_mut(r)).activity += inc;
+            }
+        }
     }
 
     /// Multiply every **live** clause's activity by `factor` (decay /

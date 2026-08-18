@@ -180,10 +180,8 @@ impl Solver {
             self.stats.binary_clauses += 1;
             self.stats.total_lbd += lbd as u64;
 
-            if let Some(clause) = self.clauses.get_mut(clause_id) {
-                clause.lbd = lbd;
-                clause.assign_tier_from_lbd();
-            }
+            self.clauses.set_lbd(clause_id, lbd);
+            self.clauses.assign_tier_from_lbd(clause_id);
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
@@ -212,10 +210,8 @@ impl Solver {
             self.proof_set_clause_id(clause_id, proof_id);
             self.stats.learned_clauses += 1;
 
-            if let Some(clause) = self.clauses.get_mut(clause_id) {
-                clause.lbd = lbd;
-                clause.assign_tier_from_lbd();
-            }
+            self.clauses.set_lbd(clause_id, lbd);
+            self.clauses.assign_tier_from_lbd(clause_id);
             self.debug_check_learned_clause_lbd(clause_id);
 
             self.learned_clause_ids.push(clause_id);
@@ -270,9 +266,7 @@ impl Solver {
             // exactly like `add_clause` and `replace_clause_lits` do.
             if best != 1 {
                 learnt_clause.swap(1, best);
-                if let Some(clause) = self.clauses.get_mut(clause_id) {
-                    clause.swap(1, best);
-                }
+                self.clauses.swap_lits(clause_id, 1, best);
             }
             let lit1 = learnt_clause[1];
             self.watches
@@ -292,8 +286,8 @@ impl Solver {
     /// Check if the given clause subsumes any existing clauses
     /// A clause C subsumes C' if all literals of C are in C'
     pub(super) fn check_subsumption(&mut self, new_clause_id: ClauseId) {
-        let new_clause = match self.clauses.get(new_clause_id) {
-            Some(c) => c.lits.clone(),
+        let new_clause: Vec<Lit> = match self.clauses.get(new_clause_id) {
+            Some(c) => c.lits.to_vec(),
             None => return,
         };
 
@@ -512,9 +506,7 @@ impl Solver {
         if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
             current_level_clauses.push(clause_id);
         }
-        if let Some(clause) = self.clauses.get_mut(clause_id) {
-            clause.lbd = lbd;
-        }
+        self.clauses.set_lbd(clause_id, lbd);
 
         // Proof: the explanation clause is a valid theory lemma (recorded with an
         // empty RUP chain; bound to the stored clause below).
@@ -573,10 +565,8 @@ impl Solver {
         if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
             current_level_clauses.push(clause_id);
         }
-        if let Some(clause) = self.clauses.get_mut(clause_id) {
-            clause.lbd = 1;
-            clause.promote_to_core();
-        }
+        self.clauses.set_lbd(clause_id, 1);
+        self.clauses.promote_to_core(clause_id);
 
         // Proof: the unit lemma (recorded as a derived unit with empty chain;
         // bound to the stored clause and the unit-id table).
@@ -989,7 +979,7 @@ impl Solver {
     pub(super) fn debug_verify_model(&self) {
         #[cfg(debug_assertions)]
         if let Some(id) = self.find_model_violation(true) {
-            let lits = self.clauses.get(id).map(|c| c.lits.clone());
+            let lits = self.clauses.get(id).map(|c| c.lits.to_vec());
             panic!(
                 "solve() reported Sat with a model that violates clause {id:?} ({lits:?}); \
                  the search accepted an assignment that does not satisfy the database"
@@ -1017,7 +1007,7 @@ impl Solver {
     pub(super) fn debug_verify_model_input(&self) {
         #[cfg(debug_assertions)]
         if let Some(id) = self.find_model_violation(false) {
-            let lits = self.clauses.get(id).map(|c| c.lits.clone());
+            let lits = self.clauses.get(id).map(|c| c.lits.to_vec());
             panic!(
                 "solve_with_theory() reported Sat with a model that violates ORIGINAL clause \
                  {id:?} ({lits:?}); the CDCL(T) search accepted an assignment that does not \
@@ -1168,9 +1158,7 @@ impl Solver {
     /// literals (mirroring [`Solver::add_clause`]), and re-attaches them.
     pub(super) fn remove_literal_and_rewatch(&mut self, clause_id: ClauseId, idx: usize) {
         let mut lits: Vec<Lit> = match self.clauses.get(clause_id) {
-            Some(c) if !c.deleted && c.lits.len() > 2 && idx < c.lits.len() => {
-                c.lits.iter().copied().collect()
-            }
+            Some(c) if !c.deleted && c.lits.len() > 2 && idx < c.lits.len() => c.lits.to_vec(),
             _ => return,
         };
 
@@ -1206,10 +1194,7 @@ impl Solver {
         let w1 = lits[1];
 
         // Write the reordered literals back into the clause.
-        if let Some(clause) = self.clauses.get_mut(clause_id) {
-            clause.lits.clear();
-            clause.lits.extend(lits.iter().copied());
-        }
+        self.clauses.shrink(clause_id, &lits);
 
         // Re-attach watches on the new positions 0 and 1.
         self.watches.add(w0.negate(), Watcher::new(clause_id, w1));
@@ -1359,7 +1344,7 @@ impl Solver {
         });
         let (i0, i1) = (idxs[0], idxs[1]);
 
-        if let Some(clause) = self.clauses.get_mut(cid) {
+        {
             // Move the chosen watches to positions 0 and 1.
             let mut lits: SmallVec<[Lit; 8]> = new_lits.iter().copied().collect();
             lits.swap(0, i0);
@@ -1372,8 +1357,7 @@ impl Solver {
                 i1
             };
             lits.swap(1, i1);
-            clause.lits.clear();
-            clause.lits.extend(lits.iter().copied());
+            self.clauses.shrink(cid, &lits);
             let w0 = lits[0];
             let w1 = lits[1];
             self.watches.add(w0.negate(), Watcher::new(cid, w1));
@@ -1488,9 +1472,7 @@ impl Solver {
             // This site used to be the exception – the LBD-0 invariant
             // (debug) caught it on the pigeonhole case.
             let lbd = self.compute_lbd(&[r.negate(), q]);
-            if let Some(clause) = self.clauses.get_mut(id) {
-                clause.lbd = lbd;
-            }
+            self.clauses.set_lbd(id, lbd);
             self.debug_check_learned_clause_lbd(id);
             self.binary_graph.add(r, q, id);
             self.binary_graph.add(q.negate(), r.negate(), id);

@@ -2,7 +2,8 @@
 
 use crate::literal::Lit;
 #[allow(unused_imports)]
-use crate::prelude::*;
+use crate::memory::{ClauseArena, ClauseRef, ClauseView};
+
 use smallvec::SmallVec;
 
 /// Unique identifier for a clause
@@ -325,19 +326,35 @@ impl ClauseDatabaseStats {
     }
 }
 
-/// Database of clauses with memory pool
-#[derive(Debug)]
+/// Database of clauses backed by the contiguous clause arena (`memory.rs`).
 pub struct ClauseDatabase {
-    /// All clauses
-    clauses: Vec<Clause>,
-    /// Number of original clauses
+    /// Contiguous clause storage (see `memory.rs`): every clause is a
+    /// 16-byte header immediately followed by its literals, packed into one
+    /// `Vec<u64>`. Slots are append-only: a `ClauseRef` names exactly one
+    /// clause forever.
+    arena: ClauseArena,
+    /// Dense id → arena ref table. `ClauseId::index()` indexes this; ids are
+    /// handed out in allocation order and never reused or relocated, so ids
+    /// stored in trail reasons, watchers and the LRAT tables stay valid for
+    /// the database's lifetime (same guarantee the old `Vec<Clause>` gave).
+    refs: Vec<ClauseRef>,
+    /// Number of live original clauses.
     num_original: usize,
-    /// Number of learned clauses
+    /// Number of live learned clauses.
     num_learned: usize,
-    /// Free list for reusing deleted clause slots (memory pool)
-    free_list: Vec<ClauseId>,
-    /// Statistics
+    /// Statistics.
     stats: ClauseDatabaseStats,
+}
+
+impl core::fmt::Debug for ClauseDatabase {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ClauseDatabase")
+            .field("live", &self.len())
+            .field("slots", &self.refs.len())
+            .field("num_original", &self.num_original)
+            .field("num_learned", &self.num_learned)
+            .finish()
+    }
 }
 
 impl Default for ClauseDatabase {
@@ -347,54 +364,201 @@ impl Default for ClauseDatabase {
 }
 
 impl ClauseDatabase {
-    /// Create a new clause database
+    /// Create an empty database.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            clauses: Vec::new(),
+            arena: ClauseArena::new(64 * 1024),
+            refs: Vec::new(),
             num_original: 0,
             num_learned: 0,
-            free_list: Vec::new(),
             stats: ClauseDatabaseStats::default(),
         }
     }
 
-    /// Get statistics about the clause database
-    #[must_use]
-    pub fn stats(&self) -> &ClauseDatabaseStats {
-        &self.stats
+    fn view(&self, id: ClauseId) -> Option<ClauseView<'_>> {
+        let r = *self.refs.get(id.index())?;
+        self.arena.get(r)
     }
 
-    /// Update statistics for a clause
-    fn update_stats_add(&mut self, clause: &Clause) {
-        if clause.learned {
-            // Update tier count
-            let tier_idx = match clause.tier {
-                ClauseTier::Core => 0,
-                ClauseTier::Mid => 1,
-                ClauseTier::Local => 2,
-            };
-            self.stats.tier_counts[tier_idx] += 1;
+    fn ref_of(&self, id: ClauseId) -> Option<ClauseRef> {
+        self.refs.get(id.index()).copied()
+    }
 
-            // Update LBD stats
-            if clause.lbd > 0 {
-                self.stats.total_lbd += clause.lbd as u64;
-                self.stats.lbd_count += 1;
+    /// Get a read-only view of the clause by ID (deleted clauses are still
+    /// returned, flagged – callers filter on `deleted`, exactly as with the
+    /// previous `Option<&Clause>`).
+    #[must_use]
+    pub fn get(&self, id: ClauseId) -> Option<ClauseView<'_>> {
+        self.view(id)
+    }
+
+    /// Mutable literal slice of a **live** clause (single header
+    /// read validates the slot and the deleted flag). This is the
+    /// propagation hot path's entry point into the arena.
+    pub fn live_lits_mut(&mut self, id: ClauseId) -> Option<&mut [Lit]> {
+        self.ref_of(id).and_then(|r| self.arena.live_lits_mut(r))
+    }
+
+    /// Rewrite a clause with a (shorter or equal-length) literal array,
+    /// in place, keeping its id stable. Returns `false` (clause untouched)
+    /// for invalid/deleted ids or growth attempts – an arena slot cannot
+    /// grow, and relocating would invalidate ids held by watchers and
+    /// reasons. Every in-solver rewrite site only shrinks.
+    pub fn shrink(&mut self, id: ClauseId, new_lits: &[Lit]) -> bool {
+        self.ref_of(id)
+            .is_some_and(|r| self.arena.shrink(r, new_lits))
+    }
+
+    /// Swap literals `i` and `j` of the clause (no-op for invalid ids or
+    /// out-of-range indices).
+    pub fn swap_lits(&mut self, id: ClauseId, i: usize, j: usize) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.swap_lits(r, i, j);
+        }
+    }
+
+    /// Set the LBD of a live clause.
+    pub fn set_lbd(&mut self, id: ClauseId, lbd: u32) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.set_lbd(r, lbd);
+        }
+    }
+
+    /// Set the tier of a live clause.
+    pub fn set_tier(&mut self, id: ClauseId, tier: ClauseTier) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.set_tier(r, tier);
+        }
+    }
+
+    /// Clear the learned flag, promoting the clause to original (cadical
+    /// `subsume_clause`'s promotion rule). Deliberately does not touch the
+    /// live-original/learned counters – the pre-arena code flipped
+    /// `Clause::learned` raw, and `reduce_clause_database` iterates
+    /// `learned_clause_ids`, not the counters.
+    pub fn clear_learned(&mut self, id: ClauseId) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.clear_learned(r);
+        }
+    }
+
+    /// Mark deleted **without** any counter/stat updates (the raw
+    /// `c.deleted = true` sites; the arena flag is all they changed).
+    pub fn mark_deleted_raw(&mut self, id: ClauseId) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.delete(r);
+        }
+    }
+
+    /// Increment the usage counter and apply the tier promotions, exactly as
+    /// `Clause::record_usage` did: Local → Mid at 3 uses, Mid → Core at 10
+    /// uses or `lbd <= 2`. (The arena's usage byte saturates at 255; both
+    /// thresholds are far below, so every decision is identical.)
+    pub fn record_usage(&mut self, id: ClauseId) {
+        let Some(r) = self.ref_of(id) else { return };
+        let usage = self.arena.bump_usage(r);
+        let Some(v) = self.arena.get(r) else { return };
+        if usage >= 3 && v.tier == ClauseTier::Local {
+            self.arena.set_tier(r, ClauseTier::Mid);
+        } else if (usage >= 10 || v.lbd <= 2) && v.tier == ClauseTier::Mid {
+            self.arena.set_tier(r, ClauseTier::Core);
+        }
+    }
+
+    /// Increment the usage counter **without** tier promotion (raw counter
+    /// access; `record_usage` is the promoting variant the conflict path
+    /// uses).
+    pub fn bump_usage(&mut self, id: ClauseId) -> u32 {
+        self.ref_of(id).map_or(0, |r| self.arena.bump_usage(r))
+    }
+
+    /// Reset the usage counter to zero (tier-change bookkeeping in
+    /// `clause_maintenance`; the old `Clause::optimize_tier` zeroed the field
+    /// inline).
+    pub fn reset_usage(&mut self, id: ClauseId) {
+        if let Some(r) = self.ref_of(id) {
+            self.arena.reset_usage(r);
+        }
+    }
+
+    /// Promote to Core tier unconditionally (`Clause::promote_to_core`).
+    pub fn promote_to_core(&mut self, id: ClauseId) {
+        self.set_tier(id, ClauseTier::Core);
+    }
+
+    /// Assign the tier implied by the clause's current LBD, one-way upward
+    /// (never demotes a clause that `record_usage`/`promote_to_core` already
+    /// lifted higher) – `Clause::assign_tier_from_lbd` verbatim: Core for
+    /// LBD ≤ 2, Mid for LBD ≤ 6, else Local.
+    pub fn assign_tier_from_lbd(&mut self, id: ClauseId) {
+        let Some(v) = self.view(id) else { return };
+        let target = if v.lbd <= 2 {
+            ClauseTier::Core
+        } else if v.lbd <= 6 {
+            ClauseTier::Mid
+        } else {
+            ClauseTier::Local
+        };
+        if (target as u8) <= (v.tier as u8) {
+            self.set_tier(id, target);
+        }
+    }
+
+    /// Normalize a clause: sort literals by code, drop duplicates, report
+    /// tautology. Semantics identical to `Clause::normalize` (same sort key,
+    /// same single-pass dedup+tautology). Returns `true` if the clause is a
+    /// tautology; the clause is left untouched in that case (callers delete
+    /// it).
+    pub fn normalize(&mut self, id: ClauseId) -> bool {
+        let Some(r) = self.ref_of(id) else {
+            return false;
+        };
+        let Some(v) = self.arena.get(r) else {
+            return false;
+        };
+        let mut lits: SmallVec<[Lit; 8]> = v.lits.iter().copied().collect();
+        if lits.is_empty() {
+            return false;
+        }
+        lits.sort_unstable_by_key(|lit| lit.code());
+        let mut write_idx = 0;
+        let mut prev_lit = lits[0];
+        let mut taut = false;
+        for read_idx in 1..lits.len() {
+            let curr = lits[read_idx];
+            if curr == prev_lit.negate() {
+                taut = true;
+                break;
+            }
+            if curr != prev_lit {
+                write_idx += 1;
+                lits[write_idx] = curr;
+                prev_lit = curr;
             }
         }
+        if taut {
+            return true;
+        }
+        lits.truncate(write_idx + 1);
+        self.arena.shrink(r, &lits);
+        false
+    }
 
-        // Update size distribution (only for clauses with 2+ literals)
-        if clause.len() >= 2 {
-            let size_idx = if clause.len() >= 12 {
-                9 // 10+ bucket
-            } else {
-                clause.len() - 2
-            };
+    /// Update statistics for a freshly added clause (computed from the same
+    /// facts the old `update_stats_add` read off the `Clause`).
+    fn update_stats_add_fields(&mut self, learned: bool, len: usize) {
+        if learned {
+            // Fresh clauses are always Local tier with lbd 0.
+            self.stats.tier_counts[2] += 1;
+        }
+        if len >= 2 {
+            let size_idx = if len >= 12 { 9 } else { len - 2 };
             self.stats.size_distribution[size_idx] += 1;
         }
     }
 
-    /// Update statistics when removing a clause
+    /// Update statistics when removing a clause.
     fn update_stats_remove_fields(
         &mut self,
         learned: bool,
@@ -403,7 +567,6 @@ impl ClauseDatabase {
         size: usize,
     ) {
         if learned {
-            // Update tier count
             let tier_idx = match tier {
                 ClauseTier::Core => 0,
                 ClauseTier::Mid => 1,
@@ -412,15 +575,11 @@ impl ClauseDatabase {
             if self.stats.tier_counts[tier_idx] > 0 {
                 self.stats.tier_counts[tier_idx] -= 1;
             }
-
-            // Update LBD stats
             if lbd > 0 && self.stats.lbd_count > 0 {
                 self.stats.total_lbd = self.stats.total_lbd.saturating_sub(lbd as u64);
                 self.stats.lbd_count -= 1;
             }
         }
-
-        // Update size distribution (only for clauses with 2+ literals)
         if (2..12).contains(&size) {
             if self.stats.size_distribution[size - 2] > 0 {
                 self.stats.size_distribution[size - 2] -= 1;
@@ -430,170 +589,125 @@ impl ClauseDatabase {
         }
     }
 
-    /// Add a clause to the database
+    /// Add a clause from literals.
     ///
-    /// # Soundness: why removed slots are NOT recycled
+    /// # Soundness: ids are never reused
     ///
-    /// `remove` only *marks* a clause deleted and relies on **lazy** watcher
-    /// cleanup: stale watch-list entries pointing at a removed clause are detached
-    /// on-the-fly during propagation (via the `deleted` flag), not eagerly when the
-    /// clause is removed. If we reused a freed `ClauseId` for a *different* clause,
-    /// those not-yet-cleaned stale watchers would suddenly reference a live but
-    /// unrelated clause. Propagation does not re-validate that the watched literal
-    /// belongs to the clause, so it could force a bogus unit propagation (or corrupt
-    /// the real watchers' positions via its in-place swaps) – an unsound result that
-    /// can flip SAT instances to UNSAT.
-    ///
-    /// Until a full watch-list garbage-collection pass exists (which would rewrite
-    /// every watcher for a relocated clause), we therefore always allocate a fresh
-    /// slot, guaranteeing a `ClauseId` maps to exactly one clause for its entire
-    /// lifetime. Freed slots stay marked `deleted` and are reclaimed only by their
-    /// lazy watcher-cleanup path. `free_list` is retained for stats/compaction and a
-    /// future GC, but is intentionally never popped here.
-    pub fn add(&mut self, clause: Clause) -> ClauseId {
-        // Update statistics
-        self.update_stats_add(&clause);
-
-        // Always allocate a new slot (see soundness note above – no free_list reuse).
-        let id = ClauseId::new(self.clauses.len() as u32);
-        if clause.learned {
+    /// Slots are append-only in the arena and `refs` only grows, so a
+    /// `ClauseId` maps to exactly one clause for its entire lifetime – stale
+    /// watch-list entries and trail reasons holding a removed id see the
+    /// deleted flag (and are skipped), never an unrelated new clause. This
+    /// preserves the no-slot-reuse rule the previous `Vec<Clause>` database
+    /// documented.
+    fn add_lits(&mut self, lits: impl IntoIterator<Item = Lit>, learned: bool) -> ClauseId {
+        let lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
+        self.update_stats_add_fields(learned, lits.len());
+        let r = self.arena.alloc(&lits, learned);
+        let id = ClauseId::new(self.refs.len() as u32);
+        self.refs.push(r);
+        if learned {
             self.num_learned += 1;
         } else {
             self.num_original += 1;
         }
-        self.clauses.push(clause);
         id
     }
 
-    /// Add an original clause
+    /// Add a clause (kept for API compatibility; preprocessors and tests
+    /// construct `Clause`s).
+    pub fn add(&mut self, clause: Clause) -> ClauseId {
+        self.add_lits(clause.lits.iter().copied(), clause.learned)
+    }
+
+    /// Add an original clause.
     pub fn add_original(&mut self, lits: impl IntoIterator<Item = Lit>) -> ClauseId {
-        self.add(Clause::original(lits))
+        self.add_lits(lits, false)
     }
 
-    /// Add a learned clause
+    /// Add a learned clause.
     pub fn add_learned(&mut self, lits: impl IntoIterator<Item = Lit>) -> ClauseId {
-        self.add(Clause::learned(lits))
+        self.add_lits(lits, true)
     }
 
-    /// Get a clause by ID
-    #[must_use]
-    pub fn get(&self, id: ClauseId) -> Option<&Clause> {
-        self.clauses.get(id.index())
-    }
-
-    /// Get a mutable reference to a clause
-    pub fn get_mut(&mut self, id: ClauseId) -> Option<&mut Clause> {
-        self.clauses.get_mut(id.index())
-    }
-
-    /// Mark a clause as deleted
-    ///
-    /// The deleted clause slot is added to the free list for reuse (memory pool)
+    /// Mark a clause as deleted and update the live counters and stats.
     pub fn remove(&mut self, id: ClauseId) {
-        if let Some(clause) = self.clauses.get_mut(id.index())
-            && !clause.deleted
-        {
-            // Stats need only the cheap classification fields – the previous
-            // full `Clause::clone()` (heap SmallVec copy per deleted clause)
-            // was pure overhead on reduction-heavy runs.
-            let learned = clause.learned;
-            let tier = clause.tier;
-            let lbd = clause.lbd;
-            let size = clause.lits.len();
-
-            clause.deleted = true;
-            if learned {
-                self.num_learned -= 1;
-            } else {
-                self.num_original -= 1;
-            }
-            // Add to free list for reuse
-            self.free_list.push(id);
-
-            // Update statistics after marking as deleted
-            self.update_stats_remove_fields(learned, tier, lbd, size);
+        let Some(v) = self.view(id).filter(|v| !v.deleted) else {
+            return;
+        };
+        let (learned, tier, lbd, size) = (v.learned, v.tier, v.lbd, v.lits.len());
+        if let Some(r) = self.ref_of(id) {
+            self.arena.delete(r);
         }
+        if learned {
+            self.num_learned -= 1;
+        } else {
+            self.num_original -= 1;
+        }
+        self.update_stats_remove_fields(learned, tier, lbd, size);
     }
 
-    /// Compact the database by removing deleted clauses from the free list
-    ///
-    /// This should be called periodically to prevent the free list from growing too large
-    pub fn compact(&mut self) {
-        // Limit free list size to avoid memory bloat
-        const MAX_FREE_LIST_SIZE: usize = 1000;
+    /// Compaction hook. The arena is append-only by design (see
+    /// `memory.rs`): deleted slots are never reclaimed, so this is a no-op
+    /// retained for API compatibility. Memory is bounded the same way the
+    /// old database's was – a deleted slot costs its 24+ bytes instead of a
+    /// full 64-byte `Clause`.
+    pub fn compact(&mut self) {}
 
-        if self.free_list.len() > MAX_FREE_LIST_SIZE {
-            // Keep only the most recent freed slots
-            self.free_list
-                .drain(0..self.free_list.len() - MAX_FREE_LIST_SIZE);
-        }
-    }
-
-    /// Get the number of active clauses
+    /// Get the number of live clauses.
     #[must_use]
     pub fn len(&self) -> usize {
         self.num_original + self.num_learned
     }
 
-    /// Check if empty
+    /// Check if empty.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Get the number of original clauses
+    /// Get the number of live original clauses.
     #[must_use]
     pub fn num_original(&self) -> usize {
         self.num_original
     }
 
-    /// Get the number of learned clauses
+    /// Get the number of live learned clauses.
     #[must_use]
     pub fn num_learned(&self) -> usize {
         self.num_learned
     }
 
-    /// Iterate over all non-deleted clause IDs
+    /// Iterate over all non-deleted clause IDs, in id (allocation) order –
+    /// the same order the previous `Vec<Clause>` index walked.
     pub fn iter_ids(&self) -> impl Iterator<Item = ClauseId> + '_ {
-        self.clauses
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| !c.deleted)
-            .map(|(i, _)| ClauseId::new(i as u32))
+        (0..self.refs.len())
+            .map(|i| ClauseId::new(i as u32))
+            .filter(|&id| !self.view(id).is_some_and(|v| v.deleted))
     }
 
-    /// Bump activity of a clause
+    /// Bump activity of a clause.
     pub fn bump_activity(&mut self, id: ClauseId, increment: f64) {
-        if let Some(clause) = self.get_mut(id) {
-            clause.activity += increment;
+        if let Some(r) = self.ref_of(id) {
+            self.arena.add_activity(r, increment);
         }
     }
 
-    /// Decay all clause activities
-    pub fn decay_activity(&mut self, factor: f64) {
-        for clause in &mut self.clauses {
-            if !clause.deleted {
-                clause.activity *= factor;
-            }
-        }
+    /// Multiply every live clause's activity by `factor` (the decay/rescale
+    /// passes; relative order preserved).
+    pub fn scale_live_activities(&mut self, factor: f64) {
+        self.arena.scale_live_activities(factor);
     }
 
-    /// Rescale every live clause's activity by `factor`.
-    ///
-    /// Used as a rare overflow guard for the MiniSat-style growing-increment
-    /// decay (see `Solver::decay_clause_activity`): the bump increment grows
-    /// geometrically, so once it approaches the f64 range limit we shrink every
-    /// activity – and the increment – by a constant factor. This is O(n) but
-    /// fires roughly every ~230k conflicts (for the default 0.999 clause decay)
-    /// instead of every conflict, replacing a per-conflict O(n) pass with an
-    /// amortized O(1) one. Relative ordering (all that `reduce_clause_database`
-    /// relies on) is preserved.
+    /// Alias kept for the existing call site (`Solver::decay_clause_activity`
+    /// overflow rescale).
     pub fn rescale_activity(&mut self, factor: f64) {
-        for clause in &mut self.clauses {
-            if !clause.deleted {
-                clause.activity *= factor;
-            }
-        }
+        self.scale_live_activities(factor);
+    }
+
+    /// Get statistics about the clause database.
+    #[must_use]
+    pub fn stats(&self) -> &ClauseDatabaseStats {
+        &self.stats
     }
 }
 

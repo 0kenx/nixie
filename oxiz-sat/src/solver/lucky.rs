@@ -35,7 +35,6 @@
 //! assumptions / external branching, where a CDCL loop is required.
 
 use super::*;
-use smallvec::SmallVec;
 
 /// Outcome of a single lucky strategy.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -107,10 +106,10 @@ impl Solver {
         // Lucky never learns clauses or bumps VSIDS (see `lucky_discrepancy`),
         // so these three are the *complete* set of persistent mutations.
         let snap_watches = self.watches.clone();
-        let snap_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = self
+        let snap_lits: Vec<(ClauseId, Vec<Lit>)> = self
             .clauses
             .iter_ids()
-            .filter_map(|id| self.clauses.get(id).map(|c| (id, c.lits.clone())))
+            .filter_map(|id| self.clauses.get(id).map(|c| (id, c.lits.to_vec())))
             .collect();
         let snap_ticks = (
             self.ticks_focused,
@@ -155,9 +154,9 @@ impl Solver {
                 // transparent to the CDCL search.
                 self.watches = snap_watches;
                 for (id, lits) in snap_lits {
-                    if let Some(c) = self.clauses.get_mut(id) {
-                        c.lits = lits;
-                    }
+                    // Watch-position swaps during the probe are undone by
+                    // rewriting the same-length literal array in place.
+                    self.clauses.shrink(id, &lits);
                 }
                 let (tf, ts, prop) = snap_ticks;
                 self.ticks_focused = tf;
@@ -194,7 +193,7 @@ impl Solver {
                 }
                 let mut satisfied = false;
                 let mut found = false;
-                for &lit in &c.lits {
+                for &lit in c.lits {
                     match self.trail.lit_value(lit) {
                         LBool::True => {
                             satisfied = true;
@@ -262,7 +261,7 @@ impl Solver {
                 }
                 let mut satisfied = false;
                 let mut pick: Option<Lit> = None;
-                for &lit in &c.lits {
+                for &lit in c.lits {
                     match self.trail.lit_value(lit) {
                         LBool::True => {
                             satisfied = true;

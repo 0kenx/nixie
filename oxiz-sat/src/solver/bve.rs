@@ -40,9 +40,9 @@ impl Solver {
             if !needs {
                 continue;
             }
-            let taut = self.clauses.get_mut(cid).is_some_and(|c| c.normalize());
-            if taut && let Some(c) = self.clauses.get_mut(cid) {
-                c.deleted = true;
+            let taut = self.clauses.normalize(cid);
+            if taut {
+                self.clauses.mark_deleted_raw(cid);
             }
         }
 
@@ -56,7 +56,7 @@ impl Solver {
             if c.deleted || c.lits.len() < 2 {
                 continue;
             }
-            for &lit in &c.lits {
+            for &lit in c.lits {
                 occ.add(lit, cid);
             }
         }
@@ -100,17 +100,15 @@ impl Solver {
                 if c.deleted || c.lits.len() > target_lits.len() {
                     return false;
                 }
-                subset_of(&c.lits, &target_lits)
+                subset_of(c.lits, &target_lits)
             });
             if subsumed {
                 if let Some(c) = self.clauses.get(cid) {
-                    for &lit in &c.lits {
+                    for &lit in c.lits {
                         occ.remove(lit, cid);
                     }
                 }
-                if let Some(c) = self.clauses.get_mut(cid) {
-                    c.deleted = true;
-                }
+                self.clauses.mark_deleted_raw(cid);
                 removed += 1;
             }
         }
@@ -205,14 +203,10 @@ impl Solver {
                 }
                 1 => {
                     units.push(lits[0]);
-                    if let Some(c) = self.clauses.get_mut(cid) {
-                        c.deleted = true;
-                    }
+                    self.clauses.mark_deleted_raw(cid);
                 }
                 n if n < orig_len => {
-                    if let Some(c) = self.clauses.get_mut(cid) {
-                        c.lits = lits;
-                    }
+                    self.clauses.shrink(cid, &lits);
                 }
                 _ => {}
             }

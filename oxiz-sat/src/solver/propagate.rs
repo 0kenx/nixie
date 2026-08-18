@@ -93,21 +93,21 @@ impl Solver {
                     continue;
                 }
 
-                let clause = match self.clauses.get_mut(watcher.clause) {
-                    Some(c) if !c.deleted => c,
-                    _ => {
+                let clause = match self.clauses.live_lits_mut(watcher.clause) {
+                    Some(lits) => lits,
+                    None => {
                         // Deleted clause – drop (don't advance write).
                         continue;
                     }
                 };
 
                 // Make sure the false literal is at position 1
-                if clause.lits[0] == lit.negate() {
+                if clause[0] == lit.negate() {
                     clause.swap(0, 1);
                 }
 
                 // If first watch is true, clause is satisfied
-                let first = clause.lits[0];
+                let first = clause[0];
                 if self.trail.lit_val(first) > 0 {
                     watches[write] = Watcher::new(watcher.clause, first);
                     write += 1;
@@ -116,12 +116,12 @@ impl Solver {
 
                 // Look for a new watch
                 let mut found = false;
-                for j in 2..clause.lits.len() {
-                    let l = clause.lits[j];
+                for j in 2..clause.len() {
+                    let l = clause[j];
                     if self.trail.lit_val(l) >= 0 {
                         clause.swap(1, j);
                         self.watches
-                            .add(clause.lits[1].negate(), Watcher::new(watcher.clause, first));
+                            .add(clause[1].negate(), Watcher::new(watcher.clause, first));
                         found = true;
                         break;
                     }
@@ -216,7 +216,7 @@ impl Solver {
 
         // Get the reason clause
         let reason_clause = match self.clauses.get(reason_id) {
-            Some(c) if c.lits.len() >= 2 && c.lits.len() <= 4 => c.lits.clone(),
+            Some(c) if c.lits.len() >= 2 && c.lits.len() <= 4 => c.lits.to_vec(),
             _ => return,
         };
 
@@ -226,7 +226,7 @@ impl Solver {
         let mut current_level_lits = SmallVec::<[Lit; 4]>::new();
         let mut has_non_zero_level_other = false;
 
-        for &reason_lit in &reason_clause {
+        for &reason_lit in reason_clause.iter() {
             if reason_lit != implied {
                 // Only a literal that is *assigned false* may be resolved away:
                 // the derivation below drops every other literal on the grounds
@@ -333,9 +333,7 @@ impl Solver {
                 // easy path into permanent retention regardless of its actual
                 // quality.
                 let lbd = self.compute_lbd(&binary_clause_lits);
-                if let Some(clause) = self.clauses.get_mut(clause_id) {
-                    clause.lbd = lbd;
-                }
+                self.clauses.set_lbd(clause_id, lbd);
                 self.debug_check_learned_clause_lbd(clause_id);
             }
         }

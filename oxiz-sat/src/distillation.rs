@@ -17,6 +17,7 @@ use crate::literal::{LBool, Lit};
 use crate::prelude::*;
 use crate::trail::Trail;
 use crate::watched::WatchLists;
+use smallvec::SmallVec;
 
 /// Statistics for distillation
 #[derive(Debug, Default, Clone)]
@@ -74,7 +75,7 @@ impl Distillation {
             return false;
         }
 
-        let original_lits: Vec<Lit> = clause.lits.iter().copied().collect();
+        let original_lits: Vec<Lit> = clause.lits.to_vec();
         let mut strengthened = false;
 
         // Try to remove each literal
@@ -132,7 +133,7 @@ impl Distillation {
             return false;
         };
 
-        for &other_lit in &clause.lits {
+        for &other_lit in clause.lits {
             if other_lit == lit {
                 continue;
             }
@@ -147,8 +148,10 @@ impl Distillation {
             // clause become true, then lit is potentially redundant
             if assignment[other_lit.var().index()] == LBool::from(other_lit.sign()) {
                 // Other literal is already true, so lit is redundant
-                if let Some(clause) = clauses.get_mut(clause_id) {
-                    clause.lits.retain(|l| *l != lit);
+                if let Some(v) = clauses.get(clause_id) {
+                    let kept: SmallVec<[Lit; 8]> =
+                        v.lits.iter().copied().filter(|&l| l != lit).collect();
+                    clauses.shrink(clause_id, &kept);
                 }
                 trail.backtrack_to(saved_level);
                 return true;

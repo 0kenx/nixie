@@ -264,8 +264,8 @@ impl DratInprocessor {
                 continue;
             }
 
-            let other_clause = match db.get(other_cid) {
-                Some(c) => &c.lits,
+            let other_clause: &[Lit] = match db.get(other_cid) {
+                Some(c) => c.lits,
                 None => continue,
             };
 
@@ -307,7 +307,7 @@ impl DratInprocessor {
 
     /// Check if a clause is a tautology (contains both l and ~l)
     fn is_tautology(clause: &[Lit]) -> bool {
-        for &lit in clause {
+        for &lit in clause.iter() {
             if clause.contains(&lit.negate()) {
                 return true;
             }
@@ -347,8 +347,8 @@ impl DratInprocessor {
                 continue;
             }
 
-            let clause = match db.get(cid) {
-                Some(c) => &c.lits,
+            let clause: &[Lit] = match db.get(cid) {
+                Some(c) => c.lits,
                 None => continue,
             };
 

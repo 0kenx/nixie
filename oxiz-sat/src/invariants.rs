@@ -258,7 +258,7 @@ pub(crate) fn check_unit_propagation_complete(solver: &Solver) -> Result<(), Str
         }
         let mut unassigned = 0usize;
         let mut satisfied = false;
-        for &lit in &clause.lits {
+        for &lit in clause.lits {
             let value = solver.trail.lit_value(lit);
             if value.is_true() {
                 satisfied = true;
@@ -448,7 +448,7 @@ pub(crate) fn check_learned_clause_lbd(solver: &Solver, clause_id: ClauseId) -> 
     if clause.lits.len() < 2 {
         return Ok(()); // unit clauses carry no LBD; see check_learned_clause_bounds
     }
-    let recomputed = recompute_lbd(&solver.trail, &clause.lits);
+    let recomputed = recompute_lbd(&solver.trail, clause.lits);
     if recomputed != clause.lbd {
         return Err(format!(
             "learned clause {clause_id:?} was stored with LBD {} but recomputing it \
@@ -487,7 +487,7 @@ pub(crate) fn check_conflict_clause(solver: &Solver, conflict: ClauseId) -> Resu
             "propagate() reported conflict clause {conflict:?}, which is not in the database"
         ));
     };
-    for &lit in &clause.lits {
+    for &lit in clause.lits {
         let value = solver.trail.lit_value(lit);
         if value.is_true() {
             return Err(format!(

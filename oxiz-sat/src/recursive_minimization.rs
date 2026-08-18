@@ -172,7 +172,7 @@ impl RecursiveMinimizer {
                         return false;
                     };
 
-                    for &reason_lit in &clause.lits {
+                    for &reason_lit in clause.lits {
                         // Skip the implied literal itself
                         if reason_lit.var() == var {
                             continue;

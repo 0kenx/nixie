@@ -164,7 +164,7 @@ impl AsymmetricBranching {
                 let Some(clause) = clauses.get(id) else {
                     continue;
                 };
-                match self.clause_status(&clause.lits) {
+                match self.clause_status(clause.lits) {
                     ClauseStatus::Conflict => return true,
                     ClauseStatus::Unit(lit) => {
                         self.assign(lit);
@@ -295,9 +295,7 @@ impl AsymmetricBranching {
                     clauses.remove(id);
                     let new_id = clauses.add_learned(new_lits);
                     let new_lbd = old_lbd.min(new_len).max(1);
-                    if let Some(c) = clauses.get_mut(new_id) {
-                        c.lbd = new_lbd;
-                    }
+                    clauses.set_lbd(new_id, new_lbd);
                     strengthened_count += 1;
                 }
             }

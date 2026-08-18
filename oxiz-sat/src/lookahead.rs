@@ -250,7 +250,7 @@ impl LookaheadBranching {
                 }
 
                 // Count unassigned literals
-                for &lit in &clause.lits {
+                for &lit in clause.lits {
                     if assignment[lit.var().index()] == LBool::Undef {
                         if lit.is_pos() {
                             pos_count[lit.var().index()] += 1;

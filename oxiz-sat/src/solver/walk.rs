@@ -90,7 +90,7 @@ impl Solver {
         // RNG) – the same order of work cadical pays rebuilding its walk
         // watches each round.
         let mut occ: Vec<Vec<u32>> = vec![Vec::new(); self.num_vars * 2];
-        let mut slots: Vec<SmallVec<[Lit; 8]>> = Vec::new();
+        let mut slots: Vec<Vec<Lit>> = Vec::new();
         let mut true_count: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
         for id in self.clauses.iter_ids() {
@@ -122,11 +122,12 @@ impl Solver {
                 .iter()
                 .filter(|&&l| values[l.var().index()] == l.is_pos())
                 .count() as u32;
-            for &l in &clause.lits {
+            for &l in clause.lits {
                 occ[l.code() as usize].push(slot);
                 lit_sum = lit_sum.saturating_add(1);
             }
-            slots.push(clause.lits.clone());
+            slots.push(clause.lits.to_vec());
+            let _ = &clause;
             true_count.push(n_true);
         }
         if slots.is_empty() {

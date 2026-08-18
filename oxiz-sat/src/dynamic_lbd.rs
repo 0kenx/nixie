@@ -104,25 +104,28 @@ impl DynamicLbdManager {
         }
 
         let old_lbd = clause.lbd;
-        let lits: Vec<Lit> = clause.lits.iter().copied().collect();
+        let old_tier = clause.tier;
+        let lits: Vec<Lit> = clause.lits.to_vec();
 
         // Compute new LBD
         let new_lbd = self.compute_lbd(&lits, level);
 
         // Update if improved
-        if new_lbd < old_lbd
-            && let Some(clause) = clauses.get_mut(clause_id)
-        {
-            clause.lbd = new_lbd;
+        if new_lbd < old_lbd && clauses.get(clause_id).is_some() {
+            clauses.set_lbd(clause_id, new_lbd);
 
             // Promote to Core tier if LBD is very low (glue clause)
-            if new_lbd <= 2 && clause.tier != ClauseTier::Core {
-                clause.promote_to_core();
+            if new_lbd <= 2
+                && clauses
+                    .get(clause_id)
+                    .is_some_and(|c| c.tier != ClauseTier::Core)
+            {
+                clauses.promote_to_core(clause_id);
                 self.stats.tier_promotions += 1;
             }
             // Promote from Local to Mid if LBD improved significantly
-            else if new_lbd < old_lbd && clause.tier == ClauseTier::Local {
-                clause.tier = ClauseTier::Mid;
+            else if new_lbd < old_lbd && old_tier == ClauseTier::Local {
+                clauses.set_tier(clause_id, ClauseTier::Mid);
                 self.stats.tier_promotions += 1;
             }
 

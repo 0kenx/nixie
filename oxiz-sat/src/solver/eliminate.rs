@@ -442,9 +442,7 @@ impl Solver {
                 }
             }
             if satisfied {
-                if let Some(c) = self.clauses.get_mut(cid) {
-                    c.deleted = true;
-                }
+                self.clauses.mark_deleted_raw(cid);
                 self.stats.deleted_clauses += 1;
                 ctx.dirty = true;
                 continue;
@@ -525,9 +523,7 @@ impl Solver {
                 })
                 .collect();
             for cid in doomed {
-                if let Some(c) = self.clauses.get_mut(cid) {
-                    c.deleted = true;
-                }
+                self.clauses.mark_deleted_raw(cid);
                 self.stats.deleted_clauses += 1;
             }
             self.learned_clause_ids
@@ -825,14 +821,10 @@ impl Solver {
     }
 
     fn elim_retire_clause_lits(&mut self, ctx: &mut Eliminator, cid: ClauseId, lits: &[Lit]) {
-        if let Some(c) = self.clauses.get_mut(cid) {
-            if c.deleted {
-                return;
-            }
-            c.deleted = true;
-        } else {
+        if self.clauses.get(cid).is_none_or(|c| c.deleted) {
             return;
         }
+        self.clauses.mark_deleted_raw(cid);
         self.stats.deleted_clauses += 1;
         ctx.dirty = true;
         for &lit in lits {
@@ -888,9 +880,7 @@ impl Solver {
             }
             _ => {}
         }
-        if let Some(c) = self.clauses.get_mut(cid) {
-            c.lits = new_lits;
-        }
+        self.clauses.shrink(cid, &new_lits);
         ctx.dirty = true;
         for &lit in drop {
             let code = lit.code() as usize;
@@ -912,7 +902,7 @@ impl Solver {
         }
         let mut vars: SmallVec<[Var; 8]> = SmallVec::new();
         if let Some(c) = self.clauses.get(cid) {
-            for &lit in &c.lits {
+            for &lit in c.lits {
                 vars.push(lit.var());
             }
         }

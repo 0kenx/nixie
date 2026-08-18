@@ -96,7 +96,7 @@ impl Preprocessor {
             if let Some(clause) = clauses.get(clause_id)
                 && !clause.deleted
             {
-                for &lit in &clause.lits {
+                for &lit in clause.lits {
                     self.occurrences.add(lit, clause_id);
                 }
             }
@@ -140,7 +140,7 @@ impl Preprocessor {
                 }
 
                 // Add literals from D except ~blocking_lit
-                for &lit in &other_clause.lits {
+                for &lit in other_clause.lits {
                     if lit != neg_lit {
                         resolvent.push(lit);
                     }
@@ -174,25 +174,26 @@ impl Preprocessor {
                 continue;
             }
 
-            if let Some(clause) = clauses.get(clause_id) {
+            let lits: Vec<Lit> = if let Some(clause) = clauses.get(clause_id) {
                 if clause.deleted || clause.learned {
                     continue;
                 }
+                clause.lits.to_vec()
+            } else {
+                continue;
+            };
 
-                let lits = clause.lits.clone();
-
-                // Try each literal as blocking literal
-                for &lit in &lits {
+            // Try each literal as blocking literal
+            {
+                for &lit in lits.iter() {
                     if self.is_blocked(&lits, lit, clauses) {
                         // Mark clause for removal
-                        if let Some(clause) = clauses.get_mut(clause_id) {
-                            clause.deleted = true;
-                        }
+                        clauses.mark_deleted_raw(clause_id);
                         self.removed_clauses.insert(clause_id);
                         eliminated += 1;
 
                         // Update occurrence lists
-                        for &l in &lits {
+                        for &l in lits.iter() {
                             self.occurrences.remove(l, clause_id);
                         }
                         break;
@@ -250,11 +251,11 @@ impl Preprocessor {
             let mut removed_any = false;
             for &clause_id in self.occurrences.get(lit).iter() {
                 if !self.removed_clauses.contains(&clause_id)
-                    && let Some(clause) = clauses.get_mut(clause_id)
+                    && let Some(clause) = clauses.get(clause_id)
                     && !clause.deleted
                     && !clause.learned
                 {
-                    clause.deleted = true;
+                    clauses.mark_deleted_raw(clause_id);
                     self.removed_clauses.insert(clause_id);
                     eliminated += 1;
                     removed_any = true;
@@ -290,11 +291,11 @@ impl Preprocessor {
                 continue;
             }
 
-            let clause_lits = if let Some(clause) = clauses.get(clause_id) {
+            let clause_lits: Vec<Lit> = if let Some(clause) = clauses.get(clause_id) {
                 if clause.deleted || clause.learned {
                     continue;
                 }
-                clause.lits.clone()
+                clause.lits.to_vec()
             } else {
                 continue;
             };
@@ -305,11 +306,11 @@ impl Preprocessor {
                     continue;
                 }
 
-                let other_lits = if let Some(other_clause) = clauses.get(other_id) {
+                let other_lits: Vec<Lit> = if let Some(other_clause) = clauses.get(other_id) {
                     if other_clause.deleted || other_clause.learned {
                         continue;
                     }
-                    &other_clause.lits
+                    other_clause.lits.to_vec()
                 } else {
                     continue;
                 };
@@ -317,9 +318,7 @@ impl Preprocessor {
                 // Check if clause_lits ⊆ other_lits
                 if clause_lits.iter().all(|lit| other_lits.contains(lit)) {
                     // clause subsumes other - remove other
-                    if let Some(other_clause) = clauses.get_mut(other_id) {
-                        other_clause.deleted = true;
-                    }
+                    clauses.mark_deleted_raw(other_id);
                     self.removed_clauses.insert(other_id);
                     eliminated += 1;
                 }
@@ -364,14 +363,14 @@ impl Preprocessor {
 
             for &pos_clause_id in &pos_clauses {
                 for &neg_clause_id in &neg_clauses {
-                    let pos_lits = if let Some(c) = clauses.get(pos_clause_id) {
-                        &c.lits
+                    let pos_lits: Vec<Lit> = if let Some(c) = clauses.get(pos_clause_id) {
+                        c.lits.to_vec()
                     } else {
                         continue;
                     };
 
-                    let neg_lits = if let Some(c) = clauses.get(neg_clause_id) {
-                        &c.lits
+                    let neg_lits: Vec<Lit> = if let Some(c) = clauses.get(neg_clause_id) {
+                        c.lits.to_vec()
                     } else {
                         continue;
                     };
@@ -379,13 +378,13 @@ impl Preprocessor {
                     // Compute resolvent
                     let mut resolvent = Vec::new();
 
-                    for &lit in pos_lits {
+                    for &lit in pos_lits.iter() {
                         if lit != pos_lit {
                             resolvent.push(lit);
                         }
                     }
 
-                    for &lit in neg_lits {
+                    for &lit in neg_lits.iter() {
                         if lit != neg_lit && !resolvent.contains(&lit) {
                             resolvent.push(lit);
                         }
@@ -406,16 +405,12 @@ impl Preprocessor {
 
             // Remove old clauses
             for &clause_id in &pos_clauses {
-                if let Some(clause) = clauses.get_mut(clause_id) {
-                    clause.deleted = true;
-                }
+                clauses.mark_deleted_raw(clause_id);
                 self.removed_clauses.insert(clause_id);
             }
 
             for &clause_id in &neg_clauses {
-                if let Some(clause) = clauses.get_mut(clause_id) {
-                    clause.deleted = true;
-                }
+                clauses.mark_deleted_raw(clause_id);
                 self.removed_clauses.insert(clause_id);
             }
 
@@ -602,7 +597,7 @@ impl Preprocessor {
 
             let clause1_id = clause_ids[i];
             let clause1_lits = match clauses.get(clause1_id) {
-                Some(c) if !c.deleted => c.lits.clone(),
+                Some(c) if !c.deleted => c.lits.to_vec(),
                 _ => continue,
             };
 
@@ -612,7 +607,7 @@ impl Preprocessor {
                 }
 
                 let clause2_lits = match clauses.get(clause2_id) {
-                    Some(c) if !c.deleted => c.lits.clone(),
+                    Some(c) if !c.deleted => c.lits.to_vec(),
                     _ => continue,
                 };
 
@@ -672,12 +667,8 @@ impl Preprocessor {
                 new_clause3.extend(&unique2);
 
                 // Remove old clauses
-                if let Some(c) = clauses.get_mut(clause1_id) {
-                    c.deleted = true;
-                }
-                if let Some(c) = clauses.get_mut(clause2_id) {
-                    c.deleted = true;
-                }
+                clauses.mark_deleted_raw(clause1_id);
+                clauses.mark_deleted_raw(clause2_id);
                 self.removed_clauses.insert(clause1_id);
                 self.removed_clauses.insert(clause2_id);
 

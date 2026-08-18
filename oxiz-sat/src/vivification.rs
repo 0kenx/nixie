@@ -182,11 +182,14 @@ impl Vivification {
                     continue;
                 }
 
-                let clause_copy = clause.clone();
+                let clause_copy = crate::clause::Clause::original(clause.lits.iter().copied());
                 if let Some(strengthened) = self.vivify_clause(&clause_copy, db) {
                     // Update the clause in the database
-                    if let Some(clause) = db.get_mut(clause_id) {
-                        clause.lits = strengthened.into();
+                    if db
+                        .get(clause_id)
+                        .is_some_and(|c| strengthened.len() <= c.lits.len())
+                    {
+                        db.shrink(clause_id, &strengthened);
                         strengthened_count += 1;
                     }
                 }
@@ -254,7 +257,7 @@ impl Vivification {
                     let mut true_count = 0;
                     let mut contains_neg_lit = false;
 
-                    for &l in &clause.lits {
+                    for &l in clause.lits {
                         if l == !lit {
                             contains_neg_lit = true;
                         }
@@ -361,8 +364,8 @@ mod tests {
         // This test just checks that vivification runs without errors
         let clause = db
             .get(ClauseId(0))
-            .expect("Clause 0 must exist in database")
-            .clone();
+            .expect("Clause 0 must exist in database");
+        let clause = Clause::original(clause.lits.iter().copied());
         let _result = viv.vivify_clause(&clause, &db);
     }
 

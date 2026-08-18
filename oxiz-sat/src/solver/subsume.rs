@@ -225,11 +225,8 @@ impl Solver {
                     // (37∨57∨1101) and reduction later removed it).
                     let subsumed_learned = self.clauses.get(cid).is_some_and(|c| c.learned)
                         && std::env::var("OXIZ_NOPROMOTE").is_err();
-                    if !subsumed_learned
-                        && let Some(s) = self.clauses.get_mut(subsumer)
-                        && s.learned
-                    {
-                        s.learned = false;
+                    if !subsumed_learned && self.clauses.get(subsumer).is_some_and(|s| s.learned) {
+                        self.clauses.clear_learned(subsumer);
                     }
                     if let Some(c) = self.clauses.get(cid) {
                         // Re-arm elimination for the variables of the removed
@@ -237,9 +234,7 @@ impl Solver {
                         let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
                         self.mark_elim_vars(lits.iter().copied());
                     }
-                    if let Some(c) = self.clauses.get_mut(cid) {
-                        c.deleted = true;
-                    }
+                    self.clauses.mark_deleted_raw(cid);
                     self.stats.deleted_clauses += 1;
                     self.stats.subsumed_removed += 1;
                     // DRAT deletion (no-op unless enabled); read the literals
@@ -302,7 +297,7 @@ impl Solver {
         let learned = self.clauses.get(clause_id).is_some_and(|c| c.learned);
         self.remove_literal_and_rewatch(clause_id, idx);
         if learned
-            && let Some(c) = self.clauses.get_mut(clause_id)
+            && let Some(c) = self.clauses.get(clause_id)
             && !c.deleted
         {
             // cadical `shrink_clause`: a shrunken redundant clause's glue is
@@ -312,7 +307,7 @@ impl Solver {
             // consistency check.
             let cap = (c.lits.len().saturating_sub(1).max(1)) as u32;
             if c.lbd > cap {
-                c.lbd = cap;
+                self.clauses.set_lbd(clause_id, cap);
             }
         }
         if len_before == 3

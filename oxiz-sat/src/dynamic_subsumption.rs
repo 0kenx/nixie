@@ -297,8 +297,8 @@ impl DynamicSubsumption {
 
             'outer: for i in 0..n {
                 let id_i = clause_ids[i];
-                let lits_i = match clause_db.get(id_i) {
-                    Some(c) => c.lits.clone(),
+                let lits_i: &[crate::literal::Lit] = match clause_db.get(id_i) {
+                    Some(c) => c.lits,
                     None => continue,
                 };
 
@@ -317,8 +317,8 @@ impl DynamicSubsumption {
                     checked += 1;
                     self.stats.checks_performed += 1;
 
-                    let lits_j = match clause_db.get(id_j) {
-                        Some(c) => c.lits.clone(),
+                    let lits_j: &[crate::literal::Lit] = match clause_db.get(id_j) {
+                        Some(c) => c.lits,
                         None => continue,
                     };
 
@@ -327,7 +327,7 @@ impl DynamicSubsumption {
                     }
 
                     // Forward subsumption: clause i subsumes clause j
-                    if self.config.enable_forward && subsumes(&lits_i, &lits_j) {
+                    if self.config.enable_forward && subsumes(lits_i, lits_j) {
                         results.push(SubsumptionResult::Forward {
                             subsumer: id_i,
                             subsumed: id_j,
@@ -336,7 +336,7 @@ impl DynamicSubsumption {
                     }
 
                     // Backward subsumption: clause j subsumes clause i
-                    if self.config.enable_backward && subsumes(&lits_j, &lits_i) {
+                    if self.config.enable_backward && subsumes(lits_j, lits_i) {
                         results.push(SubsumptionResult::Forward {
                             subsumer: id_j,
                             subsumed: id_i,
@@ -346,14 +346,14 @@ impl DynamicSubsumption {
 
                     // Self-subsumption: strengthen clause j using clause i
                     if self.config.enable_self_subsumption {
-                        if let Some(lit) = find_self_subsumption(&lits_i, &lits_j) {
+                        if let Some(lit) = find_self_subsumption(lits_i, lits_j) {
                             results.push(SubsumptionResult::SelfSubsumption {
                                 clause: id_j,
                                 literal: lit,
                             });
                             self.stats.self_subsumptions += 1;
                         }
-                        if let Some(lit) = find_self_subsumption(&lits_j, &lits_i) {
+                        if let Some(lit) = find_self_subsumption(lits_j, lits_i) {
                             results.push(SubsumptionResult::SelfSubsumption {
                                 clause: id_i,
                                 literal: lit,

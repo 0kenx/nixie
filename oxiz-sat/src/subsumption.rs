@@ -117,7 +117,7 @@ impl SubsumptionChecker {
             self.stats.checks_performed += 1;
 
             // Check if new clause subsumes this clause
-            if self.subsumes(new_clause, &clause.lits) {
+            if self.subsumes(new_clause, clause.lits) {
                 subsumed.push(clause_id);
                 self.stats.forward_subsumptions += 1;
             }
@@ -170,7 +170,7 @@ impl SubsumptionChecker {
             self.stats.checks_performed += 1;
 
             // Check if existing clause subsumes new clause
-            if self.subsumes(&clause.lits, new_clause) {
+            if self.subsumes(clause.lits, new_clause) {
                 self.stats.backward_subsumptions += 1;
                 return true;
             }
