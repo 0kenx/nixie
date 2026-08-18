@@ -150,3 +150,24 @@ search policy (restart/reuse/branching interplay), which per
 `docs/BENCHMARKING.md` requires the matched-null, ≥10-seed methodology
 before any conclusion. That is the next lever for `stable-300`, `qwh`,
 `frb65`, `summle_*`, `noL-*`.
+
+### Trail-reuse heap mismatch (fix, perf-neutral)
+
+`reuse_trail()` gated the restart-reused prefix on **VSIDS** activities, but
+the default focused mode branches via **VMTF** (the function's comment
+predates VMTF-focused becoming the default). The mismatched threshold almost
+never matched the actual branching order, so reuse collapsed to ~0 and every
+restart re-descended from the root. Fixed by mirroring `pick_branch_var`'s
+mode-dependent choice and, for the VMTF branch, comparing bump timestamps
+(cadical `restart.cpp` `reuse_trail`, queue branch). Effect on `stable-300`:
+restarts at 100k fixed conflicts 19 205 → 3 409 (cadical-parity rate).
+
+**Measured effect: neutral.** The single-seed 94-file suite showed 653s →
+699s ("worse") with 17 files improving and 14 regressing >2s — textbook
+trajectory reshuffling. A seed study over the 31 moved files (8 seeds per
+arm, CPU-time, 30s cap) gave 11 wins / 10 losses and mean-sum 706.0s vs
+712.7s (0.9%, inside noise). The fix ships on faithfulness grounds, not on a
+speed claim. The decisions-per-conflict gap vs CaDiCaL (5.7 vs 1.27 on
+`stable-300`) persists and tracks propagation-cascade depth per decision
+(6.5 vs 23) — a search-quality question for the policy study, not a
+mechanical bug.

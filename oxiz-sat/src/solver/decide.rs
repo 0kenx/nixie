@@ -367,9 +367,10 @@ impl Solver {
     /// next variable to decide). This preserves the optimal decision prefix so
     /// the restart does not throw away and re-derive the whole trail – the main
     /// reason frequent restarts were counterproductive here.
-    pub(super) fn reuse_trail(&self) -> u32 {
-        // Only meaningful under VSIDS scoring (the default); under CHB/LRB the
-        // VSIDS heap does not reflect the active branching order.
+    pub(super) fn reuse_trail(&mut self) -> u32 {
+        // Only meaningful under the branching orders that actually pick the
+        // next decision (the default); under CHB/LRB neither heap reflects
+        // the active branching order.
         if self.config.use_chb_branching || self.config.use_lrb_branching {
             return 0;
         }
@@ -380,24 +381,61 @@ impl Solver {
         if level <= 1 {
             return 0;
         }
-        // Next variable to decide = top of the VSIDS heap; its activity is the
-        // reuse threshold (decisions with at least that activity are kept).
-        let Some(next_var) = self.vsids.peek_max() else {
-            return 0;
+        // The reuse threshold must be read from the branching source that
+        // will pick the next decision, mirroring `pick_branch_var`'s
+        // mode-dependent choice. The default focused mode branches via VMTF,
+        // but this function used to consult the *VSIDS* heap regardless: the
+        // mismatched threshold almost never matched the VMTF order, so reuse
+        // collapsed to ~0 and every restart re-descended from the root –
+        // cadical keeps decision levels whose `bumped` timestamp is at least
+        // the next decision's (`restart.cpp` `reuse_trail`, queue branch).
+        // That mismatch measured as a 4.5x decisions-per-conflict gap
+        // against cadical on dense instances (stable-300: 5.7 vs 1.27).
+        let use_vmtf_now = if self.config.enable_stabilize {
+            !self.stable && self.config.focused_vmtf
+        } else {
+            self.config.use_vmtf
         };
-        let threshold = self.vsids.activity(next_var);
-        let mut reuse = 0u32;
-        for l in 1..=level {
-            let Some(dec_var) = self.trail.decision_var_at_level(l) else {
-                break;
+        if use_vmtf_now {
+            // Focused VMTF: keep decision levels whose bump timestamp is at
+            // least the next decision variable's (cadical `bumped`).
+            let Some(next_var) = self.vmtf.next_decision(|v| self.trail.is_assigned(v)) else {
+                return 0;
             };
-            if self.vsids.activity(dec_var) >= threshold {
-                reuse = l;
-            } else {
-                break;
+            let limit = self.vmtf.activity(next_var);
+            let mut reuse = 0u32;
+            for l in 1..=level {
+                let Some(dec_var) = self.trail.decision_var_at_level(l) else {
+                    break;
+                };
+                if self.vmtf.activity(dec_var) >= limit {
+                    reuse = l;
+                } else {
+                    break;
+                }
             }
+            reuse
+        } else {
+            // Stable VSIDS: next variable to decide = top of the VSIDS heap;
+            // its activity is the reuse threshold (decisions with at least
+            // that activity are kept).
+            let Some(next_var) = self.vsids.peek_max() else {
+                return 0;
+            };
+            let threshold = self.vsids.activity(next_var);
+            let mut reuse = 0u32;
+            for l in 1..=level {
+                let Some(dec_var) = self.trail.decision_var_at_level(l) else {
+                    break;
+                };
+                if self.vsids.activity(dec_var) >= threshold {
+                    reuse = l;
+                } else {
+                    break;
+                }
+            }
+            reuse
         }
-        reuse
     }
 
     /// cadical `stabilizing()`: switch focused/stable modes when the current
@@ -457,7 +495,8 @@ impl Solver {
         // `backtrack_with_phase_saving` (this one included) routes through
         // `update_target_and_best`, keyed on the conflict-free prefix –
         // cadical's exact update point (backtrack.cpp).
-        self.backtrack_with_phase_saving(self.reuse_trail());
+        let reuse = self.reuse_trail();
+        self.backtrack_with_phase_saving(reuse);
 
         // Calculate next restart threshold based on strategy
         match self.config.restart_strategy {

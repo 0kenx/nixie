@@ -20,15 +20,14 @@ use oxiz_sat::{DimacsParser, Solver, SolverConfig, SolverResult};
 
 #[test]
 fn fs_normalize_reorder_never_yields_false_unsat() {
-    let mut cfg = SolverConfig::default();
-    cfg.enable_inprocessing = true;
-    let mut solver = Solver::with_config(cfg);
+    let solver_cfg = SolverConfig {
+        enable_inprocessing: true,
+        ..SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(solver_cfg);
     solver.set_max_conflicts(Some(5000));
     let mut parser = DimacsParser::new();
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/noL_11_14.cnf"
-    );
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/noL_11_14.cnf");
     parser.parse_file(path, &mut solver).expect("parse noL");
     let result = solver.solve();
     assert_ne!(
