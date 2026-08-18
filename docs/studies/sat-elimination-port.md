@@ -210,3 +210,48 @@ exactly 32B (half a line; 4 was the f64 ceiling). Perf at 300k fixed
 conflicts on stable-300: neutral (18.6s → 18.6s interleaved ×3). f32
 rounding intentionally retires bit-identical trajectories as a regression
 net for future clause-DB changes; verdicts + fuzz + parity carry it.
+
+## Minor-gap sweep + blocker refresh (cadical parity in propagate)
+
+Three changes:
+
+1. **Portfolio wiring closed**: `Context::set_solver_config` now propagates
+   `restart_strategy` / `enable_inprocessing` / `inprocessing_interval` into
+   the live SAT engine (`oxiz_sat::Solver::update_search_config`); those
+   fields are read live by the restart/inprocessing schedules, so portfolio
+   workers' strategy triplets now genuinely diversify search. Construction-
+   seeded state (chrono thresholds, stabilize schedule, eliminator limits)
+   deliberately remains construction-only. Regression test in
+   `oxiz-solver/src/solver/tests.rs`.
+
+2. **Eliminator occurrence pass merged**: `elim_round`'s two full-database
+   scans (satisfied-check, then connect) are one; retiring and connecting
+   act on disjoint clauses within an iteration. The residual eliminator
+   cost is per-round scratch allocation (cross-round `Eliminator`
+   persistence is the known follow-up).
+
+3. **Satisfied-replacement blocker refresh** (cadical `propagate.cpp`'s
+   `if (v > 0) j[-1].blit = r`): when the replacement scan finds a
+   *satisfied* literal, the watcher now stays on the current list with its
+   blocker refreshed — no clause write, no watch-list move; only an
+   *unassigned* replacement moves the watch. Our previous `>= 0` branch
+   moved in both cases. Gent's saved-position scan (`clause->pos`) was
+   deliberately NOT ported: it needs a header field that would grow the
+   12-byte header to 16 and break the pinned 5-literal half-line property.
+
+### Measurement discipline (two traps, both hit)
+
+- Fixed-conflict instruction counts are **invalid** for trajectory-diverging
+  changes: the blocker change measured +53% at 100k fixed conflicts on
+  stable-300 purely because the new trajectory does more propagation per
+  conflict on those particular conflicts. Wall-clock was equally void —
+  the machine spent much of this window at load 8-18 from another agent's
+  job (and two day-old orphaned test processes had to be killed).
+- Valid metric: **instructions-to-verdict**, deterministic, paired per file,
+  both binaries fully solving. Result over 64 files (both-solve, <45s):
+  geomean 0.9889 (-1.1%), 26 wins / 38 losses — small losses, large wins
+  (mrpp -50%, ddc/6s167 -15%). Verdict identical on every file.
+
+Honest verdict: faithfulness-motivated (matches cadical's mechanic),
+performance roughly neutral with a slightly positive geomean. Kept on the
+same grounds as the reuse_trail fix.

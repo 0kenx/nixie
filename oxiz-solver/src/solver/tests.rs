@@ -2184,3 +2184,33 @@ fn structural_assertion_keeps_theory_atoms_in_skeleton() {
     solver.assert(root, &mut manager);
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
+
+#[test]
+fn set_config_propagates_search_fields_into_live_sat_engine() {
+    // Regression for the portfolio wiring gap: `restart_strategy` (and the
+    // inprocessing toggles) were stored on the SMT solver's config but never
+    // consumed, because the SAT engine is built once at construction and
+    // nothing pushed the new values in. `set_config` now propagates the
+    // three live-consumed fields; the next solve's search must reflect them.
+    use oxiz_sat::RestartStrategy as SatRestart;
+    let solver = Solver::with_config(crate::solver::SolverConfig {
+        restart_strategy: crate::solver::RestartStrategy::Luby,
+        ..Default::default()
+    });
+    assert_eq!(solver.sat.config().restart_strategy, SatRestart::Luby);
+
+    let mut solver = solver;
+    solver.set_config(crate::solver::SolverConfig {
+        restart_strategy: crate::solver::RestartStrategy::Geometric,
+        enable_inprocessing: true,
+        inprocessing_interval: 1234,
+        ..Default::default()
+    });
+    assert_eq!(
+        solver.sat.config().restart_strategy,
+        SatRestart::Geometric,
+        "restart_strategy must reach the already-built SAT engine"
+    );
+    assert!(solver.sat.config().enable_inprocessing);
+    assert_eq!(solver.sat.config().inprocessing_interval, 1234);
+}

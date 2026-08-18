@@ -1673,6 +1673,40 @@ impl Solver {
         self.max_conflicts = max_conflicts;
     }
 
+    /// Update the search-schedule fields on a **live** solver (the portfolio
+    /// driver's diversity levers).
+    ///
+    /// `restart_strategy`, `enable_inprocessing` and `inprocessing_interval`
+    /// are read live by the restart and inprocessing schedules
+    /// (`Solver::restart`, `Solver::handle_clause_deletion_and_restart`) –
+    /// not baked at construction – so re-setting them between solves changes
+    /// the next solve's search behaviour. This closes the gap where a caller
+    /// replacing a configuration through a higher layer (SMT
+    /// `set_solver_config`, portfolio strategies) got these fields stored
+    /// but never consumed, because this engine had already been built.
+    ///
+    /// Construction-time state is deliberately untouched: chronological-
+    /// backtracking thresholds, the initial stabilization schedule and the
+    /// eliminator's limits are seeded into helper structures by
+    /// [`Solver::with_config`], and re-setting those mid-flight would desync
+    /// their bookkeeping.
+    pub fn update_search_config(
+        &mut self,
+        restart_strategy: RestartStrategy,
+        enable_inprocessing: bool,
+        inprocessing_interval: u64,
+    ) {
+        self.config.restart_strategy = restart_strategy;
+        self.config.enable_inprocessing = enable_inprocessing;
+        self.config.inprocessing_interval = inprocessing_interval;
+    }
+
+    /// Read-only view of the live solver configuration.
+    #[must_use]
+    pub fn config(&self) -> &SolverConfig {
+        &self.config
+    }
+
     /// Set the preferred (default) decision phase for a variable.
     ///
     /// Used by theory-combination axiomatization (the z3-style "triangle"

@@ -967,10 +967,10 @@ impl Context {
     ///
     /// Fields consumed during the solve loop – `timeout_ms`, `max_conflicts`,
     /// `max_decisions`, `theory_mode`, and `simplify` – take effect on the next
-    /// `check_sat`.  Fields that the embedded SAT solver only reads at
-    /// construction time (notably `restart_strategy` and the inprocessing
-    /// toggles) are stored but do not retroactively reconfigure an already-built
-    /// SAT engine; vary those before the first solve.
+    /// `check_sat`.  The SAT search-schedule fields (`restart_strategy`,
+    /// `enable_inprocessing`, `inprocessing_interval`) are propagated into the
+    /// live SAT engine and therefore also take effect on the next `check_sat`;
+    /// every other SAT-side field is construction-only.
     pub fn set_solver_config(&mut self, config: crate::solver::SolverConfig) {
         self.solver.set_config(config);
     }

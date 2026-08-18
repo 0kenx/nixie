@@ -63,6 +63,15 @@ impl Solver {
     pub fn set_config(&mut self, config: SolverConfig) {
         self.config = config;
         self.settings_changed();
+        // Push the SAT search-schedule fields into the already-built engine
+        // (they are consumed live there). Other SAT-side fields remain
+        // construction-only - see `with_config`.
+        let (rs, inp, int) = (
+            self.config.restart_strategy,
+            self.config.enable_inprocessing,
+            self.config.inprocessing_interval,
+        );
+        self.sat.update_search_config(rs, inp, int);
     }
 
     /// Why certified mode declined the most recent candidate verdict.

@@ -16,15 +16,11 @@
 //!    and `simplify` are consumed on every `check_sat` call (see
 //!    `oxiz-solver/src/solver/mod.rs`), so they genuinely change search
 //!    behaviour. `restart_strategy` (and the `enable_*` preprocessing
-//!    toggles) are stored on the config but are only read once, by
-//!    `Solver::with_config` at construction time inside `Context::new()`
-//!    (see `oxiz-solver/src/solver/mod.rs`); `Context::set_solver_config`
-//!    replaces the stored config without rebuilding that already-constructed
-//!    SAT engine, so -- for the fresh `Context` each portfolio worker
-//!    creates -- these fields do not yet retroactively change behaviour.
-//!    They are still set (not fabricated no-ops) so strategies pick up the
-//!    real effect automatically once `oxiz-solver` gains a way to construct
-//!    a `Context`/`Solver` with a caller-supplied config up front.
+//!    toggles) are no longer stored-but-unread: `Context::set_solver_config`
+//!    propagates them into the live SAT engine
+//!    (`oxiz_sat::Solver::update_search_config`), so they genuinely change
+//!    each worker's search behaviour too. Other SAT-side fields remain
+//!    construction-only (`Solver::with_config`).
 //! 2. **A deterministic reordering of the top-level `(assert ...)`
 //!    commands** (see [`diversify_script`]). Assertion/clause order is a
 //!    real, well-known lever for CDCL search diversity -- it changes which
