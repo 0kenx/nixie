@@ -189,15 +189,26 @@ to "no answer"), so the fix is proven correct-by-parity but not proven curative
 on this file; the gate below stays until a clean refutation or a root-cause
 isolation lands.
 
-**Landed mitigation**: `improve_learnt_clause` refuses to run block-UIP
-shrinking while `enable_inprocessing` is on — the same posture as the LRAT
-gate (an uncheckable combination is not run).  Both flags remain off/on
-respectively in the default config, so default behavior is unchanged; the
-inprocessing stack stays opt-in and now cannot combine with shrink until the
-root cause is found.  Follow-up required before any Item-2 (inprocessing
-schedule) study: isolate the unsound step inside `inprocess()` (the reduced
-arm + the per-unit witness method above reproduce it in one ~70 s run), then
-remove the gate.
+**Gate removed after the flag-reset fix** (see next section): the
+mechanistic fix plus the following evidence replaced the refusal gate —
+- both reproducer files answer `sat` under every previously-failing arm
+  (`INPROCESS=1` 71 s / 48 s; full stack 19 s — also *faster* than the
+  gated build's 25 s);
+- corpus soundness sweep, combo enabled: 40 files at the default seed plus
+  20 satcomp files × 2 extra seeds — 117 verdicts, 0 disagreements with
+  CaDiCaL;
+- differential fuzzer, 2000 iterations — 0 failures (with the gate gone,
+  the full-stack arm carries the combo automatically);
+- regression test `oxiz-sat/tests/shrink_inprocessing_regression.rs`
+  (never-UNSAT-under-budget on the seed1 circuit, gated behind
+  `OXIZ_SLOW_REGRESSIONS=1`, ~51 s debug).
+
+The exact unentailed-clause chain on the circuit file was never captured
+end-to-end (unlike the `uip_pos` bug, where the offending clause was
+isolated); the flag-leak is established by cadical parity plus the empirical
+disappearance of every false verdict.  If the combination ever misfires
+again, the per-unit witness method above (286-unentailed-units signature)
+reproduces the diagnostic in one ~70 s run.
 
 The 94-file tracking numbers in this document were measured with inprocessing
 off and are unaffected.

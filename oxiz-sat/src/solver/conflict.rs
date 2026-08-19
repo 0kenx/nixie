@@ -984,20 +984,7 @@ impl Solver {
     /// variable to the conflict's bump set exactly where cadical adds it to
     /// `analyzed` (`shrunken_block_uip`), ahead of the batch bump.
     pub(super) fn improve_learnt_clause(&mut self, vars_to_bump: &mut SmallVec<[Var; 32]>) {
-        // SOUNDNESS GATE: block-UIP shrinking is disabled while inprocessing
-        // is enabled.  The combination produces a false `unsat` on real SAT
-        // input (deterministic reproducer: `circuit_48in64out_with_700gates_
-        // 4in4out_dist128_seed1` with `INPROCESS=1`, pre-search `inprocess()`
-        // only – see docs/studies/2026-08-walk-glue-ema-and-shrink.md §
-        // "shrink × inprocessing"); the same file with `SHRINK=0` answers
-        // `sat`.  The corruption enters through level-0 trail facts derived
-        // after the pre-search round (286 of 775 final root units are not
-        // entailed by the input, each with a CaDiCaL satisfiability witness);
-        // the exact hand-off inside `inprocess()` is still open.  Until it is
-        // root-caused, the combination is refused rather than risked – the
-        // same posture as the LRAT gate below (an uncheckable combination is
-        // not run).
-        if self.lrat || self.config.enable_inprocessing || !self.config.enable_shrink {
+        if self.lrat || !self.config.enable_shrink {
             self.minimize_learnt_clause();
             return;
         }
