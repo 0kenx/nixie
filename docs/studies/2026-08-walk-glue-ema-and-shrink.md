@@ -212,3 +212,49 @@ reproduces the diagnostic in one ~70 s run.
 
 The 94-file tracking numbers in this document were measured with inprocessing
 off and are unaffected.
+
+
+## Follow-up 2: root cause of the false `sat` found and fixed (`len()` used as a slot bound)
+
+Re-measuring Item 2 with the (now ungated) combo surfaced a **false `sat`**:
+`j3037_10_mdd_bm1` answered `sat` under BVE+ELS+inprocessing (CaDiCaL and Z3:
+`unsat`; our default config: `unsat`).  The returned model falsified **134
+input clauses**.  Pre-existing — the parent commit `3fdcd38` reproduces it —
+and historically invisible because the stack was off in default sweeps and
+this file timed out elsewhere.
+
+**Root cause** (`oxiz-sat/src/preprocessing_core.rs`):
+`ClauseDatabase::len()` returns the number of *live* clauses
+(`num_original + num_learned`) — it shrinks with every deletion — while
+clause IDs index the full slot space.  All five `for i in 0..clauses.len()`
+slot walks in that file (occurrence building, pure-literal, subsumption ×2,
+watch rebuild) therefore stopped early once anything had been deleted,
+making every clause stored at a slot ≥ the live count **invisible**.
+Concretely: BVE deleted clauses and added resolvents (moving the live count
+*below* the highest input-clause slot); the pure-literal pass then ran on the
+torn occurrence view, saw a variable with only negative occurrences (its one
+positive occurrence lived in the invisible tail), pinned it to the wrong
+polarity in `pure_literal_reconstruction`; the search later assigned it the
+opposite (correct) value, and `save_model`'s pure-literal overwrite turned
+the final model into one that violates live input clauses.  Fix: all five
+walks use `num_slots()` (the dense id upper bound), with the mechanism
+documented at `build_occurrences`.
+
+Regression tests (`oxiz-sat/tests/preprocessor_slot_bound_regression.rs`):
+- `len_is_not_a_slot_bound_pure_pin_minimal` — unit-level: delete a clause,
+  build occurrences, assert the tail clause is visible (verified to FAIL on
+  the bug and PASS on the fix).
+- `j3037_stack_is_unsat` — end-to-end verdict pin under the full
+  BVE+ELS+inprocessing combination (`OXIZ_SLOW_REGRESSIONS`, ~57 s release).
+
+Post-fix: the stack sweep over all 92 CaDiCaL-solvable corpus files produced
+77 verdicts with **0 disagreements**; differential fuzz 2000 iterations, 0
+failures; z3_parity 0 wrong; workspace 10046 green.
+
+**Item 2 consequence**: with soundness restored, the stack's earlier
+"1.74× net-negative" verdict is obsolete — on the 17-file dev corpus the
+stack now completes 16/17 vs default 10/15 (0 disagreements), solving the
+two `circuit_48in64` files and `mdp-28`/`noL` where the default times out.
+Whether the stack (or a schedule variant) should become the default is the
+pre-registered factorial study the handover describes — now unblocked, next
+session, with matched nulls per docs/BENCHMARKING.md.

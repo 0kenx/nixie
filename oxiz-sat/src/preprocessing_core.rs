@@ -69,6 +69,14 @@ pub struct Preprocessor {
 }
 
 impl Preprocessor {
+    /// Test-visible passthrough to the occurrence list
+    /// ([`OccurrenceList::occurrences_of`]).
+    #[doc(hidden)]
+    #[must_use]
+    pub fn occurrences_of(&self, lit: Lit) -> &[ClauseId] {
+        self.occurrences.get(lit)
+    }
+
     /// Create a new preprocessor
     pub fn new(num_vars: usize) -> Self {
         Self {
@@ -88,10 +96,23 @@ impl Preprocessor {
         &self.eliminated_pure_literals
     }
 
-    /// Build occurrence lists from clause database
+    /// Build occurrence lists from clause database.
+    ///
+    /// The loop bound must be the **slot count** (`num_slots`), not
+    /// `ClauseDatabase::len()`: `len()` returns the number of *live* clauses,
+    /// which shrinks with every deletion, so using it as a slot bound made
+    /// every clause stored at a slot index ≥ the live count invisible.  A
+    /// pure-literal pass running over such a torn view classified variables
+    /// as pure when their only opposite-polarity occurrences lived in the
+    /// invisible tail, pinned them to the wrong polarity in the model
+    /// reconstruction, and produced a **false `sat` with a model violating
+    /// the input** (reproducer: `j3037_10_mdd_bm1` under BVE+ELS+inprocessing;
+    /// the same torn bound also hid clauses from subsumption and the
+    /// watch-rebuild pass).  All five `0..len()` slot walks in this file had
+    /// the bug.
     pub fn build_occurrences(&mut self, clauses: &ClauseDatabase) {
         self.occurrences.clear();
-        for i in 0..clauses.len() {
+        for i in 0..clauses.num_slots() {
             let clause_id = ClauseId::new(i as u32);
             if let Some(clause) = clauses.get(clause_id)
                 && !clause.deleted
@@ -165,7 +186,7 @@ impl Preprocessor {
         self.build_occurrences(clauses);
 
         // Try to eliminate each clause
-        let clause_ids: Vec<_> = (0..clauses.len())
+        let clause_ids: Vec<_> = (0..clauses.num_slots())
             .map(|i| ClauseId::new(i as u32))
             .collect();
 
@@ -280,7 +301,7 @@ impl Preprocessor {
         let mut eliminated = 0;
         self.build_occurrences(clauses);
 
-        let clause_ids: Vec<_> = (0..clauses.len())
+        let clause_ids: Vec<_> = (0..clauses.num_slots())
             .map(|i| ClauseId::new(i as u32))
             .collect();
 
@@ -442,7 +463,7 @@ impl Preprocessor {
         let mut watches = WatchLists::new(self.num_vars);
 
         // Build watch lists from current clauses
-        for i in 0..clauses.len() {
+        for i in 0..clauses.num_slots() {
             let clause_id = ClauseId::new(i as u32);
             if let Some(clause) = clauses.get(clause_id) {
                 if clause.deleted || clause.lits.len() < 2 {
@@ -581,7 +602,7 @@ impl Preprocessor {
         self.build_occurrences(clauses);
 
         // Collect all clause pairs with sufficient overlap
-        let clause_ids: Vec<_> = (0..clauses.len())
+        let clause_ids: Vec<_> = (0..clauses.num_slots())
             .map(|i| ClauseId::new(i as u32))
             .filter(|&id| {
                 clauses
