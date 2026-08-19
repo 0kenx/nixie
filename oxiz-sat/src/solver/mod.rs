@@ -14,6 +14,7 @@ mod probe;
 mod propagate;
 mod search_ext;
 mod subsume;
+mod transred;
 mod walk;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
@@ -943,6 +944,16 @@ pub struct Solver {
     /// retired as satisfied before elimination), and it must still count as
     /// eliminated for decision/propagation purposes.
     pub(super) elim_var_flag: Vec<bool>,
+    /// Per-clause transred metadata, indexed by dense `ClauseId` (ids are
+    /// never reused, so these vectors cannot go stale):
+    /// `clause_transred_checked[i]` – binary already examined by a
+    /// transitive-reduction round (cadical `Clause::transred`); reset
+    /// wholesale once every candidate has been checked.
+    /// `clause_hyper[i]` – produced by hyper-binary resolution (cadical
+    /// `Clause::hyper`); transred skips these as candidates (they arrive in
+    /// bulk, are mostly reduced away, and were non-transitive at creation).
+    pub(super) clause_transred_checked: Vec<bool>,
+    pub(super) clause_hyper: Vec<bool>,
     /// `propfixed` memoization for failed-literal probing (cadical
     /// `propfixed`): per-literal count of level-0 assignments at the moment
     /// that literal last propagated without conflict. Re-probing is skipped
@@ -1160,6 +1171,8 @@ impl Solver {
             elim_resolutions_total: 0,
             last_elim_eliminated: 0,
             elim_var_flag: Vec::new(),
+            clause_transred_checked: Vec::new(),
+            clause_hyper: Vec::new(),
             probe_propfixed: Vec::new(),
             elim_probes_done: 0,
             lim_inprobe: INPROBE_INIT_LIMIT,

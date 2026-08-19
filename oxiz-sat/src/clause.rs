@@ -677,6 +677,12 @@ impl ClauseDatabase {
         self.num_learned
     }
 
+    /// Number of allocated clause slots (dense id upper bound).
+    #[must_use]
+    pub fn num_slots(&self) -> usize {
+        self.refs.len()
+    }
+
     /// Iterate over all non-deleted clause IDs, in id (allocation) order –
     /// the same order the previous `Vec<Clause>` index walked.
     pub fn iter_ids(&self) -> impl Iterator<Item = ClauseId> + '_ {

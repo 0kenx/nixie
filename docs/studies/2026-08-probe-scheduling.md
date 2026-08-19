@@ -138,3 +138,49 @@ work; HEAD 269G). No bug: the faithful-but-diverging reuse fix (measured
 aggregate-neutral, 11/10 wins/losses over 31 files × 8 seeds) landed on qwh
 as a chaotic casualty, and the subsequent diverging changes re-rolled it
 partially back. Recorded as a tracked casualty of the accepted trade-off.
+
+## transred (the last named amortizer): implemented, and the hypothesis rejected too
+
+Ported CaDiCaL `transred.cpp` (`solver/transred.rs`, wired into `inprocess()`
+after vivify): transitive reduction of the binary implication graph — a
+binary `(¬src ∨ dst)` is retired when an alternative `src→dst` path exists
+through other binaries, with the soundness rules from the source and the
+inprocessing-rules paper: **original candidates only via original-only
+paths** (a learned justification is transient; deleting an original on it
+under-constrains — the same class as the promotion bugs), the candidate's
+own edge excluded from the search, hyper-derived binaries skipped as
+candidates (flagged `clause_hyper` at both HBR sites), failed literals from
+signed-mark BFS forced as units, retirements through `retire_clause` (BIG
+purge + reason re-pointing). Unit tests pin the three rules: transitive
+retirement via an original chain, non-retirement of an original through a
+learned path, failed-literal forcing.
+
+**Full-stack re-measure with transred**: 67 files, paired
+instructions-to-verdict — geomean(full+transred/default) = **1.7729** vs
+1.74 without transred (0 mismatches; 63/67 vs 62/67 solved).
+Indistinguishable. The "missing amortizer" hypothesis for CaDiCaL's
+inprocessing stack is now exhausted along every named dimension in its
+source: probe scheduling ✗ (1.0091 vs its null), HBR dominator + ELS
+interleaving ✗ (1.74), transred ✗ (1.77). Whatever makes the stack pay in
+CaDiCaL is not a single named pass this port can add; the remaining deltas
+are the schedule constants themselves (round intervals, effort fractions)
+and search quality — and tuning constants against a 1.7× gap that four
+semantic ports failed to move is exactly the trajectory-reshuffling trap
+the methodology forbids. The stack stays opt-in (`INPROCESS`/`BVE`/…).
+
+## HEAD tracking number (post all six commits)
+
+94-file differential vs cadical, 25 s cap: **19/94 above 1.5×, 0
+disagreements** — the session's best (22 start → 18 post-throughput → 23
+post-reuse → 24 post-f32/blocker → 19 now). `6s167-opt` now solves under
+default (12.9 s) where it timed out at session start.
+
+## Process note: rogue processes
+
+Two waves of orphaned solvers (a forgotten Miri run and five
+`perf`-wrapped sat-runners whose Python `subprocess(timeout=)` parents died
+first — Python does not kill children when the parent is killed) burned
+cores for hours and contaminated wall-clock measurements. All harnesses now
+wrap children in the `timeout` binary directly (self-terminating orphans);
+post-mortem recorded here because the load pattern (one stale 97% CPU
+process per measurement anomaly) is the diagnostic signature.

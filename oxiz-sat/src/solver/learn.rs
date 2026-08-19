@@ -1489,6 +1489,8 @@ impl Solver {
             self.binary_graph.add(q.negate(), r.negate(), id);
             self.watches.add(r, Watcher::new(id, q));
             self.watches.add(q.negate(), Watcher::new(id, r.negate()));
+            self.clause_hyper.resize(id.index() + 1, false);
+            self.clause_hyper[id.index()] = true;
             *hyper += 1;
             added += 1;
         }
@@ -1743,6 +1745,13 @@ impl Solver {
         // attached – original clauses. The shortened clauses re-arm
         // elimination (their variables are marked in `vivify_clause`).
         self.vivify_clauses();
+
+        // Transitive reduction of the binary implication graph (cadical
+        // schedules `transred` inside `inprobe`; the documented amortizer
+        // for hyper-binary resolution). Original binaries are only ever
+        // retired via original-only alternative paths; failed literals
+        // surface as forced level-0 units.
+        let (_tred, _tfailed) = self.transred_round();
 
         // Rebuild watch lists for any modified clauses
         // This is a simplified approach - in a full implementation,

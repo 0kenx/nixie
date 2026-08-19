@@ -304,6 +304,8 @@ impl Solver {
             self.binary_graph.add(q.negate(), neg_dom, id);
             self.watches.add(neg_dom, Watcher::new(id, q));
             self.watches.add(q.negate(), Watcher::new(id, neg_dom));
+            self.clause_hyper.resize(id.index() + 1, false);
+            self.clause_hyper[id.index()] = true;
             *hyper += 1;
 
             // Case (B): the resolvent subsumes R when ¬dom ∈ R. cadical's
