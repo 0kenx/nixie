@@ -70,3 +70,71 @@ selection. Remaining hypotheses, in order of expected leverage:
    implications. This is a different lever than ranking.
 3. **Equivalent-literal interleaving** (`decompose`/`sweep`-class passes):
    cadical's ELS runs inside `inprobe`; ours is pre-search-only.
+
+## Follow-up (same day): dominator HBR, ELS interleaving, and the full-stack verdict
+
+### Implemented (kept, off by default; three soundness fixes found on the way)
+
+1. **Dominator hyper-binary resolution** (`derive_hyper_binaries_dominator`):
+   the port of cadical's `hyper_binary_resolve` + `probe_dominator`, applied
+   post-hoc in trail order — parents reconstructed from reasons (binary
+   reasons give the implier directly; long reasons get the dominator of
+   their level-1 false literals), the binary derived is `(¬dom ∨ q)` (the
+   backbone) instead of `(¬probe ∨ q)`, and the subsumption case retires the
+   reason.
+2. **ELS interleaving**: `substitute_equivalent_literals_round` (the
+   one-shot latch lifted; the substitution map composes) wired into
+   `inprocess()` ahead of pure-literal/subsumption, gated on
+   `enable_equiv_substitution && !real_theory_attached`.
+3. **Deleted-reason hygiene, made structural**: `Solver::retire_clause` /
+   `remove_clause` purge binary-graph edges, re-point live trail reasons to
+   `Decision`, then retire — routed through every in-solver deletion site
+   (subsume, BVE, ELS, eliminator, probe case-(B), learned-subsumption), and
+   the pure-literal pass's post-hoc bookkeeping (whose hygiene loop had been
+   dead code: the DRAT-gated literal snapshot is empty without proofs — now
+   an always-on id-only snapshot).
+
+The soundness fixes, each caught by a real reproducer (`Break_unsat_06_07`,
+165 ms, `INPROCESS+PROBE+HBP+BVE`; every proper flag subset clean):
+
+- **HBR promotion hole (the false SAT)**: subsuming an *original* reason
+  obliges the resolvent to carry it permanently (cadical `red = !contained
+  || reason->redundant`); the first port left the binary learned, a later
+  reduction deleted the only remaining (weaker) constraint, and UNSAT
+  flipped to SAT. Fix: `clear_learned` promotion.
+- **Live-reason deletion (debug invariant)**: retired clauses were still
+  recorded reasons — binary reasons escape the `lits[0]` invariant (the
+  binary-graph path records either position), so the reduce-style O(1)
+  guard misses them. Fix: re-point to `Decision` (exact for level-0 facts;
+  cadical `v.reason = level ? … : 0`).
+- **Stale binary edges (the re-establishment)**: deleting a binary leaves
+  its implication-graph edges propagating (the binary loop never consults
+  the deleted flag), re-recording reasons for deleted clauses after any
+  clearing. Fix: purge edges before setting the flag.
+
+### The full-stack experiment (hypothesis 1: elimination-as-default re-measure)
+
+Default vs `INPROCESS+PROBE+HBP+EQUIV+BVE`, 67 files, paired
+instructions-to-verdict, verdicts cross-checked:
+
+- **0 verdict mismatches** (soundness clean after the fixes)
+- **geomean(full/def) = 1.74**, full better on 18/61 paired cells
+- solved: default 64/67, full stack 62/67
+
+**Verdict: decisively net-negative as a default, again.** With probing and
+ELS in place the elimination-friendly files still improve (6s167 −57.5%),
+but the aggregate is far worse than the earlier no-probing measurement
+(53/94 → 1.74× geomean). Whatever amortizes this stack in CaDiCaL — the
+decompose/transred interplay, the schedule constants, or search quality we
+have not ported — is still missing. Per the methodology: recorded, not
+tuned against.
+
+### qwh.50.1250 regression (user-reported: sat 2.19s → timeout)
+
+Bisected by instructions-to-verdict across b6398d0 → cc72823 → 5e61d37 →
+3ef9086 → HEAD: the flip is **cc72823 (the reuse_trail fix)** — 126.5G →
+non-terminating; f32+blocker later restored solving at 263G (2.1× baseline
+work; HEAD 269G). No bug: the faithful-but-diverging reuse fix (measured
+aggregate-neutral, 11/10 wins/losses over 31 files × 8 seeds) landed on qwh
+as a chaotic casualty, and the subsequent diverging changes re-rolled it
+partially back. Recorded as a tracked casualty of the accepted trade-off.

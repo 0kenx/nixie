@@ -2722,6 +2722,61 @@ impl Solver {
         }
     }
 
+    /// Retire a clause from the live database, first re-pointing any live
+    /// trail-reason reference to `Decision`.
+    ///
+    /// **Every** in-solver deletion path must go through here (subsume,
+    /// BVE/ELS preprocessing, the eliminator, probe case-(B)): a retired
+    /// clause can be the recorded propagation reason of an assigned trail
+    /// literal, and binary reasons escape the `lits[0]` invariant (the
+    /// binary-graph propagation path records either position). A `Decision`
+    /// reason is semantically exact for these cases – level-0 facts never
+    /// enter conflict analysis (cadical: `v.reason = level ? … : 0`) – and
+    /// the deleted-reason invariant stays intact. Found by the debug
+    /// invariant via `Break_unsat_06_07` under `INPROCESS+PROBE+HBP+BVE`.
+    /// `retire_clause` + counter/stat bookkeeping + binary-graph purge +
+    /// DRAT deletion (the `ClauseDatabase::remove` shape) – use where the
+    /// old code called `clauses.remove` directly on clauses that may be
+    /// live reasons (the on-the-fly subsumption path).
+    pub(super) fn remove_clause(&mut self, cid: ClauseId) {
+        if let Some(v) = self.clauses.get(cid).filter(|c| !c.deleted) {
+            let lits: SmallVec<[Lit; 8]> = v.lits.iter().copied().collect();
+            for l in lits {
+                let var = l.var();
+                if self.trail.is_assigned(var)
+                    && matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
+                {
+                    self.trail.set_reason(var, Reason::Decision);
+                }
+            }
+        }
+        self.purge_binary_edges(cid);
+        self.drat_delete(cid);
+        self.clauses.remove(cid);
+    }
+
+    pub(super) fn retire_clause(&mut self, cid: ClauseId) {
+        // Purge binary-graph edges FIRST (the purge reads the clause's
+        // literals and requires the deleted flag to be clear): a stale edge
+        // of a deleted binary keeps PROPAGATING (the binary loop does not
+        // consult the deleted flag) and re-records reasons pointing at the
+        // deleted clause — the exact re-establishment the debug invariant
+        // caught on Break_unsat_06_07.
+        self.purge_binary_edges(cid);
+        if let Some(v) = self.clauses.get(cid).filter(|c| !c.deleted) {
+            let lits: SmallVec<[Lit; 8]> = v.lits.iter().copied().collect();
+            for l in lits {
+                let var = l.var();
+                if self.trail.is_assigned(var)
+                    && matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
+                {
+                    self.trail.set_reason(var, Reason::Decision);
+                }
+            }
+        }
+        self.clauses.mark_deleted_raw(cid);
+    }
+
     /// Get the model (if sat)
     #[must_use]
     pub fn model(&self) -> &[LBool] {

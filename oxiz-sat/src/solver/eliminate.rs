@@ -413,6 +413,18 @@ impl Solver {
         }
     }
 
+    /// Retire a clause for the eliminator, first re-pointing any live
+    /// trail-reason reference to `Decision`. A retired clause can be the
+    /// recorded propagation reason of an assigned literal (binary reasons
+    /// escape the `lits[0]` invariant – the binary-graph path records
+    /// either position; the satisfied-clause retirement hits this on
+    /// level-0 facts). Level-0 facts never enter conflict analysis, so a
+    /// Decision reason is semantically exact (cadical: `v.reason = level ?
+    /// … : 0`), and the deleted-reason invariant stays intact.
+    fn elim_retire(&mut self, cid: ClauseId) {
+        self.retire_clause(cid);
+    }
+
     /// One elimination round (cadical `elim_round`). Returns
     /// `(eliminated, completed, dirty, units)`; `completed` is true when the
     /// schedule was fully drained (the resolution budget was not hit).
@@ -456,7 +468,7 @@ impl Solver {
                 }
             }
             if satisfied {
-                self.clauses.mark_deleted_raw(cid);
+                self.elim_retire(cid);
                 self.stats.deleted_clauses += 1;
                 ctx.dirty = true;
                 continue;
@@ -529,7 +541,7 @@ impl Solver {
                 })
                 .collect();
             for cid in doomed {
-                self.clauses.mark_deleted_raw(cid);
+                self.elim_retire(cid);
                 self.stats.deleted_clauses += 1;
             }
             self.learned_clause_ids

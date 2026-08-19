@@ -234,7 +234,7 @@ impl Solver {
                         let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
                         self.mark_elim_vars(lits.iter().copied());
                     }
-                    self.clauses.mark_deleted_raw(cid);
+                    self.retire_clause(cid);
                     self.stats.deleted_clauses += 1;
                     self.stats.subsumed_removed += 1;
                     // DRAT deletion (no-op unless enabled); read the literals

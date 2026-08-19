@@ -34,8 +34,21 @@ impl Solver {
     ///
     /// Guards: decision level 0, base assertion scope, no DRAT writer.
     pub(super) fn substitute_equivalent_literals(&mut self) -> SubstOutcome {
-        if self.did_equiv_subst
-            || self.trail.decision_level() != 0
+        // One-shot for the pre-search call site (see `Solver::solve`); the
+        // mid-search inprocessing schedule calls
+        // [`Self::substitute_equivalent_literals_round`], which deliberately
+        // re-runs: the substitution map composes across rounds (see the
+        // `equiv_subst_inited` logic below).
+        if self.did_equiv_subst {
+            return SubstOutcome::Ok;
+        }
+        self.substitute_equivalent_literals_round()
+    }
+
+    /// One ELS round without the one-shot latch (mid-search re-arms keep all
+    /// the other soundness gates: level 0, base scope, no proof tracing).
+    pub(super) fn substitute_equivalent_literals_round(&mut self) -> SubstOutcome {
+        if self.trail.decision_level() != 0
             || self.assertion_levels.len() > 1
             || self.proof.is_some()
         {
@@ -151,7 +164,6 @@ impl Solver {
 
         // Early-out if nothing actually moved.
         if !(0..num_lits).any(|c| sub[c].code() as usize != c) {
-            self.did_equiv_subst = true;
             return SubstOutcome::Ok;
         }
 
@@ -178,7 +190,7 @@ impl Solver {
             let tautology = lits.windows(2).any(|w| w[0].var() == w[1].var());
 
             if tautology {
-                self.clauses.mark_deleted_raw(cid);
+                self.retire_clause(cid);
                 continue;
             }
             match lits.len() {
@@ -190,7 +202,7 @@ impl Solver {
                 }
                 1 => {
                     new_units.push(lits[0]);
-                    self.clauses.mark_deleted_raw(cid);
+                    self.retire_clause(cid);
                 }
                 _ => {
                     self.clauses.shrink(cid, &lits);
@@ -253,7 +265,6 @@ impl Solver {
         // produce hanging units (propagation fixpoint violations). Rebuild
         // from the post-substitution live binary clauses.
         self.refresh_binary_graph();
-        self.did_equiv_subst = true;
         SubstOutcome::Ok
     }
 

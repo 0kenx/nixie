@@ -314,13 +314,12 @@ impl Solver {
             }
         }
 
-        // Remove subsumed clauses
+        // Remove subsumed clauses. `remove_clause` re-points any live
+        // trail-reason reference before retiring (an old subsumed clause can
+        // be the current reason of an assigned literal; binary reasons
+        // escape the `lits[0]` invariant).
         for cid in to_remove {
-            // Purge binary-graph edges and record the DRAT deletion before the
-            // clause's literals become inaccessible.
-            self.purge_binary_edges(cid);
-            self.drat_delete(cid);
-            self.clauses.remove(cid);
+            self.remove_clause(cid);
             self.stats.deleted_clauses += 1;
         }
     }
@@ -1595,6 +1594,25 @@ impl Solver {
             return;
         }
 
+        // Equivalent-literal substitution round (cadical interleaves its
+        // `decompose`/`sweep`-class ELS inside the inprocessing schedule).
+        // The round variant skips the pre-search one-shot latch – the
+        // substitution map composes across rounds – while keeping every
+        // soundness gate (level 0, base scope, no proof tracing). Skipped
+        // under a real theory for the same reason as the pure-literal pass
+        // below: theory lemmas can force the opposite polarity of a
+        // Boolean-pure variable, and folding it mid-search desyncs the
+        // theory's atom view.
+        if self.config.enable_equiv_substitution && !self.real_theory_attached {
+            if self.substitute_equivalent_literals_round() == equiv::SubstOutcome::Unsat {
+                self.trivially_unsat = true;
+                return;
+            }
+            if self.trivially_unsat {
+                return;
+            }
+        }
+
         // Create preprocessor with current number of variables
         let mut preprocessor = Preprocessor::new(self.num_vars);
 
@@ -1612,7 +1630,7 @@ impl Solver {
         // proof would keep clauses the live database no longer has, which is
         // exactly the minimality gap this snapshot closes. Skipped entirely
         // when proof logging is off.
-        let pre_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = if self.proof.is_some() {
+        let _pre_lits: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = if self.proof.is_some() {
             self.clauses
                 .iter_ids()
                 .filter_map(|id| {
@@ -1624,6 +1642,11 @@ impl Solver {
         } else {
             Vec::new()
         };
+        // Id-only pre-state for the reason/edge hygiene pass below (always
+        // taken, unlike the DRAT literal snapshot): literals survive the
+        // deleted flag, so post-pass bookkeeping can read them from the
+        // database directly.
+        let pre_live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
 
         // Pure-literal elimination deletes original clauses; that is only
         // satisfiability-preserving if the pure literal is fixed to its polarity
@@ -1661,8 +1684,45 @@ impl Solver {
         // Emit a DRAT deletion line for every clause the pure-literal pass
         // above retired, identified by diffing against the pre-pass snapshot
         // (any previously-live clause that is now deleted).
-        for (id, lits) in &pre_lits {
-            if self.clauses.get(*id).is_some_and(|c| c.deleted) {
+        let mut newly_deleted: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = Vec::new();
+        for id in &pre_live_ids {
+            if self.clauses.get(*id).is_some_and(|c| c.deleted)
+                && let Some(c) = self.clauses.get(*id)
+            {
+                newly_deleted.push((*id, c.lits.iter().copied().collect()));
+            }
+        }
+        for (id, lits) in &newly_deleted {
+            {
+                // The pure-literal pass deleted inside a bare
+                // `&mut ClauseDatabase` (no trail access), so re-point any
+                // live reason reference here, Solver-side: a deleted clause
+                // can still be the recorded propagation reason of an
+                // assigned literal (binary reasons escape the `lits[0]`
+                // invariant). `Decision` is exact for level-0 facts.
+                for &l in lits {
+                    let var = l.var();
+                    if self.trail.is_assigned(var)
+                        && matches!(
+                            self.trail.reason(var),
+                            Reason::Propagation(r) if r == *id
+                        )
+                    {
+                        self.trail.set_reason(var, Reason::Decision);
+                    }
+                }
+                // Purge the deleted binary's implication-graph edges (the
+                // Preprocessor deleted inside a bare `&mut ClauseDatabase`,
+                // so `retire_clause`'s purge never ran): a stale edge keeps
+                // PROPAGATING (the binary loop does not consult the deleted
+                // flag) and re-records reasons pointing at the deleted
+                // clause. The snapshot lits are exactly what
+                // `purge_binary_edges` needs.
+                if lits.len() == 2 {
+                    let (a, b) = (lits[0], lits[1]);
+                    self.binary_graph.remove_clause_edges(a.negate(), *id);
+                    self.binary_graph.remove_clause_edges(b.negate(), *id);
+                }
                 self.drat_delete_lits(lits);
             }
         }

@@ -162,7 +162,20 @@ impl Trail {
         self.var_info.get(var.index()).map_or(0, |v| v.level)
     }
 
-    /// Get the reason for a variable's assignment
+    /// Overwrite the recorded reason of an assigned variable (see the
+    /// deleted-reason hygiene in `Solver::retire_clause`). Used by
+    /// deletion paths that retire a clause still referenced as a reason:
+    /// they re-point the reference to `Decision` (no antecedent), which is
+    /// exactly the semantics a level-0 fact carries in cadical
+    /// (`v.reason = level ? ... : 0`) – and conflict analysis never
+    /// resolves through a decision reason.
+    pub(super) fn set_reason(&mut self, var: Var, reason: Reason) {
+        if let Some(info) = self.var_info.get_mut(var.index()) {
+            info.reason = reason;
+        }
+    }
+
+    /// Get the reason for a variable's assignment.
     #[must_use]
     pub fn reason(&self, var: Var) -> Reason {
         self.var_info

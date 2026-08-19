@@ -42,7 +42,7 @@ impl Solver {
             }
             let taut = self.clauses.normalize(cid);
             if taut {
-                self.clauses.mark_deleted_raw(cid);
+                self.retire_clause(cid);
             }
         }
 
@@ -108,7 +108,7 @@ impl Solver {
                         occ.remove(lit, cid);
                     }
                 }
-                self.clauses.mark_deleted_raw(cid);
+                self.retire_clause(cid);
                 removed += 1;
             }
         }
@@ -203,7 +203,7 @@ impl Solver {
                 }
                 1 => {
                     units.push(lits[0]);
-                    self.clauses.mark_deleted_raw(cid);
+                    self.retire_clause(cid);
                 }
                 n if n < orig_len => {
                     self.clauses.shrink(cid, &lits);
