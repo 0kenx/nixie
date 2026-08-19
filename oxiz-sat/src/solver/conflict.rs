@@ -1130,6 +1130,10 @@ impl Solver {
         let mut open: u32 = 0;
         let mut max_trail: usize = 0;
         let mut shrinkable: SmallVec<[Var; 16]> = SmallVec::new();
+        // Literals at `blevel` marked shrinkable by this block's reason walk
+        // (not in the block itself); cadical's `shrinkable` vector holds both
+        // and is fully reset after every block.
+        let mut walk_marked: SmallVec<[Var; 16]> = SmallVec::new();
         for k in start..=end {
             let var = self.learnt[k].var();
             self.mf_set(var, MF_SHRINKABLE);
@@ -1204,7 +1208,17 @@ impl Solver {
                         failed = true;
                         break;
                     }
-                    ShrinkStep::NewlyShrinkable => open += 1,
+                    ShrinkStep::NewlyShrinkable => {
+                        // Walk-discovered literal: record it so the flag
+                        // reset below covers it too (cadical's `shrinkable`
+                        // member collects exactly these; a stale
+                        // MF_SHRINKABLE from this block's walk leaking into
+                        // a later block's trail scan within the same clause
+                        // makes it pop a foreign literal and mis-derive the
+                        // replacement).
+                        walk_marked.push(lit.var());
+                        open += 1;
+                    }
                     ShrinkStep::Skip => {}
                 }
                 if failed {
@@ -1215,8 +1229,10 @@ impl Solver {
 
         if failed {
             // `reset_shrinkable` + `shrunken_block_no_uip`: fall back to
-            // per-literal recursive minimization inside the block.
-            for &var in &shrinkable {
+            // per-literal recursive minimization inside the block.  Reset
+            // covers the walk-marked literals too (cadical resets its whole
+            // `shrinkable` vector).
+            for &var in shrinkable.iter().chain(walk_marked.iter()) {
                 self.mf_unset(var, MF_SHRINKABLE);
             }
             let mut minimized: u64 = 0;
@@ -1262,7 +1278,7 @@ impl Solver {
             // `mark_shrinkable_as_removable`: block and chain literals were
             // resolved away; they carry the REMOVABLE flag until the
             // analysis-wide reset (recorded above via `lrat_minimized`).
-            for &var in &shrinkable {
+            for &var in shrinkable.iter().chain(walk_marked.iter()) {
                 self.mf_unset(var, MF_SHRINKABLE);
                 self.mf_set(var, MF_REMOVABLE);
             }

@@ -173,6 +173,22 @@ arms) – only the reduced arm is stable.
 LBD, tripping `check_learned_clause_lbd` (`lbd > len`) in debug builds on both
 sides of the landing.  All three rewrite sites now recompute LBD (and re-tier).
 
+**Divergence found and fixed after gating** (cadical parity, affects the
+default path too): `shrink_block` reset the `MF_SHRINKABLE` flag only for the
+*block* literals after each block, while cadical's `shrinkable` vector collects
+the walk-discovered literals as well and `reset_shrinkable` /
+`mark_shrinkable_as_removable` clear **all** of them.  A stale
+`MF_SHRINKABLE` from one block's reason walk leaking into a later block's
+backward trail scan within the same clause makes that scan pop a foreign
+literal — the same mis-derivation category as the `uip_pos` bug fixed before
+landing (and caught then by the `si2-b03` replacement-level assert).  The
+reset now covers `block ∪ walk-marked` on both outcomes.  With the fix, the
+deterministic arm no longer produces the false `unsat` — it stops producing
+*any* verdict within 900 s (the trajectory moved from "wrong answer in 67 s"
+to "no answer"), so the fix is proven correct-by-parity but not proven curative
+on this file; the gate below stays until a clean refutation or a root-cause
+isolation lands.
+
 **Landed mitigation**: `improve_learnt_clause` refuses to run block-UIP
 shrinking while `enable_inprocessing` is on — the same posture as the LRAT
 gate (an uncheckable combination is not run).  Both flags remain off/on
