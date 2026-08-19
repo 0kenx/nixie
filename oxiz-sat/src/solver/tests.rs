@@ -823,10 +823,13 @@ fn learned_clauses_feed_glue_emas_and_gate_restarts() {
     let _ = (a, b);
 
     assert_eq!(solver.glue_current.fast.value(), 0.0);
-    solver.note_learned_lbd(3);
+    // The EMA input is the analysis-walk glue (cadical `levels.size() - 1`),
+    // set by the analysis itself; the clause LBD argument feeds LocalLbd/stats.
+    solver.analysis_walk_glue = 3;
+    solver.note_learned_lbd(5);
     assert!(
         (solver.glue_current.fast.value() - 3.0).abs() < 1e-9,
-        "one LBD-3 clause moves the (freshly-initialised, unbiased) fast EMA to 3"
+        "a walk glue of 3 moves the (freshly-initialised, unbiased) fast EMA to 3"
     );
     assert!((solver.glue_current.slow.value() - 3.0).abs() < 1e-9);
 }

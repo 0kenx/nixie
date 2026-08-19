@@ -122,9 +122,35 @@ impl Solver {
     /// on the QF_UF quasigroup benchmarks that wiped the trail every 100
     /// conflicts and the search needed ~45× more conflicts than Z3.
     pub(super) fn note_learned_lbd(&mut self, lbd: u32) {
-        let l = f64::from(lbd);
-        self.glue_current.fast.update(l);
-        self.glue_current.slow.update(l);
+        // cadical feeds the restart EMAs with the *analysis-walk* glue
+        // (`levels.size() - 1` over the whole 1-UIP resolution walk), not the
+        // stored clause's LBD – the walk statistic is larger and far noisier,
+        // which is what makes the focused Glucose condition
+        // (`fast >= margin × slow`) cross early and often instead of
+        // hovering below 1.0 on smooth fat-clause streams.  The clause LBD
+        // (`lbd`) continues to feed everything clause-shaped below (tiering
+        // happens in `learn_clause` via `compute_lbd`; the recent/global sums
+        // feed the LocalLbd strategy and stats).
+        //
+        // Matched null (`OXIZ_GLUE_NULL=1`): feed the *previous* conflict's
+        // walk glue instead – same work, same distribution, same timing, no
+        // current-conflict information – so a measured win can be attributed
+        // to the walk glue's semantics rather than to the noise level or the
+        // trajectory reshuffling the change induces (docs/BENCHMARKING.md).
+        let ema_glue = if crate::glue_null_enabled() {
+            self.analysis_walk_glue_prev
+        } else if crate::glue_legacy_enabled() {
+            // A/B switch for the study: the pre-port EMA input (the stored
+            // clause's LBD) – see docs/studies.
+            lbd
+        } else {
+            self.analysis_walk_glue
+        };
+        self.analysis_walk_glue_prev = self.analysis_walk_glue;
+        let g = f64::from(ema_glue);
+        self.glue_current.fast.update(g);
+        self.glue_current.slow.update(g);
+
         self.reluctant.tick();
         self.recent_lbd_sum += u64::from(lbd);
         self.recent_lbd_count += 1;

@@ -43,6 +43,7 @@ pub(super) const MF_POISON: u8 = 2;
 pub(super) const MF_REMOVABLE: u8 = 4;
 pub(super) const MF_ADDED: u8 = 8;
 pub(super) const MF_SEEN: u8 = 16;
+pub(super) const MF_SHRINKABLE: u8 = 32;
 
 /// Convert a path to a UTF-8 string for the file tracers (which take `&str`,
 /// faithful to upstream). Returns an error for non-UTF8 paths.
@@ -253,6 +254,15 @@ pub struct SolverConfig {
     /// Default true. Makes restart aggressiveness adaptive to the instance
     /// instead of a single fixed cap.
     pub enable_stabilize: bool,
+    /// Enable clause **shrinking** (cadical `opts.shrink == 3`, its default):
+    /// per decision-level block of the raw 1-UIP clause, run a mini 1-UIP
+    /// analysis restricted to that level and replace the whole block by its
+    /// block-UIP literal (`shrink.cpp`).  This is cadical's default learned-
+    /// clause improvement and supersedes plain recursive minimization there
+    /// (the minimizer remains the in-block fallback and the LRAT path).
+    /// Default true (cadical parity; measured before landing – see
+    /// `docs/studies/`).
+    pub enable_shrink: bool,
     /// Base conflict interval for the first stable/focused switch; subsequent
     /// intervals grow quadratically (`base × phase²`).
     pub stabilize_base: u64,
@@ -341,6 +351,7 @@ impl core::fmt::Debug for SolverConfig {
             .field("use_lrb_branching", &self.use_lrb_branching)
             .field("rephase", &self.rephase)
             .field("rephase_interval", &self.rephase_interval)
+            .field("enable_shrink", &self.enable_shrink)
             .field("target", &self.target)
             .field("walk", &self.walk)
             .field("enable_inprocessing", &self.enable_inprocessing)
@@ -429,6 +440,7 @@ impl Default for SolverConfig {
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
             enable_stabilize: true,
+            enable_shrink: true,
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
@@ -508,6 +520,21 @@ pub struct SolverStats {
     /// `stats.stabconflicts`); drives the stable-only rephase schedule
     /// (`rephase == 2`).
     pub stable_conflicts: u64,
+    /// Restarts that fired while in stable mode (cadical
+    /// `stats.restartstable`) – the reluctant-doubling restarts.
+    pub restarts_stable: u64,
+    /// Restarts that reused a non-empty decision prefix (cadical
+    /// `stats.reused`).
+    pub reused_trails: u64,
+    /// Total decision levels kept by reuse-trail restarts (cadical
+    /// `stats.reusedlevels`).
+    pub reused_levels: u64,
+    /// Learned literals removed by block-UIP clause shrinking (cadical
+    /// `stats.shrunken`).
+    pub shrunken: u64,
+    /// Learned literals removed by the minimizer fallback inside shrinking
+    /// (cadical `stats.minishrunken`).
+    pub minishrunken: u64,
     /// Rephasing counters (cadical `stats.rephased`).
     pub rephased: RephaseCounters,
     /// Local-search walk counters (cadical `stats.walk`).
@@ -1060,6 +1087,25 @@ pub struct Solver {
     /// analysis (cadical `levels`), so the two vectors above are reset in
     /// O(contributing levels), not O(num levels).
     pub(super) seen_levels: Vec<u32>,
+    /// Glue of the last completed 1-UIP analysis **walk**: the number of
+    /// distinct decision levels touched by the whole resolution walk
+    /// (`seen_levels.len() - 1`, cadical `const int glue = levels.size() - 1`
+    /// in `analyze`).  This is *not* the LBD of the stored clause: cadical
+    /// feeds this walk statistic into the restart EMAs
+    /// (`UPDATE_AVERAGE (averages.current.glue.fast/slow, glue)`), while the
+    /// clause's own literal-level glue is a separate quantity there (tier
+    /// assignment and `recompute_glue`).  The two differ wildly in
+    /// distribution – the walk glue is larger and far noisier, which is
+    /// exactly what makes the focused Glucose restart condition cross its
+    /// margin early and often (cadical's first restart fires around conflict
+    /// 73 on `stable-300`; feeding the smoother clause LBD instead starved
+    /// our restarts until conflict ~1100 and locked the search into tall
+    /// sparse-trail equilibria).
+    pub(super) analysis_walk_glue: u32,
+    /// Previous conflict's `analysis_walk_glue` – the lagged value the
+    /// `OXIZ_GLUE_NULL` matched null feeds into the restart EMAs (same
+    /// distribution, same timing, no current-conflict information).
+    pub(super) analysis_walk_glue_prev: u32,
     /// The genuine conflict level of the analysis in progress (the highest
     /// decision level among the conflict clause's literals, which under
     /// chronological backtracking can sit below `decision_level()`).
@@ -1198,6 +1244,8 @@ impl Solver {
             seen_level_count: Vec::new(),
             seen_level_trail: Vec::new(),
             seen_levels: Vec::new(),
+            analysis_walk_glue: 0,
+            analysis_walk_glue_prev: 0,
             current_conflict_level: 0,
         }
     }

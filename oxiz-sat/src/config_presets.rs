@@ -93,6 +93,7 @@ impl ConfigPreset {
     /// - LRB branching heuristic
     fn industrial_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 100,
             restart_multiplier: 1.5,
             clause_deletion_threshold: 15000,
@@ -140,6 +141,7 @@ impl ConfigPreset {
     /// - Higher random polarity
     fn random_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 50,
             restart_multiplier: 2.0,
             clause_deletion_threshold: 10000,
@@ -187,6 +189,7 @@ impl ConfigPreset {
     /// - Heavy clause minimization
     fn cryptographic_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 200,
             restart_multiplier: 1.3,
             clause_deletion_threshold: 20000,
@@ -234,6 +237,7 @@ impl ConfigPreset {
     /// - Frequent restarts
     fn hardware_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 80,
             restart_multiplier: 1.4,
             clause_deletion_threshold: 12000,
@@ -281,6 +285,7 @@ impl ConfigPreset {
     /// - Less preprocessing
     fn aggressive_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 30,
             restart_multiplier: 1.1,
             clause_deletion_threshold: 5000,
@@ -328,6 +333,7 @@ impl ConfigPreset {
     /// - Extensive preprocessing
     fn conservative_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 500,
             restart_multiplier: 2.0,
             clause_deletion_threshold: 50000,
@@ -371,6 +377,7 @@ impl ConfigPreset {
     /// Based on Glucose SAT solver parameters
     fn glucose_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 100,
             restart_multiplier: 1.5,
             clause_deletion_threshold: 10000,
@@ -414,6 +421,7 @@ impl ConfigPreset {
     /// Based on classic MiniSAT parameters
     fn minisat_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 100,
             restart_multiplier: 1.5,
             clause_deletion_threshold: 8000,
@@ -457,6 +465,7 @@ impl ConfigPreset {
     /// Based on CaDiCaL SAT solver parameters
     fn cadical_config() -> SolverConfig {
         SolverConfig {
+            enable_shrink: true,
             restart_interval: 100,
             restart_multiplier: 1.4,
             clause_deletion_threshold: 12000,

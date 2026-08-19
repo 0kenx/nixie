@@ -116,7 +116,12 @@ impl Solver {
                     return SolverResult::Unsat;
                 }
 
-                self.trace_conflict("bool", self.trail.decision_level(), learnt_clause.len());
+                self.trace_conflict(
+                    "bool",
+                    self.trail.decision_level(),
+                    learnt_clause.len(),
+                    backtrack_level,
+                );
                 theory.on_backtrack(backtrack_level);
                 // Clamp the theory cursor to the rollback boundary, not to the
                 // trail length: chronological backtracking re-appends the
@@ -199,6 +204,7 @@ impl Solver {
                         "theory-assign",
                         self.trail.decision_level(),
                         learnt_clause.len(),
+                        backtrack_level,
                     );
                     theory.on_backtrack(backtrack_level);
                     self.backtrack_with_phase_saving(backtrack_level);
@@ -306,6 +312,7 @@ impl Solver {
                             "theory-prop",
                             self.trail.decision_level(),
                             learnt_clause.len(),
+                            backtrack_level,
                         );
                         theory.on_backtrack(backtrack_level);
                         self.backtrack_with_phase_saving(backtrack_level);
@@ -344,6 +351,22 @@ impl Solver {
             }
 
             // Try to decide
+            // Propagation-fixpoint diagnostic (`OXIZ_CHECK_FIXPOINT`): a
+            // debug-build-only sweep that catches a hanging unit at the
+            // decision point (a clause with exactly one unassigned literal
+            // that propagation should already have fired on).  Costs one
+            // env check when unset; was the first tool reached for when
+            // auditing the shallow-cascade anomaly (it came back clean).
+            #[cfg(all(feature = "std", debug_assertions))]
+            if std::env::var("OXIZ_CHECK_FIXPOINT").is_ok()
+                && self.stats.decisions.is_multiple_of(100)
+                && let Err(msg) = crate::invariants::check_unit_propagation_complete(self)
+            {
+                eprintln!(
+                    "FIXPOINT-VIOLATION at decision {}: {msg}",
+                    self.stats.decisions
+                );
+            }
             if let Some(var) = self.pick_branch_var() {
                 self.stats.decisions += 1;
                 self.trail.new_decision_level();
@@ -394,6 +417,7 @@ impl Solver {
                             "final-check",
                             self.trail.decision_level(),
                             learnt_clause.len(),
+                            backtrack_level,
                         );
                         theory.on_backtrack(backtrack_level);
                         self.backtrack_with_phase_saving(backtrack_level);

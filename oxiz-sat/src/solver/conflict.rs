@@ -30,6 +30,17 @@ fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
     levels.len() as u32
 }
 
+/// Outcome of one block-walk step (cadical `shrink_literal` return codes).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShrinkStep {
+    /// A lower-level antecedent is not removable: abort the block walk.
+    Fail,
+    /// Already accounted for (level-0, shrinkable, or removable).
+    Skip,
+    /// Newly marked shrinkable at the block's level.
+    NewlyShrinkable,
+}
+
 impl Solver {
     /// Analyze conflict and learn clause
     /// Mark one antecedent literal during 1-UIP resolution in [`Self::analyze`].
@@ -375,34 +386,6 @@ impl Solver {
             }
         }
 
-        // Batch bump all collected variables at once (single heap rebuild)
-        self.vsids.bump_batch(&vars_to_bump);
-        // CHB's `bump_batch` performs an O(num_vars) heap rebuild and LRB's
-        // `on_conflict` does a periodic O(num_vars) participation scan. Both
-        // are pure waste when the heuristic is not the active branching
-        // strategy: their heaps/scores are only ever read inside the matching
-        // `pick_branch_var` branch. Gating them removes a ~35% hot-spot when
-        // the default (VMTF/VSIDS) heuristic is in use.
-        if self.config.use_chb_branching {
-            self.chb.bump_batch(&vars_to_bump);
-        }
-        if self.config.use_lrb_branching {
-            self.lrb.on_reason_batch(&vars_to_bump);
-        }
-        // VMTF move-to-front: bump conflict-involved variables (cadical sorts
-        // them by bump-order first to preserve relative order; the bump is
-        // idempotent for vars already at the tail). Sort `vars_to_bump` in
-        // place – its only later use (external-heuristic notification) is
-        // order-independent – avoiding a per-conflict SmallVec clone.
-        if self.config.use_vmtf {
-            // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
-            // to preserve relative queue order of bumped variables.
-            vars_to_bump.sort_by_key(|&v| self.vmtf.activity(v));
-            for &v in &vars_to_bump {
-                self.vmtf.bump(v, |v| self.trail.is_assigned(v));
-            }
-        }
-
         // Set asserting literal (p is guaranteed to be Some at this point)
         if let Some(lit) = p {
             self.learnt[0] = lit.negate();
@@ -435,9 +418,39 @@ impl Solver {
             }
         }
 
-        // Minimize learnt clause using recursive resolution (the chain-extending
-        // LRAT port when LRAT is on; the plain recursive minimization otherwise).
-        self.minimize_learnt_clause();
+        // Improve the learned clause (block-UIP shrinking by default, plain
+        // recursive minimization as fallback / under LRAT) BEFORE bumping:
+        // shrinking adds each block-UIP variable to the bump set, exactly
+        // where cadical adds it to `analyzed` ahead of `bump_variables`.
+        self.improve_learnt_clause(&mut vars_to_bump);
+
+        // Batch bump all collected variables at once (single heap rebuild)
+        self.vsids.bump_batch(&vars_to_bump);
+        // CHB's `bump_batch` performs an O(num_vars) heap rebuild and LRB's
+        // `on_conflict` does a periodic O(num_vars) participation scan. Both
+        // are pure waste when the heuristic is not the active branching
+        // strategy: their heaps/scores are only ever read inside the matching
+        // `pick_branch_var` branch. Gating them removes a ~35% hot-spot when
+        // the default (VMTF/VSIDS) heuristic is in use.
+        if self.config.use_chb_branching {
+            self.chb.bump_batch(&vars_to_bump);
+        }
+        if self.config.use_lrb_branching {
+            self.lrb.on_reason_batch(&vars_to_bump);
+        }
+        // VMTF move-to-front: bump conflict-involved variables (cadical sorts
+        // them by bump-order first to preserve relative order; the bump is
+        // idempotent for vars already at the tail). Sort `vars_to_bump` in
+        // place – its only later use (external-heuristic notification) is
+        // order-independent – avoiding a per-conflict SmallVec clone.
+        if self.config.use_vmtf {
+            // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
+            // to preserve relative queue order of bumped variables.
+            vars_to_bump.sort_by_key(|&v| self.vmtf.activity(v));
+            for &v in &vars_to_bump {
+                self.vmtf.bump(v, |v| self.trail.is_assigned(v));
+            }
+        }
 
         // LRAT chain finalization (faithful to the tail of cadical's `analyze`):
         // append the level-0 unit ids collected during the reason walk, then
@@ -548,6 +561,15 @@ impl Solver {
                 .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
             "every non-asserting literal must be at or below the backtrack level"
         );
+
+        // Snapshot the analysis-walk glue before the level statistics are
+        // cleared: `seen_levels` at this point holds exactly cadical's
+        // `levels` set (every decision level that contributed a literal to
+        // the resolution walk), so `len - 1` is cadical's `glue` – the
+        // statistic the restart EMAs are fed with (see
+        // `Solver::analysis_walk_glue`).
+        self.analysis_walk_glue =
+            u32::try_from(self.seen_levels.len().saturating_sub(1)).unwrap_or(u32::MAX);
 
         // Reset the per-level `seen` statistics now that minimization (their
         // only consumer) has run (cadical `clear_analyzed_levels`).
@@ -931,7 +953,7 @@ impl Solver {
         let minimized: SmallVec<[i32; 32]> = self.lrat_minimized.drain(..).collect();
         for vi in minimized {
             let var = Var::new(vi as u32);
-            self.mf_unset(var, MF_REMOVABLE | MF_POISON | MF_ADDED);
+            self.mf_unset(var, MF_REMOVABLE | MF_POISON | MF_ADDED | MF_SHRINKABLE);
         }
         let learnt_vars: SmallVec<[Var; 16]> = self.learnt.iter().map(|l| l.var()).collect();
         for var in learnt_vars {
@@ -951,6 +973,327 @@ impl Solver {
     /// - Themselves redundant (recursive check)
     ///
     /// This also performs clause strengthening by checking for stronger implications
+    /// Learned-clause improvement dispatcher (cadical `analyze.cpp`:
+    /// `if (opts.shrink) shrink_and_minimize_clause (); else if (opts.minimize)
+    /// minimize_clause ();`).  Under LRAT the proof-preserving minimizer port
+    /// stays the only path (the shrink port does not extend proof chains);
+    /// `OXIZ_SHRINK_NULL` runs the full shrink walk and discards its result —
+    /// the matched null for the seed study (docs/BENCHMARKING.md).
+    ///
+    /// Takes `vars_to_bump` so a successful shrink can add each block-UIP
+    /// variable to the conflict's bump set exactly where cadical adds it to
+    /// `analyzed` (`shrunken_block_uip`), ahead of the batch bump.
+    pub(super) fn improve_learnt_clause(&mut self, vars_to_bump: &mut SmallVec<[Var; 32]>) {
+        if self.lrat || !self.config.enable_shrink {
+            self.minimize_learnt_clause();
+            return;
+        }
+        if crate::shrink_null_enabled() {
+            let saved = self.learnt.clone();
+            self.shrink_and_minimize_clause(vars_to_bump);
+            self.learnt = saved;
+            self.minimize_learnt_clause();
+        } else {
+            self.shrink_and_minimize_clause(vars_to_bump);
+        }
+    }
+
+    /// cadical `shrink_and_minimize_clause` (`shrink.cpp`, the `opts.shrink ==
+    /// 3` "full" default): shrink the raw 1-UIP clause by blocks.
+    ///
+    /// The clause's literals at one common decision level (below the conflict
+    /// level) form a *block*; resolving the block's literals against their
+    /// reasons, restricted to that level and iterated to its own 1-UIP,
+    /// derives a clause that subsumes the block — so the whole block is
+    /// replaced by the single block-UIP literal (`¬uip`, false at that
+    /// level).  On stable-300-class instances cadical removes ~68% of learned
+    /// literals this way (vs ~30-40% for plain recursive minimization), which
+    /// is the difference between thin clauses that propagate (and keep trails
+    /// dense) and fat ones that never fire.
+    ///
+    /// Blocks with fewer than two literals are kept as-is.  When a block's
+    /// walk fails (an antecedent at a lower level is not removable, or a
+    /// non-clausal reason is met), the block falls back to per-literal
+    /// recursive minimization (`shrunken_block_no_uip`).
+    pub(super) fn shrink_and_minimize_clause(&mut self, vars_to_bump: &mut SmallVec<[Var; 32]>) {
+        let n = self.learnt.len();
+        if n <= 2 {
+            // cadical gates on `size > 1`; a binary clause has a one-literal
+            // "block" at most and nothing to shrink.
+            return;
+        }
+        let original_len = n;
+        // Sentinel marking removed slots (cadical reuses `uip0 = clause[0]`,
+        // which cannot occur elsewhere in the deduplicated clause).
+        let sentinel = self.learnt[0];
+
+        // Sort `learnt[1..]` by (decision level, trail index) DESCENDING
+        // (cadical `shrink_trail_negative_rank` MSORT; `learnt[0]` is the
+        // conflict-level asserting literal and stays pinned at index 0).
+        // Level-first ordering is what makes chronological backtracking safe
+        // here: blocks are same-level runs regardless of trail order.
+        {
+            let mut keyed: SmallVec<[(u64, Lit); 16]> = self.learnt[1..]
+                .iter()
+                .map(|&l| {
+                    let key = ((self.trail.level(l.var()) as u64) << 32)
+                        | u64::from(self.trail.trail_index(l.var()));
+                    (key, l)
+                })
+                .collect();
+            keyed.sort_unstable_by_key(|&(key, _)| std::cmp::Reverse(key));
+            for (i, (_, lit)) in keyed.into_iter().enumerate() {
+                self.learnt[i + 1] = lit;
+            }
+        }
+
+        // Blocks: contiguous same-level runs over `learnt[1..]`, visited from
+        // the lowest level (clause tail) toward the front.
+        let mut total_shrunken: u64 = 0;
+        let mut total_minimized: u64 = 0;
+        let mut i = n - 1;
+        while i >= 1 {
+            let blevel = self.trail.level(self.learnt[i].var());
+            let mut j = i;
+            while j > 1 && self.trail.level(self.learnt[j - 1].var()) == blevel {
+                j -= 1;
+            }
+            if i - j + 1 < 2 {
+                // Singleton block: kept (nothing to resolve against).
+                self.mf_set(self.learnt[i].var(), MF_KEEP);
+            } else {
+                let (s, m) = self.shrink_block(j, i, blevel, sentinel, vars_to_bump);
+                total_shrunken += s;
+                total_minimized += m;
+            }
+            i = j - 1;
+        }
+
+        // Compaction: drop the sentinel slots (cadical's in-place `i`/`j`
+        // filter over the clause).
+        let mut w = 1;
+        for r in 1..n {
+            let lit = self.learnt[r];
+            if lit == sentinel && r != 0 {
+                continue;
+            }
+            self.learnt[w] = lit;
+            w += 1;
+        }
+        self.learnt.truncate(w);
+
+        // Minimize-flag hygiene, exactly like `minimize_learnt_clause`'s tail:
+        // every flag this pass touched (keep on kept literals,
+        // removable/poison/shrinkable on walk-touched vars, recorded in
+        // `lrat_minimized`) must be reset before the next analysis reads
+        // them.  A stale `MF_SHRINKABLE` bit surviving into the next
+        // conflict's block walk makes its trail scan pop a foreign-level
+        // variable (caught by the replacement-level debug assert on
+        // `si2-b03-m800-03`; in release it would silently mis-shrink).
+        self.clear_minimize_flags();
+        let final_len = self.learnt.len();
+        if final_len < original_len {
+            self.stats.minimizations += 1;
+            self.stats.literals_removed += (original_len - final_len) as u64;
+        }
+        self.stats.shrunken += total_shrunken;
+        self.stats.minishrunken += total_minimized;
+    }
+
+    /// Shrink one block: `learnt[start..=end]` all sit at decision level
+    /// `blevel` (with `end` holding the block's lowest trail position after
+    /// the sort).  Returns `(shrunken, minimized)` literal counts.  See
+    /// [`Self::shrink_and_minimize_clause`].
+    fn shrink_block(
+        &mut self,
+        start: usize,
+        end: usize,
+        blevel: u32,
+        sentinel: Lit,
+        vars_to_bump: &mut SmallVec<[Var; 32]>,
+    ) -> (u64, u64) {
+        // Mark every block literal shrinkable; `open` counts undischarged
+        // shrinkable literals.
+        let mut open: u32 = 0;
+        let mut max_trail: usize = 0;
+        let mut shrinkable: SmallVec<[Var; 16]> = SmallVec::new();
+        for k in start..=end {
+            let var = self.learnt[k].var();
+            self.mf_set(var, MF_SHRINKABLE);
+            self.lrat_minimized.push(var.index() as i32);
+            shrinkable.push(var);
+            max_trail = max_trail.max(self.trail.trail_index(var) as usize);
+            open += 1;
+        }
+
+        // Backward trail scan (cadical `shrink_next` without the reap): the
+        // next literal to discharge is the most recently assigned shrinkable
+        // one.  The cursor only descends; reason antecedents always sit
+        // below their implier on the trail, so nothing is missed.
+        //
+        // The popped literal's trail index is captured *at pop time*
+        // (`uip_pos = pos` inside the loop below).  A previous revision
+        // recomputed it as `cursor + 1` after the loop, which is wrong when
+        // the UIP sits at trail index 0: the cursor's `saturating_sub` then
+        // leaves it at 0 instead of wrapping, `cursor + 1` points at the
+        // *next* literal above, and the block was replaced by that literal's
+        // negation – a literal resolution never derived.  On the 194-block
+        // incremental tautology regression this produced the unentailed
+        // clause `[3,4,5,-7,6,-8]` (block `{-8,-1}` at level 1, UIP = the
+        // level-1 decision `-1`, replaced by `-8`) and a false `unsat`.
+        let mut cursor = max_trail;
+        let mut failed = false;
+        let mut uip_var: Option<Var> = None;
+        let mut uip_pos: usize = max_trail;
+        while !failed {
+            // `shrink_next`: pop the newest shrinkable literal.
+            let mut uip_lit;
+            let mut pos;
+            loop {
+                pos = cursor;
+                uip_lit = self.trail.assignments()[cursor];
+                cursor = cursor.saturating_sub(1);
+                if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
+                    break;
+                }
+            }
+            open -= 1;
+            if open == 0 {
+                uip_var = Some(uip_lit.var());
+                uip_pos = pos;
+                break;
+            }
+            // `shrink_along_reason`: resolve the popped literal against its
+            // reason (`resolve_large_clauses` is unconditionally true under
+            // `shrink == 3`).
+            let Reason::Propagation(cid) = self.trail.reason(uip_lit.var()) else {
+                failed = true;
+                break;
+            };
+            let reason_lits: SmallVec<[Lit; 8]> = self
+                .clauses
+                .get(cid)
+                .map(|c| {
+                    c.lits
+                        .iter()
+                        .filter(|&&l| l.var() != uip_lit.var())
+                        .copied()
+                        .collect()
+                })
+                .unwrap_or_default();
+            if reason_lits.is_empty() {
+                failed = true;
+                break;
+            }
+            for &lit in &reason_lits {
+                match self.shrink_literal(lit, blevel) {
+                    ShrinkStep::Fail => {
+                        failed = true;
+                        break;
+                    }
+                    ShrinkStep::NewlyShrinkable => open += 1,
+                    ShrinkStep::Skip => {}
+                }
+                if failed {
+                    break;
+                }
+            }
+        }
+
+        if failed {
+            // `reset_shrinkable` + `shrunken_block_no_uip`: fall back to
+            // per-literal recursive minimization inside the block.
+            for &var in &shrinkable {
+                self.mf_unset(var, MF_SHRINKABLE);
+            }
+            let mut minimized: u64 = 0;
+            for k in start..=end {
+                let lit = self.learnt[k];
+                if self.minimize_literal_plain(lit.negate(), 0) {
+                    self.learnt[k] = sentinel;
+                    minimized += 1;
+                } else {
+                    self.mf_set(lit.var(), MF_KEEP);
+                }
+            }
+            (0, minimized)
+        } else {
+            // `shrunken_block_uip`: replace the block by the negation of its
+            // UIP.  `uip_lit` is TRUE on the trail; the clause stores false
+            // literals, so the replacement is its negation, at `blevel`.
+            let Some(uvar) = uip_var else {
+                return (0, 0);
+            };
+            let repl = self.trail.assignments()[uip_pos].negate();
+            debug_assert_eq!(self.trail.level(repl.var()), blevel);
+            self.learnt[end] = repl;
+            for k in start..end {
+                self.learnt[k] = sentinel;
+            }
+            let block_shrunken = (end - start) as u64;
+            // Keep-flag + analysis bookkeeping (cadical marks the replacement
+            // `keep`, adds it to `analyzed`, and resets the level's seen
+            // statistics as if it were the level's sole contributor).
+            self.mf_set(uvar, MF_KEEP);
+            if !self.seen[uvar.index()] {
+                self.seen[uvar.index()] = true;
+                if !vars_to_bump.contains(&uvar) {
+                    vars_to_bump.push(uvar);
+                }
+            }
+            let bl = blevel as usize;
+            if bl < self.seen_level_count.len() {
+                self.seen_level_count[bl] = 1;
+                self.seen_level_trail[bl] = self.trail.trail_index(uvar);
+            }
+            // `mark_shrinkable_as_removable`: block and chain literals were
+            // resolved away; they carry the REMOVABLE flag until the
+            // analysis-wide reset (recorded above via `lrat_minimized`).
+            for &var in &shrinkable {
+                self.mf_unset(var, MF_SHRINKABLE);
+                self.mf_set(var, MF_REMOVABLE);
+            }
+            (block_shrunken, 0)
+        }
+    }
+
+    /// One step of the block's resolution walk (cadical `shrink_literal`).
+    /// `lit` is FALSE on the trail.  `Skip` covers level-0 literals,
+    /// already-shrinkable ones, and lower-level literals that are (or probe)
+    /// removable; `Fail` aborts the block walk (a lower-level antecedent that
+    /// is not removable).
+    fn shrink_literal(&mut self, lit: Lit, blevel: u32) -> ShrinkStep {
+        let var = lit.var();
+        let level = self.trail.level(var);
+        if level == 0 {
+            return ShrinkStep::Skip;
+        }
+        let f = self.mf_get(var);
+        if f & MF_SHRINKABLE != 0 {
+            return ShrinkStep::Skip;
+        }
+        if level < blevel {
+            if f & MF_REMOVABLE != 0 {
+                return ShrinkStep::Skip;
+            }
+            // `shrink > 2`: try minimization for lower-level antecedents.
+            if self.minimize_literal_plain(lit.negate(), 1) {
+                return ShrinkStep::Skip;
+            }
+            return ShrinkStep::Fail;
+        }
+        if level > blevel {
+            // cadical asserts reasons never reach above the block's level;
+            // under our chronological backtracking that invariant is not
+            // guaranteed, so degrade to failure (the block falls back to
+            // plain minimization) instead of resolving through it.
+            return ShrinkStep::Fail;
+        }
+        self.mf_set(var, MF_SHRINKABLE);
+        self.lrat_minimized.push(var.index() as i32);
+        ShrinkStep::NewlyShrinkable
+    }
+
     pub(super) fn minimize_learnt_clause(&mut self) {
         if self.learnt.len() <= 2 {
             // Don't minimize very small clauses
@@ -1085,7 +1428,6 @@ impl Solver {
 
         // Conflict level for the minimizer (see `analyze`).
         self.current_conflict_level = current_level;
-
         // Process conflict literals
         let mut all_level_zero = true;
         for &lit in conflict_lits {
@@ -1215,8 +1557,9 @@ impl Solver {
             self.learnt[0] = uip.negate();
         }
 
-        // Minimize
-        self.minimize_learnt_clause();
+        // Improve (shrink/minimize) the learned clause before the bump batch,
+        // mirroring `analyze` (block-UIP vars join the bump set).
+        self.improve_learnt_clause(&mut vars_to_bump);
 
         // Compute the real LBD from the FINAL learned clause literals (post-minimization),
         // matching the standard Glucose definition rather than using the larger
@@ -1271,6 +1614,15 @@ impl Solver {
                 .all(|lit| self.trail.level(lit.var()) <= backtrack_level),
             "theory: every non-asserting literal must be at or below the backtrack level"
         );
+
+        // Snapshot the analysis-walk glue before the level statistics are
+        // cleared: `seen_levels` at this point holds exactly cadical's
+        // `levels` set (every decision level that contributed a literal to
+        // the resolution walk), so `len - 1` is cadical's `glue` – the
+        // statistic the restart EMAs are fed with (see
+        // `Solver::analysis_walk_glue`).
+        self.analysis_walk_glue =
+            u32::try_from(self.seen_levels.len().saturating_sub(1)).unwrap_or(u32::MAX);
 
         // Reset the per-level `seen` statistics now that minimization (their
         // only consumer) has run (cadical `clear_analyzed_levels`).

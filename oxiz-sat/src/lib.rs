@@ -228,6 +228,39 @@ pub fn probe_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Matched-null switch for the analysis-walk-glue restart-EMA experiment
+/// (see `docs/studies/`): when set, the restart EMAs receive the *previous*
+/// conflict's walk glue instead of the current one – same distribution,
+/// same timing, no current-conflict information.
+#[doc(hidden)]
+pub fn glue_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_GLUE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// A/B switch for the walk-glue restart-EMA port: when set, the EMAs keep
+/// receiving the pre-port input (the stored clause's LBD).  Used by the seed
+/// study to attribute the restart-cadence effect (see `docs/studies/`).
+#[doc(hidden)]
+pub fn glue_legacy_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_GLUE_LEGACY").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Matched-null switch for the clause-shrinking experiment (see
+/// `docs/studies/`): when set, the full shrink walk runs (same work, same
+/// side effects) but its result is discarded and the plain recursive
+/// minimizer produces the stored clause – isolating the semantic content of
+/// block-UIP shrinking from its cost and trajectory reshuffling.
+#[doc(hidden)]
+pub fn shrink_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_SHRINK_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
 pub use clause_maintenance::{ClauseMaintenance, MaintenanceStats};
 pub use clause_size_manager::{ClauseSizeManager, SizeAdjustmentStrategy, SizeManagerStats};

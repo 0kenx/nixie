@@ -210,18 +210,26 @@ impl Solver {
     /// backtrack) and `<props>` is the running propagation count (so the BCP
     /// power metric `propagations/conflict` = last `<props>` / #conflicts).
     #[cfg(feature = "std")]
-    pub(super) fn trace_conflict(&self, path: &str, level: u32, learnt_len: usize) {
+    pub(super) fn trace_conflict(&self, path: &str, level: u32, learnt_len: usize, backjump: u32) {
         if !trace_decisions_enabled() {
             return;
         }
         eprintln!(
-            "oxiz-conflict\t{path}\t{level}\t{learnt_len}\t{}",
-            self.stats.propagations
+            "oxiz-conflict\t{path}\t{level}\t{learnt_len}\t{}\t{backjump}\t{}",
+            self.stats.propagations,
+            self.trail.assignments().len()
         );
     }
 
     #[cfg(not(feature = "std"))]
-    pub(super) fn trace_conflict(&self, _path: &str, _level: u32, _learnt_len: usize) {}
+    pub(super) fn trace_conflict(
+        &self,
+        _path: &str,
+        _level: u32,
+        _learnt_len: usize,
+        _backjump: u32,
+    ) {
+    }
 
     /// Backtrack with phase saving
     ///
@@ -491,11 +499,28 @@ impl Solver {
     /// Restart
     pub(super) fn restart(&mut self) {
         self.stats.restarts += 1;
+        if self.stable {
+            self.stats.restarts_stable += 1;
+        }
         // Target/best phase bookkeeping no longer lives here: every
         // `backtrack_with_phase_saving` (this one included) routes through
         // `update_target_and_best`, keyed on the conflict-free prefix –
         // cadical's exact update point (backtrack.cpp).
         let reuse = self.reuse_trail();
+        if reuse > 0 {
+            self.stats.reused_trails += 1;
+            self.stats.reused_levels += u64::from(reuse);
+        }
+        #[cfg(feature = "std")]
+        if trace_decisions_enabled() {
+            eprintln!(
+                "oxiz-restart\t{}\t{}\t{}\t{}",
+                self.stats.conflicts,
+                self.trail.decision_level(),
+                reuse,
+                self.stats.propagations
+            );
+        }
         self.backtrack_with_phase_saving(reuse);
 
         // Calculate next restart threshold based on strategy
