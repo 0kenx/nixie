@@ -602,6 +602,10 @@ impl Solver {
         self.trail.assign_decision(lit);
     }
 
+    /// TEMPORARY DIAGNOSTIC: RUP-check `clause` against ORIGINAL
+    /// clauses only.  Assumes the negation of every literal and propagates
+    /// over originals; a conflict proves entailment.  Runs on a scratch
+    /// assignment map; does not touch solver state.
     /// Reduce the learned clause database using tier-based deletion strategy
     /// - Core tier (Tier 1): Rarely deleted, only if very inactive
     /// - Mid tier (Tier 2): Delete ~30% based on activity
@@ -1232,6 +1236,13 @@ impl Solver {
 
         // Write the reordered literals back into the clause.
         self.clauses.shrink(clause_id, &lits);
+        // Recompute the stored LBD over the shrunken literal set (the old
+        // value can exceed the new length – see `replace_clause_lits`).
+        if self.clauses.get(clause_id).is_some_and(|c| c.learned) {
+            let lbd = self.compute_lbd(&lits);
+            self.clauses.set_lbd(clause_id, lbd);
+            self.clauses.assign_tier_from_lbd(clause_id);
+        }
 
         // Re-attach watches on the new positions 0 and 1.
         self.watches.add(w0.negate(), Watcher::new(clause_id, w1));
@@ -1395,6 +1406,17 @@ impl Solver {
             };
             lits.swap(1, i1);
             self.clauses.shrink(cid, &lits);
+            // An in-place shrink invalidates the stored LBD: the tier and the
+            // `lbd <= len` invariant (checked by `check_learned_clause_lbd`)
+            // are defined over the *stored* literals, so recompute it.  All
+            // surviving literals are false on the trail at this moment
+            // (vivification/strengthening only drops literals it proved
+            // redundant), so the recomputation is well-defined.
+            if self.clauses.get(cid).is_some_and(|c| c.learned) {
+                let lbd = self.compute_lbd(&lits);
+                self.clauses.set_lbd(cid, lbd);
+                self.clauses.assign_tier_from_lbd(cid);
+            }
             let w0 = lits[0];
             let w1 = lits[1];
             self.watches.add(w0.negate(), Watcher::new(cid, w1));

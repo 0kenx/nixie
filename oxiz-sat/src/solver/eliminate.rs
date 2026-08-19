@@ -899,6 +899,13 @@ impl Solver {
             _ => {}
         }
         self.clauses.shrink(cid, &new_lits);
+        // Recompute the stored LBD over the shrunken literal set (learned
+        // clauses keep the `lbd <= len` invariant; originals have no LBD).
+        if self.clauses.get(cid).is_some_and(|c| c.learned) {
+            let lbd = self.compute_lbd(&new_lits);
+            self.clauses.set_lbd(cid, lbd);
+            self.clauses.assign_tier_from_lbd(cid);
+        }
         ctx.dirty = true;
         for &lit in drop {
             let code = lit.code() as usize;

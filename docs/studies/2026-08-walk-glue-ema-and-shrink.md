@@ -132,3 +132,56 @@ proof of a tuned win.
   `reused_trails`, `reused_levels`), `oxiz-restart` trace line.
 - `oxiz-sat/src/solver/{mod,search_ext,tests}.rs`, `config_presets.rs`, `lib.rs` —
   config/stats/flag plumbing, fixpoint diagnostic, updated EMA-contract test.
+
+
+## Follow-up: shrink × inprocessing produces a false `unsat` (gated; root cause open)
+
+While re-measuring the inprocessing stack against the new default (Item 2), the
+full-stack arm answered `unsat` on **SATISFIABLE**
+`satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf`
+(CaDiCaL: `sat` with model; certified mode: `unknown`).  Regression window:
+`3fdcd38` answers `sat` under the same env; the shrink landing answers `unsat`.
+
+**Deterministic reproducer** (every run, ~67 s): `INPROCESS=1` with the
+standalone pre-search vivify and the periodic inprocess round disabled
+(diagnostic gates since removed) – i.e. *pre-search `inprocess()` alone* plus
+shrink.  `SHRINK=0` on the identical arm answers `sat`.  With the whole stack
+on, the verdict is trajectory-dependent (the LBD-recompute fix below flips some
+arms) – only the reduced arm is stable.
+
+**What the corruption looks like** (all diagnostics temporary, removed):
+
+- The final refutation is a *learned* clause falsified by level-0 facts.
+  That clause is entailed (CaDiCaL: input ∧ ¬clause = UNSAT).
+- The level-0 trail has 775 units; **286 are not entailed by the input**
+  (per-unit CaDiCaL satisfiability witnesses), starting abruptly at trail
+  index 237 — one poisoned propagation cascade.
+- Every learned unit/binary/ternary is RUP-entailed over the live database at
+  learn time, and every level-0-pinning learned clause (unit, or
+  all-other-literals-false-at-0) is RUP over the then-current DB; every
+  in-place rewrite of an original clause by vivify/subsume (5000 + 35 checked)
+  is entailed by the pristine input.
+- The first poison unit is pinned via `assign_unit_fact` (a learned unit whose
+  RUP witness resolves through previously learned clauses — the chain bottoms
+  out somewhere after the pre-search round; the exact hand-off inside
+  `inprocess()` {pure-literal, subsume+strengthen, vivify, transred} is **not
+  yet isolated**: disabling subsume or the internal vivify individually makes
+  the arm time out (no verdict), the others still answer `unsat`).
+
+**Also fixed en route** (real, pre-existing): in-place clause strengthening
+(vivify, subsume, elimination) shrank clauses without recomputing the stored
+LBD, tripping `check_learned_clause_lbd` (`lbd > len`) in debug builds on both
+sides of the landing.  All three rewrite sites now recompute LBD (and re-tier).
+
+**Landed mitigation**: `improve_learnt_clause` refuses to run block-UIP
+shrinking while `enable_inprocessing` is on — the same posture as the LRAT
+gate (an uncheckable combination is not run).  Both flags remain off/on
+respectively in the default config, so default behavior is unchanged; the
+inprocessing stack stays opt-in and now cannot combine with shrink until the
+root cause is found.  Follow-up required before any Item-2 (inprocessing
+schedule) study: isolate the unsound step inside `inprocess()` (the reduced
+arm + the per-unit witness method above reproduce it in one ~70 s run), then
+remove the gate.
+
+The 94-file tracking numbers in this document were measured with inprocessing
+off and are unaffected.
