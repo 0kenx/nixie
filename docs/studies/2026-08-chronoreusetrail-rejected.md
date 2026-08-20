@@ -244,3 +244,27 @@ not the strengthened clauses themselves.  Next session's first move is now
 precise: run `debug_check_fixpoint_invariants` + a watch/BIG consistency
 sweep after every `remove_literal_and_rewatch` / `vivify_clause` call under
 the reproducer (the debug invariant suite already exists; one env knob).
+
+
+### Session-2e: causal confirmed (control experiment) + invariant sweeps clean
+
+- **Control**: `rephase` off (unrelated to the failure chain) → **still false
+  SAT** (and via a different failure surface: the debug
+  `debug_verify_model` net catches the model violating a **live** clause,
+  `learn.rs` model-violation panic).  So the 2c strengthen-off passes are
+  **causal**, not schedule luck.
+- **Invariant sweeps after every strengthen call** (both sites: watched
+  literals, reason-liveness, post-vivify trail level + propagation fixpoint)
+  → all clean.
+
+Standing picture: strengthen sites causally involved; produced clauses
+entailed (84/84); post-rewrite state passes every existing invariant — yet
+the failure needs them.  Remaining suspects (next session):
+- `mark_elim_vars` re-arming after strengthen → the *next* elimination round
+  resolves through strengthened parents; combined with the reason-position
+  (`lits[0]`) bookkeeping after `swap_lits`, a live reason may be deletable
+  (the `reduce_clause_database` is_reason check reads `lits[0]` — a swapped
+  reason literal evades the guard → deletion of a live reason → unentailed
+  *learned* clauses, which were never sampled in the 84/84 ground-truth).
+- The debug-model-violation failure surface under the rephase-off arm is a
+  second, independent reproduction seed worth keeping.
