@@ -58,3 +58,39 @@ not the schedule).
   `cdclt_propagation_fixpoint_soundness.rs` and the pr28/pr29 regression
   files are the required reading.
 - The freeze-set mechanism + QF_LIA/QF_UF measurement, per above.
+
+
+## 4. Theory-conflict 1-UIP audit vs Z3 (follow-up, same date)
+
+Completed the remaining Item-3 thread on both axes:
+
+**Code read** (`analyze_theory_conflict` vs `smt_theory.h` /
+`smt_context.cpp` usage patterns): every Z3-mirrored property is present —
+all-false validation with the Undef→asserting-lemma reroute (Z3: a lemma
+with an open literal is a propagation, not a conflict); the genuine
+conflict-level anchor (`max level of conflict literals`, not
+`decision_level()` — the level guard landed this release cycle);
+level-0-literal skipping; the chronological-backtracking pivot guard
+(`analyze_scan_pivot`, Z3's `lvl(c_var) != m_conflict_lvl` skip); and lazy
+theory-propagation resolution through `theory_reason_tail` (Z3's
+`th_propagate` records, `explain` consulted only on resolution).
+
+One deliberate conservativeness verified: **block-UIP shrinking never
+resolves through a theory reason** — `shrink_block` requires
+`Reason::Propagation` (bails to plain minimization otherwise) and
+`minimize_literal_plain` likewise; `Reason::Theory` lazy tails are never
+walked by the shrink machinery, so theory-justified literals survive
+shrinking by construction.  Shrink *is* active on the CDCL(T) path
+(`SatConfig::default()`, landed default).
+
+**Differential evidence**: 155-file stratified sweep over
+`smt-lib/non-incremental/{QF_LIA,QF_UF,QF_IDL,QF_UFIDL,QF_UFLIA}`
+(seed-11, 60 s OxiZ / 30 s Z3, verdict cross-check; `unknown`/timeout of
+either side not counted): **88 verdicts, 0 disagreements** with Z3 5.0.0
+(the parity-suite pin is 4.15.4; for ground-logics verdict comparison this
+is immaterial, and any future disagreement gets minimized + certified-mode
+re-validated before analysis anyway).
+
+Verdict: the theory-conflict 1-UIP path is audited clean.  Remaining
+Item-3 residue is only the *enabling* work (freeze set + measurement)
+described in §2 — no known soundness gap.
