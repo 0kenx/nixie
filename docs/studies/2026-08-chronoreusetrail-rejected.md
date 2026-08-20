@@ -268,3 +268,14 @@ the failure needs them.  Remaining suspects (next session):
   *learned* clauses, which were never sampled in the 84/84 ground-truth).
 - The debug-model-violation failure surface under the rephase-off arm is a
   second, independent reproduction seed worth keeping.
+
+
+### Session-2f: reason-deletion guard verified holding
+
+Instrumented `reduce_clause_database` to flag any deletion of a clause that
+is the live reason of ANY of its literals (the `lits[0]`-only guard's
+hypothetical hole): **zero hits** under the reproducer.  That suspect is
+down; the ranked-remaining list is now: mark_elim_vars re-arm interaction
+with the *next* elimination round's occurrence construction, and the
+binary-implication-graph edge bookkeeping across `remove_literal_and_rewatch`
+(a strengthened-away literal's BIG edges surviving, or vice versa).
