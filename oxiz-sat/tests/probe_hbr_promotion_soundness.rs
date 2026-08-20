@@ -19,6 +19,12 @@ fn dominator_hbr_subsuming_original_promotes_resolvent() {
         enable_inprocessing: true,
         enable_failed_literal_probing: true,
         enable_hyper_binary_probing: true,
+        // Chronological backtracking on every conflict exposes the
+        // promoted-clause deletion path this regression protects (dense
+        // out-of-order trails make the on-the-fly subsumption fire while a
+        // promoted clause is in `learned_clause_ids`); without it the same
+        // bug needs a much longer search to surface.
+        chrono_always: true,
         ..SolverConfig::default()
     };
     let mut solver = Solver::with_config(solver_cfg);

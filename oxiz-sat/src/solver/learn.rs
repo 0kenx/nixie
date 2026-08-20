@@ -329,7 +329,22 @@ impl Solver {
             }
 
             if let Some(clause) = self.clauses.get(cid) {
-                if clause.deleted || clause.lits.len() < new_clause.len() {
+                // Promoted clauses are OFF LIMITS. `learned_clause_ids` is
+                // append-only and never pruned on promotion, so a clause that
+                // `subsume_round` promoted to original (cadical
+                // `red = !contained || reason->redundant`: it subsumed an
+                // *original* and carries that original's deletion obligation
+                // permanently) still appears here. Deleting it on the word of
+                // a *learned* subsumer drops the obligation — the final model
+                // then violates an input clause (false SAT; reproduced by
+                // `dominator_hbr_subsuming_original_promotes_resolvent` under
+                // `OXIZ_CHRONO_ALWAYS=1`: promoted `(-874,-1072,-1076)`
+                // removed here while covering the retired original that the
+                // `1082`-elimination resolvent chain depended on).
+                if clause.deleted || !clause.learned {
+                    continue;
+                }
+                if clause.lits.len() < new_clause.len() {
                     continue;
                 }
 

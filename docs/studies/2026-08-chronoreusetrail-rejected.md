@@ -310,3 +310,34 @@ binary-implication-graph edge bookkeeping across `remove_literal_and_rewatch`
   clause — with occurrence lists verified complete and the fired resolution
   verified complete; the backward clause ran with the *new* resolvents
   already attached, which is the remaining unexamined interaction).
+
+
+## SOLVED (2026-08-20, session 4): `check_subsumption` deleted promoted clauses
+
+**Root cause**: the on-the-fly subsumption after learning a short clause
+(`learn.rs::check_subsumption`) iterates `learned_clause_ids` — which is
+append-only and **never pruned when a clause is promoted to original** by
+`subsume_round`'s obligation rule (`red = !contained || reason->redundant`).
+The promoted clause still appeared in the list, so a *learned* subsumer
+deleted it via `remove_clause` as if it were optional — dropping the
+retired original's obligation it had been promoted to carry. The final
+model then violated input clauses (false SAT).
+
+Full causal chain on `Break_unsat_06_07` (each step dump/oracle-verified):
+`subsume_round` promoted learned `(-874,-1072,-1076)` (subsumed an original)
+→ the `1082` elimination retired input clause `(-874,-1082,1090)` with
+resolvent `(-1072,-1076,-874)` (1090 dropped, level-0 falsified) → a
+duplicate-dedup subsumption retired the resolvent in favor of the promoted
+5130 copy → **`check_subsumption` deleted the promoted 5130** (stale list
+membership, no `clause.learned` re-check) → the model-check path found
+`(-874∨-1082∨1090)` uncoverable → one violated input clause → false SAT.
+
+**Fix**: `check_subsumption` skips non-learned clauses (`clause.deleted ||
+!clause.learned`). One line plus the regression: the `dominator_hbr` test
+now runs under `chrono_always: true` (dense out-of-order trails expose the
+path in ~2 s; it is the original reproducer).
+
+Gates: workspace 10 047 green, clippy/fmt/doc clean, z3_parity 0 wrong,
+differential fuzz 2 000 iterations 0 failures. Every diagnostic instrumented
+across the four hunt sessions was reverted; the tree contains only the fix
+and the strengthened test.
