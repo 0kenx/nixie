@@ -506,13 +506,30 @@ impl Solver {
             self.trail.level(self.learnt[1].var())
         };
 
-        // Apply chronological backtracking if enabled
-        let backtrack_level = self.chrono_backtrack.compute_backtrack_level(
+        // Apply chronological backtracking if enabled, then cadical's
+        // `chronoreusetrail` case: on a *short* jump (where the plain helper
+        // backjumps to the assertion level), find the most-recently-bumped
+        // variable in the to-be-discarded trail region and stop only at its
+        // level, keeping the trail content above it (cadical
+        // `analyze.cpp::determine_actual_backtrack_level`).  Sound on the
+        // level-filtered trail: the kept out-of-order literals survive later
+        // backtracks by recorded level, and `backtrack_to_with_callback`
+        // re-propagates the kept region from the level boundary.
+        let plain = self.chrono_backtrack.compute_backtrack_level(
             &self.trail,
             &self.learnt,
             uip_level,
             assertion_level,
         );
+        let backtrack_level = if self.config.chrono_reuse
+            && plain == assertion_level
+            && uip_level > assertion_level.saturating_add(1)
+        {
+            self.chrono_reuse_level(uip_level, assertion_level)
+                .unwrap_or(plain)
+        } else {
+            plain
+        };
 
         // Track chronological vs non-chronological backtracks
         if backtrack_level != assertion_level {
@@ -996,6 +1013,54 @@ impl Solver {
         } else {
             self.shrink_and_minimize_clause(vars_to_bump);
         }
+    }
+
+    /// cadical's `chronoreusetrail` scan (see the call site): over the trail
+    /// region strictly above `jump`'s boundary, find the variable with the
+    /// highest bump key (VMTF stamp while focused, VSIDS score bits while
+    /// stable — cadical's `bumped`/`score_smaller` split), then walk `res`
+    /// up from `jump` while the next level's boundary starts at or below
+    /// that variable's trail position (`control[res+1].trail <= best_pos`).
+    /// Returns `None` when the scan finds nothing to reuse (fall back to the
+    /// plain level).  Matched null (`OXIZ_CHRONOREUSE_NULL=1`): the bump key
+    /// is scrambled (same scan, same work, no selection semantics).
+    fn chrono_reuse_level(&self, level: u32, jump: u32) -> Option<u32> {
+        let start = self.trail.level_start(jump + 1);
+        let trail = self.trail.assignments();
+        if start >= trail.len() {
+            return None;
+        }
+        let null = crate::chrono_reuse_null_enabled();
+        let use_scores = self.config.enable_stabilize && self.stable;
+        let mut best: Option<Var> = None;
+        let mut best_key = 0u64;
+        for &lit in &trail[start..] {
+            let var = lit.var();
+            let mut key = if use_scores {
+                // VSIDS activities are non-negative f64s; their IEEE bit
+                // patterns order identically, so `to_bits` preserves the
+                // score order as a u64 key.
+                self.vsids.activity(var).to_bits()
+            } else {
+                self.vmtf.activity(var)
+            };
+            if null {
+                key ^= key << 13;
+                key ^= key >> 7;
+                key ^= key << 17;
+            }
+            if best.is_none() || key > best_key {
+                best = Some(var);
+                best_key = key;
+            }
+        }
+        let best = best?;
+        let best_pos = self.trail.trail_index(best) as usize;
+        let mut res = jump;
+        while res < level.saturating_sub(1) && self.trail.level_start(res + 1) <= best_pos {
+            res += 1;
+        }
+        if res == jump { None } else { Some(res) }
     }
 
     /// cadical `shrink_and_minimize_clause` (`shrink.cpp`, the `opts.shrink ==

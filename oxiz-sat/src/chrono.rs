@@ -33,6 +33,8 @@ use crate::trail::Trail;
 pub struct ChronoBacktrack {
     /// Enable chronological backtracking
     enabled: bool,
+    /// Force chronological on every conflict (cadical `chronoalways`).
+    always: bool,
     /// Minimum backjump distance (`conflict_level - assertion_level`) that makes
     /// chronological backtracking worthwhile.  Jumps of at most this many levels
     /// use ordinary backjumping; anything deeper is backtracked chronologically.
@@ -44,7 +46,17 @@ impl ChronoBacktrack {
     /// Create a new chronological backtracking helper
     #[must_use]
     pub fn new(enabled: bool, threshold: u32) -> Self {
-        Self { enabled, threshold }
+        Self {
+            enabled,
+            always: false,
+            threshold,
+        }
+    }
+
+    /// Set the always-chronological flag (cadical `chronoalways`).
+    #[allow(dead_code)]
+    pub fn set_always(&mut self, always: bool) {
+        self.always = always;
     }
 
     /// Determine the backtrack level for a learned clause.
@@ -89,6 +101,9 @@ impl ChronoBacktrack {
 
         if !self.enabled || conflict_level == 0 || assertion_level >= conflict_level {
             return assertion_level;
+        }
+        if self.always {
+            return conflict_level.saturating_sub(1);
         }
 
         // Ordinary backjumping for short hops: chronological backtracking pays

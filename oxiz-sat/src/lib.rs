@@ -249,6 +249,18 @@ pub fn glue_legacy_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_GLUE_LEGACY").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Matched-null switch for the chronological trail-reuse port: when set,
+/// the best-variable scan over the discarded region uses a scrambled bump
+/// key (same scan, same work, no selection semantics).
+#[doc(hidden)]
+pub fn chrono_reuse_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_CHRONOREUSE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Matched-null switch for the clause-shrinking experiment (see
 /// `docs/studies/`): when set, the full shrink walk runs (same work, same
 /// side effects) but its result is discarded and the plain recursive

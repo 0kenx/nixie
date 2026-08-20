@@ -240,6 +240,22 @@ pub struct SolverConfig {
     pub elim_interval: u64,
     /// Enable chronological backtracking
     pub enable_chronological_backtrack: bool,
+    /// cadical `chronoreusetrail`: on a short jump, stop above the
+    /// best-bumped variable of the discarded region to keep trail content
+    /// (`analyze.cpp::determine_actual_backtrack_level`).  Requires the
+    /// level-filtered trail (landed with it).  Default **off**: cadical
+    /// defaults it on, but our measurements are neutral-to-slightly-negative
+    /// (single-seed tracking 0.92× paired, bimodal per file; 10-seed null
+    /// study p=0.14) — see
+    /// docs/studies/2026-08-chronoreusetrail-rejected.md.  Revisit with a
+    /// full multi-seed study before flipping.
+    pub chrono_reuse: bool,
+    /// Debug knob (`OXIZ_CHRONO_ALWAYS=1`): force chronological backtracking
+    /// on every non-unit conflict (cadical `chronoalways`).  Exercises the
+    /// out-of-order trail paths far more densely than the distance-threshold
+    /// heuristic does.
+    #[doc(hidden)]
+    pub chrono_always: bool,
     /// Run the inprocessing passes as an unconditional **pre-search
     /// collapse** (BVE fixpoint, ELS one-shot, inprocess/vivify pre-passes)
     /// instead of deferring them to the conflict schedule.  Default `false`
@@ -450,6 +466,8 @@ impl Default for SolverConfig {
             inprocessing_interval: 5000,
             elim_interval: 2000,
             enable_chronological_backtrack: true,
+            chrono_always: std::env::var("OXIZ_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
+            chrono_reuse: std::env::var("OXIZ_CHRONO_REUSE").is_ok_and(|v| v == "1"),
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
             enable_stabilize: true,
@@ -1146,6 +1164,7 @@ impl Solver {
     pub fn with_config(config: SolverConfig) -> Self {
         let chrono_enabled = config.enable_chronological_backtrack;
         let chrono_threshold = config.chrono_backtrack_threshold;
+        let chrono_always = config.chrono_always;
         let stabilize_base = config.stabilize_base;
         let elim_interval = config.elim_interval;
 
@@ -1214,7 +1233,11 @@ impl Solver {
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
             real_theory_attached: false,
-            chrono_backtrack: ChronoBacktrack::new(chrono_enabled, chrono_threshold),
+            chrono_backtrack: {
+                let mut cb = ChronoBacktrack::new(chrono_enabled, chrono_threshold);
+                cb.set_always(chrono_always);
+                cb
+            },
             clause_bump_increment: 1.0,
             memory_optimizer: MemoryOptimizer::new(),
             pure_literal_reconstruction: Vec::new(),

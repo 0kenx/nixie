@@ -94,6 +94,8 @@ impl ConfigPreset {
     fn industrial_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 100,
             restart_multiplier: 1.5,
@@ -143,6 +145,8 @@ impl ConfigPreset {
     fn random_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 50,
             restart_multiplier: 2.0,
@@ -192,6 +196,8 @@ impl ConfigPreset {
     fn cryptographic_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 200,
             restart_multiplier: 1.3,
@@ -241,6 +247,8 @@ impl ConfigPreset {
     fn hardware_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 80,
             restart_multiplier: 1.4,
@@ -290,6 +298,8 @@ impl ConfigPreset {
     fn aggressive_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 30,
             restart_multiplier: 1.1,
@@ -339,6 +349,8 @@ impl ConfigPreset {
     fn conservative_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 500,
             restart_multiplier: 2.0,
@@ -384,6 +396,8 @@ impl ConfigPreset {
     fn glucose_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 100,
             restart_multiplier: 1.5,
@@ -429,6 +443,8 @@ impl ConfigPreset {
     fn minisat_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 100,
             restart_multiplier: 1.5,
@@ -474,6 +490,8 @@ impl ConfigPreset {
     fn cadical_config() -> SolverConfig {
         SolverConfig {
             enable_shrink: true,
+            chrono_always: false,
+            chrono_reuse: false,
             presearch_collapse: false,
             restart_interval: 100,
             restart_multiplier: 1.4,

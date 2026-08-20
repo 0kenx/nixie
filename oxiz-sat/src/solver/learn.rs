@@ -830,6 +830,15 @@ impl Solver {
         if self.config.enable_inprocessing
             && self.conflicts_since_inprocessing >= self.config.inprocessing_interval
         {
+            // The scheduled pass backtracks to the root itself (exactly like
+            // `try_scheduled_elimination` and cadical's inprocessing entries,
+            // which run at `level 0` by construction).  Without this the
+            // schedule only fired on conflicts that happened to backjump to
+            // level 0 – on instances whose conflicts resolve at non-zero
+            // assertion levels the interval silently never triggered.
+            if self.trail.decision_level() > 0 {
+                self.backtrack_with_phase_saving(0);
+            }
             self.inprocess();
             self.conflicts_since_inprocessing = 0;
         }

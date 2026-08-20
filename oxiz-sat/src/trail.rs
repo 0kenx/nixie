@@ -296,6 +296,45 @@ impl Trail {
     }
 
     /// Backtrack to a given decision level, calling the callback for each unassigned literal
+    /// Backtrack to `level` with **level-filtered** semantics (cadical
+    /// `backtrack.cpp`'s out-of-order design, SAT'18 chronological
+    /// backtracking): unassign exactly the literals whose **recorded decision
+    /// level** exceeds `level`, and keep – compacting in place – every
+    /// literal above the level boundary whose recorded level is ≤ `level`.
+    ///
+    /// The previous suffix-pop ("unassign everything positioned above
+    /// `level_starts[level+1]`") is unsound once the trail can hold
+    /// out-of-order literals – assignments recorded at a level *below* the
+    /// level they were appended at.  Such literals are created by
+    /// [`Trail::assign_propagation_at`] (chronological backtracking's
+    /// asserting literal, recorded at its true implication level while the
+    /// search sits above it).  A later suffix-pop backtracks *past* them
+    /// positionally even though their recorded level says they survive,
+    /// silently dropping justified assignments; clauses that were unit
+    /// through them stop being enforced and the propagation-fixpoint
+    /// invariant breaks – reproduced by `chronoalways` on the `pmres`
+    /// stratified test (hanging unit `[-65, 64, 62]`, levels `[0, 8, 3]`,
+    /// unassigned through a positional pop despite recorded level 8 ≤ the
+    /// stop level).
+    ///
+    /// Soundness of the keep-by-level rule rests on the trail's recording
+    /// invariant: a propagated literal's recorded level is the **maximum**
+    /// of its reason's literal levels (`assign_propagation_at`; BCP's
+    /// `assign_propagation` records `current_level`, itself an upper bound
+    /// over every trail position).  Hence every reason literal of a kept
+    /// literal has level ≤ the kept literal's level ≤ `level`, so kept
+    /// literals never dangle; and a clause that is unit over kept literals
+    /// has its open literal recorded at ≥ all their levels, so it is kept
+    /// too – no hanging units.
+    ///
+    /// The propagation head is clamped to the level boundary (cadical
+    /// `propagated = assigned`): the kept out-of-order region above the
+    /// boundary is re-examined by the next `propagate` pass, re-deriving
+    /// consequences whose originals were unassigned.  Re-processing is
+    /// idempotent – satisfied first-watches short-circuit, already-derived
+    /// units re-assert identically – and, per the invariant above, cannot
+    /// produce conflicts among kept literals (they were mutually consistent
+    /// at the last fixpoint each was appended in).
     pub fn backtrack_to_with_callback<F>(&mut self, level: u32, mut callback: F)
     where
         F: FnMut(Lit),
@@ -304,31 +343,45 @@ impl Trail {
             return;
         }
 
-        let target_idx = self.level_starts[(level + 1) as usize];
+        let boundary = self.level_starts[(level + 1) as usize];
 
-        // Unassign all literals above the target level
-        while self.assignments.len() > target_idx {
-            let lit = self
-                .assignments
-                .pop()
-                .expect("assignments non-empty in loop condition");
-            let code = lit.code() as usize;
-            self.values[code] = 0;
-            self.values[code ^ 1] = 0;
-            // Reset the full VarInfo (not just `.value`): leaving `.level` stale
-            // after backtracking made `Trail::level` report the *old* decision
-            // level for unassigned variables. That corrupted every consumer of
-            // levels on unassigned vars – most importantly `compute_lbd`, which
-            // is computed on the freshly-learned clause *after* backtracking
-            // (so its literals above the backtrack level read stale levels and
-            // produced garbage glue), and the Glucose-style restart EMA.
-            self.var_info[lit.var().index()] = VarInfo::default();
-            callback(lit);
+        // Unassign by recorded level; compact the survivors in place.
+        let mut write = boundary;
+        for read in boundary..self.assignments.len() {
+            let lit = self.assignments[read];
+            if self.var_info[lit.var().index()].level > level {
+                let code = lit.code() as usize;
+                self.values[code] = 0;
+                self.values[code ^ 1] = 0;
+                // Reset the full VarInfo (not just `.value`): leaving `.level`
+                // stale after backtracking made `Trail::level` report the *old*
+                // decision level for unassigned variables. That corrupted every
+                // consumer of levels on unassigned vars – most importantly
+                // `compute_lbd`, which is computed on the freshly-learned
+                // clause *after* backtracking (so its literals above the
+                // backtrack level read stale levels and produced garbage glue),
+                // and the Glucose-style restart EMA.
+                self.var_info[lit.var().index()] = VarInfo::default();
+                callback(lit);
+            } else {
+                // Kept out-of-order literal: compact down and refresh its
+                // trail index (reasons, watchers and `decision_var_at_level`
+                // are unaffected – the decision of each level stays at
+                // `level_starts[level]`, appended there by
+                // `new_decision_level` + `assign_decision` before anything
+                // else could interleave).
+                self.assignments[write] = lit;
+                self.var_info[lit.var().index()].trail_idx = write as u32;
+                write += 1;
+            }
         }
+        self.assignments.truncate(write);
 
         self.level_starts.truncate((level + 1) as usize);
         self.current_level = level;
-        self.prop_head = self.assignments.len();
+        // Clamp (never extend) the propagation head to the level boundary:
+        // kept literals at or above it are re-processed by the next pass.
+        self.prop_head = self.prop_head.min(boundary);
     }
 
     /// Get the number of assigned variables

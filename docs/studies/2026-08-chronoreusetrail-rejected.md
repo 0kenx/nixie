@@ -75,3 +75,56 @@ level-filtered-backtrack-everywhere redesign. Do **not** retry the
 level arithmetic (that was fixed and verified), it is that any later
 positional suffix backtrack corrupts the out-of-order trail the reuse case
 creates. Start from the trail, not the heuristic.
+
+
+## Follow-up (2026-08-20): prerequisite LANDED — level-filtered backtracks everywhere; port reapplied behind a default-off flag
+
+The enabling redesign is in: `Trail::backtrack_to_with_callback` now unassigns
+by **recorded level** and compacts kept out-of-order literals in place (cadical
+`backtrack.cpp` semantics), with the propagation head clamped to the level
+boundary (`propagated = assigned`).  Every backtrack in the engine flows
+through it.  Two supporting fixes landed with it:
+
+- **The pre-change suffix-pop was a real latent hole, now proven**: with
+  `chrono_always` (cadical `chronoalways`, exposed as a debug knob) the
+  `pmres` stratified test panics on the hanging-unit invariant under the OLD
+  trail — out-of-order asserting literals dropped positionally — and passes
+  under the new one.  Regression: `chrono_trail_level_filter_regression.rs`
+  (repeated assumption solves under `chrono_always`) plus the oxiz-opt pmres
+  test itself.
+- **The scheduled inprocess entry now backtracks to root itself** (mirroring
+  `try_scheduled_elimination` and cadical): previously the interval only fired
+  on conflicts that happened to backjump to level 0 — on instances whose
+  conflicts resolve at non-zero assertion levels the schedule silently never
+  triggered (caught by `inprocess_drat_deletion`, whose deletions vanished
+  after the trail change shifted the trajectory).
+
+The `determine_actual_backtrack_level` port (including the fixed
+`control[res+1].trail` boundary arithmetic) is reapplied as
+`SolverConfig::chrono_reuse`, **default off**: cadical defaults
+`chronoreusetrail=1`, but our measurements stay neutral-to-negative
+(single-seed canonical tracking: trail-only 0.837× paired vs pre, trail+reuse
+0.921×, both bimodal per file; the earlier 10-seed null study p=0.14), and the
+canonical-seed headline moved 19→28 (trail-only) / 19→23 (with reuse) files
+above 1.5× of cadical.  Completions did improve (79→83/82 of 94).  Revisit
+with a full ≥10-seed study before flipping the default.  Matched null:
+`OXIZ_CHRONOREUSE_NULL=1` (scrambled bump key).
+
+## Open thread (next session): pre-existing false SAT under `chronoalways` + full inprocessing stack
+
+While validating, `dominator_hbr_subsuming_original_promotes_resolvent`
+(**in-repo permanent reproducer**: `OXIZ_CHRONO_ALWAYS=1 cargo nextest run -p
+oxiz-sat dominator_hbr`) answers **sat on UNSAT input** — under BOTH the old
+and new trail (A/B-verified), i.e. a pre-existing bug the suffix-pop trail
+masked in the final verdict and the level-filter trail exposes.  Bisected to
+one elimination round: dumping the live DB (with level-0 trail facts) after
+every inprocessing sub-pass shows equi-satisfiability breaking inside a single
+`elim_round` that eliminated exactly one variable (idx 1032 / DIMACS 1033);
+occurrence lists match ground truth at elimination time and the 4 added
+resolvents match the (small) parent set — the break is in the round's
+periphery (backward strengthening / satisfied-skip / garbage retirement /
+unit forcing), not yet isolated.  Two full dump artifacts were produced
+(`/tmp/dbdumps/db_012*`, `db_013*`, cadical-verdict-checked) but the
+instrumentation was removed before landing; the recipe is in the session
+record.  Default configs are unaffected (needs the opt-in stack +
+`chronoalways`), but it is a real soundness bug — top of the queue.
