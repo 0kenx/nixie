@@ -703,6 +703,19 @@ impl Solver {
                 .saturating_add(self.config.rephase_interval);
             self.rephase_rounds = [0, 0];
         }
+        // cadical's initial probe limit (init_search_limits): conflicts +
+        // `inprobeint × log10(irredundant + 10)²`, i.e. scaled by the size of
+        // the original formula (≈ 900 conflicts at 1k clauses, ≈ 1 700 at
+        // 13k, ≈ 2 300 at 60k) – and kept as-is on incremental solves once
+        // initialized (cadical's `incremental` branch). Only the first solve
+        // of a solver instance takes this branch (`lim_inprobe_inited`).
+        if !self.lim_inprobe_inited {
+            self.lim_inprobe_inited = true;
+            let irredundant = self.clauses.num_original() as f64;
+            let delta = (irredundant + 10.0).log10();
+            let delta = (delta * delta) * super::probe::INPROBE_BASE_INTERVAL as f64;
+            self.lim_inprobe = self.stats.conflicts.saturating_add(delta.max(1.0) as u64);
+        }
     }
 
     /// cadical `Internal::rephase()`: backtrack to the root (routing through

@@ -302,15 +302,24 @@ impl Solver {
 
             self.assert_learned_clause(&learnt_clause, clause_id);
 
-            // On-the-fly subsumption: check if this new clause subsumes existing clauses
-            if learnt_clause.len() <= 5 && lbd <= 3 {
-                self.check_subsumption(clause_id);
-            }
+            // NOTE: no per-learned-clause database subsumption scan here
+            // (cadical parity). The previous `check_subsumption` call walked
+            // the append-only `learned_clause_ids` table for *every* short
+            // low-glue learned clause – an O(learned) scan whose cost grows
+            // quadratically over the search (measured on `crn_11_99_u`:
+            // ~30% of all instructions were this scan's random-access id
+            // probes). CaDiCaL never scans the database per learned clause:
+            // bulk subsumption is the periodic `subsume` round (our
+            // `subsume_round`, run by the inprocessing schedule), and its
+            // on-the-fly strengthening only ever rewrites the conflict's own
+            // driving clause. Subsumed learned clauses that linger until the
+            // next reduction are cadical's behavior too.
         }
     }
 
     /// Check if the given clause subsumes any existing clauses
     /// A clause C subsumes C' if all literals of C are in C'
+    #[expect(dead_code)]
     pub(super) fn check_subsumption(&mut self, new_clause_id: ClauseId) {
         let new_clause: Vec<Lit> = match self.clauses.get(new_clause_id) {
             Some(c) => c.lits.to_vec(),

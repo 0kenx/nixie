@@ -146,6 +146,17 @@ impl ClauseHeader {
     fn tier(self) -> u32 {
         ((self.flags_tier >> TIER_SHIFT) & 0x3) as u32
     }
+
+    #[inline]
+    fn lbd(self) -> u32 {
+        self.lbd as u32
+    }
+
+    /// Set the LBD, saturating at `u16::MAX` (the stored width).
+    #[inline]
+    fn set_lbd(&mut self, lbd: u32) {
+        self.lbd = lbd.min(u16::MAX as u32) as u16;
+    }
 }
 
 /// Slot geometry: header size and 8-byte slot stride rounding.
@@ -416,6 +427,17 @@ impl ClauseArena {
                 new_lits.len(),
             );
             (*hp).len = new_lits.len() as u32;
+            // cadical `shrink_clause` parity: clamp the glue of a redundant
+            // clause to `min(new_size - 1, glue)` on every in-place shrink.
+            // The LBD is a tiering/quality metric only, but the stored value
+            // must satisfy `lbd <= len - 1` (distinct decision levels of the
+            // surviving literals cannot exceed their count) – an in-place
+            // rewrite that drops literals (ELS substitution, subsume
+            // strengthening, vivification) leaves a stale, now-too-large LBD
+            // behind otherwise, which the debug invariant
+            // `check_learned_clause_lbd` flags and tier promotion mis-reads.
+            let new_lbd = (*hp).lbd().min(new_lits.len().saturating_sub(1) as u32);
+            (*hp).set_lbd(new_lbd);
         }
         true
     }

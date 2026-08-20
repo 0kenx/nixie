@@ -61,7 +61,11 @@ fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
 /// (i.e., for binary clause (~L v M), when L is assigned false, M must be true)
 /// Initial `lim.inprobe`: the first probe round fires once conflicts reach
 /// the base interval (mirrors how `lim_elim` initializes from the config).
-const INPROBE_INIT_LIMIT: u64 = 2_000;
+/// Initial probe-round conflict limit before the first solve re-derives it
+/// from the formula size (see `init_rephase_limits`). Zero makes `inprobing`
+/// never fire before a solve ran – probing mid-search only ever makes sense
+/// after `init_rephase_limits` has sized the schedule to the input.
+const INPROBE_INIT_LIMIT: u64 = u64::MAX;
 
 #[derive(Debug, Clone)]
 pub(super) struct BinaryImplicationGraph {
@@ -1023,6 +1027,10 @@ pub struct Solver {
     pub(super) elim_probes_done: u64,
     /// Conflict threshold for the next probe round (cadical `lim.inprobe`).
     pub(super) lim_inprobe: u64,
+    /// Whether `lim_inprobe` has been derived from the input formula size
+    /// (once per solver instance; cadical keeps its initial limit on
+    /// incremental solves).
+    pub(super) lim_inprobe_inited: bool,
     /// Level-0 trail size after the last probe round (re-arm evidence).
     pub(super) last_probe_units: usize,
     /// True while a `solve_with_assumptions` call is in flight: destructive
@@ -1263,6 +1271,7 @@ impl Solver {
             probe_propfixed: Vec::new(),
             elim_probes_done: 0,
             lim_inprobe: INPROBE_INIT_LIMIT,
+            lim_inprobe_inited: false,
             last_probe_units: 0,
             assumptions_active: false,
             did_equiv_subst: false,

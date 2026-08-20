@@ -66,9 +66,17 @@ impl Solver {
 
         // Augment the binary implication graph with equivalences inferred from
         // congruent AND/XOR gates (multiplier / adder structure) before SCC, so
-        // the closure below folds them in too.
-        if self.config.enable_gate_congruence && !self.config.enable_inprocessing {
+        // the closure below folds them in too.  Enabled under inprocessing as
+        // well: the augmented edges are only consumed by the SCC below, and
+        // **every** exit of this round now purges them via
+        // `refresh_binary_graph` (the end-of-round purge existed before; the
+        // early-out below used to skip it, which is why congruence was gated
+        // off under inprocessing in 169217e – leaving unbacked edges in the
+        // BIG through the search on the no-equivalence path).
+        let mut big_augmented = false;
+        if self.config.enable_gate_congruence {
             self.augment_big_with_gate_congruence();
+            big_augmented = true;
         }
 
         // `sub[code(l)]` = representative literal equivalent to `l` (itself if
@@ -162,8 +170,15 @@ impl Solver {
             }
         }
 
-        // Early-out if nothing actually moved.
+        // Early-out if nothing actually moved.  Even then, gate-congruence
+        // augmentation (if it ran) must be rolled back: the augmented edges
+        // are not backed by live clauses and would keep propagating through
+        // the search (hanging-unit hazard – see the module comment on
+        // `refresh_binary_graph`).
         if !(0..num_lits).any(|c| sub[c].code() as usize != c) {
+            if big_augmented {
+                self.refresh_binary_graph();
+            }
             return SubstOutcome::Ok;
         }
 
@@ -173,6 +188,30 @@ impl Solver {
         let mut eliminated = 0usize;
 
         for cid in live_ids {
+            // Rewrite semantics follow cadical `decompose.cpp` exactly:
+            // evaluate every literal (and its representative) against the
+            // level-0 trail while building the replacement clause –
+            // * a literal (or its mapped representative) that is **true**
+            //   satisfies the clause: the clause is retired outright (it
+            //   constrains nothing further at this scope),
+            // * a **false** literal is dropped from the replacement (a false
+            //   disjunct contributes nothing; the level-0 unit that falsified
+            //   it is permanent for this assertion scope).
+            //
+            // The value filtering is what makes the in-place rewrite + watch
+            // rebuild sound: after it, every literal kept in a rewritten
+            // clause is unassigned at level 0, so whichever two literals the
+            // rebuild picks as watches are literals that have not yet fired –
+            // their watch lists are still armed. Keeping a false literal (the
+            // previous behavior) placed fresh watches on literals whose
+            // falsification had *already happened* at level 0: those watch
+            // lists are never visited again (a watch fires only when its
+            // literal *becomes* false), so a clause that later became unit or
+            // falsified hung silently until the full-assignment guard caught
+            // it (reproduced: `constraints_17` under
+            // `enable_equiv_substitution` returned Unknown via
+            // `trail_falsifies_live_clause`; debug invariant:
+            // `check_unit_propagation_complete` hanging-unit violations).
             let mapped: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
                 Some(c) if !c.deleted => c.lits.iter().map(|&l| sub[l.code() as usize]).collect(),
                 _ => continue,
@@ -181,10 +220,26 @@ impl Solver {
                 continue;
             }
 
+            let mut satisfied = false;
+            let mut lits: Vec<Lit> = Vec::with_capacity(mapped.len());
+            'lits: for &l in &mapped {
+                match self.trail.lit_value(l) {
+                    LBool::True => {
+                        satisfied = true;
+                        break 'lits;
+                    }
+                    LBool::False => continue,
+                    LBool::Undef => lits.push(l),
+                }
+            }
+            if satisfied {
+                self.retire_clause(cid);
+                continue;
+            }
+
             // Sort + dedup + tautology detection. After sorting by code, the
             // two polarities of one variable are adjacent (pos(v)=2v, neg(v)=2v+1),
             // so a tautology is any adjacent pair sharing a variable.
-            let mut lits: Vec<Lit> = mapped.to_vec();
             lits.sort_unstable_by_key(|l| l.code());
             lits.dedup_by_key(|l| l.code());
             let tautology = lits.windows(2).any(|w| w[0].var() == w[1].var());
@@ -195,8 +250,9 @@ impl Solver {
             }
             match lits.len() {
                 0 => {
-                    // Every literal collapsed to one value and was a duplicate –
-                    // impossible after dedup unless the original was empty.
+                    // Every literal of the clause is false at level 0 (after
+                    // mapping through the equivalence classes): the clause is
+                    // falsified by unconditional facts alone → UNSAT.
                     self.trivially_unsat = true;
                     return SubstOutcome::Unsat;
                 }

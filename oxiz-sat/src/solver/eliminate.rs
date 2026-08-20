@@ -120,8 +120,12 @@ struct Eliminator {
     /// Elimination schedule (min-heap on `ElimRank`).
     schedule: BinaryHeap<std::cmp::Reverse<(ElimRank, u32)>>,
     /// Backward-subsumption work list of freshly added resolvents and
-    /// shrunken clauses.
+    /// shrunken clauses. Consumed FIFO through [`Self::bw_head`]: entries
+    /// before the head are processed, the tail is pending.
     backward: Vec<ClauseId>,
+    /// Read cursor into `backward` (persistent across
+    /// [`Solver::elim_backward_clauses`] calls; see the drain note there).
+    bw_head: usize,
     /// Units derived during the round, mirrored into `val` immediately and
     /// forced on the level-0 trail by the phase epilogue.
     units: SmallVec<[Lit; 32]>,
@@ -159,6 +163,7 @@ impl Eliminator {
             mark: vec![0; n],
             schedule: BinaryHeap::new(),
             backward: Vec::new(),
+            bw_head: 0,
             units: SmallVec::new(),
             resolutions: 0,
             eliminated: 0,
@@ -306,11 +311,28 @@ impl Solver {
         }
 
         self.elim_phases += 1;
+        #[cfg(feature = "std")]
+        if std::env::var("OXIZ_LOG_ELIM").is_ok() {
+            eprintln!(
+                "[elim] phase {} start: conflicts={} vars={} orig={}",
+                self.elim_phases,
+                self.stats.conflicts,
+                self.num_vars,
+                self.clauses.num_original()
+            );
+        }
 
         // Make sure a subsumption round ran since the last elimination phase
         // (cadical: `if (last.elim.subsumephases == stats.subsumephases)
         // subsume ()`).
         let (mut subsumed, mut strengthened) = self.subsume_round();
+        #[cfg(feature = "std")]
+        if std::env::var("OXIZ_LOG_ELIM").is_ok() {
+            eprintln!(
+                "[elim]   pre-phase subsume_round: subsumed={} strengthened={}",
+                subsumed, strengthened
+            );
+        }
         if self.trivially_unsat {
             return SubstOutcome::Unsat;
         }
@@ -322,6 +344,18 @@ impl Solver {
 
         loop {
             let (eliminated, complete, round_dirty, units) = self.elim_round();
+            #[cfg(feature = "std")]
+            if std::env::var("OXIZ_LOG_ELIM").is_ok() {
+                eprintln!(
+                    "[elim]   round {}: eliminated={} complete={} dirty={} units={} resolutions={}",
+                    round,
+                    eliminated,
+                    complete,
+                    round_dirty,
+                    units.len(),
+                    self.elim_resolutions_total
+                );
+            }
             eliminated_total += eliminated;
             dirty |= round_dirty;
 
@@ -989,41 +1023,49 @@ impl Solver {
     /// cadical `elim_backward_clauses`: for every queued clause (fresh
     /// resolvents and shrunken clauses), look for connected clauses it
     /// subsumes or strengthens.
+    ///
+    /// The read cursor lives on the context (`bw_head`), not the call: the
+    /// previous shape took the queue out with `mem::take`, processed it
+    /// through a local index, and put the *whole* vector back – including
+    /// the already-processed prefix – so every call re-processed the entire
+    /// history (measured on `6s167-opt`: 12M processed entries for 12k
+    /// enqueues, 99.9% of the first elimination phase's 630 ms).
+    /// cadical's `Eliminator::dequeue` pops each entry, so each enqueue is
+    /// processed exactly once; the persistent head + drain below give the
+    /// same single-pass semantics while keeping pushes that arrive *during*
+    /// processing (from `elim_shrink_clause` / unit cascades) in the same
+    /// drain, exactly like cadical's single shared queue.
     fn elim_backward_clauses(&mut self, ctx: &mut Eliminator) {
-        let mut queue = core::mem::take(&mut ctx.backward);
-        let mut qi = 0usize;
-        while qi < queue.len() && !self.trivially_unsat {
-            let cid = queue[qi];
-            qi += 1;
-            self.elim_backward_clause(ctx, cid, &mut queue);
+        while ctx.bw_head < ctx.backward.len() && !self.trivially_unsat {
+            let cid = ctx.backward[ctx.bw_head];
+            ctx.bw_head += 1;
+            self.elim_backward_clause(ctx, cid);
         }
-        ctx.backward = queue;
+        if ctx.bw_head == ctx.backward.len() {
+            ctx.backward.clear();
+            ctx.bw_head = 0;
+        }
     }
 
-    fn elim_backward_clause(
-        &mut self,
-        ctx: &mut Eliminator,
-        cid: ClauseId,
-        queue: &mut Vec<ClauseId>,
-    ) {
+    fn elim_backward_clause(&mut self, ctx: &mut Eliminator, cid: ClauseId) {
         let mut scratch = BwScratch {
             lits: core::mem::take(&mut ctx.bw_lits),
             marked: core::mem::take(&mut ctx.bw_marked),
             cands: core::mem::take(&mut ctx.bw_cands),
             dlits: core::mem::take(&mut ctx.bw_dlits),
         };
-        self.elim_backward_clause_inner(ctx, cid, queue, &mut scratch);
+        self.elim_backward_clause_inner(ctx, cid, &mut scratch);
         ctx.bw_lits = scratch.lits;
         ctx.bw_marked = scratch.marked;
         ctx.bw_cands = scratch.cands;
         ctx.bw_dlits = scratch.dlits;
     }
 
+    #[expect(clippy::too_many_lines)]
     fn elim_backward_clause_inner(
         &mut self,
         ctx: &mut Eliminator,
         cid: ClauseId,
-        queue: &mut Vec<ClauseId>,
         scratch: &mut BwScratch,
     ) {
         scratch.lits.clear();
@@ -1159,8 +1201,11 @@ impl Solver {
                             break;
                         }
                     } else if ctx.occs[neg.code() as usize].len() <= ELIM_OCC_LIMIT {
+                        // `elim_shrink_clause` enqueues the strengthened
+                        // clause on the shared backward queue itself (single
+                        // enqueue site, so a clause is never queued twice for
+                        // one strengthening).
                         self.elim_shrink_clause(ctx, did, &[neg]);
-                        queue.push(did);
                         self.stats.self_subsumed += 1;
                     }
                 }

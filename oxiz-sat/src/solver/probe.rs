@@ -40,9 +40,14 @@ const PROBE_EFFORT_PERMILLE: u64 = 80;
 const PROBE_MIN_EFFORT: u64 = 1_000_000;
 /// cadical `probemaxeff`: ceiling on the budget.
 const PROBE_MAX_EFFORT: u64 = 2_000_000_000;
-/// cadical `inprobeint` base: first mid-search round after these conflicts,
-/// then scaled by 25·log10(rounds+9).
-const INPROBE_BASE_INTERVAL: u64 = 2_000;
+/// cadical `inprobeint` (its default 100): the base unit of the mid-search
+/// probe schedule. The next round fires after
+/// `25 × inprobeint × log10(rounds + 9)` conflicts (cadical `probe.cpp`),
+/// i.e. ≈ 2.4k conflicts after the first round – NOT a flat 2 000× interval;
+/// the previous value of 2 000 here delayed the second round to ~50k
+/// conflicts, 20× later than cadical, starving the search of hyper-binaries
+/// and forced units on probing-friendly instances.
+pub(super) const INPROBE_BASE_INTERVAL: u64 = 100;
 
 impl Solver {
     /// cadical `inprobing`: the mid-search probe-round trigger.
