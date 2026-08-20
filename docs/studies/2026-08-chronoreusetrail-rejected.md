@@ -174,3 +174,30 @@ Reproducer (unchanged, in-repo): `OXIZ_CHRONO_ALWAYS=1 cargo nextest run -p
 oxiz-sat dominator_hbr` (false SAT; needs the opt-in stack:
 BVE+INPROCESS+PROBE+HBP — every proper subset answers UNSAT).  Default
 configs remain unaffected.
+
+
+### Session-2b addendum: three more suspects DISPROVEN; conclusion sharpened
+
+- **`bve_def` completeness verified** (per-eliminated-var scan at
+  reconstruction: zero live originals still containing +v — every positive
+  side fully retired and recorded; no empty-def leaks).
+- **Reconstruction is conservative-sound**: the satisfaction test counts only
+  definite True/False (Undef → not satisfied → v=TRUE, the direction that
+  satisfies the `(v ∨ A_i)` parents), iterated in reverse elimination order.
+- **The probe's dominator-HBR retirement site re-audited** against cadical's
+  `red = !contained || reason->redundant` — the learned-R arm (retire R, keep
+  the binary learned) is sound because learned-R is entailed by the *clause
+  set*, and the original-R arm promotes the binary. No hole.
+
+Therefore, by elimination: the final model satisfies every live clause, every
+eliminated var's positive side is fully recorded, and the reconstruction is
+conservative — yet input clauses are violated.  Some **covering clause
+(resolvent or promoted binary) vanished from the live DB** after the parents
+it covered were retired — the only remaining class.  Surviving suspects:
+cross-pass interactions where a clause that became load-bearing (promoted or
+resolvent) is *deletable* (learned-flag set) and a later reduction/inprocess
+round removes it while its covered originals are already gone; or an in-place
+strengthen of a load-bearing resolvent.  Concrete next step: tag every
+resolvent/promotion with its load-bearing bit and assert at each deletion
+site that no live-retired original depends on it (one debug build, one run
+of the reproducer).
