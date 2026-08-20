@@ -89,3 +89,17 @@ them.  The defaults question (all passes still opt-in) remains closed per
 the pre-registered rule — but the entry bar for reopening it is now much
 lower, since the scheduled stack no longer regresses the easy stratum at
 all.
+
+**Full-corpus single-seed snapshot** (canonical seed, 94 files, default vs
+scheduled stack): completions 79 vs 80 with churn both ways — the scheduled
+stack adds mrpp, both `circuit_48in64` files, `noL_11_14`, `adf6dacd`
+(default T/O on all five) but loses `mdp-28`, `pb_300_09`, `crypto…seed102`,
+`frb45-21-2` (default solves all four); 0 verdict disagreements.  On the
+commonly-solved set the scheduled stack's ratio-vs-CaDiCaL geomean is
+**1.42× vs default's 1.10×** — the mid-search passes (probing every 5 000
+conflicts, inprocess rounds) still cost more than they save on the broad
+middle of the corpus.  So the pre-registered conclusion stands unchanged
+even after scheduling: **stack stays opt-in**; scheduling removed the
+pathology (easy-file cliff) but not the case for defaults.  The 10-seed
+"SP vs default neutral" reading above was a property of that 6-file
+hard-skewed sample, and is hereby qualified.
