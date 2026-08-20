@@ -258,3 +258,43 @@ two `circuit_48in64` files and `mdp-28`/`noL` where the default times out.
 Whether the stack (or a schedule variant) should become the default is the
 pre-registered factorial study the handover describes — now unblocked, next
 session, with matched nulls per docs/BENCHMARKING.md.
+
+
+## Follow-up 3: the ≥10-seed null study (measurement debt paid; one claim revised)
+
+The headline (23→17 files >1.5×, canonical seed) and the 5-seed screening
+below were the evidence at landing time.  This addendum adds the bounded
+10-seed CRN-paired study the methodology requires: 6 dev files × 10 seeds ×
+3 arms (T = landed default; GN = `OXIZ_GLUE_NULL` lagged-glue null;
+SN = `OXIZ_SHRINK_NULL` shrink-discarding null), 60 s cap, paired
+instructions per file×seed, exact two-sided binomial sign test.
+
+| comparison | T-only comp | null-only comp | paired n | T faster | geomean | sign p |
+|---|---|---|---|---|---|---|
+| T vs **shrink null** | 8 | 7 | 35 | 25/35 | **1.59×** | **0.0167** |
+| T vs **glue null**   | 2 | 12 | 41 | 22/41 | 1.03× | 0.755 |
+
+Verdicts: 0 disagreements in 138 completed runs.
+
+**Shrink (block-UIP clause shrinking) is supported**: significantly faster
+than its null (p≈0.017, 1.6× paired geomean, completions even).  The
+component with the cadical-parity port and the two fixed soundness bugs is
+also the component with statistical evidence.
+
+**Walk-glue (restart-EMA input) is NOT supported as a performance claim at
+this sample size**: dead-even instructions, p=0.76, and the null completes
+10 more cells — concentrated in one file (`summle_X4053`: T 2/10 vs null
+9/10; all other files within ±2).  This *revises the 5-seed screening*
+below, which had the default ahead on completions (26 vs 23) — that ordering
+was seed luck.  What survives for walk-glue is the *faithfulness* argument:
+cadical feeds its restart EMAs the analysis-walk glue (`analyze.cpp:1281`)
+and we fed the stored clause LBD — a genuine porting divergence, fixed to
+match the reference, with documented single-file wins (stable-300 11.5×)
+and losses in both directions.  Keeping parity is the landed decision;
+**reverting would also be defensible on measurement alone** (the null is
+indistinguishable), and the resolver is a full-corpus multi-seed study,
+recorded as open.
+
+The single-seed tracking metric (23→17) stands as what it is — one seed of
+a chaotic system — and the study's original framing ("recorded without
+inflation") is why this addendum can revise rather than contradict it.
