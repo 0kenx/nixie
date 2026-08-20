@@ -197,6 +197,10 @@ fn test_pr26_probe_sat_verdict_and_model_agree_on_off() {
 fn test_pr26_bve_model_reconstruction_satisfies_original_clauses() {
     let mut solver = Solver::with_config(SolverConfig {
         enable_bve: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -226,6 +230,10 @@ fn test_pr26_bve_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_bve: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -245,6 +253,10 @@ fn test_pr26_bve_sat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_bve: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -261,6 +273,10 @@ fn test_pr26_bve_sat_verdict_agrees_on_off() {
 fn test_pr26_els_model_reconstruction_satisfies_original_clauses() {
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -294,6 +310,10 @@ fn test_pr26_els_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -313,6 +333,10 @@ fn test_pr26_els_sat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -327,6 +351,10 @@ fn test_pr26_els_detects_self_contradiction_as_unsat() {
     // independent of any assignment.
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         ..SolverConfig::default()
     });
@@ -351,6 +379,10 @@ fn test_pr26_gates_congruence_model_reconstruction_satisfies_original_clauses() 
     // model must still satisfy every original clause for both gates.
     let mut solver = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         enable_gate_congruence: true,
         ..SolverConfig::default()
@@ -387,6 +419,10 @@ fn test_pr26_gates_congruence_model_reconstruction_satisfies_original_clauses() 
 fn test_pr26_gates_unsat_verdict_agrees_on_off() {
     let mut off = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         enable_gate_congruence: false,
         ..SolverConfig::default()
@@ -396,6 +432,10 @@ fn test_pr26_gates_unsat_verdict_agrees_on_off() {
 
     let mut on = Solver::with_config(SolverConfig {
         enable_equiv_substitution: true,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/reconstruction mechanism under test is the pre-search one.
+        presearch_collapse: true,
         enable_lucky: false,
         enable_gate_congruence: true,
         ..SolverConfig::default()

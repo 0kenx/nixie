@@ -26,6 +26,10 @@ fn els_enabled_solver() -> Solver {
         // `luckyearly`) and would answer this trivially satisfiable
         // instance outright, so the ELS fold under test would never fire.
         enable_lucky: false,
+        // Conflict scheduling (the default) fires this pass on the
+        // elimination clock, which this tiny instance never reaches; the
+        // fold/rewrite mechanism under test is the pre-search one.
+        presearch_collapse: true,
         ..SolverConfig::default()
     })
 }

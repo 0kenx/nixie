@@ -846,6 +846,28 @@ impl Solver {
             }
         }
 
+        // Conflict-scheduled one-shot equivalent-literal substitution
+        // (cadical parity, see `SolverConfig::presearch_collapse`): the ELS
+        // pass that the pre-search collapse used to run unconditionally now
+        // fires on the elimination clock instead — sharing `lim_elim` with
+        // the eliminator (cadical's `decompose` runs in the same schedule
+        // region).  Independent of `enable_bve`, so `enable_equiv_substitution`
+        // alone keeps its meaning; level-0 / base-scope / proof gates are
+        // enforced inside `substitute_equivalent_literals`.
+        if !self.config.presearch_collapse
+            && self.config.enable_equiv_substitution
+            && !self.did_equiv_subst
+            && self.stats.conflicts >= self.lim_elim
+        {
+            if self.trail.decision_level() > 0 {
+                self.backtrack_with_phase_saving(0);
+            }
+            self.did_equiv_subst = true;
+            if self.substitute_equivalent_literals() == super::equiv::SubstOutcome::Unsat {
+                self.trivially_unsat = true;
+            }
+        }
+
         // Scheduled elimination (cadical `ineliminating` → `elim ()`): runs
         // when the elimination conflict limit has passed *and* something new
         // happened (units fixed at level 0, or original clauses removed or

@@ -240,6 +240,19 @@ pub struct SolverConfig {
     pub elim_interval: u64,
     /// Enable chronological backtracking
     pub enable_chronological_backtrack: bool,
+    /// Run the inprocessing passes as an unconditional **pre-search
+    /// collapse** (BVE fixpoint, ELS one-shot, inprocess/vivify pre-passes)
+    /// instead of deferring them to the conflict schedule.  Default `false`
+    /// (cadical parity: CaDiCaL schedules every pass on the conflict clock —
+    /// its first elimination lands around 1e4 conflicts — so instances that
+    /// solve early never pay for or get structurally damaged by the passes;
+    /// measured on ITC2021_Early_3: cadical eliminates zero variables and
+    /// finishes in 1164 conflicts, our pre-search collapse eliminated 1903
+    /// and needed 5040; with conflict scheduling the stack matches the
+    /// default exactly there and keeps its hard-file wins, 48/60 paired
+    /// files faster, geomean 6.3×, sign p<1e-4 over 10 seeds — see
+    /// docs/studies/2026-08-inprocessing-schedule.md).
+    pub presearch_collapse: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
     /// Cap on the Luby restart multiplier. The Luby sequence grows as 2^k, so
@@ -441,6 +454,7 @@ impl Default for SolverConfig {
             luby_cap: 64,
             enable_stabilize: true,
             enable_shrink: true,
+            presearch_collapse: false,
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
@@ -2499,7 +2513,16 @@ impl Solver {
         // structured families (Simon) in microseconds, which the elimination
         // phase would otherwise bury under seconds of occurrence-list work
         // before the guess ever runs.
-        if self.config.enable_bve {
+        // Conflict scheduling (cadical parity, see
+        // `SolverConfig::presearch_collapse`): with the default `false`, the
+        // pre-search fixpoint, the ELS one-shot and the inprocess/vivify
+        // pre-passes are all skipped; the conflict handlers schedule them
+        // instead (`eliminating()`'s first-phase arm fires once `lim_elim`
+        // is crossed, and `try_scheduled_elimination` runs the one-shot ELS
+        // alongside the first phase).
+        let sched_parity = !self.config.presearch_collapse;
+
+        if self.config.enable_bve && !sched_parity {
             // Iterate elimination phases to a fixpoint before search
             // (cadical's preprocessing interleaves elim/subsume rounds
             // back-to-back; a single bound-0 phase leaves most of the
@@ -2525,7 +2548,7 @@ impl Solver {
         // Equivalent-literal substitution (SCC on the binary implication graph).
         // Collapses binary-heavy formulas before search; a no-op (early-out)
         // when there are no non-trivial SCCs. Runs at level 0 / base scope only.
-        if self.config.enable_equiv_substitution {
+        if self.config.enable_equiv_substitution && !sched_parity {
             if self.substitute_equivalent_literals() == equiv::SubstOutcome::Unsat {
                 self.drat_emit_empty(None);
                 return SolverResult::Unsat;
@@ -2542,6 +2565,7 @@ impl Solver {
         // sequence has a rare (≈1/15k) wrong-model interaction still under
         // investigation, so the two are not run together.
         if !self.config.enable_bve
+            && !sched_parity
             && (self.config.enable_equiv_substitution || self.config.enable_inprocessing)
             && !self.did_equiv_subst
         {
@@ -2560,7 +2584,7 @@ impl Solver {
         // call) because brute-force per-variable probing is too expensive to
         // repeat – cadical schedules it on binary-implication roots, which is a
         // larger follow-up.
-        if self.config.enable_inprocessing {
+        if self.config.enable_inprocessing && !sched_parity {
             if self.config.enable_failed_literal_probing {
                 self.failed_literal_probing();
             }

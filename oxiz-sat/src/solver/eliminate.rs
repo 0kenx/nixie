@@ -220,6 +220,13 @@ impl Solver {
         if self.stats.conflicts < self.lim_elim {
             return false;
         }
+        // Conflict scheduling (cadical parity): the first phase fires
+        // unconditionally once the conflict limit is crossed — the pre-search
+        // fixpoint that normally arms it via mark-all is skipped unless
+        // `presearch_collapse` is set.
+        if self.elim_phases == 0 && !self.config.presearch_collapse {
+            return true;
+        }
         self.last_elim_fixed
             < self
                 .trail

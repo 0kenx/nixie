@@ -47,3 +47,45 @@ proof).
 ## Results (filled after the run)
 
 See "Results" below.
+
+
+## Follow-up: conflict scheduling landed (the mechanism behind the verdict)
+
+Root-causing *why* the stack regressed easy files while cadical never does:
+cadical schedules every inprocessing pass on the **conflict clock** (first
+elim phase ≈ 1e4 conflicts, `eliminit`); an instance that solves earlier
+never runs a single pass.  Measured: on `ITC2021_Early_3` cadical
+eliminates **zero** variables (it finishes in 1164 conflicts), while our
+pre-search collapse — a port invention, not cadical semantics — eliminated
+1903 and needed 5040 conflicts (34× our own default's 149).  The
+pre-search fixpoint also paid cost on every instance regardless of need.
+
+**Landed**: `SolverConfig::presearch_collapse` (default `false`,
+cadical parity).  With it off, the pre-search BVE fixpoint / ELS one-shot /
+inprocess+probing+vivify pre-passes are skipped; the passes run on the
+conflict schedule instead — `eliminating()` fires the first elimination
+phase unconditionally once `lim_elim` (= `elim_interval`) is crossed, and
+the one-shot ELS gets its own trigger on the same clock (independent of
+`enable_bve`, so `EQUIV=1` alone keeps its meaning).  The old behavior is
+preserved behind `presearch_collapse: true` (the pr26 mechanism tests opt
+into it).
+
+**Evidence** (study knob `OXIZ_SCHED_PARITY=1` = the landed behavior):
+single-run A/B/C on 8 files — every easy-file regression gone
+(ITC 159G→0.6G, worker_20 8.3G→0.1G, Break 3.1G→0.3G, all == default), win
+files improved beyond the plain stack (6s167 66→46G, mrpp 287→96G,
+circuit 564→348G); two stack-only solves lost (mdp_28, 6s167b — both
+T/O for default anyway).  Then **10 seeds × 6 files × 3 arms** (150 s cap):
+SP vs plain stack — **48/60 pairs faster, geomean 6.26×, sign p<1e-4**,
+equal completions (60/60 both), SP vs default 20/45 faster (geomean 1.22×,
+p=0.55 — i.e. the scheduled stack is default-neutral on this mixed set
+while plain stack was strictly worse); **0 verdict disagreements** in all
+180 runs.  Landed behavior re-verified equal to the study arm (6s167
+46.4G, ITC 0.7G, worker_20 0.1G).
+
+This supersedes the screening-study conclusion's caveat: the stack's
+easy-file cost was an artifact of *when* the passes ran, not of running
+them.  The defaults question (all passes still opt-in) remains closed per
+the pre-registered rule — but the entry bar for reopening it is now much
+lower, since the scheduled stack no longer regresses the easy stratum at
+all.
