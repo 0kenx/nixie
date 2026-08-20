@@ -128,3 +128,49 @@ unit forcing), not yet isolated.  Two full dump artifacts were produced
 instrumentation was removed before landing; the recipe is in the session
 record.  Default configs are unaffected (needs the opt-in stack +
 `chronoalways`), but it is a real soundness bug — top of the queue.
+
+
+## Hunt log (2026-08-20, session 2): root cause narrowed, not closed
+
+Continued from the landed prerequisite.  Established this session, in order:
+
+1. **DB-dump bisect (7 824 tagged dumps, cadical-verdict-checked, level-0
+   trail facts included):** equi-satisfiability flips UNSAT→SAT inside ONE
+   `elim_try_variable` call (dump 5623 → 5624) — an elimination of DIMACS
+   1076 retiring 4 parents and adding 3 resolvents.
+2. **The occurrence lists are complete at every try.**  A per-try ground-truth
+   check (live ORIGINAL clauses containing ±pivot vs `ctx.noccs`) printed no
+   gap anywhere (an earlier inverted-comparison false alarm is documented).
+   At the fired try: occs +v=3 −v=4, ground truth identical.
+3. **The bound path refuses correctly** (instrumented pair-by-pair: 12
+   resolvents > bound 7 → REFUSED in rounds 1–2).  In the final round the
+   three `[-1072,±1076,…]` originals are gone (retired earlier, soundly) and
+   the fired elimination is **3×1 = complete over the live originals** —
+   hand-applying exactly that transform to dump 5623 as a standalone CNF
+   reproduces the SAT flip, so the transform itself is textbook.
+4. **The final model is fully consistent with the live DB** (0 violations of
+   live originals after reconstruction) yet violates **52 INPUT clauses**
+   (e.g. `[-868,874]`, `[-871,874]`, `[-880,886]` — all variables that were
+   eliminated).  So the corruption is in the **retirement/reconstruction
+   chain**, not the resolution arithmetic.
+5. The violated clauses do **not** pass through `retire_clause` near the end
+   (provenance watcher on 2+-literal overlap: zero hits) — they left the DB
+   earlier in the stack (earlier elim rounds' `elim_retire_clause_lits`,
+   subsume retirement, or an in-place strengthen).
+
+Hypotheses ranked for the next session:
+- `bve_def` incompleteness: a positive-side clause of an eliminated variable
+  retired/rewritten **without** being recorded, so `save_model`'s
+  all-satisfied → FALSE reconstruction picks the wrong value.  Test:
+  provenance per INPUT clause id from parse time (which pass retired/rewrote
+  it), plus a debug `save_model` that checks each reconstructed var against
+  its *original* positive side.
+- An unentailed "learned" clause surviving into the DB (the 69-clause
+  `-1076` population is mostly learned; one unentailed member would explain
+  5623's UNSAT and the flip being benign).  Test: RUP-verify the learned
+  population over originals under `chronoalways` at reduction time.
+
+Reproducer (unchanged, in-repo): `OXIZ_CHRONO_ALWAYS=1 cargo nextest run -p
+oxiz-sat dominator_hbr` (false SAT; needs the opt-in stack:
+BVE+INPROCESS+PROBE+HBP — every proper subset answers UNSAT).  Default
+configs remain unaffected.
