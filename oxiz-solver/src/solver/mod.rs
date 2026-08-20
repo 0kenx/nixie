@@ -477,7 +477,12 @@ impl Solver {
             // focused-mode VMTF bursts lose focus on theory-propagated
             // variables; measured 91:45 for VSIDS-everywhere vs
             // VMTF-focused on a 150-file QF_UF sample.
-            focused_vmtf: false,
+            // Debug/measurement override (OXIZ_SAT_VMTF_FOCUS=1): run the
+            // cadical default VMTF-focused branching in the CDCL(T) path.
+            // The default stays `false` (the measured 91:45 QF_UF decision);
+            // this knob exists so that decision can be re-measured after
+            // search-core changes without a rebuild.
+            focused_vmtf: std::env::var("OXIZ_SAT_VMTF_FOCUS").is_ok_and(|v| v == "1"),
             external_branching: if config.enable_domain_first_branching {
                 Some(priority_heuristic)
             } else {
