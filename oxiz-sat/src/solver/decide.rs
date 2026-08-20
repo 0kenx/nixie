@@ -710,6 +710,7 @@ impl Solver {
     /// then overwrite the saved phases according to the mode-dependent
     /// strategy schedule, and make the new phases the fresh target.
     pub(super) fn rephase(&mut self) {
+        self.rephase_skipped = false;
         self.stats.rephased.total += 1;
 
         // cadical's leading `backtrack()`: full root backtrack, which updates

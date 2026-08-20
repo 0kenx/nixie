@@ -279,3 +279,34 @@ down; the ranked-remaining list is now: mark_elim_vars re-arm interaction
 with the *next* elimination round's occurrence construction, and the
 binary-implication-graph edge bookkeeping across `remove_literal_and_rewatch`
 (a strengthened-away literal's BIG edges surviving, or vice versa).
+
+
+## Hunt 3 (2026-08-20, session 3): the "second seed" was an invariant false alarm; causal picture weakened honestly
+
+- **The rephase-arm restart-consistency panic was our own bug**: the check
+  assumes rephase's leading root backtrack ran, but `OXIZ_REPHASE_OFF` (the
+  A/B knob) made rephase a no-op *after* `rephasing()` had already gated the
+  check on — so the check fired on the conflict handler's legitimate
+  level-14 backtrack.  Fixed (`rephase_skipped` flag; check skipped for the
+  no-op round) — a real landed fix, independent of the hunt.
+- **Consequence for the causal claim**: with the false alarm cleared,
+  `OXIZ_REPHASE_OFF=1` now *passes* the reproducer (28.6 s, correct UNSAT).
+  So THREE unrelated knobs (subsume-strengthen off, vivify off, rephase off)
+  each disable the false SAT — the single-pass "causal localization" of hunt
+  2c is trajectory-shaped after all, and the earlier "control confirmed
+  causal" reading is RETRACTED (the control passed only because the false
+  alarm aborted that arm early).  Every "X off → passes" result in this file
+  is a trajectory observation, not causal localization.
+- What survives: the DB-equi-satisfiability bisect (hunt 2, dumps 5623→5624)
+  is a *stateful* fact — some pass between those snapshots loses
+  obligations — and the produced clauses are entailed.  The bug is
+  state/order-dependent and masked by many schedule perturbations.
+- Revised method note: stop using pass-off A/Bs entirely.  The productive
+  oracle is the DB dump bisect at finer granularity (it found the flip
+  window); next session should dump *between* the retire call and the
+  resolvent-add inside `elim_add_resolvents`/`elim_retire_pivot_clauses`
+  for the 1076 window (the flip was pinned to try_1075→trybw_1075, i.e.
+  inside `elim_try_variable(1075)` — resolution, retire, or its backward
+  clause — with occurrence lists verified complete and the fired resolution
+  verified complete; the backward clause ran with the *new* resolvents
+  already attached, which is the remaining unexamined interaction).

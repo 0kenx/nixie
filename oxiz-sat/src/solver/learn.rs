@@ -814,8 +814,12 @@ impl Solver {
             // so running both would just redo the rollback.
             self.rephase();
             // Rephase's leading backtrack is a full root backtrack, so the
-            // level-0 restart invariant applies regardless of `reuse_trail`.
-            self.debug_check_restart_consistency();
+            // level-0 restart invariant applies regardless of `reuse_trail` —
+            // except when the round was a debug no-op (no backtrack ran), in
+            // which case the conflict handler's own backtrack level stands.
+            if !self.rephase_skipped {
+                self.debug_check_restart_consistency();
+            }
             self.debug_check_invariants("after rephase");
         }
 

@@ -1119,6 +1119,10 @@ pub struct Solver {
     /// analysis (cadical `levels`), so the two vectors above are reset in
     /// O(contributing levels), not O(num levels).
     pub(super) seen_levels: Vec<u32>,
+    /// Whether the last rephase round was a debug no-op (see
+    /// `OXIZ_REPHASE_OFF`): the post-rephase restart-consistency check must
+    /// be skipped then, since no root backtrack ran.
+    pub(super) rephase_skipped: bool,
     /// Glue of the last completed 1-UIP analysis **walk**: the number of
     /// distinct decision levels touched by the whole resolution walk
     /// (`seen_levels.len() - 1`, cadical `const int glue = levels.size() - 1`
@@ -1281,6 +1285,7 @@ impl Solver {
             seen_level_count: Vec::new(),
             seen_level_trail: Vec::new(),
             seen_levels: Vec::new(),
+            rephase_skipped: false,
             analysis_walk_glue: 0,
             analysis_walk_glue_prev: 0,
             current_conflict_level: 0,
