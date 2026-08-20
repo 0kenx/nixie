@@ -201,3 +201,28 @@ strengthen of a load-bearing resolvent.  Concrete next step: tag every
 resolvent/promotion with its load-bearing bit and assert at each deletion
 site that no live-retired original depends on it (one debug build, one run
 of the reproducer).
+
+
+### Session-2c: the vanish is CONFIRMED in the in-place strengthen paths
+
+Env-gated A/B on the reproducer (all reverted; determinism holds per arm):
+
+| arm | verdict |
+|---|---|
+| baseline | **false SAT** |
+| subsume-strengthen off | **pass** |
+| vivify off | **pass** |
+| elim backward-strengthen off | still false SAT |
+
+Each strengthen site *alone* disables the failure; the backward pass does
+not.  (All-three-off fails again — disabling passes shifts the inprocessing
+schedule onto a different trajectory where the same latent bug re-fires;
+per-arm results are the signal.)  Strengthening a resolvent keeps coverage
+(the stronger clause implies the weaker), so a *correct* strengthen cannot
+uncover a parent — the implication is a **bug inside one/both strengthen
+paths themselves** (literal removal, watch/BIG re-attachment, or the
+satisfaction-test interaction with out-of-order trails), not in the
+schedule.  Next session: differential instrument `remove_literal_and_rewatch`
++ `vivify_clause` under the reproducer, RUP-verifying every strengthened
+clause at rewrite time — the two passing arms above are the regression
+seeds.
