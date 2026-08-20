@@ -226,3 +226,21 @@ schedule.  Next session: differential instrument `remove_literal_and_rewatch`
 + `vivify_clause` under the reproducer, RUP-verifying every strengthened
 clause at rewrite time — the two passing arms above are the regression
 seeds.
+
+
+### Session-2d: strengthen OUTPUTS are sound — the corruption is a side effect
+
+RUP-flagged every in-place strengthen (both sites) under the reproducer
+(fixpoint-without-conflict flags are expected — resolution chains are not
+RUP), then ground-truthed 84 of the 340 flagged clauses against the
+**original input** with CaDiCaL (`input ∧ ¬clause`): **84/84 entailed,
+0 unentailed**.  The clauses the strengthen paths produce are correct.
+
+Combined with 2c (either strengthen site off → the false SAT disappears):
+the corruption is a **side effect of the strengthen machinery** — watch-list
+/ binary-graph / usage-bookkeeping damage during the rewrite, or state
+damage in vivify's probe (save-level/decide/propagate/backtrack cycle) —
+not the strengthened clauses themselves.  Next session's first move is now
+precise: run `debug_check_fixpoint_invariants` + a watch/BIG consistency
+sweep after every `remove_literal_and_rewatch` / `vivify_clause` call under
+the reproducer (the debug invariant suite already exists; one env knob).
