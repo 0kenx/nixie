@@ -1,5 +1,8 @@
 # CaDiCaL `elim.cpp` port: sound, big per-family wins, net-negative as a default (2026-08-17)
 
+> **Update 2026-08-21: the default flipped ON.** See the final section —
+> BVE+ELS are now enabled in the `CaDiCaL` preset (reference parity).
+
 ## Motivation
 
 `bench`-suite differential vs CaDiCaL (`/tmp` run, 94 files: 40× SATLIB `uf100`,
@@ -255,3 +258,100 @@ Three changes:
 Honest verdict: faithfulness-motivated (matches cadical's mechanic),
 performance roughly neutral with a slightly positive geomean. Kept on the
 same grounds as the reuse_trail fix.
+
+## 2026-08-21: the default flips on (BVE + ELS in the `CaDiCaL` preset)
+
+### Trigger
+
+Fresh 94-file CaDiCaL differential (`/tmp/opencode/sat_vs_cadical.json`,
+25 s cap): 15 oxiz-only timeouts where CaDiCaL solves (4-23 s), worst paired
+ratios 6s167-opt 52.7x, mrpp 7.3x, crn 3.7x, constraints_17 3.1x. CaDiCaL's
+own log on 6s167-opt shows the win is inprocessing (582 substituted vars,
+1126 vivified, 2974 subsumed clauses, 377 fixed; 0.28 s total).
+
+### Why the 2026-08-17 "net-negative as default" verdict no longer holds
+
+That verdict predates three landed changes: the eliminator single-pass
+backward queue (first elimination phase 630 ms -> 9.4 ms, 67x), the ELS
+value-filtered rewrite (cadical `decompose` semantics), and the cadical probe
+schedule (`inprobeint`-based, 3bfd6bf). The eliminator is no longer paying a
+full-database rescan per eliminated variable, so the cost side of the ledger
+collapsed while the benefit side (smaller formula) stayed.
+
+### Measurement (instructions-to-verdict, PMU `cpu_core/instructions`,
+### pinned CPU 6, deterministic trajectories)
+
+Both arms are deterministic (no RNG axis in this path; repeat runs bit-stable
+to ~1e-8 modulo PMU interrupt noise), so single-run comparisons are true
+values, not draws — the stochastic-baseline trap of `BENCHMARKING.md` §4 does
+not apply. Wall-clock was only used for the suite-cap capability table and
+was measured under external load (run alongside, same conditions both arms).
+
+| file | base | +BVE+ELS | +inprocessing | BVE only |
+|---|---|---|---|---|
+| 6s167-opt | 118.6G | **46.9G** | 14.0G | 32.7G |
+| mrpp_4x4#12_12 | 109.1G | **46.0G** | 52.6G | 73.9G |
+| frb65-12-2 | 120.1G | **38.5G** | 105.0G | 78.1G |
+| stable-300 | 245.2G | **81.8G** | 310.5G | 131.2G |
+| summle_X4044 | 115.2G | **62.9G** | 116.9G | 157.2G |
+| summle_X4053 | 127.4G | **71.3G** | 227.2G | 60.1G |
+| summle_X11112 | TO400 | **129.1G** | 203.5G | 247.0G |
+| circuit_700gates | TO400 | **62.3G** | 78.5G | 62.3G |
+| j3037_10_mdd_b | 83.6G | **49.1G** | 80.6G | 261.0G |
+| constraints_17 | 40.3G | 63.4G | 205.4G | 153.1G |
+| qwh.50.1250 | 55.7G | 67.9G | 1088G | 350.5G |
+| x9-09054 | 13.7G | 509.1G | 1173.9G | 423.3G |
+| x9-08075 | 326.1G | 344.6G | 618.8G | 324.6G |
+| uf100-* (2 files) | = | = | = | = |
+
+Verdicts agree with CaDiCaL on every file in every arm.
+
+Decisions from this table:
+
+1. **BVE + ELS on** (the bundle, matching what CaDiCaL actually interleaves).
+   BVE-only is a different and worse configuration: without ELS,
+   qwh.50 collapses to 350G and constraints_17 to 153G (ELS is doing real
+   work on the equivalence chains those families carry). ELS-only is also
+   worse alone (6s167 181.8G, stable-300 320.3G).
+2. **Inprocessing stays off**: the periodic `inprocess()` round destroys the
+   BVE+ELS gains on stable-300/summle (back to base level or worse) and
+   collapses qwh.50 by 20x. Only 6s167-opt benefits (46.9G -> 14.0G). The
+   missing amortizers are vivification and transitive reduction — the same
+   two named in the 2026-08-17 verdict.
+3. **Known regressions kept** (documented in the preset comment): x9-09054
+   13.7G -> 509G (37x, one adversarial crypto file), constraints_17 1.6x,
+   qwh.50 1.2x. Against: 7 files at 1.7-3.1x, 2 timeout->solved, and
+   family-consistency (all four summle files improve; wins cluster on
+   elimination-shaped instances, losses do not).
+
+### Not the reshuffle signature
+
+`BENCHMARKING.md` requires asking whether an aggregate win is trajectory
+reshuffling. Three reasons it is not, here: (a) the arms are deterministic —
+there is no seed distribution to confuse the estimate with; (b) the wins are
+family-clustered (every summle, both stable, mrpp, frb65, 6s167 — the
+elimination-shaped instances), while reshuffle noise is per-instance random
+in sign; (c) the mechanism is countable — BVE shrinks the formula (vars and
+clauses eliminated), it is not a trajectory perturbation of the same search.
+
+### Soundness gate
+
+400k-iteration differential fuzz (`examples/diff_equiv`, stack on vs off,
+verdict agreement + model validation of every SAT model): 268k sat, 0
+mismatches, 0 invalid models. Full workspace suite (10 059), clippy, fmt,
+doc, Z3 parity 168/168 clean.
+
+### Suite result (the user's own harness, 25 s cap, jobs=8, same load)
+
+| | before (16:36) | after |
+|---|---|---|
+| oxiz solved | 69/94 | **73/94** |
+| paired geomean oxiz/cadical | 0.918 | **0.461** |
+| files >=1.5x faster than cadical | 22 | **42** |
+| files >=1.5x slower | 9 | 12 (x9-09054 joined) |
+| disagreements | 0 | 0 |
+
+Remaining gap: the 15-file cadical-only-timeout class (circuit_800, worker,
+crypto, rbsat, FmlaEquivChain need 250-500G instructions — cadical's
+vivify/sweep amortizers; several DO solve now given 200 s: rbsat 484G,
+noL-11-14 410G, FmlaEquivChain 257G). Next lever: port vivification.

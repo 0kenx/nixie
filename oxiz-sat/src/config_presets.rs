@@ -505,10 +505,30 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false,   // VMTF in real CaDiCaL
-            enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
-            enable_equiv_substitution: false,
+            enable_inprocessing: false, // measured net-negative as a default on the
+            // 94-file suite (2026-08-21): the periodic inprocess() round costs
+            // the BVE+ELS gains on stable-300/summle and collapses qwh.50
+            // (55.7G -> 1088G instructions). Only 6s167-opt benefits (46.9G ->
+            // 14.0G). Revisit with cadical vivify/transred amortizers.
+            enable_equiv_substitution: true, // cadical parity: decompose/sweep runs
+            // by default in CaDiCaL. Bundled with BVE below this recovers the
+            // elimination-heavy families the 2026-08-17 study left off by
+            // default (measured 2026-08-21, instructions-to-verdict, see
+            // docs/studies/sat-elimination-port.md): 6s167-opt 118.6G -> 46.9G,
+            // mrpp 109.1G -> 46.0G, frb65 120.1G -> 38.5G, stable-300 245.2G ->
+            // 81.8G, summle_X4044 115.2G -> 62.9G, plus 3 timeout->solved flips
+            // at the 25s cap. Known regressions (kept, family view): x9-09054
+            // 13.7G -> 509G, constraints_17 40.3G -> 63.4G, qwh.50 55.7G ->
+            // 67.9G. BVE-only is NOT the same bundle: without ELS, qwh.50
+            // collapses to 350G and constraints_17 to 153G.
             enable_gate_congruence: true,
-            enable_bve: false,
+            enable_bve: true, // cadical parity: elimination is a default inprocessing
+            // technique in CaDiCaL. Sound since the 2026-08-17 port's six-bug
+            // sweep (fuzz: 400k random CNFs, stack on/off verdict agreement +
+            // model validation, clean); the old net-negative-as-default verdict
+            // predates the eliminator single-pass queue fix (67x faster phases),
+            // the ELS value-filtered rewrite and the cadical probe schedule
+            // (3bfd6bf).
             elim_interval: 2000,
             inprocessing_interval: 4000,
             enable_chronological_backtrack: true,
