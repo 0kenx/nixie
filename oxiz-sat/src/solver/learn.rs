@@ -621,6 +621,159 @@ impl Solver {
     /// clauses only.  Assumes the negation of every literal and propagates
     /// over originals; a conflict proves entailment.  Runs on a scratch
     /// assignment map; does not touch solver state.
+    /// Whether the cadical-reduce study port is active (`OXIZ_CADICAL_REDUCE`
+    /// treatment or `OXIZ_CADICAL_REDUCE_NULL` matched null – same trigger
+    /// points and deletion counts, scrambled selection). First use sizes the
+    /// used-stamp table (dense over clause ids; ids are dense, append-only).
+    pub(super) fn cadical_reduce_enabled(&mut self) -> bool {
+        if crate::cadical_reduce_enabled() || crate::cadical_reduce_null_enabled() {
+            // First use sizes the used-stamp table (dense over clause ids;
+            // ids are dense and append-only).
+            if self.cadical_used.len() < self.clauses.num_slots() {
+                self.cadical_used.resize(self.clauses.num_slots(), 0);
+            }
+            return true;
+        }
+        false
+    }
+
+    /// cadical `reduce.cpp` port: schedule + selection policy.
+    ///
+    /// Schedule (cadical `internal.cpp` + tail of `reduce ()`): the first
+    /// reduction fires `reduceinit` (300) conflicts into the search; after
+    /// each reduction the next is scheduled at
+    /// `conflicts + max(1, reduceint * sqrt(conflicts))` (with `reduceopt=1`,
+    /// CaDiCaL's default), scaled by `log10(irredundant / 1e4)` once the
+    /// irredundant set exceeds 1e5.
+    ///
+    /// Selection (cadical `mark_useless_redundant_clauses_as_garbage`): every
+    /// live learned clause that is not a current propagation reason gets its
+    /// used-stamp decremented; clauses with `glue <= tier1 (2)` and a positive
+    /// stamp, and clauses with `glue <= tier2 (6)` and a nearly-maximal stamp,
+    /// are protected. The rest are ordered least-useful-first by
+    /// `(glue desc, size desc)` (stable, so equal keys keep allocation order =
+    /// learn order) and the worst `reducetarget`% (75) are deleted. Analysis
+    /// bumps restamp a clause to `max_used` (31) – see the bump site in
+    /// `analyze_mark_antecedent`.
+    ///
+    /// Deliberately not ported here: cadical's satisfied-clause sweep and
+    /// falsified-literal removal (`collect.cpp`) – oxiz strengthens through
+    /// vivification/subsumption instead, and this port isolates the *schedule
+    /// + retention policy* effect. Recorded in the study doc.
+    pub(super) fn cadical_reduce_if_due(&mut self) {
+        const REDUCE_INT: f64 = 25.0; // cadical opts.reduceint
+        const REDUCE_TARGET_PCT: usize = 75; // cadical opts.reducetarget
+        const TIER1_GLUE: u32 = 2; // cadical opts.reducetier1glue
+        const TIER2_GLUE: u32 = 6; // cadical opts.reducetier2glue
+        const MAX_USED: u8 = 31; // cadical max_used
+
+        if self.stats.conflicts < self.cadical_reduce_next {
+            return;
+        }
+
+        let null_arm = crate::cadical_reduce_null_enabled();
+        let mut candidates: Vec<(
+            u32, /*glue*/
+            u32, /*size*/
+            u32, /*used*/
+            ClauseId,
+        )> = Vec::new();
+
+        for &cid in &self.learned_clause_ids {
+            let Some(v) = self.clauses.get(cid) else {
+                continue;
+            };
+            if v.deleted || !v.learned {
+                continue;
+            }
+            let is_reason = matches!(
+                self.trail.reason(v.lits[0].var()),
+                Reason::Propagation(r) if r == cid
+            );
+            if is_reason {
+                continue;
+            }
+            // Decrement the used stamp of every surviving candidate first
+            // (cadical does this inline in the marking scan). Saturating at 0.
+            let slot = cid.index();
+            if slot >= self.cadical_used.len() {
+                self.cadical_used.resize(slot + 1, 0);
+            }
+            let used = self.cadical_used[slot];
+            if used > 0 {
+                self.cadical_used[slot] = used - 1;
+            }
+            let glue = v.lbd.max(1); // stored LBD; glue-1 units exist as lbd=1
+            let size = v.lits.len() as u32;
+
+            // Tier protection (cadical's two keep rules).
+            let used_now = if used > 0 { used - 1 } else { 0 };
+            if glue <= TIER1_GLUE && used_now > 0 {
+                continue;
+            }
+            if glue <= TIER2_GLUE && used_now >= MAX_USED - 1 {
+                continue;
+            }
+            candidates.push((glue, size, u32::from(used_now), cid));
+        }
+
+        let mut to_delete: Vec<ClauseId> = Vec::new();
+        if !candidates.is_empty() {
+            if null_arm {
+                // MATCHED NULL: delete the same *number* of clauses as the
+                // treatment would (same schedule, same target fraction), but
+                // chosen pseudo-randomly instead of by glue/size/used – the
+                // perturbation without the retention semantics. Partial
+                // Fisher-Yates over the tail: uniform over distinct clauses,
+                // no replacement.
+                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                for i in 0..target {
+                    let remaining = candidates.len() - i;
+                    let r = (self.rand_u64() as usize) % remaining + i;
+                    candidates.swap(i, r);
+                    to_delete.push(candidates[i].3);
+                }
+            } else {
+                // Least useful first: larger glue dies earlier, then larger
+                // size. Stable sort keeps allocation (= learn) order for ties,
+                // matching cadical's stable_sort rationale.
+                candidates.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                for c in candidates.iter().take(target) {
+                    to_delete.push(c.3);
+                }
+            }
+        }
+
+        for cid in to_delete {
+            // Detach watchers (watch hygiene identical to the legacy reduce:
+            // deleted slots stay readable, so stale watchers are safe, but
+            // every visit then pays a cache miss to discover the flag).
+            if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
+                && c.lits.len() >= 2
+            {
+                let w0 = c.lits[0];
+                let w1 = c.lits[1];
+                self.watches.remove_clause(w0.negate(), cid);
+                self.watches.remove_clause(w1.negate(), cid);
+            }
+            self.drat_delete(cid);
+            self.clauses.remove(cid);
+            self.stats.deleted_clauses += 1;
+        }
+        self.debug_check_invariants("after cadical-style reduction");
+
+        // Schedule the next reduction (cadical reduceopt=1 default).
+        self.cadical_reductions += 1;
+        let mut delta = REDUCE_INT * (self.stats.conflicts.max(1) as f64).sqrt();
+        let irredundant = self.clauses.num_original() as f64;
+        if irredundant > 1e5 {
+            delta *= irredundant.log10() - 4.0;
+        }
+        let delta = delta.max(1.0) as u64;
+        self.cadical_reduce_next = self.stats.conflicts + delta;
+    }
+
     /// Reduce the learned clause database using tier-based deletion strategy
     /// - Core tier (Tier 1): Rarely deleted, only if very inactive
     /// - Mid tier (Tier 2): Delete ~30% based on activity
@@ -770,7 +923,10 @@ impl Solver {
         // Without it the periodic-inprocessing schedule below never fires.
         self.conflicts_since_inprocessing += 1;
 
-        if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
+        if self.cadical_reduce_enabled() {
+            // cadical `reducing ()`: schedule-driven, not threshold-driven.
+            self.cadical_reduce_if_due();
+        } else if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
             self.reduce_clause_database();
             self.debug_check_invariants("after clause database reduction");
             self.conflicts_since_deletion = 0;

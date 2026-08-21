@@ -273,6 +273,66 @@ pub fn shrink_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_SHRINK_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Treatment switch for the cadical `bump_variable` mode-gating port (see
+/// `docs/studies/2026-08-sat-mode-gated-bumping.md`): when set, conflict
+/// bumps reach only the *active* mode's decision structure – scores
+/// (VSIDS/EVSIDS) in stable mode, the VMTF queue in focused mode – exactly
+/// like `Internal::bump_variable`'s `if (use_scores ())` split. The default
+/// (unset) keeps the historical double-maintenance: both structures are
+/// bumped on every conflict regardless of mode.
+#[doc(hidden)]
+pub fn bump_mode_gate_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_BUMP_MODE_GATE").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
+/// Matched null for [`bump_mode_gate_enabled`]: same structural change (the
+/// inactive structure stops receiving the analyzed variables), but in stable
+/// mode the score bumps go to a **randomly chosen** variable set of the same
+/// size instead of the conflict-analyzed ones – identical work, identical
+/// perturbation, no signal. Focused-mode behavior matches the treatment
+/// (queue-only). If treatment beats this null, the win is attributable to
+/// delivering the real analysis signal through one structure, not to the
+/// removal of double-maintenance overhead or to trajectory reshuffling.
+#[doc(hidden)]
+pub fn bump_mode_gate_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_BUMP_MODE_GATE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
+/// Treatment switch for the cadical `reduce.cpp` port (see
+/// `docs/studies/2026-08-sat-cadical-reduce.md`): schedule-driven clause-database
+/// reduction (first at conflict 300, then `reduceint * sqrt(conflicts)`
+/// apart) with glue/used-tiered retention, replacing the fixed-12000-conflict
+/// tier-percentage reduce.
+#[doc(hidden)]
+pub fn cadical_reduce_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_CADICAL_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
+/// Matched null for [`cadical_reduce_enabled`]: identical trigger schedule
+/// and identical deletion counts, but the clauses to delete are drawn
+/// uniformly at random instead of by glue/size/used ranking – same
+/// perturbation, no retention semantics.
+#[doc(hidden)]
+pub fn cadical_reduce_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_CADICAL_REDUCE_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
 pub use clause_maintenance::{ClauseMaintenance, MaintenanceStats};
 pub use clause_size_manager::{ClauseSizeManager, SizeAdjustmentStrategy, SizeManagerStats};

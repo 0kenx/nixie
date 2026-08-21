@@ -298,6 +298,15 @@ impl Solver {
             // Record clause usage for tier promotion and bump activity (if it's a learned clause)
             if is_learned && self.clauses.get(reason_clause).is_some() {
                 self.clauses.record_usage(reason_clause);
+                // cadical `bump_clause`: restamp the used counter to max_used
+                // on every analysis use (the reduce port's recency signal).
+                if crate::cadical_reduce_enabled() || crate::cadical_reduce_null_enabled() {
+                    let slot = reason_clause.index();
+                    if slot >= self.cadical_used.len() {
+                        self.cadical_used.resize(slot + 1, 0);
+                    }
+                    self.cadical_used[slot] = 31;
+                }
                 // Promote to Core if LBD ≤ 2 (GLUE clause)
                 if self.clauses.get(reason_clause).is_some_and(|c| c.lbd <= 2) {
                     self.clauses.promote_to_core(reason_clause);
@@ -446,8 +455,41 @@ impl Solver {
         // where cadical adds it to `analyzed` ahead of `bump_variables`.
         self.improve_learnt_clause(&mut vars_to_bump);
 
-        // Batch bump all collected variables at once (single heap rebuild)
-        self.vsids.bump_batch(&vars_to_bump);
+        // Which decision structure receives the analysis signal this conflict?
+        //
+        // cadical `analyze.cpp::bump_variable`: `if (use_scores ())
+        // bump_variable_score (lit) else bump_queue (lit)` with
+        // `use_scores () = opts.score && stable`. With VMTF owning focused
+        // mode (`focused_vmtf`, the CaDiCaL-preset default), the faithful
+        // routing is: stable → scores only, focused → queue only. The
+        // historical oxiz behavior – both structures bumped on every conflict
+        // – remains the default (unset env); the treatment/null switches for
+        // the study live in `lib.rs`.
+        //
+        // Configs where VSIDS owns both modes (`focused_vmtf = false`, or no
+        // VMTF at all) keep unconditional score bumps: there is no inactive
+        // structure to gate.
+        let scores_active = !self.config.use_vmtf || !self.config.focused_vmtf || self.stable;
+        let gate = crate::bump_mode_gate_enabled() || crate::bump_mode_gate_null_enabled();
+
+        if scores_active || !gate {
+            if gate && crate::bump_mode_gate_null_enabled() && self.config.use_vmtf {
+                // NULL ARM: same bump count, same heap work, scrambled signal –
+                // each analyzed slot is replaced by a pseudo-random variable
+                // before it reaches the score heap. Deterministic per seed.
+                let mut scrambled: SmallVec<[Var; 32]> =
+                    SmallVec::with_capacity(vars_to_bump.len());
+                for _ in 0..vars_to_bump.len() {
+                    let r = self.rand_u64();
+                    let idx = (r % (self.num_vars.max(1) as u64)) as u32;
+                    scrambled.push(Var::new(idx));
+                }
+                self.vsids.bump_batch(&scrambled);
+            } else {
+                // Batch bump all collected variables at once (single heap rebuild)
+                self.vsids.bump_batch(&vars_to_bump);
+            }
+        }
         // CHB's `bump_batch` performs an O(num_vars) heap rebuild and LRB's
         // `on_conflict` does a periodic O(num_vars) participation scan. Both
         // are pure waste when the heuristic is not the active branching
@@ -465,7 +507,13 @@ impl Solver {
         // idempotent for vars already at the tail). Sort `vars_to_bump` in
         // place – its only later use (external-heuristic notification) is
         // order-independent – avoiding a per-conflict SmallVec clone.
-        if self.config.use_vmtf {
+        //
+        // Mode-gated under the study switches (cadical bumps the queue only
+        // when scores are NOT in use): in stable mode the queue stops
+        // receiving analysis signal, exactly mirroring the score-side gate
+        // above. Default (gates unset) keeps double maintenance.
+        let vmtf_active = self.config.use_vmtf && (!gate || !scores_active);
+        if vmtf_active {
             // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
             // to preserve relative queue order of bumped variables.
             //

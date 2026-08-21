@@ -133,7 +133,7 @@ impl Solver {
                 theory_processed = theory_processed.min(boundary);
                 self.learn_clause(learnt_clause);
 
-                self.vsids.decay();
+                self.decay_vsids();
                 if self.config.use_chb_branching {
                     self.chb.decay();
                 }
@@ -212,7 +212,7 @@ impl Solver {
                     theory_processed = theory_processed.min(boundary);
                     self.learn_clause(learnt_clause);
 
-                    self.vsids.decay();
+                    self.decay_vsids();
                     if self.config.use_chb_branching {
                         self.chb.decay();
                     }
@@ -320,7 +320,7 @@ impl Solver {
                         theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
-                        self.vsids.decay();
+                        self.decay_vsids();
                         if self.config.use_chb_branching {
                             self.chb.decay();
                         }
@@ -425,7 +425,7 @@ impl Solver {
                         theory_processed = theory_processed.min(boundary);
                         self.learn_clause(learnt_clause);
 
-                        self.vsids.decay();
+                        self.decay_vsids();
                         if self.config.use_chb_branching {
                             self.chb.decay();
                         }

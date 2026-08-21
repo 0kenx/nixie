@@ -922,6 +922,18 @@ pub struct Solver {
     pub(super) learned_clause_ids: Vec<ClauseId>,
     /// Number of conflicts since last clause deletion
     pub(super) conflicts_since_deletion: u64,
+    /// cadical-reduce port (`OXIZ_CADICAL_REDUCE`, study in
+    /// `docs/studies/`): conflict count at which the next cadical-style
+    /// reduction fires (cadical `lim.reduce`; first at `reduceinit` = 300).
+    pub(super) cadical_reduce_next: u64,
+    /// Completed cadical-style reductions (cadical `stats.reductions`;
+    /// feeds the growing `delta = reduceint * sqrt(conflicts)` schedule).
+    pub(super) cadical_reductions: u64,
+    /// cadical `Clause::used`: recency-of-use stamp per learned clause id
+    /// (`max_used` = 31 set on every analysis bump, decremented once per
+    /// reduction round; glue-tiered retention reads it). Indexed by
+    /// `ClauseId::index()`.
+    pub(super) cadical_used: Vec<u8>,
     /// PRNG state (xorshift64)
     pub(super) rng_state: u64,
     /// For Glucose-style restarts: average LBD of recent conflicts
@@ -1273,6 +1285,9 @@ impl Solver {
             lbd_mark: 0,
             learned_clause_ids: Vec::new(),
             conflicts_since_deletion: 0,
+            cadical_reduce_next: 300,
+            cadical_reductions: 0,
+            cadical_used: Vec::new(),
             rng_state: 0x853c_49e6_748f_ea9b, // Random seed
             recent_lbd_sum: 0,
             recent_lbd_count: 0,
@@ -2511,6 +2526,21 @@ impl Solver {
         }
     }
 
+    /// Decay the VSIDS score increment, honoring the mode-gating study
+    /// switches (`bump_mode_gate_enabled` / `..._null_enabled`): cadical
+    /// grows `score_inc` only while scores are the active heuristic
+    /// (`analyze.cpp::bump_variable_score_inc` under `use_scores ()`), so
+    /// under the gate the increment stays flat through focused phases and
+    /// stable-mode EVSIDS ordering is not seeded by focused-phase pollution.
+    /// Default (gates unset): unconditional, historical behavior.
+    pub(super) fn decay_vsids(&mut self) {
+        let scores_active = !self.config.use_vmtf || !self.config.focused_vmtf || self.stable;
+        let gated = crate::bump_mode_gate_enabled() || crate::bump_mode_gate_null_enabled();
+        if scores_active || !gated {
+            self.vsids.decay();
+        }
+    }
+
     /// The fatal soundness error set by a prior `add_clause`/assumption that
     /// reintroduced a BVE-eliminated variable (`None` when none has). When
     /// `Some`, `solve*` returns `Unknown` rather than guess.
@@ -2844,7 +2874,7 @@ impl Solver {
                 self.debug_check_invariants("after backtrack (assumptions)");
                 self.learn_clause(learnt_clause);
 
-                self.vsids.decay();
+                self.decay_vsids();
                 self.decay_clause_activity();
                 self.handle_clause_deletion_and_restart_limited(assumption_level_start);
             } else {
