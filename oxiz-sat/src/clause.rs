@@ -381,8 +381,24 @@ impl ClauseDatabase {
         self.arena.get(r)
     }
 
-    fn ref_of(&self, id: ClauseId) -> Option<ClauseRef> {
+    /// Arena slot of a clause id. `None` for out-of-range ids (cannot happen
+    /// for an id returned by one of the `add_*` constructors – slots are
+    /// append-only and ids are never reused).
+    pub(crate) fn ref_of(&self, id: ClauseId) -> Option<ClauseRef> {
         self.refs.get(id.index()).copied()
+    }
+
+    /// Mutable literal slice of a live clause addressed **directly** by its
+    /// arena slot – the propagation hot path, which already carries the slot
+    /// inside its watchers and must not pay the extra `refs[id]` indirection
+    /// (a second dependent cache miss per visited watcher) on every visit.
+    ///
+    /// Validation is identical to [`Self::live_lits_mut`] (slot bounds,
+    /// deleted flag); a null/stale ref simply reads as "no clause", exactly
+    /// as an invalid id does.
+    #[inline]
+    pub(crate) fn live_lits_by_ref(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
+        self.arena.live_lits_mut(r)
     }
 
     /// Get a read-only view of the clause by ID (deleted clauses are still

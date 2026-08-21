@@ -222,10 +222,7 @@ impl Solver {
             self.binary_graph.add(lit0.negate(), lit1, clause_id);
             self.binary_graph.add(lit1.negate(), lit0, clause_id);
 
-            self.watches
-                .add(lit0.negate(), Watcher::new(clause_id, lit1));
-            self.watches
-                .add(lit1.negate(), Watcher::new(clause_id, lit0));
+            self.attach_watchers(clause_id, lit0, lit1);
 
             self.assert_learned_clause(&learnt_clause, clause_id);
         } else {
@@ -295,10 +292,7 @@ impl Solver {
                 self.clauses.swap_lits(clause_id, 1, best);
             }
             let lit1 = learnt_clause[1];
-            self.watches
-                .add(lit0.negate(), Watcher::new(clause_id, lit1));
-            self.watches
-                .add(lit1.negate(), Watcher::new(clause_id, lit0));
+            self.attach_watchers(clause_id, lit0, lit1);
 
             self.assert_learned_clause(&learnt_clause, clause_id);
 
@@ -575,10 +569,7 @@ impl Solver {
             self.binary_graph.add(lit0.negate(), lit1, clause_id);
             self.binary_graph.add(lit1.negate(), lit0, clause_id);
         }
-        self.watches
-            .add(lit0.negate(), Watcher::new(clause_id, lit1));
-        self.watches
-            .add(lit1.negate(), Watcher::new(clause_id, lit0));
+        self.attach_watchers(clause_id, lit0, lit1);
 
         clause_id
     }
@@ -1304,8 +1295,7 @@ impl Solver {
         }
 
         // Re-attach watches on the new positions 0 and 1.
-        self.watches.add(w0.negate(), Watcher::new(clause_id, w1));
-        self.watches.add(w1.negate(), Watcher::new(clause_id, w0));
+        self.attach_watchers(clause_id, w0, w1);
 
         // Record the in-place strengthening in the proof: add the shorter
         // clause (RUP-derivable – vivification proved it entailed) then delete the
@@ -1478,8 +1468,7 @@ impl Solver {
             }
             let w0 = lits[0];
             let w1 = lits[1];
-            self.watches.add(w0.negate(), Watcher::new(cid, w1));
-            self.watches.add(w1.negate(), Watcher::new(cid, w0));
+            self.attach_watchers(cid, w0, w1);
         }
     }
 
@@ -1594,8 +1583,7 @@ impl Solver {
             self.debug_check_learned_clause_lbd(id);
             self.binary_graph.add(r, q, id);
             self.binary_graph.add(q.negate(), r.negate(), id);
-            self.watches.add(r, Watcher::new(id, q));
-            self.watches.add(q.negate(), Watcher::new(id, r.negate()));
+            self.attach_watchers(id, r.negate(), q);
             self.clause_hyper.resize(id.index() + 1, false);
             self.clause_hyper[id.index()] = true;
             *hyper += 1;

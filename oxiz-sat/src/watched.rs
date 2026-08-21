@@ -2,25 +2,37 @@
 
 use crate::clause::ClauseId;
 use crate::literal::Lit;
+use crate::memory::ClauseRef;
 #[allow(unused_imports)]
 use crate::prelude::*;
 #[allow(unused_imports)]
 use smallvec::SmallVec;
 
 /// A watcher entry
+///
+/// 12 bytes: the clause is addressed both by id (stable handle for reasons,
+/// reduction, subsumption – everything outside BCP) and by arena slot, so a
+/// propagation visit dereferences the clause **directly** instead of paying
+/// the `refs[id]` table indirection (a second dependent load per visited
+/// watcher). Slots are append-only and never reused (`memory.rs`), so the
+/// slot names exactly the same clause as the id for the watcher's whole
+/// life; deletion keeps the slot readable with the deleted flag set, which
+/// is what makes stale watchers safe.
 #[derive(Debug, Clone, Copy)]
 pub struct Watcher {
     /// The clause being watched
     pub clause: ClauseId,
+    /// The clause's arena slot (byte offset) – direct-addressing fast path.
+    pub r: ClauseRef,
     /// The other watched literal (blocking literal)
     pub blocker: Lit,
 }
 
 impl Watcher {
-    /// Create a new watcher
+    /// Create a new watcher for a clause whose arena slot is `r`.
     #[must_use]
-    pub const fn new(clause: ClauseId, blocker: Lit) -> Self {
-        Self { clause, blocker }
+    pub const fn new(clause: ClauseId, r: ClauseRef, blocker: Lit) -> Self {
+        Self { clause, r, blocker }
     }
 }
 
@@ -239,7 +251,7 @@ mod tests {
         let clause = ClauseId::new(0);
         let blocker = Lit::neg(Var::new(1));
 
-        wl.add(lit, Watcher::new(clause, blocker));
+        wl.add(lit, Watcher::new(clause, ClauseRef::null(), blocker));
 
         assert_eq!(wl.get(lit).len(), 1);
         assert_eq!(wl.get(lit)[0].clause, clause);

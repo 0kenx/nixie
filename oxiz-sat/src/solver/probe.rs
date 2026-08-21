@@ -307,8 +307,7 @@ impl Solver {
             self.debug_check_learned_clause_lbd(id);
             self.binary_graph.add(dom_lit, q, id);
             self.binary_graph.add(q.negate(), neg_dom, id);
-            self.watches.add(neg_dom, Watcher::new(id, q));
-            self.watches.add(q.negate(), Watcher::new(id, neg_dom));
+            self.attach_watchers(id, neg_dom, q);
             self.clause_hyper.resize(id.index() + 1, false);
             self.clause_hyper[id.index()] = true;
             *hyper += 1;

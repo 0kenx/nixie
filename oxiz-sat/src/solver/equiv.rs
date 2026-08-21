@@ -396,13 +396,11 @@ impl Solver {
                     let (a, b) = (lits[0], lits[1]);
                     self.binary_graph.add(a.negate(), b, cid);
                     self.binary_graph.add(b.negate(), a, cid);
-                    self.watches.add(a.negate(), Watcher::new(cid, b));
-                    self.watches.add(b.negate(), Watcher::new(cid, a));
+                    self.attach_watchers(cid, a, b);
                 }
                 n if n >= 3 => {
                     let (a, b) = (lits[0], lits[1]);
-                    self.watches.add(a.negate(), Watcher::new(cid, b));
-                    self.watches.add(b.negate(), Watcher::new(cid, a));
+                    self.attach_watchers(cid, a, b);
                 }
                 _ => {} // units are level-0 facts on the trail
             }

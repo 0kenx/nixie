@@ -88,6 +88,16 @@ impl BinaryImplicationGraph {
         self.implications[lit.code() as usize].push((implied, clause_id));
     }
 
+    /// Owned edge list of `lit`'s trigger (for the take/put-back pattern in
+    /// propagation).
+    fn get_mut(&mut self, lit: Lit) -> &mut Vec<(Lit, ClauseId)> {
+        let idx = lit.code() as usize;
+        if idx >= self.implications.len() {
+            self.implications.resize(idx + 1, Vec::new());
+        }
+        &mut self.implications[idx]
+    }
+
     fn get(&self, lit: Lit) -> &[(Lit, ClauseId)] {
         &self.implications[lit.code() as usize]
     }
@@ -774,6 +784,7 @@ pub struct Solver {
     pub(super) trail: Trail,
     /// Watch lists
     pub(super) watches: WatchLists,
+
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
     /// Prefer these variables before VSIDS (highest priority first). Cleared
@@ -1165,6 +1176,34 @@ impl Default for Solver {
 }
 
 impl Solver {
+    /// Attach the two watchers of a clause whose stored literals are
+    /// `l0`/`l1` (positions [0]/[1]): key `~l0` with blocker `l1`, and
+    /// `~l1` with blocker `l0`.
+    ///
+    /// The watcher records the clause's **arena slot** alongside its id, so
+    /// propagation can dereference the clause directly instead of walking the
+    /// `refs[id]` table on every visit. Slots are append-only and never reused
+    /// (`memory.rs`), so the slot stays bound to this exact clause for the
+    /// watcher's lifetime; deletion keeps it readable under the deleted flag.
+    ///
+    /// `cid` must come straight from an `add_*` call – every other caller has
+    /// only ever held ids of live clauses, so the `ref_of` lookup cannot miss;
+    /// the debug assert documents that invariant, and release mode skips
+    /// attachment for a missing ref (a watcher-less clause degrades search
+    /// completeness for that clause but is not a soundness hazard: dropping a
+    /// watch never fabricates implications).
+    pub(super) fn attach_watchers(&mut self, cid: ClauseId, l0: Lit, l1: Lit) {
+        let Some(r) = self.clauses.ref_of(cid) else {
+            debug_assert!(
+                false,
+                "freshly added/known-live clause id without arena slot"
+            );
+            return;
+        };
+        self.watches.add(l0.negate(), Watcher::new(cid, r, l1));
+        self.watches.add(l1.negate(), Watcher::new(cid, r, l0));
+    }
+
     /// Create a new solver
     #[must_use]
     pub fn new() -> Self {
@@ -2313,10 +2352,7 @@ impl Solver {
                     }
                     self.binary_graph.add(lit0.negate(), lit1, clause_id);
                     self.binary_graph.add(lit1.negate(), lit0, clause_id);
-                    self.watches
-                        .add(lit0.negate(), Watcher::new(clause_id, lit1));
-                    self.watches
-                        .add(lit1.negate(), Watcher::new(clause_id, lit0));
+                    self.attach_watchers(clause_id, lit0, lit1);
                     return true;
                 }
 
@@ -2348,10 +2384,7 @@ impl Solver {
                 }
                 self.binary_graph.add(lit0.negate(), lit1, clause_id);
                 self.binary_graph.add(lit1.negate(), lit0, clause_id);
-                self.watches
-                    .add(lit0.negate(), Watcher::new(clause_id, lit1));
-                self.watches
-                    .add(lit1.negate(), Watcher::new(clause_id, lit0));
+                self.attach_watchers(clause_id, lit0, lit1);
 
                 if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
                     self.trail.assign_propagation_at(forced, clause_id, 0);
@@ -2424,10 +2457,7 @@ impl Solver {
         let lit0 = clause_lits[0];
         let lit1 = clause_lits[1];
 
-        self.watches
-            .add(lit0.negate(), Watcher::new(clause_id, lit1));
-        self.watches
-            .add(lit1.negate(), Watcher::new(clause_id, lit0));
+        self.attach_watchers(clause_id, lit0, lit1);
 
         // `pre_check_effective_unit` already determined -- against the exact
         // pre-watch-selection trail state, before anything here could shift

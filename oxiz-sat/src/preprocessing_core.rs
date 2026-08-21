@@ -465,16 +465,23 @@ impl Preprocessor {
         // Build watch lists from current clauses
         for i in 0..clauses.num_slots() {
             let clause_id = ClauseId::new(i as u32);
-            if let Some(clause) = clauses.get(clause_id) {
-                if clause.deleted || clause.lits.len() < 2 {
-                    continue;
-                }
-
-                let lit0 = clause.lits[0];
-                let lit1 = clause.lits[1];
-                watches.add(lit0.negate(), Watcher::new(clause_id, lit1));
-                watches.add(lit1.negate(), Watcher::new(clause_id, lit0));
+            let Some(clause) = clauses.get(clause_id) else {
+                continue;
+            };
+            if clause.deleted || clause.lits.len() < 2 {
+                continue;
             }
+            // The ref lookup cannot miss here: the id came from `num_slots()`
+            // over this very database.
+            let Some(r) = clauses.ref_of(clause_id) else {
+                debug_assert!(false, "slot-table id without arena slot");
+                continue;
+            };
+
+            let lit0 = clause.lits[0];
+            let lit1 = clause.lits[1];
+            watches.add(lit0.negate(), Watcher::new(clause_id, r, lit1));
+            watches.add(lit1.negate(), Watcher::new(clause_id, r, lit0));
         }
 
         // Try to probe each literal

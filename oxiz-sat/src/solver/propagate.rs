@@ -26,50 +26,87 @@ impl Solver {
                 *limit -= 1;
             }
 
-            // First, propagate binary implications (faster)
-            let binary_len = self.binary_graph.get(lit).len();
-            for idx in 0..binary_len {
-                let (implied_lit, clause_id) = self.binary_graph.get(lit)[idx];
+            // First, propagate binary implications (faster).
+            //
+            // Take ownership of the trigger's edge list for the scan (same
+            // take/mutate/put-back pattern as the watch list below): the naive
+            // version re-called `binary_graph.get(lit)` per edge – two
+            // bounds-checked loads per implication – and holding the slice
+            // across the loop body is impossible because the calls below take
+            // `&mut self`.
+            //
+            // Put-back correctness rests on a single-threaded invariant (the
+            // whole solver is thread-local; portfolio workers each own their
+            // solver): no edge keyed under `lit` can be appended while `lit`
+            // propagates. The only mid-propagation append source is hyper-
+            // binary resolution, which keys its new edges under negations of
+            // literals *other than* `lit` (its `other_lit` is false while
+            // `lit` is true, and `implied` lands true, so neither negation can
+            // equal `lit`). Assigning the taken vector back therefore cannot
+            // drop an edge added elsewhere during the loop.
+            //
+            // Most propagated literals have no binary implications at all –
+            // the `is_empty` probe keeps the common case down to one bounds-
+            // checked length load instead of the take/put-back dance.
+            if !self.binary_graph.get(lit).is_empty() {
+                let edges = core::mem::take(self.binary_graph.get_mut(lit));
+                for (implied_lit, clause_id) in edges.iter().copied() {
+                    // Binary clauses are never deleted during search
+                    // (reduce_clause_database skips len<=2 clauses), so edges in
+                    // the binary implication graph are always valid. The previous
+                    // per-edge validation (clauses.get + 2x contains) was a major
+                    // BCP bottleneck – ~5 ops per binary edge per propagation.
+                    // In incremental mode (pop/forget), edges could go stale; that
+                    // path would need edge invalidation, not per-propagation checks.
 
-                // Binary clauses are never deleted during search
-                // (reduce_clause_database skips len<=2 clauses), so edges in
-                // the binary implication graph are always valid. The previous
-                // per-edge validation (clauses.get + 2x contains) was a major
-                // BCP bottleneck – ~5 ops per binary edge per propagation.
-                // In incremental mode (pop/forget), edges could go stale; that
-                // path would need edge invalidation, not per-propagation checks.
+                    let value = self.trail.lit_val(implied_lit);
+                    if value < 0 {
+                        // Conflict in binary clause. `lit`'s remaining implication
+                        // edges (and its whole watch list) have not been examined,
+                        // so restore the taken edge list before bailing out –
+                        // dropping it would lose every implication keyed under
+                        // `lit` – and requeue the literal (see
+                        // `Trail::requeue_last_propagated`; preserves the
+                        // propagation-queue contract so a later solve() re-visits
+                        // it and rescans those edges).
+                        *self.binary_graph.get_mut(lit) = edges;
+                        self.note_conflict_prefix();
+                        self.trail.requeue_last_propagated();
+                        return Some(clause_id);
+                    } else if value == 0 {
+                        // Propagate
+                        self.trail.assign_propagation(implied_lit, clause_id);
+                        // LRAT: flush level-0 propagations to explicit derived units
+                        // so every level-0 literal carries a unit id.
+                        if self.lrat && self.trail.decision_level() == 0 {
+                            self.flush_level0_unit(implied_lit, clause_id);
+                        }
 
-                let value = self.trail.lit_val(implied_lit);
-                if value < 0 {
-                    // Conflict in binary clause. `lit`'s remaining implication
-                    // edges (and its whole watch list) have not been examined,
-                    // so put it back on the queue before bailing out – see
-                    // `Trail::requeue_last_propagated` (preserves the
-                    // propagation-queue contract so a later solve() re-visits it).
-                    self.note_conflict_prefix();
-                    self.trail.requeue_last_propagated();
-                    return Some(clause_id);
-                } else if value == 0 {
-                    // Propagate
-                    self.trail.assign_propagation(implied_lit, clause_id);
-                    // LRAT: flush level-0 propagations to explicit derived units
-                    // so every level-0 literal carries a unit id.
-                    if self.lrat && self.trail.decision_level() == 0 {
-                        self.flush_level0_unit(implied_lit, clause_id);
-                    }
-
-                    // Lazy hyper-binary resolution: check if we can learn a binary clause
-                    if self.config.enable_lazy_hyper_binary {
-                        self.check_hyper_binary_resolution(lit, implied_lit, clause_id);
+                        // Lazy hyper-binary resolution: check if we can learn a binary clause
+                        if self.config.enable_lazy_hyper_binary {
+                            self.check_hyper_binary_resolution(lit, implied_lit, clause_id);
+                        }
                     }
                 }
+
+                // Put the edge list back (see the take-site invariant above:
+                // nothing appended under `lit` during the scan, so this cannot
+                // drop an edge).
+                *self.binary_graph.get_mut(lit) = edges;
             }
 
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
             let mut watches = core::mem::take(self.watches.get_mut(lit));
             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
-            // sizeof(Watcher) = 8; cache_lines(n, 8) = (n*8 + 127) / 128.
+            //
+            // NOTE: deliberately counts 8 bytes/watcher even though our
+            // Watcher is 12 (id + arena slot + blocker). The tick counters
+            // drive restart/mode-switch schedules – changing the accounting
+            // changes the search trajectory, which makes every before/after
+            // measurement a different-search comparison. Any correction here
+            // must go through the matched-null methodology in
+            // docs/BENCHMARKING.md first.
             let ticks = 1u64 + (watches.len() as u64 * 8).div_ceil(128);
             if self.stable {
                 self.ticks_stable = self.ticks_stable.saturating_add(ticks);
@@ -93,7 +130,13 @@ impl Solver {
                     continue;
                 }
 
-                let clause = match self.clauses.live_lits_mut(watcher.clause) {
+                // Direct arena addressing: the watcher carries the clause's
+                // slot (`Watcher::r`), so a visit costs one dependent load
+                // (the clause itself) instead of two (refs table, then
+                // clause). Validation is unchanged: bounds + deleted flag,
+                // with deleted/invalid slots reading as "no clause" exactly
+                // like the id-based path.
+                let clause = match self.clauses.live_lits_by_ref(watcher.r) {
                     Some(lits) => lits,
                     None => {
                         // Deleted clause – drop (don't advance write).
@@ -109,7 +152,10 @@ impl Solver {
                 // If first watch is true, clause is satisfied
                 let first = clause[0];
                 if self.trail.lit_val(first) > 0 {
-                    watches[write] = Watcher::new(watcher.clause, first);
+                    watches[write] = Watcher {
+                        blocker: first,
+                        ..watcher
+                    };
                     write += 1;
                     continue;
                 }
@@ -141,7 +187,10 @@ impl Solver {
                     if v > 0 {
                         // Satisfied replacement: keep the watcher here,
                         // refresh the blocker to the satisfied literal.
-                        watches[write] = Watcher::new(watcher.clause, l);
+                        watches[write] = Watcher {
+                            blocker: l,
+                            ..watcher
+                        };
                         write += 1;
                         found = true;
                         break;
@@ -149,8 +198,13 @@ impl Solver {
                     if v == 0 {
                         // Unassigned replacement: move the watch.
                         clause.swap(1, j);
-                        self.watches
-                            .add(clause[1].negate(), Watcher::new(watcher.clause, first));
+                        self.watches.add(
+                            clause[1].negate(),
+                            Watcher {
+                                blocker: first,
+                                ..watcher
+                            },
+                        );
                         found = true;
                         break;
                     }
@@ -161,7 +215,10 @@ impl Solver {
                 }
 
                 // No new watch found - clause is unit or conflicting
-                watches[write] = Watcher::new(watcher.clause, first);
+                watches[write] = Watcher {
+                    blocker: first,
+                    ..watcher
+                };
 
                 if self.trail.lit_val(first) < 0 {
                     conflict_found = Some(watcher.clause);

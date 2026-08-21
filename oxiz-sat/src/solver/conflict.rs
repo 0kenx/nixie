@@ -30,6 +30,28 @@ fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
     levels.len() as u32
 }
 
+/// Stable insertion sort by `u64` key on pre-extracted `(key, item)` pairs.
+///
+/// Output is element-for-element identical to `[T]::sort_by_key` (both are
+/// stable: equal keys keep their original relative order), so swapping this in
+/// cannot change the search trajectory. Used for the per-conflict VMTF bump
+/// sort, whose arrays are tiny (typically ≤ 40 analyzed variables) where the
+/// generic driftsort machinery costs more than the quadratic move count of a
+/// plain insertion sweep; keys are read once (decorated) so the sweep does
+/// O(n) score lookups instead of O(n²).
+fn insertion_sort_by_key_stable<K: Copy + PartialOrd, T: Copy>(v: &mut [(K, T)]) {
+    for i in 1..v.len() {
+        let cur = v[i];
+        let k = cur.0;
+        let mut j = i;
+        while j > 0 && v[j - 1].0 > k {
+            v[j] = v[j - 1];
+            j -= 1;
+        }
+        v[j] = cur;
+    }
+}
+
 /// Outcome of one block-walk step (cadical `shrink_literal` return codes).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShrinkStep {
@@ -446,7 +468,20 @@ impl Solver {
         if self.config.use_vmtf {
             // Sort by bump timestamp (cadical MSORT on `analyzed_bumped_rank`)
             // to preserve relative queue order of bumped variables.
-            vars_to_bump.sort_by_key(|&v| self.vmtf.activity(v));
+            //
+            // Keys are read once into (key, var) pairs: an undecorated
+            // insertion sweep re-evaluates the key O(n²) times (each a bounds-
+            // checked btab load), which measured *slower* than the generic
+            // driftsort it replaced; decorating makes it O(n) reads and keeps
+            // the stable tie order intact.
+            let mut keyed: SmallVec<[(u64, Var); 32]> = vars_to_bump
+                .iter()
+                .map(|&v| (self.vmtf.activity(v), v))
+                .collect();
+            insertion_sort_by_key_stable(&mut keyed);
+            for (i, &(_, v)) in keyed.iter().enumerate() {
+                vars_to_bump[i] = v;
+            }
             for &v in &vars_to_bump {
                 self.vmtf.bump(v, |v| self.trail.is_assigned(v));
             }

@@ -103,67 +103,161 @@ impl DimacsParser {
 
     /// Parse from a reader
     ///
+    /// Byte-level scanning: the whole input is read once and tokens are
+    /// parsed by hand (`[+-]?digits`) instead of `str::parse::<i32>` per
+    /// whitespace-split token. Semantics are identical to the previous
+    /// line/token version, including its quirks (a line whose first
+    /// non-space character is `c` is skipped *entirely*, `%` ends parsing,
+    /// a token that is not a valid `i32` is an error naming that token).
+    ///
     /// # Errors
     ///
     /// Returns an error if parsing fails
     pub fn parse_reader<R: BufRead>(
         &mut self,
-        reader: R,
+        mut reader: R,
         solver: &mut Solver,
     ) -> Result<(), DimacsError> {
         let mut current_clause = Vec::new();
         let mut _clauses_read = 0;
 
-        for line in reader.lines() {
-            let line = line?;
-            let line = line.trim();
+        let mut buf = Vec::new();
+        reader.read_to_end(&mut buf)?;
+        let text = core::str::from_utf8(&buf)
+            .map_err(|e| DimacsError::Io(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        let bytes = text.as_bytes();
 
-            // Skip empty lines
-            if line.is_empty() {
-                continue;
+        // Token scan state: `tok_start..i` is the pending token when
+        // `in_token` is set. Tokens never span lines, so the line-oriented
+        // classification below sees the same token stream as the previous
+        // `split_whitespace` version.
+        let mut in_token = false;
+        let mut tok_start = 0usize;
+        let mut line_has_content = false; // seen a non-whitespace byte this line
+
+        #[inline]
+        fn parse_i32(token: &str) -> Option<i32> {
+            let neg = token.starts_with('-');
+            let digits = token.strip_prefix(['+', '-']).unwrap_or(token);
+            if digits.is_empty() {
+                return None;
             }
-
-            // Skip comments
-            if line.starts_with('c') {
-                continue;
-            }
-
-            // DIMACS end-of-file marker (SATLIB and older generators)
-            if line.starts_with('%') {
-                break;
-            }
-
-            // Parse problem line
-            if line.starts_with('p') {
-                self.parse_problem_line(line)?;
-                solver.ensure_vars(self.num_vars);
-                continue;
-            }
-
-            // Parse clause
-            for token in line.split_whitespace() {
-                let lit_val: i32 = token
-                    .parse()
-                    .map_err(|_| DimacsError::Parse(format!("Invalid literal: {token}")))?;
-
-                if lit_val == 0 {
-                    // End of clause. Always hand the clause to the solver –
-                    // including the *empty* clause. An empty clause (a lone `0`,
-                    // as in `p cnf 0 1` / `0`) is the unsatisfiable unit and must
-                    // be recorded: `Solver::add_clause` marks the solver
-                    // trivially UNSAT for an empty input. The previous
-                    // `!current_clause.is_empty()` guard silently dropped empty
-                    // clauses, so `false.cnf` parsed as clause-free (trivially
-                    // SAT) instead of UNSAT.
-                    solver.add_clause(current_clause.iter().copied());
-                    current_clause.clear();
-                    _clauses_read += 1;
-                } else {
-                    // Add literal to current clause
-                    let lit = self.dimacs_to_lit(lit_val)?;
-                    current_clause.push(lit);
+            let mut acc: i64 = 0;
+            for b in digits.bytes() {
+                if !b.is_ascii_digit() {
+                    return None;
+                }
+                acc = acc * 10 + i64::from(b - b'0');
+                if acc > i32::MAX as i64 + 1 {
+                    return None;
                 }
             }
+            let v = if neg { -acc } else { acc };
+            if v < i32::MIN as i64 || v > i32::MAX as i64 {
+                return None;
+            }
+            Some(v as i32)
+        }
+
+        let mut i = 0usize;
+        while i <= bytes.len() {
+            let at_end = i == bytes.len();
+            let b = if at_end { b'\n' } else { bytes[i] };
+
+            if at_end || b == b'\n' {
+                // End of line: flush any pending token first.
+                if in_token {
+                    let token = &text[tok_start..i];
+                    match parse_i32(token) {
+                        Some(0) => {
+                            solver.add_clause(current_clause.iter().copied());
+                            current_clause.clear();
+                            _clauses_read += 1;
+                        }
+                        Some(v) => {
+                            let lit = self.dimacs_to_lit(v)?;
+                            current_clause.push(lit);
+                        }
+                        None => {
+                            return Err(DimacsError::Parse(format!("Invalid literal: {token}")));
+                        }
+                    }
+                    in_token = false;
+                }
+                if at_end {
+                    break;
+                }
+                // Line-level classification happens on the FIRST content byte
+                // of a line; a directive byte consumed it already.
+                if !line_has_content {
+                    i += 1;
+                    continue;
+                }
+                line_has_content = false;
+                i += 1;
+                continue;
+            }
+
+            let is_space = matches!(b, b' ' | b'\t' | b'\r' | b'\x0b' | b'\x0c');
+            if is_space {
+                if in_token {
+                    let token = &text[tok_start..i];
+                    match parse_i32(token) {
+                        Some(0) => {
+                            solver.add_clause(current_clause.iter().copied());
+                            current_clause.clear();
+                            _clauses_read += 1;
+                        }
+                        Some(v) => {
+                            let lit = self.dimacs_to_lit(v)?;
+                            current_clause.push(lit);
+                        }
+                        None => {
+                            return Err(DimacsError::Parse(format!("Invalid literal: {token}")));
+                        }
+                    }
+                    in_token = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if !line_has_content && !in_token {
+                // First non-space byte of a line: check the line directives
+                // exactly like the line-based parser did.
+                line_has_content = true;
+                match b {
+                    b'c' => {
+                        // Skip the remainder of this line entirely.
+                        while i < bytes.len() && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                        line_has_content = false;
+                        continue;
+                    }
+                    b'%' => break,
+                    b'p' => {
+                        // Collect the rest of the line and hand it to the
+                        // problem-line parser.
+                        let start = i;
+                        while i < bytes.len() && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                        let line = &text[start..i];
+                        self.parse_problem_line(line.trim_end())?;
+                        solver.ensure_vars(self.num_vars);
+                        line_has_content = false;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            if !in_token {
+                in_token = true;
+                tok_start = i;
+            }
+            i += 1;
         }
 
         // Handle case where last clause doesn't end with 0
@@ -470,5 +564,80 @@ mod tests {
             .parse_reader(cnf.as_bytes(), &mut solver)
             .expect("test operation should succeed");
         assert_eq!(solver.solve(), SolverResult::Unsat);
+    }
+
+    // Byte-scanner parity with the previous line/token parser on the awkward
+    // shapes that motivated its quirks.
+    #[test]
+    fn test_parse_crlf_and_tabs() {
+        let cnf = "c comment\r\np cnf 2 2\r\n1\t-2 0\r\n-1 2 0\r\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("CRLF input parses");
+        assert_eq!(parser.num_clauses(), 2);
+    }
+
+    #[test]
+    fn test_parse_no_trailing_newline() {
+        let cnf = "p cnf 2 1\n1 2 0";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("input without final newline parses");
+        assert_eq!(parser.num_clauses(), 1);
+    }
+
+    #[test]
+    fn test_parse_percent_stops() {
+        // SATLIB-style trailing garbage after `%` is ignored.
+        let cnf = "p cnf 2 1\n1 2 0\n%\n0\n";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("% terminates parsing");
+        assert_eq!(parser.num_clauses(), 1);
+    }
+
+    #[test]
+    fn test_parse_plus_sign_literal() {
+        let cnf = "p cnf 1 1\n+1 0";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("leading + accepted like i32::from_str");
+        assert_eq!(parser.num_clauses(), 1);
+    }
+
+    #[test]
+    fn test_parse_invalid_token_is_error() {
+        let cnf = "p cnf 2 1\n1 x 0";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        let err = parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect_err("invalid token rejected");
+        assert!(
+            matches!(err, DimacsError::Parse(ref msg) if msg.contains('x')),
+            "error names the offending token: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_bare_digits_are_literals() {
+        // Regression: an early draft of the byte scanner stripped a sign
+        // prefix via `strip_prefix('+').or_else(|| strip_prefix('-'))`, whose
+        // `None` fallthrough made every plain digit token fail to parse.
+        let cnf = "p cnf 3 1\n1 -2 3 0";
+        let mut parser = DimacsParser::new();
+        let mut solver = Solver::new();
+        parser
+            .parse_reader(cnf.as_bytes(), &mut solver)
+            .expect("plain digit tokens parse");
+        assert_eq!(parser.num_vars(), 3);
     }
 }
