@@ -246,10 +246,36 @@ pete only along some trajectories.
 
 ## Remaining steps
 
-1. Land the arrangement round per the design above (scoped EUF merges +
-   interface disjunction lemmas); regression: 5s/cxs-bp* → `unsat`,
-   differential 0 new unsound.
-2. Re-validate `QF_UFLIA/wisas/xs_8_13.smt2` (the earlier machinery
-   regression): check whether main also goes false-SAT there under a
-   different seed/schedule before blaming the added enforcement.
-3. Full bar + differential + parity per AGENTS.md.
+1. ~~Land the arrangement round~~ **done** - see "Fix LANDED" above
+   (commit `8db2f3c`): entire pete family -> correct `unsat`, differential
+   0 new unsound.
+2. QF_ANIA avg40 - **diagnosed to the array layer (2026-08-21, third
+   follow-up), not yet fixed**:
+   * Pin experiment: oxiz's `sat` model is degenerate (every array as
+     `(as const ...)`, all `#valid` false / `#memory_int` inner 0; 401 Int
+     pins mostly 0) and z3 refutes `F AND (all pins)`; greedy minimization
+     reaches a **single pin**: `main_~ret5~0_427 = 162` alone makes `F`
+     UNSAT.
+   * **Decisive**: oxiz answers `sat` on `F AND (= |main_~ret5~0_427| 162)`
+     too (2.4 s; z3: unsat) - not a search/derivation gap: the theory layer
+     cannot refute the pinned formula at all.  Reproducer (trivial): the
+     original file + `(assert (= |main_~ret5~0_427| 162))` before
+     `(check-sat)`; the `(set-logic QF_ANIA)` header must stay or oxiz
+     routes to `unknown` (a routing artifact worth remembering).
+   * Internal scans (`OXIZ_SCAN_VIOL`): atom violations **none**,
+     congruence gaps **none** - the failure is inside the ARRAY reasoning.
+     Shape: Ultimate-style 2-level heap model
+     (`#memory_int : Array Int (Array Int Int)`), 84 stores / 326 selects;
+     the refutation requires read-over-write derivations through the nested
+     store chains (a const-0 array model means no select ever forces a
+     stored value, so `ret5`'s arithmetic chain stays unconstrained).
+     Suspects: the RoW cascade over 2-level selects
+     (`select (select mem base) off`) and index-equality reasoning for the
+     `base`/`offset` index terms.  Fix belongs in `check_array` /
+     `instantiate_array_axioms` with this reproducer; do NOT widen the
+     arrangement round's gate for it.
+3. wisas-class inputs (QF_UFLIA): the hole exists there too and is
+   trajectory-dependent (see the wisas lesson above).  Extend the round's
+   cross-theory check beyond `is_dl_family` only after wisas's own shape is
+   understood - its refutation chain is deeper (counter UF results
+   interacting with LIA pins, not just congruent arguments).
