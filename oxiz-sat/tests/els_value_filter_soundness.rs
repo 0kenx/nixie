@@ -50,11 +50,7 @@ fn els_rewrite_does_not_strand_dead_watches_sat() {
     solver.add_clause(vec![Lit::neg(v(1))]); // ¬y
     solver.add_clause(vec![Lit::neg(v(2)), Lit::pos(v(3))]); // ¬a ∨ b
     solver.add_clause(vec![Lit::pos(v(2)), Lit::neg(v(3))]); // a ∨ ¬b
-    solver.add_clause(vec![
-        Lit::pos(v(0)),
-        Lit::pos(v(1)),
-        Lit::pos(v(3)),
-    ]); // x ∨ y ∨ b  (victim)
+    solver.add_clause(vec![Lit::pos(v(0)), Lit::pos(v(1)), Lit::pos(v(3))]); // x ∨ y ∨ b  (victim)
 
     assert_eq!(solver.solve(), SolverResult::Sat);
     // The victim clause forces b (and thus a) true.
@@ -87,11 +83,7 @@ fn els_rewrite_detects_falsified_clause_as_unsat() {
     solver.add_clause(vec![Lit::neg(v(2))]); // ¬a
     solver.add_clause(vec![Lit::neg(v(2)), Lit::pos(v(3))]); // ¬a ∨ b
     solver.add_clause(vec![Lit::pos(v(2)), Lit::neg(v(3))]); // a ∨ ¬b
-    solver.add_clause(vec![
-        Lit::pos(v(0)),
-        Lit::pos(v(1)),
-        Lit::pos(v(3)),
-    ]); // x ∨ y ∨ b
+    solver.add_clause(vec![Lit::pos(v(0)), Lit::pos(v(1)), Lit::pos(v(3))]); // x ∨ y ∨ b
 
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
