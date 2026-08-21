@@ -868,6 +868,18 @@ impl EufSolver {
         }
     }
 
+    /// Debug-only (OXIZ_SCAN_VIOL): indices of every interned function
+    /// application node, for congruence-gap diagnostics.
+    #[cfg(debug_assertions)]
+    pub fn debug_app_nodes(&self) -> Vec<u32> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_app())
+            .map(|(i, _)| i as u32)
+            .collect()
+    }
+
     /// Look up the node index for a given TermId
     pub fn term_to_node(&self, term: TermId) -> Option<u32> {
         self.term_to_node.get(&term).copied()

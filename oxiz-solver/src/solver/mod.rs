@@ -1413,6 +1413,7 @@ impl Solver {
                     #[cfg(debug_assertions)]
                     if std::env::var("OXIZ_SCAN_VIOL").is_ok() {
                         theory_manager.debug_scan_theory_model_violations("check_core Sat");
+                        theory_manager.debug_scan_congruence_gaps(8);
                     }
                     if resource_exhausted {
                         // A real theory conflict was dropped at the conflict

@@ -143,6 +143,85 @@ impl TheoryManager<'_> {
         None
     }
 
+    /// Congruence-gap probe: find same-function application pairs whose
+    /// results are in different EUF classes and report why congruence did not
+    /// merge them —
+    /// * args pairwise EUF-**equal** ⇒ a congruence-closure miss (EUF bug);
+    /// * args EUF-distinct but pairwise **arith-model-equal** ⇒ the
+    ///   arith→EUF equality propagation never merged the args (the
+    ///   combination gap behind the pete false-SATs).
+    ///
+    /// Prints at most `cap` findings; `OXIZ_SCAN_VIOL=1` gates the caller.
+    pub fn debug_scan_congruence_gaps(&self, cap: usize) {
+        let apps = self.euf.debug_app_nodes();
+        let mut found = 0usize;
+        for i in 0..apps.len() {
+            for j in i + 1..apps.len() {
+                if found >= cap {
+                    return;
+                }
+                let (a, b) = (apps[i], apps[j]);
+                if self.euf.node_func(a) != self.euf.node_func(b) {
+                    continue;
+                }
+                if self.euf.are_equal_immutable(a, b) {
+                    continue;
+                }
+                let (Some(ka), Some(kb)) = (self.euf.node_args(a), self.euf.node_args(b)) else {
+                    continue;
+                };
+                if ka.len() != kb.len() || ka.is_empty() {
+                    continue;
+                }
+                let ta = self.euf.node_term(a);
+                let tb = self.euf.node_term(b);
+                let args_eq: Vec<bool> = ka
+                    .iter()
+                    .zip(kb.iter())
+                    .map(|(x, y)| self.euf.are_equal_immutable(*x, *y))
+                    .collect();
+                if args_eq.iter().all(|&e| e) {
+                    eprintln!(
+                        "[cgap] CONGRUENCE MISS: apps {ta:?}({a}) vs {tb:?}({b}) — args \
+                         EUF-equal, results distinct"
+                    );
+                    found += 1;
+                    continue;
+                }
+                // Args EUF-distinct: are they arith-model-equal?
+                let mut all_arith_eq = true;
+                let mut any_value = false;
+                for (&x, &y) in ka.iter().zip(kb.iter()) {
+                    let (Some(tx), Some(ty)) = (self.euf.node_term(x), self.euf.node_term(y))
+                    else {
+                        all_arith_eq = false;
+                        break;
+                    };
+                    match (self.arith.value(tx), self.arith.value(ty)) {
+                        (Some(vx), Some(vy)) => {
+                            any_value = true;
+                            if vx != vy {
+                                all_arith_eq = false;
+                                break;
+                            }
+                        }
+                        _ => {
+                            all_arith_eq = false;
+                            break;
+                        }
+                    }
+                }
+                if all_arith_eq && any_value {
+                    eprintln!(
+                        "[cgap] PROPAGATION GAP: apps {ta:?}({a}) vs {tb:?}({b}) — args \
+                         arith-equal in the model, EUF-distinct (merge never propagated)"
+                    );
+                    found += 1;
+                }
+            }
+        }
+    }
+
     fn debug_describe_terms(&self, terms: &[TermId]) -> String {
         terms
             .iter()

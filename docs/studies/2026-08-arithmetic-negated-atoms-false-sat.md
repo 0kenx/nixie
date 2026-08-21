@@ -145,20 +145,62 @@ resumed (or re-derive from this doc — the design above is complete).
 * Bisect discipline: test in a `git worktree`, never stash/restore the
   shared tree; rebuild the harness binaries per commit.
 
-## Resume plan
+## ROOT CAUSE (found 2026-08-21, follow-up session): non-convex combination incompleteness
 
-1. Root-cause why the accepted assignment's `pc0 = -1` pin is not refuted
-   internally. The chain to instrument: arith pins `pc0` → bound propagation
-   resolves ite conditions (`is_dl_family` Tighten mode) → equal arguments
-   reach EUF (congruence) → a negated `=` atom between congruent UF results
-   must conflict. Prime suspects: UF-application results never interned as
-   arith interface terms (so `nelson_oppen_combine`'s model-equal probe
-   never sees the pair), and negated `=` atoms reaching EUF only (Hole A).
-2. Re-land the `assert_diseq` machinery (design above; unit tests + oracle
-   are re-derivable) once (1) explains why it helped pete and why wisas
-   regressed: re-validate `QF_UFLIA/wisas/xs_8_13.smt2` FIRST — check
-   whether main also goes false-SAT on wisas under a different seed/schedule
-   before blaming the DFS (the machinery reshuffles trajectories; the study
-   of the SAT side documents 7× swings from seed alone).
-3. Only then re-run: full bar + differential (0 new unsound required) +
-   parity, per AGENTS.md.
+The congruence-gap probe (`debug_scan_congruence_gaps`, committed with the
+scanner) settles the mechanism on 5s's accepted assignment:
+
+```
+[cgap] PROPAGATION GAP: apps TermId(188) vs TermId(729) — args arith-equal
+       in the model, EUF-distinct (merge never propagated)   [×4 more pairs]
+```
+
+`nelson_oppen_combine`'s arith→EUF direction only merges **entailed**
+equalities (`entailed_equal_reason` = two scratch simplex proofs). When the
+refutation requires merging two arguments that the arith model merely
+*assigns* equal (not entails — e.g. two opaque UF-result variables the LP
+happened to co-locate), the probe correctly declines, the merge never
+commits, congruence never fires on the UF applications, and the negated-`=`
+atom between the (would-be congruent) results never conflicts. The search
+then reports `Sat` over an **arrangement that was never jointly checked** —
+the textbook non-convex Nelson-Oppen gap. Per-atom scanning cannot see it
+(each atom is individually consistent); the pin experiment certified it
+(`F ∧ (= pc0 -1)` is unsat while the model pins `pc0 = -1`).
+
+### Fix shape (z3/cvc5 `th_combination` / arrangement-based, NOT landed)
+
+Tentative-arrangement round at `final_check`:
+
+1. Collect the model-equal candidate pairs the cgap probe finds (interface
+   terms that are UF arguments, grouped by arith value — the existing
+   `by_val` machinery already builds this set).
+2. Tentatively merge them in EUF **inside a scope** (EUF needs push/pop or a
+   rebuild-on-exit; today only `reset()`+replay exists — the cheap route is
+   snapshotting the merge list and unmerging is NOT sound in general, so a
+   scoped EUF or a replay is required).
+3. If EUF conflicts under the tentative arrangement, the assignment implies
+   `¬(x₁=y₁ ∧ … ∧ xₖ=yₖ)` over the merged pairs — learn that **interface
+   disjunction lemma** as a clause over the pairs' `(= x_i y_i)` SAT atoms
+   (encodable whenever the pairs are formula atoms, which the pete family's
+   `(= app1 app2)` atoms are; pairs without a SAT variable cannot be
+   learned — skip them, staying incomplete-but-sound there).
+4. Drop the tentative merges and continue the search. Iterate.
+
+Sound because the lemma is a logical consequence of the (refuted) tentative
+conjunction; incomplete only for pairs lacking SAT atoms.
+
+The reverted `assert_diseq` machinery is complementary, not sufficient: it
+enforces negated-`=` atoms *inside* arithmetic once operands are interned,
+but the pete refutation needs the arrangement merge FIRST (congruence over
+equal args) to make the negated-`=` fire — which is why wiring it flipped
+pete only along some trajectories.
+
+## Remaining steps
+
+1. Land the arrangement round per the design above (scoped EUF merges +
+   interface disjunction lemmas); regression: 5s/cxs-bp* → `unsat`,
+   differential 0 new unsound.
+2. Re-validate `QF_UFLIA/wisas/xs_8_13.smt2` (the earlier machinery
+   regression): check whether main also goes false-SAT there under a
+   different seed/schedule before blaming the added enforcement.
+3. Full bar + differential + parity per AGENTS.md.
