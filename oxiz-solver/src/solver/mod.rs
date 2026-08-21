@@ -1411,14 +1411,22 @@ impl Solver {
         let max_array_refinement_rounds = 256;
         let mut array_refinement_rounds = 0;
 
-        // Stamp the start of the search so the non-convex-LIA case-split
-        // refinement can be gated on how long the first solve took: the
-        // refinement re-solves the whole problem from scratch, so it is only
-        // affordable when the first solve was fast.  On a slow (hard) instance
-        // we skip it rather than blow the time budget and turn a fast wrong
-        // answer into a slow timeout.
-        #[cfg(feature = "std")]
-        let check_start = std::time::Instant::now();
+        // NOTE: there is deliberately NO wall-clock gate on the non-convex
+        // integer case-split refinement below.  The refinement is the only
+        // thing standing between a QF_UFLIA/QF_UFIDL candidate `Sat` and the
+        // non-convex Nelson-Oppen hole (an integer UF argument pinned to a
+        // small finite domain needs its `(or (= t lo) .. (= t hi))` lemma
+        // before CDCL can branch on the arrangement); gating it on
+        // `Instant::elapsed()` made the *verdict* a function of machine load
+        // — measured on QF_UFLIA/wisas/xs_8_13.smt2: identical invocations of
+        // the same binary flipped 7×`sat` / 1×`unsat`, and forcing the two
+        // arms gave 5×`sat` (budget 0) vs 5×`unsat` (budget ∞).  A skipped
+        // closing round is a potentially-wrong `sat`, which per AGENTS.md is
+        // the one outcome this codebase may never trade for speed.  The
+        // refinement's own cost is bounded deterministically
+        // (`MAX_CASE_SPLIT_ROUNDS`, `PER_ROUND_CAP`); an overall unaffordable
+        // search is the user's resource limit's business (`timeout_ms` →
+        // honest `unknown`), never a silent verdict flip.
 
         let mut model_block_rounds: u32 = 0;
 
@@ -1588,14 +1596,7 @@ impl Solver {
                             );
                             continue;
                         }
-                        #[cfg(feature = "std")]
-                        let case_split_affordable = check_start.elapsed()
-                            < std::time::Duration::from_millis(
-                                int_case_split::CASE_SPLIT_REFINE_BUDGET_MS,
-                            );
-                        #[cfg(not(feature = "std"))]
-                        let case_split_affordable = true;
-                        if case_split_affordable && self.refine_int_case_split(manager) {
+                        if self.refine_int_case_split(manager) {
                             // Re-solve with the freshly asserted case-split
                             // lemmas from a clean state.  `add_clause` left the
                             // SAT core at the candidate model's trail; the

@@ -290,8 +290,19 @@ pete only along some trajectories.
    differing-index arrangements - as before the fix - instead of
    completeness-with-timeouts on the sat side).
 
-3. wisas-class inputs (QF_UFLIA): the hole exists there too and is
-   trajectory-dependent (see the wisas lesson above).  Extend the round's
-   cross-theory check beyond `is_dl_family` only after wisas's own shape is
+3. wisas-class inputs (QF_UFLIA): **RESOLVED 2026-08-21 (fifth follow-up):
+   the "trajectory dependence" was a wall-clock gate, not chaos.**  The
+   integer case-split refinement (`int_case_split.rs` — built for exactly
+   this shape) was called only when the first solve took < 5 s of wall
+   clock.  On `xs_8_13.smt2` the same binary answered `sat` 7/8 identical
+   runs (gate expired -> closing round skipped -> non-convex hole reported
+   `sat`) and `unsat` when the first solve happened to be fast; forcing the
+   arms gave 5x`sat` (budget 0) vs 5x`unsat` (budget inf).  Every past
+   differential `unsat` on this file was load luck.  The gate is removed
+   (commit follows); the refinement always runs when eligible, and `xs_8_13`
+   is now deterministically `unsat` in debug and release.  The `is_dl_family`
+   gate on the arrangement round itself stays (its own reasoning was
+   validated on DL only).  Extend the round's cross-theory check beyond
+   `is_dl_family` only after
    understood - its refutation chain is deeper (counter UF results
    interacting with LIA pins, not just congruent arguments).

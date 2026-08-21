@@ -53,11 +53,11 @@
 //! ## Cost control
 //!
 //! Each refinement round re-solves the whole problem from scratch, so the
-//! refinement is gated on the first solve being fast
-//! ([`CASE_SPLIT_REFINE_BUDGET_MS`]) and capped at one round: easy instances
-//! (where a non-convex gap actually exists) solve quickly and get the extra
-//! round, while hard instances keep their original fast answer instead of
-//! turning a wrong-but-fast verdict into a slow timeout.
+//! refinement is capped at one round (`MAX_CASE_SPLIT_ROUNDS`) and at
+//! [`PER_ROUND_CAP`] new split terms.  There is deliberately NO wall-clock
+//! affordability gate: see the note at [`PER_ROUND_CAP`] — a time-gated
+//! closing round made verdicts load-dependent (`sat` on a busy machine,
+//! `unsat` on a quiet one, same binary, same input).
 //!
 //! Reference: the standard "integer case splitting" used by Z3 / cvc5 for
 //! non-convex LIA theory combination (Barrett et al., "Decision Procedures",
@@ -92,13 +92,18 @@ const MAX_CASE_SPLIT_ROUNDS: u32 = 1;
 /// one, so restricting the count would risk leaving it unsplit.
 const PER_ROUND_CAP: usize = 32;
 
-/// The refinement is only attempted when the first CDCL(T) solve completed
-/// within this many milliseconds.  The refinement re-solves the whole problem
-/// from scratch, so on a hard instance (slow first solve) it would roughly
-/// double the runtime; skipping it there preserves the original fast answer.
-/// Easy instances – where the technique actually closes a non-convex gap –
-/// solve in well under this budget.
-pub(super) const CASE_SPLIT_REFINE_BUDGET_MS: u64 = 5000;
+// NOTE: the refinement used to carry a wall-clock affordability gate
+// (`CASE_SPLIT_REFINE_BUDGET_MS`, first solve < 5 s).  Removed 2026-08-21:
+// it made the *verdict* load-dependent — on QF_UFLIA/wisas/xs_8_13.smt2 the
+// same binary answered `sat` 7/8 identical runs (gate expired → closing
+// round skipped → non-convex hole reported as `sat`) and `unsat` when the
+// first solve happened to be fast; forcing the arms gave 5×`sat` (budget 0)
+// vs 5×`unsat` (budget ∞).  "Preserving the original fast answer" is not a
+// legitimate goal when that answer is uncertifiable: skipping the closing
+// round must yield `unknown`, never `sat` — and with the gate gone the
+// round always runs, so the case never arises.  Cost stays bounded by the
+// deterministic caps above; an overall unaffordable search is the user's
+// `timeout_ms`'s business.
 
 /// Whether a constraint's effect on a variable is to pin a lower bound, an
 /// upper bound, or both (equality).  Strict `<` / `>` are normalised to `<=` /
