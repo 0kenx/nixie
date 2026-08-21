@@ -1410,6 +1410,10 @@ impl Solver {
                     return SolverResult::Unknown;
                 }
                 SatResult::Sat => {
+                    #[cfg(debug_assertions)]
+                    if std::env::var("OXIZ_SCAN_VIOL").is_ok() {
+                        theory_manager.debug_scan_theory_model_violations("check_core Sat");
+                    }
                     if resource_exhausted {
                         // A real theory conflict was dropped at the conflict
                         // limit; never fabricate Sat over a suppressed conflict.

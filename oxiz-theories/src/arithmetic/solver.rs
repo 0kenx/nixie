@@ -675,6 +675,27 @@ impl ArithSolver {
         }
     }
 
+    /// Debug-only (OXIZ_SCAN_VIOL): one-line description of a term's current
+    /// arithmetic state – simplex var id, model value, lower/upper bounds,
+    /// and whether the integral B&B snapshot supplies the value.
+    #[cfg(debug_assertions)]
+    pub fn debug_describe_term(&self, t: TermId) -> Option<String> {
+        let &var = self.term_to_var.get(&t)?;
+        let val = self.value(t);
+        let lo = self
+            .simplex
+            .get_lower(var)
+            .map(|b| format!("{:?}", b.value.real));
+        let hi = self
+            .simplex
+            .get_upper(var)
+            .map(|b| format!("{:?}", b.value.real));
+        Some(format!(
+            "{t:?}/v{var} val={val:?} lo={lo:?} hi={hi:?} lia_model={}",
+            self.lia_model.contains_key(&var)
+        ))
+    }
+
     /// Assert: lhs <= rhs
     pub fn assert_le(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         let mut expr = LinExpr::new();

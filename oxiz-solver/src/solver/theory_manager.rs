@@ -73,6 +73,8 @@ pub(crate) enum BoundPropMode {
 }
 
 mod conflict_clause;
+#[cfg(debug_assertions)]
+mod debug_scan;
 mod derived_reasons;
 mod euf_propagate;
 pub(crate) use derived_reasons::DerivedReasons;

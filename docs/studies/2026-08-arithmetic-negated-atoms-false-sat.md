@@ -31,19 +31,36 @@ the EUF diseq. Model-based combination only checks same-EUF-class ⇒ same
 arith value, not the dual. Result: `sat` over a theory-inconsistent
 assignment.
 
-### Hole B — negated comparison atoms unenforced at the final model
+### Hole B — RETRACTED (scanner artifact) and superseded by the pin experiment
 
-Diagnostic recipe (method below): on today's `5s.smt2` false-SAT the
-violated atom is a **`Le`** atom, var 223, form `-t ≤ 0`, **assigned false**
-(the formula demands `t < 0`), while the final model has `t = 1`.
-`process_constraint` was called for this atom 656 times (always
-`is_positive=false`, at 24+ different levels), each call allegedly running
-`arith.assert_gt` — the row still does not constrain the final model
-(candidate mechanisms: scope/pop divergence between the manager replay and
-the simplex bound trail; stale `lia_model` snapshot read by the value
-extraction; the processed-lits guard skipping a re-assert after a
-backtrack-resync). **Unresolved** — this hole alone keeps pete false-SAT
-even after Hole A is closed.
+The originally reported "Hole B" (a negated `Le` atom, var 223, `-t ≤ 0`
+assigned false with model `t = 1`) was a **misdiagnosis**: `var_to_parsed_arith`
+carries a **`Le` placeholder for `Eq` atoms** (encode.rs stores it so the
+positive polarity can assert both bounds), and the first scanner version
+evaluated every parsed form as a comparison — misreading a negated `=` atom
+(`t448 ≠ t456`, model 2 ≠ 3: **satisfied**) as a violated `≤`. With the
+scanner fixed (comparison checks only for genuine `Lt/Le/Gt/Ge` constraints),
+it reports **zero per-atom violations** on 5s's accepted assignment.
+
+What actually characterizes the bug (z3-certified):
+
+* oxiz answered `sat` on 5s with model `pc0 = -1, dmem0 = -1, a1 = -1,
+  ZERO = -2` (and **no UF interpretations** in the printed model);
+* `F ∧ (= pc0 -1)` is **UNSAT** — the pinned constant *alone* refutes the
+  formula (verified by minimization over the 4 pins: every proper subset is
+  sat);
+* every assigned atom is individually consistent with the theory model
+  under oxiz's opaque values for UF-application variables.
+
+So the missing enforcement is **not** at the atom level: the formula entails
+`pc0 ≠ -1` through a chain (pinned constant → ite-condition resolution →
+equal-argument congruence on UF applications → a contradictory
+equality/disequality), and oxiz's final_check accepts an assignment that
+breaks that chain — the negated-equality/congruence conflict is never
+derived. This is Hole-A-shaped (negated `=` enforcement) but at the level of
+*propagated/congruent* facts rather than asserted atoms: the operands whose
+equality congruence forces are themselves UF results whose equality only the
+combination loop can see.
 
 ## The fix attempt (reverted)
 
@@ -66,7 +83,8 @@ the unit level (3 focused tests + a 400-case random brute-force oracle over
   violation that every integral leaf has).
 * Wired into the manager's negative-`Eq` and positive-`Diseq` arms (gated
   `!dl_pure`, see below). **With this wiring pete answered `unsat`**
-  (correctly) until the search trajectory moved and Hole B took over.
+  (correctly) until later enforcement fixes reshuffled the search trajectory
+  (see the Hole B retraction below for what that residual failure is).
 
 ### Integration bugs found while landing it (all real, all with reproducers)
 
@@ -101,37 +119,46 @@ the unit level (3 focused tests + a 400-case random brute-force oracle over
 
 The differential suite (270 pinned instances) flagged a NEW wrong answer:
 `QF_UFLIA/wisas/xs_8_13.smt2` — `unsat` on main (correct, 6.4 s), `sat`
-with the machinery (fast). With pete still false-SAT through Hole B, the
-change was net-negative: it traded one pre-existing false-SAT for a
+with the machinery (fast). With pete still false-SAT (per the then-believed
+Hole B; per the corrected analysis below, the residual failure is the
+combination-chain gap), the change was net-negative: it traded one pre-existing false-SAT for a
 regression on a previously-correct family. Everything was reverted;
 `git log` around `3bfd6bf` has the full implementation in the WIP if
 resumed (or re-derive from this doc — the design above is complete).
 
-## Diagnostic tooling recipe (rebuild when resuming)
+## Diagnostic tooling (committed with this study's follow-up)
 
-* **Theory-model violation scanner**: wrap `final_check` to return through a
-  checker that walks every assigned `var_to_constraint` atom, evaluates
-  Eq/Diseq via `euf.value`/`arith.value` and Le/Lt/Ge/Gt via
-  `var_to_parsed_arith` sums, and prints the first atom whose polarity
-  contradicts the model (`is_pos != model_holds`). This is how Hole B was
-  found (env-gate it; ~60 lines).
-* **SMT2 dead-end dump**: at a DFS terminal dead end, dump
-  `int_equalities` + per-var bounds + diseqs as QF_LIA and ask z3 —
-  distinguishes "search unsound" (z3: sat) from "state wrong" (z3: unsat,
-  look for zombie/stale assertions).
+* **`OXIZ_SCAN_VIOL=1`** (debug builds): at `check_core`'s `Sat` exit, walk
+  every assigned theory atom and print the first one the final theory model
+  violates (`theory_manager/debug_scan.rs`; comparison checks only for
+  genuine `Lt/Le/Gt/Ge` — see the module doc for the placeholder trap).
+  Negative result is itself informative: it localizes the failure *below*
+  the atom level.
+* **Pin experiment** (external, z3): solve, take the model's constant
+  assignments, check `F ∧ pins` with z3, then minimize the pin set. A
+  refutable pin proves the `sat` verdict wrong without any internal
+  instrumentation — this is what certified the 5s bug (`pc0 = -1` alone).
+* **SMT2 dead-end dump** (from the reverted machinery work): at a DFS
+  terminal dead end, dump equalities + bounds + diseqs as QF_LIA and ask
+  z3 — distinguishes "search unsound" (z3: sat) from "state wrong" (z3:
+  unsat ⇒ look for zombie/stale assertions).
 * Bisect discipline: test in a `git worktree`, never stash/restore the
-  shared tree; the harness binaries in `/tmp` must be rebuilt per commit.
+  shared tree; rebuild the harness binaries per commit.
 
 ## Resume plan
 
-1. Fix Hole B first (it blocks pete even with Hole A closed): instrument the
-   Le-negation path — why `assert_gt`'s row does not constrain the final
-   model. Prime suspects: the processed-lits guard vs resync replay
-   interleaving, and `lia_model` staleness in `value()`.
-2. Re-validate the `assert_diseq` machinery against wisas (the regression
-   may be Hole-B-shaped: the new conflicts reshuffled the search into a
-   hole that main's slower trajectory never visited — check whether main
-   also goes false-SAT on wisas with a longer seed/schedule before blaming
-   the DFS).
+1. Root-cause why the accepted assignment's `pc0 = -1` pin is not refuted
+   internally. The chain to instrument: arith pins `pc0` → bound propagation
+   resolves ite conditions (`is_dl_family` Tighten mode) → equal arguments
+   reach EUF (congruence) → a negated `=` atom between congruent UF results
+   must conflict. Prime suspects: UF-application results never interned as
+   arith interface terms (so `nelson_oppen_combine`'s model-equal probe
+   never sees the pair), and negated `=` atoms reaching EUF only (Hole A).
+2. Re-land the `assert_diseq` machinery (design above; unit tests + oracle
+   are re-derivable) once (1) explains why it helped pete and why wisas
+   regressed: re-validate `QF_UFLIA/wisas/xs_8_13.smt2` FIRST — check
+   whether main also goes false-SAT on wisas under a different seed/schedule
+   before blaming the DFS (the machinery reshuffles trajectories; the study
+   of the SAT side documents 7× swings from seed alone).
 3. Only then re-run: full bar + differential (0 new unsound required) +
    parity, per AGENTS.md.
