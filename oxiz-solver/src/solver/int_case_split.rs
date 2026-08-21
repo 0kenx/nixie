@@ -127,10 +127,97 @@ struct Fact {
 impl Solver {
     /// Lazy integer case-split refinement entry point.
     ///
-    /// Returns `true` iff at least one new case-split lemma was asserted, in
-    /// which case the caller resets the theory state and re-solves.  Returns
-    /// `false` when there is nothing more to split – the candidate `sat` then
-    /// stands.
+    /// **Eager** half of the integer case-split architecture (z3
+    /// `arith_eq_adapter` / cvc5 `ensureLiteral` parity): assert the
+    /// `(or (= t lo) .. (= t hi))` enumeration lemmas for every int-sorted UF
+    /// argument whose finite range is derivable *before* the search starts,
+    /// from the level-0 interval fixpoint alone ([`Self::compute_int_bounds`]
+    /// over the SAT trail's level-0 prefix and the single-variable atoms –
+    /// the exact same soundness basis the reactive round uses).
+    ///
+    /// The literals are phase-guided toward `true` (`set_preferred_phase`,
+    /// the port of z3's `try_true_first` / cvc5 B&B's `preferPhase(literal,
+    /// true)`): CDCL pins `t` to one of its finitely many values first, so
+    /// the congruence closure sees a concrete arrangement early instead of
+    /// reaching an unchecked candidate and paying the reactive round's
+    /// reset-and-re-solve.
+    ///
+    /// Runs once per `check_core`, right after `pre_encode_care_graph_atoms`.
+    /// Deliberately does **not** touch `case_split_rounds`: it performs no
+    /// re-solve, and the reactive round ([`Self::refine_int_case_split`])
+    /// must stay available for ranges that only the LP fallback can see
+    /// (the simplex is empty pre-search) – e.g. a bounded *difference* of
+    /// free variables, the wisas shape.  Terms already eagerly split land in
+    /// `case_split_terms`, so the reactive round skips them.
+    pub(super) fn assert_eager_int_case_splits(&mut self, manager: &mut TermManager) {
+        // Quantified goals route through MBQI; enumeration lemmas over its
+        // search would churn without bound.
+        if self.has_quantifiers {
+            return;
+        }
+        let uf_args = self.collect_int_uf_args(manager);
+        if uf_args.is_empty() {
+            return;
+        }
+        let bounds = self.compute_int_bounds();
+        if bounds.is_empty() {
+            return;
+        }
+        // Same deterministic eligibility as the reactive round: finite range,
+        // width within the enumeration cap, deduped, tightest-first, capped
+        // per search.  No model-consistency guard here: there is no candidate
+        // model yet, and soundness rests on the level-0 derivation itself
+        // (bounds are theorems of the formula, so the enumeration clause is
+        // logically valid over the reachable values).
+        let mut candidates: Vec<(TermId, i64, i64)> = Vec::new();
+        for t in &uf_args {
+            if self.case_split_terms.contains(t) {
+                continue;
+            }
+            let Some(&(Some(lo), Some(hi))) = bounds.get(t) else {
+                continue;
+            };
+            if hi < lo || hi - lo > MAX_INT_CASE_RANGE {
+                continue;
+            }
+            candidates.push((*t, lo, hi));
+        }
+        if candidates.is_empty() {
+            return;
+        }
+        candidates.sort_by_key(|&(_, lo, hi)| (hi - lo, lo));
+        candidates.truncate(PER_ROUND_CAP);
+        for &(term, lo, hi) in &candidates {
+            let mut lits: Vec<Lit> = Vec::new();
+            for k in lo..=hi {
+                let int_k = manager.mk_int(k);
+                let eq = manager.mk_eq(term, int_k);
+                let lit = self.encode_depth(eq, manager, 0);
+                self.sat.set_preferred_phase(lit.var(), true);
+                lits.push(lit);
+            }
+            self.sat.add_clause(lits);
+            self.case_split_terms.insert(term);
+        }
+    }
+
+    /// **Reactive** half: at a theory-consistent candidate model, derive
+    /// finite ranges the eager pass could not see (the LP fallback needs the
+    /// base-scoped simplex, which only exists once the search has propagated
+    /// the level-0 constraints) and assert their enumeration lemmas.
+    ///
+    /// The trigger is deductive, never temporal: a candidate `Sat` plus a
+    /// finite range derived from the *asserted* facts.  This mirrors the
+    /// trigger class of cvc5's branch-and-bound (`BranchAndBound::
+    /// branchIntegerVariable` fires at the fractional LP value, a property
+    /// of the current tableau state) – deterministic and load-independent.
+    /// The reset-and-re-solve that follows is inherent to enumeration
+    /// lemmas: unlike a B&B split at a fractional point (violated at the
+    /// trigger), an enumeration clause over `[lo, hi]` is *satisfied* by the
+    /// candidate (the model's value is one of the disjuncts), so asserting
+    /// it mid-search cannot invalidate that candidate; only a fresh search
+    /// in which the branching dimension exists explores the arrangements.
+    ///
     pub(super) fn refine_int_case_split(&mut self, manager: &mut TermManager) -> bool {
         // Not gated on `self.arith.is_integer()`: the Solver always constructs
         // `ArithSolver::lra()` (is_integer == false), so that guard disabled
@@ -220,7 +307,12 @@ impl Solver {
             for k in lo..=hi {
                 let int_k = manager.mk_int(k);
                 let eq = manager.mk_eq(term, int_k);
-                lits.push(self.encode_depth(eq, manager, 0));
+                let lit = self.encode_depth(eq, manager, 0);
+                // cvc5 B&B `preferPhase(literal, true)` parity: try the
+                // pinning polarity first so the re-solve walks arrangements
+                // immediately instead of skipping every enumeration atom.
+                self.sat.set_preferred_phase(lit.var(), true);
+                lits.push(lit);
             }
             self.sat.add_clause(lits);
             self.case_split_terms.insert(term);

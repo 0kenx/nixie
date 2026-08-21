@@ -1285,6 +1285,17 @@ impl Solver {
         // search, before borrowing the theory solvers out to the TheoryManager.
         self.pre_encode_care_graph_atoms(manager);
 
+        // Eager integer case-split lemmas (the z3 `arith_eq_adapter` /
+        // cvc5 `ensureLiteral` half of the architecture; see
+        // [`int_case_split`]): every int-sorted UF argument whose finite
+        // range the level-0 interval fixpoint derives gets its
+        // `(or (= t lo) .. (= t hi))` clause asserted BEFORE the search, so
+        // CDCL branches on the arrangement from conflict #1 instead of
+        // reaching an unchecked candidate.  Ranges that need the LP fallback
+        // (the reactive half) cannot be derived here - the simplex is empty
+        // pre-search - and stay with [`Solver::refine_int_case_split`].
+        self.assert_eager_int_case_splits(manager);
+
         // Debug: dump the SAT-var -> term-kind legend before the theory
         // solvers are borrowed out to `theory_manager` (after which `self` is
         // partially borrowed for the whole CDCL search). See

@@ -51,6 +51,45 @@ fn wisas_xs_8_13_is_unsat() {
     assert_eq!(solve_fixture(), SolverResult::Unsat);
 }
 
+/// The **eager** half of the architecture (z3 `arith_eq_adapter` /
+/// cvc5 `ensureLiteral` parity): a UF argument bounded by direct
+/// single-variable atoms (`(>= a 0)`, `(<= a 3)`) gets its
+/// `(or (= a 0) .. (= a 3))` enumeration lemma asserted BEFORE the search
+/// (level-0 interval fixpoint — no simplex, no candidate model), so CDCL
+/// pins the argument value from conflict #1.  Without the eager pass this
+/// shape is the non-convex hole: the model assigns `a` into `[0,3]`, EUF
+/// never merges `f(a)` with any pinned `f(k)`, and the answer is a wrong
+/// `sat` (or depends on the reactive round noticing at the candidate).
+#[test]
+fn eager_enumeration_closes_bounded_uf_domain() {
+    let script = r#"
+        (set-logic QF_UFLIA)
+        (declare-fun f (Int) Int)
+        (declare-const a Int)
+        (assert (>= a 0))
+        (assert (<= a 3))
+        (assert (= (f 0) 1))
+        (assert (= (f 1) 2))
+        (assert (= (f 2) 3))
+        (assert (= (f 3) 4))
+        (assert (= (f a) 5))
+        (check-sat)
+    "#;
+    let mut ctx = Context::new();
+    let outputs = ctx.execute_script(script).unwrap_or_default();
+    let verdict = outputs
+        .iter()
+        .rev()
+        .find_map(|t| match t.trim() {
+            "sat" => Some(SolverResult::Sat),
+            "unsat" => Some(SolverResult::Unsat),
+            "unknown" => Some(SolverResult::Unknown),
+            _ => None,
+        })
+        .unwrap_or(SolverResult::Unknown);
+    assert_eq!(verdict, SolverResult::Unsat);
+}
+
 /// Determinism smoke: two full solves of the same script in one process
 /// must agree.  A wall-clock or RNG read on the verdict path shows up here
 /// as an intermittent failure under CI load — exactly the signature that

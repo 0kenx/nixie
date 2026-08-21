@@ -290,19 +290,47 @@ pete only along some trajectories.
    differing-index arrangements - as before the fix - instead of
    completeness-with-timeouts on the sat side).
 
-3. wisas-class inputs (QF_UFLIA): **RESOLVED 2026-08-21 (fifth follow-up):
-   the "trajectory dependence" was a wall-clock gate, not chaos.**  The
-   integer case-split refinement (`int_case_split.rs` — built for exactly
-   this shape) was called only when the first solve took < 5 s of wall
-   clock.  On `xs_8_13.smt2` the same binary answered `sat` 7/8 identical
-   runs (gate expired -> closing round skipped -> non-convex hole reported
-   `sat`) and `unsat` when the first solve happened to be fast; forcing the
-   arms gave 5x`sat` (budget 0) vs 5x`unsat` (budget inf).  Every past
-   differential `unsat` on this file was load luck.  The gate is removed
-   (commit follows); the refinement always runs when eligible, and `xs_8_13`
-   is now deterministically `unsat` in debug and release.  The `is_dl_family`
-   gate on the arrangement round itself stays (its own reasoning was
-   validated on DL only).  Extend the round's cross-theory check beyond
-   `is_dl_family` only after
-   understood - its refutation chain is deeper (counter UF results
-   interacting with LIA pins, not just congruent arguments).
+3. wisas-class inputs (QF_UFLIA): **RESOLVED 2026-08-21 (fifth follow-up,
+   and rebuilt on the reference architecture in the sixth)**.  The fifth
+   follow-up removed a wall-clock gate that made verdicts load-dependent
+   (same binary: 7x`sat`/1x`unsat` on `xs_8_13`; forced arms 5x`sat` at
+   budget 0 vs 5x`unsat` at budget inf).  The sixth follow-up then replaced
+   "always run the reactive round" with the z3/cvc5 architecture after
+   reading both references:
+   * **z3 `smt/arith_eq_adapter.cpp`**: interface-equality triangle lemmas
+     (`eq <-> le and ge` via `mk_th_axiom`) internalized DURING the search
+     on deductive triggers (`new_eq_eh`/`new_diseq_eh` = enode merges,
+     `restart_eh` = base-level pairs), trail-scoped (`already_processed`
+     + trail object), phase-guided (`try_true_first`), relevancy-gated.
+     No post-hoc round, no budget of any kind.
+   * **cvc5 `theory/arith/equality_solver.cpp`**: (dis)equalities flow as
+     propagations through the shared equality engine (distributed mode).
+   * **cvc5 `theory/arith/branch_and_bound.cpp`**: split lemmas
+     (`(= v i) v (v < i) v (v > i)`, `ensureLiteral` + `preferPhase(true)`,
+     via the inference manager) asserted mid-search at a DEDUCTIVE trigger
+     (fractional LP value) — violated at the trigger, so no restart.
+   Oxiz now mirrors this split:
+   * **Eager half** (`assert_eager_int_case_splits`, called after
+     `pre_encode_care_graph_atoms`): enumeration lemmas for int-sorted UF
+     arguments whose finite range the level-0 interval fixpoint derives
+     (the same soundness basis as before), asserted BEFORE the search,
+     with `set_preferred_phase(lit, true)` on every `(= t k)` literal
+     (z3 `try_true_first` / cvc5 `preferPhase` port).  CDCL pins values
+     from conflict #1; no candidate is reached without the branching
+     dimension for this class.
+   * **Reactive half** (`refine_int_case_split`, kept): fires at a
+     theory-consistent candidate for ranges ONLY the LP fallback can see
+     (it needs the base-scoped simplex, empty pre-search — measured:
+     fixpoint-only leaves `xs_8_13` `sat`).  The trigger is deductive
+     (candidate + finite range from asserted facts), cvc5-B&B-class; the
+     reset-and-re-solve is INHERENT to enumeration lemmas (unlike a B&B
+     split at a fractional point, an enumeration clause is *satisfied* by
+     the candidate, so it cannot invalidate it mid-search).  Deterministic
+     caps only (one round, 32 terms, width <= 8) — the gate the user
+     asked for: deductive, load-independent, thread-safe.
+   Results: `xs_8_13` deterministic `unsat`; app12/bench_315 26.0s ->
+   12.8s (eager lemmas replaced its reactive reset); differential 162
+   solved / 0 disagreements with both app12 files back (bench_134
+   timeout->sat 9.0s, bench_315 timeout->unsat 10.8s at the 10s cap under
+   parallel load); pete + wisas families clean.  The wisas lesson's
+   "trajectory-dependent" verdicts were the clock, not chaos.
