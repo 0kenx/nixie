@@ -383,6 +383,9 @@ pub struct Solver {
     /// case-splitting within the current `check`.  Capped by
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
     pub(super) case_split_rounds: u32,
+    /// Arrangement-split refinement rounds used (see
+    /// `refine_arrangement_splits`); capped by `MAX_ARRANGEMENT_ROUNDS`.
+    pub(super) arrangement_rounds: u32,
     /// Static formula features collected from `self.assertions` at the start of
     /// the most recent [`Solver::check_core`] – the oxiz port of Z3's
     /// `ast/static_features`.  `None` before the first check (or after the goal
@@ -582,6 +585,7 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
+            arrangement_rounds: 0,
             last_features: None,
         }
     }
@@ -732,6 +736,51 @@ impl Solver {
     /// true decisions).  Used when an incomplete theory accepts a trail that
     /// concrete evaluation refutes: rather than give up with `Unknown`, block
     /// the spurious model and keep searching (bounded by `model_block_rounds`).
+    /// Internalize `(= x y)` atoms for pairs whose tentative arrangement
+    /// merge the theory refuted during the last search
+    /// ([`TheoryManager::take_arrangement_splits`]), so the next search can
+    /// *decide* those arrangements instead of accepting one that was never
+    /// jointly checked.  The refutation rests on search-branch facts, so no
+    /// clause may be asserted — only the branching dimension is added
+    /// (`mk_eq` + `encode_depth`, the same internalization
+    /// `pre_encode_care_graph_atoms` performs up front).  Returns `true`
+    /// when at least one new atom was created and the caller should re-solve.
+    fn refine_arrangement_splits(
+        &mut self,
+        manager: &mut TermManager,
+        pairs: Vec<(TermId, TermId)>,
+    ) -> bool {
+        /// Round cap: each round internalizes at least one *new* atom
+        /// (deduplicated via `care_split_pairs`), so the loop is monotone;
+        /// the cap bounds pathological churn.
+        const MAX_ARRANGEMENT_ROUNDS: u32 = 64;
+        if self.arrangement_rounds >= MAX_ARRANGEMENT_ROUNDS {
+            return false;
+        }
+        let mut added = false;
+        for (a, b) in pairs {
+            let pair = if a < b { (a, b) } else { (b, a) };
+            if !self.care_split_pairs.insert(pair) {
+                continue;
+            }
+            let eq_term = manager.mk_eq(pair.0, pair.1);
+            let eq_lit = self.encode_depth(eq_term, manager, 0);
+            // cvc5 parity: prefer trying the merge first — a true polarity
+            // feeds the merge to EUF, where either congruence fires usefully
+            // or the diseq side of the pair's context refutes it.
+            self.sat.set_preferred_phase(eq_lit.var(), true);
+            self.trail.push(TrailOp::CareSplitAdded {
+                a: pair.0,
+                b: pair.1,
+            });
+            added = true;
+        }
+        if added {
+            self.arrangement_rounds += 1;
+        }
+        added
+    }
+
     fn block_current_model(&mut self) -> bool {
         let trail = self.sat.trail();
         let level = trail.decision_level();
@@ -1397,6 +1446,10 @@ impl Solver {
             // dropped conflict never justifies `Sat` either.
             let resource_exhausted =
                 theory_manager.resource_exhausted() || theory_manager.unjustified_conflict();
+            // Drain the arrangement-split requests here (before any `&mut
+            // self`/`&mut manager` use below) so the manager's borrows end at
+            // this point, exactly as they do on the paths that rebuild it.
+            let arrangement_pairs = theory_manager.take_arrangement_splits();
             match sat_result {
                 SatResult::Unsat => {
                     self.build_unsat_core();
@@ -1489,6 +1542,52 @@ impl Solver {
                         // first solve being fast: the refinement re-solves the
                         // whole problem from scratch, so on a slow (hard)
                         // instance we skip it rather than blow the time budget.
+                        // Non-convex arrangement refinement: the tentative
+                        // arrangement round in the last `model_based_combination`
+                        // refuted pair(s) the search never got to decide (no
+                        // `(= x y)` atom existed).  Internalize those atoms and
+                        // re-solve so CDCL decides the arrangement; a true
+                        // polarity merges into EUF (congruence fires or the
+                        // context refutes it), a false polarity prunes it.
+                        // Same affordability gate as the int case-split: the
+                        // refinement re-solves from scratch.
+                        if !arrangement_pairs.is_empty()
+                            && self.refine_arrangement_splits(manager, arrangement_pairs)
+                        {
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.bv.reset();
+                            self.diff.reset();
+                            let zero_term = manager.mk_int(0);
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &mut self.diff,
+                                &mut self.array_theory,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                &self.numarg_proxies,
+                                zero_term,
+                                &self.ite_result_terms,
+                                &mut self.derived_reasons,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.config.timeout_ms,
+                                self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
+                            );
+                            continue;
+                        }
                         #[cfg(feature = "std")]
                         let case_split_affordable = check_start.elapsed()
                             < std::time::Duration::from_millis(

@@ -250,9 +250,12 @@ impl super::Solver {
             // next search reads it (the case-split lemmas are SAT-scoped and
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
-            last_features: _,     // SNAPSHOT: recomputed in `check_core`; dropped
-                                  // wholesale by `invalidate_results` on any stack move, so a value
-                                  // left by a popped scope is stale and overwritten before reuse.
+            arrangement_rounds: _, // PER-SEARCH: mirrors `case_split_rounds`;
+            // the internalized atoms are SAT-scoped (retracted by `pop`), so
+            // the round counter must not outlive them.
+            last_features: _, // SNAPSHOT: recomputed in `check_core`; dropped
+                              // wholesale by `invalidate_results` on any stack move, so a value
+                              // left by a popped scope is stale and overwritten before reuse.
         } = self;
 
         debug_assert_eq!(self.trail.len(), state.trail_position);

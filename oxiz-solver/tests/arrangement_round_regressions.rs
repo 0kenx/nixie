@@ -1,0 +1,95 @@
+//! Regression: non-convex Nelson–Oppen arrangement (QF_UFIDL false-SATs).
+//!
+//! `nelson_oppen_combine` merges only *entailed* equalities into EUF.  When a
+//! refutation instead needs the model-suggested arrangement — UF arguments the
+//! arithmetic model merely co-locates, whose congruent results a negated `=`
+//! atom keeps apart — the merge never happens, congruence never fires, and a
+//! full assignment whose arrangement was never jointly checked is accepted.
+//!
+//! Reproducer family: `smt-lib/non-incremental/QF_UFIDL/pete` (`5s`, `cxs-bp`,
+//! `cxs-bp-ex`, `cxs-bp-safety`, `cxs-bp-ex-inp-safety`, and `6stage-flush`,
+//! which was a timeout before the fix) — all UNSAT per z3, all answered `sat`.
+//! z3-certified: `F ∧ (= pc0 -1)` alone is UNSAT while oxiz's model pinned
+//! `pc0 = -1` (see `docs/studies/2026-08-arithmetic-negated-atoms-false-sat.md`).
+//!
+//! The fix: the tentative-arrangement round in `model_based_combination`
+//! (single-pair probes + a full-arrangement probe with a cross-theory tableau
+//! check) derives disequalities it can prove and requests `(= x y)` atoms for
+//! the rest, which `Solver::refine_arrangement_splits` internalizes so the
+//! next search *decides* the arrangement.  This test pins the round against
+//! both a hand-written minimal shape and the real family instance.
+
+use oxiz_solver::{Context, SolverResult};
+
+fn run_script(script: &str) -> SolverResult {
+    let mut ctx = Context::new();
+    let outputs = ctx.execute_script(script).unwrap_or_default();
+    for tok in outputs.iter().rev() {
+        match tok.trim() {
+            "sat" => return SolverResult::Sat,
+            "unsat" => return SolverResult::Unsat,
+            "unknown" => return SolverResult::Unknown,
+            _ => {}
+        }
+    }
+    SolverResult::Unknown
+}
+
+/// Minimal non-convex shape: `f(a)` and `f(b)` with `a`, `b` both pinned to 3
+/// by arithmetic (never *entailed* equal — each is pinned independently), and
+/// a negated `=` between the results.  No single theory sees the contradiction
+/// without the arrangement merge: EUF has no reason to merge `a` and `b`
+/// (different terms, no asserted equality), arithmetic holds both pins
+/// consistently, and the negated `=` only constrains EUF.  Merging `a ≡ b`
+/// (the model arrangement) fires congruence and conflicts with the diseq.
+#[test]
+fn nonconvex_ufidl_arrangement_is_checked() {
+    let script = r#"
+        (set-logic QF_UFIDL)
+        (declare-fun f (Int) Int)
+        (declare-const a Int)
+        (declare-const b Int)
+        (declare-const c Int)
+        (assert (= a 3))
+        (assert (= b 3))
+        (assert (= c 5))
+        (assert (= (f a) c))
+        (assert (= (f b) 4))
+        (assert (not (= (f a) (f b))))
+        (check-sat)
+    "#;
+    assert_eq!(run_script(script), SolverResult::Unsat);
+}
+
+/// A genuinely-satisfiable counterpart: the pins entail `a = b`, and the
+/// asserted result equality `f(a) = f(b)` is exactly what congruence derives
+/// — the arrangement round must not fabricate a conflict.  (Note the
+/// tempting variant with `(not (= (f a) (f b)))` here is UNSAT — the pins
+/// *entail* `a = b`, so congruence forces equal results; oxiz and z3 agree
+/// on that too.)
+#[test]
+fn nonconvex_ufidl_arrangement_stays_sat_when_consistent() {
+    let script = r#"
+        (set-logic QF_UFIDL)
+        (declare-fun f (Int) Int)
+        (declare-const a Int)
+        (declare-const b Int)
+        (assert (= a 3))
+        (assert (= b 3))
+        (assert (= (f a) (f b)))
+        (check-sat)
+    "#;
+    assert_eq!(run_script(script), SolverResult::Sat);
+}
+
+/// The real family instance (`pete/5s.smt2`, UNSAT per z3): a
+/// microprocessor-verification refinement goal over `IMem0`/`rf0`/… whose
+/// refutation runs pinned-constant → ite resolution → congruence on UF
+/// applications → a contradictory equality — exactly the chain the atom-level
+/// scans cannot see.  Slow-ish in debug; still well under a minute.
+#[test]
+fn pete_5s_family_instance_is_unsat() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/pete_5s.smt2");
+    let script = std::fs::read_to_string(path).expect("fixture pete_5s.smt2");
+    assert_eq!(run_script(&script), SolverResult::Unsat);
+}

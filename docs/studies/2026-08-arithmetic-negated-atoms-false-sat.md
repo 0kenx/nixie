@@ -167,7 +167,56 @@ the textbook non-convex Nelson-Oppen gap. Per-atom scanning cannot see it
 (each atom is individually consistent); the pin experiment certified it
 (`F ∧ (= pc0 -1)` is unsat while the model pins `pc0 = -1`).
 
-### Fix shape (z3/cvc5 `th_combination` / arrangement-based, NOT landed)
+### Fix LANDED (2026-08-21, second follow-up): tentative-arrangement round
+
+Implemented as designed (plus two additions the landing required), gated to
+the validated `is_dl_family` (QF_UFIDL/UFIDL):
+
+1. **`TheoryManager::arrange_model_equal_pairs`** (runs at the end of
+   `model_based_combination`):
+   * *Phase 1* — per-pair probes: for each model-equal, EUF-distinct pair of
+     UF-argument interface terms (existing EUF nodes only — interning would
+     perturb node order and flip unrelated verdicts), merge tentatively in a
+     scope.  A direct EUF conflict proves `C ⊢ x ≠ y` (core minus the
+     tentative edge's tag; the tag is collision-checked against
+     `derived_reasons`): assert that derived disequality scoped, with `C`
+     recorded as its justification, and request a split atom for the pair.
+   * *Phase 2* — full arrangement: accumulate up to 32 merges in one scope;
+     a direct conflict (pete: congruence vs a negated `=` on the results)
+     requests atoms for the merged superset.  If no direct conflict, a
+     **cross-theory check** (`arrangement_cross_check_arith`) groups
+     arith-valued shared terms by their merged EUF class, asserts the
+     class-disagreement equalities into a scoped tableau and lets
+     `arith.check` refute (the wisas shape: congruence over merged args
+     collapses `format`-apps whose pinned constants disagree only in
+     arithmetic).
+2. **`Solver::refine_arrangement_splits`** — on a `Sat`, drain the requests,
+   `mk_eq` + `encode_depth` each pair (cvc5 `ensureLiteral`; preferred
+   positive phase) and re-solve through the existing block/case-split
+   restart loop (theories reset, fresh manager).  The refutation rests on
+   search facts, so no clause may be asserted — only the branching dimension
+   is added; a true polarity merges through `process_constraint` and the
+   conflict becomes an ordinary learned clause.
+
+**Results**: the entire pete family flips to correct `unsat` (5s, cxs-bp,
+cxs-bp-ex, cxs-bp-safety, cxs-bp-ex-inp-safety — and 6stage-flush, a
+previous timeout).  Differential: **0 new unsound**; the only remaining
+disagreement is the pre-existing QF_ANIA avg40 (different family — the round
+is gated off there).  Regression tests:
+`oxiz-solver/tests/arrangement_round_regressions.rs` (+ fixture).
+
+**The wisas lesson (verified twice now)**: QF_UFLIA/wisas/xs_8_13 flips
+between correct `unsat` and false `sat` across *search configurations*
+(ab-vmtf/ab-vsids experiment snapshots: `sat`; ab-fixed: `unsat`) — the same
+hole class reachable by trajectory.  The first ungated landing flipped it
+(debug AND release).  Two measurement traps recorded: (1) *debug vs release
+builds can disagree on these instances* — always compare release-vs-release
+(HEAD debug answered wisas `sat` while HEAD release said `unsat`);
+(2) a change that derives nothing on an instance can still perturb it via
+node-creation order — the round now skips pairs without existing EUF nodes.
+With the `is_dl_family` gate wisas keeps main's verdict.
+
+### Original fix-shape sketch (superseded by the landing above)
 
 Tentative-arrangement round at `final_check`:
 

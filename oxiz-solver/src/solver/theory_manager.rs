@@ -395,6 +395,13 @@ pub(crate) struct TheoryManager<'a> {
     /// subset of the true Farkas proof, so bound propagation is gated to this
     /// family.
     is_dl_family: bool,
+    /// Pairs whose tentative arrangement merge was refuted during the last
+    /// [`Self::model_based_combination`] round (`C ⊢ x ≠ y` for then-true
+    /// facts C).  Drained by `Solver::refine_arrangement_splits`, which
+    /// internalizes `(= x y)` atoms for them so the next search can *decide*
+    /// the arrangement (the refutation itself lives on search facts, so no
+    /// clause can be asserted — only the branching dimension is added).
+    arrangement_splits: Vec<(TermId, TermId)>,
     /// Pure integer difference logic end-to-end: every arithmetic atom is
     /// difference-shaped (Z3's structural `is_in_diff_logic(st)` gate, see
     /// `solver::static_features`) and integer-sorted without UF.  While this
@@ -633,6 +640,7 @@ impl<'a> TheoryManager<'a> {
             max_conflicts,
             max_decisions,
             has_bv_arith_ops,
+            arrangement_splits: Vec::new(),
             is_dl_family: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
                 .unwrap_or(false),
@@ -1399,7 +1407,254 @@ impl<'a> TheoryManager<'a> {
                 return self.conflict_from_terms(&conflict_terms);
             }
         }
+
+        // ===== arith → EUF: tentative arrangement (non-convex combination) =====
+        //
+        // The entailed-equality pass in `nelson_oppen_combine` merges only
+        // pairs arithmetic *proves* equal.  When a refutation instead needs
+        // the model-suggested arrangement – two interface terms the tableau
+        // merely co-locates (equal UF arguments whose congruent results a
+        // negated `=` atom keeps apart) – that merge never happens,
+        // congruence never fires, and a full assignment whose arrangement was
+        // never jointly checked gets accepted: the pete false-SATs (see
+        // `docs/studies/2026-08-arithmetic-negated-atoms-false-sat.md`).
+        //
+        // For each model-equal, EUF-distinct interface pair, merge
+        // tentatively inside a scope.  A conflict proves `C ⊢ x ≠ y` for the
+        // currently-true facts C (the conflict core minus the tentative
+        // edge's own tag); that **derived disequality** is asserted at the
+        // current scope with C recorded as its justification, so congruence
+        // stops re-proposing the refuted arrangement and any later conflict
+        // citing the edge expands back to C.  Sound because C is exactly the
+        // proof's other premises (see the tag-collision note in the helper);
+        // incomplete because refutations needing several merges at once are
+        // not explored.
+        self.arrange_model_equal_pairs();
+
         TheoryCheckResult::Sat
+    }
+
+    /// The tentative-arrangement round described on
+    /// [`Self::model_based_combination`].  Best-effort and scoped: every
+    /// tentative merge lives in its own EUF scope and is popped before the
+    /// next pair, so the round never leaves partial merges behind.
+    fn arrange_model_equal_pairs(&mut self) {
+        use oxiz_theories::Theory;
+
+        // Scoped to the validated family (QF_UFIDL/UFIDL), mirroring the
+        // `is_dl_family` gate on bound propagation: on wider inputs the
+        // refinement loop can move a search that main answers correctly onto
+        // a trajectory that reaches a *different* unchecked arrangement
+        // (QF_UFLIA wisas: main `unsat`, with the round `sat` — the round
+        // found no refutation for wisas's shape, so it only perturbed the
+        // search).  Widen only after that shape is covered.
+        if !self.is_dl_family {
+            return;
+        }
+
+        // Candidate set: interface terms that are UF arguments, grouped by
+        // their current arithmetic model value (the same grouping
+        // `nelson_oppen_combine`'s model-equal probe uses).
+        let uf_args = self.euf.app_argument_terms();
+        let mut by_val: FxHashMap<(Rational64, oxiz_core::SortId), Vec<TermId>> =
+            FxHashMap::default();
+        for &t in self.arith.interface_terms() {
+            if uf_args.contains(&t)
+                && let Some(v) = self.arith.value(t)
+                && let Some(sort) = self.manager.get(t).map(|tm| tm.sort)
+            {
+                let e = by_val.entry((v, sort)).or_default();
+                if !e.contains(&t) {
+                    e.push(t);
+                }
+            }
+        }
+
+        const MAX_PAIRS: usize = 64;
+        let mut probed = 0usize;
+        'groups: for terms in by_val.values() {
+            if terms.len() < 2 {
+                continue;
+            }
+            for i in 0..terms.len() {
+                for j in (i + 1)..terms.len() {
+                    if probed >= MAX_PAIRS {
+                        break 'groups;
+                    }
+                    probed += 1;
+                    let (x, y) = (terms[i], terms[j]);
+
+                    // Existing nodes only: interning here would perturb node
+                    // creation order (explanation iteration order → conflict
+                    // clause tie-breaking → search trajectory) even when the
+                    // round derives nothing, flipping unrelated verdicts
+                    // (wisas).  A pair without EUF presence is skipped.
+                    let (Some(nx), Some(ny)) = (self.euf.term_to_node(x), self.euf.term_to_node(y))
+                    else {
+                        continue;
+                    };
+                    if self.euf.are_equal_immutable(nx, ny) || self.euf.are_proven_disequal(nx, ny)
+                    {
+                        continue;
+                    }
+
+                    // Tag for the tentative edge (and, on refutation, for the
+                    // derived disequality).  It must name no *existing*
+                    // derived-equality justification: filtering the tag back
+                    // out of the conflict core assumes every occurrence is
+                    // this edge's, so a tag that also justifies another edge
+                    // would silently drop that premise from C and let the
+                    // asserted diseq claim more than was derived.
+                    let tag = [x, y, self.zero_term]
+                        .into_iter()
+                        .find(|t| self.derived_reasons.literals(*t).is_none());
+                    let Some(tag) = tag else { continue };
+
+                    self.euf.push();
+                    let _ = self.euf.merge(nx, ny, tag);
+                    let conflict = self.euf.check_conflicts();
+                    self.euf.pop();
+
+                    let Some(core) = conflict else {
+                        continue; // arrangement-consistent; not kept (v1)
+                    };
+                    // C = the proof's premises minus the tentative edge
+                    // itself: `C ⊢ x ≠ y` with every C premise currently
+                    // true, so the derived diseq holds for exactly as long
+                    // as the scope it is asserted at.
+                    let justification: Vec<TermId> =
+                        core.into_iter().filter(|t| *t != tag).collect();
+                    self.derived_reasons.record(tag, justification);
+                    self.euf.assert_diseq(nx, ny, tag);
+                    self.arrangement_splits.push((x, y));
+                    self.statistics.theory_propagations += 1;
+                }
+            }
+        }
+        // ===== Phase 2: the full model arrangement. =====
+        //
+        // Phase 1 refutes pairs one merge at a time and misses refutations
+        // that need several merges simultaneously (congruence fires only
+        // once a whole group of model-equal arguments is merged).  So also
+        // accumulate ALL candidate merges in one scope and check once.  A
+        // conflict there proves the *conjunction* of the merged equalities
+        // is incompatible with the current facts — no per-pair diseq is
+        // derivable (soundness), but requesting `(= x y)` atoms for the
+        // merged pairs lets the next search DECIDE the arrangement, where a
+        // true polarity merges through `process_constraint` and the conflict
+        // becomes an ordinary learned clause over existing atoms.
+        //
+        // The requested set is a superset of the proof's actual needs (we
+        // cannot attribute the conflict to individual merges without
+        // per-edge tags); over-approximating is sound — an internalized
+        // equality atom is a pure branching dimension, never a constraint —
+        // and bounded by the cap.
+        {
+            const MAX_ARRANGED: usize = 32;
+            let mut merged: Vec<(TermId, TermId)> = Vec::new();
+            self.euf.push();
+            'acc: for terms in by_val.values() {
+                for i in 0..terms.len() {
+                    for j in (i + 1)..terms.len() {
+                        if merged.len() >= MAX_ARRANGED {
+                            break 'acc;
+                        }
+                        let (x, y) = (terms[i], terms[j]);
+                        let (Some(nx), Some(ny)) =
+                            (self.euf.term_to_node(x), self.euf.term_to_node(y))
+                        else {
+                            continue;
+                        };
+                        if self.euf.are_equal_immutable(nx, ny)
+                            || self.euf.are_proven_disequal(nx, ny)
+                        {
+                            continue;
+                        }
+                        let _ = self.euf.merge(nx, ny, x);
+                        merged.push((x, y));
+                        if self.euf.check_conflicts().is_some() {
+                            break 'acc;
+                        }
+                    }
+                }
+            }
+            let mut conflicted = self.euf.check_conflicts().is_some();
+            if !conflicted && !merged.is_empty() {
+                // Cross-theory joint check: congruence may have collapsed
+                // applications whose PINNED values (equalities with
+                // constants) disagree only in arithmetic — invisible to
+                // `check_conflicts`, which sees no EUF disequality between
+                // the constants.  Group the arith-valued shared terms by
+                // their (now merged) EUF class and let a scoped tableau
+                // check refute the arrangement (wisas shape).
+                conflicted = self.arrangement_cross_check_arith();
+            }
+            self.euf.pop();
+            if conflicted {
+                self.arrangement_splits.extend(merged);
+            }
+        }
+    }
+
+    /// Cross-theory joint check for the tentative arrangement: group every
+    /// arith-valued shared term by its current EUF class and assert one
+    /// equality per class-disagreement into a scoped tableau; `Unsat` proves
+    /// the arrangement is jointly inconsistent (congruence + arithmetic).
+    /// Runs INSIDE the arrangement scope: the caller pops the EUF side, this
+    /// helper pops its own arith scope.
+    fn arrangement_cross_check_arith(&mut self) -> bool {
+        use oxiz_theories::Theory;
+        let mut witness: FxHashMap<u32, (TermId, Rational64)> = FxHashMap::default();
+        let mut pending: Vec<(TermId, TermId)> = Vec::new();
+        // Deterministic order (see `model_based_combination`'s note).
+        let mut shared_terms: Vec<TermId> = self.term_to_var.keys().copied().collect();
+        shared_terms.sort_unstable_by_key(|t| t.raw());
+        for term in shared_terms {
+            let Some(value) = self.arith.value(term) else {
+                continue;
+            };
+            let Some(node) = self.euf.term_to_node(term) else {
+                continue;
+            };
+            let rep = self.euf.find(node);
+            match witness.get(&rep) {
+                Some(&(prev, prev_value)) => {
+                    if prev_value != value {
+                        pending.push((prev, term));
+                    }
+                }
+                None => {
+                    witness.insert(rep, (term, value));
+                }
+            }
+        }
+        if pending.is_empty() {
+            return false;
+        }
+        self.arith.push();
+        for (a, b) in pending {
+            self.arith.assert_eq(
+                &[
+                    (a, Rational64::from_integer(1)),
+                    (b, Rational64::from_integer(-1)),
+                ],
+                Rational64::from_integer(0),
+                a,
+            );
+        }
+        let unsat = matches!(
+            self.arith.check(),
+            Ok(oxiz_theories::TheoryCheckResult::Unsat(_))
+        );
+        self.arith.pop();
+        unsat
+    }
+
+    /// Drain the arrangement-split requests collected by the last
+    /// [`Self::model_based_combination`] round (see `arrangement_splits`).
+    #[must_use]
+    pub fn take_arrangement_splits(&mut self) -> Vec<(TermId, TermId)> {
+        core::mem::take(&mut self.arrangement_splits)
     }
 
     /// Bidirectional Nelson–Oppen combination to a fixpoint.
