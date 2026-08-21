@@ -204,6 +204,24 @@ impl Solver {
         // stalled the refinement loop on deep `swap` / `storecomm` chains.
         build_equality_read_congruence(manager, &collected, &mut candidates);
 
+        // ======== Phase 2.4: constant-array reads ========
+        // `select((as const S) v, i) = v` for every observed read of a
+        // constant-function array.  The axiom holds for every index, so a
+        // unit per read is exact (no guard, no witness); it is what makes a
+        // stored value visible when the model reads the array (Z3 rewrites
+        // this select away entirely at internalization — see
+        // `th_rewriter::mk_select`'s `is_const` folding — the unit here is
+        // the lazy-lemma equivalent).  Reads of a variable EQUAL to a const
+        // array chain through the eq-pair select-congruence lemmas, and
+        // store-over-const bases through the read-over-write family.
+        for &(sel_term, array, _index) in &collected.selects {
+            let Some(&value) = collected.const_arrays.get(&array) else {
+                continue;
+            };
+            let lemma = manager.mk_eq(sel_term, value);
+            candidates.push(lemma);
+        }
+
         // ======== Phase 2.5: interface-equality atoms (Z3
         // `mk_interface_eqs`) ========
         // For every pair of *interface* arrays (cross-theory arguments, ite
@@ -410,6 +428,15 @@ struct ArrayStructure {
     store_base_pairs: Vec<(TermId, TermId)>,
     /// Distinct indices read on each array operand (for select congruence).
     read_indices: FxHashMap<TermId, Vec<TermId>>,
+    /// Constant-function array terms: `((as const S) v)` parses as an
+    /// `Apply` named `(as const)` (see the parser's `Head::Qualified` arm) —
+    /// an opaque array term unless this module recognizes it.  Maps the
+    /// const-array term to its value term.  The constant-array axiom
+    /// `select(const v, i) = v` holds for EVERY index, so one unit lemma per
+    /// observed read makes the value visible to the core (reads through
+    /// equalities chain via select congruence; store-over-const chains via
+    /// read-over-write).
+    const_arrays: FxHashMap<TermId, TermId>,
 }
 
 /// Gather array structure from `term`.  `visited` prevents re-descending
@@ -615,7 +642,21 @@ fn collect_array_structure(
                     });
                 }
             }
-            TermKind::Apply { args, .. } => {
+            TermKind::Apply { func, args } => {
+                // `((as const (Array D R)) v)`: the SMT-LIB constant-function
+                // array, parsed as a qualified `Apply` whose function name is
+                // `(as const)` (see the parser's `Head::Qualified` arm).
+                // Without recognizing it here, every read of the array is an
+                // opaque select and `select(const v, i) = v` is never derived
+                // (QF_ANIA avg40: `F ∧ (= ret5 162)` stayed `sat` against a
+                // z3-unsat because the whole heap model read as const-arrays
+                // never forced a single stored value).
+                if manager.resolve_str(*func) == "(as const)"
+                    && args.len() == 1
+                    && is_array_sorted(term, manager)
+                {
+                    out.const_arrays.insert(term, args[0]);
+                }
                 // An array-sorted argument of an uninterpreted application
                 // (`g(a)`, `sk(a1, a2)`) is a shared (interface) array: a
                 // disequality between the applications forces the arguments
@@ -775,11 +816,25 @@ fn build_read_over_write(
                     candidates.push(manager.mk_implies(idx_eq, same));
                     idx_eqs.push(idx_eq);
                 }
-                let base_read = manager.mk_select(ultimate_base, index);
-                let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
-                else_disj.push(manager.mk_eq(select_term, base_read));
-                else_disj.extend(idx_eqs);
-                candidates.push(manager.mk_or(else_disj));
+                // A store index that is SYNTACTICALLY the read index makes
+                // every SAME guard's antecedent true and the ELSE disjunction
+                // trivially satisfiable (`... ∨ index = ki` with ki == index):
+                // the else clause is then a tautology and is dropped rather
+                // than materialised.  Materialising it would mint
+                // `select(ultimate_base, index)` - and on read-modify-write
+                // heaps the ultimate base is itself a nested select, so the
+                // fresh read re-seeds the select-over-select arm and the
+                // chain resolves one memory level per refinement round
+                // (the quadratic instance growth that first landed the
+                // select-over-select fix: 0 -> 373 -> 997 -> 1659 over four
+                // rounds on QF_ANIA avg40).
+                if !entries.iter().any(|(ki, _)| *ki == index) {
+                    let base_read = manager.mk_select(ultimate_base, index);
+                    let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
+                    else_disj.push(manager.mk_eq(select_term, base_read));
+                    else_disj.extend(idx_eqs);
+                    candidates.push(manager.mk_or(else_disj));
+                }
             }
         } else if let Some(store_terms) = collected.aliases.get(&array) {
             // Aliased read: an asserted `array = store(...)` makes the same
@@ -874,6 +929,76 @@ fn build_read_over_write(
             let not_c = manager.mk_not(c);
             candidates.push(manager.mk_implies(c, hit));
             candidates.push(manager.mk_implies(not_c, miss));
+        } else if let Some((inner_array, inner_idx)) = as_select(array, manager) {
+            // select-over-select: `select (select A j) i`, the
+            // read-modify-write heap shape (`store(mem, base,
+            // store(select(mem, base), off, v))`, Ultimate memory models).
+            // The array operand is itself a read; resolve that inner read
+            // through A's FULL store chain (aliases followed, so one round
+            // instead of one level per round).  When a chain store's index
+            // equals `j`, the array operand IS that store's value, so the
+            // outer read twins to a read of the value (which the next
+            // round's own read-over-write resolves).  Without this arm the
+            // inner read is an opaque array term and the stored value never
+            // reaches the outer read (QF_ANIA avg40: `F AND (= ret5 162)`
+            // stayed `sat` against z3-unsat).
+            let chain = collected
+                .aliases
+                .get(&inner_array)
+                .and_then(|_| aliased_store_map(inner_array, &collected.aliases, manager))
+                .or_else(|| {
+                    direct_store_map(inner_array, manager).map(|(b, e)| (b, e, Vec::new()))
+                });
+            if let Some((_chain_base, entries, guard_pairs)) = chain
+                && !entries.is_empty()
+            {
+                let guard_term: Option<TermId> = if guard_pairs.is_empty() {
+                    None
+                } else {
+                    let conj: Vec<TermId> = guard_pairs
+                        .iter()
+                        .map(|(v, s)| manager.mk_eq(*v, *s))
+                        .collect();
+                    Some(if conj.len() == 1 {
+                        conj[0]
+                    } else {
+                        manager.mk_and(conj)
+                    })
+                };
+                // A store whose index is SYNTACTICALLY the read index makes
+                // the resolution unconditional (outermost hit wins: entries
+                // are newest-first) and every SAME guard's antecedent
+                // trivially true - the ELSE disjunction is then trivially
+                // satisfiable too, so it is dropped rather than
+                // materialised.  A materialised ELSE twin is itself a
+                // select-over-select and re-seeds this arm every round: the
+                // quadratic instance growth that the first version of this
+                // fix showed on avg40 (0 -> 373 -> 997 -> 1659 instances
+                // over four rounds and a 2s -> 60s+ blowup).
+                let syntactic_hit = entries
+                    .iter()
+                    .find(|(idx, _)| *idx == inner_idx)
+                    .map(|&(idx, val)| (idx, val));
+                if let Some((_, val)) = syntactic_hit {
+                    let twin = manager.mk_select(val, index);
+                    let same = manager.mk_eq(select_term, twin);
+                    candidates.push(match guard_term {
+                        Some(g) => manager.mk_implies(g, same),
+                        None => same,
+                    });
+                }
+                // No syntactic hit: the non-matching arrangement (store index
+                // DIFFERS from the read index) is deliberately NOT
+                // materialised here.  An ELSE twin would be a fresh nested
+                // select that re-seeds this arm (and the upward-closure /
+                // witness paths) every round - measured as the growth that
+                // stalls the refinement loop on satisfiable QF_ANIA goals
+                // (floppy2: `sat` 2.6 s -> honesty-gated `unknown`).  The
+                // matching-index resolution above already covers the
+                // RMW-heaps this arm exists for; the differing-index case
+                // stays with the pre-existing machinery (incomplete, as
+                // before this fix).
+            }
         }
     }
 }
@@ -1379,6 +1504,15 @@ fn extensionality_witness(
 fn as_store(term: TermId, manager: &TermManager) -> Option<(TermId, TermId, TermId)> {
     match manager.get(term)?.kind {
         TermKind::Store(base, index, value) => Some((base, index, value)),
+        _ => None,
+    }
+}
+
+/// `(select A i)` destructuring for the select-over-select arm of
+/// [`build_read_over_write`].
+fn as_select(term: TermId, manager: &TermManager) -> Option<(TermId, TermId)> {
+    match manager.get(term)?.kind {
+        TermKind::Select(array, index) => Some((array, index)),
         _ => None,
     }
 }

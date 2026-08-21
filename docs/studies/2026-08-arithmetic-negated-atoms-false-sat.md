@@ -249,31 +249,47 @@ pete only along some trajectories.
 1. ~~Land the arrangement round~~ **done** - see "Fix LANDED" above
    (commit `8db2f3c`): entire pete family -> correct `unsat`, differential
    0 new unsound.
-2. QF_ANIA avg40 - **diagnosed to the array layer (2026-08-21, third
-   follow-up), not yet fixed**:
-   * Pin experiment: oxiz's `sat` model is degenerate (every array as
-     `(as const ...)`, all `#valid` false / `#memory_int` inner 0; 401 Int
-     pins mostly 0) and z3 refutes `F AND (all pins)`; greedy minimization
-     reaches a **single pin**: `main_~ret5~0_427 = 162` alone makes `F`
-     UNSAT.
-   * **Decisive**: oxiz answers `sat` on `F AND (= |main_~ret5~0_427| 162)`
-     too (2.4 s; z3: unsat) - not a search/derivation gap: the theory layer
-     cannot refute the pinned formula at all.  Reproducer (trivial): the
-     original file + `(assert (= |main_~ret5~0_427| 162))` before
-     `(check-sat)`; the `(set-logic QF_ANIA)` header must stay or oxiz
-     routes to `unknown` (a routing artifact worth remembering).
-   * Internal scans (`OXIZ_SCAN_VIOL`): atom violations **none**,
-     congruence gaps **none** - the failure is inside the ARRAY reasoning.
-     Shape: Ultimate-style 2-level heap model
-     (`#memory_int : Array Int (Array Int Int)`), 84 stores / 326 selects;
-     the refutation requires read-over-write derivations through the nested
-     store chains (a const-0 array model means no select ever forces a
-     stored value, so `ret5`'s arithmetic chain stays unconstrained).
-     Suspects: the RoW cascade over 2-level selects
-     (`select (select mem base) off`) and index-equality reasoning for the
-     `base`/`offset` index terms.  Fix belongs in `check_array` /
-     `instantiate_array_axioms` with this reproducer; do NOT widen the
-     arrangement round's gate for it.
+2. QF_ANIA avg40 - **FIXED (2026-08-21, fourth follow-up): two lazy-lemma
+   gaps in the array theory**.  The single-pin diagnosis led to minimal
+   probes that isolated two independent missing axioms:
+   * **Constant-function arrays**: `((as const S) v)` parses as a qualified
+     `Apply` (`(as const)`) - an opaque array term unless recognized.  Even
+     the fully ground `(select ((as const (Array Int Int)) 162) 7)` was
+     free.  Fix: `collect_array_structure` records const-array terms
+     (name `(as const)`, array-sorted, one arg) and
+     `instantiate_array_axioms` asserts one UNIT per observed read:
+     `select((as const S) v, i) = v` (z3 folds this in the rewriter -
+     `mk_select`'s `is_const`; the unit is the lazy-lemma equivalent).
+   * **select-over-select (RMW heaps)**: `select(select(A, j), i)` where A
+     stores at j - the Ultimate heap-update shape
+     `store(mem, base, store(select(mem, base), off, v))`.  The outer
+     read's array operand is itself a read; nothing resolved it.  Fix: a
+     select-over-select arm in `build_read_over_write` resolves the inner
+     read through A's FULL (aliased) store chain and, on a store index
+     SYNTACTICALLY equal to the read index, twins the outer read to
+     `select(value, i)` guarded only by the alias equalities.
+   Result: avg40+pin now grinds toward the refutation instead of answering
+   `sat`; at the differential's 10 s cap it is an honest TIMEOUT
+   (wrong-sat -> timeout).  **Differential: disagree(soundness)=0 for the
+   first time** (162/163 solved; avg40 is the one loss).
+   Perf follow-up (NOT landed): deep RMW chains resolve one memory level
+   per refinement round; the twin reads re-seed the round machinery and the
+   instance stream never saturates (measured 0 -> 373 -> 997 -> 1659 over
+   four rounds; avg40 needs >1000 s).  Two tautology-drop optimizations
+   landed (ELSE clauses whose disjunction contains a syntactically-true
+   `index = ki` literal are dropped instead of materialised - the
+   materialised twin is what re-seeds); the remaining growth is via the
+   upward-closure / witness paths.  The proper fix is z3-style EAGER chain
+   reduction in a rewriter (compose `select(mem_N, base)` down the whole
+   alias chain at internalization), a separate piece of work.
+   **floppy2 lesson**: the first version ALSO materialised the
+   differing-index ELSE rows; on satisfiable QF_ANIA goals that churn never
+   saturates, the honesty gate fires and correct `sat` answers became
+   `unknown` (4-7 floppy2 instances, sat 2.6 s -> unknown).  The landed
+   version fires ONLY on the syntactic match (incomplete for
+   differing-index arrangements - as before the fix - instead of
+   completeness-with-timeouts on the sat side).
+
 3. wisas-class inputs (QF_UFLIA): the hole exists there too and is
    trajectory-dependent (see the wisas lesson above).  Extend the round's
    cross-theory check beyond `is_dl_family` only after wisas's own shape is
