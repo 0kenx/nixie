@@ -243,13 +243,19 @@ Results live in the same per-machine, gitignored tree as the precompiled binarie
 (`AGENTS.md` → *Git: precompile binary cache*):
 
 ```
-precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__<config>__s<seed>.json
+precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__c<cfghex16>__s<seed>.json
 ```
 
 - One JSON file per `(instance × config × seed)` run — `oxiz-bench-record/1` schema.
+- **Config identity is content-addressed.** The `c<cfghex16>` segment is
+  `sha256(canonical flags)[:16]`; `config.id` is a human label only. Two arms with different
+  labels but identical flags are **the same cell** (recorded once); any behavioural difference
+  must appear in `flags`, or it does not exist. Flags are flat scalars or flat scalar lists
+  (list order is significant); nested objects and non-finite floats are rejected so the
+  canonical form stays well-defined.
 - **Per machine. Never committed. Never compared across different `host.id`s.**
 - A measurement's identity is its **join key**:
-  `(host.id, git sha, binary sha256, suite, instance sha256, config id, seed)`.
+  `(host.id, git sha, binary sha256, suite, instance sha256, config-hash, seed)`.
   The file name carries the human-readable projection; `record_id` is the first 16 hex of the
   join-key hash.
 
@@ -261,7 +267,8 @@ precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__<config>__s<s
 | `git.sha_long/sha_short/dirty` | dirty-tree runs are excluded from reuse unless explicitly requested |
 | `binary.sha256` | pins the exact binary, not just the commit |
 | `instance.name/sha256/family/sat_expected` | content-addressed instances; family = per-family reporting |
-| `config.id`, `flags`, `cmdline` | reproducible arm definition |
+| `config.flags` | content-addressed arm identity (`config_hash` = sha256 of canonical flags); the only place a behavioural difference may live |
+| `config.id`, `cmdline` | human label and reproduction aid; **not** part of identity |
 | `arm.role`: `treatment\|null\|baseline\|reference` | matched-null protocol is part of the data, not prose |
 | `metrics.primary {name, value}` | deterministic counter only |
 | `metrics.counter_coverage_verified: true` | §3's completeness check is mandatory to record at all |
@@ -274,8 +281,25 @@ precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__<config>__s<s
 BENCH=bench/suite/scripts/benchstore.py
 $BENCH record run.json                        # validate + file into precompile/<sha>/benchmark/
 $BENCH locate --suite satcomp25 --instance fs.cnf --host $HOST   # find cached cells
+$BENCH locate --suite satcomp25 --any-host --flags '{"vivify": true}'   # exact flag-set match
 $BENCH missing manifest.json                  # cells of a planned experiment not yet in the store
-$BENCH verify                                 # revalidate all records (path + record_id + schema)
+$BENCH verify                                 # revalidate all records (path + ids + schema)
+```
+
+Manifest configs are either bare labels (empty flags) or `{id, flags}` objects, so flag
+combos are expressed directly:
+
+```json
+{
+  "suite": "satcomp25", "host": "devbox",
+  "configs": [
+    "default",
+    {"id": "vivify-on",  "flags": {"vivify": true, "vivify_budget_tier": 2}},
+    {"id": "vivify-null","flags": {"vivify": true, "vivify_budget_tier": 2, "scramble_order": true}}
+  ],
+  "seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "instances": [{"name": "fs.cnf", "path": "satcomp2025/main_easy_mid/fs.cnf"}]
+}
 ```
 
 Experiment protocol:

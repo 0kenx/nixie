@@ -12,27 +12,39 @@ the cells `missing` reports. See docs/BENCHMARKING.md section 9.
 Commands:
   record  RECORD.json        validate a record and file it into the store
   locate  --suite S --instance NAME (--host H | --any-host)
-                             [--config C] [--seed N] [--sha X]
+                             [--config C] [--flags JSON] [--seed N] [--sha X]
                              [--include-dirty] [--root R]
                              print paths of matching stored records
   missing MANIFEST.json      list experiment cells not yet in the store
   verify  [--root R]         revalidate every stored record
 
+Config identity is content-addressed: the join key carries
+sha256(canonical flags)[:16], not the human label. Two arms with different
+labels but identical flags share one cell; any behavioural difference must
+appear in flags or it does not exist. Flag values are flat scalars or flat
+scalar lists (order-significant); nested objects are rejected.
+
 Manifest format (for `missing`):
 {
   "suite": "satcomp25-easy",
   "host": "devbox",
-  "configs": ["default", "rephase-null"],
+  "configs": [
+    "default",
+    {"id": "rephase-null", "flags": {"rephase_mode": "random", "nonce": 7}},
+    {"id": "vivify-on",    "flags": {"vivify": true, "vivify_budget_tier": 2}}
+  ],
   "seeds": [0, 1, 2],
   "instances": [{"name": "6s167-opt.cnf",
                  "path": "satcomp2025/main_easy_mid/6s167-opt.cnf"}]
 }
-`path` may be omitted if the instance carries an explicit "sha256".
+A config is either a bare label (empty flags) or an object with "id" plus
+optional "flags". `path` may be omitted if the instance carries "sha256".
 """
 
 import argparse
 import hashlib
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -42,6 +54,7 @@ ARM_ROLES = {"treatment", "null", "baseline", "reference"}
 VERDICTS = {"sat", "unsat", "unknown"}
 
 HEX64 = re.compile(r"[0-9a-f]{64}")
+SCALARS = (str, bool, int, float)
 
 SUBOBJECT_KEYS = {
     "host": {"id", "cpu", "os"},
@@ -70,6 +83,32 @@ def slug(text):
     return cleaned
 
 
+def canonical_flags(flags):
+    if flags is None:
+        flags = {}
+    if not isinstance(flags, dict):
+        raise SchemaError("config.flags must be an object")
+    for key, value in flags.items():
+        if not isinstance(key, str) or not key:
+            raise SchemaError("config.flags keys must be non-empty strings")
+        if isinstance(value, list):
+            if not value or any(not isinstance(v, SCALARS) for v in value):
+                raise SchemaError(f"config.flags[{key!r}] must be a non-empty flat list of scalars")
+        elif not isinstance(value, SCALARS):
+            raise SchemaError(f"config.flags[{key!r}] must be a scalar or flat list of scalars")
+
+    def norm(value):
+        if isinstance(value, list):
+            return [norm(v) for v in value]
+        if isinstance(value, float) and not math.isfinite(value):
+            raise SchemaError(f"non-finite float in config.flags[{key!r}]")
+        return value
+
+    payload = json.dumps({k: norm(v) for k, v in sorted(flags.items())}, sort_keys=True,
+                         separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 def canonical_join_key(rec):
     payload = {
         "host": rec["host"]["id"],
@@ -77,7 +116,7 @@ def canonical_join_key(rec):
         "binary_sha256": rec["binary"]["sha256"],
         "suite": rec["suite"],
         "instance_sha256": rec["instance"]["sha256"],
-        "config_id": rec["config"]["id"],
+        "config_hash": rec["config_hash"],
         "seed": rec["seed"],
     }
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -93,7 +132,7 @@ def runs_dir(root, rec):
 
 def record_path(root, rec):
     inst8 = rec["instance"]["sha256"][:8]
-    name = f"{slug(rec['instance']['name'])}__{inst8}__{slug(rec['config']['id'])}__s{rec['seed']}.json"
+    name = f"{slug(rec['instance']['name'])}__{inst8}__c{rec['config_hash']}__s{rec['seed']}.json"
     return runs_dir(root, rec) / name
 
 
@@ -125,6 +164,13 @@ def validate(rec):
         raise SchemaError("instance.name required")
     if not isinstance(rec["config"].get("id"), str) or not rec["config"]["id"]:
         raise SchemaError("config.id required")
+    declared = rec.get("config_hash")
+    if declared is not None and (not isinstance(declared, str) or not re.fullmatch(r"[0-9a-f]{16}", declared)):
+        raise SchemaError("config_hash must be 16-hex when present")
+    computed = canonical_flags(rec["config"].get("flags"))
+    if declared is not None and declared != computed:
+        raise SchemaError(f"config_hash mismatch: file says {declared!r}, flags say {computed!r}")
+    rec["config_hash"] = computed
     seed = rec.get("seed")
     if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
         raise SchemaError("seed must be a non-negative integer")
@@ -203,6 +249,12 @@ def cmd_record(args):
 def cmd_locate(args):
     if not args.any_host and not args.host:
         fail("cross-machine comparison is invalid: pass --host or --any-host explicitly")
+    flags_filter = None
+    if args.flags is not None:
+        try:
+            flags_filter = canonical_flags(json.loads(args.flags))
+        except (json.JSONDecodeError, SchemaError) as exc:
+            fail(f"bad --flags: {exc}")
     hits = []
     for path, rec in iter_records(args.root, args.include_dirty):
         if args.suite and rec["suite"] != args.suite:
@@ -210,6 +262,8 @@ def cmd_locate(args):
         if args.instance and rec["instance"]["name"] != args.instance:
             continue
         if args.config and rec["config"]["id"] != args.config:
+            continue
+        if flags_filter is not None and rec["config_hash"] != flags_filter:
             continue
         if args.seed is not None and rec["seed"] != args.seed:
             continue
@@ -220,7 +274,7 @@ def cmd_locate(args):
         hits.append((path, rec))
     for path, rec in hits:
         primary = rec["metrics"]["primary"]
-        print(f"{path}\t{primary['name']}={primary['value']}\t{rec['verdict']['answer']}")
+        print(f"{path}\tconfig={rec['config']['id']}\t{primary['name']}={primary['value']}\t{rec['verdict']['answer']}")
     print(f"# {len(hits)} record(s)", file=sys.stderr)
     sys.exit(0 if hits else 1)
 
@@ -234,8 +288,22 @@ def cmd_missing(args):
     for _, rec in iter_records(args.root, include_dirty=args.include_dirty):
         if rec["host"]["id"] != manifest["host"] or rec["suite"] != manifest["suite"]:
             continue
-        key = (rec["instance"]["sha256"], rec["config"]["id"], rec["seed"])
+        key = (rec["instance"]["sha256"], rec["config_hash"], rec["seed"])
         stored.setdefault(key, []).append(rec["git"]["sha_short"])
+
+    def manifest_configs(entries):
+        for entry in entries:
+            if isinstance(entry, str):
+                if not entry:
+                    fail("manifest config labels must be non-empty")
+                yield entry, {}
+            elif isinstance(entry, dict):
+                cid = entry.get("id")
+                if not isinstance(cid, str) or not cid:
+                    fail("manifest config objects need a string 'id'")
+                yield cid, entry.get("flags", {})
+            else:
+                fail("manifest configs must be strings or {id, flags} objects")
 
     def instance_hash(entry):
         if entry.get("sha256"):
@@ -253,12 +321,16 @@ def cmd_missing(args):
     total = 0
     for entry in manifest["instances"]:
         ihash = instance_hash(entry)
-        for config in manifest["configs"]:
+        for cid, flags in manifest_configs(manifest["configs"]):
+            try:
+                chash = canonical_flags(flags)
+            except SchemaError as exc:
+                fail(f"bad manifest flags: {exc}")
             for seed in manifest["seeds"]:
                 total += 1
-                if stored.get((ihash, config, seed)):
+                if stored.get((ihash, chash, seed)):
                     continue
-                missing.append((manifest["suite"], entry["name"], config, seed))
+                missing.append((manifest["suite"], entry["name"], f"{cid}({chash})", seed))
     for suite, name, config, seed in missing:
         print(f"{suite}\t{name}\t{config}\t{seed}")
     print(f"# {len(missing)}/{total} cell(s) to run", file=sys.stderr)
@@ -302,7 +374,8 @@ def main():
     p = sub.add_parser("locate")
     p.add_argument("--suite")
     p.add_argument("--instance")
-    p.add_argument("--config")
+    p.add_argument("--config", help="human label (informational; identity is the flags hash)")
+    p.add_argument("--flags", help='exact-match filter, e.g. \'{"vivify": true}\'')
     p.add_argument("--seed", type=int)
     p.add_argument("--sha")
     p.add_argument("--host")
