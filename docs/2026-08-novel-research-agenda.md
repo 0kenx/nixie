@@ -414,6 +414,7 @@ preprocessing captures nearly all oracle value.
 
 | Supplied idea | Disposition |
 |---|---|
+| Logic-contract validation and body-derived engine routing | Established conformance/setup architecture and a correctness prerequisite; added as Priority 0 in the implementation document |
 | SOI, SBVA, MBTC/care graphs, BV abstraction, split Gröbner bases, local-search phases | Established; moved to the implementation document |
 | Vivification 4.0 | Established for SAT clauses; only its N3 extension to re-certified theory lemmas remains a novelty hypothesis |
 | Relevant-domain MBQI | Established prioritization; moved to the implementation document. Model-disequilibrium ranking is an unvalidated ordering heuristic, not yet a standalone research direction |

@@ -15,6 +15,14 @@ from the reports are not evidence and are not repeated here.
 
 ## Executive decision
 
+Before any performance project, OxiZ should land a **logic-contract and structural-routing
+layer**. Today `set-logic` changes engines and preprocessing through substring tests, while
+the asserted formula is not checked against the declared logic. A wrong or unknown header
+can therefore suppress a complete backend and turn a solvable input into `Unknown`. The
+fix is to infer required capabilities from the complete parsed script, validate those
+capabilities against an exact declared-logic specification, and route engines from the
+capabilities rather than from a guessed logic name.
+
 The best established implementation bets, in order, are:
 
 1. **CEGAR abstraction for expensive bit-vector arithmetic** (`bvmul`, `bvudiv`,
@@ -63,7 +71,7 @@ The local studies are decisive context:
   full scheduled stack broad-suite negative even after fixing its scheduling pathology.
 - [`2026-08-probe-scheduling.md`](studies/2026-08-probe-scheduling.md) rejected the probe
   ranking signal against its matched null.
-- [`2026-08-sota-survey-performance-proposals.md`](studies/2026-08-sota-survey-performance-proposals.md)
+- The supplied local study, `docs/studies/2026-08-sota-survey-performance-proposals.md`,
   consolidates those negative results. Its combined verdict rejects single-policy
   CaDiCaL ports, restart-boundary/rephase learning, inprocessing-arm tuning, probe
   ranking, elimination as a default, and chrono-reuse trail retention as current
@@ -74,6 +82,138 @@ The local studies are decisive context:
 - [`BENCHMARKING.md`](BENCHMARKING.md) requires deterministic work metrics,
   matched nulls, common-random-number pairing, and at least ten seeds per cell for
   trajectory-changing heuristics.
+
+## Priority 0: logic contract and structural engine routing
+
+### Problem
+
+In current OxiZ, `set-logic` is not merely a performance hint:
+
+- [`Solver::set_logic`](../oxiz-solver/src/solver/config.rs) stores an arbitrary string
+  and uses substring tests such as `contains("NIA")` to replace the arithmetic engine;
+- nonlinear dispatch auto-detects formula shape only for `ALL` or a missing header;
+- assertion-time UF/arithmetic purification is also gated by substrings in the declared
+  name; and
+- the later `StaticFeatures` walk refines a small set of search knobs but does not
+  validate the body against the declaration or generally select complete backends.
+
+Consequently, the same parsed formula can take different completeness paths solely because
+of its header. For example, a nonlinear term declared as `QF_LIA` does not engage the NIA
+backend and may return `Unknown`; an invented name containing `NIA` can engage it. OxiZ also
+accepts declarations and terms outside the named fragment instead of returning a logic
+error. `Unknown` remains an honest solving result, but allowing an unchecked string to
+cause it is behavior-changing routing, not harmless advisory metadata.
+
+### Established basis
+
+The [SMT-LIB 2.7 logic catalog](https://smt-lib.org/logics-all.shtml) defines each logic by
+its theory signature and language restrictions. For example, QF_LIA permits multiplication
+only by concrete coefficients, while AUFLIA-family declarations constrain the allowed
+array signatures. Z3 separately implements a syntactic `check_logic` walk and a
+formula-feature `static_features` setup path. Both implementations are incomplete and
+leaky in places, but the architectural separation is correct:
+
+1. a declared logic is a contract over the permitted input language; and
+2. formula features determine which solver capabilities and heuristics are actually
+   needed.
+
+The exact logic name cannot be reconstructed from the body. One formula may belong to
+several logics, the author may deliberately declare a strict superset, and some feature
+combinations have no unique smallest named logic. What can be recovered reliably for the
+supported SMT-LIB language is a structural **required-capability profile**.
+
+### Required design
+
+Represent the three concerns independently:
+
+```text
+DeclaredLogic = Known(LogicSpec) | OpenAll | Missing | Unsupported(name)
+
+RequiredCapabilities = {
+    quantifiers,
+    theory families,
+    arithmetic fragment: IDL | LIA | NIA | RDL | LRA | NRA,
+    UF and free-sort use,
+    recursive array signatures,
+    BV/FP parameters,
+    datatype/string/sequence features,
+    ...
+}
+
+EnginePlan = complete theory engines, combination path, and safe preprocessing
+```
+
+Then apply these rules:
+
+| Input state | Required behavior |
+|---|---|
+| Known header, conforming body | Validate the contract; route from `RequiredCapabilities` |
+| Known header, non-conforming body | Return a logic/command error, not `Unknown` |
+| Missing header or explicit `ALL` | Route entirely from `RequiredCapabilities` |
+| Unsupported name | Return `unsupported`/an error without partially reconfiguring solver state |
+
+If compatibility with mislabeled benchmarks is desired, expose an explicit permissive
+mode that warns, ignores the incompatible header, and routes structurally. Silent widening
+must not be the default.
+
+### Collector requirements
+
+The trusted collector must walk the parsed representation, not the tolerant raw-token
+detector in `oxiz-smtcomp`. It must:
+
+- validate declaration and definition signatures, including unused symbols;
+- recursively inspect array domains/ranges, parametric sorts, datatypes, BV widths, and
+  FP formats;
+- inspect original assertion DAGs **before** any header-dependent purification or rewrite;
+- expand or account for `let` and `define-fun` bodies;
+- distinguish concrete-coefficient multiplication from nonlinear multiplication and
+  recognize exact IDL/RDL shapes;
+- use an explicit heap stack and report malformed/missing terms or sorts as errors;
+- update before each incremental assertion and roll scope-dependent feature state back
+  exactly on `pop`; and
+- produce a capability profile directly, without first guessing a logic-name string.
+
+For batch SMT-LIB files, OxiZ may pre-scan the complete parsed script. For an incremental
+API, theory activation must be lazy and replay-safe, or the open configuration must install
+a conservative complete superset. Swapping an engine after assertions have already been
+purified under another policy is not sufficient.
+
+### OxiZ reuse and delta
+
+[`StaticFeatures`](../oxiz-solver/src/solver/static_features.rs) already provides a safe
+explicit-stack assertion-DAG walk and recognizes theory families, nonlinearity, and
+difference-logic shape. It is a useful foundation, but its current `inferred_logic` covers
+only a few shapes, it sees post-assertion terms, and it records only array presence rather
+than recursive signature restrictions. The `oxiz-smtcomp` `TheoryBits` scanner is useful
+for scheduling metadata but is intentionally tolerant and must not become the validation
+or soundness boundary.
+
+The implementation delta is therefore an exact `LogicSpec` registry plus a broadened,
+pre-rewrite capability collector shared by declarations, assertions, validation, and
+engine planning. Standard logics and OxiZ/competition extensions such as `QF_ANIA` need
+explicit separate registry entries; their semantics must never be decoded from substrings
+of their names.
+
+### Acceptance tests
+
+At minimum, the completed layer must demonstrate:
+
+1. `QF_LIA` plus `(* x y)` is rejected as outside the declared logic;
+2. the same nonlinear body under missing/`ALL` routing engages the complete nonlinear
+   path rather than falling through because of its header;
+3. disallowed nested array signatures are rejected even when all array terms type-check;
+4. a linear body declared under a broader nonlinear logic may use the linear engine;
+5. an unsupported name neither behaves like a substring-matched known logic nor leaves a
+   partially changed engine configuration;
+6. a second illegal `set-logic` is rejected instead of silently replacing live solver
+   state; and
+7. compatible broad headers over the same body produce the same capability-derived engine
+   plan and verdict.
+
+This is primarily a conformance, correctness, and completeness fix. Performance evaluation
+comes only after those invariants hold; it does not need a matched-null experiment because
+rejecting out-of-logic input and preventing header-induced incompleteness are semantic
+requirements, not heuristic claims.
 
 ## Priority 1: bit-vector arithmetic abstraction/refinement
 
@@ -405,7 +545,7 @@ valuable only after being reformulated more rigorously in the novel agenda.
 
 ### local SOTA study
 
-[`2026-08-sota-survey-performance-proposals.md`](studies/2026-08-sota-survey-performance-proposals.md)
+The supplied `docs/studies/2026-08-sota-survey-performance-proposals.md`
 has the best OxiZ fit: it reuses the repository's negative studies, follows the matched-null
 protocol, distinguishes adoption from novelty in several proposals, and identifies concrete
 code deltas. Its local measurements are much more actionable than generic competition
