@@ -83,6 +83,71 @@ Notable observations for whoever revisits clause-db management here:
   159k→460k conflicts across seeds (≈2.9×); single-seed A/B numbers on such
   instances are worthless (reconfirmed live twice during this study).
 
+## Study 3: cadical `stabilizing ()` schedule port (same session)
+
+The reference ablation below showed CaDiCaL's stabilize switch interacts
+with reduction, so the exact `stabilizing ()` schedule was ported:
+first switch at `stabilizeinit` (1000) **conflicts**, increment *measured*
+from phase 1's consumed ticks (`inc.stabilize`), later phases
+`inc × stabphases²` (`OXIZ_STAB_FAITHFUL`). Matched null: the same
+multiset of quadratic phase lengths drawn in shuffled order
+(`OXIZ_STAB_NULL`).
+
+First contact on `6s167-opt` (single seed):
+
+| arm | conflicts | mode switches |
+|---|---|---|
+| default (fixed 5000-tick base) | 170,039 | 35 |
+| faithful cadical schedule | 187,430 | 6 |
+| shuffled-length null | **100,133** | 7 |
+
+Null beats treatment; killed without a full study. Note this also corrects
+an earlier misdiagnosis: "52 stable phases" in the stats line is
+`restarts_stable` (restarts *during* stable mode), not mode switches —
+the real default flip count is 35, not wildly far from CaDiCaL's 2 but
+still ~17×.
+
+## Reference ablation: where CaDiCaL's own advantage lives
+
+Ablating CaDiCaL itself on `6s167-opt` (times, single seed; seed spread
+checked separately for the big effects):
+
+| config | time | conflicts |
+|---|---|---|
+| default | 0.28–0.38 s | 16.6 k |
+| `--stabilize=0` | 0.30 s | – |
+| `--score=0` (VMTF everywhere) | 0.27 s | – |
+| `--shrink=0` / `--rephase=0` / `--target=0` | 0.25–0.36 s | – |
+| `--minimize=0` / `--vivify=0` | 0.39 s | – |
+| `--otfs=0` | 0.49 s | – |
+| **`--reduce=0`** | **3.4–6.6 s** (seeds 1–3) | **186 k** |
+| `--reduceint=1e6 --reduceinit=1e6` | 6.48 s | – |
+| **`--reduce=0 --stabilize=0`** | **1.58 s** | – |
+
+Reading: clause-database reduction carries essentially the whole gap, and
+roughly half of that is an *interaction* — with a bloated database the
+per-conflict tick rate inflates (2330 vs 903 ticks/conflict), which mistimes
+the tick-driven stabilize switch; turning stabilization off recovers most of
+the loss even with no reduction at all. Reduction's search benefit in
+CaDiCaL is substantially "keep the tick clock calibrated", not a direct
+clause-quality effect.
+
+OxiZ calibration on the same instance: **403 ticks/conflict** (its DB stays
+small through on-the-fly subsumption — net 1,941 live learned clauses at
+exit, and disabling its scheduled reduce changes conflicts by <1 %,
+170,039 → 168,562). OxiZ has no DB bloat and no tick inflation, yet still
+needs 170k conflicts. So neither "add cadical's reduce" nor "fix tick
+inflation" can be oxiz's fix: the disease is not present in the same form.
+The shared observable — oxiz lands where CaDiCaL-with-no-reduce lands —
+remains unexplained by any single-policy delta tested so far (four ports,
+all null-neutral or null-beaten).
+
+Diagnostics added to support further work: per-reason origin counters
+(`OXIZ_REASON_STATS`: 31.6 % of OxiZ's BCP reasons are learned clauses on
+this instance, so reuse machinery does fire), real mode-switch count
+(`Solver::stabilization_phases()`), and per-mode tick totals
+(`Solver::search_ticks()`).
+
 ## What was NOT ported (recorded omission)
 
 cadical's satisfied-clause sweep + falsified-literal removal at reduce time
@@ -105,10 +170,23 @@ re-verified post-commit (`170039/550301/19369185` on 6s167-opt).
 * OTFS during analysis (880 events on the same instance);
 * tick-accounting correction (still gated behind its own study).
 
-Given two consecutive kills under proper controls, the prior that "porting
-individual cadical policies onto this codebase transfers CaDiCaL's search
-power" should be treated as weak. The alternative hypothesis — that the gap
-comes from an interacting *system* property (e.g., phase/target handling
-during stabilization, or EVSIDS ordering dynamics in long stable phases)
-rather than from any single policy — now has more support than any specific
-policy hypothesis tested so far.
+Given four consecutive null-neutral or null-beaten results, the prior that
+"porting individual cadical policies onto this codebase transfers CaDiCaL's
+search power" should now be treated as refuted for single-policy ports.
+The ablation adds a sharper constraint: whatever makes CaDiCaL fast is not
+reproducible by changing reduction, stabilization, scores, phases,
+minimization, shrink, OTFS, or rephase *in isolation in OxiZ*, and inside
+CaDiCaL only reduction matters — largely through keeping the tick clock
+calibrated. The most plausible remaining hypotheses:
+
+1. **Ordering/interleaving of inprocessing** (probe → elim → subsume →
+   reduce cadence relative to restarts), which no single-policy port
+   touched;
+2. a **deeper decision-dynamics difference** (e.g. what trail depth conflicts
+   form at, how backjump levels distribute) that manifests as reduced search
+   power everywhere but is invisible in per-policy A/Bs;
+3. residual per-propagation constant factors amplifying trajectory chaos.
+
+Measuring (2) needs cross-solver instrumentation (conflict-depth histograms
+from both solvers on identical instances); that, not another policy port,
+is the recommended next step.

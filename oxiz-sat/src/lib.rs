@@ -333,6 +333,42 @@ pub fn cadical_reduce_null_enabled() -> bool {
     })
 }
 
+/// Treatment switch for the cadical `stabilizing ()` schedule port (see
+/// `docs/studies/2026-08-sat-stabilize-schedule.md`): the first
+/// focused/stable switch fires at `stabilizeinit` (1000) **conflicts**; the
+/// increment is then *measured* as phase 1's consumed ticks, and each later
+/// phase lasts `inc x stabphases^2` ticks. Replaces the historical fixed
+/// `stabilize_base`-ticks schedule whose quadratic constant never adapts.
+#[doc(hidden)]
+pub fn stab_faithful_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_STAB_FAITHFUL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
+/// Matched null for [`stab_faithful_enabled`]: identical set of phase lengths
+/// (the same `inc x k^2` values), applied in a pseudo-randomly shuffled order
+/// – same perturbation magnitude and phase-count distribution, no monotone
+/// growth semantics.
+#[doc(hidden)]
+pub fn stab_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_STAB_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Diagnostics (`OXIZ_REASON_STATS`): BCP propagation counts split by whether
+/// the reason clause was learned or original. Process-global atomics so the
+/// stats harness can read them after `solve()`; diagnostic-only.
+#[doc(hidden)]
+pub static DIAG_REASON_LEARNED: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+#[doc(hidden)]
+pub static DIAG_REASON_ORIGINAL: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
 pub use clause_maintenance::{ClauseMaintenance, MaintenanceStats};
 pub use clause_size_manager::{ClauseSizeManager, SizeAdjustmentStrategy, SizeManagerStats};

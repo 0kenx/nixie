@@ -461,33 +461,89 @@ impl Solver {
         } else {
             self.ticks_focused
         };
-        // First switch is conflict-based (ticks have barely accumulated);
-        // thereafter tick-based, like cadical.
+        let faithful = crate::stab_faithful_enabled() || crate::stab_null_enabled();
+        // First switch: the faithful port uses cadical `stabilizing ()`'s
+        // conflict-based trigger (`stats.conflicts <= lim.stabilize` with
+        // `stabilizeinit` = 1000); the historical schedule used a fixed tick
+        // budget (`stabilize_base`).
         let ready = if self.stabphases == 0 {
-            self.ticks_focused >= self.config.stabilize_base
+            if faithful {
+                self.stats.conflicts < 1000
+            } else {
+                self.ticks_focused < self.config.stabilize_base
+            }
         } else {
-            current_ticks >= self.lim_stabilize
+            current_ticks < self.lim_stabilize
         };
-        if !ready {
+        if ready {
             return;
         }
         // Swap per-mode averages and switch mode.
         core::mem::swap(&mut self.glue_current, &mut self.glue_saved);
         self.stable = !self.stable;
         self.stabphases = self.stabphases.saturating_add(1);
-        // Quadratic growth of the next phase length (cadical `next_delta =
-        // inc × stabphases²`), measured in the new mode's ticks.
-        let next_delta = self
-            .config
-            .stabilize_base
-            .saturating_mul(self.stabphases)
-            .saturating_mul(self.stabphases);
-        let new_mode_ticks = if self.stable {
-            self.ticks_stable
+
+        if faithful {
+            // cadical restart.cpp::stabilizing tail:
+            //
+            //   if (!inc.stabilize) inc.stabilize = delta_ticks (phase 1);
+            //   next_delta_ticks = inc.stabilize * stabphases^2;
+            //   lim.stabilize = ticks[next_mode] + next_delta_ticks;
+            //   last.stabilize.ticks = ticks[next_mode];
+            //
+            // The increment is *measured* from phase 1's consumed ticks, not
+            // a config constant; growth is quadratic in completed phases.
+            let old_mode_ticks = if self.stable {
+                self.ticks_focused
+            } else {
+                self.ticks_stable
+            };
+            let delta_ticks = old_mode_ticks.saturating_sub(self.stab_last_ticks);
+            // Phase-1 delta defines the increment; later deltas are ignored
+            // by cadical (`if (!inc.stabilize)`).
+            if self.stab_inc == 0 {
+                self.stab_inc = delta_ticks.max(1);
+            }
+            let stabphases = self.stabphases;
+            let next_delta = if crate::stab_null_enabled() && stabphases > 1 {
+                // NULL ARM: same multiset of quadratic lengths
+                // {inc*k^2 : k <= stabphases}, drawn without replacement in a
+                // pseudo-random order – growth semantics removed.
+                if self.stab_null_pending.is_empty() {
+                    self.stab_null_pending = (1..=stabphases)
+                        .map(|k| self.stab_inc.saturating_mul(k).saturating_mul(k))
+                        .collect();
+                }
+                let idx = (self.rand_u64() as usize) % self.stab_null_pending.len();
+                self.stab_null_pending.swap_remove(idx)
+            } else {
+                self.stab_inc
+                    .saturating_mul(stabphases)
+                    .saturating_mul(stabphases)
+            };
+            let new_mode_ticks = if self.stable {
+                self.ticks_stable
+            } else {
+                self.ticks_focused
+            };
+            self.lim_stabilize = new_mode_ticks.saturating_add(next_delta.max(1));
+            self.stab_last_ticks = new_mode_ticks;
         } else {
-            self.ticks_focused
-        };
-        self.lim_stabilize = new_mode_ticks.saturating_add(next_delta);
+            // Quadratic growth of the next phase length (cadical `next_delta =
+            // inc × stabphases²`), measured in the new mode's ticks. The
+            // historical schedule pins the increment to `stabilize_base`.
+            let next_delta = self
+                .config
+                .stabilize_base
+                .saturating_mul(self.stabphases)
+                .saturating_mul(self.stabphases);
+            let new_mode_ticks = if self.stable {
+                self.ticks_stable
+            } else {
+                self.ticks_focused
+            };
+            self.lim_stabilize = new_mode_ticks.saturating_add(next_delta);
+        }
         // Enable/disable the reluctant (Luby) restart trigger for stable mode.
         if self.stable {
             self.reluctant.enable(1024, 1 << 20);

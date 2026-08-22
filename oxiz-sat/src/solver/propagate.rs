@@ -232,6 +232,13 @@ impl Solver {
                 } else {
                     // Unit propagation
                     self.trail.assign_propagation(first, watcher.clause);
+                    // Diagnostic (`OXIZ_REASON_STATS`): classify each BCP
+                    // propagation by whether its reason clause was learned.
+                    // Cold: one extra clause-header read per assignment, only
+                    // when the env gate is set (search-shape studies).
+                    if Self::reason_stats_enabled() && !watcher.clause.is_null() {
+                        self.count_reason_origin(watcher.clause);
+                    }
                     // LRAT: flush level-0 propagations to explicit derived units.
                     if self.lrat && self.trail.decision_level() == 0 {
                         self.flush_level0_unit(first, watcher.clause);
@@ -432,4 +439,33 @@ impl Solver {
             .iter()
             .any(|(lit, _)| *lit == to_lit)
     }
+
+    /// `OXIZ_REASON_STATS` gate (search-shape diagnostics only).
+    #[cfg(feature = "std")]
+    pub(super) fn reason_stats_enabled() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("OXIZ_REASON_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    pub(super) fn reason_stats_enabled() -> bool {
+        false
+    }
+
+    /// Classify one BCP propagation by the origin of its reason clause
+    /// (`OXIZ_REASON_STATS`). Counters live in `lib.rs` so the stats harness
+    /// can read them at exit.
+    #[cfg(feature = "std")]
+    pub(super) fn count_reason_origin(&mut self, cid: crate::clause::ClauseId) {
+        let learned = self.clauses.get(cid).map(|v| v.learned).unwrap_or(false);
+        if learned {
+            crate::DIAG_REASON_LEARNED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        } else {
+            crate::DIAG_REASON_ORIGINAL.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    pub(super) fn count_reason_origin(&mut self, _cid: crate::clause::ClauseId) {}
 }

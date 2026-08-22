@@ -934,6 +934,17 @@ pub struct Solver {
     /// reduction round; glue-tiered retention reads it). Indexed by
     /// `ClauseId::index()`.
     pub(super) cadical_used: Vec<u8>,
+    /// Faithful-stabilize port (`OXIZ_STAB_FAITHFUL`, study in
+    /// `docs/studies/`): cadical `inc.stabilize` – the tick length of the
+    /// first focused phase, measured at its end; 0 until then. Later phase
+    /// lengths are `stab_inc x stabphases^2`.
+    pub(super) stab_inc: u64,
+    /// Tick counter of the current mode captured at its last stabilization
+    /// switch (cadical `last.stabilize.ticks`, taken per mode).
+    pub(super) stab_last_ticks: u64,
+    /// Scratch for the shuffled-phase-length null (`OXIZ_STAB_NULL`): the
+    /// not-yet-consumed quadratic sequence values.
+    pub(super) stab_null_pending: Vec<u64>,
     /// PRNG state (xorshift64)
     pub(super) rng_state: u64,
     /// For Glucose-style restarts: average LBD of recent conflicts
@@ -1288,6 +1299,9 @@ impl Solver {
             cadical_reduce_next: 300,
             cadical_reductions: 0,
             cadical_used: Vec::new(),
+            stab_inc: 0,
+            stab_last_ticks: 0,
+            stab_null_pending: Vec::new(),
             rng_state: 0x853c_49e6_748f_ea9b, // Random seed
             recent_lbd_sum: 0,
             recent_lbd_count: 0,
@@ -2975,6 +2989,20 @@ impl Solver {
     #[must_use]
     pub fn stats(&self) -> &SolverStats {
         &self.stats
+    }
+
+    /// Number of completed stable/focused mode switches (cadical
+    /// `stats.stabphases`). Diagnostic accessor for the search-shape studies.
+    #[must_use]
+    pub fn stabilization_phases(&self) -> u64 {
+        self.stabphases
+    }
+
+    /// Total search ticks per mode (`ticks_focused`, `ticks_stable`).
+    /// Diagnostic accessor for cross-solver schedule calibration.
+    #[must_use]
+    pub fn search_ticks(&self) -> (u64, u64) {
+        (self.ticks_focused, self.ticks_stable)
     }
 
     /// Get memory optimizer statistics
