@@ -183,6 +183,50 @@ this instance, so reuse machinery does fire), real mode-switch count
 (`Solver::stabilization_phases()`), and per-mode tick totals
 (`Solver::search_ticks()`).
 
+## Learned-clause utilization (final discriminator, also negative)
+
+Instrumented the CaDiCaL copy to count search propagations whose reason
+clause is redundant/learned (`stats.propagations.redundant_reason`), and
+compared with OxiZ's `OXIZ_REASON_STATS` counters on `6s167-opt`:
+
+| solver | search propagations | from learned clauses | share |
+|---|---|---|---|
+| CaDiCaL | 2,307,295 | 175,445 | **7.6 %** |
+| OxiZ | 19,369,185 | 4,412,629 | **31.6 %** |
+
+OxiZ propagates through learned clauses at 3–4× the reference's rate (26 vs
+10.5 learned-props per conflict) – its learned database is *more* load-
+bearing, not less. This closes the last single-mechanism hypothesis tested:
+utilization, cadence, sizes, ratios, pointer health, and tick rates are all
+equivalent or better in OxiZ, yet the global conflict count differs 10×.
+
+A methodological note for future readers: the earlier "NO_REDUCE is
+trajectory-neutral in OxiZ" observation does not replicate CaDiCaL's
+`--reduce=0` condition. OxiZ's other deletion paths (on-the-fly subsumption,
+strengthening) removed 132 k of 170 k learned clauses even with the
+scheduled reducer disabled, so the DB never bloated. The 11× sensitivity to
+reduction that CaDiCaL exhibits has no analogue to switch off in OxiZ.
+
+## Conclusion of the investigation
+
+Every locally measurable property of OxiZ's CDCL search on this instance
+family matches or exceeds CaDiCaL's. The 10–20× outcome gap on hard
+industrial UNSAT is therefore **emergent from accumulated trajectory
+divergence**, not attributable to any component defect identified by
+ablation, porting, or instrumentation. Within-solver A/Bs are exhausted;
+the two remaining directions are outside this study's scope:
+
+1. **Step-level cross-debugging on small family instances** – impossible
+   across solvers as-is (heuristics diverge immediately), but a shared
+   decision-forcing harness could align trajectories artificially;
+2. **Portfolio diversity / local search** (kissat-style) – attack the
+   variance directly instead of chasing the mean.
+
+Meanwhile the suite picture remains healthy: OxiZ beats CaDiCaL outright on
+frb65, simon-r1x/r2x, barman, summle_X11112, worker_20_40_20 and most uf100
+instances; the gap concentrates in UNSAT circuit/multiplier families
+(6s167-opt, g2-ak128*, x9-*, noL-*).
+
 ## What was NOT ported (recorded omission)
 
 cadical's satisfied-clause sweep + falsified-literal removal at reduce time

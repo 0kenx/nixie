@@ -368,6 +368,20 @@ pub static DIAG_REASON_LEARNED: core::sync::atomic::AtomicU64 =
 #[doc(hidden)]
 pub static DIAG_REASON_ORIGINAL: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
+/// Diagnostics (`OXIZ_VMTF_SCAN=1` arms the counter): total linked-list steps
+/// walked by `VMTF::next_decision` picks. Divide by decision count for the
+/// mean scan length per decision – a growing value indicates search-pointer
+/// stagnation.
+#[doc(hidden)]
+pub static DIAG_VMTF_SCAN: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Gate for [`DIAG_VMTF_SCAN`] accumulation (`OXIZ_VMTF_SCAN=1`).
+#[doc(hidden)]
+pub fn vmtf_scan_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_VMTF_SCAN").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
 
 pub use clause::{Clause, ClauseDatabase, ClauseDatabaseStats, ClauseId, ClauseTier};
 pub use clause_maintenance::{ClauseMaintenance, MaintenanceStats};

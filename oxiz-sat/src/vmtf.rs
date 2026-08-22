@@ -132,6 +132,12 @@ impl VMTF {
     /// Pick the next decision variable: the most-recently-bumped unassigned
     /// variable, scanning backward from the search pointer. Returns `None` if
     /// every variable is assigned.
+    ///
+    /// Under `OXIZ_VMTF_SCAN=1` each pick adds its walked-link count to
+    /// [`crate::DIAG_VMTF_SCAN`] – divide by decision count for the mean scan
+    /// length; a growing value means the search pointer sits in stale,
+    /// fully-assigned list territory (decision-stagnation studies read this).
+    /// The gate keeps the default path free of the counter update.
     pub fn next_decision<F>(&mut self, mut is_assigned: F) -> Option<Var>
     where
         F: FnMut(Var) -> bool,
@@ -139,9 +145,15 @@ impl VMTF {
         if self.head == NULL {
             return None;
         }
+        #[cfg(feature = "std")]
+        let diag = crate::vmtf_scan_enabled();
+        #[cfg(not(feature = "std"))]
+        let diag = false;
+        let mut steps: u64 = 1;
         let mut res = self.search;
         while res != NULL && is_assigned(Var::new(res)) {
             res = self.prev[res as usize];
+            steps += 1;
         }
         if res == NULL {
             // Search pointer exhausted toward the head (lagged behind a
@@ -149,10 +161,14 @@ impl VMTF {
             res = self.tail;
             while res != NULL && is_assigned(Var::new(res)) {
                 res = self.prev[res as usize];
+                steps += 1;
             }
         }
         if res == NULL {
             return None;
+        }
+        if diag {
+            crate::DIAG_VMTF_SCAN.fetch_add(steps, core::sync::atomic::Ordering::Relaxed);
         }
         self.search = res;
         Some(Var::new(res))
