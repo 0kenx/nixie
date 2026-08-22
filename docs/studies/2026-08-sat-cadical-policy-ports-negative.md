@@ -107,6 +107,41 @@ an earlier misdiagnosis: "52 stable phases" in the stats line is
 the real default flip count is 35, not wildly far from CaDiCaL's 2 but
 still ~17×.
 
+A 4-seed check confirmed the kill with better evidence — per-seed T/N =
+0.99 / 0.60 / 1.70 / 1.52, i.e. pure chaos redistribution with no
+consistent direction:
+
+| seed | default | faithful | null |
+|---|---|---|---|
+| 0 | 170,039 | 187,430 | 100,133 |
+| 1 | 108,651 | 113,283 | 190,238 |
+| 2 | 125,828 | 111,576 | 65,758 |
+| 3 | 138,076 | 107,464 | 70,564 |
+
+(Side observation: the *default* schedule is seed-stable here at 108–170 k
+across four seeds while the shuffled-length null swings 66–190 k.)
+
+## Decision-stagnation quantification
+
+From per-decision traces (`OXIZ_TRACE_DECISIONS` decisions lines; matching
+instrumented-CaDiCaL `cdec` lines) on `6s167-opt`, equal-size windows of
+the run:
+
+* OxiZ decides each variable **35–62×** per window (diversity collapses
+  2045 → 444 unique variables across the run).
+* CaDiCaL re-decides **4–14×** per comparable window.
+* Both start deep (OxiZ mean level 42 in window 1, CaDiCaL 78); OxiZ falls
+  to ≈20 by window 2 and never recovers, decaying to 12; CaDiCaL
+  oscillates 21–50 and holds.
+
+Combined with the identical restart cadence, learnt sizes and backjump
+ratios, the divergence is localized to **what the decision heuristic does
+between restarts**: OxiZ's chosen variable set narrows over the run and its
+conflict depth decays with it. Whether this narrowing is a cause (heuristic
+stagnation worth fixing) or a symptom (a weaker search needing more
+conflicts naturally cycles harder through its hot set) is exactly what the
+recommended cross-solver instrumentation should settle next.
+
 ## Reference ablation: where CaDiCaL's own advantage lives
 
 Ablating CaDiCaL itself on `6s167-opt` (times, single seed; seed spread
