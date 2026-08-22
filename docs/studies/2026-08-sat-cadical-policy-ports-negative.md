@@ -163,6 +163,37 @@ clippy/fmt/doc, and the Z3 parity suite (168/168 correct, 0 wrong) clean on
 the commit carrying these switches. Default-path trajectory preservation
 re-verified post-commit (`170039/550301/19369185` on 6s167-opt).
 
+## Search-shape characterization (cross-solver, same instance)
+
+Method: instrumented CaDiCaL copy (source patched in a throwaway tree to
+print `level / backjump / trail / learnt-size / stable` per conflict behind
+`CADICAL_CONF_TRACE`; reference sources untouched) vs OxiZ's existing
+`OXIZ_TRACE_DECISIONS` conflict lines. Same instance (`6s167-opt`), default
+configs.
+
+| metric | OxiZ | CaDiCaL |
+|---|---|---|
+| conflicts | 170 k | 15.5 k |
+| decision level @ conflict (median) | 22 | **34** |
+| trail @ conflict (median) | 594 | 410 |
+| learnt size (median) | 19 | 16 |
+| backjump ratio new/level (median) | 0.95 | 0.97 |
+| restart interval proxy (median trail-collapse gap) | 12 | 12 |
+
+The distributions of learnt size, backjump ratio, and restart cadence are
+**the same**. The divergence is the *depth trajectory*: CaDiCaL opens very
+deep (mean level 62–81, trails up to ~3.7k in the first 15 % of conflicts)
+and holds level ≈30–40 throughout. OxiZ starts at ≈32 and **monotonically
+decays** to level ≈11–12 by the end — classic re-treading of shallow,
+already-refuted space while conflicts keep accumulating. This decay under
+identical restart cadence is the first observable that cleanly separates
+the solvers; any future fix attempt has a measurable target: hold decision
+depth up through the late search.
+
+(Dead ends recorded for completeness: disabling trail-reuse via
+`REUSE=0` leaves this instance's trajectory bit-identical — the knob does
+not reach this path.)
+
 ## Remaining candidates from the original list
 
 * mid-search vivification cadence (cadical vivified 1126 clauses on
