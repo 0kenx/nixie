@@ -50,6 +50,38 @@ variance exists on this residue and a default-first chain converts real
 timeouts.  Re-measure the arm table with the mixed API before tuning any
 production seed list.
 
+## Correction (2026-08-22, post-landing re-measure with the landed API)
+
+The first mixed-API re-measure reported seeds 0-4 bit-identical to default
+on x9-09054/rbsat and nearly invalidated the raw-state finding.  That was a
+**harness bug**: the portfolio refactor folded the single-seed knob into
+`SEEDS=` while the measurement script still set `SEED=` (silently dead),
+so every "seeded" arm ran the default seed.  Diagnosis path worth keeping:
+a `rand_calls` counter (temporary instrumentation, since reverted) showed
+`decision_polarity` itself is invoked (1.53M calls per 600k conflicts) and
+`rand_bool` fires (1.55M hits) — the RNG surface is live; identical
+*counts* across arms was the tell that the seed never reached the solver.
+
+Re-measured correctly (`SEEDS=`, quiet machine, instructions-to-verdict):
+
+* x9-09054: default 525G; `SEEDS=1` reaches 600k-conflict cap with only
+  1.43M decisions (vs default's 1.53M at the same cap); `SEEDS=4` SOLVES
+  at 403k conflicts (~2/3 of default's 1.32M).  Chain @500k arms: 655G
+  over 4 arms — default's own trajectory is already the good one at full
+  budget, so a default-first chain with generous arms pays ~25% overhead
+  vs plain default *when default eventually solves*; the chain wins when
+  the budget is capped below default's requirement.
+* rbsat: default 519G; chain @500k arms SOLVES in 375G over 3 arms
+  (~1.4x faster than default) — rotation genuinely pays here.
+* crypto1: still TO >1.7T on default; the raw-state matrix solved it at
+  506G on one arm — re-screen its arm list under `SEEDS=` before relying
+  on that cell.
+
+Operational summary: `SEEDS=default,0,1,2,3,4 ARM_CONFLICTS=<~60% of the
+budget you would otherwise give default>` is the shape that converts
+timeouts at bounded budgets; single-seed `default` remains best when the
+budget is unlimited and default's trajectory happens to solve.
+
 ## The mechanism (landed)
 
 * `Solver::set_random_seed` now records the configured state in a
