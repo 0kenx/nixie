@@ -102,10 +102,17 @@ seed list.
    Same class as the wisas wall-clock-gate bug: verdicts as a function of
    load.  Every "TO" in a screening table must be an instruction cap, not a
    wall cap, on a shared machine.
-2. **CPU pinning starves under load 23.**  `taskset -c 6` + `perf stat`
-   runs TO'd at 900 s for a ~190G chain because the pinned core was fully
-   occupied by other agents' work.  Pinning helps determinism only when the
-   core is free; under saturation the run gets no CPU at all.
+2. **CPU pinning starves under load 23 — and the load was our own orphans.**
+   `taskset -c 6` + `perf stat` runs TO'd at 900 s for a ~190G chain.
+   Post-mortem (2026-08-22 morning): 14 orphaned `cnf_solve` instances from
+   the previous day's timed-out screens (the `timeout` wrappers died, the
+   children survived; one running since 03:57, several pinning ~4 GB each)
+   were the bulk of that load — my own measurement contamination, not
+   "other agents' work".  All killed; load fell 73 -> 17 within seconds.
+   Two habits recorded: (a) always `pgrep cnf_solve` before trusting a
+   quiet-machine claim, (b) screening harnesses must use
+   `subprocess.run(timeout=...)` with process-group kill (`start_new_session`
+   + `os.killpg`), not a bare shell `timeout` that can orphan children.
 
 Also inconclusive (wall-capped, never re-measured): the alternate-schedule
 screen (`RESTART=luby INTERVAL=512`, `STABLE=0`, full inprocessing stack)
