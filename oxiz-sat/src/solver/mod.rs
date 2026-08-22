@@ -947,6 +947,10 @@ pub struct Solver {
     pub(super) stab_null_pending: Vec<u64>,
     /// PRNG state (xorshift64)
     pub(super) rng_state: u64,
+    /// Seed [`Self::rng_state`] was initialized from (set via
+    /// [`Solver::set_rng_seed`]); `reset()` restores the same stream so
+    /// per-seed trajectories stay reproducible across repeated solves.
+    pub(super) rng_seed: u64,
     /// For Glucose-style restarts: average LBD of recent conflicts
     pub(super) recent_lbd_sum: u64,
     /// Number of conflicts contributing to recent_lbd_sum
@@ -1303,6 +1307,7 @@ impl Solver {
             stab_last_ticks: 0,
             stab_null_pending: Vec::new(),
             rng_state: 0x853c_49e6_748f_ea9b, // Random seed
+            rng_seed: 0x853c_49e6_748f_ea9b,
             recent_lbd_sum: 0,
             recent_lbd_count: 0,
             lbd_ema_fast: 0.0,
@@ -1872,6 +1877,14 @@ impl Solver {
     /// loop returns [`SolverResult::Unknown`] once the budget is reached.
     pub fn set_max_conflicts(&mut self, max_conflicts: Option<u64>) {
         self.max_conflicts = max_conflicts;
+    }
+
+    /// The current conflict budget ([`Self::set_max_conflicts`]); `None`
+    /// means unlimited.  Portfolio drivers use it to compose per-arm caps
+    /// with a caller-supplied global budget.
+    #[must_use]
+    pub fn max_conflicts(&self) -> Option<u64> {
+        self.max_conflicts
     }
 
     /// Update the search-schedule fields on a **live** solver (the portfolio
@@ -3311,7 +3324,7 @@ impl Solver {
         self.lbd_mark = 0;
         self.learned_clause_ids.clear();
         self.conflicts_since_deletion = 0;
-        self.rng_state = 0x853c_49e6_748f_ea9b;
+        self.rng_state = self.rng_seed;
         self.recent_lbd_sum = 0;
         self.recent_lbd_count = 0;
         self.binary_graph.clear();

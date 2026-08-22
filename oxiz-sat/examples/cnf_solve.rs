@@ -112,21 +112,74 @@ fn main() {
         config.rephase_interval = n;
     }
 
-    let mut parser = DimacsParser::new();
-    let mut solver = Solver::with_config(config);
-    if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty())
-        && let Ok(n) = v.parse::<u64>()
-    {
-        solver.set_max_conflicts(Some(n));
-    }
-    if let Err(e) = parser.parse_file(&path, &mut solver) {
-        eprintln!("parse error: {e}");
-        std::process::exit(2);
-    }
+    // Seed-portfolio mode (kissat-style seeded restarts): `SEEDS` gives a
+    // comma-separated arm list (`default` keeps the built-in seed), and
+    // `ARM_CONFLICTS` an optional per-arm conflict budget.  Each arm is a
+    // FULL solve restart (fresh solver, same clauses, own seed): CDCL cost
+    // is strongly seed-dependent (measured spread on the satcomp2024
+    // timeout residue: same file 64G vs 524G vs TO>1.7T instructions
+    // across seeds), so exhausting one trajectory's budget and rolling a
+    // fresh one converts hard timeouts into solves.  Deterministic: the
+    // arm list and budgets are counters, never wall-clock.
+    // `Unsat`/`Sat` from any arm is a real verdict (SAT verdicts are
+    // seed-independent facts) and returns immediately; only budget
+    // exhaustion advances to the next arm.
+    let seeds: Vec<Option<u64>> = match std::env::var("SEEDS") {
+        Ok(v) if !v.trim().is_empty() => v
+            .split(',')
+            .map(|t| match t.trim() {
+                "" | "default" => None,
+                other => other.parse::<u64>().ok(),
+            })
+            .collect(),
+        _ => vec![None],
+    };
+    let arm_conflicts: Option<u64> = std::env::var("ARM_CONFLICTS")
+        .ok()
+        .and_then(|v| v.parse().ok());
 
-    match solver.solve() {
-        SolverResult::Sat => println!("s SATISFIABLE"),
-        SolverResult::Unsat => println!("s UNSATISFIABLE"),
-        SolverResult::Unknown => println!("s UNKNOWN"),
+    for (arm, seed) in seeds.iter().enumerate() {
+        let mut solver = Solver::with_config(config.clone());
+        if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty())
+            && let Ok(n) = v.parse::<u64>()
+        {
+            solver.set_max_conflicts(Some(n));
+        }
+        // Per-arm budget: the tighter of the global MAXC (if any) and
+        // ARM_CONFLICTS.
+        if let Some(arm_cap) = arm_conflicts {
+            let cap = solver
+                .max_conflicts()
+                .map_or(arm_cap, |global| global.min(arm_cap));
+            solver.set_max_conflicts(Some(cap));
+        }
+        if let Some(sd) = seed {
+            solver.set_random_seed(*sd);
+        }
+        let mut parser = DimacsParser::new();
+        if let Err(e) = parser.parse_file(&path, &mut solver) {
+            eprintln!("parse error: {e}");
+            std::process::exit(2);
+        }
+        let result = solver.solve();
+        if seeds.len() > 1 {
+            eprintln!(
+                "c arm {arm} seed {} -> {result:?} (conflicts {})",
+                seed.map_or_else(|| "default".to_string(), |s| s.to_string()),
+                solver.stats().conflicts,
+            );
+        }
+        match result {
+            SolverResult::Sat => {
+                println!("s SATISFIABLE");
+                return;
+            }
+            SolverResult::Unsat => {
+                println!("s UNSATISFIABLE");
+                return;
+            }
+            SolverResult::Unknown => continue,
+        }
     }
+    println!("s UNKNOWN");
 }

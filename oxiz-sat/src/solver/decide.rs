@@ -1028,7 +1028,13 @@ impl Solver {
     /// different search orders.  A seed of `0` maps to the historical default
     /// state, so `set_random_seed(0)` reproduces the out-of-the-box behaviour.
     pub fn set_random_seed(&mut self, seed: u64) {
-        self.rng_state = Self::seed_to_rng_state(seed);
+        let state = Self::seed_to_rng_state(seed);
+        // Record the configured state so `reset()` restores the same stream
+        // instead of stomping back to the built-in constant (a user seed used
+        // to survive only until the first reset, silently reverting every
+        // randomized decision to the default trajectory mid-portfolio).
+        self.rng_seed = state;
+        self.rng_state = state;
     }
 
     /// Derive a nonzero xorshift64 state from a user seed via one splitmix64
