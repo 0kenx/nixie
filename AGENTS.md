@@ -48,12 +48,14 @@ catastrophe. Every rule below follows from that.
    - **CVC5** source: [`../temp/cvc5`](../temp/cvc5) (C++; under `src/`)
    - **CaDiCaL** source: [`../temp/cadical`](../temp/cadical) (C++; under `src/`;
      C++ binary at `../temp/cadical/build/cadical`)
+   - **Kissat** source: [`../temp/kissat`](../temp/kissat) (C++; under `src/`)
 
    These are the ground truth for theory decision procedures, SAT/NLSAT, CAD, proof
-   rules, quantifier handling, and theory combination. CaDiCaL is the ground truth
-   for the SAT core (CDCL search, restarts, VMTF/VSIDS, inprocessing, LRAT). Before
-   reinventing a procedure, find it in Z3, CVC5, and/or CaDiCaL, understand *why*
-   it is shaped that way, and match their semantics. Do not invent new ones.
+   rules, quantifier handling, and theory combination. CaDiCaL and Kissat are the
+   ground truth for the SAT core (CDCL search, restarts, VMTF/VSIDS, inprocessing,
+   LRAT). Before reinventing a procedure, find it in Z3, CVC5, CaDiCaL, and/or
+   Kissat, understand *why* it is shaped that way, and match their semantics. Do
+   not invent new ones.
 
    **Read-only reference.** Do **not** add `z3`, `z3-sys`, `cvc5`, or `cadical` as
    dependencies – they are **banned** in `deny.toml` (this project is strictly pure
@@ -151,19 +153,25 @@ artifact you created** that is not currently in use by another agent:
   mandatory for *your idle* leftovers, not a license to garbage-collect the
   shared tree.
 
-## Git: older binaries for testing
+## Git: precompile binary cache / older binaries for testing
 
-If you need an **older revision's binary** (baseline, bisect, A/B, parity):
+Prebuilt solver binaries live in the shared working tree under
+`./precompile/<commit-sha>/` (one directory per commit, named by that commit's
+SHA). They are untracked (`/precompile/` in `.gitignore`) — **never commit
+binaries**.
 
-1. Check it out in a **throwaway worktree** (never `git checkout` / `restore`
-   on a shared tree).
-2. Build the binary, **copy only that binary** to a stable path
-   (e.g. `/tmp/oxiz-<sha>` or a local `bench/bin/` you will delete later).
-3. **Immediately** delete the worktree, its `target/` dir, and any other
-   source/build artifacts. Do not keep the old checkout around "in case".
-4. Keep **only the binary** for as long as the comparison needs it; delete
-   that too when the experiment is done (or it was already committed as
-   part of a recorded study).
+- **After landing a commit:** if your change builds a new binary, copy that
+  binary into `./precompile/<commit-sha>/` for the commit you just landed.
+- If you need an **older revision's binary** (baseline, bisect, A/B, parity)
+  and no `precompile/<sha>` entry exists yet:
+  1. Check it out in a **throwaway worktree** (never `git checkout` /
+     `restore` on a shared tree).
+  2. Build the binary and **create the missing `precompile` entry**: copy the
+     binary into `./precompile/<commit-sha>/` so the next agent never has to
+     rebuild it.
+  3. **Immediately after building a version, delete its worktree** — source
+     tree and `target/` dir included. Do not keep an old checkout around "in
+     case"; the cached binary is the artifact that survives.
 
 ## How to verify your work
 
@@ -225,9 +233,10 @@ two confident, entirely real, entirely meaningless measurements.
 
 ## When you get stuck
 
-1. Read the corresponding Z3/CVC5/CaDiCaL code ([`../temp/z3`](../temp/z3),
-   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)) – the
-   procedure is almost certainly documented there.
+1. Read the corresponding Z3/CVC5/CaDiCaL/Kissat code ([`../temp/z3`](../temp/z3),
+   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical),
+   [`../temp/kissat`](../temp/kissat)) – the procedure is almost certainly
+   documented there.
 2. Read `docs/ARCHITECTURE.md`, `docs/PITFALLS.md`, `docs/THEORY_GUIDE.md`, and the
    relevant crate's `README.md` / `TODO.md`. For measuring a heuristic change, read
    `docs/BENCHMARKING.md`; for past experiments and their verdicts, `docs/studies/`.
@@ -246,7 +255,8 @@ two confident, entirely real, entirely meaningless measurements.
 - Rust edition 2024, MSRV 1.88 (pervasive let-chains). Do not lower either casually.
 - Reference solvers (read-only spec): [`../temp/z3`](../temp/z3),
   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)
-  (C++ SAT core; binary `../temp/cadical/build/cadical`).
+  (C++ SAT core; binary `../temp/cadical/build/cadical`),
+  [`../temp/kissat`](../temp/kissat) (C++ SAT core).
 
 ### Benchmarks live in-repo – search them, not the disk
 
