@@ -86,6 +86,14 @@ fn main() {
         s.reused_trails,
         solver.stabilization_phases()
     );
+    let scan = oxiz_sat::DIAG_VMTF_SCAN.load(std::sync::atomic::Ordering::Relaxed);
+    if scan > 0 {
+        println!(
+            "vmtf_scan_total={} per_decision={:.2}",
+            scan,
+            scan as f64 / s.decisions.max(1) as f64
+        );
+    }
     println!(
         "subsumed_removed={} self_subsumed={} shrunken={}",
         s.subsumed_removed, s.self_subsumed, s.shrunken
