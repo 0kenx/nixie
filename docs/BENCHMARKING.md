@@ -186,6 +186,10 @@ Before claiming a heuristic change helped:
 - [ ] Per-family and SAT/UNSAT breakdowns reported
 - [ ] Wall-clock confirmed on a quiet machine
 - [ ] `./bench/z3_parity/run_parity.sh` clean (soundness is unaffected by any of the above)
+- [ ] Go/no-go metrics and falsification criteria written down **before** running (§10)
+- [ ] Ladder position stated: telemetry / shadow / flag-gated — no default flip without passing gates (§10)
+- [ ] Baseline arm is the strongest relevant existing path (plus reference solver where one exists), not a strawman (§10)
+- [ ] Every raw run recorded with `benchstore.py`; existing cells reused, never re-run (§9)
 
 ---
 
@@ -223,3 +227,100 @@ decision point the variance is chaos, not action semantics.
 planned restart-level RL selector was cancelled on this evidence. Untouched by the study, and
 still open: per-*variable* phase policies, one-shot pre-search phase initialisation, and the
 `target` phase array that OxiZ still lacks entirely (see the study's *Verdict* section).
+
+---
+
+## 9. The result store: run once, reuse everywhere
+
+A disciplined experiment needs ≥10 seeds × N instances × ≥3 arms (treatment, matched null,
+strongest baseline). Re-measuring a baseline or null arm for every new study wastes machine-days
+and invites quiet top-ups at mismatched settings. So every run is recorded **once**, on disk, and
+reused by every later experiment that needs that exact cell.
+
+### Layout
+
+Results live in the same per-machine, gitignored tree as the precompiled binaries
+(`AGENTS.md` → *Git: precompile binary cache*):
+
+```
+precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__<config>__s<seed>.json
+```
+
+- One JSON file per `(instance × config × seed)` run — `oxiz-bench-record/1` schema.
+- **Per machine. Never committed. Never compared across different `host.id`s.**
+- A measurement's identity is its **join key**:
+  `(host.id, git sha, binary sha256, suite, instance sha256, config id, seed)`.
+  The file name carries the human-readable projection; `record_id` is the first 16 hex of the
+  join-key hash.
+
+### Required record fields
+
+| field | discipline it enforces |
+|---|---|
+| `host.id`, `cpu`, `os` | cross-host comparisons are invalid; tooling refuses to mix hosts by default |
+| `git.sha_long/sha_short/dirty` | dirty-tree runs are excluded from reuse unless explicitly requested |
+| `binary.sha256` | pins the exact binary, not just the commit |
+| `instance.name/sha256/family/sat_expected` | content-addressed instances; family = per-family reporting |
+| `config.id`, `flags`, `cmdline` | reproducible arm definition |
+| `arm.role`: `treatment\|null\|baseline\|reference` | matched-null protocol is part of the data, not prose |
+| `metrics.primary {name, value}` | deterministic counter only |
+| `metrics.counter_coverage_verified: true` | §3's completeness check is mandatory to record at all |
+| `wall_clock_s` | optional sanity value; rejected as primary metric |
+| `verdict.answer`, `verified_model_or_proof` | a non-`unknown` verdict must have been model-checked or proof-checked |
+
+### Tooling: `bench/suite/scripts/benchstore.py`
+
+```bash
+BENCH=bench/suite/scripts/benchstore.py
+$BENCH record run.json                        # validate + file into precompile/<sha>/benchmark/
+$BENCH locate --suite satcomp25 --instance fs.cnf --host $HOST   # find cached cells
+$BENCH missing manifest.json                  # cells of a planned experiment not yet in the store
+$BENCH verify                                 # revalidate all records (path + record_id + schema)
+```
+
+Experiment protocol:
+
+1. Write the manifest (`suite`, `host`, `instances` × `configs` × `seeds`) **and** the §10
+   pre-registration before running anything.
+2. `$BENCH missing manifest.json` → run exactly those cells, with the target sha's precompiled
+   binary.
+3. `record` each run immediately after it finishes.
+4. Compare arms by joining stored records on `(instance sha256, config id, seed)` — common-random-
+   number pairing holds by construction.
+
+Rules:
+
+- **Never re-run an existing cell to get a nicer number.** That is cherry-picking with extra
+  steps. If a measurement must genuinely be superseded (wrong config, broken counter), delete the
+  old record explicitly in the write-up and say why.
+- Results are attributable to committed trees only: `dirty` records do not participate in reuse.
+
+## 10. Discipline from the 2026-08 reviews
+
+Distilled from [`2026-08-established-research-candidates.md`](2026-08-established-research-candidates.md)
+(§*Common implementation gate*, §*Reference-parity backlog*) and
+[`2026-08-novel-research-agenda.md`](2026-08-novel-research-agenda.md) (§*Cross-cutting research
+protocol*, every proposal's *First experiment*/*Falsification*). Sections 1–8 above say how to
+measure; these rules say how an experiment is allowed to proceed.
+
+1. **Escalation ladder.** Every heuristic idea climbs
+   `telemetry/oracle study → shadow mode → flag-gated matched-null A/B → default flip`.
+   No behaviour change before the previous gate passes with pre-registered exit criteria. All eight
+   novel-agenda proposals start instrumentation-only for exactly this reason; four local policy
+   ports died at the null without ever touching default behaviour — which was the system working.
+2. **Pre-register falsification.** Write the go/no-go metrics and the falsification criteria into
+   the study doc *before* running. Post-hoc metrics migrate toward whatever moved. Intermediate
+   proxies are not success: "a stronger relaxation violation by itself is not success"; "a reduced
+   pivot count is insufficient if row work or coefficient growth increases".
+3. **Strongest-baseline rule.** The baseline arm is the strongest relevant existing OxiZ path, and
+   where a reference implementation exists (CaDiCaL/Kissat/Z3), the treatment is also compared
+   against it. Beating a weakened arm proves nothing.
+4. **Tick-accounting changes are schedule changes.** They alter budgets globally and therefore
+   need their own matched-null study before being classed as "engineering" improvements.
+5. **Never tune isolated policies against PAR-2 or wall-clock.** Explicit non-priority in the
+   established-candidates doc, for the §3 determinism reasons plus the measured null-beating of
+   four recent wall-clock-tuned experiments.
+6. **Complete fallback or no merge.** Any new mechanism degrades to the trusted path or returns
+   `Unknown`; exhaustion never fabricates a consequence, a model, or an answer.
+7. **Negative results land in `docs/studies/`.** Already `AGENTS.md` policy; a cancelled idea with
+   a recorded verdict is a finished step.

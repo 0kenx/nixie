@@ -158,7 +158,10 @@ artifact you created** that is not currently in use by another agent:
 Prebuilt solver binaries live in the shared working tree under
 `./precompile/<commit-sha>/` (one directory per commit, named by that commit's
 SHA). They are untracked (`/precompile/` in `.gitignore`) — **never commit
-binaries**.
+binaries**. Benchmark results live next to them under
+`./precompile/<commit-sha>/benchmark/` and are reused across experiments —
+see `docs/BENCHMARKING.md` → *The result store*; run every cell once, never
+re-run an existing one.
 
 - **After landing a commit:** if your change builds a new binary, copy that
   binary into `./precompile/<commit-sha>/` for the commit you just landed.
@@ -228,8 +231,12 @@ Also non-negotiable here:
 
 Read [`docs/BENCHMARKING.md`](docs/BENCHMARKING.md) before running the experiment – it has the
 construction recipes, the power table (a 5% effect needs ~1 800 unpaired runs), the failure
-modes, and a checklist. The worked case study in `docs/studies/` shows these controls killing
-two confident, entirely real, entirely meaningless measurements.
+modes, the escalation ladder and pre-registration rules, and the result-store protocol
+(`bench/suite/scripts/benchstore.py` — record every run once under
+`./precompile/<sha>/benchmark/`, reuse cells, never re-run one). The worked case study in
+`docs/studies/` shows these controls killing two confident, entirely real, entirely meaningless
+measurements. The 2026-08 reviews in `docs/2026-08-*.md` are the current statement of what
+counts as discipline.
 
 ## When you get stuck
 
