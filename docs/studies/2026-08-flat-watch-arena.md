@@ -120,3 +120,13 @@ needed) — a different, pre-registrable experiment.
 
 Code reverted on main (the worktree branch is deleted); this study is the
 artifact. Precompile entries for the touched commits retained.
+
+## Erratum (2026-08-23): classification under the ±5% neutrality band
+
+`docs/BENCHMARKING.md` §3 now defines a ±5% neutrality band for geomean
+effects.  The measured 0.9554–0.9647 (−3.5 to −4.5%) falls **inside** it:
+this study's Arena result is therefore **neutral**, not "4.5% slower" as
+the prose above says.  The verdict is unchanged — the pre-registered bar
+was ≥ 1.02× and was not met — but under the band rule the correct wording
+is "neutral, below the pre-registered bar".  The 8-bug defect chain and
+the density hypothesis remain the study's content.

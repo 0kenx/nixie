@@ -101,6 +101,29 @@ either metric. That is a silent ~6% understatement that biases toward walk-heavy
 Report wall-clock separately, measured on a quiet machine, as a sanity check that the
 deterministic proxy tracks reality.
 
+### The neutrality band: ±5%
+
+A geomean effect within **±5%** is **neutral** — reported as neutral, never as a win or a
+loss.
+
+The band is a *practical-significance* threshold, not a confidence interval. Paired
+deterministic counters (e.g. instructions-to-verdict under trajectory identity) repeat nearly
+bit-exactly, so a 3% shift is usually real — and still not actionable: an effect that small
+does not justify added complexity, a new maintenance surface, or soundness-adjacent risk,
+and it sits inside the day-to-day trajectory reshuffle of unrelated changes landing next to
+it. Effects at or beyond the band need the full §2/§5 machinery (matched null, seeds,
+families) before they mean anything at all.
+
+Corollaries:
+
+- A pre-registered go bar (e.g. ≥ 1.02×) is legitimate: it prices the change's complexity.
+  Landing *inside* the band while failing the bar is a neutral outcome, not a "regression" —
+  the write-up must say "neutral, below the pre-registered bar", not "slower".
+- Conversely, a within-band effect is never a reason to land a change either.
+- The band applies to *measured* geomeans from paired, deterministic, complete-work metrics.
+  Unpaired or single-seed numbers may not borrow it to claim neutrality: establish the
+  measurement's own noise first (§4, §5).
+
 ---
 
 ## 4. The determinism trap
@@ -182,6 +205,7 @@ Before claiming a heuristic change helped:
 - [ ] ≥10 seeds per cell; baseline reported as a distribution
 - [ ] Common-random-numbers pairing across arms
 - [ ] Effect size checked against the power table in §5
+- [ ] Geomean within ±5% reported as **neutral** (§3 band) — no win/loss language, no landing or reverting on it alone
 - [ ] Any hindsight-selected configuration replayed at a fresh seed
 - [ ] Per-family and SAT/UNSAT breakdowns reported
 - [ ] Wall-clock confirmed on a quiet machine

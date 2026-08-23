@@ -77,3 +77,11 @@ the reusable artifact).  This is the seventh pre-registered null/reject
 in the SAT-perf arc, and the first where the component gate passed while
 the system gate failed — the cleanest demonstration yet of the
 repo-motto: component wins are not system wins.
+
+## Erratum (2026-08-23): classification under the ±5% neutrality band
+
+The end-to-end geomean 0.9897 is inside `docs/BENCHMARKING.md` §3's ±5%
+neutrality band: **neutral**, not "1% slower".  The reject verdict stands
+on the doc's own gate ("prefix savings must survive end-to-end work" — a
+39% component saving dissolving to a sub-band system effect is exactly
+that failure), not on a regression claim.

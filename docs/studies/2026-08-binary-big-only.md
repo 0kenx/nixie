@@ -100,3 +100,13 @@ BIG-only for *memory* reasons on constrained targets, this study's patch
 is the verified starting point — re-measure, do not assume.
 
 Reverted on main per pre-registration; worktrees deleted.
+
+## Erratum (2026-08-23): classification under the ±5% neutrality band
+
+Under `docs/BENCHMARKING.md` §3's ±5% neutrality band, both the corpus
+geomean (1.0066) and the motivating-class results (rbsat 1.04×, x9 1.01×)
+are **neutral** — real but not actionable.  The revert stands on the
+pre-registered ≥ 1.2× motivating criterion, not on any corpus loss; the
+cost-map conclusion (propagate-side headroom ~1–4%, all sub-band) is
+unchanged and is in fact strengthened by having a named band to anchor
+"small".
