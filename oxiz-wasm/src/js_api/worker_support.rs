@@ -765,7 +765,7 @@ impl WorkerHandler {
         if let Ok(logic) = js_sys::Reflect::get(&data, &"logic".into())
             && let Some(logic_str) = logic.as_string()
         {
-            self.ctx.set_logic(&logic_str);
+            let _ = self.ctx.set_logic(&logic_str);
         }
 
         // Optional declarations: an array of `{name, sort}` objects,

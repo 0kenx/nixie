@@ -296,8 +296,10 @@ async fn handle_solve(
     *ctx = Context::new();
 
     // Set logic if specified
-    if let Some(ref logic) = request.logic {
-        ctx.set_logic(logic);
+    if let Some(ref logic) = request.logic
+        && let Err(e) = ctx.set_logic(logic)
+    {
+        eprintln!("error: {e}");
     }
 
     // Execute the script
@@ -397,8 +399,10 @@ async fn handle_check_sat(
     *ctx = Context::new();
 
     // Set logic if specified
-    if let Some(ref logic) = request.logic {
-        ctx.set_logic(logic);
+    if let Some(ref logic) = request.logic
+        && let Err(e) = ctx.set_logic(logic)
+    {
+        eprintln!("error: {e}");
     }
 
     let script = build_check_sat_script(&request);

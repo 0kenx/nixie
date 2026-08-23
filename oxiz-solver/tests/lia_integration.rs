@@ -19,7 +19,7 @@ use oxiz_solver::{Context, SolverResult};
 #[test]
 fn test_lia_gcd_infeasibility_basic() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     // Create integer variables
     let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
@@ -60,7 +60,7 @@ fn test_lia_gcd_infeasibility_basic() {
 #[test]
 fn test_lia_gcd_infeasibility_larger_gcd() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
     let y = ctx.declare_const("y", ctx.terms.sorts.int_sort);
@@ -98,7 +98,7 @@ fn test_lia_gcd_infeasibility_larger_gcd() {
 #[test]
 fn test_lia_gcd_satisfiable() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
     let y = ctx.declare_const("y", ctx.terms.sorts.int_sort);
@@ -128,7 +128,7 @@ fn test_lia_gcd_satisfiable() {
 #[test]
 fn test_lia_mixed_constraints_with_gcd() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
     let y = ctx.declare_const("y", ctx.terms.sorts.int_sort);
@@ -164,7 +164,7 @@ fn test_lia_mixed_constraints_with_gcd() {
 #[test]
 fn test_lia_fractional_constant_in_equality() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
 

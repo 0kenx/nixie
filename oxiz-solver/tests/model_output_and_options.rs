@@ -342,21 +342,26 @@ fn test_get_model_invalidated_by_reset_assertions() {
 
 #[test]
 fn test_get_model_invalidated_by_set_logic() {
-    // `set-logic` reconfigures the arithmetic engine underneath the cached
-    // model, so the verdict it produced no longer describes the solver.
-    let output = run(r#"
-        (set-logic QF_LIA)
-        (declare-const x Int)
-        (assert (= x 5))
-        (check-sat)
-        (set-logic QF_LRA)
-        (get-model)
-    "#);
-    assert_eq!(output[0], "sat");
+    // SMT-LIB permits exactly one `set-logic`, so the historical
+    // "second set-logic swaps the engine, invalidating the cached model"
+    // scenario can no longer occur: the second call is itself a command
+    // error (the logic-contract layer rejects it before any engine state
+    // moves).  `execute_script` reports the command error as `Err` —
+    // which is the observable contract — and no engine swap happens.
+    let mut ctx = Context::new();
+    let result = ctx.execute_script(
+        "(set-logic QF_LIA)
+         (declare-const x Int)
+         (assert (= x 5))
+         (check-sat)
+         (set-logic QF_LRA)
+         (get-model)",
+    );
+    let err = result.expect_err("second set-logic must be a command error");
+    let msg = err.to_string();
     assert!(
-        is_error(&output[1]),
-        "get-model after set-logic must error: {}",
-        output[1]
+        msg.contains("set-logic") && msg.contains("already"),
+        "unexpected error: {msg}"
     );
 }
 

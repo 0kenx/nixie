@@ -153,7 +153,7 @@ fn bench_context_api(c: &mut Criterion) {
         b.iter(|| {
             let mut ctx = Context::new();
 
-            ctx.set_logic("QF_LIA");
+            let _ = ctx.set_logic("QF_LIA");
             let x = ctx.declare_const("x", ctx.terms.sorts.int_sort);
             let y = ctx.declare_const("y", ctx.terms.sorts.int_sort);
 

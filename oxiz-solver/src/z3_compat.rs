@@ -331,7 +331,7 @@ impl Z3Solver {
 
     /// Set the logic for this solver (e.g. `"QF_LIA"`, `"QF_BV"`).
     pub fn set_logic(&mut self, logic: &str) {
-        self.ctx.set_logic(logic);
+        let _ = self.ctx.set_logic(logic);
     }
 
     /// Access a shared reference to the underlying [`Context`].

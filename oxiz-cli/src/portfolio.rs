@@ -407,7 +407,7 @@ pub fn solve_portfolio_custom(
             let mut ctx = Context::new();
 
             if let Some(ref logic_str) = logic {
-                ctx.set_logic(logic_str);
+                let _ = ctx.set_logic(logic_str);
             }
 
             strategy.apply(&mut ctx);

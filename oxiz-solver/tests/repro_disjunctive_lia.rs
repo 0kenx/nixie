@@ -24,7 +24,7 @@ fn check_str(res: SolverResult) -> &'static str {
 #[test]
 fn test_repro_disjunctive_lia_sat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x0 = ctx.declare_const("x0", int_sort);
@@ -67,7 +67,7 @@ fn test_repro_disjunctive_lia_sat() {
 #[test]
 fn test_one_disjunction() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let x0 = ctx.declare_const("x0", int_sort);
     let x1 = ctx.declare_const("x1", int_sort);
@@ -98,7 +98,7 @@ fn test_one_disjunction() {
 #[test]
 fn test_one_disjunction_second_arm() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let x0 = ctx.declare_const("x0", int_sort);
     let x1 = ctx.declare_const("x1", int_sort);
@@ -130,7 +130,7 @@ fn test_one_disjunction_second_arm() {
 #[test]
 fn test_two_disjunctions_free() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let x0 = ctx.declare_const("x0", int_sort);
     let x1 = ctx.declare_const("x1", int_sort);
@@ -165,7 +165,7 @@ fn test_two_disjunctions_free() {
 #[test]
 fn test_conjunction_chain() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let x0 = ctx.declare_const("x0", int_sort);
     let x1 = ctx.declare_const("x1", int_sort);
@@ -207,7 +207,7 @@ fn test_conjunction_chain() {
 #[test]
 fn test_euf_arith_interface_unsat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
     let int_sort = ctx.terms.sorts.int_sort;
 
     ctx.declare_fun("f", vec![int_sort], int_sort);
@@ -238,7 +238,7 @@ fn test_euf_arith_interface_unsat() {
 #[test]
 fn test_euf_arith_interface_sat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
     let int_sort = ctx.terms.sorts.int_sort;
 
     ctx.declare_fun("f", vec![int_sort], int_sort);
@@ -373,7 +373,7 @@ impl Instance {
     /// Build and solve the same instance through the full solver.
     fn solve(&self) -> SolverResult {
         let mut ctx = Context::new();
-        ctx.set_logic("QF_LIA");
+        let _ = ctx.set_logic("QF_LIA");
         let int_sort = ctx.terms.sorts.int_sort;
         let xs: Vec<_> = (0..self.k)
             .map(|i| ctx.declare_const(&format!("x{i}"), int_sort))
@@ -483,7 +483,7 @@ fn test_random_disjunctive_lia_vs_brute_force() {
 #[test]
 fn test_cdclt_propagation_fixpoint_regression_unsat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let xs: Vec<_> = (0..3)
         .map(|i| ctx.declare_const(&format!("x{i}"), int_sort))
@@ -522,7 +522,7 @@ fn test_cdclt_propagation_fixpoint_regression_unsat() {
 #[test]
 fn test_cdclt_propagation_fixpoint_regression_sat_model_is_valid() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_LIA");
+    let _ = ctx.set_logic("QF_LIA");
     let int_sort = ctx.terms.sorts.int_sort;
     let xs: Vec<_> = (0..3)
         .map(|i| ctx.declare_const(&format!("x{i}"), int_sort))

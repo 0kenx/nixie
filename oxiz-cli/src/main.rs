@@ -808,8 +808,11 @@ async fn main() {
     let mut ctx = Context::new();
 
     // Set logic if provided
-    if let Some(logic) = &args.logic {
-        ctx.set_logic(logic);
+    if let Some(logic) = &args.logic
+        && let Err(e) = ctx.set_logic(logic)
+    {
+        eprintln!("error: {e}");
+        std::process::exit(1);
     }
 
     // Apply solver options

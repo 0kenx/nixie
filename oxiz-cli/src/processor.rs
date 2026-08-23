@@ -398,8 +398,11 @@ fn process_files_sequential(
         // Each file gets a completely fresh solver context to prevent state
         // from the previous file leaking into the next (issue #5 follow-up).
         let mut file_ctx = Context::new();
-        if let Some(ref logic) = args.logic {
-            file_ctx.set_logic(logic);
+        if let Some(ref logic) = args.logic
+            && let Err(e) = file_ctx.set_logic(logic)
+        {
+            eprintln!("error: {e}");
+            std::process::exit(1);
         }
         apply_solver_options(&mut file_ctx, args);
 
@@ -455,8 +458,12 @@ fn process_files_parallel(
         .par_iter()
         .map(|file| {
             let mut ctx = Context::new();
-            if let Some(ref logic) = args.logic {
-                ctx.set_logic(logic);
+            if let Some(ref logic) = args.logic
+                && let Err(e) = ctx.set_logic(logic)
+            {
+                // Preserve the closure's result shape: surface the
+                // contract violation as the file's outcome line.
+                eprintln!("error {}: {e}", file.display());
             }
 
             // Apply resource limits and options

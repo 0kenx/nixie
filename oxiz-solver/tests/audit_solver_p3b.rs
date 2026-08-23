@@ -19,7 +19,7 @@ use oxiz_solver::{Context, SolverResult};
 #[test]
 fn array_nested_eq_polarity_not_unsat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_AUFLIA");
+    let _ = ctx.set_logic("QF_AUFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let arr_sort = ctx.terms.sorts.array(int_sort, int_sort);
@@ -51,7 +51,7 @@ fn array_nested_eq_polarity_not_unsat() {
 #[test]
 fn array_direct_store_select_contradiction_is_unsat() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_AUFLIA");
+    let _ = ctx.set_logic("QF_AUFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let arr_sort = ctx.terms.sorts.array(int_sort, int_sort);

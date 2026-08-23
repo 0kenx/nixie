@@ -62,7 +62,7 @@ impl AsyncSolver {
     /// Set the logic for the solver
     #[wasm_bindgen(js_name = setLogic)]
     pub fn set_logic(&self, logic: &str) {
-        self.ctx.borrow_mut().set_logic(logic);
+        let _ = self.ctx.borrow_mut().set_logic(logic);
     }
 
     /// Declare a constant

@@ -16,7 +16,7 @@ use oxiz_solver::{Context, SolverResult};
 fn test_nia_x_squared_eq_4_sat() {
     // x * x = 4 → SAT (x = 2 or x = -2)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -39,7 +39,7 @@ fn test_nia_x_squared_eq_4_sat() {
 #[test]
 fn test_nia_sat_provides_get_model() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -87,7 +87,7 @@ fn test_nia_sat_provides_get_model() {
 #[test]
 fn test_all_logic_nia_auto_detect_sat() {
     let mut ctx = Context::new();
-    ctx.set_logic("ALL");
+    let _ = ctx.set_logic("ALL");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -114,7 +114,7 @@ fn test_all_logic_nia_auto_detect_sat() {
 #[test]
 fn test_all_logic_nra_auto_detect_sat() {
     let mut ctx = Context::new();
-    ctx.set_logic("ALL");
+    let _ = ctx.set_logic("ALL");
 
     let real_sort = ctx.terms.sorts.real_sort;
     let x = ctx.declare_const("x", real_sort);
@@ -134,7 +134,7 @@ fn test_all_logic_nra_auto_detect_sat() {
 fn test_nia_x_squared_eq_3_unsat() {
     // x * x = 3 → UNSAT (3 is not a perfect square)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -155,7 +155,7 @@ fn test_nia_x_squared_eq_3_unsat() {
 fn test_nia_x_squared_eq_neg1_unsat() {
     // x * x = -1 → UNSAT (squares are non-negative)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -176,7 +176,7 @@ fn test_nia_x_squared_eq_neg1_unsat() {
 fn test_nia_x_squared_eq_16_sat() {
     // x * x = 16 → SAT (x = 4 or x = -4)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -197,7 +197,7 @@ fn test_nia_x_squared_eq_16_sat() {
 fn test_nia_xy_eq_6_with_bounds_sat() {
     // x * y = 6, x >= 1, y >= 1 → SAT (e.g. x=2, y=3)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -224,7 +224,7 @@ fn test_nia_xy_eq_6_with_bounds_sat() {
 fn test_nia_xy_gt_5_with_bounds_sat() {
     // x * y > 5, x >= 2, y >= 2 → SAT (e.g. x=3, y=2)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -251,7 +251,7 @@ fn test_nia_xy_gt_5_with_bounds_sat() {
 fn test_nia_triple_product_xyz_sat() {
     // x * y * z = 24, x >= 1, y >= 1, z >= 1 → SAT (e.g. x=2, y=3, z=4)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -284,7 +284,7 @@ fn test_nia_triple_product_xyz_sat() {
 fn test_nia_factored_product_xp1_ym2_sat() {
     // (x + 1) * (y - 2) = 6, x >= 0, y >= 3 → SAT (e.g. x=1, y=5: 2*3=6)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);
@@ -322,7 +322,7 @@ fn test_nia_factored_product_xp1_ym2_sat() {
 fn test_nra_x_squared_lt_0_unsat() {
     // x * x < 0 → UNSAT (no real squared is negative)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NRA");
+    let _ = ctx.set_logic("QF_NRA");
 
     let real_sort = ctx.terms.sorts.real_sort;
     let x = ctx.declare_const("x", real_sort);
@@ -343,7 +343,7 @@ fn test_nra_x_squared_lt_0_unsat() {
 fn test_nra_x_squared_eq_2_sat() {
     // x * x = 2 → SAT (x = sqrt(2))
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NRA");
+    let _ = ctx.set_logic("QF_NRA");
 
     let real_sort = ctx.terms.sorts.real_sort;
     let x = ctx.declare_const("x", real_sort);
@@ -370,7 +370,7 @@ fn test_nra_x_squared_eq_2_sat() {
 fn test_nra_circle_inside_sat() {
     // x * x + y * y < 1 → SAT (e.g. x=0, y=0 is inside unit circle)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NRA");
+    let _ = ctx.set_logic("QF_NRA");
 
     let real_sort = ctx.terms.sorts.real_sort;
     let x = ctx.declare_const("x", real_sort);
@@ -396,7 +396,7 @@ fn test_nra_circle_inside_sat() {
 fn test_nra_polynomial_x2_minus_2x_plus_1_sat() {
     // x^2 - 2*x + 1 = 0  ↔  (x-1)^2 = 0  → SAT (x=1)
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NRA");
+    let _ = ctx.set_logic("QF_NRA");
 
     let real_sort = ctx.terms.sorts.real_sort;
     let x = ctx.declare_const("x", real_sort);
@@ -427,7 +427,7 @@ fn test_nra_polynomial_x2_minus_2x_plus_1_sat() {
 #[test]
 fn test_nia_push_pop_backtrack() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_NIA");
+    let _ = ctx.set_logic("QF_NIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let x = ctx.declare_const("x", int_sort);

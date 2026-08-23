@@ -194,7 +194,7 @@ impl WasmSolver {
     /// ```
     #[wasm_bindgen(js_name = setLogic)]
     pub fn set_logic(&mut self, logic: &str) {
-        self.ctx.set_logic(logic);
+        let _ = self.ctx.set_logic(logic);
     }
 
     /// Check satisfiability of the current assertions

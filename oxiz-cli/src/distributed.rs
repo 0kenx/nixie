@@ -777,7 +777,7 @@ pub fn run_worker(config: &DistributedConfig) -> Result<(), String> {
                         // Initialize context
                         let mut new_ctx = Context::new();
                         if let Some(ref l) = logic {
-                            new_ctx.set_logic(l);
+                            let _ = new_ctx.set_logic(l);
                         }
                         ctx = Some(new_ctx);
 

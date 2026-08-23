@@ -18,7 +18,7 @@ use oxiz_solver::{Context, SolverResult};
 #[test]
 fn test_func_interp_congruence_dedup() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let a = ctx.declare_const("a", int_sort);
@@ -73,7 +73,7 @@ fn test_func_interp_congruence_dedup() {
 #[test]
 fn test_func_interp_two_distinct_args() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     ctx.declare_fun("f", vec![int_sort], int_sort);
@@ -126,7 +126,7 @@ fn test_func_interp_two_distinct_args() {
 #[test]
 fn test_func_interp_value_via_class_representative() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let a = ctx.declare_const("a", int_sort);
@@ -168,7 +168,7 @@ fn test_func_interp_value_via_class_representative() {
 #[test]
 fn test_func_interp_unapplied_function() {
     let mut ctx = Context::new();
-    ctx.set_logic("QF_UFLIA");
+    let _ = ctx.set_logic("QF_UFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     ctx.declare_fun("g", vec![int_sort], int_sort);

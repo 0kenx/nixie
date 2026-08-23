@@ -19,6 +19,7 @@ pub(super) mod encode_guards;
 pub(super) mod equality_graph;
 pub(super) mod int_case_split;
 pub(super) mod ite_table;
+pub(crate) mod logic_contract;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
 pub(super) mod pigeonhole;

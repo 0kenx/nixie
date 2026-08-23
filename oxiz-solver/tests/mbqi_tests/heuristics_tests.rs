@@ -83,7 +83,7 @@ fn test_depth_bound_terminates() {
 #[test]
 fn test_uflia_sat_correctness() {
     let mut ctx = Context::new();
-    ctx.set_logic("UFLIA");
+    let _ = ctx.set_logic("UFLIA");
 
     let int_sort = ctx.terms.sorts.int_sort;
     let a = ctx.declare_const("a", int_sort);

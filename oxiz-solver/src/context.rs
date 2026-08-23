@@ -70,7 +70,7 @@ struct DeclaredFun {
 /// use oxiz_solver::Context;
 ///
 /// let mut ctx = Context::new();
-/// ctx.set_logic("QF_UF");
+/// let _ = ctx.set_logic("QF_UF");
 ///
 /// // Declare boolean constants
 /// let p = ctx.declare_const("p", ctx.terms.sorts.bool_sort);
@@ -109,6 +109,14 @@ pub struct Context {
     solver: Solver,
     /// Current logic
     logic: Option<String>,
+    /// Whether `set-logic` was already issued (SMT-LIB permits it once;
+    /// a second call is a command error, and silently replacing live
+    /// engine configuration — the old behavior — is the hazard).
+    logic_was_set: bool,
+    /// A logic-contract violation found by the last `check_sat` (body
+    /// requires capabilities the declared header forbids); surfaced as a
+    /// command error by `execute_script`.
+    pending_contract_error: Option<String>,
     /// Assertions
     assertions: Vec<TermId>,
     /// Assertion stack for push/pop
@@ -165,6 +173,8 @@ impl Context {
             terms: TermManager::new(),
             solver: Solver::new(),
             logic: None,
+            logic_was_set: false,
+            pending_contract_error: None,
             assertions: Vec::new(),
             assertion_stack: Vec::new(),
             declared_consts: Vec::new(),
@@ -279,10 +289,27 @@ impl Context {
     /// still invalidate the cached verdict: [`crate::solver::Solver::set_logic`]
     /// swaps the arithmetic engine and can install NLSAT, which would leave any
     /// cached model describing a solver configuration that no longer exists.
-    pub fn set_logic(&mut self, logic: &str) {
+    pub fn set_logic(&mut self, logic: &str) -> Result<()> {
+        if self.logic_was_set {
+            return Err(oxiz_core::error::OxizError::Unsupported(format!(
+                "set-logic: a logic was already set ({:?}); SMT-LIB permits exactly one set-logic per session",
+                self.logic.as_deref().unwrap_or("?")
+            )));
+        }
+        // Unknown logic names are rejected BEFORE any solver state moves:
+        // the old behavior configured engines from substring matches on
+        // the name, so an invented name could partially install a backend
+        // (or suppress one) while still being accepted.
+        if crate::solver::logic_contract::lookup(logic).is_err() {
+            return Err(oxiz_core::error::OxizError::Unsupported(format!(
+                "set-logic: unknown logic '{logic}'"
+            )));
+        }
+        self.logic_was_set = true;
         self.logic = Some(logic.to_string());
         self.solver.set_logic(logic);
         self.invalidate_last_check();
+        Ok(())
     }
 
     /// Get the current logic
@@ -328,6 +355,44 @@ impl Context {
 
     /// Check satisfiability
     pub fn check_sat(&mut self) -> SolverResult {
+        // Logic-contract validation (Priority 0): a KNOWN header is a
+        // contract; a body that requires capabilities outside it is a
+        // command error, not an `Unknown`.  Missing/`ALL` headers route
+        // structurally and are never validated against a spec.  The check
+        // runs over the assertions as written (pre-purification) and is
+        // skipped when the structural walk itself cannot classify a term
+        // (unknown kinds) — refusing to guess is the documented behavior.
+        if let Some(name) = self.logic.as_deref()
+            && let Ok(Some(spec)) = crate::solver::logic_contract::lookup(name)
+        {
+            let mut all_caps: Option<crate::solver::logic_contract::Capabilities> =
+                Some(crate::solver::logic_contract::Capabilities::default());
+            for &a in &self.assertions {
+                match crate::solver::logic_contract::Capabilities::collect(a, &self.terms) {
+                    Some(c) => {
+                        if let Some(acc) = all_caps.as_mut() {
+                            acc.union_with(&c);
+                        }
+                    }
+                    None => {
+                        all_caps = None;
+                        break;
+                    }
+                }
+            }
+            if let Some(caps) = all_caps
+                && let Some(violation) = crate::solver::logic_contract::validate(spec, &caps)
+            {
+                // Record for `execute_script` to report as a command error
+                // (check-sat in script context prints it); direct API
+                // callers still get an honest Unknown from this return.
+                self.pending_contract_error = Some(format!(
+                    "asserted formula violates the declared logic {name}: {violation}"
+                ));
+                self.last_result = Some(SolverResult::Unknown);
+                return SolverResult::Unknown;
+            }
+        }
         let mut result = self.solver.check(&mut self.terms);
 
         // Array soundness honesty gate: the syntactic array checks and the EUF
@@ -1179,7 +1244,7 @@ impl Context {
             let output_len_before = output.len();
             match cmd {
                 Command::SetLogic(logic) => {
-                    self.set_logic(&logic);
+                    self.set_logic(&logic)?;
                 }
                 Command::DeclareConst(name, sort_name) => {
                     let sort = self.parse_sort_name(&sort_name)?;
@@ -1212,6 +1277,12 @@ impl Context {
                 }
                 Command::CheckSat => {
                     let result = self.check_sat();
+                    // A logic-contract violation is a command error, not an
+                    // honest `unknown`: the script's body never belonged to
+                    // the declared fragment.
+                    if let Some(err) = self.pending_contract_error.take() {
+                        return Err(oxiz_core::error::OxizError::Unsupported(err));
+                    }
                     output.push(match result {
                         SolverResult::Sat => "sat".to_string(),
                         SolverResult::Unsat => "unsat".to_string(),
@@ -1587,7 +1658,7 @@ mod tests {
     fn test_context_basic() {
         let mut ctx = Context::new();
 
-        ctx.set_logic("QF_UF");
+        let _ = ctx.set_logic("QF_UF");
         assert_eq!(ctx.logic(), Some("QF_UF"));
 
         let t = ctx.terms.mk_true();
