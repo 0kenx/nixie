@@ -113,6 +113,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 5000,
             enable_chronological_backtrack: true,
@@ -164,6 +165,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
@@ -215,6 +217,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 10000,
             enable_chronological_backtrack: true,
@@ -266,6 +269,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 3000, // More frequent
             enable_chronological_backtrack: true,
@@ -317,6 +321,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 20000,
             enable_chronological_backtrack: false,
@@ -368,6 +373,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 2000,
             enable_chronological_backtrack: true,
@@ -415,6 +421,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
@@ -462,6 +469,7 @@ impl ConfigPreset {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             elim_interval: 2000,
             inprocessing_interval: 10000,
             enable_chronological_backtrack: false,
@@ -522,7 +530,8 @@ impl ConfigPreset {
             // 67.9G. BVE-only is NOT the same bundle: without ELS, qwh.50
             // collapses to 350G and constraints_17 to 153G.
             enable_gate_congruence: true,
-            enable_bve: true, // cadical parity: elimination is a default inprocessing
+            enable_bve: false,
+            enable_sbva: false, // cadical parity: elimination is a default inprocessing
             // technique in CaDiCaL. Sound since the 2026-08-17 port's six-bug
             // sweep (fuzz: 400k random CNFs, stack on/off verdict agreement +
             // model validation, clean); the old net-negative-as-default verdict

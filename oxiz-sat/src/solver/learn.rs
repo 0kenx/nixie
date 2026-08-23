@@ -1480,7 +1480,6 @@ impl Solver {
         const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
         let start_props = self.stats.propagations;
-        let mut done = 0usize;
 
         // Snapshot candidate ids up front (vivify mutates the clause DB).
         // Learned clauses first (they drive the search), then – when no proof
@@ -1519,9 +1518,11 @@ impl Solver {
         // 709 clauses) at 39% fewer vivify-internal propagations (278k vs
         // 458k); end-to-end neutral over the 94-file corpus — an above-band
         // component win at no system cost, landed per the band rule.
-        let mut snapshot: Vec<(SmallVec<[u32; 8]>, ClauseId, SmallVec<[Lit; 8]>)> = Vec::new();
+        #[allow(clippy::type_complexity)]
+        type SnapEntry = (SmallVec<[u32; 8]>, ClauseId, SmallVec<[Lit; 8]>);
+        let mut snapshot: Vec<SnapEntry> = Vec::new();
         for cid in candidates {
-            if done >= MAX_CLAUSES
+            if snapshot.len() >= MAX_CLAUSES
                 || self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS
             {
                 break;
@@ -1546,9 +1547,8 @@ impl Solver {
             if self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS {
                 break;
             }
-            if self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths) {
-                done += 1;
-            }
+            let _strengthened =
+                self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
         }
         // The shared version deliberately leaves the trail at the last
         // candidate's end state for reuse; this round is over, so restore
@@ -1653,63 +1653,9 @@ impl Solver {
 
         // Publish the examined prefix and its exact depths (lockstep with
         // handled_end by construction above).
-        let mut new_lits: SmallVec<[Lit; 8]> = SmallVec::new();
-        for idx in 0..handled_end {
-            new_lits.push(lits[idx]);
-        }
+        let new_lits: SmallVec<[Lit; 8]> = lits[..handled_end].iter().copied().collect();
         *prev_lits = new_lits;
         *prev_depths = depths;
-
-        let Some(new_lits) = shorten_to else {
-            return false;
-        };
-        // Only replace if we actually shrank (and kept ≥ 2 literals: a unit /
-        // empty clause from vivification needs separate handling we skip here).
-        if new_lits.len() >= lits.len() || new_lits.len() < 2 {
-            return false;
-        }
-        // Re-arm elimination for the shrunken clause's variables (cadical
-        // marks on `shrink_clause`).
-        self.mark_elim_vars(lits.iter().copied());
-        self.replace_clause_lits(cid, &new_lits);
-        true
-    }
-
-    /// Try to vivify one clause. Returns true if the clause was shortened.
-    fn vivify_clause(&mut self, cid: ClauseId, lits: &[Lit]) -> bool {
-        let saved_level = self.trail.decision_level();
-        let n = lits.len();
-        let mut shorten_to: Option<SmallVec<[Lit; 8]>> = None;
-
-        'outer: for j in 0..n {
-            match self.trail.lit_value(lits[j]) {
-                // Already true: clause is satisfied, nothing to vivify.
-                crate::literal::LBool::True => break 'outer,
-                // Already false: counts as assumed, no new decision needed.
-                crate::literal::LBool::False => {}
-                crate::literal::LBool::Undef => {
-                    self.trail.new_decision_level();
-                    self.trail.assign_decision(lits[j].negate());
-                    if self.propagate().is_some() {
-                        // Falsifying lits[0..=j] conflicts → prefix implied.
-                        shorten_to = Some(lits[0..=j].iter().copied().collect());
-                        break 'outer;
-                    }
-                }
-            }
-            // Did the propagation force a later clause literal true?
-            // (lits[0..=j] ∨ lits[m]) is then implied.
-            for m in (j + 1)..n {
-                if self.trail.lit_value(lits[m]).is_true() {
-                    let mut s: SmallVec<[Lit; 8]> = lits[0..=j].iter().copied().collect();
-                    s.push(lits[m]);
-                    shorten_to = Some(s);
-                    break 'outer;
-                }
-            }
-        }
-
-        self.backtrack(saved_level);
 
         let Some(new_lits) = shorten_to else {
             return false;

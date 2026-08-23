@@ -1,5 +1,6 @@
 //! CDCL SAT Solver
 
+mod bva;
 mod bve;
 mod conflict;
 mod congruence;
@@ -245,6 +246,12 @@ pub struct SolverConfig {
     /// most foundational SAT preprocessing technique. Off by default (same
     /// incremental/AllSAT caveat as substitution).
     pub enable_bve: bool,
+    /// Structured bounded variable addition (k-way common-literal-set
+    /// extraction, pre-search slice; `solver/bva.rs`).  Default off: this
+    /// is a first slice pending its corpus study — see
+    /// `docs/studies/2026-08-sbva.md`.  Experiment knob `OXIZ_SBVA=1`
+    /// (and `OXIZ_SBVA_NULL=1` for the matched-null arm).
+    pub enable_sbva: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
     /// Conflict interval between elimination phases (cadical `elimint`,
@@ -477,6 +484,7 @@ impl Default for SolverConfig {
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
+            enable_sbva: false,
             inprocessing_interval: 5000,
             elim_interval: 2000,
             enable_chronological_backtrack: true,
@@ -2667,6 +2675,24 @@ impl Solver {
                 if self.elim_finished {
                     break;
                 }
+            }
+        }
+        // Structured bounded variable addition (k-way common-literal-set
+        // extraction): one-shot pre-search introduction of aux vars that
+        // merge clause groups sharing a common part.  The encoding is
+        // equisatisfiable AND model-preserving in both directions (see
+        // `solver/bva.rs`), so no reconstruction record is needed.  Slice
+        // gates inside the pass: level 0, base scope, no theory, no proof
+        // tracer, bounded budgets.  Default off.
+        if self.config.enable_sbva || std::env::var("OXIZ_SBVA").as_deref() == Ok("1") {
+            let (added, saved) = self.structured_bva();
+            if added > 0 {
+                #[cfg(feature = "std")]
+                eprintln!("c [bva] introduced={} literals_saved={}", added, saved);
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
             }
         }
         // Equivalent-literal substitution (SCC on the binary implication graph).
