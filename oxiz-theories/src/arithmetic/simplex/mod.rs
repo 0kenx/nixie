@@ -232,6 +232,15 @@ fn checked_mul_delta(d: DeltaRational, c: Rational64) -> Option<DeltaRational> {
 }
 
 /// Checked `DeltaRational + DeltaRational`; see [`checked_mul_delta`].
+/// Checked `DeltaRational - DeltaRational` (both components), `None` on
+/// overflow.
+fn checked_sub_delta(a: DeltaRational, b: DeltaRational) -> Option<DeltaRational> {
+    Some(DeltaRational {
+        real: checked_sub_r64(a.real, b.real)?,
+        delta: checked_sub_r64(a.delta, b.delta)?,
+    })
+}
+
 fn checked_add_delta(a: DeltaRational, b: DeltaRational) -> Option<DeltaRational> {
     Some(DeltaRational {
         real: checked_add_r64(a.real, b.real)?,
@@ -345,6 +354,13 @@ fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     checked_ratio_i128(numer, denom)
 }
 /// Checked rational addition: `a + b`. Returns `None` on overflow.
+/// Checked `Rational64` subtraction, `None` on overflow (num-rational has
+/// no `checked_sub`; subtract via `a + (−b)` with both steps checked).
+fn checked_sub_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+    let nb = checked_neg_r64(b)?;
+    checked_add_r64(a, nb)
+}
+
 fn checked_add_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     // Integer fast path: plain checked `i64` add.
     if a.denom() == &1 && b.denom() == &1 {
@@ -624,6 +640,17 @@ enum BoundUndo {
     /// Upper bound was Some, save old value
     UpperWasSome(VarId, Bound),
 }
+/// One infeasibility for the SOI driver: a basic variable violating one of
+/// its bounds.  `sigma` is +1 when below the lower bound (must increase)
+/// and -1 when above the upper bound (must decrease); `target` is the
+/// violated bound's value.
+#[derive(Clone, Copy)]
+struct SoiError {
+    var: VarId,
+    sigma: i8,
+    target: DeltaRational,
+}
+
 /// Simplex tableau state
 #[derive(Debug)]
 pub struct Simplex {
@@ -704,6 +731,8 @@ pub struct Simplex {
     /// Pivoting rule to use
     /// Maximum number of pivot operations before giving up
     max_pivots: usize,
+    /// SOI feasibility driver enabled (see `SimplexConfig::enable_soi`).
+    soi_enabled: bool,
     /// Set to `true` when the most recent `check()`/`dual_simplex()` aborted
     /// because it hit `max_pivots` without proving feasibility or infeasibility.
     ///
@@ -755,6 +784,13 @@ impl Simplex {
             cached_assignments: Vec::new(),
             saved_tableaux: Vec::new(),
             max_pivots: config.max_pivots,
+            // Experiment knob (OXIZ_ARITH_SOI=1) mirroring the
+            // OXIZ_SAT_VMTF_FOCUS precedent: lets the A/B measurement run
+            // without CLI plumbing while the flag default stays off.
+            #[cfg(feature = "std")]
+            soi_enabled: config.enable_soi || std::env::var("OXIZ_ARITH_SOI").as_deref() == Ok("1"),
+            #[cfg(not(feature = "std"))]
+            soi_enabled: config.enable_soi,
             resource_limit: false,
             assignment_current: true,
         }
@@ -1404,7 +1440,11 @@ impl Simplex {
             self.crash_basis();
             self.assignment_current = true;
         }
-        self.make_feasible()
+        if self.soi_enabled {
+            self.make_feasible_soi()
+        } else {
+            self.make_feasible()
+        }
     }
     /// Crash basis initialization for faster convergence
     ///
@@ -1485,6 +1525,332 @@ impl Simplex {
                 None => {
                     return Err(self.explain_conflict(basic_var, &bound));
                 }
+            }
+        }
+        self.resource_limit = true;
+        Ok(())
+    }
+
+    /// Collect every current infeasibility of the basic variables.
+    fn collect_soi_errors(&self) -> Vec<SoiError> {
+        let mut errors = Vec::new();
+        for var in self.tableau.keys() {
+            let idx = *var as usize;
+            let val = self.assignment[idx];
+            if let Some(lo) = &self.lower[idx]
+                && val < lo.value
+            {
+                errors.push(SoiError {
+                    var: *var,
+                    sigma: 1,
+                    target: lo.value,
+                });
+            } else if let Some(hi) = &self.upper[idx]
+                && val > hi.value
+            {
+                errors.push(SoiError {
+                    var: *var,
+                    sigma: -1,
+                    target: hi.value,
+                });
+            }
+        }
+        errors
+    }
+
+    /// The sum-of-infeasibilities function as a linear form over the
+    /// current non-basic variables:
+    ///
+    /// `S = sum_b sigma_b * (x_b - target_b)`, with each basic `x_b`
+    /// substituted by its tableau row.  Returns the coefficient map
+    /// (`c_j = sum_b sigma_b * a_bj`) and the current value `S_cur` (the
+    /// total violation, `> 0` while any error exists at this vertex).
+    ///
+    /// Every arithmetic step is checked; `None` means an exact-arithmetic
+    /// overflow, which the caller treats as a resource limit.
+    fn build_soi(
+        &self,
+        errors: &[SoiError],
+    ) -> Option<(FxHashMap<VarId, Rational64>, DeltaRational)> {
+        let mut coefs: FxHashMap<VarId, Rational64> = FxHashMap::default();
+        let mut s_cur = DeltaRational::zero();
+        for e in errors {
+            let idx = e.var as usize;
+            // sigma_b * (x_b - target_b) at the current assignment.
+            let neg_target = DeltaRational {
+                real: checked_neg_r64(e.target.real)?,
+                delta: checked_neg_r64(e.target.delta)?,
+            };
+            let viol = checked_add_delta(self.assignment[idx], neg_target)?;
+            let viol = if e.sigma > 0 {
+                viol
+            } else {
+                DeltaRational {
+                    real: checked_neg_r64(viol.real)?,
+                    delta: checked_neg_r64(viol.delta)?,
+                }
+            };
+            s_cur = checked_add_delta(s_cur, viol)?;
+            // Substitute x_b by its row.
+            let row = self.tableau.get(&e.var)?;
+            for &(j, a) in &row.terms {
+                let contribution = if e.sigma > 0 { a } else { checked_neg_r64(a)? };
+                let entry = coefs.entry(j).or_insert(Rational64::zero());
+                *entry = checked_add_r64(*entry, contribution)?;
+            }
+        }
+        coefs.retain(|_, c| !c.is_zero());
+        Some((coefs, s_cur))
+    }
+
+    /// Choose the entering non-basic column for one SOI-decreasing step:
+    /// a column `j` with `c_j > 0` improves by *decreasing* `x_j` (needs
+    /// room below), `c_j < 0` by *increasing* it.  Heuristic mode takes the
+    /// steepest `|c_j|`; Bland mode (after a degenerate streak) takes the
+    /// smallest eligible id — with Bland entering AND leaving rules the
+    /// step sequence cannot cycle.
+    fn soi_entering(
+        &self,
+        coefs: &FxHashMap<VarId, Rational64>,
+        bland: bool,
+    ) -> Option<(VarId, i8)> {
+        let mut best: Option<(Rational64, VarId, i8)> = None;
+        for (&j, &c) in coefs {
+            let idx = j as usize;
+            let assign = self.assignment[idx];
+            let (dir, eligible) = if c > Rational64::zero() {
+                let room = self.lower[idx].as_ref().is_some_and(|lo| assign > lo.value);
+                (-1, room)
+            } else {
+                let room = self.upper[idx].as_ref().is_some_and(|hi| assign < hi.value);
+                (1, room)
+            };
+            if !eligible {
+                continue;
+            }
+            let abs_c = c.abs();
+            let better = match best {
+                None => true,
+                Some((ba, bv, _)) if !bland => (abs_c, j) > (ba, bv) || (abs_c == ba && j < bv),
+                Some((_, bv, _)) => j < bv,
+            };
+            if better {
+                best = Some((abs_c, j, dir));
+            }
+        }
+        best.map(|(_, j, dir)| (j, dir))
+    }
+
+    /// Distance the non-basic `col` can move in `dir` before hitting its own
+    /// opposite bound (`None` if unbounded in that direction).
+    fn soi_self_limit(&self, col: VarId, dir: i8) -> Option<DeltaRational> {
+        let idx = col as usize;
+        let assign = self.assignment[idx];
+        if dir > 0 {
+            let hi = self.upper[idx].as_ref()?;
+            checked_sub_delta(hi.value, assign)
+        } else {
+            let lo = self.lower[idx].as_ref()?;
+            checked_sub_delta(assign, lo.value)
+        }
+    }
+
+    /// Ratio test: how far `col` may move in `dir` before some basic row
+    /// variable hits a bound.  Returns the blocking distance and the row's
+    /// basic variable (`None` if no row blocks).
+    fn soi_ratio(&self, col: VarId, dir: i8) -> Option<Option<(DeltaRational, VarId)>> {
+        let mut best: Option<(DeltaRational, VarId)> = None;
+        let rows = self.columns.get(&col)?.clone();
+        for b in rows.iter() {
+            let row = match self.tableau.get(b) {
+                Some(r) => r,
+                None => continue,
+            };
+            let a = match row.terms.iter().find(|(v, _)| *v == col) {
+                Some((_, c)) => *c,
+                None => continue,
+            };
+            if a.is_zero() {
+                continue;
+            }
+            // x_b moves at rate a*dir per unit of x_j movement.
+            let rate = if dir > 0 { a } else { checked_neg_r64(a)? };
+            let idx = *b as usize;
+            let assign = self.assignment[idx];
+            let t = if rate > Rational64::zero() {
+                let hi = match self.upper[idx].as_ref() {
+                    Some(h) => h,
+                    None => continue,
+                };
+                checked_sub_delta(hi.value, assign)?
+            } else {
+                let lo = match self.lower[idx].as_ref() {
+                    Some(l) => l,
+                    None => continue,
+                };
+                checked_sub_delta(assign, lo.value)?
+            };
+            // Divide by |rate| (both components), clamping the negative
+            // dust of an already-violated row to zero.
+            let inv = checked_recip_r64(rate.abs())?;
+            let t = DeltaRational {
+                real: checked_mul_r64(t.real, inv)?,
+                delta: checked_mul_r64(t.delta, inv)?,
+            };
+            let t = if t.is_negative() {
+                DeltaRational::zero()
+            } else {
+                t
+            };
+            let better = best
+                .as_ref()
+                .is_none_or(|(bt, bv)| t < *bt || (t == *bt && *b < *bv));
+            if better {
+                best = Some((t, *b));
+            }
+        }
+        Some(best)
+    }
+
+    /// Move the non-basic `col` to its opposite bound in direction `dir`
+    /// (distance `t`), delta-propagating every dependent basic assignment.
+    /// `false` on exact-arithmetic overflow (no partial mutation: the
+    /// assignment updates are staged).
+    fn soi_bound_flip(&mut self, col: VarId, dir: i8) -> bool {
+        let Some(t) = self.soi_self_limit(col, dir) else {
+            return false;
+        };
+        let delta = if dir > 0 {
+            t
+        } else {
+            match (checked_neg_r64(t.real), checked_neg_r64(t.delta)) {
+                (Some(real), Some(delta)) => DeltaRational { real, delta },
+                (None, _) | (_, None) => return false,
+            }
+        };
+        // Staged updates: compute every new assignment first, commit only
+        // if all of them are representable.
+        let mut updates: Vec<(VarId, DeltaRational)> = Vec::new();
+        let col_idx = col as usize;
+        let new_col = match checked_add_delta(self.assignment[col_idx], delta) {
+            Some(v) => v,
+            None => return false,
+        };
+        updates.push((col, new_col));
+        if let Some(rows) = self.columns.get(&col).cloned() {
+            for b in rows.iter() {
+                let a = match self
+                    .tableau
+                    .get(b)
+                    .and_then(|r| r.terms.iter().find(|(v, _)| *v == col))
+                {
+                    Some((_, c)) => *c,
+                    None => continue,
+                };
+                let d = match checked_mul_delta(delta, a) {
+                    Some(d) => d,
+                    None => return false,
+                };
+                let idx = *b as usize;
+                match checked_add_delta(self.assignment[idx], d) {
+                    Some(v) => updates.push((*b, v)),
+                    None => return false,
+                }
+            }
+        }
+        for (v, val) in updates {
+            self.assignment[v as usize] = val;
+        }
+        true
+    }
+
+    /// Sum-of-infeasibilities feasibility driver (see
+    /// `SimplexConfig::enable_soi`).  Drives the tableau toward feasibility
+    /// by minimizing the global infeasibility sum with dual-like steps
+    /// (steepest-`|c_j|` entering, min-ratio leaving, Bland after a
+    /// degenerate streak, bound flips when no row blocks).
+    ///
+    /// **Fallback contract**: whenever the driver cannot improve — no
+    /// eligible entering column, an unbounded-improvement anomaly, its own
+    /// pivot budget, or any exact-arithmetic overflow — control passes to
+    /// the standard one-violation driver ([`Self::make_feasible`]) from the
+    /// current basis.  Every conflict therefore still comes from the
+    /// existing exact explanation path; this driver introduces no new
+    /// certificate surface.  Budget exhaustion *without* a fallback answer
+    /// sets [`Self::resource_limit`] and returns `Ok(())` exactly like the
+    /// standard driver.
+    fn make_feasible_soi(&mut self) -> Result<(), Vec<u32>> {
+        const SOI_BLAND_STREAK: u32 = 500;
+        let mut bland = false;
+        let mut degenerate_streak: u32 = 0;
+        let mut prev_s: Option<DeltaRational> = None;
+        for _ in 0..self.max_pivots {
+            let errors = self.collect_soi_errors();
+            if errors.is_empty() {
+                return Ok(());
+            }
+            let Some((coefs, s_cur)) = self.build_soi(&errors) else {
+                // Exact-arithmetic overflow building the SOI form: resource
+                // limit, same convention as the standard driver.
+                self.resource_limit = true;
+                return Ok(());
+            };
+            if let Some(p) = prev_s
+                && s_cur < p
+            {
+                degenerate_streak = 0;
+            } else {
+                degenerate_streak = degenerate_streak.saturating_add(1);
+                if degenerate_streak > SOI_BLAND_STREAK {
+                    bland = true;
+                }
+            }
+            prev_s = Some(s_cur);
+
+            let Some((col, dir)) = self.soi_entering(&coefs, bland) else {
+                // SOI cannot improve from this vertex.  The standard driver
+                // finishes the job (its conflict explanations are the
+                // existing exact path).
+                return self.make_feasible();
+            };
+
+            let t_self = self.soi_self_limit(col, dir);
+            let t_row = self.soi_ratio(col, dir);
+            let Some(t_row) = t_row else {
+                // Overflow inside the ratio test: fall back.
+                return self.make_feasible();
+            };
+            // Pivot on the blocking row when it stops the column first;
+            // otherwise flip the column to its own opposite bound.
+            let row_blocks_first = match (&t_row, &t_self) {
+                (Some((t, _)), Some(ts)) => *t < *ts,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => {
+                    // Improvement unbounded over the box: not decidable
+                    // here; let the standard driver take over.
+                    return self.make_feasible();
+                }
+            };
+            if row_blocks_first {
+                // t_row is Some here by the match above.
+                let Some((_, b)) = t_row else {
+                    return self.make_feasible();
+                };
+                #[cfg(feature = "std")]
+                diag::inc_pivot();
+                if !self.pivot(b, col) {
+                    // Overflow mid-pivot: `pivot` set `resource_limit` and
+                    // mutated nothing (transactional contract).  Clear the
+                    // flag and hand the (unchanged) state to the standard
+                    // driver — it may still terminate via its own path
+                    // before hitting the same overflow, and re-sets the
+                    // flag if it cannot.
+                    self.resource_limit = false;
+                    return self.make_feasible();
+                }
+            } else if !self.soi_bound_flip(col, dir) {
+                return self.make_feasible();
             }
         }
         self.resource_limit = true;

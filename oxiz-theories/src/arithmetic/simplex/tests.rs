@@ -754,3 +754,322 @@ fn dbg_probe_two_le_entails_eq() {
         "y<x must be infeasible under x<=y<=x after probe1 pop"
     );
 }
+
+#[cfg(test)]
+mod soi_differential {
+    use super::*;
+
+    /// Deterministic xorshift for reproducible random tableaus.
+    pub(super) struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn i64_in(&mut self, lo: i64, hi: i64) -> i64 {
+            lo + (self.next() % ((hi - lo + 1) as u64)) as i64
+        }
+    }
+
+    /// Build one random bounded linear system on a fresh simplex: n vars,
+    /// random dense `<=` rows (via `add_le`), random lower/upper bounds.
+    /// Returns the simplex configured with `soi`.
+    pub(super) fn build(seed: u64, n: usize, rows: usize, soi: bool) -> Simplex {
+        let mut rng = Rng(seed);
+        let cfg = crate::config::SimplexConfig {
+            enable_soi: soi,
+            ..crate::config::SimplexConfig::default()
+        };
+        let mut s = Simplex::with_config(cfg);
+        let vars: Vec<VarId> = (0..n).map(|_| s.new_var()).collect();
+        for (i, &v) in vars.iter().enumerate() {
+            // Mixed bound shapes: some free, some boxed, some half-bounded.
+            match rng.next() % 4 {
+                0 => {
+                    s.set_lower(v, Rational64::from_integer(rng.i64_in(-8, 0)), i as u32);
+                    s.set_upper(v, Rational64::from_integer(rng.i64_in(1, 9)), i as u32);
+                }
+                1 => {
+                    s.set_lower(v, Rational64::from_integer(rng.i64_in(-5, 5)), i as u32);
+                }
+                2 => {
+                    s.set_upper(v, Rational64::from_integer(rng.i64_in(-5, 5)), i as u32);
+                }
+                _ => {}
+            }
+        }
+        for r in 0..rows {
+            let mut expr = LinExpr::new();
+            let terms = rng.i64_in(2, n as i64).max(2) as usize;
+            for _ in 0..terms {
+                let v = vars[rng.next() as usize % n];
+                let c = rng.i64_in(-3, 3);
+                if c != 0 {
+                    expr.terms.push((v, Rational64::from_integer(c)));
+                }
+            }
+            expr.constant = Rational64::from_integer(rng.i64_in(-10, 10));
+            s.add_le(expr, 100 + r as u32);
+        }
+        s
+    }
+
+    /// SOI and the standard driver must agree on feasibility for every
+    /// random system, and a feasible SOI answer must be backed by an
+    /// assignment within the asserted bounds.
+    #[test]
+    fn soi_matches_standard_on_random_systems() {
+        for seed in 1..=400u64 {
+            for &(n, rows) in &[(3usize, 4usize), (5, 7), (8, 10), (12, 14)] {
+                let mut std = build(seed, n, rows, false);
+                let mut soi = build(seed, n, rows, true);
+                let r_std = std.check();
+                let r_soi = soi.check();
+                match (&r_std, &r_soi) {
+                    (Ok(()), Ok(())) => {
+                        // Both feasible: the SOI assignment must satisfy
+                        // every bound AND every tableau row (the stored
+                        // basic assignment must equal its row evaluated at
+                        // the nonbasic assignments — a divergent delta
+                        // propagation shows up here, not in the bounds).
+                        for v in 0..soi.assignment.len() {
+                            let val = soi.assignment[v];
+                            if let Some(lo) = &soi.lower[v] {
+                                assert!(
+                                    val >= lo.value,
+                                    "seed={seed} n={n}: SOI model violates lower on var {v}"
+                                );
+                            }
+                            if let Some(hi) = &soi.upper[v] {
+                                assert!(
+                                    val <= hi.value,
+                                    "seed={seed} n={n}: SOI model violates upper on var {v}"
+                                );
+                            }
+                        }
+                        let mut basics: Vec<VarId> = soi.tableau.keys().copied().collect();
+                        basics.sort_unstable();
+                        for b in basics {
+                            let row = soi.tableau.get(&b).unwrap().clone();
+                            let mut acc = DeltaRational::from_rational(row.constant);
+                            for (nv, c) in &row.terms {
+                                let av = soi.assignment[*nv as usize];
+                                acc = crate::arithmetic::simplex::checked_add_delta(
+                                    acc,
+                                    crate::arithmetic::simplex::checked_mul_delta(av, *c)
+                                        .expect("row eval overflow"),
+                                )
+                                .expect("row eval overflow");
+                            }
+                            assert_eq!(
+                                soi.assignment[b as usize], acc,
+                                "seed={seed} n={n}: SOI assignment diverged from row of var {b}"
+                            );
+                        }
+                    }
+                    (Err(_), Err(_)) => {}
+                    (Err(stdc), Ok(())) => {
+                        // The simplex `Ok(())` contract: feasible, OR a
+                        // resource limit was hit (overflow/budget) and the
+                        // caller must treat the answer as inconclusive —
+                        // an inconclusive SOI is acceptable (same contract
+                        // as the standard driver), not a wrong answer.
+                        if soi.resource_limit_reached() {
+                            return;
+                        }
+                        // Std conflicts, SOI feasible: decide who is right
+                        // by validating the SOI model against rows+bounds.
+                        let mut ok_model = true;
+                        'outer: for b in soi.tableau.keys().copied().collect::<Vec<_>>() {
+                            let row = soi.tableau.get(&b).unwrap().clone();
+                            let mut acc = DeltaRational::from_rational(row.constant);
+                            for (nv, c) in &row.terms {
+                                match crate::arithmetic::simplex::checked_mul_delta(
+                                    soi.assignment[*nv as usize],
+                                    *c,
+                                )
+                                .and_then(|d| crate::arithmetic::simplex::checked_add_delta(acc, d))
+                                {
+                                    Some(v) => acc = v,
+                                    None => {
+                                        ok_model = false;
+                                        break 'outer;
+                                    }
+                                }
+                            }
+                            if acc != soi.assignment[b as usize] {
+                                panic!(
+                                    "ROW-DIVERGE b={b} stored={:?} row={:?}",
+                                    soi.assignment[b as usize].real, acc.real
+                                );
+                            }
+                            if let Some(lo) = &soi.lower[b as usize]
+                                && acc < lo.value
+                            {
+                                panic!(
+                                    "LOWER-VIOL b={b} acc={:?} lo={:?}",
+                                    acc.real, lo.value.real
+                                );
+                            }
+                            if let Some(hi) = &soi.upper[b as usize]
+                                && acc > hi.value
+                            {
+                                panic!(
+                                    "UPPER-VIOL b={b} acc={:?} hi={:?}",
+                                    acc.real, hi.value.real
+                                );
+                            }
+                        }
+                        if ok_model {
+                            panic!(
+                                "STD SPURIOUS CONFLICT seed={seed} n={n} rows={rows}: std={stdc:?} — SOI model validated"
+                            );
+                        } else {
+                            panic!(
+                                "SOI FALSE FEASIBLE seed={seed} n={n} rows={rows}: std={stdc:?} soi model invalid"
+                            );
+                        }
+                    }
+                    (a, b) => {
+                        panic!(
+                            "verdict mismatch seed={seed} n={n} rows={rows}: std={a:?} soi={b:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Degenerate systems (many identical bounds) are the SOI paper's
+    /// target regime; exercise heavily-tied boxes.
+    #[test]
+    fn soi_degenerate_boxes() {
+        for seed in 1..=200u64 {
+            let mut rng = Rng(seed);
+            let cfg = crate::config::SimplexConfig {
+                enable_soi: true,
+                ..crate::config::SimplexConfig::default()
+            };
+            let mut s = Simplex::with_config(cfg);
+            let vars: Vec<VarId> = (0..6).map(|_| s.new_var()).collect();
+            for (i, &v) in vars.iter().enumerate() {
+                // Everything boxed into the SAME tiny range: maximal ties.
+                s.set_lower(v, Rational64::zero(), i as u32);
+                s.set_upper(
+                    v,
+                    Rational64::from_integer(if i % 2 == 0 { 0 } else { 1 }),
+                    i as u32,
+                );
+            }
+            for r in 0..6 {
+                let mut expr = LinExpr::new();
+                for (k, &v) in vars.iter().enumerate() {
+                    let c = if (rng.next() >> k) & 1 == 0 { 1 } else { -1 };
+                    expr.terms.push((v, Rational64::from_integer(c)));
+                }
+                expr.constant = Rational64::from_integer(rng.i64_in(-4, 4));
+                s.add_le(expr, 100 + r as u32);
+            }
+            let reference = build(seed, 0, 0, false);
+            drop(reference);
+            // Reference: same system on the standard driver.
+            let mut std = {
+                let mut rng = Rng(seed);
+                let mut s2 = Simplex::new();
+                let vars: Vec<VarId> = (0..6).map(|_| s2.new_var()).collect();
+                for (i, &v) in vars.iter().enumerate() {
+                    s2.set_lower(v, Rational64::zero(), i as u32);
+                    s2.set_upper(
+                        v,
+                        Rational64::from_integer(if i % 2 == 0 { 0 } else { 1 }),
+                        i as u32,
+                    );
+                }
+                for r in 0..6 {
+                    let mut expr = LinExpr::new();
+                    for (k, &v) in vars.iter().enumerate() {
+                        let c = if (rng.next() >> k) & 1 == 0 { 1 } else { -1 };
+                        expr.terms.push((v, Rational64::from_integer(c)));
+                    }
+                    expr.constant = Rational64::from_integer(rng.i64_in(-4, 4));
+                    s2.add_le(expr, 100 + r as u32);
+                }
+                s2
+            };
+            let a = std.check();
+            let b = s.check();
+            // Same contract as the random differential: an SOI give-up
+            // (resource limit) is inconclusive, not wrong; any *answered*
+            // pair must agree, and an SOI-feasible answer must be backed by
+            // a row-consistent in-bounds assignment.
+            if s.resource_limit_reached() {
+                continue;
+            }
+            if std.resource_limit_reached() {
+                continue;
+            }
+            assert_eq!(
+                a.is_ok(),
+                b.is_ok(),
+                "degenerate mismatch seed={seed}: std={a:?} soi={b:?}"
+            );
+            if b.is_ok() {
+                for bv in s.tableau.keys().copied().collect::<Vec<_>>() {
+                    let row = s.tableau.get(&bv).unwrap().clone();
+                    let mut acc = DeltaRational::from_rational(row.constant);
+                    for (nv, c) in &row.terms {
+                        acc = crate::arithmetic::simplex::checked_add_delta(
+                            acc,
+                            crate::arithmetic::simplex::checked_mul_delta(
+                                s.assignment[*nv as usize],
+                                *c,
+                            )
+                            .expect("overflow"),
+                        )
+                        .expect("overflow");
+                    }
+                    assert_eq!(s.assignment[bv as usize], acc, "row divergence");
+                    if let Some(lo) = &s.lower[bv as usize] {
+                        assert!(acc >= lo.value, "lower violation seed={seed}");
+                    }
+                    if let Some(hi) = &s.upper[bv as usize] {
+                        assert!(acc <= hi.value, "upper violation seed={seed}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod soi_pivot_bench {
+
+    /// Pivot-count comparison SOI vs standard on the random-harness systems
+    /// (diagnostic only, run via OXIZ_SOI_BENCH=1; prints the counters the
+    /// go/no-go metrics require).
+    #[test]
+    fn soi_pivot_counts() {
+        if std::env::var("OXIZ_SOI_BENCH").is_err() {
+            return;
+        }
+        for &(n, rows) in &[(8usize, 10usize), (16, 20), (32, 40)] {
+            for driver in [false, true] {
+                crate::arithmetic::simplex::diag::reset();
+                let mut answered = 0u32;
+                for seed in 1..=50u64 {
+                    let mut s = super::soi_differential::build(seed, n, rows, driver);
+                    let r = s.check();
+                    if r.is_ok() && !s.resource_limit_reached() || r.is_err() {
+                        answered += 1;
+                    }
+                }
+                println!("n={n} rows={rows} soi={driver}: answered={answered}");
+                crate::arithmetic::simplex::diag::print();
+            }
+        }
+    }
+}

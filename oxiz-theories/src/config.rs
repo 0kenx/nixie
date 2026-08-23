@@ -18,6 +18,15 @@ pub struct SimplexConfig {
     pub enable_bound_tightening: bool,
     /// Enable coefficient normalization
     pub enable_normalization: bool,
+    /// Feasibility driver: sum-of-infeasibilities (King/Barrett/Dutertre,
+    /// FMCAD'13; cvc5 `soi_simplex.cpp`) instead of the default
+    /// one-violation primal repair.  The SOI driver minimizes the global
+    /// infeasibility sum with dual-like steps; when it cannot improve (or
+    /// hits its budget/overflow) it falls back to the standard driver from
+    /// the current basis, and ALL conflicts still come from the existing
+    /// exact explanation path — no new certificate surface.  Default off
+    /// (see docs/studies/2026-08-soi-simplex.md).
+    pub enable_soi: bool,
 }
 
 impl Default for SimplexConfig {
@@ -26,6 +35,7 @@ impl Default for SimplexConfig {
             max_pivots: 100_000,
             enable_bound_tightening: true,
             enable_normalization: true,
+            enable_soi: false,
         }
     }
 }
@@ -169,6 +179,8 @@ impl TheoryConfig {
                 max_pivots: 50_000,
                 enable_bound_tightening: true,
                 enable_normalization: true,
+
+                enable_soi: false,
             },
             lia: LiaConfig {
                 max_depth: 5000,
@@ -204,6 +216,8 @@ impl TheoryConfig {
                 max_pivots: 1_000,
                 enable_bound_tightening: false,
                 enable_normalization: false,
+
+                enable_soi: false,
             },
             lia: LiaConfig {
                 max_depth: 100,
