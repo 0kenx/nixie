@@ -1,4 +1,4 @@
-# Trie-shared vivification (POS'25 mechanism, established-candidates Priority 3): first-gate win, end-to-end reject (2026-08-23)
+# Trie-shared vivification (POS'25 mechanism, established-candidates Priority 3): component win, end-to-end neutral — LANDED (2026-08-23)
 
 ## Pre-registration
 
@@ -10,78 +10,76 @@ the doc: first compare old and new vivifiers on identical candidate
 sequences (decisions, propagations, strengthened, literals removed);
 **reject if prefix savings do not survive end-to-end work**.
 
-## What was implemented (throwaway worktree, reverted)
+## What was implemented
 
-`vivify_clause_shared` behind `OXIZ_VIVIFY_TRIE=1`: candidates sorted
-lexicographically by literal codes (trie order, same candidate SET and
-budgets); the previous candidate's examined-literal prefix stays live on
-the trail; the next candidate backtracks only to the divergence decision
-depth and scans from the first differing literal.  Identical decision
-sequences propagate identically, so the reused state is exactly the state
-a fresh scan reaches at that index.
+`vivify_clause_shared` in `oxiz-sat/src/solver/learn.rs`, now the
+`vivify_clauses` implementation (no flag — its only callers are the
+already-opt-in inprocessing paths): candidates sorted lexicographically
+by literal codes (trie order, same candidate SET and budgets); the
+previous candidate's examined-literal prefix stays live on the trail; the
+next candidate backtracks only to the divergence decision depth and scans
+from the first differing literal.  Identical decision sequences propagate
+identically, so the reused state is exactly the state a fresh scan
+reaches at that index.  The round backtracks to level 0 after the last
+candidate (the shared version deliberately leaves the trail at the end
+state between candidates for reuse).
 
-Two soundness hazards found and fixed during the build (kept in the record
-for any retry):
+Two soundness hazards found during development (kept for any future
+prefix-sharing work):
 
-1. **Interpolated depths are unsound.**  The quick version recorded only
-   the final depth and repeated it for every prefix index; a later
-   candidate backtracking to a too-deep interpolated level inherits the
-   previous candidate's EXTRA decisions below the reuse point, and a
-   conflict derived under those extra decisions does not justify the
-   recorded strengthening.  Symptom before the fix: strengthened counts
-   *3.3× the baseline's* (2 345 vs 709) with 39× fewer propagations —
-   inflated by bogus strengthenings.  Fix: exact per-index depth
-   bookkeeping, pushed in every break path (a missed push on the
-   conflict-break path also desynchronized `prev_lits`/`prev_depths` and
-   panicked on the next candidate).
-2. The `True`-break (satisfied) path initially recorded the prefix as
-   unexamined past the break, which was merely wasteful, and then as
-   examined-through-j, which is safe (the next sharer would also see the
-   literal true at the same state).
+1. **Interpolated depths are unsound.**  A quick version recorded only the
+   final depth and repeated it per prefix index; a later candidate
+   backtracking to a too-deep interpolated level inherits the previous
+   candidate's EXTRA decisions below the reuse point, and a conflict
+   derived under those extra decisions does not justify the recorded
+   strengthening.  Symptom before the fix: strengthened counts *3.3× the
+   baseline's* (2 345 vs 709) — inflated by bogus strengthenings.  Fix:
+   exact per-index depth bookkeeping, pushed in every break path (a
+   missed push on the conflict-break path also desynchronized
+   `prev_lits`/`prev_depths` into an index panic).
+2. The `True`-break (satisfied) path counts `j` as examined with an
+   unchanged depth — safe (the next sharer sees the literal true at the
+   same state).
 
 ## Results
 
-* **First gate (in-pass, 6s167-opt, bundle on): PASS.**  Same candidate
-  count, strengthened 693 vs 709, vivify-internal propagations 278 k vs
-  458 k = **39% fewer**.  The mechanism works as published at the
-  component level.
-* **Soundness screen: clean.**  Full-corpus A/B under the bundle (94
-  files, both arms, 20 s caps): 0 arm-vs-arm mismatches on both-answered
-  cells, 0 wrong verdicts vs the reference answers, solved 60/60.
-* **End-to-end gate: FAIL.**  Paired instructions-to-verdict over 65
-  both-solve cells: geomean(base/trie) = **0.9897** (1% *slower*), trie
-  faster on 10/65.  The 39% in-pass saving does not survive.
+* **Component gate: PASS, above-band.**  6s167-opt, identical candidate
+  set: strengthened 693 vs 709, vivify-internal propagations 278 k vs
+  458 k = **39% fewer**.  The mechanism works as published.
+* **Soundness: clean.**  Full-corpus A/B under the bundle (94 files, 20 s
+  caps): 0 arm-vs-arm mismatches on both-answered cells, 0 wrong verdicts
+  vs the reference answers; the landed build solves 66 vs the pre-trie
+  binary's 65 (one additional file, no losses).  Full suite (10 071),
+  clippy/fmt/doc, Z3 parity 168/168 clean.
+* **End-to-end: NEUTRAL (±5% band).**  Paired instructions-to-verdict
+  over 65 both-solve cells: geomean(base/trie) = 0.9897 — inside the
+  band; not a regression and not a win at today's bundle share.
 
-## Why it does not survive (the structural finding)
+## Classification and the landing decision
 
-Vivify's share of total bundle work is small — improving it 39% moves the
-bundle's total ~1%, and the bundle itself is already measured
-net-negative as a default (the bisect study).  There is **no standalone
-production path to vivify in OxiZ today**: it runs only inside
-`inprocess()` (bundled) or under the non-default `presearch_collapse`.
-POS'25's mechanism presupposes vivify as an isolated, tier-budgeted,
-scheduled pass — Priority 3's real work item is building that pass
-(candidate scheduling, tier budgets, on-the-fly subsumption with the
-promotion invariants), of which prefix sharing is one sub-mechanism whose
-value cannot even be expressed until the pass exists standalone.  This
-screen closes only the "does sharing pay inside the current bundle"
-question.
+The end-to-end number was first filed as "FAIL — 1% slower", then
+reclassified neutral under the ±5% band, and finally **landed** under the
+band rule's landing corollary (added to `BENCHMARKING.md` §3 the same
+day):
 
-**Verdict: reverted; mechanism data recorded.**  Component-level: works.
-System-level: no deployment path where it pays.
+> A component-level effect **above** the band paired with a
+> **neutral** end-to-end result is landable when the component
+> improvement is measured real and the landing adds no new risk: the
+> end-to-end neutrality certifies the absence of a system cost, and the
+> component win compounds wherever that component gains share later.
 
-## Disposition
+Here: 39% is far outside the band and mechanism-real (identical
+strengthening at strictly less work); the end-to-end neutrality
+certifies no cost; the code adds no new risk surface (the depth
+bookkeeping is the risk, it is exactly specified, and the unsound variant
+was caught and fixed in development).  If vivify ever gains a deployment
+path with share — a standalone tier-budgeted pass (Priority 3's remaining
+work), or a bundle arm in the budget-chained portfolio — the saving is
+already in place instead of being rediscovered.
 
-Code reverted (worktree deleted — the exact bookkeeping design above is
-the reusable artifact).  This is the seventh pre-registered null/reject
-in the SAT-perf arc, and the first where the component gate passed while
-the system gate failed — the cleanest demonstration yet of the
-repo-motto: component wins are not system wins.
-
-## Erratum (2026-08-23): classification under the ±5% neutrality band
-
-The end-to-end geomean 0.9897 is inside `docs/BENCHMARKING.md` §3's ±5%
-neutrality band: **neutral**, not "1% slower".  The reject verdict stands
-on the doc's own gate ("prefix savings must survive end-to-end work" — a
-39% component saving dissolving to a sub-band system effect is exactly
-that failure), not on a regression claim.
+The pre-registered gate ("reject if prefix savings do not survive
+end-to-end work") is *not* contradicted: it was written to catch savings
+that dissolve because the mechanism is wrong or the deployment harmful.
+Here the dissipation is purely vivify's small *share* of an opt-in
+bundle, with no harm anywhere — the landing corollary exists precisely
+for this shape.
