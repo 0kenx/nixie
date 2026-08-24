@@ -55,3 +55,7 @@ Landed with the gate (`04329ea` + this): the `Sat` exit now has both
 halves — the trajectory-independent refusal of uninterpretable models,
 and the repair of models that differ from a real one only in
 unconstrained application results.
+
+## Erratum (2026-08-24): SUPERSEDED
+
+The canonicalizer is REMOVED together with the gate it serviced: the false-model class it repaired is closed at the root (complete arrangement enumeration, `2026-08-arrangement-chain-root-cause.md`), and `sorted_list_insert_noalloc1` answers `sat` with no canonicalizer.

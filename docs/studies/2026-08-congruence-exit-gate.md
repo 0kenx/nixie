@@ -69,3 +69,7 @@ combination-gap escape, regardless of which candidate the search
 reached — the wisas wall-clock lesson and the cxs-bp trajectory lesson
 both reduce to "a correct verdict that depends on trajectory luck is
 not closed", and this gate removes the luck from the `Sat` exit.
+
+## Erratum (2026-08-24): SUPERSEDED by the root-cause fix
+
+The gate this study landed is REMOVED. The actual root cause — truncated pair enumeration in the arrangement round — was found afterwards (see `2026-08-arrangement-chain-root-cause.md`) and fixed with a complete spanning-chain Phase 2; with the fix, the pete family is `unsat` and no exit gate is needed. The gate hid the bug (converting the wrong `sat` into an honest `unknown` and greening the suite) and duplicated certified mode's verification.

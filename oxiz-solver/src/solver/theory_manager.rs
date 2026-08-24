@@ -1550,32 +1550,41 @@ impl<'a> TheoryManager<'a> {
         // equality atom is a pure branching dimension, never a constraint —
         // and bounded by the cap.
         {
-            const MAX_ARRANGED: usize = 32;
+            // COMPLETE arrangement: per value-group, merge a spanning
+            // CHAIN (consecutive terms) instead of enumerating pairs.
+            // A chain realizes the same partition as all-pairs merging at
+            // O(group) cost, so there is no cap and no truncation.  The
+            // previous 64-pair / 32-merge caps left the arrangement
+            // dependent on FxHashMap group order: the fatal pair of a
+            // false candidate was probed only against other partners and
+            // never against each other, its split atom was never
+            // internalized, and the candidate escaped as `sat` — reachable
+            // by any clause-DB perturbation that shifted term ids (measured
+            // on pete/cxs-bp under trie-vivify; root cause of the
+            // trajectory-dependent false-SAT class).
             let mut merged: Vec<(TermId, TermId)> = Vec::new();
             self.euf.push();
-            'acc: for terms in by_val.values() {
-                for i in 0..terms.len() {
-                    for j in (i + 1)..terms.len() {
-                        if merged.len() >= MAX_ARRANGED {
-                            break 'acc;
-                        }
-                        let (x, y) = (terms[i], terms[j]);
-                        let (Some(nx), Some(ny)) =
-                            (self.euf.term_to_node(x), self.euf.term_to_node(y))
-                        else {
-                            continue;
-                        };
-                        if self.euf.are_equal_immutable(nx, ny)
-                            || self.euf.are_proven_disequal(nx, ny)
-                        {
-                            continue;
-                        }
-                        let _ = self.euf.merge(nx, ny, x);
-                        merged.push((x, y));
-                        if self.euf.check_conflicts().is_some() {
-                            break 'acc;
-                        }
+            for terms in by_val.values() {
+                let mut prev: Option<TermId> = None;
+                for &t in terms.iter() {
+                    let Some(pt) = prev else {
+                        prev = Some(t);
+                        continue;
+                    };
+                    let (Some(np), Some(nt)) =
+                        (self.euf.term_to_node(pt), self.euf.term_to_node(t))
+                    else {
+                        prev = Some(t);
+                        continue;
+                    };
+                    if self.euf.are_equal_immutable(np, nt) || self.euf.are_proven_disequal(np, nt)
+                    {
+                        prev = Some(t);
+                        continue;
                     }
+                    let _ = self.euf.merge(np, nt, pt);
+                    merged.push((pt, t));
+                    prev = Some(t);
                 }
             }
             let mut conflicted = self.euf.check_conflicts().is_some();
