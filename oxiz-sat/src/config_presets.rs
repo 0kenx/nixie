@@ -530,7 +530,15 @@ impl ConfigPreset {
             // 67.9G. BVE-only is NOT the same bundle: without ELS, qwh.50
             // collapses to 350G and constraints_17 to 153G.
             enable_gate_congruence: true,
-            enable_bve: false,
+            enable_bve: true, // cadical parity: elimination is a default inprocessing
+            // technique in CaDiCaL.  Sound since the 2026-08-17 port's
+            // six-bug sweep; landed as a default in 0ed8543 after the
+            // eliminator single-pass queue / ELS rewrite / probe schedule
+            // work.  (An SBVA-commit regex accidentally reset this to
+            // false, silently reverting the default flip and regressing
+            // the elimination-dependent families — caught by the pete
+            // cxs-bp differential canary flipping unsat->sat; see the
+            // SBVA study erratum.)
             enable_sbva: false, // cadical parity: elimination is a default inprocessing
             // technique in CaDiCaL. Sound since the 2026-08-17 port's six-bug
             // sweep (fuzz: 400k random CNFs, stack on/off verdict agreement +

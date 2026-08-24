@@ -122,11 +122,16 @@ Corollaries:
 - Conversely, a within-band *end-to-end* effect is never, by itself, a reason to land a
   change — **with one landing corollary**: a component-level effect **above** the band paired
   with a **neutral** end-to-end result is landable when the component improvement is measured
-  real and the landing adds no new risk.  The end-to-end neutrality certifies the absence of a
-  system cost; the component win compounds wherever that component gains share later (a
-  standalone pass, a portfolio arm, a schedule change).  Precedent: trie-shared vivification
-  (`studies/2026-08-trie-vivify.md`) — 39% fewer in-pass propagations at 0.99× end-to-end,
-  landed.
+  real and the landing adds **no new risk — verified as inert (or measured) on every path
+  that executes the component, not merely on the presets you benchmarked**.  A SAT-core
+  change is an SMT-path change whenever the embedded CDCL(T) core executes it (the SMT
+  default runs inprocessing): the trie-vivify landing answered "no new risk" from the
+  DIMACS presets alone, and a trajectory-crossed false-SAT surfaced on `pete/cxs-bp`
+  (`studies/2026-08-trie-vivify.md`, reverted).  The end-to-end neutrality certifies the
+  absence of a *measured system cost*; it says nothing about paths the measurement did not
+  cover, and the component win compounds only where the component actually gains share
+  later.  Any landing that touches shared solver code ships with a fresh SMT differential
+  at the landing commit.
 - The band applies to *measured* geomeans from paired, deterministic, complete-work metrics.
   Unpaired or single-seed numbers may not borrow it to claim neutrality: establish the
   measurement's own noise first (§4, §5).
