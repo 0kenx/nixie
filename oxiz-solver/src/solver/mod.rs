@@ -42,6 +42,7 @@ use crate::mbqi::{MBQIIntegration, MBQIResult};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::simplify::Simplifier;
+use num_rational::Rational64;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 use oxiz_core::ematching::{EmatchingConfig, EmatchingEngine};
 use oxiz_core::sort::SortId;
@@ -190,6 +191,14 @@ pub struct Solver {
     /// Accumulates across `assert`s; a stale entry only makes eval try a proxy
     /// that is no longer asserted (harmless – eval falls back to the original).
     pub(super) numarg_proxies: FxHashMap<TermId, TermId>,
+    /// Constant numeric arguments of *quantified* (un-purified) functions,
+    /// with their literal values: the per-function gate in
+    /// `purify_numeric_uf_args` leaves those functions un-rewritten, and these
+    /// constants must be pinned into arithmetic as interface terms by
+    /// `nelson_oppen_combine` (every round: theory resets/rebuilds wipe
+    /// encode-time state) so the model-equal probe can pair them with
+    /// equal-valued shared terms and congruence closes `f(y) = f(3)`.
+    pub(super) quant_uf_const_pins: FxHashMap<TermId, Rational64>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
     /// Numeric-equality trichotomy pairs already emitted by
@@ -552,6 +561,7 @@ impl Solver {
             ite_result_terms: FxHashSet::default(),
             quantifier_uf_funcs: FxHashSet::default(),
             numarg_proxies: FxHashMap::default(),
+            quant_uf_const_pins: FxHashMap::default(),
             care_split_pairs: FxHashSet::default(),
             numeric_eq_split_pairs: FxHashSet::default(),
             arith_purify: purify_arith::PurifyState::new(),
@@ -1399,6 +1409,7 @@ impl Solver {
             &self.term_to_var,
             &self.var_to_term,
             &self.numarg_proxies,
+            &self.quant_uf_const_pins,
             zero_term,
             &self.ite_result_terms,
             &mut self.derived_reasons,
@@ -1533,6 +1544,7 @@ impl Solver {
                                     &self.term_to_var,
                                     &self.var_to_term,
                                     &self.numarg_proxies,
+                                    &self.quant_uf_const_pins,
                                     zero_term,
                                     &self.ite_result_terms,
                                     &mut self.derived_reasons,
@@ -1593,6 +1605,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
+                                &self.quant_uf_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -1636,6 +1649,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
+                                &self.quant_uf_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -1712,6 +1726,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
+                                &self.quant_uf_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -1752,23 +1767,6 @@ impl Solver {
 
                     // Build partial model for MBQI
                     self.build_model(manager);
-
-                    // Congruence backstop: a quantified candidate `sat` whose
-                    // model violates EUF congruence (e.g. `f(y) != f(3)` while
-                    // `y = 3`) cannot certify the goal; answer `Unknown` rather
-                    // than a wrong `Sat` (pr30#3).  Also refuse the verdict
-                    // when a *ground* assertion evaluates false under the model
-                    // – the ground part is independent of instantiation, so its
-                    // violation means the candidate contradicts the input
-                    // itself (mirrors v0.3.2's
-                    // `quantified_model_refutes_ground_assertions`).
-                    if self.model_violates_euf_congruence(manager)
-                        || self.ground_assertion_false_in_model(manager)
-                    {
-                        self.unsat_core = None;
-                        self.model = None;
-                        return SolverResult::Unknown;
-                    }
 
                     // Certified `sat`: for the fragments `mbqi::model_certify`
                     // covers, a *total* interpretation of every symbol can be
@@ -2070,6 +2068,7 @@ impl Solver {
                         &self.term_to_var,
                         &self.var_to_term,
                         &self.numarg_proxies,
+                        &self.quant_uf_const_pins,
                         zero_term,
                         &self.ite_result_terms,
                         &mut self.derived_reasons,
@@ -2172,114 +2171,6 @@ impl Solver {
         };
         let assignments = model.assignments().clone();
         crate::mbqi::model_certify::certify(&self.assertions, &assignments, manager)
-    }
-
-    /// Congruence-consistency backstop for a quantified candidate `sat` model.
-    ///
-    /// The SAT core can accept a trail where two function applications
-    /// `f(a)`, `f(b)` with `a = b` (under the model) are assigned *different*
-    /// results – a model that violates EUF congruence and therefore cannot
-    /// certify the quantified goal. When that happens the sound verdict is
-    /// `Unknown`, not `Sat` (pr30#3: a quantifier over `f` left `f` un-purified,
-    /// so the literal argument `3` never reached the care graph and the
-    /// congruence `f(y) = f(3)` was not derived during the search).
-    ///
-    /// Returns `true` iff some function has two applications whose arguments
-    /// all map to equal model values but whose results differ.
-    fn model_violates_euf_congruence(&self, manager: &TermManager) -> bool {
-        use num_bigint::BigInt;
-        use num_rational::BigRational;
-        use rustc_hash::FxHashMap;
-
-        /// Exact scalar model value used as a congruence key.
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        enum GroundValue {
-            Bool(bool),
-            Number(BigRational),
-            BitVec { value: BigInt, width: u32 },
-            String(String),
-        }
-
-        let Some(model) = self.model.as_ref() else {
-            return false;
-        };
-        let asg = model.assignments();
-        let chase = |mut t: TermId| -> TermId {
-            let mut seen: FxHashSet<TermId> = FxHashSet::default();
-            while seen.insert(t) {
-                match asg.get(&t) {
-                    Some(&w) if w != t => t = w,
-                    _ => break,
-                }
-            }
-            t
-        };
-        let exact_value = |t: TermId| -> Option<GroundValue> {
-            match &manager.get(t)?.kind {
-                TermKind::True => Some(GroundValue::Bool(true)),
-                TermKind::False => Some(GroundValue::Bool(false)),
-                TermKind::IntConst(value) => Some(GroundValue::Number(BigRational::from_integer(
-                    value.clone(),
-                ))),
-                TermKind::RealConst(value) => Some(GroundValue::Number(BigRational::new(
-                    BigInt::from(*value.numer()),
-                    BigInt::from(*value.denom()),
-                ))),
-                TermKind::BitVecConst { value, width } => Some(GroundValue::BitVec {
-                    value: value.clone(),
-                    width: *width,
-                }),
-                TermKind::StringLit(value) => Some(GroundValue::String(value.clone())),
-                _ => None,
-            }
-        };
-        let mut groups: FxHashMap<(u32, Vec<GroundValue>), GroundValue> = FxHashMap::default();
-        for &assertion in &self.assertions {
-            let mut stack = vec![assertion];
-            while let Some(st) = stack.pop() {
-                let Some(t) = manager.get(st) else { continue };
-                // A candidate ground model does not assign quantified bound
-                // variables. Values left on their arena terms are encoding
-                // artefacts, not a semantic environment for the binder, so
-                // comparing applications below a quantifier fabricates
-                // congruence violations. The quantified body is checked by
-                // MBQI/model certification instead.
-                if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
-                    continue;
-                }
-                stack.extend(oxiz_core::ast::get_children(&t.kind));
-                let TermKind::Apply { func, args } = &t.kind else {
-                    continue;
-                };
-                // Only consider applications whose arguments AND result the
-                // model resolves to concrete constants. Applications whose
-                // result is not in the model (chase does not move) would
-                // otherwise compare the app term to itself and flag every pair.
-                let Some(key_args) = args
-                    .iter()
-                    .map(|&arg| exact_value(chase(arg)))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    continue;
-                };
-                let chased_result = chase(st);
-                if chased_result == st {
-                    continue;
-                }
-                let Some(result) = exact_value(chased_result) else {
-                    continue;
-                };
-                let key = (func.into_inner().get(), key_args);
-                if let Some(existing) = groups.get(&key) {
-                    if existing != &result {
-                        return true;
-                    }
-                } else {
-                    groups.insert(key, result);
-                }
-            }
-        }
-        false
     }
 
     /// Sound sufficient check used only at the MBQI incompleteness fallback.

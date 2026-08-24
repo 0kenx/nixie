@@ -349,18 +349,18 @@ fn test_pr30_wide_range_uf_argument_stays_sat() {
 /// asked about the `forall`, reports its fixpoint, and the solver used to
 /// return `sat` for a formula whose *ground part alone* is unsatisfiable.
 ///
-/// What closes it is the model-verification gate on the quantified `Sat`
-/// exits (`Solver::quantified_model_refutes_ground_assertions`): the reported
-/// model says `y = 3` yet gives `f(y)` and `f(3)` different values, so it is
-/// not a function and cannot be reported as a model.
-///
-/// The verdict is `unknown`, not `unsat`. `unknown` is sound -- it is the
-/// honest answer once the candidate has been refuted and the search has
-/// reached its MBQI fixpoint with nothing left to try. Deriving the full
-/// `unsat` would require purifying UF arguments under binders as well, which
-/// is exactly what the per-function gate exists to avoid (it perturbs
-/// e-matching: see `encode::numeric_purification`). Closing that gap is a
-/// completeness improvement, not a soundness one; `sat` here was the bug.
+/// What closes it is the ROOT FIX (`encode::purify_numeric_uf_args`
+/// per-function gate + `TheoryManager::nelson_oppen_combine` re-pin): the
+/// constant numeric args of a quantified (un-purified) function are pinned
+/// into arithmetic as interface terms fixed to their literal value – a
+/// tautological row whose reason tag names no literal (empty
+/// `DerivedReasons` explanation). The model-equal probe can then pair `3`
+/// with the equal-valued shared `y`, `entailed_equal_reason` re-verifies
+/// `y = 3` with two feasibility checks, EUF merges them, congruence fires on
+/// `f(y) = f(3)`, and the asserted disequality refutes the candidate. The
+/// verdict is now the full `unsat` (z3 agrees) – not the `unknown` the
+/// removed exit-gate backstop used to produce: the gate masked this as an
+/// honest downgrade while the search itself stayed broken.
 #[test]
 fn test_pr30_quantifier_trigger_function_ground_diseq_is_not_sat() {
     let output = run(r#"
@@ -376,9 +376,10 @@ fn test_pr30_quantifier_trigger_function_ground_diseq_is_not_sat() {
     "#);
     assert_eq!(
         output,
-        vec!["unknown"],
-        "the ground part is unsatisfiable, so `sat` is wrong; `unknown` is the \
-         sound verdict the model-verification gate produces"
+        vec!["unsat"],
+        "the ground part is unsatisfiable (y = 3 forces f(y) = f(3)), so the \
+         answer is `unsat` — derived at the root by pinning `3` into arithmetic \
+         so congruence can fire (z3: unsat)"
     );
 }
 
@@ -403,5 +404,76 @@ fn test_pr30_quantifier_trigger_function_stays_sat_when_consistent() {
         output,
         vec!["sat"],
         "the quantified model-verification gate must not downgrade a genuine sat"
+    );
+}
+
+/// Root-fix regression: the pinned constant is NEGATIVE and reached through a
+/// longer arithmetic chain (`y = 2x - 8 = -4`), so the pair (`y`, `-4`) must be
+/// probed, entailed, merged, and refuted by congruence exactly as the positive
+/// case.  `sat` here would mean the pin only works for non-negative constants.
+#[test]
+fn test_pr30_quantified_uf_negative_const_pin_closes_false_sat() {
+    let output = run(r#"
+        (set-logic UFLIA)
+        (declare-fun g (Int) Int)
+        (declare-const a Int)
+        (declare-const b Int)
+        (assert (forall ((w Int)) (< (g w) 100)))
+        (assert (= a 2))
+        (assert (= b (- (* 2 a) 8)))
+        (assert (not (= (g b) (g (- 4)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        output,
+        vec!["unsat"],
+        "b = -4 forces g(b) = g(-4) by congruence; z3: unsat"
+    );
+}
+
+/// Root-fix control: same shape with the chain entailing a DIFFERENT value
+/// (`y = 4`, so `f(y)` and `f(3)` are congruence-independent) — must stay
+/// `sat`; a pin that over-merged (pairing unequal values or skipping the
+/// entailment re-verification) would flip this to `unsat`/`unknown`.
+#[test]
+fn test_pr30_quantified_uf_pin_stays_sat_when_values_differ() {
+    let output = run(r#"
+        (set-logic UFLIA)
+        (declare-fun f (Int) Int)
+        (declare-const x Int)
+        (declare-const y Int)
+        (assert (forall ((z Int)) (>= (f z) 0)))
+        (assert (= x 3))
+        (assert (= y (+ x 1)))
+        (assert (not (= (f y) (f 3))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        output,
+        vec!["sat"],
+        "y = 4 ≠ 3: f(4) ≠ f(3) is consistent; z3: sat"
+    );
+}
+
+/// Root-fix regression: the pinned constant is a COMPOUND arithmetic term
+/// (`(- 8 2)`, not constant-folded by the parser), closed-form evaluated to 6
+/// by the linear extractor.  Shape-by-shape pinning (literals only) left this
+/// exact input a false `sat`; the pin now fires for any variable-free linear
+/// form.
+#[test]
+fn test_pr30_quantified_uf_compound_const_pin_closes_false_sat() {
+    let output = run(r#"
+        (set-logic UFLIA)
+        (declare-fun g (Int) Int)
+        (declare-const b Int)
+        (assert (forall ((w Int)) (< (g w) 100)))
+        (assert (= b (- 10 4)))
+        (assert (not (= (g b) (g (- 8 2)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        output,
+        vec!["unsat"],
+        "b = 6 = (- 8 2) forces g(b) = g(6) by congruence; z3: unsat"
     );
 }

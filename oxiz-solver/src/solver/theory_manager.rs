@@ -543,6 +543,10 @@ pub(crate) struct TheoryManager<'a> {
     /// [`Self::terms_to_conflict_clause`] tell "correctly contributes nothing
     /// to the clause" apart from "justification silently lost".
     tautological_reasons: FxHashSet<TermId>,
+    /// Constant numeric args of quantified (un-purified) functions to pin
+    /// into arithmetic each combine round; see the Solver field of the same
+    /// name for why these exist and why the pin is re-asserted here.
+    quant_uf_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
     /// Explanations for reason terms that stand for a *derived* equality
     /// propagated between theories.
     ///
@@ -589,6 +593,7 @@ impl<'a> TheoryManager<'a> {
         term_to_var: &'a FxHashMap<TermId, Var>,
         var_to_term: &'a Vec<TermId>,
         numarg_proxies: &'a FxHashMap<TermId, TermId>,
+        quant_uf_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
         zero_term: TermId,
         ite_result_terms: &'a FxHashSet<TermId>,
         derived_reasons: &'a mut DerivedReasons,
@@ -668,6 +673,7 @@ impl<'a> TheoryManager<'a> {
             trail_index: Vec::new(),
             assigned_level: Vec::new(),
             tautological_reasons: FxHashSet::default(),
+            quant_uf_const_pins,
             euf_eq_atoms: var_to_constraint
                 .iter()
                 .filter_map(|(&v, c)| match c {
@@ -1688,9 +1694,37 @@ impl<'a> TheoryManager<'a> {
     /// the resulting EUF merge expands back to the arithmetic atoms that forced
     /// it – the merge is a *deduction*, never a guess, so it cannot cause a
     /// false `unsat`.
+    /// Model value of `t` for interface grouping: pinned constants report
+    /// their pin value (true by construction; the tableau assignment may be
+    /// stale between the re-pin and the next solve), everything else the
+    /// arithmetic solver's current value.
+    fn arith_value_with_pins(&self, t: TermId) -> Option<num_rational::Rational64> {
+        self.quant_uf_const_pins
+            .get(&t)
+            .copied()
+            .or_else(|| self.arith.value(t))
+    }
+
     fn nelson_oppen_combine(&mut self) -> TheoryCheckResult {
         use oxiz_theories::Theory;
         use oxiz_theories::TheoryCheckResult as TheoryCheckResultEnum;
+
+        // Re-pin the constant numeric arguments of quantified (un-purified)
+        // functions into arithmetic.  UNCONDITIONALLY: `term_to_var` survives
+        // `pop` while the bounds do not, so `is_interned` cannot distinguish a
+        // live pin from a popped one — and the rows are cached per linear
+        // form, so re-asserting is a bound re-set on an existing row.  Each
+        // pin is a tautology (`c = c`) whose reason tag names no literal; the
+        // empty `DerivedReasons` explanation keeps a certificate citing it
+        // contributing nothing instead of losing justification.  Without the
+        // pin, no interface-equality mechanism can pair `3` with an
+        // equal-valued shared `y`, congruence `f(y) = f(3)` never fires, and
+        // a refutable input answers `sat` (pr30#3 class).
+        for (&t, &v) in self.quant_uf_const_pins.iter() {
+            self.arith
+                .assert_eq(&[(t, num_rational::Rational64::from_integer(1))], v, t);
+            self.derived_reasons.record(t, Vec::new());
+        }
 
         const NO_MAX_ROUNDS: usize = 8;
         for _ in 0..NO_MAX_ROUNDS {
@@ -1738,7 +1772,7 @@ impl<'a> TheoryManager<'a> {
             let uf_args = self.euf.app_argument_terms();
             for &t in self.arith.interface_terms() {
                 if uf_args.contains(&t) {
-                    if let Some(v) = self.arith.value(t) {
+                    if let Some(v) = self.arith_value_with_pins(t) {
                         by_val.entry(v).or_default().push(t);
                     }
                 }
@@ -1777,7 +1811,9 @@ impl<'a> TheoryManager<'a> {
                 // spurious difference-constraint / live-diseq candidate pair
                 // has distinct model values, so this prunes the hundreds of
                 // wasted probes per call to the handful that are model-equal.
-                if let (Some(a), Some(b)) = (self.arith.value(x), self.arith.value(y)) {
+                if let (Some(a), Some(b)) =
+                    (self.arith_value_with_pins(x), self.arith_value_with_pins(y))
+                {
                     if a != b {
                         continue;
                     }

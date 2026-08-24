@@ -2099,6 +2099,27 @@ impl Solver {
                 // reach MBQI/model-certification as clean `Eq`. An unrelated
                 // quantifier over another function does not suppress this one.
                 if self.quantifier_uf_funcs.contains(func) {
+                    // Root fix for this gate's blind spot (pr30#3 class): the
+                    // function stays un-purified, so its CONSTANT numeric
+                    // arguments never become arithmetic interface terms – no
+                    // interface-equality mechanism can pair `3` with an
+                    // equal-valued shared `y`, the congruence `f(y) = f(3)`
+                    // (from the entailed `y = 3`) is never derived, and a
+                    // refutable input answers `sat` (pr30 regression;
+                    // previously masked by the removed exit-gate backstop).
+                    // Pin each constant into arithmetic as an interface term
+                    // fixed to its literal value: the sound model-equal probe
+                    // in `nelson_oppen_combine` can then pair them,
+                    // `entailed_equal_reason` re-verifies the equality with
+                    // two feasibility checks, and congruence closes the case
+                    // at the root.  Compound numeric args stay unpinned in
+                    // this slice (an unpinned intern would float at an
+                    // arbitrary value and only misdirect candidates); a
+                    // numeral proxied elsewhere covers this function too via
+                    // the global substitution.
+                    for &arg in args {
+                        self.pin_quantified_uf_const_arg(arg, manager);
+                    }
                     continue;
                 }
                 for &arg in args {
@@ -2156,6 +2177,46 @@ impl Solver {
         let mut parts = side;
         parts.insert(0, rewritten);
         manager.mk_and(parts)
+    }
+
+    /// Pin a constant numeric argument of a quantified (un-purified) function
+    /// into arithmetic as an interface term fixed to its literal value.
+    /// Companion to the per-function gate in [`Self::purify_numeric_uf_args`]
+    /// – see the comment there for the false-`sat` class this closes.
+    ///
+    /// SOUND: the asserted row is a tautology (`c = c`), so its bound can
+    /// never be violated and the pin constrains nothing.  The reason tag
+    /// names no literal; it is recorded as an EMPTY `DerivedReasons`
+    /// explanation (an equality that holds structurally and rests on no
+    /// assertion), so a feasibility certificate citing the pin contributes
+    /// nothing to the conflict clause instead of losing justification – the
+    /// failure mode `terms_to_conflict_clause` case (3) exists for.  The row
+    /// is idempotent (`is_interned` guard) and survives user `push`/`pop` in
+    /// lockstep with the scope it was asserted at (re-encode re-pins).
+    /// Constants that do not fit `Rational64` are skipped: the pre-fix gap
+    /// remains for them (missed pairing only, never a wrong answer).
+    fn pin_quantified_uf_const_arg(&mut self, arg: TermId, manager: &TermManager) {
+        if self.quant_uf_const_pins.contains_key(&arg) {
+            return;
+        }
+        // CLOSED-FORM evaluation via the atom parser's linear extractor: the
+        // pin fires for any numeric argument that folds to a variable-free
+        // linear form — literals (`3`, `4.0`), negated literals (`(- 4)`,
+        // not constant-folded by the parser), and compound constants
+        // (`(- 8 2)`, `(+ 1 (* 2 3))`).  `div`/`mod`/`ite` stay opaque terms
+        // in the extractor (never folded), so they are skipped here by the
+        // empty-`terms` test — no integer/rational division-semantics hazard.
+        // A variable-bearing compound is skipped the same way.
+        let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> = smallvec::SmallVec::new();
+        let mut constant = Rational64::zero();
+        if self
+            .extract_linear_terms(arg, Rational64::one(), &mut terms, &mut constant, manager)
+            .is_none()
+            || !terms.is_empty()
+        {
+            return;
+        }
+        self.quant_uf_const_pins.insert(arg, constant);
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately

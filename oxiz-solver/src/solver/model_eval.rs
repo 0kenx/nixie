@@ -617,37 +617,6 @@ impl Solver {
             .value()
     }
 
-    /// A quantified candidate `sat` whose model makes a *ground* assertion
-    /// `false` is not a model: the ground part is independent of the
-    /// quantifier instantiation, so its violation means the candidate model
-    /// contradicts the input itself.  The honest verdict is `Unknown`, not a
-    /// continued round of instantiation against a model that can never
-    /// certify the goal – and not a wrong `Sat`.
-    ///
-    /// This is the ground-assertion half of v0.3.2's
-    /// `quantified_model_refutes_ground_assertions`; the congruence half is
-    /// [`super::Solver::model_violates_euf_congruence`].  Only assertions that
-    /// contain no quantifier are tested: a quantified assertion's truth can
-    /// depend on the very instantiation the search is still building, so a
-    /// `false` evaluation there is not yet a contradiction.
-    pub(super) fn ground_assertion_false_in_model(&self, manager: &TermManager) -> bool {
-        let Some(model) = self.model.as_ref() else {
-            return false;
-        };
-        for &assertion in &self.assertions {
-            if crate::solver::encode::finite_expand::contains_quantifier(assertion, manager) {
-                continue;
-            }
-            if matches!(
-                self.eval_in_model_outcome(assertion, model, manager, 0),
-                EvalOutcome::Value(EvalVal::Bool(false))
-            ) {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Evaluate `term` under `model`.
     ///
     /// Runs the explicit frame stack described in the module documentation: a

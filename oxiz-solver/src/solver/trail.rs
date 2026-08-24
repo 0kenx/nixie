@@ -172,7 +172,8 @@ impl super::Solver {
             // asserted quantifiers; a stale entry after `pop` only makes
             // `purify_numeric_uf_args` over-conservatively skip a *sound*
             // purification, so it is left in place (cleared only by `reset`).
-            numarg_proxies: _, // accumulates arg->proxy entries; a stale entry
+            numarg_proxies: _,
+            quant_uf_const_pins: _, // accumulates arg->proxy entries; a stale entry
             // only makes `eval_in_model` try a proxy that is no longer asserted
             // (it falls back to the original term), so it is sound to leave.
             table_index_terms: _, // accumulates equality-ite table indices across

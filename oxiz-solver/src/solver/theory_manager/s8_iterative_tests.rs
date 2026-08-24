@@ -36,6 +36,7 @@ struct Scratch {
     term_to_var: FxHashMap<TermId, Var>,
     var_to_term: Vec<TermId>,
     numarg_proxies: FxHashMap<TermId, TermId>,
+    quant_uf_const_pins: FxHashMap<TermId, num_rational::Rational64>,
     derived_reasons: DerivedReasons,
     statistics: Statistics,
 }
@@ -55,6 +56,7 @@ impl Scratch {
             &self.term_to_var,
             &self.var_to_term,
             &self.numarg_proxies,
+            &self.quant_uf_const_pins,
             zero_term,
             &self.ite_result_terms,
             &mut self.derived_reasons,
