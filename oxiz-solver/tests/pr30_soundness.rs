@@ -477,3 +477,93 @@ fn test_pr30_quantified_uf_compound_const_pin_closes_false_sat() {
         "b = 6 = (- 8 2) forces g(b) = g(6) by congruence; z3: unsat"
     );
 }
+
+/// Root-fix regression: `div`/`mod` constants as quantified-UF arguments.
+/// The linear extractor keeps them opaque, so the literal/compound pin did
+/// not cover them and `(f (div 6 2))` was left unpaired with the equal-valued
+/// `y = 3` — a false `sat` (z3: unsat).  Closed-form Euclidean evaluation
+/// per SMT-LIB (`arith_axioms` semantics; Rust `div_euclid`/`rem_euclid`).
+#[test]
+fn test_pr30_quantified_uf_div_mod_const_pins_close_false_sat() {
+    let div_case = run(r#"
+        (set-logic UFLIA)
+        (declare-fun f (Int) Int)
+        (declare-const y Int)
+        (assert (forall ((z Int)) (>= (f z) 0)))
+        (assert (= y 3))
+        (assert (not (= (f y) (f (div 6 2)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        div_case,
+        vec!["unsat"],
+        "y = 3 = (div 6 2): congruence refutes; z3: unsat"
+    );
+
+    let mod_case = run(r#"
+        (set-logic UFLIA)
+        (declare-fun f (Int) Int)
+        (declare-const y Int)
+        (assert (forall ((z Int)) (>= (f z) 0)))
+        (assert (= y 3))
+        (assert (not (= (f y) (f (mod 11 4)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        mod_case,
+        vec!["unsat"],
+        "y = 3 = (mod 11 4): congruence refutes; z3: unsat"
+    );
+
+    // Euclidean semantics for NEGATIVE operands: (div -7 2) = -4 (remainder
+    // nonneg), not C-style -3.  A pin using truncated division would leave
+    // this `sat`.
+    let euclid_case = run(r#"
+        (set-logic UFLIA)
+        (declare-fun g (Int) Int)
+        (declare-const y Int)
+        (assert (forall ((z Int)) (> (g z) 0)))
+        (assert (= y (- 0 4)))
+        (assert (not (= (g y) (g (div (- 0 7) 2)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        euclid_case,
+        vec!["unsat"],
+        "y = -4 = (div -7 2) Euclidean; z3: unsat"
+    );
+
+    // Real division: exact rational value, same pairing.
+    let real_case = run(r#"
+        (set-logic UFLRA)
+        (declare-fun f (Real) Real)
+        (declare-const y Real)
+        (assert (forall ((z Real)) (>= (f z) 0.0)))
+        (assert (= y 2.5))
+        (assert (not (= (f y) (f (/ 5.0 2.0)))))
+        (check-sat)
+    "#);
+    assert_eq!(real_case, vec!["unsat"], "y = 2.5 = (/ 5.0 2.0); z3: unsat");
+}
+
+/// Zero-divisor control: `(div 1 0)` is UNINTERPRETED per SMT-LIB — any value
+/// is admissible, so pairing it with an equal-valued term would FABRICATE a
+/// semantics the logic does not define.  The pin must skip it and the verdict
+/// stay `sat` (z3: sat).
+#[test]
+fn test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate() {
+    let output = run(r#"
+        (set-logic UFLIA)
+        (declare-fun f (Int) Int)
+        (declare-const y Int)
+        (assert (forall ((z Int)) (>= (f z) 0)))
+        (assert (= y 1))
+        (assert (not (= (f y) (f (div 1 0)))))
+        (check-sat)
+    "#);
+    assert_eq!(
+        output,
+        vec!["sat"],
+        "(div 1 0) uninterpreted: may differ from 1; z3: sat"
+    );
+}

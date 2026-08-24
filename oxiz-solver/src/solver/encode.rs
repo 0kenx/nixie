@@ -2199,24 +2199,107 @@ impl Solver {
         if self.quant_uf_const_pins.contains_key(&arg) {
             return;
         }
-        // CLOSED-FORM evaluation via the atom parser's linear extractor: the
-        // pin fires for any numeric argument that folds to a variable-free
-        // linear form — literals (`3`, `4.0`), negated literals (`(- 4)`,
-        // not constant-folded by the parser), and compound constants
-        // (`(- 8 2)`, `(+ 1 (* 2 3))`).  `div`/`mod`/`ite` stay opaque terms
-        // in the extractor (never folded), so they are skipped here by the
-        // empty-`terms` test — no integer/rational division-semantics hazard.
-        // A variable-bearing compound is skipped the same way.
-        let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> = smallvec::SmallVec::new();
-        let mut constant = Rational64::zero();
-        if self
-            .extract_linear_terms(arg, Rational64::one(), &mut terms, &mut constant, manager)
-            .is_none()
-            || !terms.is_empty()
-        {
-            return;
-        }
-        self.quant_uf_const_pins.insert(arg, constant);
+        // CLOSED-FORM evaluation, three layers:
+        //
+        // 1. Int `div`/`mod` of closed constants — Euclidean per SMT-LIB
+        //    (the same semantics `arith_axioms` axiomatises as
+        //    `m = q·n + r ∧ 0 ≤ r < |n|`; Rust's `div_euclid`/`rem_euclid`
+        //    match it exactly, checked for overflow).  A ZERO divisor is
+        //    uninterpreted per SMT-LIB — any value is admissible — so the
+        //    pin must skip it: pinning a value would fabricate a semantics
+        //    the logic does not define.
+        // 2. the atom parser's linear extractor, for any numeric argument
+        //    that folds to a variable-free linear form — literals (`3`,
+        //    `4.0`), negated literals (`(- 4)`, not constant-folded by the
+        //    parser), and compound constants (`(- 8 2)`, `(+ 1 (* 2 3))`).
+        //    Variable-bearing compounds are skipped by the empty-`terms`
+        //    test.  (In the extractor `div`/`mod`/`ite` are opaque terms,
+        //    hence layer 1 running first.)
+        // 3. Real `div` of closed rational constants — exact rational
+        //    division; zero divisor skipped as uninterpreted, same as 1.
+        //
+        // Anything else (symbolic operands, `ite`, out-of-`i64` magnitudes,
+        // overflow while folding) stays unpinned: missed pairing only, never
+        // a wrong value.
+        let node = manager.get(arg);
+        let int_sort = manager.sorts.int_sort;
+        let real_sort = manager.sorts.real_sort;
+        let Some(node) = node else { return };
+        let value = match &node.kind {
+            TermKind::Div(m, n) if node.sort == int_sort => {
+                let (m, n) = match (
+                    super::arith_axioms::int_constant(*m, manager),
+                    super::arith_axioms::int_constant(*n, manager),
+                ) {
+                    (Some(m), Some(n)) => (m, n),
+                    _ => return,
+                };
+                if n == 0 {
+                    return; // uninterpreted per SMT-LIB: no value to pin
+                }
+                let r = m.rem_euclid(n);
+                let q = match m.checked_sub(r).and_then(|x| x.checked_div(n)) {
+                    Some(q) => q,
+                    None => return,
+                };
+                num_rational::Rational64::from_integer(q)
+            }
+            TermKind::Mod(m, n) if node.sort == int_sort => {
+                let (m, n) = match (
+                    super::arith_axioms::int_constant(*m, manager),
+                    super::arith_axioms::int_constant(*n, manager),
+                ) {
+                    (Some(m), Some(n)) => (m, n),
+                    _ => return,
+                };
+                if n == 0 {
+                    return;
+                }
+                num_rational::Rational64::from_integer(m.rem_euclid(n))
+            }
+            TermKind::Div(m, n) if node.sort == real_sort => {
+                let mut mterms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
+                    smallvec::SmallVec::new();
+                let mut nterms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
+                    smallvec::SmallVec::new();
+                let (mut mc, mut nc) = (Rational64::zero(), Rational64::zero());
+                if self
+                    .extract_linear_terms(*m, Rational64::one(), &mut mterms, &mut mc, manager)
+                    .is_none()
+                    || !mterms.is_empty()
+                    || self
+                        .extract_linear_terms(*n, Rational64::one(), &mut nterms, &mut nc, manager)
+                        .is_none()
+                    || !nterms.is_empty()
+                {
+                    return;
+                }
+                if nc == Rational64::zero() {
+                    return; // uninterpreted per SMT-LIB
+                }
+                mc / nc
+            }
+            _ => {
+                let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
+                    smallvec::SmallVec::new();
+                let mut constant = Rational64::zero();
+                if self
+                    .extract_linear_terms(
+                        arg,
+                        Rational64::one(),
+                        &mut terms,
+                        &mut constant,
+                        manager,
+                    )
+                    .is_none()
+                    || !terms.is_empty()
+                {
+                    return;
+                }
+                constant
+            }
+        };
+        self.quant_uf_const_pins.insert(arg, value);
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately

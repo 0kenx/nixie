@@ -126,7 +126,7 @@ const MAX_CONST_EVAL_DEPTH: u32 = 32;
 /// those [`Solver::extract_linear_terms`] also treats as constants, so the
 /// value used to build the axiom always agrees with the value the linear parse
 /// derives from the very same term.
-fn int_constant(term: TermId, manager: &TermManager) -> Option<i64> {
+pub(super) fn int_constant(term: TermId, manager: &TermManager) -> Option<i64> {
     int_constant_at(term, manager, 0)
 }
 
