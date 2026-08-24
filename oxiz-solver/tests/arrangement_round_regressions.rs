@@ -93,3 +93,30 @@ fn pete_5s_family_instance_is_unsat() {
     let script = std::fs::read_to_string(path).expect("fixture pete_5s.smt2");
     assert_eq!(run_script(&script), SolverResult::Unsat);
 }
+
+/// The trajectory-dependence canary (2026-08-24): a clause-DB
+/// perturbation (trie-vivify) steered the search onto a candidate the
+/// arrangement round's caps/pair-enumeration missed, reopening the
+/// false-SAT the round had closed — the same instance answered `unsat`
+/// on one trajectory and `sat` on another.  The final congruence honesty
+/// gate (model-level, trajectory-independent) closes the class: this
+/// fixture pins `unsat` for the exact instance that flipped.
+#[test]
+fn pete_cxs_bp_is_unsat_on_every_trajectory() {
+    let script = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/pete_cxs_bp.smt2"
+    ))
+    .unwrap_or_default();
+    let mut ctx = Context::new();
+    let outputs = ctx.execute_script(&script).unwrap_or_default();
+    for tok in outputs.iter().rev() {
+        match tok.trim() {
+            "sat" => panic!("cxs-bp answered sat: the non-convex gap reopened"),
+            "unsat" => return,
+            "unknown" => panic!("cxs-bp regressed to unknown"),
+            _ => {}
+        }
+    }
+    panic!("no verdict");
+}

@@ -1727,6 +1727,29 @@ impl Solver {
                             );
                             continue;
                         }
+                        // Final congruence honesty gate — the
+                        // trajectory-independent closure of the non-convex
+                        // Nelson-Oppen gap.  The arrangement round's coverage
+                        // (caps, pair enumeration, model grouping) is a
+                        // property of the trajectory that reached this
+                        // candidate: a clause-DB perturbation can steer the
+                        // search onto a candidate the round's coverage misses
+                        // and reopen a false-SAT the round had closed (pete
+                        // cxs-bp under trie-vivify).  This check fires on the
+                        // gap itself: a model where one function's arguments
+                        // map to equal values but results differ cannot be
+                        // extended to a real interpretation, so the honest
+                        // verdict is `Unknown` — placed AFTER the refinement
+                        // chain (int case split, arrangement splits, array
+                        // axioms) so the productive lemma paths get every
+                        // candidate first; a pre-placement starved them and
+                        // exploded wisas (256 blocking rounds without
+                        // learning).
+                        if self.model_violates_euf_congruence(manager) {
+                            self.unsat_core = None;
+                            self.model = None;
+                            return SolverResult::Unknown;
+                        }
                         self.unsat_core = None;
                         self.debug_check_invariants("check_core: before returning sat");
                         return SolverResult::Sat;
