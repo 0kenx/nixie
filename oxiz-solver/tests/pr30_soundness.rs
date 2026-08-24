@@ -567,3 +567,59 @@ fn test_pr30_quantified_uf_zero_divisor_pin_does_not_fabricate() {
         "(div 1 0) uninterpreted: may differ from 1; z3: sat"
     );
 }
+
+/// MBQI relevant-term pool regression (ABV residual of the registry study):
+/// a quantifier whose auto-trigger `(select a i)` contains no ground term of
+/// the bound variable's sort left that sort's candidate pool EMPTY — ground
+/// terms were collected only from patterns, defaults had no BitVec arm, and
+/// injected extras replaced the strategies instead of merging — so MBQI found
+/// no counterexample in any round and a refutable goal answered `unknown`
+/// (z3: `unsat`).  The fix: ground sub-terms of every quantifier-free
+/// assertion enter the pool; BitVec gets default candidates (exhaustive for
+/// width ≤ 3, structural set above); extras MERGE into the computed lists.
+#[test]
+fn test_abv_quantified_select_bv_index_finds_counterexample() {
+    let auto_trigger = run(r#"
+        (set-logic ABV)
+        (declare-const a (Array (_ BitVec 4) (_ BitVec 4)))
+        (assert (forall ((i (_ BitVec 4))) (= (select a i) i)))
+        (assert (not (= (select a #xb) #xb)))
+        (check-sat)
+    "#);
+    assert_eq!(
+        auto_trigger,
+        vec!["unsat"],
+        "the ground #xb must be a candidate; z3: unsat"
+    );
+
+    let explicit_pattern = run(r#"
+        (set-logic ABV)
+        (declare-const a (Array (_ BitVec 4) (_ BitVec 4)))
+        (assert (forall ((i (_ BitVec 4))) (! (= (select a i) i) :pattern ((select a i)))))
+        (assert (not (= (select a #xb) #xb)))
+        (check-sat)
+    "#);
+    assert_eq!(explicit_pattern, vec!["unsat"], "z3: unsat");
+}
+
+/// Control for the pool change: a SATISFIABLE BV-quantified problem whose
+/// richer candidate pool must not over-instantiate into a spurious conflict
+/// (tautological body → Satisfied fast path; ground part decides).
+/// (A const-array sat-control — `forall i. select a i = #x0` — answers
+/// `unknown` on BOTH sides of the change: satisfiable quantified-array
+/// goals are not yet certifiable, a separate recorded incompleteness.)
+#[test]
+fn test_abv_quantified_select_bv_stays_sat_when_consistent() {
+    let output = run(r#"
+        (set-logic ABV)
+        (declare-const a (Array (_ BitVec 4) (_ BitVec 4)))
+        (assert (forall ((i (_ BitVec 4))) (= (select a i) (select a i))))
+        (assert (not (= (select a #xb) #x1)))
+        (check-sat)
+    "#);
+    assert_eq!(
+        output,
+        vec!["sat"],
+        "any a with select(a,#xb) != #x1; z3: sat"
+    );
+}

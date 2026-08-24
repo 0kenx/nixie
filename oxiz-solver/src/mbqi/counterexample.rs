@@ -207,6 +207,12 @@ pub struct CounterExampleGenerator {
     stats: CexStats,
     /// Candidate cache
     candidate_cache: FxHashMap<SortId, Vec<TermId>>,
+    /// Injected candidates (ground terms of the problem, Skolem apps): merged
+    /// INTO the computed candidate lists by `build_candidate_lists`, never a
+    /// replacement for them — extras alone would starve the pool of model
+    /// values and defaults. Kept separate from `candidate_cache`, which is a
+    /// pure per-round memo of computed lists.
+    injected_candidates: FxHashMap<SortId, Vec<TermId>>,
 }
 
 impl CounterExampleGenerator {
@@ -220,6 +226,7 @@ impl CounterExampleGenerator {
             generation_bound: 0,
             stats: CexStats::default(),
             candidate_cache: FxHashMap::default(),
+            injected_candidates: FxHashMap::default(),
         }
     }
 
@@ -365,6 +372,23 @@ impl CounterExampleGenerator {
             // Strategy 3: Add default values based on sort
             self.add_default_candidates(sort, &mut candidates, manager);
 
+            // Strategy 4: the injected pool (ground terms of the problem,
+            // Skolem applications).  REPLACES the strategies when present —
+            // deliberately: extras are the *relevant* terms and any sort
+            // that already has them had its search trajectory measured on
+            // exactly this pool (merging strategies in perturbed the
+            // enumeration order and regressed a 0.04s `unsat` parity
+            // benchmark to `unknown`).  The strategies above therefore run
+            // only for sorts whose pool was EMPTY — which is precisely the
+            // gap being closed (a sort with neither extras, model values,
+            // nor defaults could instantiate nothing and MBQI exhausted its
+            // rounds answering `unknown` for refutable goals).
+            if let Some(extra) = self.injected_candidates.get(&sort)
+                && !extra.is_empty()
+            {
+                candidates = extra.clone();
+            }
+
             // Limit candidates
             candidates.truncate(self.max_candidates_per_var);
 
@@ -400,6 +424,32 @@ impl CounterExampleGenerator {
             }
             if !candidates.contains(&false_val) {
                 candidates.push(false_val);
+            }
+        } else if let Some(width) = manager.sorts.get(sort).and_then(|s| s.bitvec_width()) {
+            // BitVec: the domain is FINITE, so for small widths enumerate it
+            // exhaustively (a quantifier over 2^w values can then be fully
+            // instantiated — complete, not heuristic).  Above the exhaustive
+            // bound the cap would truncate away the informative values, so
+            // fall back to a deterministic structural set: zero, one, the
+            // sign bit, and all-ones — the values most likely to falsify an
+            // operator's algebraic identity (overflow / sign behaviour).
+            let exhaustive = width <= 3; // 8 values <= default candidate cap
+            if exhaustive {
+                for v in 0u64..(1u64 << width) {
+                    let val = manager.mk_bitvec(v, width);
+                    if !candidates.contains(&val) {
+                        candidates.push(val);
+                    }
+                }
+            } else {
+                let max = (1u64 << width) - 1;
+                let sign = 1u64 << (width - 1);
+                for v in [0u64, 1, sign, max] {
+                    let val = manager.mk_bitvec(v, width);
+                    if !candidates.contains(&val) {
+                        candidates.push(val);
+                    }
+                }
             }
         }
     }
@@ -1796,7 +1846,7 @@ impl CounterExampleGenerator {
     /// every subsequent `build_candidate_lists` call.
     pub fn inject_extra_candidates(&mut self, extras: &FxHashMap<SortId, Vec<TermId>>) {
         for (&sort, terms) in extras {
-            let entry = self.candidate_cache.entry(sort).or_default();
+            let entry = self.injected_candidates.entry(sort).or_default();
             for &t in terms {
                 if !entry.contains(&t) {
                     entry.push(t);
@@ -1808,6 +1858,7 @@ impl CounterExampleGenerator {
     /// Clear the candidate cache
     pub fn clear_cache(&mut self) {
         self.candidate_cache.clear();
+        self.injected_candidates.clear();
     }
 
     /// Get statistics

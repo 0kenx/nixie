@@ -641,6 +641,22 @@ impl Solver {
         // Replace inlined nullary define-fun bodies with their named consts
         // (parser expands bindings at parse time).  Prevents re-flattening
         // Discord/EM/R on every later assert that mentions them.
+        // Relevant-term pool for MBQI: every ground sub-term of a
+        // quantifier-FREE assertion is a candidate value for the bound
+        // variables of quantifiers elsewhere in the problem (the z3-style
+        // relevant-ground-term pool).  Collecting only from quantifier
+        // *patterns* left sort pools empty whenever the pattern has no
+        // ground sub-term of that sort — measured: an `ABV` problem whose
+        // ground part mentions `#xb` but whose auto-trigger `(select a i)`
+        // contains no BV constant gave the BV4 sort an empty pool, MBQI
+        // found no counterexample in any round, and a refutable goal
+        // answered `unknown` (z3: `unsat`).  Cost: one linear sub-term walk
+        // per assertion.  Quantified assertions are skipped here — their
+        // registration path collects from patterns, and a naive walk of the
+        // whole term would also reach under the binders.
+        if !crate::solver::encode::finite_expand::contains_quantifier(term, manager) {
+            self.mbqi.collect_ground_terms(term, manager);
+        }
         let term = self.fold_unit_eq_reps(term, manager);
         // Alias before rewrite: nullary define-fun `(= name body)` must link the
         // pre-inline `body` TermId (which later asserts re-use via parser
