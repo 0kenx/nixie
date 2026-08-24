@@ -556,6 +556,479 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
+    // --- SMT-LIB catalog completion (2026-08-24) ---
+    // The 43 benchmark-catalog logics the table above was missing, decoded
+    // with the cvc5 grammar (`src/theory/logic_info.cpp`): a leading `QF_`
+    // drops quantifiers; `A`=arrays, `UF`, `BV`, `FP`, `DT`, `S`; one
+    // arithmetic suffix sets linear/nonlinear, integer/real/diff.  Mixed
+    // Int+Real shapes (`LIRA`/`NIRA`) follow the table's shipped convention
+    // (`AUFLIRA`, `AUFNIRA`, `QF_UFDTLIRA`): `integer: false` — provenance
+    // is deliberately unenforced in `validate`, the flag only routes the
+    // linear fallback.  The completeness test pins the full 89-name catalog.
+    (
+        "ABV",
+        LogicSpec {
+            arrays: true,
+            bv: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "ABVFP",
+        LogicSpec {
+            arrays: true,
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "ABVFPLRA",
+        LogicSpec {
+            arith: true,
+            arrays: true,
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "ALIA",
+        LogicSpec {
+            arith: true,
+            integer: true,
+            arrays: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "ANIA",
+        LogicSpec {
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            arrays: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBV",
+        LogicSpec {
+            uf: true,
+            arrays: true,
+            bv: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBVDTLIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            arrays: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBVDTNIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            arrays: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBVDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            arrays: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBVFP",
+        LogicSpec {
+            uf: true,
+            arrays: true,
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFBVFPDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            arrays: true,
+            bv: true,
+            fp: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFDTLIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            arrays: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFDTLIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            arrays: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            arrays: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "AUFFPDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            arrays: true,
+            fp: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "BVFP",
+        LogicSpec {
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "BVFPLRA",
+        LogicSpec {
+            arith: true,
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "FPLRA",
+        LogicSpec {
+            arith: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_ABVFPLRA",
+        LogicSpec {
+            arith: true,
+            arrays: true,
+            bv: true,
+            fp: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_BVFPLRA",
+        LogicSpec {
+            arith: true,
+            bv: true,
+            fp: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_LIRA",
+        LogicSpec {
+            arith: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_SNIA",
+        LogicSpec {
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            strings: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_UFBVDT",
+        LogicSpec {
+            uf: true,
+            bv: true,
+            datatypes: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_UFDTNIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            datatypes: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_UFFP",
+        LogicSpec {
+            uf: true,
+            fp: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "QF_UFFPDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            fp: true,
+            datatypes: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBV",
+        LogicSpec {
+            uf: true,
+            bv: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVDT",
+        LogicSpec {
+            uf: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVDTLIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVDTNIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            bv: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVFP",
+        LogicSpec {
+            uf: true,
+            bv: true,
+            fp: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVFPDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            bv: true,
+            fp: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFBVLIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            bv: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFDT",
+        LogicSpec {
+            uf: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFDTLIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFDTLIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFDTNIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFFPDTNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            fp: true,
+            datatypes: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFIDL",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            integer: true,
+            diff: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFNIA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            integer: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    (
+        "UFNIRA",
+        LogicSpec {
+            uf: true,
+            arith: true,
+            nonlinear: true,
+            quantifiers: true,
+            ..LogicSpec::NONE
+        },
+    ),
     (
         "ALL",
         LogicSpec {
@@ -985,6 +1458,49 @@ pub fn validate(spec: &LogicSpec, caps: &Capabilities) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Grammar decode of the SMT-LIB catalog completion: quantifier presence,
+    /// theory composition, and the mixed-Int+Real convention (`integer:
+    /// false` — provenance unenforced, the flag routes the linear fallback)
+    /// must match the cvc5 decoder semantics (`src/theory/logic_info.cpp`).
+    #[test]
+    fn smt_lib_catalog_decodes_grammar_semantics() {
+        let spec = |n: &str| lookup(n).ok().flatten().unwrap_or_else(|| panic!("{n}"));
+        // UFNIA: UF + nonlinear integer arith + quantifiers (the probe case).
+        let ufnia = spec("UFNIA");
+        assert!(ufnia.uf && ufnia.arith && ufnia.nonlinear && ufnia.integer && ufnia.quantifiers);
+        // UFIDL: difference-logic shape, quantified.
+        let ufidl = spec("UFIDL");
+        assert!(ufidl.uf && ufidl.arith && ufidl.diff && ufidl.quantifiers);
+        // Mixed shapes follow the shipped convention (AUFLIRA et al.).
+        let ufnira = spec("UFNIRA");
+        assert!(
+            ufnira.uf && ufnira.arith && ufnira.nonlinear && !ufnira.integer && ufnira.quantifiers
+        );
+        let qf_lira = spec("QF_LIRA");
+        assert!(qf_lira.arith && !qf_lira.integer && !qf_lira.quantifiers);
+        // Strings + nonlinear integer arithmetic, quantifier-free.
+        let qf_snia = spec("QF_SNIA");
+        assert!(
+            qf_snia.strings
+                && qf_snia.arith
+                && qf_snia.nonlinear
+                && qf_snia.integer
+                && !qf_snia.quantifiers
+        );
+        // Composition stack: UF + BV + DT + NIRA + quantifiers.
+        let ufbvdtnira = spec("UFBVDTNIRA");
+        assert!(
+            ufbvdtnira.uf
+                && ufbvdtnira.bv
+                && ufbvdtnira.datatypes
+                && ufbvdtnira.nonlinear
+                && ufbvdtnira.quantifiers
+        );
+        // FP-with-arith and quantified arrays/BV shapes.
+        assert!(spec("FPLRA").fp && spec("FPLRA").arith && spec("FPLRA").quantifiers);
+        assert!(spec("ABV").arrays && spec("ABV").bv && spec("ABV").quantifiers);
+    }
 
     #[test]
     fn registry_decodes_not_substring_matches() {

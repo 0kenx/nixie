@@ -167,3 +167,29 @@ fn broad_headers_agree_on_verdict() {
     assert_eq!(via_all, "unsat");
     assert_eq!(via_none, "unsat");
 }
+
+/// The SMT-LIB benchmark catalog (89 logics, smt-lib.org bench listing) must
+/// be ACCEPTED at the command surface — every one, no exceptions.  A missing
+/// registry entry rejects valid input at `set-logic` (measured live: `UFNIA`
+/// before the completion).  Grammar decode semantics are pinned by the
+/// in-module unit tests (`smt_lib_catalog_decodes_grammar_semantics`).
+#[test]
+fn smt_lib_catalog_is_accepted_at_set_logic() {
+    let catalog = "ABV ABVFP ABVFPLRA ALIA ANIA AUFBV AUFBVDTLIA AUFBVDTNIA \
+AUFBVDTNIRA AUFBVFP AUFBVFPDTNIRA AUFDTLIA AUFDTLIRA AUFDTNIRA AUFFPDTNIRA \
+AUFLIA AUFLIRA AUFNIA AUFNIRA BV BVFP BVFPLRA FP FPLRA LIA LRA NIA NRA \
+QF_ABV QF_ABVFP QF_ABVFPLRA QF_ALIA QF_ANIA QF_AUFBV QF_AUFBVFP QF_AUFLIA \
+QF_AUFNIA QF_AX QF_BV QF_BVFP QF_BVFPLRA QF_DT QF_FP QF_FPLRA QF_IDL QF_LIA \
+QF_LIRA QF_LRA QF_NIA QF_NIRA QF_NRA QF_RDL QF_S QF_SLIA QF_SNIA QF_UF QF_UFBV \
+QF_UFBVDT QF_UFDT QF_UFDTLIA QF_UFDTLIRA QF_UFDTNIA QF_UFFP QF_UFFPDTNIRA \
+QF_UFIDL QF_UFLIA QF_UFLRA QF_UFNIA QF_UFNRA UF UFBV UFBVDT UFBVDTLIA UFBVDTNIA \
+UFBVDTNIRA UFBVFP UFBVFPDTNIRA UFBVLIA UFDT UFDTLIA UFDTLIRA UFDTNIA UFDTNIRA \
+UFFPDTNIRA UFIDL UFLIA UFLRA UFNIA UFNIRA";
+    for name in catalog.split_whitespace() {
+        let err = run_err(&format!("(set-logic {name})\n(check-sat)"));
+        assert!(
+            !err.contains("unknown logic"),
+            "SMT-LIB catalog logic {name} rejected at the command surface: {err}"
+        );
+    }
+}
