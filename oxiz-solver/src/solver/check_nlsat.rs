@@ -120,15 +120,22 @@ impl Solver {
         // Unset logic behaves like SMT-LIB `ALL` (no theory restriction).
         let logic = self.logic.as_deref().unwrap_or("ALL");
 
-        // Explicit nonlinear logics win over shape detection.
-        // Note: `NIRA` does NOT contain `NIA` as a substring (it is N-I-R-A),
-        // so match it explicitly – NIRA routes to the NIA backend (per-sort
-        // integrality in the translator keeps Real vars real).
-        if logic.contains("NIA") || logic.contains("NIRA") {
-            return Some(NlBackend::Nia);
-        }
-        if logic.contains("NRA") {
-            return Some(NlBackend::Nra);
+        // Explicit nonlinear logics win over shape detection.  Routing is
+        // registry-driven (never substrings): a KNOWN header with the
+        // `arith ∧ nonlinear` spec fields routes to NLSAT, integrality
+        // picking the mode (per-sort integrality in the translator keeps
+        // Real vars real under NIRA).  `ALL`/unknown names have no spec
+        // and fall through to open-logic shape detection below —
+        // trajectory parity with the historical behavior.
+        if let Ok(Some(spec)) = crate::solver::logic_contract::lookup(logic)
+            && spec.arith
+            && spec.nonlinear
+        {
+            return Some(if spec.integer {
+                NlBackend::Nia
+            } else {
+                NlBackend::Nra
+            });
         }
 
         // Open logics only: do not override QF_LIA / QF_UF / … declarations.
@@ -181,7 +188,10 @@ impl Solver {
         // Run for explicit NL logics, and for open logics that actually contain
         // nonlinear products (same auto-detect policy as `dispatch_nl_solver`).
         let logic = self.logic.as_deref().unwrap_or("ALL");
-        let explicit_nl = logic.contains("NIA") || logic.contains("NRA") || logic.contains("NIRA");
+        let explicit_nl = crate::solver::logic_contract::lookup(logic)
+            .ok()
+            .flatten()
+            .is_some_and(|spec| spec.arith && spec.nonlinear);
         let open_nl = is_open_logic(logic)
             && self
                 .assertions

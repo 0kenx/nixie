@@ -124,49 +124,66 @@ impl Solver {
     }
 
     /// Set the logic
+    ///
+    /// Engine routing derives from the **registry spec** (`logic_contract`),
+    /// never from name substrings.  Known-header semantics per the SMT-LIB
+    /// catalog entry; `ALL`/unknown names keep the constructor defaults and
+    /// route structurally at check time (`check_nlsat`'s open-logic shape
+    /// detection) — matching the historical `ALL` behavior exactly, so
+    /// trajectory parity holds for headerless inputs.
+    ///
+    /// Substring bugs this replaces: `QF_NIRA` contains neither "LIA" nor
+    /// "LRA", so its linear-fallback arithmetic solver stayed the default
+    /// LRA even though NIRA includes integer terms; the registry's
+    /// `arith ∧ integer` field routes it (and AUFNIRA) to LIA.
     pub fn set_logic(&mut self, logic: &str) {
         self.logic = Some(logic.to_string());
         self.settings_changed();
 
-        // Switch ArithSolver based on logic
-        // QF_NIA and QF_NRA use NLSAT solver for nonlinear arithmetic
-        if logic.contains("NIA") {
-            // Nonlinear integer arithmetic - use NLSAT with integer mode
+        // `Err` (unknown name) reaches here only via direct
+        // `Solver::set_logic` calls — the Context layer rejects unknown
+        // names at the script surface.  Route as `ALL` (defaults + shape
+        // detection) rather than partially reconfiguring.
+        let spec = crate::solver::logic_contract::lookup(logic).ok().flatten();
+        let Some(spec) = spec else {
+            return;
+        };
+        if spec.arith && spec.nonlinear {
+            // Nonlinear: NLSAT primary; the linear fallback keeps every
+            // linear atom answerable.  Per-sort integrality in the
+            // translator handles mixed NIRA.
             #[cfg(feature = "std")]
             {
-                self.nlsat = Some(oxiz_theories::nlsat::NlsatTheory::new(true));
+                self.nlsat = Some(oxiz_theories::nlsat::NlsatTheory::new(spec.integer));
             }
-            self.arith = ArithSolver::lia(); // Keep LIA as fallback for linear constraints
+            self.arith = if spec.integer {
+                ArithSolver::lia()
+            } else {
+                ArithSolver::lra()
+            };
             #[cfg(feature = "tracing")]
-            tracing::info!("Using NLSAT solver for QF_NIA (nonlinear integer arithmetic)");
-        } else if logic.contains("NRA") {
-            // Nonlinear real arithmetic - use NLSAT with real mode
-            #[cfg(feature = "std")]
-            {
-                self.nlsat = Some(oxiz_theories::nlsat::NlsatTheory::new(false));
-            }
-            self.arith = ArithSolver::lra(); // Keep LRA as fallback for linear constraints
-            #[cfg(feature = "tracing")]
-            tracing::info!("Using NLSAT solver for QF_NRA (nonlinear real arithmetic)");
-        } else if logic.contains("LIA") || logic.contains("IDL") {
-            // Integer arithmetic logic (QF_LIA, LIA, QF_AUFLIA, QF_IDL, etc.)
-            self.arith = ArithSolver::lia();
-        } else if logic.contains("LRA") || logic.contains("RDL") {
-            // Real arithmetic logic (QF_LRA, LRA, QF_RDL, etc.)
-            self.arith = ArithSolver::lra();
-        } else if logic.contains("BV") {
-            // Bitvector logic - use LIA since BV comparisons are handled
-            // as bounded integer arithmetic
+            tracing::info!(
+                "NLSAT solver engaged for {logic} (nonlinear, integer={})",
+                spec.integer
+            );
+        } else if spec.arith {
+            self.arith = if spec.integer {
+                ArithSolver::lia()
+            } else {
+                ArithSolver::lra()
+            };
+        } else if spec.bv {
+            // BV comparisons are handled as bounded integer arithmetic.
             self.arith = ArithSolver::lia();
         }
-        // For other logics (QF_UF, etc.) keep the default LRA
+        // QF_UF and other theory-only logics: keep the default.
 
-        // NOTE: the VSIDS + arith-bound-prop configuration that previously gated
-        // on `matches!(logic, "QF_UFIDL")` is now applied from the *features*
-        // of the asserted formula in [`Self::apply_feature_routing`]
+        // NOTE: the VSIDS + arith-bound-prop configuration that previously
+        // gated on `matches!(logic, "QF_UFIDL")` is applied from the
+        // *features* of the asserted formula in [`Self::apply_feature_routing`]
         // (`is_diff_logic() && has_uf()`), the `CFG_AUTO` analogue of Z3's
-        // `setup_QF_UFIDL(static_features&)`.  It cannot run here because the
-        // assertions are not available at `set-logic` time.
+        // `setup_QF_UFIDL(static_features&)` — it cannot run here because
+        // the assertions are not available at `set-logic` time.
     }
 
     /// Feature-driven search-knob routing – the `CFG_AUTO` half of Z3's

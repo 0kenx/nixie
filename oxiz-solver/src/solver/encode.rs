@@ -675,10 +675,14 @@ impl Solver {
         // recorded in `quantifier_uf_funcs`), so an *unrelated* quantifier over
         // `g` does not suppress `f`'s purification (pr30). Only the NIA family
         // is gated globally here.
-        let skip_uf_purify = matches!(
-            self.logic.as_deref(),
-            Some(l) if l.contains("NIA") || l.contains("NRA") || l.contains("NIRA")
-        );
+        // Registry-driven (never substrings): the NIA family gates UF
+        // purification globally; `ALL`/missing have no spec and keep the
+        // purify path (shape detection decides at check time).
+        let skip_uf_purify = self
+            .logic
+            .as_deref()
+            .and_then(|l| crate::solver::logic_contract::lookup(l).ok().flatten())
+            .is_some_and(|spec| spec.arith && spec.nonlinear);
         let term = if skip_uf_purify {
             term
         } else {
@@ -692,7 +696,10 @@ impl Solver {
         // vars the string theory cannot consume.
         let purify = match self.logic.as_deref() {
             None | Some("ALL") => true,
-            Some(l) => l.contains("NIA") || l.contains("NRA") || l.contains("NIRA"),
+            Some(l) => crate::solver::logic_contract::lookup(l)
+                .ok()
+                .flatten()
+                .is_some_and(|spec| spec.arith && spec.nonlinear),
         };
         let purified = if purify {
             super::purify_arith::purify_assertion(term, manager, &mut self.arith_purify)
