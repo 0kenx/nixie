@@ -167,7 +167,7 @@ fn universal_instances(
     // Prefer the exhaustive bounded-box domain (needs no model-extension
     // argument); otherwise fall back to the essentially-/almost-uninterpreted
     // relevant-term domain.
-    let domains = match int_box_domains(quantifier, model, manager, cap) {
+    let domains = match bounded_domains(quantifier, model, manager, cap) {
         Some(d) => d,
         None => eu_domains(quantifier, relevant, manager, cap)?,
     };
@@ -366,32 +366,75 @@ fn push_guard_ground(
 /// (the non-variable side is evaluated under the model, so `i < n` with a
 /// declared `n = 5` yields `i ∈ [0, 4]`).  The product of interval sizes must
 /// not exceed `cap`.
-fn int_box_domains(
+fn bounded_domains(
     quantifier: &QuantifiedFormula,
     model: &CompletedModel,
     manager: &mut TermManager,
     cap: usize,
 ) -> Option<Vec<Vec<TermId>>> {
-    let bounds = extract_int_bounds(quantifier.body, &quantifier.bound_vars, model, manager)?;
+    // Exhaustive finite domains — sound with NO model-extension argument:
+    //
+    // * a BitVec-sorted bound variable ranges over exactly `2^width` values,
+    //   so enumerating them instantiates the universal over its ENTIRE
+    //   domain.  This needs neither the essentially-uninterpreted body
+    //   shape nor the relevant-term justification of the EU path (measured:
+    //   the completed model of an array-over-BV problem carried no select
+    //   keys, the relevant set was empty, and satisfiable goals answered
+    //   `unknown` where z3 says `sat`).
+    // * an Int-sorted bound variable ranges over the box its body's guards
+    //   impose (`x ≥ lo ∧ x ≤ hi` extracted from the guard structure).
+    //
+    // Any other sort (or an unbounded Int / too-large product) declines to
+    // the EU path.  Width is capped before the shift so a pathological sort
+    // cannot overflow the count computation; the product-vs-cap check does
+    // the real limiting.
+    const MAX_BV_WIDTH: u32 = 20;
+    let has_int = quantifier
+        .bound_vars
+        .iter()
+        .any(|&(_, s)| s == manager.sorts.int_sort);
+    let bounds = if has_int {
+        Some(extract_int_bounds(
+            quantifier.body,
+            &quantifier.bound_vars,
+            model,
+            manager,
+        )?)
+    } else {
+        None
+    };
 
     let mut domains = Vec::with_capacity(quantifier.bound_vars.len());
     let mut product: usize = 1;
     for &(name, sort) in quantifier.bound_vars.iter() {
-        if sort != manager.sorts.int_sort {
+        let bv_width = manager
+            .sorts
+            .get(sort)
+            .and_then(|s| s.bitvec_width())
+            .filter(|w| *w <= MAX_BV_WIDTH);
+        let dom: Vec<TermId> = if let Some(w) = bv_width {
+            let count = 1usize.checked_shl(w)?;
+            product = product.checked_mul(count)?;
+            if product > cap {
+                return None;
+            }
+            (0..count as u64).map(|v| manager.mk_bitvec(v, w)).collect()
+        } else if sort == manager.sorts.int_sort {
+            let (lo, hi) = bounds.as_ref()?.get(&name)?;
+            if hi < lo {
+                return None;
+            }
+            let count = ((hi - lo) + 1u32).to_usize()?;
+            product = product.checked_mul(count)?;
+            if product > cap {
+                return None;
+            }
+            num_iter_inclusive(lo, hi)
+                .map(|v| manager.mk_int(v))
+                .collect()
+        } else {
             return None;
-        }
-        let (lo, hi) = bounds.get(&name)?;
-        if hi < lo {
-            return None;
-        }
-        let count = ((hi - lo) + 1u32).to_usize()?;
-        product = product.checked_mul(count)?;
-        if product > cap {
-            return None;
-        }
-        let dom: Vec<TermId> = num_iter_inclusive(lo, hi)
-            .map(|v| manager.mk_int(v))
-            .collect();
+        };
         domains.push(dom);
     }
     Some(domains)

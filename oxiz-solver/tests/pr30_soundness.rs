@@ -623,3 +623,43 @@ fn test_abv_quantified_select_bv_stays_sat_when_consistent() {
         "any a with select(a,#xb) != #x1; z3: sat"
     );
 }
+
+/// Sat-certification residual of the MBQI pool study, closed: a satisfiable
+/// quantified-array goal over a FINITE BV index domain now certifies `sat`
+/// (was `unknown`; z3: `sat`).  The completed model carried no select keys,
+/// so the EU relevant-term set was empty — but a BV-sorted bound variable
+/// ranges over exactly `2^width` values, so `bounded_domains` enumerates the
+/// whole domain exhaustively: unconditionally sound, no model-extension
+/// argument needed (the same exhaustive-box argument as the Int path).
+#[test]
+fn test_bv_index_quantified_array_certifies_sat() {
+    let output = run(r#"
+        (set-logic ABV)
+        (declare-const a (Array (_ BitVec 4) (_ BitVec 4)))
+        (assert (forall ((i (_ BitVec 4))) (= (select a i) #x0)))
+        (assert (not (= (select a #xb) #x1)))
+        (check-sat)
+    "#);
+    assert_eq!(output, vec!["sat"], "a = const 0; z3: sat");
+}
+
+/// Exhaustive BV enumeration is complete in BOTH directions: the whole
+/// domain is instantiated, so a falsified instance refutes (`unsat`) and a
+/// satisfied domain certifies (`sat`) — with no body-shape restriction
+/// (these bodies are pure BV comparisons, not essentially-uninterpreted).
+#[test]
+fn test_bv_exhaustive_domain_certifies_both_directions() {
+    let unsat_case = run(r#"
+        (set-logic BV)
+        (assert (forall ((i (_ BitVec 2))) (bvult i (_ bv2 2))))
+        (check-sat)
+    "#);
+    assert_eq!(unsat_case, vec!["unsat"], "i = 2 or 3 falsifies; z3: unsat");
+
+    let sat_case = run(r#"
+        (set-logic BV)
+        (assert (forall ((i (_ BitVec 2))) (bvule i (_ bv3 2))))
+        (check-sat)
+    "#);
+    assert_eq!(sat_case, vec!["sat"], "every BV2 value is <= 3; z3: sat");
+}

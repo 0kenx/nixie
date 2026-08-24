@@ -62,8 +62,10 @@ BV4-indexed quantifier with auto-trigger `(select a i)`:
 
 ## Residuals
 
-- Satisfiable quantified-array goals still cannot be *certified* `sat`
-  (`∀i. select a i = #x0` + consistent ground part → `unknown` on both
-  sides of this change; pre-existing).  The candidate cap (10) is also
-  below small BV domains (16 for width 4) — exhaustive certification
-  would need the cap to interact with finiteness.
+- ~~Satisfiable quantified-array goals still cannot be *certified* `sat`~~
+  **Closed by `2026-08-bv-exhaustive-certification.md`**: a BV-sorted
+  bound variable's domain is exactly `2^width` values, so
+  `bounded_domains` enumerates it exhaustively — sound with no
+  relevant-term argument — and the array-over-BV sat control now answers
+  `sat`.  (The counterexample-pool cap note stands, but applies to the
+  MBQI search path, not certification.)
