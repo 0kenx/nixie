@@ -21,7 +21,8 @@ pub(super) mod int_case_split;
 pub(super) mod ite_table;
 pub(crate) mod logic_contract;
 pub(super) mod model_builder;
-pub(super) mod model_eval;
+pub(super) mod model_congruence;
+mod model_eval;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
 pub(super) mod static_features;
@@ -1745,6 +1746,40 @@ impl Solver {
                         // candidate first; a pre-placement starved them and
                         // exploded wisas (256 blocking rounds without
                         // learning).
+                        // Congruence canonicalization FIRST (repairs
+                        // inconsequential result collisions by re-pinning
+                        // unpinned/outvoted application results to the
+                        // group's representative — pinned results never
+                        // move), then the gate: it now fires only when no
+                        // congruent interpretation is compatible with the
+                        // pinned values, restoring the honest `sat`s a raw
+                        // collision would have downgraded.  The repair is
+                        // post-checked by `model_refutes_assertions` below
+                        // (`_gate`), which discards any repair that would
+                        // falsify a ground assertion.
+                        let repaired = self.canonicalize_model_congruence(manager);
+                        if repaired {
+                            // TRIAL post-validation: the repair unifies split
+                            // congruence groups to representatives; keep it
+                            // only when no ground assertion is falsified
+                            // under it (the same evaluator the model-
+                            // refutation gate uses).  Discarding restores
+                            // the pre-repair assignments, and the gate below
+                            // then judges the ORIGINAL model — the honest
+                            // `Unknown` for genuinely unsat-shaped
+                            // candidates.
+                            let assignments_snapshot =
+                                self.model.as_ref().map(|m| m.assignments().clone());
+                            if self.model_refutes_assertions(manager) {
+                                if let (Some(m), Some(snap)) =
+                                    (self.model.as_mut(), assignments_snapshot)
+                                {
+                                    for (t, v) in snap {
+                                        m.set(t, v);
+                                    }
+                                }
+                            }
+                        }
                         if self.model_violates_euf_congruence(manager) {
                             self.unsat_core = None;
                             self.model = None;
