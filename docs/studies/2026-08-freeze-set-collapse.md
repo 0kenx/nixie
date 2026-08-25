@@ -47,9 +47,27 @@ passes may collapse.
 | geomean, >2 s files (5) | 0.914 | 1 |
 
 Single-seed screening: one strong win (`PO4-6-PO4` 18.8 → 12.3 s),
-rest ~tied; the 1.14 all-file geomean is sub-second noise.  **Default
-off** — a PMU-instructions, ≥10-seeds-per-cell A/B is the bar for any
-default flip (per `docs/BENCHMARKING.md`), not run here.
+rest ~tied; the 1.14 all-file geomean is sub-second noise.
+
+## Amendment (same day): ENABLED BY DEFAULT under the relaxed enablement rule
+
+Direction received: the multi-seed PMU bar is for *improvement claims*,
+not for enabling a sound mechanism — "if it logically makes sense and
+doesn't have obvious regress, it shall be enabled".  Codified as the
+**enablement rule** in `docs/BENCHMARKING.md` §3.  Applied here:
+
+| gate | result (default-on binary) |
+|---|---|
+| differential vs z3, 270 files | **solved 162 (off-arm: 159), 0 disagreements** |
+| paired per-file diff | **+3 gained, 0 lost** (`sorted_list_insert_noalloc9`, `xs-20-12-3-1-5-2`, `hash_sat_08_03`) |
+| par2 | 2267 vs 2313 (off) |
+| canaries | cxs-bp `unsat`, 25s `unsat`, wisas `unsat`, sorted_list `sat` |
+| Z3 parity | 167/0/1 identical |
+| full bar | 10 102 tests, clippy/fmt/doc |
+
+Default-on strictly dominates on this corpus.  `OXIZ_FREEZE_COLLAPSE=0`
+remains the A/B off-switch.  The strict statistical program still
+applies to any *quantified* claim about the win.
 
 ## Soundness argument
 

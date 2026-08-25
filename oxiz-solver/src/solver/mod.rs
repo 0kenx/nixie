@@ -481,15 +481,19 @@ impl Solver {
         let (branch_priority, priority_heuristic) = branch_priority::new_priority_branching();
 
         // Build SAT solver configuration from our config
-        // Freeze-set collapse experiment (cdclt-gates-audit enabling slice):
-        // with OXIZ_FREEZE_COLLAPSE=1 the embedded core enables BVE + ELS,
-        // and every check entry freezes the theory-mapped variables
-        // (`var_to_constraint` keys — exactly what the theory manager
-        // replays via `on_assignment`), so those passes only ever transform
-        // Boolean-structure variables the theories never observe.  Default
-        // off until the QF_LIA/QF_UF value case is measured (see the
-        // freeze-set study).
-        let freeze_collapse = std::env::var("OXIZ_FREEZE_COLLAPSE").is_ok();
+        // Freeze-set collapse (cdclt-gates-audit enabling slice, DEFAULT ON):
+        // the embedded core enables BVE + ELS, and every check entry freezes
+        // the theory-mapped variables (`var_to_constraint` keys — exactly
+        // what the theory manager replays via `on_assignment`), so those
+        // passes only ever transform Boolean-structure variables the
+        // theories never observe.  Enabled under the relaxed landing rule
+        // (sound by construction — frozen vars are never touched, model
+        // reconstruction rides the existing witness machinery, and the
+        // whole-assertion validation gates every `Sat` — plus screening
+        // with no regress: solved identical, 0 verdict changes, 0 wrong vs
+        // z3; see the freeze-set study).  `OXIZ_FREEZE_COLLAPSE=0` disables
+        // for A/B.
+        let freeze_collapse = crate::solver::freeze_collapse_enabled();
         let sat_config = SatConfig {
             restart_strategy: config.restart_strategy,
             enable_bve: freeze_collapse,
@@ -1478,7 +1482,7 @@ impl Solver {
             // the inprocessing schedule then skip these, transforming only
             // Boolean-structure vars.  Idempotent set insertion covers atoms
             // asserted since the previous check.
-            if std::env::var("OXIZ_FREEZE_COLLAPSE").is_ok() {
+            if crate::solver::freeze_collapse_enabled() {
                 let vars: Vec<_> = self.var_to_constraint.keys().copied().collect();
                 self.sat.freeze_theory_vars(vars);
             }
@@ -2774,6 +2778,14 @@ impl Solver {
     pub fn stats(&self) -> &oxiz_sat::SolverStats {
         self.sat.stats()
     }
+}
+
+/// Whether freeze-set collapse is enabled: **default on** under the relaxed
+/// landing rule (sound by construction + screening with no regress — see
+/// `docs/studies/2026-08-freeze-set-collapse.md`); `OXIZ_FREEZE_COLLAPSE=0`
+/// disables it for A/B.
+pub(crate) fn freeze_collapse_enabled() -> bool {
+    std::env::var("OXIZ_FREEZE_COLLAPSE").as_deref() != Ok("0")
 }
 
 mod branch_priority;

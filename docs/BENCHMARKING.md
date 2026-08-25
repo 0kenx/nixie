@@ -132,6 +132,17 @@ Corollaries:
   cover, and the component win compounds only where the component actually gains share
   later.  Any landing that touches shared solver code ships with a fresh SMT differential
   at the landing commit.
+- **Enablement rule (2026-08-25, direction)**: the statistical bar above governs *claims
+  of improvement* (win/loss language, "N% faster").  It is not the bar for deciding
+  whether a **sound-by-construction mechanism runs by default**.  A change may be enabled
+  by default when (a) its soundness is an argument, not a measurement — every unsafe
+  interaction is excluded structurally, and (b) screening shows **no obvious regress**:
+  a full differential at the new default with **0 verdict disagreements** and a solved
+  count not worse than the previous default.  Default flips under this rule still ship
+  with the fresh differential and parity from (b); if the later multi-seed A/B shows the
+  default was the wrong call, the revert is a one-line flip, not a measurement program.
+  (First application: freeze-set collapse, `studies/2026-08-freeze-set-collapse.md` —
+  +3 solved / 0 lost / 0 disagreements at default-on.)
 - The band applies to *measured* geomeans from paired, deterministic, complete-work metrics.
   Unpaired or single-seed numbers may not borrow it to claim neutrality: establish the
   measurement's own noise first (§4, §5).
