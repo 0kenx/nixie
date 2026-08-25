@@ -67,8 +67,30 @@ Full suite 10 082, clippy/fmt/doc, Z3 parity 168/168; differential
 
 ## Disposition
 
-Reverted (learn.rs restored to the per-candidate vivifier).  The
-mechanism remains real and measured; any RELANDING must first either
-(a) demonstrate SMT-differential cleanliness at the landing commit (not
-just the SAT corpus), or (b) land behind a config flag that the SMT
-path provably leaves off.
+**REVERTED then RELANDED (same session, 2026-08-25).**  The revert stood
+because the false-SAT root cause was open.  It has since been closed at
+`a5f97b9` (complete spanning-chain arrangement — the round's Phase 2 has
+no caps and no early break, so its coverage no longer depends on which
+candidate the search reaches; see
+`docs/studies/2026-08-arrangement-chain-root-cause.md`).  The disposition
+required either (a) SMT-differential cleanliness at the landing commit
+or (b) a flag the SMT path leaves off.  (a) is now demonstrated:
+
+| gate | result |
+|---|---|
+| differential (270 files), run 1 | 0 wrong, solved 160, cxs-bp `unsat` |
+| differential, run 2 | 0 wrong, solved 160 (the one-run 159 was parallel-load noise — all 10 "lost" files byte-identical on targeted serial re-runs) |
+| Z3 parity | 167/0/1 — identical to pre-change |
+| canaries | cxs-bp `unsat`, 25s `unsat`, wisas `unsat`, sorted_list `sat` — all hold WITH the perturbation present |
+| SAT A/B (60 satcomp files) | 0 verdict mismatches, 0 TO asymmetry, 22/22 both-solved; multi-second files at 1.01–1.02 (neutral, consistent with the original 0.9897) |
+| full bar | 10 100 tests, clippy/fmt/doc |
+
+The re-applied diff is the original `9345d77` `learn.rs` change verbatim
+(candidate reordering + shared-prefix reuse with lockstep per-index
+depths); the surrounding code had drifted, so the superseded
+`vivify_clause` was removed and three clippy findings fixed.  The
+component win (39% fewer vivify-internal propagations, identical
+strengthening) stands unchanged.  **The landing's lasting lesson**: the
+original flip was a real bug in the arrangement round, exposed by — not
+caused by — this perturbation; a trajectory change that flips a verdict
+is a detector, and the fix belongs in the detector's target.

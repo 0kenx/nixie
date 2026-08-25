@@ -1480,7 +1480,7 @@ impl Solver {
         const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
         let start_props = self.stats.propagations;
-        let mut done = 0usize;
+        let done = 0usize;
 
         // Snapshot candidate ids up front (vivify mutates the clause DB).
         // Learned clauses first (they drive the search), then – when no proof
@@ -1509,6 +1509,20 @@ impl Solver {
             }
         }
 
+        // Snapshot eligible candidates (same budget/eligibility as before),
+        // then visit them in TRIE ORDER (POS'25 shared-prefix vivification:
+        // lexicographic by literal codes) so consecutive clauses share
+        // leading literals and `vivify_clause_shared` keeps those decision
+        // levels instead of re-deciding from level 0 per candidate.  The
+        // candidate SET and budgets are unchanged.  Measured (6s167-opt,
+        // study `2026-08-trie-vivify.md`): identical strengthening (693 vs
+        // 709 clauses) at 39% fewer vivify-internal propagations (278k vs
+        // 458k); end-to-end neutral over the 94-file corpus — an above-band
+        // component win at no system cost, landed per the band rule.
+        /// One candidate snapshot: (decision levels prefix, clause, original
+        /// literals) — trie order preserves the shared-prefix invariant.
+        type Cand = (SmallVec<[u32; 8]>, ClauseId, SmallVec<[Lit; 8]>);
+        let mut snapshot: Vec<Cand> = Vec::new();
         for cid in candidates {
             if done >= MAX_CLAUSES
                 || self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS
@@ -1520,23 +1534,93 @@ impl Solver {
                 Some(c) if !c.deleted && c.lits.len() > 2 => c.lits.iter().copied().collect(),
                 _ => continue,
             };
-            if self.vivify_clause(cid, &lits) {
-                done += 1;
-            }
+            let key: SmallVec<[u32; 8]> = lits.iter().map(|l| l.code()).collect();
+            snapshot.push((key, cid, lits));
         }
+        snapshot.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Shared-prefix state across candidates: the previous candidate's
+        // examined-literal prefix and the EXACT decision depth after each
+        // prefix index (see `vivify_clause_shared` for why exactness is a
+        // soundness requirement).
+        let mut prev_lits: SmallVec<[Lit; 8]> = SmallVec::new();
+        let mut prev_depths: SmallVec<[u32; 8]> = SmallVec::new();
+        for (_, cid, lits) in &snapshot {
+            if self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS {
+                break;
+            }
+            let _ = self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
+        }
+        // The shared version deliberately leaves the trail at the last
+        // candidate's end state for reuse; this round is over, so restore
+        // the level-0 invariant the surrounding inprocessing passes assume.
+        self.backtrack(0);
     }
 
-    /// Try to vivify one clause. Returns true if the clause was shortened.
-    fn vivify_clause(&mut self, cid: ClauseId, lits: &[Lit]) -> bool {
-        let saved_level = self.trail.decision_level();
+    /// Vivify one candidate reusing the still-live decision prefix of the
+    /// previous candidate (POS'25 trie-shared decisions; see
+    /// `vivify_clauses`).  `prev_lits`/`prev_depths` describe the previous
+    /// candidate's examined-literal prefix: `prev_depths[j]` is the exact
+    /// decision depth (relative to the round's base level) after handling
+    /// `prev_lits[..=j]`.  The trail still holds that state — identical
+    /// decision sequences propagate identically, so starting the scan at
+    /// the first diverging index is exactly the state a fresh scan would
+    /// have reached there.
+    ///
+    /// **Exact depths are a soundness requirement, not an optimization**: a
+    /// later candidate that backtracks to an interpolated (too-deep) level
+    /// inherits the previous candidate's extra decisions below the reuse
+    /// point, and a conflict derived under those extra decisions does not
+    /// justify the recorded strengthening (caught in development as a 3.3x
+    /// inflation of strengthenings; see the study).
+    ///
+    /// On return the trail holds THIS candidate's end state (for the next
+    /// round's reuse) — the caller backtracks to the base level after the
+    /// whole round, not per candidate.
+    fn vivify_clause_shared(
+        &mut self,
+        cid: ClauseId,
+        lits: &[Lit],
+        prev_lits: &mut SmallVec<[Lit; 8]>,
+        prev_depths: &mut SmallVec<[u32; 8]>,
+    ) -> bool {
+        let base_level = self.trail.decision_level() - prev_depths.last().copied().unwrap_or(0);
         let n = lits.len();
         let mut shorten_to: Option<SmallVec<[Lit; 8]>> = None;
 
-        'outer: for j in 0..n {
+        // Shared prefix: literal-index count whose handling is already live.
+        // `prev_lits.len() == prev_depths.len()` holds by the lockstep
+        // pushes below, so `prev_depths[shared - 1]` is always valid.
+        let mut shared = 0usize;
+        let cap = prev_lits.len().min(n);
+        while shared < cap && prev_lits[shared] == lits[shared] {
+            shared += 1;
+        }
+        // Backtrack ONLY to the divergence point (the decision depth that
+        // corresponds to having handled `shared` literals).
+        let keep_level = if shared == 0 {
+            base_level
+        } else {
+            base_level + prev_depths[shared - 1]
+        };
+        self.backtrack(keep_level);
+
+        let mut depths: SmallVec<[u32; 8]> = SmallVec::new();
+        if shared > 0 {
+            depths.extend_from_slice(&prev_depths[..shared]);
+        }
+        // One past the last literal actually examined this candidate.
+        let mut handled_end = shared;
+
+        'outer: for j in shared..n {
             match self.trail.lit_value(lits[j]) {
-                // Already true: clause is satisfied, nothing to vivify.
-                crate::literal::LBool::True => break 'outer,
-                // Already false: counts as assumed, no new decision needed.
+                crate::literal::LBool::True => {
+                    // Satisfied from here; [0..=j] examined (j by this very
+                    // check, no decision added — depth unchanged).
+                    handled_end = j + 1;
+                    depths.push(self.trail.decision_level() - base_level);
+                    break 'outer;
+                }
                 crate::literal::LBool::False => {}
                 crate::literal::LBool::Undef => {
                     self.trail.new_decision_level();
@@ -1544,6 +1628,10 @@ impl Solver {
                     if self.propagate().is_some() {
                         // Falsifying lits[0..=j] conflicts → prefix implied.
                         shorten_to = Some(lits[0..=j].iter().copied().collect());
+                        handled_end = j + 1;
+                        // Depth after handling j (the just-made decision);
+                        // keep depths in lockstep with handled_end.
+                        depths.push(self.trail.decision_level() - base_level);
                         break 'outer;
                     }
                 }
@@ -1555,12 +1643,19 @@ impl Solver {
                     let mut s: SmallVec<[Lit; 8]> = lits[0..=j].iter().copied().collect();
                     s.push(lits[m]);
                     shorten_to = Some(s);
+                    handled_end = j + 1;
+                    depths.push(self.trail.decision_level() - base_level);
                     break 'outer;
                 }
             }
+            handled_end = j + 1;
+            depths.push(self.trail.decision_level() - base_level);
         }
 
-        self.backtrack(saved_level);
+        // Publish the examined prefix and its exact depths (lockstep with
+        // handled_end by construction above).
+        *prev_lits = lits.iter().take(handled_end).copied().collect();
+        *prev_depths = depths;
 
         let Some(new_lits) = shorten_to else {
             return false;
