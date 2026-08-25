@@ -36,6 +36,26 @@ combinatorial 3-CNF, not a data-structure one.  Profile (symbols build):
 propagate 30 %, conflict analysis ~30 % (`shrink_and_minimize` 15 % +
 `analyze_mark` 5 % + `minimize_literal_plain` 5 %), elim+subsume ~21 %.
 
+### cadical's own numbers on the same file (correction of the first read)
+
+| metric | oxiz | cadical |
+|---|---|---|
+| conflicts | 200 k cap hit (TO at 60 s ≈ 2.6 M) | **232 k** (solves) |
+| conflicts/s | 43.6 k | 53.1 k |
+| decisions | 1.05 M at the cap | 716 k |
+| decisions/conflict | **9.5** | **3.1** |
+| chronological backtracks | (feature off) | **26 % of conflicts** |
+| phase machinery | rephase only | walked 6, weakened 7484, rephased 21 |
+
+So cadical does NOT need fewer conflicts — it survives to 232 k and
+**finds the model** there, while our search passes 2.6 M without one.
+Conflict throughput is comparable (0.82×); the deficits are (a) 3× more
+decisions per conflict and (b) phase guidance to satisfying assignments
+(cadical's walking/weakening/chronological mix).  Our chronological
+backtracking exists but is default-off (measured neutral-negative
+elsewhere); re-evaluating it *on this class* is a cheap first trial for
+the follow-up.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, now with
