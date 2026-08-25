@@ -474,7 +474,15 @@ pub(super) fn encode_bv_term_recursive(
                     }
                     bv.new_bv(*a, width);
                     bv.new_bv(*b, width);
-                    if !bv.bv_udiv(tid, *a, *b) {
+                    let a_const = matches!(
+                        mgr.get(*a).map(|t| &t.kind),
+                        Some(TermKind::BitVecConst { .. })
+                    );
+                    let b_const = matches!(
+                        mgr.get(*b).map(|t| &t.kind),
+                        Some(TermKind::BitVecConst { .. })
+                    );
+                    if !bv.bv_udiv_or_abstract(tid, *a, *b, a_const, b_const) {
                         return false;
                     }
                 }
@@ -494,7 +502,15 @@ pub(super) fn encode_bv_term_recursive(
                     }
                     bv.new_bv(*a, width);
                     bv.new_bv(*b, width);
-                    if !bv.bv_urem(tid, *a, *b) {
+                    let a_const = matches!(
+                        mgr.get(*a).map(|t| &t.kind),
+                        Some(TermKind::BitVecConst { .. })
+                    );
+                    let b_const = matches!(
+                        mgr.get(*b).map(|t| &t.kind),
+                        Some(TermKind::BitVecConst { .. })
+                    );
+                    if !bv.bv_urem_or_abstract(tid, *a, *b, a_const, b_const) {
                         return false;
                     }
                 }

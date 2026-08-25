@@ -110,12 +110,26 @@ impl crate::solver::Solver {
             Ok("0") => 0,
             _ => 32,
         };
+        // Division threshold: OFF by default — a measured negative.  Both
+        // 32 and 64 thresholds A/B'd neutral-to-negative on the only
+        // wide-division corpus available (`spear`: geomean 1.079×/1.057×
+        // vs exact, solved identical, 0 verdict changes — see the study):
+        // the quotient-multiplication circuit is expensive, but the value
+        // lemmas rarely converge there and the round tax is real.  The
+        // capability ships sound + regression-tested; enable with
+        // `OXIZ_BV_CEGAR_DIV=<width>` (64 = abstract width-64 divisions).
+        let cegar_div_width = match std::env::var("OXIZ_BV_CEGAR_DIV").ok() {
+            Some(v) => v.parse().unwrap_or(0),
+            None => 0,
+        };
         self.bv.set_mul_abstraction_width(cegar_min_width);
+        self.bv.set_div_abstraction_width(cegar_div_width);
         for &assertion in &assertions {
             self.blast_bv_circuits_at_base_scope(assertion, manager);
         }
         let abstracted = self.bv.take_mul_abstractions();
         self.bv.set_mul_abstraction_width(0);
+        self.bv.set_div_abstraction_width(0);
         if std::env::var("OXIZ_BV_CEGAR_TRACE").is_ok() && !abstracted.is_empty() {
             eprintln!("[cegar] abstracted {} wide muls", abstracted.len());
         }
@@ -168,7 +182,7 @@ impl crate::solver::Solver {
                     // (abstraction, operand values) pairs; the default
                     // value pair marks "value unreadable — terminal-refine".
                     let mut spurious: Vec<(
-                        oxiz_theories::bv::MulAbstraction,
+                        oxiz_theories::bv::BvAbstraction,
                         Option<(num_bigint::BigUint, num_bigint::BigUint)>,
                     )> = Vec::new();
                     for abs in &abstracted {
@@ -184,9 +198,7 @@ impl crate::solver::Solver {
                             spurious.push((*abs, None));
                             continue;
                         };
-                        let mask = (num_bigint::BigUint::from(1u8) << abs.width as usize) - 1u8;
-                        let product = (va.clone() * vb.clone()) & mask;
-                        if product != vm {
+                        if abs.exact_value(&va, &vb) != vm {
                             spurious.push((*abs, Some((va, vb))));
                         }
                     }
@@ -212,7 +224,17 @@ impl crate::solver::Solver {
                         // either arm of the loop is a final verdict.
                         for abs in &abstracted {
                             if !terminal.contains(&abs.result) {
-                                self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                match abs.kind {
+                                    oxiz_theories::bv::AbstractionKind::Mul => {
+                                        self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                    }
+                                    oxiz_theories::bv::AbstractionKind::Udiv => {
+                                        self.bv.bv_udiv(abs.result, abs.a, abs.b);
+                                    }
+                                    oxiz_theories::bv::AbstractionKind::Urem => {
+                                        self.bv.bv_urem(abs.result, abs.a, abs.b);
+                                    }
+                                }
                                 terminal.insert(abs.result);
                             }
                         }
@@ -224,14 +246,24 @@ impl crate::solver::Solver {
                         match (values, *n > CEGAR_VALUE_ROUNDS) {
                             // Tier 2: value lemma for this spurious assignment.
                             (Some((va, vb)), false) => {
-                                self.bv.refine_mul_value(abs, va, vb);
+                                self.bv.refine_abstraction_value(abs, va, vb);
                             }
                             // Tier 3: the exact circuit, wired into the
                             // already-abstracted result bits — the
                             // guaranteed terminal refinement (also the path
                             // for unreadable model values).
                             (_, true) | (None, false) => {
-                                self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                match abs.kind {
+                                    oxiz_theories::bv::AbstractionKind::Mul => {
+                                        self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                    }
+                                    oxiz_theories::bv::AbstractionKind::Udiv => {
+                                        self.bv.bv_udiv(abs.result, abs.a, abs.b);
+                                    }
+                                    oxiz_theories::bv::AbstractionKind::Urem => {
+                                        self.bv.bv_urem(abs.result, abs.a, abs.b);
+                                    }
+                                }
                                 terminal.insert(abs.result);
                             }
                         }

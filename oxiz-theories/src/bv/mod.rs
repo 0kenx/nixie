@@ -31,7 +31,7 @@ pub use division_opt::{
     BarrettParams, DivisionConfig, DivisionOptimizer, DivisionStats, MontgomeryParams,
 };
 pub use propagator::{Constraint, Interval, WordLevelPropagator};
-pub use solver::{BvSolver, MulAbstraction};
+pub use solver::{AbstractionKind, BvAbstraction, BvSolver};
 pub use word_level::{
     OverflowInfo, SignInfo, SimplifiedTerm, WidthInfo, WordLevelReasoner, WordLevelStats,
 };

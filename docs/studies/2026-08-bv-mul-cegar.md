@@ -60,16 +60,42 @@ width-64 predicates, `smulov*`).
 
 ## Known limitations (recorded, not hidden)
 
-1. **Re-checks drop learned clauses** (`check_body`'s probe-cleanup
-   deletes this round's learned clauses): every CEGAR round re-solves
-   from the asserted + refinement clauses.  On UNSAT-mul-central inputs
-   (smulov) this makes CEGAR ≈ exact + wasted rounds (measured both TO).
-   A CEGAR-mode check that keeps learned clauses is the highest-value
-   follow-up.
+1. **~~Re-checks drop learned clauses~~ — ERRATUM (same day, measured)**:
+   this diagnosis was wrong.  `check_body` already RETAINS both the trail
+   and the learned clauses across checks (the incremental-resume lever;
+   `forget_learned_since` runs only inside the defensive re-solve on a
+   first-verdict `Unsat`).  Re-profiling the cited evidence:
+   `smulov2bw032` abstracts 2 muls, takes 3 spurious rounds, then TOs on
+   the *exact terminal solve itself* — the instance is bounded by the
+   underlying exact solve, not by CEGAR overhead.  `predicate_2110`
+   (2 muls, ZERO refinement rounds — the first check refutes the
+   relaxation outright, soundly) measures 16.4 s vs 11.9 s in release:
+   the relaxed refutation is simply a harder CDCL trajectory there, and
+   the A/B "flip" was that 4.5 s delta crossing the 15 s cap.  No
+   retention follow-up is warranted.
 2. Escalation is per-term round-count; a global signal (many spurious at
-   once ⇒ skip value tier) would cut the round tax on UNSAT instances.
-3. `bvudiv`/`bvurem` abstraction (even more expensive circuits) is the
-   next published slice; same skeleton.
+   once ⇒ skip value tier) would cut the round tax on UNSAT instances —
+   but the measured round counts are small (≤ 3), so this is low-value.
+3. ~~`bvudiv`/`bvurem` abstraction is the next published slice~~ —
+   **DONE, same session; shipped default-OFF (a measured negative)**:
+   `abstract_udiv_urem` generalizes the skeleton with the SMT-LIB-exact
+   zero-divisor lemmas (`bvudiv a 0 = 1…1`, `bvurem a 0 = a` — wired as
+   tier-1, so the abstraction is already complete on that case), `b = 1`,
+   `a = 0 ∧ b ≠ 0`, and `a = b ∧ b ≠ 0` identities, plus kind-dispatched
+   value/terminal refinement (`BvAbstraction::exact_value`, separate
+   `set_div_abstraction_width`).  Sound: 3 division regressions
+   (zero-divisor exactness, satisfiable model exactness, the bounded
+   Euclidean-identity refutation — the last one's shape is load-bearing:
+   without bounding `q`, `q·b + r` wraps mod 2^64 and the identity has
+   spurious solutions; verified against z3), 52-file wide-division A/B
+   (`spear` + Goel + challenge, 20 s cap) with **0 verdict changes** at
+   both the 32 and 64 thresholds.  Performance: geomean 1.079× (width 32)
+   and 1.057× (width 64) vs exact — solved identical both times.  The
+   value lemmas rarely converge on this corpus and the round tax is real,
+   so the division half ships behind `OXIZ_BV_CEGAR_DIV=<width>`
+   (default 0 = exact); the mul half keeps its measured win.  A
+   division-dominated corpus that flips this verdict would justify
+   revisiting the default.
 
 ## Soundness evidence
 

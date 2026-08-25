@@ -81,25 +81,66 @@ struct ContextMark {
     outer_bool_len: usize,
 }
 
-/// One abstracted `bvmul` (CEGAR; see `BvSolver::abstract_mul`).
+/// Which expensive operator one abstraction stands for (CEGAR; see
+/// `BvSolver::abstract_mul` / `abstract_udiv` / `abstract_urem`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbstractionKind {
+    /// `result = a * b` (mod 2^width).
+    Mul,
+    /// `result = a bvudiv b` (SMT-LIB: divisor 0 ⇒ all ones).
+    Udiv,
+    /// `result = a bvurem b` (SMT-LIB: divisor 0 ⇒ `a`).
+    Urem,
+}
+
+/// One abstracted wide operator (CEGAR).
 ///
 /// `result` carries fresh, unconstrained wires (plus the tier-1 identity
 /// lemmas).  Every clause emitted for the abstraction — the lemmas, any
 /// value refinement, and the terminal exact circuit — is a logical
-/// *consequence* of the exact definition `result = a * b`, so the abstract
+/// *consequence* of the exact operator semantics, so the abstract
 /// SAT instance is a relaxation of the exact one at every stage:
 /// `Unsat` is sound at any round, and `Sat` is provisional until the model
-/// values of `a`, `b` and `result` agree with the exact product.
+/// values of `a`, `b` and `result` agree with the exact semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MulAbstraction {
-    /// The `bvmul` term whose circuit was replaced.
+pub struct BvAbstraction {
+    /// The operator term whose circuit was replaced.
+    pub kind: AbstractionKind,
+    /// The term carrying the abstracted result wires.
     pub result: TermId,
-    /// Left operand.
+    /// Left operand (dividend / first factor).
     pub a: TermId,
-    /// Right operand.
+    /// Right operand (divisor / second factor).
     pub b: TermId,
     /// Operand/result width.
     pub width: u32,
+}
+
+impl BvAbstraction {
+    /// The exact SMT-LIB value of this operator under concrete operand
+    /// values `va`, `vb`: the tier-2 consistency target and the
+    /// value-lemma right-hand side.
+    #[must_use]
+    pub fn exact_value(&self, va: &BigUint, vb: &BigUint) -> BigUint {
+        let mask = (BigUint::from(1u8) << self.width as usize) - 1u8;
+        match self.kind {
+            AbstractionKind::Mul => (va * vb) & mask,
+            AbstractionKind::Udiv => {
+                if *vb == BigUint::default() {
+                    mask
+                } else {
+                    va / vb
+                }
+            }
+            AbstractionKind::Urem => {
+                if *vb == BigUint::default() {
+                    va & mask
+                } else {
+                    va % vb
+                }
+            }
+        }
+    }
 }
 
 /// BitVector Theory Solver using bit-blasting
@@ -115,12 +156,19 @@ pub struct BvSolver {
     /// was set (drained by the pure-BV dispatch).  Each entry records one
     /// `bvmul` whose exact circuit was replaced by fresh result wires plus
     /// sound identity lemmas; see [`Self::abstract_mul`].
-    mul_abstractions: Vec<MulAbstraction>,
+    mul_abstractions: Vec<BvAbstraction>,
     /// Bit-width at (and above) which `bvmul` terms are abstracted instead
     /// of bit-blasted (CEGAR; 0 = always exact — the default, keeping the
     /// general CDCL(T) path byte-identical).  Set only by the eager pure-BV
     /// dispatch around its blast.
     abstract_mul_width: u32,
+    /// The analogous threshold for `bvudiv`/`bvurem`.  Separate from the
+    /// mul threshold because the measured trade-offs differ: wide `bvmul`
+    /// abstraction wins on value-lemma convergence, while 32-bit division
+    /// abstraction measured neutral-to-negative on the `spear` corpus
+    /// (rounds without circuit savings) — only the true monsters (width
+    /// ≥ 64) pay off there.
+    abstract_div_width: u32,
     /// Context stack: one [`ContextMark`] per open push, restored by `pop`.
     context_stack: Vec<ContextMark>,
     /// Configuration
@@ -201,6 +249,7 @@ impl BvSolver {
             assertions: Vec::new(),
             mul_abstractions: Vec::new(),
             abstract_mul_width: 0,
+            abstract_div_width: 0,
             context_stack: Vec::new(),
             config,
             ult_cache: FxHashMap::default(),
@@ -1369,9 +1418,15 @@ impl BvSolver {
         self.abstract_mul_width = width;
     }
 
+    /// Set the `bvudiv`/`bvurem` abstraction width (see the field doc for
+    /// why it is separate).
+    pub fn set_div_abstraction_width(&mut self, width: u32) {
+        self.abstract_div_width = width;
+    }
+
     /// Drain the abstractions recorded during the blast (the caller owns the
     /// CEGAR loop that refines them).
-    pub fn take_mul_abstractions(&mut self) -> Vec<MulAbstraction> {
+    pub fn take_mul_abstractions(&mut self) -> Vec<BvAbstraction> {
         core::mem::take(&mut self.mul_abstractions)
     }
 
@@ -1490,7 +1545,8 @@ impl BvSolver {
             }
         }
 
-        self.mul_abstractions.push(MulAbstraction {
+        self.mul_abstractions.push(BvAbstraction {
+            kind: AbstractionKind::Mul,
             result,
             a,
             b,
@@ -1499,12 +1555,219 @@ impl BvSolver {
         true
     }
 
+    /// CEGAR tier 1 — abstract one `bvudiv`/`bvurem` (see
+    /// [`Self::abstract_mul`]; same relaxation argument, exact semantics
+    /// = SMT-LIB division: divisor 0 ⇒ all-ones (`udiv`) / dividend
+    /// (`urem`)).  Tier-1 lemmas:
+    ///
+    /// * `b = 0 → udiv = 1…1` and `b = 0 → urem = a` — these are the
+    ///   *exact* SMT-LIB zero-divisor semantics, so the abstraction is
+    ///   already complete on that case;
+    /// * `b = 1 → udiv = a`, `b = 1 → urem = 0`;
+    /// * `a = 0 ∧ b ≠ 0 → udiv = 0`, `a = 0 ∧ b ≠ 0 → urem = 0`;
+    /// * `a = b ∧ b ≠ 0 → udiv = 1`, `a = b ∧ b ≠ 0 → urem = 0`.
+    ///
+    /// Returns `false` (encoding nothing) when the operands are not
+    /// blasted at equal widths.
+    pub fn abstract_udiv_urem(&mut self, result: TermId, a: TermId, b: TermId, urem: bool) -> bool {
+        let Some((va, vb)) = self.binop_bits(a, b) else {
+            return false;
+        };
+        if va.width != vb.width {
+            return false;
+        }
+        let width = va.width;
+        let Some(r) = self.result_bits(result, width) else {
+            return false;
+        };
+
+        // Detects, gate-folded (`Sig` layer).
+        let mut zero_b = Sig::True;
+        for &bit in &vb.bits {
+            let b_sig = self.sig(bit);
+            let not_b = self.gate_not(b_sig);
+            zero_b = self.gate_and(zero_b, not_b);
+        }
+        let mut one_b = self.sig(vb.bits[0]);
+        for &bit in &vb.bits[1..] {
+            let b_sig = self.sig(bit);
+            let not_b = self.gate_not(b_sig);
+            one_b = self.gate_and(one_b, not_b);
+        }
+        let mut zero_a = Sig::True;
+        for &bit in &va.bits {
+            let a_sig = self.sig(bit);
+            let not_a = self.gate_not(a_sig);
+            zero_a = self.gate_and(zero_a, not_a);
+        }
+        let mut eq_ab = Sig::True;
+        for (&x, &y) in va.bits.iter().zip(vb.bits.iter()) {
+            let xnor = self.gate_xnor(self.sig(x), self.sig(y));
+            eq_ab = self.gate_and(eq_ab, xnor);
+        }
+
+        for (idx, &m_bit) in r.bits.iter().enumerate() {
+            let m = self.sig(m_bit);
+            let Sig::Var(mv) = m else {
+                return false;
+            };
+            let m_pos = Lit::pos(mv);
+            let m_neg = m_pos.negate();
+            // EXACT zero-divisor semantics.
+            match zero_b {
+                Sig::True => {
+                    // b provably 0: pin the whole result.
+                    if urem {
+                        if let Some(&av) = va.bits.get(idx) {
+                            self.sat.add_clause([m_neg, Lit::pos(av)]);
+                            self.sat.add_clause([m_pos, Lit::neg(av)]);
+                        }
+                    } else {
+                        self.sat.add_clause([m_pos]);
+                    }
+                }
+                Sig::Var(z) => {
+                    let z_neg = Lit::neg(z);
+                    if urem {
+                        if let Some(&av) = va.bits.get(idx) {
+                            self.sat.add_clause([z_neg, m_neg, Lit::pos(av)]);
+                            self.sat.add_clause([z_neg, m_pos, Lit::neg(av)]);
+                        }
+                    } else {
+                        self.sat.add_clause([z_neg, m_pos]);
+                    }
+                }
+                Sig::False => {}
+            }
+            // b = 1 lemmas.
+            match one_b {
+                Sig::True => {
+                    if urem {
+                        self.sat.add_clause([m_neg]);
+                    } else if let Some(&av) = va.bits.get(idx) {
+                        self.sat.add_clause([m_neg, Lit::pos(av)]);
+                        self.sat.add_clause([m_pos, Lit::neg(av)]);
+                    }
+                }
+                Sig::Var(o) => {
+                    let o_neg = Lit::neg(o);
+                    if urem {
+                        self.sat.add_clause([o_neg, m_neg]);
+                    } else if let Some(&av) = va.bits.get(idx) {
+                        self.sat.add_clause([o_neg, m_neg, Lit::pos(av)]);
+                        self.sat.add_clause([o_neg, m_pos, Lit::neg(av)]);
+                    }
+                }
+                Sig::False => {}
+            }
+            // a = 0 ∧ b ≠ 0 → udiv = 0 / urem = 0.
+            if let Sig::Var(za) = zero_a
+                && let Some(zb) = match zero_b {
+                    Sig::Var(z) => Some(Lit::neg(z)),
+                    _ => None,
+                }
+            {
+                self.sat.add_clause([Lit::neg(za), zb, m_neg]);
+            } else if zero_a == Sig::True && zero_b == Sig::False {
+                self.sat.add_clause([m_neg]);
+            }
+            // a = b ∧ b ≠ 0 → udiv = (idx == 0) / urem = 0.
+            if let Sig::Var(e) = eq_ab
+                && let Some(zb) = match zero_b {
+                    Sig::Var(z) => Some(Lit::neg(z)),
+                    _ => None,
+                }
+            {
+                let target = !urem && idx == 0;
+                if target {
+                    self.sat.add_clause([Lit::neg(e), zb, m_pos]);
+                } else {
+                    self.sat.add_clause([Lit::neg(e), zb, m_neg]);
+                }
+            } else if eq_ab == Sig::True && zero_b == Sig::False {
+                let target = !urem && idx == 0;
+                if target {
+                    self.sat.add_clause([m_pos]);
+                } else {
+                    self.sat.add_clause([m_neg]);
+                }
+            }
+        }
+
+        self.mul_abstractions.push(BvAbstraction {
+            kind: if urem {
+                AbstractionKind::Urem
+            } else {
+                AbstractionKind::Udiv
+            },
+            result,
+            a,
+            b,
+            width,
+        });
+        true
+    }
+
+    /// `bvudiv`/`bvurem` encoding with the CEGAR switch (the division
+    /// analogue of [`Self::bv_mul_or_abstract`]): at/above the configured
+    /// width with non-constant operands, abstract; else exact circuit.
+    pub fn bv_udiv_or_abstract(
+        &mut self,
+        result: TermId,
+        a: TermId,
+        b: TermId,
+        a_is_const: bool,
+        b_is_const: bool,
+    ) -> bool {
+        if self.abstract_div_width > 0
+            && !a_is_const
+            && !b_is_const
+            && let Some((va, vb)) = self.binop_bits(a, b)
+            && va.width >= self.abstract_div_width
+            && va.width == vb.width
+            && !self.term_to_bv.contains_key(&result)
+        {
+            return self.abstract_udiv_urem(result, a, b, false);
+        }
+        self.bv_udiv(result, a, b)
+    }
+
+    /// `bvurem` encoding with the CEGAR switch: see
+    /// [`Self::bv_udiv_or_abstract`].
+    pub fn bv_urem_or_abstract(
+        &mut self,
+        result: TermId,
+        a: TermId,
+        b: TermId,
+        a_is_const: bool,
+        b_is_const: bool,
+    ) -> bool {
+        if self.abstract_div_width > 0
+            && !a_is_const
+            && !b_is_const
+            && let Some((va, vb)) = self.binop_bits(a, b)
+            && va.width >= self.abstract_div_width
+            && va.width == vb.width
+            && !self.term_to_bv.contains_key(&result)
+        {
+            return self.abstract_udiv_urem(result, a, b, true);
+        }
+        self.bv_urem(result, a, b)
+    }
+
     /// CEGAR tier 2 — value refinement for one abstraction under a spurious
-    /// model: the clause `(a != va ∨ b != vb ∨ result = va * vb)`, one clause
-    /// per result bit.  Blocks exactly this operand assignment unless the
-    /// product is honored; sound (a consequence of the exact definition).
+    /// model: the clause family `(a ≠ va ∨ b ≠ vb ∨ result = exact(va, vb))`,
+    /// one clause per result bit with the exact SMT-LIB semantics of the
+    /// abstracted operator ([`BvAbstraction::exact_value`]).  Blocks exactly
+    /// this operand assignment unless the exact value is honored; sound (a
+    /// consequence of the exact definition).
     #[allow(clippy::too_many_arguments)]
-    pub fn refine_mul_value(&mut self, abs: &MulAbstraction, va: &BigUint, vb: &BigUint) -> bool {
+    pub fn refine_abstraction_value(
+        &mut self,
+        abs: &BvAbstraction,
+        va: &BigUint,
+        vb: &BigUint,
+    ) -> bool {
         let width = abs.width;
         let (Some(ra), Some(rb), Some(rr)) = (
             self.term_to_bv.get(&abs.a).cloned(),
@@ -1516,7 +1779,8 @@ impl BvSolver {
         if ra.width != width || rb.width != width || rr.width != width {
             return false;
         }
-        let product = (va * vb) & ((BigUint::from(1u8) << width as usize) - 1u8);
+        let exact = abs.exact_value(va, vb);
+        let _ = width;
         // Guard literals: bit i of a differs from va_i (same for b).
         let mut guard: Vec<Lit> = Vec::with_capacity(2 * width as usize);
         for i in 0..width as usize {
@@ -1539,7 +1803,7 @@ impl BvSolver {
             }
         }
         for (j, &m_bit) in rr.bits.iter().enumerate() {
-            let p_j = (&product >> j) & BigUint::from(1u8) == BigUint::from(1u8);
+            let p_j = (&exact >> j) & BigUint::from(1u8) == BigUint::from(1u8);
             let eq_lit = if p_j {
                 Lit::pos(m_bit)
             } else {
