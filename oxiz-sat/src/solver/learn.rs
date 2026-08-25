@@ -1545,11 +1545,20 @@ impl Solver {
         // soundness requirement).
         let mut prev_lits: SmallVec<[Lit; 8]> = SmallVec::new();
         let mut prev_depths: SmallVec<[u32; 8]> = SmallVec::new();
+        let start_subsumed = self.stats.subsumed_removed;
         for (_, cid, lits) in &snapshot {
             if self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS {
                 break;
             }
             let _ = self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
+        }
+        if std::env::var("OXIZ_VIVIFY_TRACE").is_ok() {
+            eprintln!(
+                "[vivify] cands={} props={} otf_subsumed={}",
+                snapshot.len(),
+                self.stats.propagations.saturating_sub(start_props),
+                self.stats.subsumed_removed.saturating_sub(start_subsumed),
+            );
         }
         // The shared version deliberately leaves the trail at the last
         // candidate's end state for reuse; this round is over, so restore
@@ -1577,6 +1586,42 @@ impl Solver {
     /// On return the trail holds THIS candidate's end state (for the next
     /// round's reuse) — the caller backtracks to the base level after the
     /// whole round, not per candidate.
+    /// On-the-fly subsumption test (POS'25, cadical `vivify_deduce`'s
+    /// `marked2` check): does clause `d_id` subsume the candidate `cand`
+    /// modulo the level-0 units — i.e. is every literal of `d_id` either a
+    /// literal of `cand` or permanently false at decision level 0?  Such a
+    /// `d_id` entails `cand` outright (level-0-false literals are droppable
+    /// from `d_id` under the units), so `cand` can be deleted.
+    fn vivify_otf_subsumed(&self, cand: &[Lit], cid: ClauseId, d_id: ClauseId) -> bool {
+        if std::env::var("OXIZ_VIVIFY_OTF").as_deref() == Ok("0") {
+            return false;
+        }
+        // cadical `assert (c != subsuming)`: the subsumer must differ from
+        // the candidate.  The candidate CAN be its own conflict/reason
+        // clause (assuming ¬ of a prefix propagates the rest of C), and
+        // "C ⊆ C" would pass the subset test trivially — deleting C on its
+        // own word, with nothing justifying the deletion.
+        if d_id == cid {
+            return false;
+        }
+        let Some(d) = self.clauses.get(d_id) else {
+            return false;
+        };
+        if d.deleted {
+            return false;
+        }
+        for &dl in d.lits {
+            let val = self.trail.lit_value(dl);
+            if val.is_false() && self.trail.level(dl.var()) == 0 {
+                continue; // fixed-false: droppable modulo the units
+            }
+            if !cand.contains(&dl) {
+                return false;
+            }
+        }
+        true
+    }
+
     fn vivify_clause_shared(
         &mut self,
         cid: ClauseId,
@@ -1587,6 +1632,11 @@ impl Solver {
         let base_level = self.trail.decision_level() - prev_depths.last().copied().unwrap_or(0);
         let n = lits.len();
         let mut shorten_to: Option<SmallVec<[Lit; 8]>> = None;
+        // On-the-fly subsumption (POS'25 / cadical `vivify_deduce`): when
+        // vivifying C finds a conflict or an implied literal whose reason
+        // clause D satisfies `D \ {level-0-fixed literals} ⊆ C`, C is
+        // DELETED as subsumed rather than shrunk — D ⊨ C outright.
+        let mut subsumed_by: Option<ClauseId> = None;
 
         // Shared prefix: literal-index count whose handling is already live.
         // `prev_lits.len() == prev_depths.len()` holds by the lockstep
@@ -1625,9 +1675,16 @@ impl Solver {
                 crate::literal::LBool::Undef => {
                     self.trail.new_decision_level();
                     self.trail.assign_decision(lits[j].negate());
-                    if self.propagate().is_some() {
+                    if let Some(conflict_id) = self.propagate() {
                         // Falsifying lits[0..=j] conflicts → prefix implied.
-                        shorten_to = Some(lits[0..=j].iter().copied().collect());
+                        // But first: if the conflict clause itself subsumes
+                        // C (all its literals in C or level-0-fixed), the
+                        // whole clause goes, no shrink needed.
+                        if self.vivify_otf_subsumed(lits, cid, conflict_id) {
+                            subsumed_by = Some(conflict_id);
+                        } else {
+                            shorten_to = Some(lits[0..=j].iter().copied().collect());
+                        }
                         handled_end = j + 1;
                         // Depth after handling j (the just-made decision);
                         // keep depths in lockstep with handled_end.
@@ -1637,12 +1694,19 @@ impl Solver {
                 }
             }
             // Did the propagation force a later clause literal true?
-            // (lits[0..=j] ∨ lits[m]) is then implied.
+            // (lits[0..=j] ∨ lits[m]) is then implied.  When the implying
+            // reason clause subsumes C outright, delete instead of shrink.
             for m in (j + 1)..n {
                 if self.trail.lit_value(lits[m]).is_true() {
-                    let mut s: SmallVec<[Lit; 8]> = lits[0..=j].iter().copied().collect();
-                    s.push(lits[m]);
-                    shorten_to = Some(s);
+                    if let crate::trail::Reason::Propagation(rid) = self.trail.reason(lits[m].var())
+                        && self.vivify_otf_subsumed(lits, cid, rid)
+                    {
+                        subsumed_by = Some(rid);
+                    } else {
+                        let mut s: SmallVec<[Lit; 8]> = lits[0..=j].iter().copied().collect();
+                        s.push(lits[m]);
+                        shorten_to = Some(s);
+                    }
                     handled_end = j + 1;
                     depths.push(self.trail.decision_level() - base_level);
                     break 'outer;
@@ -1656,6 +1720,26 @@ impl Solver {
         // handled_end by construction above).
         *prev_lits = lits.iter().take(handled_end).copied().collect();
         *prev_depths = depths;
+
+        // On-the-fly subsumption commit: mirror `subsume_round`'s rules —
+        // promote a learned subsumer to original when the deleted clause is
+        // original (else reduction could later drop the justification and
+        // uncover a false SAT — the `crn_11_99_u` lesson), re-arm
+        // elimination for the removed literals, retire, and account.
+        if let Some(sub_id) = subsumed_by {
+            let subsumed_learned = self.clauses.get(cid).is_some_and(|c| c.learned);
+            if !subsumed_learned && self.clauses.get(sub_id).is_some_and(|s| s.learned) {
+                self.clauses.clear_learned(sub_id);
+            }
+            if let Some(c) = self.clauses.get(cid) {
+                let removed: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
+                self.mark_elim_vars(removed.iter().copied());
+            }
+            self.retire_clause(cid);
+            self.stats.deleted_clauses += 1;
+            self.stats.subsumed_removed += 1;
+            return true;
+        }
 
         let Some(new_lits) = shorten_to else {
             return false;
@@ -2187,4 +2271,33 @@ mod tests {
             "DRAT deletion-line count must match the number of clauses inprocess() removed"
         );
     }
+}
+
+/// On-the-fly subsumption self-guard (POS'25 port): assuming the
+/// negation of a clause prefix can make the candidate clause C its own
+/// propagation reason or conflict clause (e.g. C = (a ∨ b ∨ c) under
+/// decisions ¬a, ¬b propagates c with reason C).  The subset test
+/// "D ⊆ C" then holds trivially for D = C, and deleting C on its own
+/// word is a false deletion with no justification — measured live: it
+/// flipped `6s167-opt` to a false `sat` (cadical: `unsat`) before the
+/// guard.  cadical's `assert (c != subsuming)` is the same rule.
+#[test]
+fn vivify_otf_subsumption_rejects_self() {
+    let mut solver = Solver::new();
+    let a = solver.new_var();
+    let b = solver.new_var();
+    let c = solver.new_var();
+    // C = (a ∨ b ∨ c) and a distinct smaller clause D = (a ∨ b).
+    let big = solver
+        .clauses
+        .add_original([Lit::pos(a), Lit::pos(b), Lit::pos(c)]);
+    let small = solver.clauses.add_original([Lit::pos(a), Lit::pos(b)]);
+    let cand: SmallVec<[Lit; 8]> = [Lit::pos(a), Lit::pos(b), Lit::pos(c)]
+        .into_iter()
+        .collect();
+    // Self: must be rejected even though the subset test passes
+    // trivially.
+    assert!(!solver.vivify_otf_subsumed(&cand, big, big));
+    // A genuine subsumer (at level 0, nothing fixed) is accepted.
+    assert!(solver.vivify_otf_subsumed(&cand, big, small));
 }
