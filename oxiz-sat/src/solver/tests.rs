@@ -1279,3 +1279,39 @@ fn rephase_incremental_push_pop_stays_consistent() {
     assert_eq!(solver.solve(), SolverResult::Sat);
     let _ = solver.rephase_rounds;
 }
+
+/// Pins the `inprocess()` soundness defect CLOSED.  `config_presets`' module
+/// doc historically cited exactly this shape — pigeonhole(7,6) with
+/// `inprocessing_interval: 1` — as returning `Sat` on an UNSAT instance
+/// ("hanging unit at a propagation fixpoint" from missing watch rebuilds),
+/// and every preset shipped inprocessing off because of it.  The intervening
+/// clause-management fixes (retire reason fixups + binary-edge purge, DRAT
+/// deletion completion, subsumption promotion, deletion-aware arena reads)
+/// closed it; the doc was re-verified 2026-08-25 (see
+/// `docs/studies/2026-08-inprocessing-soundness-recheck.md`).  If this test
+/// ever fails, presets must be re-audited before anything else ships.
+#[test]
+fn pigeonhole_inprocessing_interval_1_stays_unsat() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_inprocessing: true,
+        inprocessing_interval: 1,
+        ..SolverConfig::default()
+    });
+    let (pigeons, holes) = (7usize, 6usize);
+    let mut p = Vec::new();
+    for _ in 0..pigeons * holes {
+        p.push(solver.new_var());
+    }
+    let at = |i: usize, j: usize| Lit::pos(p[i * holes + j]);
+    for i in 0..pigeons {
+        solver.add_clause((0..holes).map(|j| at(i, j)));
+    }
+    for j in 0..holes {
+        for i1 in 0..pigeons {
+            for i2 in i1 + 1..pigeons {
+                solver.add_clause([at(i1, j).negate(), at(i2, j).negate()]);
+            }
+        }
+    }
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+}

@@ -4,33 +4,27 @@
 //! These presets are based on extensive empirical testing and competition
 //! results from modern SAT solvers.
 //!
-//! # Soundness: inprocessing is disabled in every preset
+//! # Inprocessing is disabled in every preset (measured, not soundness)
 //!
-//! All presets set `enable_inprocessing: false`. The inprocessing pipeline
-//! (`Solver::inprocess`) carries a **soundness defect inherited from upstream
-//! v0.3.2**: its clause-management passes (subsumption, pure-literal
-//! elimination, on-the-fly strengthening) do not fully rebuild the watch
-//! lists, so a clause can be left as a "hanging unit" at a propagation
-//! fixpoint. In a `debug` build the propagation-fixpoint invariant fires and
-//! panics; in a `release` build the invariant is compiled out and the solver
-//! can return a wrong verdict (verified: `pigeonhole(7,6)` with
-//! `inprocessing_interval: 1` returns `Sat` on an UNSAT instance).
+//! All presets set `enable_inprocessing: false`.  An earlier version of this
+//! note attributed that to a soundness defect inherited from upstream v0.3.2
+//! (a "hanging unit at a propagation fixpoint" from missing watch rebuilds,
+//! with `pigeonhole(7,6)` + `inprocessing_interval: 1` cited as a false
+//! `Sat`).  **That repro no longer reproduces**: the intervening
+//! clause-management soundness fixes (`retire_clause`'s reason fixups and
+//! binary-edge purge, the DRAT-deletion completion, the subsumption
+//! promotion rule, the deletion-aware arena reads) closed it.  Re-verified
+//! 2026-08-25: `pigeonhole(4..9, 3..8)` × interval {1, 97, 5000} all answer
+//! `Unsat` in debug *and* release, and 80 satcomp files under
+//! `INPROCESS=1` show **0 verdict mismatches against a real `cadical`**
+//! (see `docs/studies/2026-08-inprocessing-soundness-recheck.md`).
 //!
-//! This is **not** a regression introduced by the 0.3.2 integration: a v0.3.2
-//! worktree fails the identical debug invariant, and the root cause (the
-//! "simplified approach" watch-rebuild comment at the end of `inprocess()`)
-//! is present in v0.3.2 too. A differential benchmark against z3 confirms
-//! upstream is the weaker reference here – v0.3.2 disagrees with z3 on 16
-//! of 270 sampled instances vs main's 4 – so matching upstream's
-//! inprocessing-on preset values is not a soundness argument. The presets
-//! therefore ship inprocessing *off*; the real fix (a correct watch rebuild
-//! in `inprocess()`) is a tracked follow-up, now well-scoped since the
-//! mechanism is named.
-//!
-//! Callers who want inprocessing and accept the known wrong-verdict path may
-//! still opt in explicitly via [`crate::solver::SolverConfig`] – but no preset
-//! turns it on by default. See `INTEGRATION_NOTES.md` §1 for the full
-//! blast-radius measurements.
+//! The presets stay off for the *performance* reason recorded at the
+//! CaDiCaL preset: the periodic inprocess() round costs the BVE+ELS gains
+//! on the 94-file suite (qwh.50 collapsed 55.7G → 1088G instructions).
+//! That measurement predates the cadical amortizers this tree has since
+//! landed (trie-shared vivification, budgeted transred rounds, on-the-fly
+//! vivify subsumption); revisit per that preset's note.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -109,7 +103,7 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,    // LRB for structured problems
-            enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
+            enable_inprocessing: false, // measured net-negative as a preset default (see module doc + cadical preset note)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
@@ -213,7 +207,7 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: true, // CHB good for crypto
             use_lrb_branching: false,
-            enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
+            enable_inprocessing: false, // measured net-negative as a preset default (see module doc + cadical preset note)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
@@ -265,7 +259,7 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
-            enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
+            enable_inprocessing: false, // measured net-negative as a preset default (see module doc + cadical preset note)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
@@ -369,7 +363,7 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: true,
-            enable_inprocessing: false, // soundness: inprocess() watch-rebuild is unsound (see module doc)
+            enable_inprocessing: false, // measured net-negative as a preset default (see module doc + cadical preset note)
             enable_equiv_substitution: false,
             enable_gate_congruence: true,
             enable_bve: false,
@@ -648,7 +642,7 @@ mod tests {
         assert!(config.use_lrb_branching);
         assert!(
             !config.enable_inprocessing,
-            "inprocessing is disabled in all presets (see module doc: inprocess() watch-rebuild unsoundness)"
+            "inprocessing is disabled in all presets (measured net-negative; see module doc)"
         );
     }
 
