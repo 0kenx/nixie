@@ -335,7 +335,15 @@ pub(super) fn encode_bv_term_recursive(
                     } else {
                         bv.new_bv(*a, width);
                         bv.new_bv(*b, width);
-                        bv.bv_mul(tid, *a, *b)
+                        let a_const = matches!(
+                            mgr.get(*a).map(|t| &t.kind),
+                            Some(TermKind::BitVecConst { .. })
+                        );
+                        let b_const = matches!(
+                            mgr.get(*b).map(|t| &t.kind),
+                            Some(TermKind::BitVecConst { .. })
+                        );
+                        bv.bv_mul_or_abstract(tid, *a, *b, a_const, b_const)
                     };
                     if !encoded_ok {
                         return false;

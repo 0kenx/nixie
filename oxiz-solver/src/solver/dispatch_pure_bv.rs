@@ -94,8 +94,30 @@ impl crate::solver::Solver {
         // (see `blast_bv_circuits_at_base_scope` for the scope-invariant
         // rationale). After the rebase the memo is empty, so this is the
         // one full blast.
+        //
+        // CEGAR (Niemetz/Preiner/Zohar, Scalable Bit-Blasting with
+        // Abstractions): while the abstraction width is set, a `bvmul` with
+        // non-constant operands at or above it is replaced by fresh result
+        // wires + sound identity lemmas instead of its exact circuit (the
+        // multiplier is the dominant gate count of a wide blast).  The
+        // abstract instance is a RELAXATION (every abstraction clause is a
+        // consequence of the exact definition), so its `Unsat` transfers
+        // soundly at every stage; its `Sat` is checked against the exact
+        // BigUint product and refined (value lemma, then the exact circuit
+        // as the guaranteed terminal) below.  Default width 32; disable
+        // with OXIZ_BV_CEGAR=0.
+        let cegar_min_width = match std::env::var("OXIZ_BV_CEGAR").as_deref() {
+            Ok("0") => 0,
+            _ => 32,
+        };
+        self.bv.set_mul_abstraction_width(cegar_min_width);
         for &assertion in &assertions {
             self.blast_bv_circuits_at_base_scope(assertion, manager);
+        }
+        let abstracted = self.bv.take_mul_abstractions();
+        self.bv.set_mul_abstraction_width(0);
+        if std::env::var("OXIZ_BV_CEGAR_TRACE").is_ok() && !abstracted.is_empty() {
+            eprintln!("[cegar] abstracted {} wide muls", abstracted.len());
         }
 
         // Assert each assertion true, using the direct literal encodings
@@ -115,37 +137,133 @@ impl crate::solver::Solver {
             }
         }
 
-        match self.bv.check() {
-            Ok(TheoryCheckResult::Unsat(_conflict_terms)) => {
-                // The conflict terms are the recorded constraint-level
+        // The refinement loop.  `terminal` holds the abstracted muls that
+        // have been replaced by their exact circuit; every abstraction is
+        // refined at most a few times by cheap value lemmas before the
+        // exact circuit lands (guaranteed progress: each terminal blast
+        // permanently removes one abstraction, so the loop terminates with
+        // a fully exact instance even on adversarial value patterns).
+        const CEGAR_MAX_ROUNDS: usize = 50;
+        const CEGAR_VALUE_ROUNDS: u32 = 2;
+        let mut terminal: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut value_rounds: rustc_hash::FxHashMap<TermId, u32> = rustc_hash::FxHashMap::default();
+        let mut round = 0usize;
+        loop {
+            match self.bv.check() {
+                // Relaxation unsat: every abstraction clause is a logical
+                // consequence of the exact `bvmul` definition, so a refuted
+                // abstract instance refutes the exact formula.  The
+                // conflict terms are the recorded constraint-level
                 // assertions – a sound superset of any minimal core.
-                self.build_unsat_core();
-                Some(SolverResult::Unsat)
-            }
-            Ok(TheoryCheckResult::Sat) => {
-                let mut model = self.build_pure_bv_model(manager);
-                // Solve-eqs eliminated variables carry no bits, so the
-                // satisfying assignment gives them no value; reconstruct
-                // each by evaluating its definition under the model (in
-                // dependency order) before validating against the original
-                // assertions.  Without this, every `sat` instance that had
-                // definitions eliminated paid the eager attempt *and* the
-                // general path's full re-solve.
-                Self::bv_reconstruct_eliminations(&mut model, &eliminations, manager);
-                self.model = Some(model);
-                if self.model_refutes_assertions(manager) {
-                    // The satisfying assignment does not evaluate to `true`
-                    // under every assertion: do not trust it. Hand the goal
-                    // to the general path rather than answer `Unknown`
-                    // outright, because the fallback may still decide it.
-                    self.model = None;
-                    return None;
+                Ok(TheoryCheckResult::Unsat(_conflict_terms)) => {
+                    self.build_unsat_core();
+                    return Some(SolverResult::Unsat);
                 }
-                Some(SolverResult::Sat)
+                Ok(TheoryCheckResult::Sat) => {
+                    if abstracted.is_empty() {
+                        break;
+                    }
+                    // Exact product check under the candidate model, per
+                    // abstraction (BigUint, no truncation).
+                    // (abstraction, operand values) pairs; the default
+                    // value pair marks "value unreadable — terminal-refine".
+                    let mut spurious: Vec<(
+                        oxiz_theories::bv::MulAbstraction,
+                        Option<(num_bigint::BigUint, num_bigint::BigUint)>,
+                    )> = Vec::new();
+                    for abs in &abstracted {
+                        if terminal.contains(&abs.result) {
+                            continue;
+                        }
+                        let (Some(va), Some(vb), Some(vm)) = (
+                            self.bv.get_value_big(abs.a),
+                            self.bv.get_value_big(abs.b),
+                            self.bv.get_value_big(abs.result),
+                        ) else {
+                            // Value unreadable: cannot certify, must refine.
+                            spurious.push((*abs, None));
+                            continue;
+                        };
+                        let mask = (num_bigint::BigUint::from(1u8) << abs.width as usize) - 1u8;
+                        let product = (va.clone() * vb.clone()) & mask;
+                        if product != vm {
+                            spurious.push((*abs, Some((va, vb))));
+                        }
+                    }
+                    if spurious.is_empty() {
+                        // Every abstracted mul carries its exact product
+                        // value in this model: the assignment satisfies the
+                        // exact formula's semantics at those subterms.  The
+                        // independent whole-assertion validation below is
+                        // still the gate that reports `Sat`.
+                        break;
+                    }
+                    round += 1;
+                    if std::env::var("OXIZ_BV_CEGAR_TRACE").is_ok() {
+                        eprintln!(
+                            "[cegar] round {round}: {} spurious ({} terminal so far)",
+                            spurious.len(),
+                            terminal.len()
+                        );
+                    }
+                    if round > CEGAR_MAX_ROUNDS {
+                        // Budget exhausted: terminal-blast every remaining
+                        // abstraction; the next check is fully exact, so
+                        // either arm of the loop is a final verdict.
+                        for abs in &abstracted {
+                            if !terminal.contains(&abs.result) {
+                                self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                terminal.insert(abs.result);
+                            }
+                        }
+                        continue;
+                    }
+                    for (abs, values) in &spurious {
+                        let n = value_rounds.entry(abs.result).or_insert(0);
+                        *n += 1;
+                        match (values, *n > CEGAR_VALUE_ROUNDS) {
+                            // Tier 2: value lemma for this spurious assignment.
+                            (Some((va, vb)), false) => {
+                                self.bv.refine_mul_value(abs, va, vb);
+                            }
+                            // Tier 3: the exact circuit, wired into the
+                            // already-abstracted result bits — the
+                            // guaranteed terminal refinement (also the path
+                            // for unreadable model values).
+                            (_, true) | (None, false) => {
+                                self.bv.bv_mul(abs.result, abs.a, abs.b);
+                                terminal.insert(abs.result);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                // Resource exhaustion (conflict limit): defer to the general
+                // path, which enforces the limits itself.
+                _ => return None,
             }
-            // Resource exhaustion (conflict limit): defer to the general
-            // path, which enforces the limits itself.
-            _ => None,
+        }
+
+        {
+            let mut model = self.build_pure_bv_model(manager);
+            // Solve-eqs eliminated variables carry no bits, so the
+            // satisfying assignment gives them no value; reconstruct
+            // each by evaluating its definition under the model (in
+            // dependency order) before validating against the original
+            // assertions.  Without this, every `sat` instance that had
+            // definitions eliminated paid the eager attempt *and* the
+            // general path's full re-solve.
+            Self::bv_reconstruct_eliminations(&mut model, &eliminations, manager);
+            self.model = Some(model);
+            if self.model_refutes_assertions(manager) {
+                // The satisfying assignment does not evaluate to `true`
+                // under every assertion: do not trust it. Hand the goal
+                // to the general path rather than answer `Unknown`
+                // outright, because the fallback may still decide it.
+                self.model = None;
+                return None;
+            }
+            Some(SolverResult::Sat)
         }
     }
 

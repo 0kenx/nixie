@@ -81,6 +81,27 @@ struct ContextMark {
     outer_bool_len: usize,
 }
 
+/// One abstracted `bvmul` (CEGAR; see `BvSolver::abstract_mul`).
+///
+/// `result` carries fresh, unconstrained wires (plus the tier-1 identity
+/// lemmas).  Every clause emitted for the abstraction — the lemmas, any
+/// value refinement, and the terminal exact circuit — is a logical
+/// *consequence* of the exact definition `result = a * b`, so the abstract
+/// SAT instance is a relaxation of the exact one at every stage:
+/// `Unsat` is sound at any round, and `Sat` is provisional until the model
+/// values of `a`, `b` and `result` agree with the exact product.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MulAbstraction {
+    /// The `bvmul` term whose circuit was replaced.
+    pub result: TermId,
+    /// Left operand.
+    pub a: TermId,
+    /// Right operand.
+    pub b: TermId,
+    /// Operand/result width.
+    pub width: u32,
+}
+
 /// BitVector Theory Solver using bit-blasting
 #[derive(Debug)]
 pub struct BvSolver {
@@ -90,6 +111,16 @@ pub struct BvSolver {
     term_to_bv: FxHashMap<TermId, BvVar>,
     /// Pending assertions
     assertions: Vec<(TermId, bool)>,
+    /// CEGAR bvmul abstractions created while [`Self::abstract_mul_width`]
+    /// was set (drained by the pure-BV dispatch).  Each entry records one
+    /// `bvmul` whose exact circuit was replaced by fresh result wires plus
+    /// sound identity lemmas; see [`Self::abstract_mul`].
+    mul_abstractions: Vec<MulAbstraction>,
+    /// Bit-width at (and above) which `bvmul` terms are abstracted instead
+    /// of bit-blasted (CEGAR; 0 = always exact — the default, keeping the
+    /// general CDCL(T) path byte-identical).  Set only by the eager pure-BV
+    /// dispatch around its blast.
+    abstract_mul_width: u32,
     /// Context stack: one [`ContextMark`] per open push, restored by `pop`.
     context_stack: Vec<ContextMark>,
     /// Configuration
@@ -168,6 +199,8 @@ impl BvSolver {
             sat,
             term_to_bv: FxHashMap::default(),
             assertions: Vec::new(),
+            mul_abstractions: Vec::new(),
+            abstract_mul_width: 0,
             context_stack: Vec::new(),
             config,
             ult_cache: FxHashMap::default(),
@@ -1297,6 +1330,226 @@ impl BvSolver {
             return true;
         }
         false
+    }
+
+    /// `bvmul` encoding with the CEGAR switch: when the configured
+    /// abstraction width is set, the term's width is at least it, and BOTH
+    /// operands are already-blasted non-constant wires, the term is
+    /// abstracted ([`Self::abstract_mul`]) instead of bit-blasted; every
+    /// other case (abstraction off, too narrow, or a constant operand whose
+    /// exact circuit constant-folds cheaply) takes the exact circuit.  With
+    /// abstraction off this is `bv_mul` exactly — the general CDCL(T) path's
+    /// clause stream is unchanged.
+    pub fn bv_mul_or_abstract(
+        &mut self,
+        result: TermId,
+        a: TermId,
+        b: TermId,
+        a_is_const: bool,
+        b_is_const: bool,
+    ) -> bool {
+        if self.abstract_mul_width > 0
+            && !a_is_const
+            && !b_is_const
+            && let Some((va, vb)) = self.binop_bits(a, b)
+            && va.width >= self.abstract_mul_width
+            && va.width == vb.width
+            && !self.term_to_bv.contains_key(&result)
+        {
+            return self.abstract_mul(result, a, b);
+        }
+        self.bv_mul(result, a, b)
+    }
+
+    /// Set the width at (and above) which `bvmul` is abstracted instead of
+    /// bit-blasted (0 = always exact).  Only the pure-BV dispatch toggles
+    /// this around its blast; every other caller keeps the default and gets
+    /// the exact circuit.
+    pub fn set_mul_abstraction_width(&mut self, width: u32) {
+        self.abstract_mul_width = width;
+    }
+
+    /// Drain the abstractions recorded during the blast (the caller owns the
+    /// CEGAR loop that refines them).
+    pub fn take_mul_abstractions(&mut self) -> Vec<MulAbstraction> {
+        core::mem::take(&mut self.mul_abstractions)
+    }
+
+    /// CEGAR tier 1 — abstract one `bvmul` (Niemetz/Preiner/Zohar,
+    /// *Scalable Bit-Blasting with Abstractions*).
+    ///
+    /// The exact multiplier circuit is replaced by fresh, unconstrained
+    /// result wires plus the published identity lemmas
+    /// (`a = 0 -> m = 0`, `b = 0 -> m = 0`, `a = 1 -> m = b`,
+    /// `b = 1 -> m = a`), each a logical consequence of the exact
+    /// definition.  The abstract instance is therefore a relaxation of the
+    /// exact one: `Unsat` transfers, `Sat` is provisional (the caller
+    /// checks the model's product consistency and refines).
+    ///
+    /// Returns `false` (and encodes nothing) when the operands are not
+    /// blasted at equal widths.
+    pub fn abstract_mul(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
+        let Some((va, vb)) = self.binop_bits(a, b) else {
+            return false;
+        };
+        if va.width != vb.width {
+            return false;
+        }
+        let width = va.width;
+        let Some(r) = self.result_bits(result, width) else {
+            return false;
+        };
+
+        // zero-detect(a): AND of NOT a_i (folds through constants — a
+        // provably-nonzero operand makes the implication vacuous, `Sig::False`).
+        let mut zero_a = Sig::True;
+        for &bit in &va.bits {
+            let b_sig = self.sig(bit);
+            let not_b = self.gate_not(b_sig);
+            zero_a = self.gate_and(zero_a, not_b);
+        }
+        let mut zero_b = Sig::True;
+        for &bit in &vb.bits {
+            let b_sig = self.sig(bit);
+            let not_b = self.gate_not(b_sig);
+            zero_b = self.gate_and(zero_b, not_b);
+        }
+        // one-detect(x): x == 1 (bit 0 set, the rest clear).
+        let one_of = |bits: &[Var], slf: &mut Self| -> Sig {
+            let first = slf.sig(bits[0]);
+            let mut acc = first;
+            for &bit in &bits[1..] {
+                let b_sig = slf.sig(bit);
+                let not_b = slf.gate_not(b_sig);
+                acc = slf.gate_and(acc, not_b);
+            }
+            acc
+        };
+        let one_a = one_of(&va.bits, self);
+        let one_b = one_of(&vb.bits, self);
+
+        // Emit the identity lemmas, one pair of implications per result bit.
+        // `lit_true_of(s)` is the literal asserting `s`.
+        for &m_bit in &r.bits {
+            let m = self.sig(m_bit);
+            let (Sig::Var(mm), mm_pos) = (m, Lit::pos(m_bit)) else {
+                // Constant result wire cannot happen (fresh wires), but
+                // declining is the honest answer if it ever did.
+                return false;
+            };
+            // a = 0 -> m_i = 0  (¬zero_a ∨ ¬m_i)
+            match zero_a {
+                Sig::True => {
+                    self.sat.add_clause([Lit::neg(mm)]);
+                }
+                Sig::Var(z) => {
+                    self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
+                }
+                Sig::False => {}
+            }
+            // b = 0 -> m_i = 0
+            match zero_b {
+                Sig::True => {
+                    self.sat.add_clause([Lit::neg(mm)]);
+                }
+                Sig::Var(z) => {
+                    self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
+                }
+                Sig::False => {}
+            }
+            // a = 1 -> m_i = b_i   (¬one_a ∨ ¬m_i ∨ b_i) ∧ (¬one_a ∨ m_i ∨ ¬b_i)
+            let idx = r.bits.iter().position(|&x| x == m_bit).unwrap_or(0);
+            if let Some(&bvar) = vb.bits.get(idx) {
+                match one_a {
+                    Sig::True => {
+                        self.sat.add_clause([Lit::neg(mm), Lit::pos(bvar)]);
+                        self.sat.add_clause([mm_pos, Lit::neg(bvar)]);
+                    }
+                    Sig::Var(o) => {
+                        self.sat
+                            .add_clause([Lit::neg(o), Lit::neg(mm), Lit::pos(bvar)]);
+                        self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(bvar)]);
+                    }
+                    Sig::False => {}
+                }
+            }
+            // b = 1 -> m_i = a_i
+            if let Some(&avar) = va.bits.get(idx) {
+                match one_b {
+                    Sig::True => {
+                        self.sat.add_clause([Lit::neg(mm), Lit::pos(avar)]);
+                        self.sat.add_clause([mm_pos, Lit::neg(avar)]);
+                    }
+                    Sig::Var(o) => {
+                        self.sat
+                            .add_clause([Lit::neg(o), Lit::neg(mm), Lit::pos(avar)]);
+                        self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(avar)]);
+                    }
+                    Sig::False => {}
+                }
+            }
+        }
+
+        self.mul_abstractions.push(MulAbstraction {
+            result,
+            a,
+            b,
+            width,
+        });
+        true
+    }
+
+    /// CEGAR tier 2 — value refinement for one abstraction under a spurious
+    /// model: the clause `(a != va ∨ b != vb ∨ result = va * vb)`, one clause
+    /// per result bit.  Blocks exactly this operand assignment unless the
+    /// product is honored; sound (a consequence of the exact definition).
+    #[allow(clippy::too_many_arguments)]
+    pub fn refine_mul_value(&mut self, abs: &MulAbstraction, va: &BigUint, vb: &BigUint) -> bool {
+        let width = abs.width;
+        let (Some(ra), Some(rb), Some(rr)) = (
+            self.term_to_bv.get(&abs.a).cloned(),
+            self.term_to_bv.get(&abs.b).cloned(),
+            self.term_to_bv.get(&abs.result).cloned(),
+        ) else {
+            return false;
+        };
+        if ra.width != width || rb.width != width || rr.width != width {
+            return false;
+        }
+        let product = (va * vb) & ((BigUint::from(1u8) << width as usize) - 1u8);
+        // Guard literals: bit i of a differs from va_i (same for b).
+        let mut guard: Vec<Lit> = Vec::with_capacity(2 * width as usize);
+        for i in 0..width as usize {
+            let bit = |v: &BigUint, i: usize| (v >> i) & BigUint::from(1u8) == BigUint::from(1u8);
+            if let Some(&av) = ra.bits.get(i) {
+                let a_lit = if bit(va, i) {
+                    Lit::neg(av)
+                } else {
+                    Lit::pos(av)
+                };
+                guard.push(a_lit);
+            }
+            if let Some(&bv_) = rb.bits.get(i) {
+                let b_lit = if bit(vb, i) {
+                    Lit::neg(bv_)
+                } else {
+                    Lit::pos(bv_)
+                };
+                guard.push(b_lit);
+            }
+        }
+        for (j, &m_bit) in rr.bits.iter().enumerate() {
+            let p_j = (&product >> j) & BigUint::from(1u8) == BigUint::from(1u8);
+            let eq_lit = if p_j {
+                Lit::pos(m_bit)
+            } else {
+                Lit::neg(m_bit)
+            };
+            let mut clause = guard.clone();
+            clause.push(eq_lit);
+            self.sat.add_clause(clause);
+        }
+        true
     }
 
     /// Left shift by a compile-time constant: result = a << shift_amount.
