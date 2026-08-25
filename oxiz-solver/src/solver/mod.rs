@@ -481,8 +481,19 @@ impl Solver {
         let (branch_priority, priority_heuristic) = branch_priority::new_priority_branching();
 
         // Build SAT solver configuration from our config
+        // Freeze-set collapse experiment (cdclt-gates-audit enabling slice):
+        // with OXIZ_FREEZE_COLLAPSE=1 the embedded core enables BVE + ELS,
+        // and every check entry freezes the theory-mapped variables
+        // (`var_to_constraint` keys — exactly what the theory manager
+        // replays via `on_assignment`), so those passes only ever transform
+        // Boolean-structure variables the theories never observe.  Default
+        // off until the QF_LIA/QF_UF value case is measured (see the
+        // freeze-set study).
+        let freeze_collapse = std::env::var("OXIZ_FREEZE_COLLAPSE").is_ok();
         let sat_config = SatConfig {
             restart_strategy: config.restart_strategy,
+            enable_bve: freeze_collapse,
+            enable_equiv_substitution: freeze_collapse,
             enable_inprocessing: config.enable_inprocessing,
             inprocessing_interval: config.inprocessing_interval,
             // CDCL(T) branching: VSIDS in both stable and focused modes (z3's
@@ -1461,6 +1472,15 @@ impl Solver {
                 if std::time::Instant::now() >= d {
                     return SolverResult::Unknown;
                 }
+            }
+            // Freeze-set collapse: freeze every theory-mapped variable
+            // before the (possibly first) solve — its pre-search passes and
+            // the inprocessing schedule then skip these, transforming only
+            // Boolean-structure vars.  Idempotent set insertion covers atoms
+            // asserted since the previous check.
+            if std::env::var("OXIZ_FREEZE_COLLAPSE").is_ok() {
+                let vars: Vec<_> = self.var_to_constraint.keys().copied().collect();
+                self.sat.freeze_theory_vars(vars);
             }
             let sat_result = self.sat.solve_with_theory(&mut theory_manager);
             // If a genuine theory conflict was suppressed because the conflict

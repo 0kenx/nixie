@@ -2035,7 +2035,7 @@ impl Solver {
         // below: theory lemmas can force the opposite polarity of a
         // Boolean-pure variable, and folding it mid-search desyncs the
         // theory's atom view.
-        if self.config.enable_equiv_substitution && !self.real_theory_attached {
+        if self.config.enable_equiv_substitution && self.destructive_preprocessing_safe() {
             if self.substitute_equivalent_literals_round() == equiv::SubstOutcome::Unsat {
                 self.trivially_unsat = true;
                 return;
@@ -2090,12 +2090,18 @@ impl Solver {
         // force the opposite polarity of a variable with one-sided Boolean
         // occurrences, and `save_model` would pin the pure polarity regardless
         // (see `TheoryCallback::is_real_theory`).
-        if self.assertion_levels.len() <= 1 && !self.real_theory_attached {
+        if self.assertion_levels.len() <= 1 && self.destructive_preprocessing_safe() {
             // Variables already fixed on the level-0 trail must be excluded
             // from pure-literal elimination (see
             // `Preprocessor::pure_literal_elimination`).
             let assigned: Vec<bool> = (0..self.num_vars)
-                .map(|i| self.trail.is_assigned(Var::new(i as u32)))
+                .map(|i| {
+                    self.trail.is_assigned(Var::new(i as u32))
+                        // Freeze set: theory-mapped variables never
+                        // pure-eliminated (their polarity belongs to the
+                        // theory, not to one-sided Boolean occurrence).
+                        || self.frozen_vars.contains(&Var::new(i as u32))
+                })
                 .collect();
             let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses, &assigned);
             // Record each eliminated pure literal so `save_model` can fix it to

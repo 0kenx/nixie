@@ -147,7 +147,17 @@ impl Solver {
                         // fabricating equivalences (and spurious pos(v)≡neg(v)
                         // contradictions) that proved satisfiable formulas UNSAT.
                         let scc_members = stack.split_off(scc_start);
+                        // Freeze set: a class containing a frozen
+                        // (theory-mapped) variable is left unfolded —
+                        // folding would rewrite the frozen literal's
+                        // clauses onto the representative and stop its
+                        // atom from ever reaching the theory
+                        // (`on_assignment` desync).
+                        let class_has_frozen = scc_members
+                            .iter()
+                            .any(|&c| self.frozen_vars.contains(&Lit::from_code(c as u32).var()));
                         if scc_members.len() > 1
+                            && !class_has_frozen
                             && let Some(&min_c) = scc_members.iter().min()
                         {
                             let rep = Lit::from_code(min_c as u32);

@@ -984,6 +984,19 @@ pub struct Solver {
     /// pure-literal pass of [`Solver::inprocess`] (see the trait method's
     /// soundness note).
     pub(super) real_theory_attached: bool,
+    /// Freeze set (cdclt-gates-audit enabling slice): SAT variables whose
+    /// assignments the theory callback observes.  Destructive preprocessing
+    /// (BVE elimination, ELS folding, pure-literal elimination) skips frozen
+    /// variables, which lets those passes run under a REAL theory when the
+    /// caller has frozen the theory-mapped set — the transforms then only
+    /// touch Boolean-structure (Tseitin/gate) variables the theory never
+    /// sees.  Frozen forever once frozen: the set only ever shrinks what the
+    /// passes may do, so retaining entries past a hypothetical un-mapping is
+    /// the conservative direction.
+    pub(super) frozen_vars: rustc_hash::FxHashSet<Var>,
+    /// Whether [`Solver::freeze_theory_vars`] has been called — the
+    /// precondition that relaxes the `real_theory_attached` gates.
+    pub(super) theory_vars_frozen: bool,
     /// Chronological backtracking helper
     pub(super) chrono_backtrack: ChronoBacktrack,
     /// Clause activity bump increment (for MapleSAT-style clause bumping)
@@ -1326,6 +1339,8 @@ impl Solver {
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
             real_theory_attached: false,
+            frozen_vars: rustc_hash::FxHashSet::default(),
+            theory_vars_frozen: false,
             chrono_backtrack: {
                 let mut cb = ChronoBacktrack::new(chrono_enabled, chrono_threshold);
                 cb.set_always(chrono_always);
@@ -3010,6 +3025,19 @@ impl Solver {
             }
         }
         self.clauses.mark_deleted_raw(cid);
+    }
+
+    /// Freeze the variables the caller's theory observes (see
+    /// [`Solver::frozen_vars`]).  Must be called before the first `solve*`
+    /// pre-search pass; later calls extend the set (idempotent).  After
+    /// this, [`Solver::elimination_allowed`]-class gates treat destructive
+    /// preprocessing as safe: the passes still refuse every frozen
+    /// variable, so only Boolean-structure variables are touched.
+    pub fn freeze_theory_vars<I: IntoIterator<Item = Var>>(&mut self, vars: I) {
+        for v in vars {
+            self.frozen_vars.insert(v);
+        }
+        self.theory_vars_frozen = true;
     }
 
     /// Get the model (if sat)

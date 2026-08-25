@@ -182,11 +182,19 @@ impl Eliminator {
 }
 
 impl Solver {
+    /// The `real_theory_attached` relaxation: destructive preprocessing is
+    /// safe under a real theory **iff** the caller froze the theory-mapped
+    /// variables first — the passes skip frozen variables, so they only
+    /// transform Boolean-structure variables the theory never observes.
+    pub(super) fn destructive_preprocessing_safe(&self) -> bool {
+        !self.real_theory_attached || self.theory_vars_frozen
+    }
+
     /// Whether destructive inprocessing (elimination) may run right now.
     fn elimination_allowed(&self) -> bool {
         self.trail.decision_level() == 0
             && self.assertion_levels.len() <= 1
-            && !self.real_theory_attached
+            && self.destructive_preprocessing_safe()
             && self.proof.is_none()
             && !self.lrat
             && !self.trivially_unsat
@@ -276,6 +284,12 @@ impl Solver {
             return;
         }
         if self.trail.is_assigned(v) || self.var_eliminated(v) {
+            return;
+        }
+        // Freeze set: theory-mapped variables are never eliminated (their
+        // assignments surface to the theory, and the SMT layer's
+        // term-to-var maps would dangle).
+        if self.frozen_vars.contains(&v) {
             return;
         }
         self.elim_mark[i] = true;
