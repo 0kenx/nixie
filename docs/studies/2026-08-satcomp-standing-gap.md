@@ -1,0 +1,50 @@
+# SATCOMP standing gap vs CaDiCaL after the 2026-08 landings (2026-08-25)
+
+## Standing table (261 files: satcomp2024 bench ×2 encodings + satcomp2025 main_easy_mid)
+
+| | oxiz (CaDiCaL preset, `cc78521`) | cadical (reference build) |
+|---|---|---|
+| solved (60 s, 6-way) | **128** | **159** |
+| verdict mismatches | — | **0** (522 runs) |
+
+Soundness is clean across every run; the entire gap is solving power.
+
+## Gap taxonomy (35 one-sided losses)
+
+1. **Trajectory-sensitive trio** (cheap, knob-level): `battleship-16-31`
+   (cadical 1.1 s), `intel047`, `mp1-Nb7T45` — each is solved by disabling
+   exactly one pre-search pass (BVE=0 or EQUIV=0) or enabling inprocessing;
+   the BVE+ELS-processed starting DB sends the search wandering.  Not a
+   family property: single files, opposite fixes.
+2. **Genuinely-hard trio** (all knobs TO): `fsf-300-354` (3.2 s),
+   `noL-11-14` (5.2 s), `x9-09054` (6.3 s).
+3. **Known follow-up family**: `worker_550` ×2, `circuit_64i` ×2 (the
+   studies' named decision-quality/amplitude items).
+4. Long tail: 30–55 s cadical solves (pb/frb/Timetable/af-synthesis …) —
+   uniform slowness, no single lever.
+
+## noL-11-14 diagnosis (the hard-trio representative)
+
+1419 vars, 7821 ternary clauses + 14 units, SAT.  cadical: 5.2 s (exit 10).
+oxiz: TO under default, `PRESET=default`, `STABLE=1`, `INPROCESS=1`,
+`REPHASE=0` — every knob.  Capped run: 200 k conflicts in 4.6 s
+(43.6 k conflicts/s — throughput is NOT the problem) at **9.5 decisions
+per conflict** (healthy CDCL runs 1–3): the learned clauses do not drive
+propagation to contradiction, and a SAT instance survives 1 M decisions
+without a model — a *branching/phase-quality* deficit on dense
+combinatorial 3-CNF, not a data-structure one.  Profile (symbols build):
+propagate 30 %, conflict analysis ~30 % (`shrink_and_minimize` 15 % +
+`analyze_mark` 5 % + `minimize_literal_plain` 5 %), elim+subsume ~21 %.
+
+## Recorded follow-ups
+
+- **Decision quality on dense 3-CNF** (the worker550-class item, now with
+  the noL diagnosis attached): why 9.5 decisions/conflict; compare phase
+  saving/rephase schedules and VMTF-vs-VSIDS per-mode against cadical's
+  `satisfying phases` behaviour on SAT instances.  This is the biggest
+  single lever for the 35-file gap.
+- The trajectory trio: revisit whether pre-search BVE+ELS *composition*
+  (order/interaction) systematically worsens satcomp2025-style starting
+  DBs — single-file evidence only; needs a paired corpus A/B before any
+  change.
+- Re-run this standing table after any landing that claims SAT-side wins.
