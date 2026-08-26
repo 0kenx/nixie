@@ -486,6 +486,18 @@ impl ClauseArena {
         }
     }
 
+    /// Set the usage counter (reduce-round decay under the used-shield).
+    pub fn set_usage(&mut self, r: ClauseRef, usage: u32) {
+        if self.read_header(r).is_none() {
+            return;
+        }
+        // SAFETY: `r` validated by `read_header`.
+        let hp = self.header_ptr_mut(r);
+        unsafe {
+            (*hp).usage = usage.min(u32::from(u8::MAX)) as u8;
+        }
+    }
+
     /// Set the tier of the clause at `r`.
     pub fn set_tier(&mut self, r: ClauseRef, tier: ClauseTier) {
         if self.read_header(r).is_some() {

@@ -817,10 +817,26 @@ impl Solver {
                 );
 
                 if !is_reason {
-                    match clause.tier {
-                        ClauseTier::Core => core_candidates.push((cid, clause.activity)),
-                        ClauseTier::Mid => mid_candidates.push((cid, clause.activity)),
-                        ClauseTier::Local => local_candidates.push((cid, clause.activity)),
+                    // cadical `reduce.cpp` protects recently-USED glue
+                    // clauses from deletion entirely (before any activity
+                    // sort): `glue <= tier1limit && used` and
+                    // `glue <= tier2limit && used >= max_used-1` are kept.
+                    // Our tier-percentage deletion has no such shield (the
+                    // 96 %-vs-76 % deletion anomaly, standing-gap study).
+                    // `OXIZ_REDUCE_USED_SHIELD=1` (default OFF — the shield
+                    // measured corpus-negative here: 23 vs 25 solved on a
+                    // 60-file sample; our tier promotions already reward
+                    // use, so the shield over-retains under the
+                    // tier-percentage policy) shields any clause used
+                    // since the last reduction.
+                    let protect_used =
+                        crate::reduce_used_shield_enabled() && self.clauses.usage_of(cid) > 0;
+                    if !protect_used {
+                        match clause.tier {
+                            ClauseTier::Core => core_candidates.push((cid, clause.activity)),
+                            ClauseTier::Mid => mid_candidates.push((cid, clause.activity)),
+                            ClauseTier::Local => local_candidates.push((cid, clause.activity)),
+                        }
                     }
                 }
             }
@@ -892,6 +908,16 @@ impl Solver {
             detach(self, *cid);
             self.clauses.remove(*cid);
             self.stats.deleted_clauses += 1;
+        }
+
+        // cadical decrements `used` by one per reduce round on every
+        // non-deleted candidate (protection thus means "used since roughly
+        // the last round"); approximate by halving, which preserves
+        // ordering and reaches 0 in O(log rounds).
+        if crate::reduce_used_shield_enabled() {
+            for &cid in &self.learned_clause_ids {
+                self.clauses.decay_usage(cid);
+            }
         }
 
         // Clean up learned_clause_ids (remove deleted clauses)

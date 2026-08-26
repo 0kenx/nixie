@@ -482,6 +482,22 @@ impl ClauseDatabase {
         }
     }
 
+    /// Current usage counter (0 for unknown/deleted clauses).
+    pub fn usage_of(&self, id: ClauseId) -> u32 {
+        self.ref_of(id)
+            .and_then(|r| self.arena.get(r).map(|v| v.usage_count))
+            .unwrap_or(0)
+    }
+
+    /// Halve the usage counter (the reduce round's decay under the
+    /// used-shield; keeps ordering, reaches 0 in O(log rounds)).
+    pub fn decay_usage(&mut self, id: ClauseId) {
+        if let Some(r) = self.ref_of(id) {
+            let u = self.arena.get(r).map_or(0, |v| v.usage_count);
+            self.arena.set_usage(r, u / 2);
+        }
+    }
+
     /// Increment the usage counter **without** tier promotion (raw counter
     /// access; `record_usage` is the promoting variant the conflict path
     /// uses).

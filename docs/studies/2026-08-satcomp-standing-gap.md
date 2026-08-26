@@ -347,3 +347,36 @@ Two corrections to the record:
   DBs — single-file evidence only; needs a paired corpus A/B before any
   change.
 - Re-run this standing table after any landing that claims SAT-side wins.
+
+### Reduction used-shield (cadical `reduce.cpp` parity): sound, corpus-NEGATIVE, shipped default-off
+
+The reduction-anomaly follow-up: cadical's `reduce` protects
+recently-used glue clauses from deletion entirely (`glue <= tier1limit
+&& used`, `glue <= tier2limit && used >= max_used-1` keep-tests before
+any sort), with `used` decaying one per round; our tier-percentage
+deletion (10/30/75 % by tier, activity sort) has no such shield — the
+mechanism behind the 96 %-vs-76 % deletion anomaly, hypothesized
+upstream cause of the clause-length gap (43.9 vs 34.7 lits at shrink).
+
+Ported as `OXIZ_REDUCE_USED_SHIELD` (shield any clause with usage > 0;
+decay-by-halving per round).  Results:
+
+| | shield ON | OFF |
+|---|---|---|
+| noL-11-14 | sat 59 s | **sat 49 s** |
+| 60-file satcomp sample (25 s, 6-way) | 23 | **25** |
+| verdict mismatches | — | **0** |
+
+Corpus-negative under OUR tier system — coherent with the design
+difference: our tier *promotions* (Local→Mid at 3 uses, Mid→Core at
+10/lbd≤2) already reward use, so the shield over-retains under the
+tier-percentage policy; cadical needs it because its glue-limit
+keep-tests carry no use-rewarding promotion ladder.  **Shipped
+default-OFF** (`OXIZ_REDUCE_USED_SHIELD=1` for A/B); the parity port,
+the `usage_of`/`decay_usage`/`set_usage` infrastructure, and this
+negative result are kept for the reduction-policy deep study.
+
+Canaries at default (shield inert): wisas `unsat` ~10 s, cxs-bp
+`unsat`; differential 161/0 both arms (one file of load noise vs the
+standing 162 — the paired inert run and the landed-default run agree
+with each other); parity 167/0/1; oxiz-sat 870/870; clippy/fmt clean.

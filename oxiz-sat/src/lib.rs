@@ -266,6 +266,20 @@ pub fn chrono_reuse_null_enabled() -> bool {
 /// side effects) but its result is discarded and the plain recursive
 /// minimizer produces the stored clause – isolating the semantic content of
 /// block-UIP shrinking from its cost and trajectory reshuffling.
+/// Reduce used-shield (cadical `reduce.cpp` parity port): shield
+/// recently-used learned clauses from tier-percentage deletion.
+/// **Default OFF** — corpus-negative in screening (23 vs 25 solved on a
+/// 60-file satcomp sample, 0 verdict mismatches; our tier promotions
+/// already reward use, so the shield over-retains under the
+/// tier-percentage policy).  `OXIZ_REDUCE_USED_SHIELD=1` enables for A/B
+/// (see the standing-gap study's reduction-anomaly section).
+#[doc(hidden)]
+pub fn reduce_used_shield_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_REDUCE_USED_SHIELD").is_ok_and(|v| v != "0"))
+}
+
 #[doc(hidden)]
 pub fn shrink_null_enabled() -> bool {
     use std::sync::OnceLock;
