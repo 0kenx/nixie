@@ -56,13 +56,42 @@ backtracking exists but is default-off (measured neutral-negative
 elsewhere); re-evaluating it *on this class* is a cheap first trial for
 the follow-up.
 
+### Erratum (same day): the CHRONO trial was a cap artifact; the hard trio is a 10× speed gap, not unsolvable
+
+The "cheap first trial" above was run and **falsified cleanly**: the
+CaDiCaL preset *already* sets `enable_chronological_backtrack: true`
+(as does `SolverConfig::default()`) — cadical's 26 % chronological
+behaviour is already matched, and the `CHRONO=1` "solves" of `noL-11-14`
+(55.4 s) and `rbsat-v760c` (50.6 s) reproduced identically **with no env
+at all**: they were the 60 s cap of the screen vs the 40 s cap of the
+earlier spot-check, not a chrono effect.  (The knob conflated
+chronological backtracking with the separately-gated `chrono_reuse`
+trail-saving, which is the measured neutral-negative feature.)
+
+Corrected facts:
+
+- **`noL-11-14` and `rbsat-v760c` solve serially in ~51–56 s under the
+  default config.**  The standing table's 60 s 6-way-parallel cap turns
+  these into TOs by load margin — the table systematically
+  under-counts borderline files by roughly one load factor.
+- The hard-trio deficit is therefore a **~10× speed gap** (55 s vs
+  cadical's 5.2 s), not a solve/no-solve boundary.
+- The remaining named difference vs cadical on this class is the
+  **phase machinery**: cadical ran walked 6 / weakened 7484 / rephased
+  21 (walk-based target phases toward satisfying assignments).  That,
+  not chronological backtracking, is the open lever for the
+  decisions-per-conflict deficit (9.5 vs 3.1).
+- `cnf_solve` gains an explicit `CHRONO=0|1` override so future A/Bs
+  can test the *off* arm without rebuilds (it was previously only
+  settable via preset internals).
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, now with
-  the noL diagnosis attached): why 9.5 decisions/conflict; compare phase
-  saving/rephase schedules and VMTF-vs-VSIDS per-mode against cadical's
-  `satisfying phases` behaviour on SAT instances.  This is the biggest
-  single lever for the 35-file gap.
+  the noL diagnosis attached): why 9.5 decisions/conflict; the concrete
+  named difference is cadical's **walk-based target phases** (walked /
+  weakened / rephased) steering toward satisfying assignments — we have
+  rephase only.  This is the biggest single lever for the 35-file gap.
 - The trajectory trio: revisit whether pre-search BVE+ELS *composition*
   (order/interaction) systematically worsens satcomp2025-style starting
   DBs — single-file evidence only; needs a paired corpus A/B before any

@@ -90,6 +90,14 @@ fn main() {
     if let Ok(v) = std::env::var("BVE") {
         config.enable_bve = v != "0";
     }
+    // Chronological backtracking A/B knob (cadical defaults it on; our
+    // measurements elsewhere were neutral-to-slightly-negative — the
+    // satcomp standing-gap study names it the cheap first trial for the
+    // dense-3-CNF model-finding deficit, where cadical runs 26 %
+    // chronological).
+    if let Ok(v) = std::env::var("CHRONO") {
+        config.enable_chronological_backtrack = v != "0";
+    }
     if let Ok(v) = std::env::var("STABLE") {
         config.enable_stabilize = v != "0";
     }
