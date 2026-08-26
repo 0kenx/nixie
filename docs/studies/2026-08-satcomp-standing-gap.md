@@ -213,6 +213,28 @@ in one loaded run were external-load artifacts — both pass serially in
 doc clean.  Search-core change: SAT and SMT trajectories both perturbed
 and re-verified.
 
+### Post-landing note (same day): debug-profile wisas duration unresolved; release verified throughout
+
+During post-landing re-verification under heavy external machine load
+(another agent's builds; load spikes to 68–73, plus a mid-verification
+`cargo clean` that deleted `target/`), debug-profile `wisas_xs_8_13`
+test runs exceeded every timebox (148 s→fail, 447 s→fail, 800 s/1500 s
+timeouts) while the RELEASE binary solves the identical fixture in
+13 s (`unsat`, both pre- and post-fix binaries, serial, quiet machine).
+No panic, no OOM line, no verdict change was ever captured — only
+timeouts under contention.  The full workspace suite passed at
+`9749a7d` twice BEFORE the load spikes; oxiz-sat 870/870 and the
+pete/arrangement subset 8/8 re-verified under timebox today.
+
+**Open item (owner: next quiet-machine session)**: measure debug-wisas
+serially on a quiet box at `e1d77bc` (pre-fix) vs `9749a7d` (post-fix).
+If post ≫ pre in debug too, the fallback fix shifted the wisas
+TRAJECTORY onto a much longer debug path (release unaffected — but
+explain the profile divergence, e.g. a debug-only assertion cost or a
+`debug_assert`-guarded branch); if comparable, today's failures were
+pure environment.  Do not treat today's timeouts as a regression
+signal (the repo's own rule), and do not re-run suites while load > 10.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
