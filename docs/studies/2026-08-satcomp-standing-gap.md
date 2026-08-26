@@ -126,6 +126,53 @@ deep study remains: learned-clause quality (glue distribution, reduction
 policy, otfs at 215-vs-ours unknown) and the branching *signal* itself,
 multi-seed with matched nulls per `docs/BENCHMARKING.md`.
 
+### Fourth screening: learned-clause quality counters — the first REAL mechanism gap (quantified)
+
+Counters at cadical's solve point on `noL-11-14` (232 k conflicts,
+default config both sides):
+
+| metric | oxiz | cadical |
+|---|---|---|
+| learned / conflict | 100 % | 97.1 % |
+| **literals removed / conflict (shrink+minimize)** | **2.36** | **~9.6** (shrunken 5.68 + minishrunken 3.96) |
+| `minishrunken` (in-block per-literal fallback) | **1** | **893 234** |
+| deleted (reduction) / conflict | 96.2 % | 76.3 % |
+| chronological backtracks | **0 %** | **26 %** |
+| avg LBD | 21.6 | — |
+
+Two anomalies, both verified against cadical source:
+
+1. **Recursive minimization saves ~nothing** (`minishrunken = 1`).
+   `improve_learnt_clause` runs the block-shrink path only (classic
+   `minimize_learnt_clause` runs only under LRAT/shrink-off), and the
+   in-block fallback (`shrunken_block_no_uip`) — implemented, guards
+   cadical-faithful incl. the Knuth `seen.count < 2` gate at depth 0 —
+   removes essentially zero literals.  cadical removes 3.96/conflict
+   through the same fallback.  Net: our learned clauses carry ~7 extra
+   literals each, directly explaining fat clauses / worse propagation /
+   higher dec-per-conflict.  Hypotheses to test next: block-size
+   distribution (blocks of 1 are skipped entirely — `i-j+1 < 2` keeps
+   them), failure frequency of the walk (the fallback only runs on
+   *failed* walks), and whether `seen_level_count` is populated on the
+   shrink path (the plain minimizer's Knuth gate reads it; if the block
+   walk does not maintain it, depth-0 calls always reject).
+2. **Chronological backtracking fires 0 %** (counters
+   `chrono_backtracks=0`) despite `enable_chronological_backtrack:
+   true` — semantics verified identical to cadical
+   (`level − jump > chronolevelim(=100)` → chrono).  Since our restart
+   interval matches cadical's (~22), the anomaly is that our trails
+   apparently never span >100 levels — consistent with the reduction
+   policy deleting 96 % as many clauses as conflicts (cadical 76 %):
+   an over-aggressive reduction keeps fewer long clauses, shallowens
+   the search, and starves both deep levels and the shrink fallback.
+
+**This is the deep study's first positive finding**: a quantified,
+mechanism-level gap (2.36 vs 9.6 literals removed per learned clause)
+with two concrete candidate causes.  Next steps: instrument
+`shrink_block` (block count/size, walk success/fail, fallback savings)
+and `seen_level_count` maintenance on the shrink path; compare
+reduction-policy targets against cadical's `reduced 76 %`.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
@@ -136,6 +183,11 @@ multi-seed with matched nulls per `docs/BENCHMARKING.md`.
   intrinsic (branching heuristics and learned-clause quality), and needs
   the deep multi-seed study, not a config flip.  This is the biggest
   single lever for the 35-file gap.
+- **Shrink/minimize savings gap** (fourth screening, quantified above):
+  2.36 vs ~9.6 literals removed per learned clause; `minishrunken=1` vs
+  893 k.  Instrument block sizes, walk failures, `seen_level_count`
+  maintenance; then compare the reduction policy (96 % vs cadical's
+  76 % deletion rate) — the two anomalies may be one causal chain.
 - The trajectory trio: revisit whether pre-search BVE+ELS *composition*
   (order/interaction) systematically worsens satcomp2025-style starting
   DBs — single-file evidence only; needs a paired corpus A/B before any
