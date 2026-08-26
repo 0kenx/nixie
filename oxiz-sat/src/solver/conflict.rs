@@ -1441,19 +1441,18 @@ impl Solver {
                 self.mf_unset(var, MF_SHRINKABLE);
             }
             let mut minimized: u64 = 0;
-            // OLDEST-FIRST (cadical `shrunken_block_no_uip`'s reverse
-            // iterators: the block sits in a trail-DESCENDING sort, so
-            // rbegin_block is the block's lowest-trail = oldest literal).
-            // Direction is load-bearing: a newer literal's reason can name an
-            // older block literal, and a KEPT older literal satisfies that
-            // walk (`MF_KEEP → removable`, the classic in-clause pivot
-            // argument).  Newest-first walks into *unclassified* older
-            // literals, which fail-and-poison, and the poison cascades
-            // through the whole block — measured on `noL-11-14`:
-            // `minishrunken = 1` across 232 k analyzes (cadical: 893 k
-            // savings) with depth-0 rejects dominated by self-inflicted
-            // poison (813 k) after no-reason decisions (428 k).
-            for k in (start..=end).rev() {
+            // NOTE: cadical iterates oldest-first here (reverse iterators),
+            // and oldest-first measured +2.4 fallback literals/analyze with
+            // the poison cascade gone (`2026-08-satcomp-standing-gap.md`,
+            // "SOLVED" section) — but it REVERTED again: the changed learned
+            // clauses explode the `wisas/xs_8_13` determinism canary by
+            // 50×+ CPU (11 s → >515 s user, both profiles; 20-core box, 4×
+            // oversubscribed controls isolate CPU from load).  A designated
+            // canary gates landings, so the semantic win stays unlanded
+            // until wisas's trajectory fragility is understood.  Newest-first
+            // (the pre-existing order) is equally SOUND — each removal is
+            // still individually justified; it merely saves less.
+            for k in start..=end {
                 let lit = self.learnt[k];
                 if self.minimize_literal_plain(lit.negate(), 0) {
                     self.learnt[k] = sentinel;

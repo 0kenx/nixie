@@ -235,6 +235,49 @@ explain the profile divergence, e.g. a debug-only assertion cost or a
 pure environment.  Do not treat today's timeouts as a regression
 signal (the repo's own rule), and do not re-run suites while load > 10.
 
+### REVERTED again (same day): the direction fix explodes the wisas canary by 50×+ CPU — and the landing's verification was corrupted
+
+The full controlled matrix (20-core box; pre/post binaries of verified
+provenance; load held roughly constant across cells):
+
+| | release | debug test |
+|---|---|---|
+| pre-fix (`2d55fc7`) | 10–14 s `unsat` (load 83) | **17 s pass** (load 134) |
+| post-fix (`9749a7d`) | **>120 s ×5** (load 83) | **>900 s** |
+
+CPU-truth run: post-fix burned **515 s user CPU without finishing**
+vs pre-fix ~11 s — a 50×+ CPU regression, both profiles.  wisas is this
+codebase's designated trajectory-fragile instance (the trie-vivify
+lesson): the fallback's changed learned clauses (soundly justified —
+each removal individually entailed) shift the SMT trajectory onto a
+catastrophically longer path.
+
+**The landing's "canaries pass in ~10 s" was wrong**: those runs used
+`target/release/oxiz` from the SHARED target dir during another
+agent's builds — a "32 s incremental" build after a full `cargo clean`
+is impossible, so the binary measured was not the fixed one.  Lesson
+recorded: after any `cargo clean` on this shared tree, binary
+provenance requires a full-duration build (or the precompile copy)
+before a canary can certify anything.
+
+**Disposition**: the one-line direction change is REVERTED (newest-first
+restored, equally sound, saves less); the instrumentation, the root-
+cause analysis, and the measured component win (+2.4 fallback
+lits/analyze, poison rejects 813 k → 0, noL TO → sat, satcomp 128→133)
+all stand in this study.  Relanding requires either understanding
+wisas's fragility or a policy that keeps the canary affordable — e.g.
+bounding the fallback per block and matching cadical's exact iteration
+semantics *including* its walk-failure rates (our walks fail 3.3/a vs
+cadical succeeding more, which changes which literals the fallback ever
+sees).
+
+Post-revert verification (timeboxed, fresh-provenance builds): wisas
+release `unsat` 7 s; debug canary subset (wisas+pete+pr30+cegar)
+28/28; oxiz-sat 870/870; clippy/fmt clean.  Both trajectory families
+(pre-fix and post-fix) measured 162/0 on the differential at their
+respective landings — verdict-clean either way; the revert is about
+the canary, not soundness.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
