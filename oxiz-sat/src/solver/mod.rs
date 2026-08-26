@@ -1271,8 +1271,22 @@ impl Solver {
     }
 
     /// Create a new solver with configuration
+    ///
+    /// The `OXIZ_CHRONO_REUSE` / `OXIZ_CHRONO_ALWAYS` experiment overrides
+    /// are re-applied here: presets hard-set both fields (`chrono_reuse:
+    /// false` everywhere), which used to stomp the env knobs read in
+    /// `SolverConfig::default` — the switches were dead for any
+    /// preset-built solver (found while preparing the reuse re-study;
+    /// `docs/studies/2026-08-chronoreusetrail-rejected.md` follow-up).
     #[must_use]
     pub fn with_config(config: SolverConfig) -> Self {
+        let mut config = config;
+        if let Ok(v) = std::env::var("OXIZ_CHRONO_REUSE") {
+            config.chrono_reuse = v == "1";
+        }
+        if let Ok(v) = std::env::var("OXIZ_CHRONO_ALWAYS") {
+            config.chrono_always = v == "1";
+        }
         let chrono_enabled = config.enable_chronological_backtrack;
         let chrono_threshold = config.chrono_backtrack_threshold;
         let chrono_always = config.chrono_always;

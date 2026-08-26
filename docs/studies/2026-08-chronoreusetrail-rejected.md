@@ -341,3 +341,49 @@ Gates: workspace 10 047 green, clippy/fmt/doc clean, z3_parity 0 wrong,
 differential fuzz 2 000 iterations 0 failures. Every diagnostic instrumented
 across the four hunt sessions was reverted; the tree contains only the fix
 and the strengthened test.
+
+
+## Re-study (2026-08-21): the revisit directive was unexecutable — the env knob was DEAD; fixed, re-measured, default-off CONFIRMED
+
+Preparing the prescribed ≥10-seed re-study found that `OXIZ_CHRONO_REUSE`
+(and `OXIZ_CHRONO_ALWAYS`) could never reach a preset-built solver: every
+`ConfigPreset` hard-sets `chrono_reuse: false` / `chrono_always: false`,
+stomping the env override read in `SolverConfig::default`.  Any A/B run
+through `ConfigPreset::config()` (stats_solve, cnf_solve, the SMT paths)
+silently measured the default arm twice.  Fixed by re-applying the two env
+overrides in `Solver::with_config` (the config-consumption point), and this
+re-study is the first measurement of the port through a live knob.
+
+**Port health confirmed**: fire rate median **24.2 %** of conflicts across
+the corpus — cadical parity (26 % on the standing-gap screening); on the
+mrpp sample file `chrono_bt` went 42 → 45 908, decisions/conflict
+4.50 → 3.95, ticks −1 %.
+
+**Corpus re-measurement** (45 satcomp files solved by default within 40 s;
+arms OFF / ON / NULL via the env knob + `OXIZ_CHRONOREUSE_NULL`; 120 s cap;
+deterministic metrics primary):
+
+| | ON/OFF | NULL/OFF | ON vs NULL |
+|---|---|---|---|
+| conflicts geomean | **1.717×** | 1.953× | **0.916×** |
+| decisions geomean | 1.336× | 1.483× | — |
+| propagations geomean | 1.226× | 1.334× | — |
+| ticks geomean | 1.269× | 1.356× | 0.914× (13/23 files faster) |
+| solved (of 45) | 43 | 43 | 45 (OFF) |
+
+Per-file: big ON wins (`Break_06_07` 0.41×, `si2-b` 0.41×, one `summl`
+0.58×, `x9-10070` 0.67× — which NULL times out on) and big losses
+(`frb65` 3.72×, `j3037` 4.52×, `summl`×2 3.4–4.3×, `WS_50` 2.14×) — the
+same bimodality the single-seed canonical tracking saw (0.921×).
+
+**Verdict**: the semantic content of trail reuse is mildly POSITIVE (it
+beats its matched null on both metrics — the selection, not the work,
+helps), but the trajectory reshuffling against our default is strongly
+NEGATIVE on this corpus (1.7× conflicts geomean, far outside noise).
+cadical's search (target phases, stable/focused schedule, glue-limits
+reduction) is tuned around trail reuse; ours is not.  **Default stays
+OFF**, now on a live-knob 3-arm measurement instead of a dead-knob
+accident.  The dead-knob fix lands regardless — it un-deadens the A/B
+infrastructure for every future revisit (and `OXIZ_CHRONO_ALWAYS` too,
+which the `chrono_trail_level_filter_regression` path relies on being able
+to set).
