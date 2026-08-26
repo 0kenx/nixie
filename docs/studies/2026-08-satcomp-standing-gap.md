@@ -292,6 +292,41 @@ therefore means closing the 3.3-walk-failures/analyze gap first
 the fallback rarely fires — or understanding wisas's fragility
 directly.
 
+### Correction (same day, instrumented cadical): that premise was WRONG — cadical's walks fail MORE
+
+An instrumented cadical build (counters patched into `shrink.cpp` in a
+`/tmp` copy, never touching the reference tree) produced the missing
+comparison cell on the same file:
+
+| per analyze | oxiz (232 k cap) | cadical (solve run, 225 k) |
+|---|---|---|
+| learned lits at shrink entry | 34.7 | **43.9** |
+| multi-blocks (avg size) | 4.66 (3.8) | **7.51** (3.6) |
+| walk UIP success | 1.36 (29 % of blocks) | 3.29 (**44 %**) |
+| walk fail → fallback fires | 3.30 | **4.21** |
+| fallback literals saved | ~0 (reverted) / 2.40 (fixed) | 3.96 |
+| total literals removed / conflict | 2.36 | 9.4 |
+
+Two corrections to the record:
+
+1. **cadical's walks fail MORE than ours** (4.21 vs 3.30 per analyze).
+   The premise above — "cadical resolves those blocks to UIPs where we
+   fall back" — was inferred from aggregate removal counts and was
+   wrong.  cadical's 4× total savings decompose as: **longer learned
+   clauses** (43.9 vs 34.7 literals at shrink entry — a whole-search
+   property: deeper trails, different reduction policy) yielding
+   **61 % more multi-blocks**, each with a somewhat higher UIP success
+   rate (44 % vs 29 %).  The fallback is not vestigial in cadical — it
+   fires constantly and saves heavily.
+2. **The direction-fixed port is cadical-shaped**: with the fix, our
+   fallback fired 3.28/analyze saving 2.4, vs cadical's 4.21/3.96 —
+   the same operating profile.  The wisas explosion is therefore even
+   more clearly a canary-specific trajectory accident, not a semantic
+   divergence.  The corrected reland path: understand wisas, or attack
+   the upstream clause-length gap (trail depth; the unexamined 96 % vs
+   76 % reduction-deletion anomaly) — which is where cadical's
+   advantage actually originates.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
