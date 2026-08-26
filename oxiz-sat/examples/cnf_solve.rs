@@ -98,6 +98,18 @@ fn main() {
     if let Ok(v) = std::env::var("CHRONO") {
         config.enable_chronological_backtrack = v != "0";
     }
+    // Branching arm for the decision-quality study: VSIDS=1 switches the
+    // preset's VMTF to VSIDS in BOTH stable and focused modes (the
+    // standing-gap study's dec/conf deficit: 5.1 vs cadical's 3.1 with
+    // schedule-level behaviour otherwise matched).
+    if let Ok(v) = std::env::var("VSIDS") {
+        config.use_vmtf = v == "0";
+        if v != "0" {
+            config.focused_vmtf = false;
+            config.use_lrb_branching = false;
+            config.use_chb_branching = false;
+        }
+    }
     if let Ok(v) = std::env::var("STABLE") {
         config.enable_stabilize = v != "0";
     }

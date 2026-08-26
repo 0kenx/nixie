@@ -104,6 +104,28 @@ cadical reaches the model at **232 k conflicts** where we pass **400 k**
 the worker550-class deep study (multi-seed, matched nulls, branching and
 learned-clause quality), not a config flip.
 
+### Third screening: the VSIDS arm — dec/conf fixed, corpus negative
+
+The schedule-level comparison had come out nearly identical to cadical
+(stable share 51 % vs 58 %, rephases 21 vs 21, walks 6 vs 6, restarts
+comparable), isolating the deficit to *decision content*.  Switching the
+preset's VMTF to VSIDS-in-both-modes (`VSIDS=1`, new knob) on `noL-11-14`:
+
+| arm | dec/conf (250 k) | model found |
+|---|---|---|
+| VMTF (default) | 5.1 | no (even at 600 k / 120 s) |
+| VSIDS | **3.1** (= cadical) | **no** (even at 600 k / 120 s) |
+
+dec/conf is *fixed* to exactly cadical's figure — and the model still is
+not found: decision density was a symptom, not the cause.  Corpus screen
+(80 files, 30 s, 6-way): **VSIDS 33 vs VMTF 36 solved** (gained 4, lost
+7, 0 mismatches) — corpus-negative; do not flip.  Three cheap levers are
+now falsified (chronological backtracking = cap artifact; walk phases =
+already firing; VSIDS arm = fixes the metric, loses the corpus).  The
+deep study remains: learned-clause quality (glue distribution, reduction
+policy, otfs at 215-vs-ours unknown) and the branching *signal* itself,
+multi-seed with matched nulls per `docs/BENCHMARKING.md`.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
