@@ -85,13 +85,35 @@ Corrected facts:
   can test the *off* arm without rebuilds (it was previously only
   settable via preset internals).
 
+### Second erratum (same day): the "walk-based target phases" lever is also already implemented and firing
+
+Measured on `noL-11-14` (400 k conflict cap, default config): the walk
+port (`solver/walk.rs`, default-on, in the rephase rotation) fired
+**8 walks / 49 113 flips** — cadical ran 6 walks; the counts are
+comparable — but **plateaued at 74 broken clauses**, never reaching a
+satisfying assignment.  (`weakened 7484` was a misread: it is
+extension-stack accounting for cadical's 390 BVE eliminations, not a
+walk mechanism.)  dec/conf at the 400 k cap measures **4.7** (the 9.5
+figure was the 200 k cap; the ratio is front-loaded in the search).
+
+**Net**: two consecutive "obvious levers" (chronological backtracking,
+walk-based phases) were both already present and firing.  No missing
+feature remains.  The hard-trio gap is intrinsic CDCL decision quality —
+cadical reaches the model at **232 k conflicts** where we pass **400 k**
+(18 s) without one, at 3.1 vs 4.7 decisions/conflict.  Closing that is
+the worker550-class deep study (multi-seed, matched nulls, branching and
+learned-clause quality), not a config flip.
+
 ## Recorded follow-ups
 
-- **Decision quality on dense 3-CNF** (the worker550-class item, now with
-  the noL diagnosis attached): why 9.5 decisions/conflict; the concrete
-  named difference is cadical's **walk-based target phases** (walked /
-  weakened / rephased) steering toward satisfying assignments — we have
-  rephase only.  This is the biggest single lever for the 35-file gap.
+- **Decision quality on dense 3-CNF** (the worker550-class item, with the
+  noL diagnosis attached): cadical reaches the model at 232 k conflicts
+  where we pass 400 k (3.1 vs 4.7 decisions/conflict).  Both "obvious"
+  levers (chronological backtracking, walk phases) are already
+  implemented, default-on, and firing on this class — the deficit is
+  intrinsic (branching heuristics and learned-clause quality), and needs
+  the deep multi-seed study, not a config flip.  This is the biggest
+  single lever for the 35-file gap.
 - The trajectory trio: revisit whether pre-search BVE+ELS *composition*
   (order/interaction) systematically worsens satcomp2025-style starting
   DBs — single-file evidence only; needs a paired corpus A/B before any
