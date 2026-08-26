@@ -173,6 +173,46 @@ with two concrete candidate causes.  Next steps: instrument
 and `seen_level_count` maintenance on the shrink path; compare
 reduction-policy targets against cadical's `reduced 76 %`.
 
+### SOLVED (same day): the fallback direction was inverted — poison cascade
+
+Instrumentation (`OXIZ_SHRINK_TRACE=1`, now a documented diagnostic
+surface) on `noL-11-14` at the 232 k cap isolated it:
+
+| signal | value |
+|---|---|
+| multi-blocks / analyze | 4.66 (avg size 3.8), walks: 1.36 OK / **3.30 FAIL** |
+| fallback savings | **0.000** (≈2.9 M calls, none removed) |
+| walk-fail reasons | ALL `level < blevel` minimize failures (765 785) |
+| fallback depth-0 rejects | **poison 813 636** + no-reason 428 347 + early-abort 337 438 |
+
+**Root cause**: cadical's `shrunken_block_no_uip` iterates the block
+**oldest→newest** (reverse iterators over the trail-descending sort),
+so a KEPT older literal satisfies newer literals' reason walks
+(`MF_KEEP → removable`: the classic in-clause pivot argument).  Our
+port iterated `start..=end` — **newest→oldest** — so reasons descended
+into *unclassified* older literals, which failed and set `MF_POISON`;
+the poison cascaded through the whole block (813 k self-inflicted
+rejects) and the fallback saved exactly nothing, on every instance.
+
+**Fix (one line, cadical parity)**: iterate `(start..=end).rev()`.
+
+| metric | before | after | cadical |
+|---|---|---|---|
+| fallback savings / analyze | 0.000 | **2.403** | 3.96 |
+| depth-0 poison rejects | 813 636 | **0** | — |
+| total shrink savings / conflict | 2.36 | **~4.8** | ~9.6 |
+| `noL-11-14` verdict | TO at 120 s | **sat in 52.7 s** | sat 5.2 s |
+| 80-file corpus (30 s, 6-way) | 36 | **37** | — |
+
+The remaining half of the shrink gap is the 3.3-walk-failures/analyze
+(cadical's block-UIP walks succeed more often) — recorded as the next
+thread.  Gates: suite functionally green (the two wisas-canary SIGTERMs
+in one loaded run were external-load artifacts — both pass serially in
+~10 s on both pre- and post-fix binaries), differential **162 solved /
+0 wrong** (standing level), parity **167/0/1 identical**, clippy/fmt/
+doc clean.  Search-core change: SAT and SMT trajectories both perturbed
+and re-verified.
+
 ## Recorded follow-ups
 
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
@@ -183,11 +223,11 @@ reduction-policy targets against cadical's `reduced 76 %`.
   intrinsic (branching heuristics and learned-clause quality), and needs
   the deep multi-seed study, not a config flip.  This is the biggest
   single lever for the 35-file gap.
-- **Shrink/minimize savings gap** (fourth screening, quantified above):
-  2.36 vs ~9.6 literals removed per learned clause; `minishrunken=1` vs
-  893 k.  Instrument block sizes, walk failures, `seen_level_count`
-  maintenance; then compare the reduction policy (96 % vs cadical's
-  76 % deletion rate) — the two anomalies may be one causal chain.
+- **Shrink/minimize savings gap** — the fallback half SOLVED (see above:
+  inverted direction, poison cascade; fixed to cadical's oldest-first).
+  The remaining half is walk failures: 3.3/analyze vs cadical's higher
+  success rate on block-UIP walks.  Reduction policy (96 % vs 76 %
+  deletion) still unexamined.
 - The trajectory trio: revisit whether pre-search BVE+ELS *composition*
   (order/interaction) systematically worsens satcomp2025-style starting
   DBs — single-file evidence only; needs a paired corpus A/B before any

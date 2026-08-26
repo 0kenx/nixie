@@ -1178,6 +1178,18 @@ pub struct Solver {
     /// conflict analysis (cadical `Level::seen.count`). Feeds Don Knuth's
     /// `seen.count < 2` gate in clause minimization.
     pub(super) seen_level_count: Vec<u32>,
+    /// Shrink-study accumulator (OXIZ_SHRINK_TRACE=1):
+    /// (analyzes, learnt_lits, singleton_blocks, multi_blocks,
+    ///  multi_block_lits, walk_success, walk_fail, fallback_saved).
+    pub(super) shrink_trace: (u64, u64, u64, u64, u64, u64, u64, u64),
+    /// Shrink-study failure-reason counters (OXIZ_SHRINK_TRACE=1).
+    pub(super) shrink_fail_low: u64,
+    pub(super) shrink_fail_above: u64,
+    pub(super) mini_reject_no_reason: u64,
+    pub(super) mini_reject_poison: u64,
+    pub(super) mini_reject_conflict_level: u64,
+    pub(super) mini_reject_knuth: u64,
+    pub(super) mini_reject_early_abort: u64,
     /// Per-decision-level smallest trail index among `seen` literals of the
     /// current analysis (cadical `Level::seen.trail`, reset to `u32::MAX`).
     /// Feeds the `v.trail <= l.seen.trail` early abort in minimization.
@@ -1388,6 +1400,14 @@ impl Solver {
             lrat_flags: Vec::new(),
             lrat_minimized: Vec::new(),
             seen_level_count: Vec::new(),
+            shrink_trace: (0, 0, 0, 0, 0, 0, 0, 0),
+            shrink_fail_low: 0,
+            shrink_fail_above: 0,
+            mini_reject_no_reason: 0,
+            mini_reject_poison: 0,
+            mini_reject_conflict_level: 0,
+            mini_reject_knuth: 0,
+            mini_reject_early_abort: 0,
             seen_level_trail: Vec::new(),
             seen_levels: Vec::new(),
             rephase_skipped: false,
@@ -3070,6 +3090,26 @@ impl Solver {
     #[must_use]
     pub fn search_ticks(&self) -> (u64, u64) {
         (self.ticks_focused, self.ticks_stable)
+    }
+
+    /// Shrink-study accumulator (see `conflict.rs`; `OXIZ_SHRINK_TRACE=1`).
+    #[must_use]
+    pub fn shrink_trace_stats(&self) -> (u64, u64, u64, u64, u64, u64, u64, u64) {
+        self.shrink_trace
+    }
+
+    /// Shrink-study failure-reason counters (debug instrumentation).
+    #[must_use]
+    pub fn shrink_fail_stats(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+        (
+            self.shrink_fail_low,
+            self.shrink_fail_above,
+            self.mini_reject_no_reason,
+            self.mini_reject_poison,
+            self.mini_reject_conflict_level,
+            self.mini_reject_knuth,
+            self.mini_reject_early_abort,
+        )
     }
 
     /// Get memory optimizer statistics

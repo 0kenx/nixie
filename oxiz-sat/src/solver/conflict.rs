@@ -63,6 +63,18 @@ enum ShrinkStep {
     NewlyShrinkable,
 }
 
+/// One analyze's block-walk statistics (debug instrumentation).
+#[derive(Default, Clone, Copy)]
+struct ShrinkTraceDbg {
+    learnt_len: usize,
+    singleton_blocks: u64,
+    multi_blocks: u64,
+    multi_block_lits: u64,
+    walk_success: u64,
+    walk_fail: u64,
+    fallback_saved: u64,
+}
+
 impl Solver {
     /// Analyze conflict and learn clause
     /// Mark one antecedent literal during 1-UIP resolution in [`Self::analyze`].
@@ -815,6 +827,15 @@ impl Solver {
         }
         let reason = self.trail.reason(var);
         let no_reason = !matches!(reason, Reason::Propagation(_));
+        if depth == 0 {
+            if no_reason {
+                self.mini_reject_no_reason += 1;
+            } else if (f & MF_POISON) != 0 {
+                self.mini_reject_poison += 1;
+            } else if level == self.current_conflict_level {
+                self.mini_reject_conflict_level += 1;
+            }
+        }
         // cadical compares against the conflict level (`v.level == level`),
         // not the current decision level: under chronological backtracking
         // the two differ, and treating a conflict-level literal as removable
@@ -830,6 +851,7 @@ impl Solver {
         if depth == 0 {
             let lv = level as usize;
             if lv < self.seen_level_count.len() && self.seen_level_count[lv] < 2 {
+                self.mini_reject_knuth += 1;
                 return false;
             }
         }
@@ -841,6 +863,9 @@ impl Solver {
             if lv < self.seen_level_trail.len()
                 && self.trail.trail_index(var) <= self.seen_level_trail[lv]
             {
+                if depth == 0 {
+                    self.mini_reject_early_abort += 1;
+                }
                 return false;
             }
         }
@@ -1049,6 +1074,33 @@ impl Solver {
     /// Clear every minimization flag touched during [`Self::minimize_clause_lrat`]:
     /// removable/poison/added for minimized vars, keep for kept (learnt) vars,
     /// seen for level-0 vars reached by the chain walk.
+    /// Debug instrumentation for the shrink study (OXIZ_SHRINK_TRACE=1).
+    fn shrink_trace_enabled(&self) -> bool {
+        #[cfg(feature = "std")]
+        {
+            std::env::var("OXIZ_SHRINK_TRACE").is_ok()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    #[cfg(feature = "std")]
+    fn shrink_trace_record(&mut self, dbg: ShrinkTraceDbg) {
+        self.shrink_trace.0 += 1;
+        self.shrink_trace.1 += dbg.learnt_len as u64;
+        self.shrink_trace.2 += dbg.singleton_blocks;
+        self.shrink_trace.3 += dbg.multi_blocks;
+        self.shrink_trace.4 += dbg.multi_block_lits;
+        self.shrink_trace.5 += dbg.walk_success;
+        self.shrink_trace.6 += dbg.walk_fail;
+        self.shrink_trace.7 += dbg.fallback_saved;
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn shrink_trace_record(&mut self, _dbg: ShrinkTraceDbg) {}
+
     fn clear_minimize_flags(&mut self) {
         let minimized: SmallVec<[i32; 32]> = self.lrat_minimized.drain(..).collect();
         for vi in minimized {
@@ -1199,6 +1251,12 @@ impl Solver {
         // the lowest level (clause tail) toward the front.
         let mut total_shrunken: u64 = 0;
         let mut total_minimized: u64 = 0;
+        let trace = self.shrink_trace_enabled();
+        #[allow(clippy::default_constructed_unit_structs)]
+        let mut dbg = ShrinkTraceDbg {
+            learnt_len: n,
+            ..ShrinkTraceDbg::default()
+        };
         let mut i = n - 1;
         while i >= 1 {
             let blevel = self.trail.level(self.learnt[i].var());
@@ -1208,13 +1266,25 @@ impl Solver {
             }
             if i - j + 1 < 2 {
                 // Singleton block: kept (nothing to resolve against).
+                dbg.singleton_blocks += 1;
                 self.mf_set(self.learnt[i].var(), MF_KEEP);
             } else {
+                dbg.multi_blocks += 1;
+                dbg.multi_block_lits += (i - j + 1) as u64;
                 let (s, m) = self.shrink_block(j, i, blevel, sentinel, vars_to_bump);
+                if s > 0 {
+                    dbg.walk_success += 1;
+                } else {
+                    dbg.walk_fail += 1;
+                }
+                dbg.fallback_saved += m;
                 total_shrunken += s;
                 total_minimized += m;
             }
             i = j - 1;
+        }
+        if trace {
+            self.shrink_trace_record(dbg);
         }
 
         // Compaction: drop the sentinel slots (cadical's in-place `i`/`j`
@@ -1371,7 +1441,19 @@ impl Solver {
                 self.mf_unset(var, MF_SHRINKABLE);
             }
             let mut minimized: u64 = 0;
-            for k in start..=end {
+            // OLDEST-FIRST (cadical `shrunken_block_no_uip`'s reverse
+            // iterators: the block sits in a trail-DESCENDING sort, so
+            // rbegin_block is the block's lowest-trail = oldest literal).
+            // Direction is load-bearing: a newer literal's reason can name an
+            // older block literal, and a KEPT older literal satisfies that
+            // walk (`MF_KEEP → removable`, the classic in-clause pivot
+            // argument).  Newest-first walks into *unclassified* older
+            // literals, which fail-and-poison, and the poison cascades
+            // through the whole block — measured on `noL-11-14`:
+            // `minishrunken = 1` across 232 k analyzes (cadical: 893 k
+            // savings) with depth-0 rejects dominated by self-inflicted
+            // poison (813 k) after no-reason decisions (428 k).
+            for k in (start..=end).rev() {
                 let lit = self.learnt[k];
                 if self.minimize_literal_plain(lit.negate(), 0) {
                     self.learnt[k] = sentinel;
@@ -1444,6 +1526,7 @@ impl Solver {
             if self.minimize_literal_plain(lit.negate(), 1) {
                 return ShrinkStep::Skip;
             }
+            self.shrink_fail_low += 1;
             return ShrinkStep::Fail;
         }
         if level > blevel {
@@ -1451,6 +1534,7 @@ impl Solver {
             // under our chronological backtracking that invariant is not
             // guaranteed, so degrade to failure (the block falls back to
             // plain minimization) instead of resolving through it.
+            self.shrink_fail_above += 1;
             return ShrinkStep::Fail;
         }
         self.mf_set(var, MF_SHRINKABLE);
