@@ -273,10 +273,24 @@ sees).
 
 Post-revert verification (timeboxed, fresh-provenance builds): wisas
 release `unsat` 7 s; debug canary subset (wisas+pete+pr30+cegar)
-28/28; oxiz-sat 870/870; clippy/fmt clean.  Both trajectory families
-(pre-fix and post-fix) measured 162/0 on the differential at their
-respective landings — verdict-clean either way; the revert is about
-the canary, not soundness.
+28/28; oxiz-sat 870/870; clippy/fmt clean.  **Differential at the
+revert commit: 162 solved / 0 wrong; parity 167/0/1** — the revert is
+itself a SAT-core change and shipped with the fresh differential the
+corollary requires (both trajectory families verdict-clean either
+way; the revert is about the canary, not soundness).
+
+Direction parity has since been re-confirmed from cadical source at
+BOTH levels (across blocks: `shrink_and_minimize_clause` iterates
+`rbegin_block` from the trail-descending sort's tail = oldest block
+first; within the fallback: `shrunken_block_no_uip`'s forward reverse
+iterators = oldest literal first) — the inverted direction was a real
+port bug, the fix is genuinely cadical-parity, and the wisas
+explosion is a trajectory interaction with our (differently-shaped)
+walk-failure distribution, not an implementation error.  Relanding
+therefore means closing the 3.3-walk-failures/analyze gap first
+(cadical resolves those blocks to UIPs where we fall back), so that
+the fallback rarely fires — or understanding wisas's fragility
+directly.
 
 ## Recorded follow-ups
 
