@@ -60,3 +60,32 @@ LANDED, default-on in code (reachable only where vivify already runs),
 inconclusive-mixed; revisit with a matched null and ≥10 seeds per cell
 before making any bundle-default claim.  The self-subsumption guard is
 the load-bearing soundness lesson of this slice.
+
+
+## Seed study (2026-08-21): default-on CONFIRMED — fires rarely, mildly positive where it fires
+
+The owed ≥10-seed follow-up to the inconclusive bundle screen.  Design: 21
+satcomp files (1–15 s default), 10 seeds (`SEED=N` — verified to spread
+trajectories, 1.5× conflicts on the mrpp sample), arms ON (default) vs OFF
+(`OXIZ_VIVIFY_OTF=0`), 40 s cap, ticks-to-verdict primary; 420 runs, 16 min
+at 6-way.  No matched null: the only semantic-scrambling null (delete a
+*non*-subsuming clause) is unsound and would corrupt the DB — the seed
+band is the comparator instead.  Knob reach verified by construction: 4
+files' trajectories changed under OFF.
+
+| | |
+|---|---|
+| files bit-identical ON vs OFF | **16/20** (all seeds) — the check runs but never fires |
+| affected files | 3 wins **0.866 / 0.856 / 0.873** (qwh, stable-300, j3037), 1 loss **1.215** (6s268r) |
+| overall geomean-of-geomeans | **0.988** |
+| aggregate TOs | ON 34 / OFF 33 (wash) |
+
+Conclusions: (1) OTF subsumption is a **rarely-firing, targeted** pass —
+16/20 files see zero firings, consistent with its narrow trigger (conflict
+or reason clause D with D ⊆ C mod level-0 units during vivify); (2) where
+it fires it is mildly positive on balance (3:1 win/loss, ~13 % median
+gain vs one 21 % loss); (3) the original screen's "3 TO losses" does not
+reproduce across seeds (TOs wash) — seed luck, as suspected.  **Default-on
+stands**, now on a seed study rather than an enablement-rule call.  The
+knob itself was proven live (unlike `OXIZ_CHRONO_REUSE`, found dead the
+same day).
