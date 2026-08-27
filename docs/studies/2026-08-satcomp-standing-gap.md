@@ -550,3 +550,23 @@ start that ProbSAT cannot build itself).  Ported (`walk_warmup`,
   (`warmups`/`warmup_conflicts`), and the knob remain for a future
   score-ordered variant (cadical decides by decision-queue order; we
   use an index cursor — the one semantic difference left).
+
+
+## Heterogeneous portfolio arms (2026-08-21): capability landed; at the 60 s standing cap it is a wash
+
+`SEEDS` now accepts config-variant arms (`chrono` = ungated
+`chrono_reuse`, optional `chrono:<seed>`) and per-arm `ARM_CONFLICTS`
+lists — converting the chrono-reuse study's "endurance-instance opt-in"
+verdict into a one-line portfolio invocation.
+
+Sizing under 6-way load: the chrono arm solves **5/18 residue files**
+(Timetable 20 s, Ptn-7824 20 s, worker 42 s, WS_500 52 s, g2-slp 55 s;
+circuit_64i flaps).  At the 60 s cap the budget arithmetic is a mutual
+exclusion: noL needs 1.53 M default conflicts (~55 s) in the default
+arm, while the chrono captures need their slice *after* a meaningful
+default budget.  Measured `default@1M,chrono@700k` on the 60-file
+corpus: **exactly one loss (noL, deterministic) and nothing else** —
+the residue captures land at the cap edge.  Net at 60 s ≈ 0 ± noise;
+at ≥90 s budgets strictly additive (+3–5).  No table run spent on a
+predicted wash; use `SEEDS=default,chrono ARM_CONFLICTS=1000000,700000`
+when the cap allows.

@@ -148,42 +148,69 @@ fn main() {
     if std::env::var("REPHASE").as_deref() == Ok("0") {
         config.rephase_interval = 0;
     }
-    // Seed-portfolio mode (kissat-style seeded restarts): `SEEDS` gives a
-    // comma-separated arm list (`default` keeps the built-in seed), and
-    // `ARM_CONFLICTS` an optional per-arm conflict budget.  Each arm is a
-    // FULL solve restart (fresh solver, same clauses, own seed): CDCL cost
-    // is strongly seed-dependent (measured spread on the satcomp2024
-    // timeout residue: same file 64G vs 524G vs TO>1.7T instructions
-    // across seeds), so exhausting one trajectory's budget and rolling a
-    // fresh one converts hard timeouts into solves.  Deterministic: the
-    // arm list and budgets are counters, never wall-clock.
-    // `Unsat`/`Sat` from any arm is a real verdict (SAT verdicts are
-    // seed-independent facts) and returns immediately; only budget
+    // Portfolio mode (kissat-style seeded restarts + heterogeneous config
+    // arms): `SEEDS` gives a comma-separated arm list, `ARM_CONFLICTS` a
+    // per-arm conflict budget (single number = all arms, or a comma list
+    // matching the arm count).  Arm tokens:
+    //   `default`  default config, built-in seed
+    //   `<n>`      default config, seed `n`
+    //   `chrono`   default config + `chrono_reuse` (ungated) — the
+    //              endurance-instance variant measured to solve 8 of the
+    //              25 cadical-only standing losses while being
+    //              corpus-negative as a *default* (standing-gap study):
+    //              as a later portfolio arm it converts those wins at
+    //              zero risk to files the default arm already solves.
+    //              Optional seed suffix: `chrono:<n>`.
+    // Each arm is a FULL solve restart (fresh solver, same clauses): CDCL
+    // cost is strongly seed- and config-dependent (measured spread on the
+    // satcomp2024 timeout residue: same file 64G vs 524G vs TO>1.7T
+    // instructions across seeds), so exhausting one trajectory's budget
+    // and rolling a fresh one converts hard timeouts into solves.
+    // Deterministic: the arm list and budgets are counters, never
+    // wall-clock.  `Unsat`/`Sat` from any arm is a real verdict (verdicts
+    // are arm-independent facts) and returns immediately; only budget
     // exhaustion advances to the next arm.
-    let seeds: Vec<Option<u64>> = match std::env::var("SEEDS") {
-        Ok(v) if !v.trim().is_empty() => v
-            .split(',')
-            .map(|t| match t.trim() {
-                "" | "default" => None,
-                other => other.parse::<u64>().ok(),
-            })
-            .collect(),
-        _ => vec![None],
+    let parse_arm = |t: &str| -> (Option<u64>, bool) {
+        let t = t.trim();
+        if t.is_empty() || t == "default" {
+            return (None, false);
+        }
+        if let Some(rest) = t.strip_prefix("chrono") {
+            let seed = rest
+                .strip_prefix(':')
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            return (seed, true);
+        }
+        (t.parse::<u64>().ok(), false)
     };
-    let arm_conflicts: Option<u64> = std::env::var("ARM_CONFLICTS")
-        .ok()
-        .and_then(|v| v.parse().ok());
+    let arms: Vec<(Option<u64>, bool)> = match std::env::var("SEEDS") {
+        Ok(v) if !v.trim().is_empty() => v.split(',').map(&parse_arm).collect(),
+        _ => vec![(None, false)],
+    };
+    let arm_budgets: Vec<Option<u64>> = match std::env::var("ARM_CONFLICTS") {
+        Ok(v) if v.contains(',') => v.split(',').map(|t| t.trim().parse().ok()).collect(),
+        Ok(v) => {
+            let n = v.parse().ok();
+            arms.iter().map(|_| n).collect()
+        }
+        Err(_) => arms.iter().map(|_| None).collect(),
+    };
 
-    for (arm, seed) in seeds.iter().enumerate() {
-        let mut solver = Solver::with_config(config.clone());
+    for (arm, (seed, chrono)) in arms.iter().enumerate() {
+        let mut arm_config = config.clone();
+        if *chrono {
+            arm_config.chrono_reuse = true;
+            arm_config.chrono_reuse_after = 0;
+        }
+        let mut solver = Solver::with_config(arm_config);
         if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty())
             && let Ok(n) = v.parse::<u64>()
         {
             solver.set_max_conflicts(Some(n));
         }
-        // Per-arm budget: the tighter of the global MAXC (if any) and
-        // ARM_CONFLICTS.
-        if let Some(arm_cap) = arm_conflicts {
+        // Per-arm budget: the tighter of the global MAXC (if any) and this
+        // arm's ARM_CONFLICTS entry.
+        if let Some(Some(arm_cap)) = arm_budgets.get(arm).copied() {
             let cap = solver
                 .max_conflicts()
                 .map_or(arm_cap, |global| global.min(arm_cap));
@@ -198,10 +225,11 @@ fn main() {
             std::process::exit(2);
         }
         let result = solver.solve();
-        if seeds.len() > 1 {
+        if arms.len() > 1 {
             eprintln!(
-                "c arm {arm} seed {} -> {result:?} (conflicts {})",
+                "c arm {arm} seed {} chrono={} -> {result:?} (conflicts {})",
                 seed.map_or_else(|| "default".to_string(), |s| s.to_string()),
+                chrono,
                 solver.stats().conflicts,
             );
         }
