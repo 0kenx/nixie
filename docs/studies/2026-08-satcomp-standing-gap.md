@@ -477,3 +477,40 @@ worsen — the pre-landing "2 % is load-bearing in focused mode" verdict
 (1.082× then) reproduces strengthened.  Focused-mode diversification and
 stable-mode phase guidance are genuinely complementary in this engine;
 the configuration is settled on this axis.
+
+
+## Residue diagnosis (2026-08-21, fresh 261-file table: 143/162 under load, 0 mismatches, 25 one-sided losses → 19 unique)
+
+Per-file cadical profile vs ours (decisions/conflict at a 300 k cap):
+
+| file | cad conflicts | cad chrono % | cad stab % | cad walked | ox dec/conf |
+|---|---|---|---|---|---|
+| worker_550 (×2) | 5 113 | 30.8 | 75 | 0 | 6.8 |
+| Timetable_C_392 | 184 851 | 15.3 | 93 | 5 | **43.5** |
+| circuit_64i (×2) | 373 215 | 14.3 | 37 | 7 | 2.5 |
+| g2-slp-synthesis (×2) | 573 630 | 26.1 | 27 | 10 | 6.8 |
+| combined-crypto1 (×2) | 437 012 | 19.5 | 53 | 9 | 2.0 |
+| rbsat-v760 (×2) | 528 963 | 25.4 | 43 | 9 | 2.3 |
+| bp4_AM_IXA | 800 662 | 16.7 | 36 | 12 | 3.7 |
+| 170223547 | 406 048 | 17.6 | 57 | 8 | 1.9 |
+| grs-64-48 | 655 675 | **39.5** | 40 | 10 | 6.0 |
+| fsf-300-354 | 136 034 | 30.1 | 55 | 4 | 12.9 |
+| Ptn-7824-b19 | 1 653 126 | 20.1 | 54 | 18 | 2.6 |
+| hid-uns-enc-6 | 1 452 345 | 22.0 | 49 | 16 | 3.9 |
+| anbul-dated-5-15 | 1 013 313 | 15.1 | 47 | 13 | 2.5 |
+| WS_500_16_90_70 | 666 064 | 16.7 | 49 | 11 | 2.6 |
+| case17 | 1 228 326 | 14.9 | 49 | 15 | 2.5 |
+| velev-pipe | 700 927 | **37.6** | 44 | 11 | 11.0 |
+| div-mitern172 | 708 744 | 14.5 | 52 | 11 | 3.2 |
+| mdp-28-14 (×2) | 1 232 630 | 4.3 | 55 | 15 | 3.0 |
+
+Classes: (a) **borderline-slow** — worker (solves at 106 k/~90 s
+unloaded, flaps at the 60 s/6-way cap) and circuit_64i (same, both were
+in the phase landing's 17); (b) **high wander** — Timetable 43.5,
+velev 11.0, fsf 12.9 dec/conf; (c) **endurance** — the 0.4–1.7 M-cad-
+conflict tail.  cadical's uniform signatures on the residue: chrono
+15–40 % (attacked via `chrono_reuse`, rejected thrice — see that
+study) and **walked 4–18** (walk-SAT phase improvements; our rephase
+cycle contains a walk step but its effectiveness on these files is
+unmeasured — the next candidate).  Residue list recoverable by re-running
+the table script shape documented above (both solvers, 60 s, 6-way).
