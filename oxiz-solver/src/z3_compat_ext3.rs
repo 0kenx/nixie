@@ -105,9 +105,15 @@ impl Z3Sort {
             Some(SortKind::Array { .. }) => Z3SortKind::Array,
             Some(SortKind::Datatype(_)) => Z3SortKind::Datatype,
             Some(SortKind::Uninterpreted(_)) => Z3SortKind::Uninterpreted,
+            // `RoundingMode` reports `Other` rather than folding into
+            // `Uninterpreted`: a caller switching on the kind to decide
+            // whether the sort's domain is user-defined would otherwise be
+            // lied to — this one is a reserved five-element built-in.
+            // (Ported from upstream v0.3.3.)
             Some(
                 SortKind::String
                 | SortKind::FloatingPoint { .. }
+                | SortKind::RoundingMode
                 | SortKind::Parameter(_)
                 | SortKind::Parametric { .. },
             )

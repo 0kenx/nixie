@@ -96,14 +96,22 @@ impl<'a> Parser<'a> {
             // workspace-wide change outside this fix's scope. Until that
             // lands, reject these two reserved names honestly instead of
             // silently mistyping them.
-            "RoundingMode" => Err(OxizError::ParseError {
-                position: self.lexer.position(),
-                message: "sort 'RoundingMode' is a reserved SMT-LIB FloatingPoint theory sort; \
-                    declaring constants or functions of this sort is not yet supported (a \
-                    rounding mode is only accepted as a literal RNE/RNA/RTP/RTN/RTZ argument \
-                    directly inside an fp.* operator)"
-                    .to_string(),
-            }),
+            // `RoundingMode` is a first-class sort (`SortKind::RoundingMode`):
+            // `(declare-const m RoundingMode)` builds a real, solvable
+            // rounding-mode constant.  Its five inhabitants are nullary `Var`
+            // terms at this sort, so EUF decides equalities between them; the
+            // finiteness of the domain is enforced by the solver layer, which
+            // asserts a closure axiom per declared constant plus the pairwise
+            // distinctness of the five modes.
+            //
+            // Because those axioms attach per *nullary declaration*, the sort
+            // is accepted here and then rejected in the positions no axiom can
+            // reach — see `reject_unsupported_rounding_mode_position`.
+            // (Ported from upstream v0.3.3.)
+            "RoundingMode" => {
+                self.manager.note_rounding_mode_used();
+                Ok(self.manager.sorts.rounding_mode_sort)
+            }
             // `RegLan` is *implemented*, just not user-declarable.
             //
             // The regular-language sublanguage itself works end to end:
@@ -273,6 +281,11 @@ impl<'a> Parser<'a> {
                         return true;
                     }
                 }
+                // The reserved RoundingMode sort is interned by
+                // `SortManager::new` under a `RoundingMode` kind (not an
+                // `Uninterpreted` name), so it cannot collide with a
+                // user-chosen name here.
+                SortKind::RoundingMode => {}
                 // A sort parameter's name is interned by `SortManager` itself
                 // (`mk_sort_parameter` / `define_parametric_sort`), so it must
                 // be resolved through the sort manager's own interner – see
@@ -458,6 +471,14 @@ impl<'a> Parser<'a> {
                                 let domain = self.parse_sort()?;
                                 let range = self.parse_sort()?;
                                 self.expect_rparen()?;
+                                self.reject_unsupported_rounding_mode_position(
+                                    domain,
+                                    "an array domain",
+                                )?;
+                                self.reject_unsupported_rounding_mode_position(
+                                    range,
+                                    "an array range",
+                                )?;
                                 Ok(self.manager.sorts.array(domain, range))
                             }
                             _ => Err(OxizError::ParseError {
@@ -483,6 +504,29 @@ impl<'a> Parser<'a> {
                 message: "expected sort, found end of input".to_string(),
             })
         }
+    }
+
+    /// Reject `RoundingMode` in a position its closure axiom cannot reach.
+    /// (Ported from upstream v0.3.3.)
+    pub(super) fn reject_unsupported_rounding_mode_position(
+        &self,
+        sort: SortId,
+        position: &str,
+    ) -> Result<()> {
+        if !self.manager.sorts.sort_mentions_rounding_mode(sort) {
+            return Ok(());
+        }
+        Err(OxizError::ParseError {
+            position: self.lexer.position(),
+            message: format!(
+                "sort 'RoundingMode' is supported only in nullary declaration position — \
+                 (declare-const m RoundingMode) or (declare-fun m () RoundingMode) — not as \
+                 {position}. The sort's five-element domain is enforced by a closure axiom \
+                 attached to each declared rounding-mode constant, and there is no way to attach \
+                 that axiom to the rounding modes reachable through {position}; accepting it \
+                 would silently treat RoundingMode as an infinite free sort"
+            ),
+        })
     }
 
     /// Convert a SortId to its canonical SMT-LIB2 string representation.
@@ -525,6 +569,7 @@ impl<'a> Parser<'a> {
                         SortKind::FloatingPoint { eb, sb } => {
                             out.push_str(&format!("(_ FloatingPoint {eb} {sb})"));
                         }
+                        SortKind::RoundingMode => out.push_str("RoundingMode"),
                         SortKind::Array { domain, range } => {
                             out.push_str("(Array ");
                             // Pushed in reverse of emission order.

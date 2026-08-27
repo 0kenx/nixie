@@ -391,6 +391,7 @@ impl Context {
                     | SortKind::String
                     | SortKind::BitVec(_)
                     | SortKind::FloatingPoint { .. }
+                    | SortKind::RoundingMode
                     | SortKind::Uninterpreted(_)
                     | SortKind::Parameter(_)
                     | SortKind::Datatype(_) => {}
@@ -426,6 +427,7 @@ impl Context {
                     SortKind::String => "String".to_string(),
                     SortKind::BitVec(w) => format!("(_ BitVec {w})"),
                     SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
+                    SortKind::RoundingMode => "RoundingMode".to_string(),
                     // An uninterpreted sort's name is interned by the *term*
                     // manager (`Parser::parse_sort` for `declare-sort` names
                     // and `TermManager::reglan_sort` both call
@@ -586,6 +588,18 @@ impl Context {
                 let printer = oxiz_core::smtlib::Printer::new(&self.terms);
                 printer.print_term(term)
             }
+            // A rounding-mode value: a nullary `Var` at the reserved
+            // `RoundingMode` sort, interned under the canonical long name —
+            // print the name (that IS the value's SMT-LIB spelling).
+            // (Ported from upstream v0.3.3.)
+            Some(TermKind::Var(spur))
+                if self
+                    .terms
+                    .get(term)
+                    .is_some_and(|t| t.sort == self.terms.sorts.rounding_mode_sort) =>
+            {
+                self.terms.resolve_str(*spur).to_string()
+            }
             _ => "?".to_string(),
         }
     }
@@ -642,6 +656,9 @@ impl Context {
                     }
                     // Positive zero is a canonical, valid ground FP value.
                     SortKind::FloatingPoint { eb, sb } => break format!("(_ +zero {eb} {sb})"),
+                    // The canonical default rounding mode (matches
+                    // `ValueFactory`'s default for the sort).
+                    SortKind::RoundingMode => break "roundNearestTiesToEven".to_string(),
                     // A constant array whose every entry is the range's
                     // default value.  Descending into the range charges no
                     // constructor expansion – the sort graph alone is

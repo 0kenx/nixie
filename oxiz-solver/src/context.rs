@@ -22,6 +22,11 @@ mod model_fmt;
 /// file stays under the 2000-line policy limit.
 mod sort_name;
 
+/// Cardinality axioms for the reserved `RoundingMode` sort. Split into a
+/// child module so this file stays under the 2000-line policy limit.
+/// (Ported from upstream v0.3.3.)
+mod rounding_mode;
+
 /// `define-fun-rec` / `define-funs-rec`: registry plus the fuel-bounded
 /// unfolding driver that discharges the definitional axiom. Split into a
 /// child module so this file stays under the 2000-line policy limit.
@@ -241,6 +246,13 @@ impl Context {
     /// Declare a constant
     pub fn declare_const(&mut self, name: &str, sort: SortId) -> TermId {
         let term = self.terms.mk_var(name, sort);
+        // A declared `RoundingMode` constant gets its closure axiom (one of
+        // the five modes) immediately: this is the one position the parser
+        // accepts the sort in, exactly because the axiom needs a single
+        // symbol to attach to. (Ported from upstream v0.3.3.)
+        if self.is_rounding_mode_sort(sort) {
+            self.assert_rounding_mode_closure(term);
+        }
         let index = self.declared_consts.len();
         self.declared_consts.push(DeclaredConst {
             term,
@@ -372,6 +384,12 @@ impl Context {
     /// would silently lose them for any script using `define-fun-rec`.
     /// (Split introduced by the upstream-v0.3.3 recfun port.)
     pub(super) fn check_sat_core(&mut self) -> SolverResult {
+        // The five rounding modes must be pairwise distinct for any solve
+        // that mentions one; see `context::rounding_mode` for why this is
+        // asserted here rather than once at declaration time.
+        if self.terms.rounding_mode_used() {
+            self.assert_rounding_mode_distinctness();
+        }
         // Logic-contract validation (Priority 0): a KNOWN header is a
         // contract; a body that requires capabilities outside it is a
         // command error, not an `Unknown`.  Missing/`ALL` headers route

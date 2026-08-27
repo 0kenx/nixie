@@ -26,6 +26,7 @@
 //!   level-0 prefix satisfies every live clause, so the refutation has to
 //!   come from theory propagation of the numeric equality atom — and none
 //!   fires.
+//!
 //! The fix (all repros below now pass):
 //!   `numeric_eq_split_pairs` (the trichotomy-clause dedup memo) survived
 //!   `pop` while the clauses it deduped were emitted into the popped SAT
