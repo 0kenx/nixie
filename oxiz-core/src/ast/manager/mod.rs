@@ -2,12 +2,11 @@
 
 use super::term::{Term, TermId, TermKind};
 use super::traversal::get_children;
-#[cfg(feature = "arena")]
-use crate::ast::arena::TermArena;
 use crate::interner::{Rodeo, Spur};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::sort::{SortId, SortManager};
+use hashbrown::HashTable;
 use portable_atomic::{AtomicU32, Ordering};
 
 mod builder;
@@ -15,6 +14,26 @@ pub mod bv_fold;
 mod query;
 mod rounding_mode;
 pub mod str_fold;
+
+/// Hash of an interning key, i.e. of the pair `(kind, sort)`.
+///
+/// This is deliberately the *same* value the previous
+/// `FxHashMap<(TermKind, SortId), TermId>` computed for the same pair:
+/// `Hash for (A, B)` is defined as `a.hash(state)` followed by
+/// `b.hash(state)`, so hashing the two components in that order into a
+/// default-seeded [`rustc_hash::FxHasher`] reproduces the old key hash bit for
+/// bit. Storing ids instead of owned keys was meant to move memory and nothing
+/// else, so the hash distribution -- and with it every bucket-occupancy and
+/// probe-length property the intern table had before -- is held fixed.
+/// (Ported from upstream v0.3.3.)
+fn hash_term_key(kind: &TermKind, sort: SortId) -> u64 {
+    use core::hash::{Hash, Hasher};
+
+    let mut hasher = rustc_hash::FxHasher::default();
+    kind.hash(&mut hasher);
+    sort.hash(&mut hasher);
+    hasher.finish()
+}
 
 /// Statistics for garbage collection
 #[derive(Debug, Clone, Default)]
@@ -45,23 +64,28 @@ pub struct TermManager {
     /// Whether anything has introduced a rounding mode: a mode term, or a
     /// parser-accepted `RoundingMode` declaration (see `rounding_mode.rs`).
     pub(super) rounding_mode_used: bool,
-    /// Cache for structural sharing.
+    /// Intern table for structural sharing: hashes of `(kind, sort)` to the
+    /// `TermId` of the one term carrying that pair.
     ///
-    /// Keyed on `(TermKind, SortId)` rather than `TermKind` alone: two
-    /// structurally identical kinds that carry different sorts (most notably
-    /// `Var` with the same name but a different sort) must intern to distinct
-    /// terms, otherwise same-named variables of different sorts would alias and
-    /// silently type-confuse (wrong terms, wrong models).
-    pub(super) cache: FxHashMap<(TermKind, SortId), TermId>,
+    /// A term's identity is the pair `(kind, sort)`, not the kind alone: two
+    /// structurally identical kinds at different sorts -- most notably `Var`
+    /// with the same name -- must intern to distinct terms, or same-named
+    /// variables of different sorts alias and silently type-confuse (wrong
+    /// terms, wrong models).
+    ///
+    /// Rather than own a *second* copy of each `TermKind` as a map key, this
+    /// stores only the id and resolves both lookups and collisions against
+    /// `terms[id]`, so each kind is retained exactly once -- in the `terms`
+    /// vector, which is where `get()` reads it from anyway. That is why this
+    /// is a [`HashTable`] and not a `HashMap`: a `HashMap` has no way to
+    /// express "the key lives somewhere else". (Ported from upstream v0.3.3.)
+    pub(super) table: HashTable<TermId>,
     /// True constant
     pub true_id: TermId,
     /// False constant
     pub false_id: TermId,
     /// GC statistics
     pub(super) gc_stats: GCStatistics,
-    /// Optional bump arena for fast allocation (feature-gated)
-    #[cfg(feature = "arena")]
-    pub(super) arena: TermArena,
 }
 
 impl Default for TermManager {
@@ -83,12 +107,10 @@ impl TermManager {
             interner: Rodeo::default(),
             sorts,
             rounding_mode_used: false,
-            cache: FxHashMap::default(),
+            table: HashTable::new(),
             true_id: TermId(0),
             false_id: TermId(1),
             gc_stats: GCStatistics::default(),
-            #[cfg(feature = "arena")]
-            arena: TermArena::with_capacity(64 * 1024),
         };
 
         // Pre-allocate true and false
@@ -109,41 +131,33 @@ impl TermManager {
 
     /// Intern a term, returning its unique ID
     pub(crate) fn intern(&mut self, kind: TermKind, sort: SortId) -> TermId {
-        // Key on (kind, sort) so that identical kinds with distinct sorts do
-        // not alias (see the `cache` field documentation).
-        let key = (kind, sort);
-        if let Some(&id) = self.cache.get(&key) {
-            return id;
-        }
+        // Identity is the pair (kind, sort): identical kinds at distinct sorts
+        // must not alias (see the `table` field documentation).
+        let hash = hash_term_key(&kind, sort);
 
-        let id = TermId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let term = Term {
-            id,
-            kind: key.0.clone(),
-            sort,
-        };
-        // When the arena feature is enabled, also allocate in the bump arena
-        #[cfg(feature = "arena")]
         {
-            let _ = self.arena.alloc_term(id, key.0.clone(), sort);
+            let Self { terms, table, .. } = self;
+            if let Some(&id) = table.find(hash, |&id| {
+                terms
+                    .get(id.0 as usize)
+                    .is_some_and(|t| t.sort == sort && t.kind == kind)
+            }) {
+                return id;
+            }
         }
 
-        self.terms.push(term);
-        self.cache.insert(key, id);
+        // Miss: allocate the id, then push the term *before* recording it, so
+        // that the id the table stores is already resolvable through `terms`.
+        let id = TermId(self.next_id.fetch_add(1, Ordering::Relaxed));
+        self.terms.push(Term { id, kind, sort });
+
+        let Self { terms, table, .. } = self;
+        table.insert_unique(hash, id, |&id| {
+            terms
+                .get(id.0 as usize)
+                .map_or(0, |t| hash_term_key(&t.kind, t.sort))
+        });
         id
-    }
-
-    /// Get arena statistics (only available with `arena` feature)
-    #[cfg(feature = "arena")]
-    #[must_use]
-    pub fn arena_stats(&self) -> crate::ast::arena::ArenaStats {
-        self.arena.stats()
-    }
-
-    /// Reset the arena allocator, freeing all arena memory
-    #[cfg(feature = "arena")]
-    pub fn reset_arena(&mut self) {
-        self.arena.reset();
     }
 
     /// Get a term by its ID
@@ -215,10 +229,12 @@ impl TermManager {
             }
         }
 
-        // Sweep phase: remove unreachable entries from cache
-        let original_cache_size = self.cache.len();
-        self.cache.retain(|_, &mut id| reachable.contains(&id));
-        let removed = original_cache_size - self.cache.len();
+        // Sweep phase: remove unreachable entries from the intern table.
+        // A swept term stays readable through `get`, and interning its kind
+        // again allocates a *fresh* id rather than returning the old one.
+        let original_cache_size = self.table.len();
+        self.table.retain(|id| reachable.contains(id));
+        let removed = original_cache_size - self.table.len();
 
         // Update statistics
         self.gc_stats.gc_count += 1;
@@ -242,7 +258,14 @@ impl TermManager {
     /// Number of cache entries removed
     pub fn gc_aggressive(&mut self, roots: &FxHashSet<TermId>) -> usize {
         let removed = self.gc(roots);
-        self.cache.shrink_to_fit();
+        // Reallocating the table rehashes every retained id, so this needs the
+        // same `terms`-resolving hasher that `intern` inserts with.
+        let Self { terms, table, .. } = self;
+        table.shrink_to_fit(|&id| {
+            terms
+                .get(id.0 as usize)
+                .map_or(0, |t| hash_term_key(&t.kind, t.sort))
+        });
         removed
     }
 
@@ -255,7 +278,7 @@ impl TermManager {
     /// Get the current cache size (number of hash-consed terms)
     #[must_use]
     pub fn cache_size(&self) -> usize {
-        self.cache.len()
+        self.table.len()
     }
 
     /// Get the total number of terms allocated
