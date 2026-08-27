@@ -37,7 +37,10 @@ rayon = { workspace = true, optional = true }
 parking_lot = { workspace = true, optional = true }
 
 [features]
-default = ["std"]
+# `property-tests` joins the default set (matching `oxiz-solver` and upstream
+# v0.3.3): the proptest suites run on a plain `cargo test -p oxiz-core`
+# instead of only when someone remembers the flag.
+default = ["std", "property-tests"]
 std = [
     "lasso",
     "bumpalo",

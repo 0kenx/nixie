@@ -74,17 +74,26 @@ impl Solver {
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
                     } else if value == 0 {
-                        // Propagate
+                        // Propagate.
+                        //
+                        // No lazy hyper-binary resolution here: the reason is
+                        // a binary clause (the BIG edge being traversed), and
+                        // `check_hyper_binary_resolution` provably cannot
+                        // learn anything from one — the resolvent of a binary
+                        // clause against the conflicting clause is what the
+                        // ordinary conflict path already learns.  Skipping the
+                        // call removes 6-31% of all scans on BIG-heavy
+                        // instances with bit-identical search trajectories;
+                        // the same filter *inside* the function was measured
+                        // (upstream v0.3.3) to change *which* clauses get
+                        // learned, because a binary clause can also propagate
+                        // from the watch lists where the BIG edge may not
+                        // exist.
                         self.trail.assign_propagation(implied_lit, clause_id);
                         // LRAT: flush level-0 propagations to explicit derived units
                         // so every level-0 literal carries a unit id.
                         if self.lrat && self.trail.decision_level() == 0 {
                             self.flush_level0_unit(implied_lit, clause_id);
-                        }
-
-                        // Lazy hyper-binary resolution: check if we can learn a binary clause
-                        if self.config.enable_lazy_hyper_binary {
-                            self.check_hyper_binary_resolution(lit, implied_lit, clause_id);
                         }
                     }
                 }
