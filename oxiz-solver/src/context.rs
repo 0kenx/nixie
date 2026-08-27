@@ -22,6 +22,12 @@ mod model_fmt;
 /// file stays under the 2000-line policy limit.
 mod sort_name;
 
+/// `define-fun-rec` / `define-funs-rec`: registry plus the fuel-bounded
+/// unfolding driver that discharges the definitional axiom. Split into a
+/// child module so this file stays under the 2000-line policy limit.
+/// (Ported from upstream v0.3.3.)
+mod recfun;
+
 /// Regression tests for the closing restore check of `(get-consequences ..)`.
 /// Split into a child module so this file stays under the 2000-line policy
 /// limit.
@@ -135,6 +141,9 @@ pub struct Context {
     fun_name_to_index: crate::prelude::HashMap<String, usize>,
     /// Last check-sat result
     last_result: Option<SolverResult>,
+    /// Recursive definitions in scope (`define-fun-rec` /
+    /// `define-funs-rec`) plus the driver's scratch-scope bookkeeping.
+    recfun: recfun::RecFunState,
     /// The assumption terms passed to the most recent `check-sat-assuming`
     /// (empty for a plain `check-sat`).  Retained so `get-unsat-assumptions`
     /// can report an unsatisfiable subset after an `unsat` verdict.
@@ -176,6 +185,7 @@ impl Context {
             logic_was_set: false,
             pending_contract_error: None,
             assertions: Vec::new(),
+            recfun: recfun::RecFunState::default(),
             assertion_stack: Vec::new(),
             declared_consts: Vec::new(),
             const_stack: Vec::new(),
@@ -354,7 +364,14 @@ impl Context {
     }
 
     /// Check satisfiability
-    pub fn check_sat(&mut self) -> SolverResult {
+    /// One solver check, with the gates that belong to *every* check-sat.
+    ///
+    /// Factored out of [`Context::check_sat`] so the recursive-definition
+    /// driver (`context::recfun`) runs each of its fuel rounds through
+    /// exactly these gates.  A driver that called `solver.check` directly
+    /// would silently lose them for any script using `define-fun-rec`.
+    /// (Split introduced by the upstream-v0.3.3 recfun port.)
+    pub(super) fn check_sat_core(&mut self) -> SolverResult {
         // Logic-contract validation (Priority 0): a KNOWN header is a
         // contract; a body that requires capabilities outside it is a
         // command error, not an `Unknown`.  Missing/`ALL` headers route
@@ -408,6 +425,21 @@ impl Context {
         {
             result = SolverResult::Unknown;
         }
+
+        result
+    }
+
+    /// Check satisfiability.
+    ///
+    /// With recursive definitions in scope the plain check would solve a
+    /// strictly weaker problem (every `f(x)` unconstrained), so the
+    /// fuel-bounded unfolding driver takes over.
+    pub fn check_sat(&mut self) -> SolverResult {
+        let result = if self.recfun.is_empty() {
+            self.check_sat_core()
+        } else {
+            self.check_sat_recfun()
+        };
 
         // A plain check-sat clears any assumption context from a prior
         // check-sat-assuming, so a following get-unsat-assumptions does not
@@ -560,6 +592,7 @@ impl Context {
         self.assertion_stack.push(self.assertions.len());
         self.const_stack.push(self.declared_consts.len());
         self.fun_stack.push(self.declared_funs.len());
+        self.recfun.push_scope();
         self.solver.push();
         self.invalidate_last_check();
     }
@@ -567,6 +600,8 @@ impl Context {
     /// Pop a context level with incremental declaration removal
     pub fn pop(&mut self) {
         self.invalidate_last_check();
+        self.discharge_recfun_scope();
+        self.recfun.pop_scope();
         if let Some(len) = self.assertion_stack.pop() {
             self.assertions.truncate(len);
             if let Some(const_len) = self.const_stack.pop() {
@@ -591,6 +626,7 @@ impl Context {
 
     /// Reset the context
     pub fn reset(&mut self) {
+        self.recfun.clear_all();
         self.solver.reset();
         let mut config = self.solver.config().clone();
         config.certification_mode = if self.certified_mode_required {
@@ -634,6 +670,7 @@ impl Context {
     /// - the **declared constants** as MBQI ground-instantiation candidates, so
     ///   trigger-free quantifiers keep the in-scope constants they had before.
     pub fn reset_assertions(&mut self) {
+        self.recfun.retract_to_base();
         self.solver.reset();
         self.assertions.clear();
         self.assertion_stack.clear();
@@ -1082,6 +1119,13 @@ impl Context {
         &mut self,
         assumptions: &[oxiz_core::ast::TermId],
     ) -> crate::solver::SolverResult {
+        // With recursive definitions in scope this would solve a strictly
+        // weaker problem, exactly as a plain `check_sat` would; the driver
+        // takes over and threads the assumptions through its rounds.
+        // (Ported from upstream v0.3.3.)
+        if !self.recfun.is_empty() {
+            return self.check_sat_recfun_with(assumptions);
+        }
         self.solver
             .check_with_assumptions(assumptions, &mut self.terms)
     }
@@ -1450,6 +1494,13 @@ impl Context {
                     // 0-arity `define-sort` aliases in-script (see
                     // `oxiz_core`'s `Parser::parse_sort_name`), so there is
                     // no sound target to register here either.
+                }
+                Command::DefineFunsRec(decls) => {
+                    // `define-fun-rec` / `define-funs-rec`: register the
+                    // definitions; the fuel-bounded unfolding driver in
+                    // `context::recfun` discharges the definitional axiom
+                    // `forall x. f(x) = body` at the next `check-sat`.
+                    self.define_funs_rec(decls)?;
                 }
                 Command::DefineFun(name, params, ret_sort, body) => {
                     let sort = self.parse_sort_name(&ret_sort)?;

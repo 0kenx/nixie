@@ -794,15 +794,22 @@ impl<'a> Parser<'a> {
                 Command::DeclareSort(name, arity)
             }
             "define-fun-rec" | "define-funs-rec" => {
-                // Recursively-defined functions are not evaluated: silently
-                // treating the function as an unconstrained uninterpreted
-                // function (the previous "skip unknown command" behavior)
-                // can produce wrong sat/unsat answers with no diagnostic.
-                // Surface an explicit, honest error instead.
-                self.reject_command(
-                    &cmd_name,
-                    "recursive function definitions are not supported",
-                )?
+                // Recursive function definitions are now supported end to
+                // end: the parser registers each function as an ordinary
+                // declared symbol BEFORE its body is read (so the body's own
+                // recursive references resolve), carries the bodies in
+                // `Command::DefineFunsRec`, and the solver discharges the
+                // definitional axiom `forall x. f(x) = body` by fuel-bounded
+                // unfolding with sat-certificates (see
+                // `oxiz_solver::context::recfun`). (Ported from upstream
+                // v0.3.3.)
+                if cmd_name == "define-fun-rec" {
+                    let decl = self.parse_define_fun_rec()?;
+                    Command::DefineFunsRec(vec![decl])
+                } else {
+                    let decls = self.parse_define_funs_rec()?;
+                    Command::DefineFunsRec(decls)
+                }
             }
             "get-unsat-assumptions" => {
                 // The assumptions passed to the most recent
@@ -830,30 +837,6 @@ impl<'a> Parser<'a> {
         };
 
         Ok(CommandStep::Parsed(cmd))
-    }
-
-    /// Consume the remainder of a recognized-but-unsupported command's
-    /// token stream (balanced-paren skip, mirroring the fallback used for
-    /// genuinely unrecognized commands) and then fail with an explicit,
-    /// honest error. Used for commands whose semantics we understand well
-    /// enough to know that silently ignoring them would risk a wrong
-    /// sat/unsat answer (e.g. `define-fun-rec`), so – unlike truly unknown
-    /// commands – they must never be balance-skipped and continued past.
-    fn reject_command(&mut self, cmd_name: &str, reason: &str) -> Result<Command> {
-        let position = self.lexer.position();
-        let mut depth = 1;
-        while depth > 0 {
-            match self.lexer.next_token().map(|t| t.kind) {
-                Some(TokenKind::LParen) => depth += 1,
-                Some(TokenKind::RParen) => depth -= 1,
-                Some(TokenKind::Eof) | None => break,
-                _ => {}
-            }
-        }
-        Err(OxizError::ParseError {
-            position,
-            message: format!("unsupported command '{cmd_name}': {reason}"),
-        })
     }
 
     /// Parse an optional numeral from the token stream; return `default` if none present

@@ -89,6 +89,14 @@ impl<'a> ChcCompParser<'a> {
                 self.declare_predicate(&name, arg_sorts, &ret_sort)
             }
             Command::Assert(term) => self.process_assertion(term),
+            // A recursive definition is the only thing constraining the
+            // symbol it defines; dropping it here would solve a strictly
+            // weaker problem. Reject honestly instead. (Upstream v0.3.3.)
+            Command::DefineFunsRec(decls) => Err(ChcCompError::Unsupported(format!(
+                "recursive function definitions ({} function(s), first: '{}')",
+                decls.len(),
+                decls.first().map(|d| d.name.as_str()).unwrap_or("?")
+            ))),
             Command::CheckSat => {
                 debug!("check-sat command (ignored in CHC parsing)");
                 Ok(())

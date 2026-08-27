@@ -1368,7 +1368,7 @@ impl Parser<'_> {
 
     /// If the next token is a closing `)`, consume it and return `true`;
     /// otherwise leave the stream untouched and return `false`.
-    fn try_consume_rparen(&mut self) -> bool {
+    pub(super) fn try_consume_rparen(&mut self) -> bool {
         if let Some(token) = self.lexer.peek()
             && matches!(token.kind, TokenKind::RParen)
         {

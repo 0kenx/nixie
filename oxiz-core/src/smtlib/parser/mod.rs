@@ -12,6 +12,7 @@ use num_rational::Rational64;
 mod build;
 mod commands;
 mod indexed;
+mod recfun;
 mod sorts;
 mod terms;
 
@@ -37,6 +38,33 @@ pub struct Attribute {
     pub key: String,
     /// Optional attribute value
     pub value: Option<AttributeValue>,
+}
+
+/// One parsed `define-fun-rec` / `define-funs-rec` definition.
+///
+/// The bodies leave the parser unexpanded; the definitional axiom
+/// `forall x. f(x) = body` is discharged by the solver (fuel-bounded
+/// unfolding in `oxiz_solver::context::recfun`).
+#[derive(Debug, Clone)]
+pub struct RecFunDecl {
+    /// The defined function's name.
+    pub name: String,
+    /// `(name, sort-string)` per formal parameter, in declaration order.
+    pub params: Vec<(String, String)>,
+    /// Each formal parameter's interned `Var`, in declaration order.
+    ///
+    /// These are the only sound substitution keys for `body`: a `Var` minted
+    /// later with the same name and sort is a *different* `TermId` only if
+    /// the manager interns by name+sort (it does) — but any other route to a
+    /// "same" variable (a shadowed `let` binding, say) could substitute the
+    /// wrong node. Holding the exact interned nodes keeps the substitution
+    /// faithful.
+    pub formal_vars: Vec<TermId>,
+    /// The declared return sort, stringified.
+    pub ret_sort: String,
+    /// The definition's right-hand side, with parameters bound as their
+    /// interned `Var`s.
+    pub body: TermId,
 }
 
 /// SMT-LIB2 command
@@ -65,6 +93,19 @@ pub enum Command {
     DeclareFun(String, Vec<String>, String),
     /// Define fun
     DefineFun(String, Vec<(String, String)>, String, TermId),
+    /// `define-fun-rec` / `define-funs-rec`: one variant for both commands
+    /// (a singleton group for the former).
+    ///
+    /// A recursive definition is the *only* thing that constrains the symbol
+    /// it defines: the parser registers the name as an ordinary declared
+    /// function so call sites build a real `Apply`, and never expands the
+    /// body (expansion would not terminate). A consumer whose `match` lets
+    /// this command fall into a catch-all keeps every `(f x)` application and
+    /// drops every constraint on `f`, silently solving a strictly weaker
+    /// problem and turning `unsat` into `sat` with a meaningless model. A
+    /// consumer that cannot solve recursive definitions must error or answer
+    /// `unknown`. (Ported from upstream v0.3.3.)
+    DefineFunsRec(Vec<RecFunDecl>),
     /// Assert
     Assert(TermId),
     /// Assert a term carrying a `:named` annotation (the assertion name).
@@ -148,6 +189,10 @@ pub struct Parser<'a> {
     /// enough: a wrong sort yields a different interned var and the body keeps
     /// free parameters).
     pub(super) function_defs: FxHashMap<String, DefinedFun>,
+    /// Recursive definitions by name, for introspection (`get-model`).
+    /// Deliberately NOT consulted at call sites: expanding a recursive body
+    /// would not terminate (see `parser/recfun.rs`).
+    pub(super) rec_function_defs: FxHashMap<String, RecFunDecl>,
     /// Term annotations (term -> attributes)
     pub(super) annotations: FxHashMap<TermId, Vec<Attribute>>,
     /// Error recovery mode enabled
@@ -211,6 +256,7 @@ impl<'a> Parser<'a> {
             functions: FxHashMap::default(),
             sort_aliases: FxHashMap::default(),
             function_defs: FxHashMap::default(),
+            rec_function_defs: FxHashMap::default(),
             annotations: FxHashMap::default(),
             recovery_mode: false,
             errors: Vec::new(),
@@ -313,6 +359,7 @@ impl<'a> Parser<'a> {
             functions: FxHashMap::default(),
             sort_aliases: FxHashMap::default(),
             function_defs: FxHashMap::default(),
+            rec_function_defs: FxHashMap::default(),
             annotations: FxHashMap::default(),
             recovery_mode: true,
             errors: Vec::new(),

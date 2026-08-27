@@ -54,6 +54,21 @@ impl CaseDef {
             predicate,
         }
     }
+
+    /// The single, unguarded case of a definition written as one plain body —
+    /// the shape `(define-fun-rec f ((x S)) R body)` produces.
+    ///
+    /// `guards` stays empty: the case applies to every argument tuple, which is
+    /// exactly what the SMT-LIB surface syntax says. The multi-case form (a
+    /// definition split into guarded branches with one case predicate each, so
+    /// that only the relevant branch has to be instantiated) is what `guards`
+    /// and [`CaseDef::predicate`] are reserved for; nothing constructs it yet,
+    /// and a single unguarded case is the honest encoding of a plain body
+    /// rather than a placeholder for one. (Ported from upstream v0.3.3.)
+    #[must_use]
+    pub fn plain(rhs: TermId, predicate: Spur) -> Self {
+        Self::new(Vec::new(), rhs, predicate)
+    }
 }
 
 /// Definition of a recursive function

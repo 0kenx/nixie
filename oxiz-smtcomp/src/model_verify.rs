@@ -284,6 +284,21 @@ impl ModelVerifier {
                     variables.push((name.clone(), var, ret_sort.clone()));
                 }
                 Command::DeclareFun(..) => {}
+                // A recursive definition is the only thing constraining the
+                // symbol it defines; silently dropping it would answer a
+                // strictly weaker problem. Bail out of verification rather
+                // than certify a weaker formula. (Upstream v0.3.3.)
+                Command::DefineFunsRec(_) => {
+                    // Honest bail-out: refuse to certify rather than verify a
+                    // weaker formula.
+                    return VerificationResult::failure(
+                        &benchmark_name,
+                        None,
+                        "recursive function definitions are not supported by                          the model verifier"
+                            .to_string(),
+                        start.elapsed(),
+                    );
+                }
                 // `:named` assertions must be asserted too -- skipping them
                 // (as the previous version of this loop did) would silently
                 // re-solve a *weaker* formula than the benchmark actually

@@ -890,12 +890,29 @@ impl Context {
     pub fn format_model(&self) -> String {
         match self.get_model() {
             None => "(error \"No model available\")".to_string(),
-            Some(model) if model.is_empty() => "(model)".to_string(),
+            Some(model) if model.is_empty() => {
+                // Even an empty model still lists the recursive definitions
+                // in scope: they are part of the interpretation the model
+                // claims. (Upstream v0.3.3.)
+                let lines = self.recfun_model_lines();
+                if lines.is_empty() {
+                    "(model)".to_string()
+                } else {
+                    let mut out = vec!["(model".to_string()];
+                    out.extend(lines);
+                    out.push(")".to_string());
+                    out.join("\n")
+                }
+            }
             Some(model) => {
                 let mut lines = vec!["(model".to_string()];
                 for (name, sort, value) in model {
                     lines.push(format!("  (define-fun {} () {} {})", name, sort, value));
                 }
+                // The `define-fun-rec` definitions in scope: a model that
+                // omits them leaves every `(f x)` the assertions mention
+                // without an interpretation. (Ported from upstream v0.3.3.)
+                lines.extend(self.recfun_model_lines());
                 lines.push(")".to_string());
                 lines.join("\n")
             }

@@ -350,6 +350,17 @@ impl ParallelRunner {
                     let _var = tm.mk_var(&name, sort);
                 }
                 Command::DeclareFun(..) => {}
+                // A recursive definition is the only thing constraining the
+                // symbol it defines; silently dropping it would answer a
+                // strictly weaker problem. Report Unknown instead.
+                // (Upstream v0.3.3.)
+                Command::DefineFunsRec(_) => {
+                    return SingleResult::new(
+                        &benchmark.meta,
+                        BenchmarkStatus::Unknown,
+                        start.elapsed(),
+                    );
+                }
                 Command::Assert(term) => {
                     solver.assert(term, &mut tm);
                 }

@@ -293,6 +293,16 @@ impl Runner {
                 Command::DeclareFun(..) => {
                     // Functions with arguments need uninterpreted function support
                 }
+                // A recursive definition is the only thing constraining the
+                // symbol it defines; silently dropping it would answer a
+                // strictly weaker problem. (Upstream v0.3.3: Unknown.)
+                Command::DefineFunsRec(_) => {
+                    return SingleResult::new(
+                        &benchmark.meta,
+                        BenchmarkStatus::Unknown,
+                        start.elapsed(),
+                    );
+                }
                 Command::Assert(term) => {
                     solver.assert(term, &mut tm);
                 }
