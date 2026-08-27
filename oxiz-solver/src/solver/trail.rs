@@ -109,6 +109,10 @@ pub(crate) struct ContextState {
     /// `pop` undoes the `select`/`store` entries encoded in this scope
     /// (Stage 5, `docs/ARRAY_THEORY_PLAN.md`).
     pub(crate) array_theory_scope: super::array_theory::ArrayTheoryScope,
+    /// `model_blocking_active` at push: the blocking clauses are SAT-scoped
+    /// (retracted by `sat.pop()` with the scope), so the counter must roll
+    /// back in lockstep or a later `Unsat` would be downgraded forever / never.
+    pub(crate) model_blocking_active: usize,
 }
 
 #[cfg(debug_assertions)]
@@ -266,6 +270,15 @@ impl super::Solver {
             // next search reads it (the case-split lemmas are SAT-scoped and
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
+            #[cfg(test)]
+                repair_paths_saw_model: _, // INVARIANT: test-only event log,
+            // deliberately cumulative across `check`s and scopes; restoring it
+            // would defeat what it measures.
+            model_blocking_active: _, // SNAPSHOT: restored from ContextState in
+            // lockstep with `sat.pop()` retracting the blocking clauses (the
+            // counter is a *lifetime* count for the scope, deliberately NOT
+            // per-search: a second `check` must keep downgrading over the
+            // first one's still-live restrictions).
             arrangement_rounds: _, // PER-SEARCH: mirrors `case_split_rounds`;
             // the internalized atoms are SAT-scoped (retracted by `pop`), so
             // the round counter must not outlive them.
