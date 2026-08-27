@@ -775,6 +775,48 @@ fn record_alias(
 ///
 ///   * RoW-1: `store_idx = index  ⇒  select_term = stored_val`
 ///   * RoW-2: `store_idx != index ⇒  select_term = select(base, index)`
+/// Order-awareness guard for one entry of a *flat* read-over-write
+/// encoding.
+///
+/// A flat `(index = kᵢ) ⇒ select = vᵢ` clause per map entry is only faithful
+/// when the chain's index terms are pairwise distinct: `entries` is ordered
+/// outermost (= latest write) first, and an inner write is visible at the
+/// read index only where the index *misses* every outer write.  When outer
+/// index `k_q` and this entry's `k_p` are provably distinct terms the miss is
+/// automatic (`index = k_p` already gives `index ≠ k_q`), so those guards
+/// drop out and the `storecomm` family (distinct literal indices) keeps the
+/// exact clauses it had; same-term pairs cannot occur ([`direct_store_map`]
+/// and [`aliased_store_map`] keep the outermost write), but the guard would
+/// be correct for them too – the inner write is never visible under
+/// co-equality.
+///
+/// Found via upstream v0.3.3's `store_commutativity_without_distinctness_is_sat`
+/// control: with `i = j` the two flat implications `(k = i) ⇒ x` and
+/// `(k = j) ⇒ y` both fire on a chain whose true value at the co-equal index
+/// is only `y`, forcing `x = y` and a false `unsat`.
+fn row_same_guard(
+    entries: &[(TermId, TermId)],
+    pos: usize,
+    index: TermId,
+    manager: &mut TermManager,
+) -> Option<TermId> {
+    let kp = entries[pos].0;
+    let mut guards: Vec<TermId> = Vec::new();
+    for q in 0..pos {
+        let kq = entries[q].0;
+        if kq != kp && provably_distinct_indices(kp, kq, manager) {
+            continue;
+        }
+        let eq = manager.mk_eq(index, kq);
+        guards.push(manager.mk_not(eq));
+    }
+    match guards.len() {
+        0 => None,
+        1 => Some(guards[0]),
+        _ => Some(manager.mk_and(guards)),
+    }
+}
+
 fn build_read_over_write(
     manager: &mut TermManager,
     collected: &ArrayStructure,
@@ -810,10 +852,20 @@ fn build_read_over_write(
                 candidates.push(row2);
             } else if let Some((ultimate_base, entries)) = direct_store_map(array, manager) {
                 let mut idx_eqs: Vec<TermId> = Vec::with_capacity(entries.len());
-                for (ki, vi) in &entries {
+                for (pos, (ki, vi)) in entries.iter().enumerate() {
                     let idx_eq = manager.mk_eq(*ki, index);
                     let same = manager.mk_eq(select_term, *vi);
-                    candidates.push(manager.mk_implies(idx_eq, same));
+                    // RoW-SAME, order-aware: an inner write is visible only
+                    // where the read index misses every outer write it could
+                    // co-equal (see [`row_same_guard`]).
+                    let imp = match row_same_guard(&entries, pos, index, manager) {
+                        Some(g) => {
+                            let antecedent = manager.mk_and([idx_eq, g]);
+                            manager.mk_implies(antecedent, same)
+                        }
+                        None => manager.mk_implies(idx_eq, same),
+                    };
+                    candidates.push(imp);
                     idx_eqs.push(idx_eq);
                 }
                 // A store index that is SYNTACTICALLY the read index makes
@@ -872,14 +924,22 @@ fn build_read_over_write(
                     })
                 };
                 let mut idx_eqs: Vec<TermId> = Vec::with_capacity(entries.len());
-                for (ki, vi) in &entries {
+                for (pos, (ki, vi)) in entries.iter().enumerate() {
                     let idx_eq = manager.mk_eq(*ki, index);
-                    // RoW-SAME (guarded): (alias ∧ idx = ki) ⇒ select = vi.
+                    // RoW-SAME (guarded): (alias ∧ idx = ki [∧ idx misses
+                    // outer writes]) ⇒ select = vi – order-aware like the
+                    // direct path (see [`row_same_guard`]).
                     let same = manager.mk_eq(select_term, *vi);
-                    let imp = manager.mk_implies(idx_eq, same);
+                    let inner = match row_same_guard(&entries, pos, index, manager) {
+                        Some(g) => {
+                            let antecedent = manager.mk_and([idx_eq, g]);
+                            manager.mk_implies(antecedent, same)
+                        }
+                        None => manager.mk_implies(idx_eq, same),
+                    };
                     candidates.push(match guard_term {
-                        Some(g) => manager.mk_implies(g, imp),
-                        None => imp,
+                        Some(g) => manager.mk_implies(g, inner),
+                        None => inner,
                     });
                     idx_eqs.push(idx_eq);
                 }
@@ -1657,6 +1717,67 @@ fn is_scalar_value(term: TermId, manager: &TermManager) -> bool {
 /// round.  Returns `None` when the precondition (common base + same index set +
 /// at least one store) does not hold, so the caller falls back to the
 /// fresh-witness extensionality.
+/// Whether two index terms are *provably* distinct in every model: two
+/// literals of the same sort with different values.  Deliberately narrow –
+/// anything the solver could not refute (`i` vs `j+1`) is "not provably
+/// distinct" and forces the guard below.  (Part of the v0.3.3-port fix for
+/// the unguarded finite-disjunction lemma.)
+pub(super) fn provably_distinct_indices(a: TermId, b: TermId, manager: &TermManager) -> bool {
+    match (
+        manager.get(a).map(|d| &d.kind),
+        manager.get(b).map(|d| &d.kind),
+    ) {
+        (Some(TermKind::IntConst(x)), Some(TermKind::IntConst(y))) => x != y,
+        (Some(TermKind::RealConst(x)), Some(TermKind::RealConst(y))) => x != y,
+        (
+            Some(TermKind::BitVecConst { value: xv, width: xw }),
+            Some(TermKind::BitVecConst { value: yv, width: yw }),
+        ) => xw == yw && xv != yv,
+        _ => false,
+    }
+}
+
+/// The pairwise-distinctness guard for one store chain's write map.
+///
+/// A write map `{i₁→v₁, …, iₖ→vₖ}` is a faithful model of its chain **only
+/// when the chain's index terms are pairwise distinct**: with `i = j`,
+/// `store(store(a,i,x),j,y)` reads `y` at the shared index while the map
+/// keeps both writes – and the two *orderings* of the same two writes keep
+/// *different* survivors (`x` vs `y`), so a lemma built from the maps alone
+/// can assert `a = b` for two arrays a model can separate.  Upstream v0.3.3's
+/// `store_commutativity_without_distinctness_is_sat` control pins exactly
+/// that: `i = j, x ≠ y` separates the two chains, and the unguarded
+/// single-disjunct `a = b` lemma turned the satisfiable goal `unsat`.
+///
+/// Returns `None` when the guard is trivially true (at most one write, or
+/// every pair provably distinct – e.g. the distinct literal indices of the
+/// `storecomm` family) and `Some(t)` otherwise, with `t` the conjunction of
+/// `iₚ ≠ i_q` over every unordered pair that is not provably distinct.
+/// Same-term pairs are skipped: [`direct_store_map`] already collapsed them
+/// by last-write-wins, which is exactly what shadowing does when the terms
+/// are equal.
+fn index_distinctness_guard(
+    entries: &[(TermId, TermId)],
+    manager: &mut TermManager,
+) -> Option<TermId> {
+    let mut conjuncts: Vec<TermId> = Vec::new();
+    for p in 0..entries.len() {
+        for q in (p + 1)..entries.len() {
+            let (ip, iq) = (entries[p].0, entries[q].0);
+            if ip == iq || provably_distinct_indices(ip, iq, manager) {
+                continue;
+            }
+            let eq = manager.mk_eq(ip, iq);
+            conjuncts.push(manager.mk_not(eq));
+        }
+    }
+    match conjuncts.len() {
+        0 => None,
+        1 => Some(conjuncts[0]),
+        _ => Some(manager.mk_and(conjuncts)),
+    }
+}
+
 fn finite_disjunction_extensionality(
     manager: &mut TermManager,
     a: TermId,
@@ -1681,12 +1802,26 @@ fn finite_disjunction_extensionality(
         return None;
     }
     let base = ba;
+    // Each chain's write map is faithful only under that chain's own pairwise
+    // index distinctness (see [`index_distinctness_guard`]).  The guard is
+    // `None` (trivially true) for the `storecomm` family's distinct literal
+    // indices, so the fast path is unchanged there; for symbolic or possibly
+    // co-equal indices the lemma is emitted **guarded** – vacuous exactly in
+    // the models where the maps lie – and `is_complete` stays `false` so the
+    // caller still mints the fresh-witness extensionality clause for the pair.
+    let guard_a = index_distinctness_guard(&ma, manager);
+    let guard_b = index_distinctness_guard(&mb, manager);
+    let unguarded = guard_a.is_none() && guard_b.is_none();
     // `is_complete`: the clause decides `a = b` with no array-read unfolding.
     // Requires (1) a free-variable base, (2) every compared value scalar, and
     // (3) the SAME index set on both sides – a differing index set forces a
     // one-sided `select(base, idx)` disjunct whose opaque read the SAT core
     // cannot settle instantly, so the eager chain unfold is still needed there.
-    let is_complete = matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
+    // (4) the lemma is unguarded: a guarded clause decides nothing in the
+    // models where its antecedent is false, so the pair still needs its
+    // witness clause.
+    let is_complete = unguarded
+        && matches!(manager.get(base).map(|d| &d.kind), Some(TermKind::Var(_)))
         && ma
             .iter()
             .chain(mb.iter())
@@ -1723,12 +1858,25 @@ fn finite_disjunction_extensionality(
     }
     // A single-disjunct lemma is just `a = b`, which is valid precisely when
     // the two chains write identical values to identical indices over an
-    // identical base – sound to assert, and it forces a conflict with any
-    // `not(= a b)`.
-    Some(if disjuncts.len() == 1 {
-        (disjuncts[0], is_complete)
+    // identical base – sound to assert (guarded below when the indices are
+    // not provably distinct), and it forces a conflict with any `not(= a b)`
+    // that survives the guard.
+    let clause = if disjuncts.len() == 1 {
+        disjuncts[0]
     } else {
-        (manager.mk_or(disjuncts), is_complete)
+        manager.mk_or(disjuncts)
+    };
+    // Combine both chains' guards into one antecedent.  `guard_a`/`guard_b`
+    // are `None` when trivially true, so the common `storecomm` case keeps the
+    // exact lemma it had before this guard existed.
+    let combined_guard = match (guard_a, guard_b) {
+        (None, None) => None,
+        (Some(g), None) | (None, Some(g)) => Some(g),
+        (Some(ga), Some(gb)) => Some(manager.mk_and([ga, gb])),
+    };
+    Some(match combined_guard {
+        None => (clause, is_complete),
+        Some(g) => (manager.mk_implies(g, clause), is_complete),
     })
 }
 

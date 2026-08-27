@@ -1584,6 +1584,23 @@ impl Solver {
     /// when equality is not concretely decidable (different bases, differing
     /// index sets, or differing value terms that might yet coincide) – those
     /// defer to the lazy refinement loop.
+    /// Concretely prove two store chains EQUAL by reconstruction: `Some(true)`
+    /// iff both chains share the same base term AND write the same value term
+    /// to the same index term at every written index (following named
+    /// intermediates) AND every chain's own index terms are pairwise provably
+    /// distinct.  The resulting arrays are then identical regardless of
+    /// how the (free) index/value variables are interpreted, so a disequality
+    /// that depends on them being different is unsatisfiable.  The
+    /// pairwise-distinctness requirement is load-bearing: a write *multiset*
+    /// only characterises the resulting array when no write shadows another,
+    /// and with co-equal symbolic indices (`i = j`) two permutations of the
+    /// same writes keep *different* survivors at the shared index — e.g.
+    /// `store(store(a,i,x),j,y)` vs `store(store(a,j,y),i,x)` with `i = j, x ≠ y`
+    /// are provably DIFFERENT while their entry sets match exactly (found via
+    /// upstream v0.3.3's `store_commutativity_without_distinctness_is_sat`
+    /// control, which this fast path answered `unsat`).  When distinctness is
+    /// not provable the check returns `None` (no decision) and the goal falls
+    /// through to the CDCL(T) refinement loop.  Returns `None`
     fn store_chains_concretely_equal(
         x: TermId,
         y: TermId,
@@ -1612,6 +1629,25 @@ impl Solver {
                 Some((_, vy)) if vy == vx => {}
                 _ => return None,
             }
+        }
+        // Order-independence of the write multiset needs every chain's own
+        // indices pairwise distinct in EVERY model – provable only for
+        // distinct literals.  (See the doc comment; this is the guard that
+        // keeps the permutation fast path from fabricating equalities.)
+        let pairwise_provably_distinct =
+            |entries: &[(TermId, TermId)]| -> bool {
+                entries
+                    .iter()
+                    .enumerate()
+                    .all(|(p, (ip, _))| {
+                        entries[..p].iter().all(|(iq, _)| {
+                            iq == ip
+                                || super::array_axioms::provably_distinct_indices(*ip, *iq, manager)
+                        })
+                    })
+            };
+        if !pairwise_provably_distinct(&ex) || !pairwise_provably_distinct(&ey) {
+            return None;
         }
         Some(true)
     }
