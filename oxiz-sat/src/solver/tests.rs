@@ -889,7 +889,7 @@ fn healthy_glue_ema_suppresses_glucose_restart() {
 /// antecedents and learn over x, y, w only – in either design.
 #[test]
 fn lazy_theory_reason_resolves_like_a_materialized_clause() {
-    let build = |lazy: bool| -> SmallVec<[Lit; 16]> {
+    let build = |lazy: bool| -> SmallVec<[Lit; 32]> {
         let mut solver = Solver::new();
         let x = solver.new_var();
         let y = solver.new_var();

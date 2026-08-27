@@ -162,7 +162,7 @@ impl Solver {
         }
     }
 
-    pub(super) fn learn_clause(&mut self, mut learnt_clause: SmallVec<[Lit; 16]>) {
+    pub(super) fn learn_clause(&mut self, mut learnt_clause: SmallVec<[Lit; 32]>) {
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
 

@@ -191,7 +191,7 @@ impl Solver {
         }
     }
 
-    pub(super) fn analyze(&mut self, conflict: ClauseId) -> (u32, SmallVec<[Lit; 16]>) {
+    pub(super) fn analyze(&mut self, conflict: ClauseId) -> (u32, SmallVec<[Lit; 32]>) {
         // Debug: print conflict info (only with analyze-debug feature)
         #[cfg(feature = "analyze-debug")]
         if self.num_vars <= 5 {
@@ -779,10 +779,10 @@ impl Solver {
         // dropped→`MF_REMOVABLE`) before it is reached – the recursive base case
         // (cadical `minimize_sort_clause`).
         let asserting = self.learnt[0];
-        let mut order: SmallVec<[Lit; 16]> = self.learnt[1..].iter().copied().collect();
+        let mut order: SmallVec<[Lit; 32]> = self.learnt[1..].iter().copied().collect();
         order.sort_by_key(|&l| self.trail.trail_index(l.var()));
 
-        let mut kept: SmallVec<[Lit; 16]> = SmallVec::new();
+        let mut kept: SmallVec<[Lit; 32]> = SmallVec::new();
         let mut minimize_chain: Vec<i64> = Vec::new();
         for &lit in &order {
             // `lit` is FALSE (a learnt literal); check its TRUE form's reason graph.
@@ -1357,11 +1357,11 @@ impl Solver {
         // shrinkable literals.
         let mut open: u32 = 0;
         let mut max_trail: usize = 0;
-        let mut shrinkable: SmallVec<[Var; 16]> = SmallVec::new();
+        let mut shrinkable: SmallVec<[Var; 32]> = SmallVec::new();
         // Literals at `blevel` marked shrinkable by this block's reason walk
         // (not in the block itself); cadical's `shrinkable` vector holds both
         // and is fully reset after every block.
-        let mut walk_marked: SmallVec<[Var; 16]> = SmallVec::new();
+        let mut walk_marked: SmallVec<[Var; 32]> = SmallVec::new();
         for k in start..=end {
             let var = self.learnt[k].var();
             self.mf_set(var, MF_SHRINKABLE);
@@ -1603,10 +1603,10 @@ impl Solver {
             // so a literal another resolves through is already decided
             // (kept → `MF_KEEP`, dropped → `MF_REMOVABLE`) when reached.
             let asserting = self.learnt[0];
-            let mut order: SmallVec<[Lit; 16]> = self.learnt[1..].iter().copied().collect();
+            let mut order: SmallVec<[Lit; 32]> = self.learnt[1..].iter().copied().collect();
             order.sort_by_key(|&l| self.trail.trail_index(l.var()));
 
-            let mut kept: SmallVec<[Lit; 16]> = SmallVec::new();
+            let mut kept: SmallVec<[Lit; 32]> = SmallVec::new();
             for &lit in &order {
                 if self.minimize_literal_plain(lit.negate(), 0) {
                     self.stats.literals_removed += 1;
@@ -1632,7 +1632,7 @@ impl Solver {
     pub(super) fn analyze_theory_conflict(
         &mut self,
         conflict_lits: &[Lit],
-    ) -> (u32, SmallVec<[Lit; 16]>) {
+    ) -> (u32, SmallVec<[Lit; 32]>) {
         // A well-formed theory conflict clause is fully falsified – every literal
         // is assigned false on the trail – which is what makes the 1-UIP
         // resolution below well-defined. The MBQI / quantifier-instantiation path,
@@ -1922,7 +1922,7 @@ impl Solver {
     fn analyze_theory_asserting_lemma(
         &mut self,
         conflict_lits: &[Lit],
-    ) -> (u32, SmallVec<[Lit; 16]>) {
+    ) -> (u32, SmallVec<[Lit; 32]>) {
         self.learnt.clear();
 
         // Deduplicate by variable (a lemma may legitimately list a literal twice;
@@ -2034,7 +2034,7 @@ impl Solver {
         assumptions: &[Lit],
         conflict: ClauseId,
     ) -> Vec<Lit> {
-        let seed: SmallVec<[Lit; 16]> = match self.clauses.get(conflict) {
+        let seed: SmallVec<[Lit; 32]> = match self.clauses.get(conflict) {
             Some(c) => c.lits.iter().copied().collect(),
             None => SmallVec::new(),
         };

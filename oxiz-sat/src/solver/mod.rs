@@ -837,7 +837,7 @@ pub struct Solver {
     /// Statistics
     pub(super) stats: SolverStats,
     /// Learnt clause for conflict analysis
-    pub(super) learnt: SmallVec<[Lit; 16]>,
+    pub(super) learnt: SmallVec<[Lit; 32]>,
     /// Seen flags for conflict analysis
     pub(super) seen: Vec<bool>,
     /// Analyze stack

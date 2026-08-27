@@ -647,3 +647,37 @@ Next slice targets, in recorded priority: (a) attribute the 20 % extend
 alloc-per-resolvent); (b) the mid-search elim/subsume weight (18 % —
 schedule/sweep policy, trajectory-sensitive: full A/B required);
 (c) `shrink_block`'s 10.9 % (block walk + arena loads).
+
+
+## Deep-study slice 3 (2026-08-21): perf-report phantoms exposed — the true noL map is propagate ≈ 70 %; SmallVec capacity bumps landed
+
+Slice 2's table contained two phantoms from `perf report`'s flat view:
+the "20 % SmallVec extend" and the "18 % elim+subsume" (and a
+"39 % malloc_consolidate" from a short DWARF run).  Stack-level walks
+(`perf script`, frame-verified) show **elim_round in 2 of 1 450
+stacks, subsume_round in 2, small_sort_network in 1** — the LTO
+binary's shared inlined addresses make the flat report attribute whole
+buckets to whichever symbol it resolves first.  **Method rule for this
+codebase: profile with `perf script` stack walks; never trust the flat
+report on the LTO build.**
+
+Verified noL search map (stack-level, post-fixes): **propagate
+ecosystem ≈ 68–70 %**, search loop 10 %, shrink 4 %, analyze-mark
+3.6 %, minimize 3 %, insertion sort 2 %, nothing else above 1 %.
+
+Landed: the per-conflict SmallVecs on the analyze/learn path
+(`learnt`, `kept`, `order`, `shrinkable`, `walk_marked`, the
+`learn_clause` signature) bumped from `[..; 16]` to `[..; 32]` — noL's
+average learnt clause is ~22 literals, so `[Lit; 16]` spilled to the
+heap on *every* conflict.  Effect: the extend/growth bucket dropped
+13 % → 1 % in the profile; wall time on noL is unchanged within noise
+(21.4 s → 21.4 s at 1 M conflicts) — the allocator cost was
+concurrent, not serial.  Kept: fewer per-conflict allocations is
+correct by construction and matters on allocator-contended
+deployments.
+
+**Consequence for the throughput path**: no non-propagate lump above
+3 % remains — further conflicts/s gains now require work inside
+`propagate` itself (watcher layout, arena header compression,
+blocking-literal efficiency), a data-structure slice of the same scale
+as the flat-watch-arena study.
