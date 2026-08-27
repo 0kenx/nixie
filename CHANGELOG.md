@@ -5,6 +5,88 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Upstream v0.3.3 port] - 2026-08-27
+
+Selective behavior port of upstream `cool-japan/oxiz` **v0.3.3** (tag `e7c7bca`,
+"Availability of 0.3.3", 2026-08-26) onto this fork's `main` (diverged from
+upstream at v0.3.1). Full analysis and per-item disposition in
+`docs/studies/2026-08-27-v0.3.3-port.md`. Summary:
+
+### Ported (each its own commit, full gates per item)
+
+- **Soundness: the store-chain write-map faithfulness class** (false `unsat` on
+  `storecomm`-without-distinctness).  A store-chain write map is faithful only
+  under pairwise-distinct indices; with `i = j` two permutations of the same
+  writes keep different survivors.  Three layers shared the blindness — the
+  syntactic fast path (`store_chains_concretely_equal`), the finite-disjunction
+  extensionality lemma, and the flat read-over-write implications (direct +
+  aliased) — all now guarded.  Found by upstream's
+  `store_commutativity_without_distinctness_is_sat` control, which answered
+  `unsat` on a `sat` goal here.
+- **Soundness (pre-existing on main, found BY the port): push/check-sat(sat)/
+  pop/assert/check-sat answered a refuted goal `sat`.**  Lazy check-time clause
+  passes dedup emissions with memos whose "clauses survive (no retracting pop)"
+  assumption is false: clauses emitted inside a push scope are retracted by
+  `pop` while the memo key survives, so `numeric_eq_split_pairs` (trichotomy
+  clauses) and `arith_const_axiom_pairs` (triangle axioms) were never
+  re-emitted.  Both are now journalled on the undo trail
+  (`TrailOp::NumericEqSplitPairAdded` / `ArithConstAxiomPairAdded`).  4 new
+  guards in `push_sat_pop_leak.rs`.
+- **Soundness: SAT "hanging unit" completeness hole** — the propagation head is
+  rewound after in-place clause strengthening and after every probe pass
+  (vivify / failed-literal probing / inprocess).  Repairs the opt-in
+  inprocessing path's documented watch-rebuild defect (presets stay off on
+  measured perf grounds).
+- **Soundness: `try_mk_bv_concat`** — substitution / e-matching can no longer
+  intern a fabricated 32-bit concat; they keep the original term on error.
+- **Fix: the lexer could spin forever on one unlexable byte** (zero-width
+  `Symbol("")` at a fixed offset; the shape that hung the wasm build).  Catch-all
+  consumes the char and errors.
+- **Fix: `RecFunSolver::pop` retracted an arbitrary hash-ordered subset** of the
+  applications; insertion-ordered `app_trail` scopes retraction exactly.
+- **Fix: `str.indexof` bounds axiom** lower bound `0` → `-1` (not-found was
+  ruled out).
+- **Feature: `define-fun-rec` / `define-funs-rec` supported end to end** —
+  fuel-bounded unfolding of the definitional axiom with sat-certificates
+  (saturation or model re-computation); `unsat` final, uncertified `sat` never
+  published; divergent definitions answer `unknown` in finite time.
+  `Command::DefineFunsRec` is a new enum variant; spacer/smtcomp reject it
+  honestly rather than solving a weaker problem.
+- **Feature: `RoundingMode` is a first-class sort** (`SortKind::RoundingMode`,
+  raw id 3): closure + distinctness axioms give the five-element domain;
+  symbolic modes inside `fp.*` expand to a five-way `ite`; quantifier binders
+  are relativized; model extraction reads the mode from the closure axiom's
+  atoms.  Position-restricted (nullary declarations only), honestly.
+  Two new parity benchmarks (168 Correct / 0 Wrong / 2 Inconclusive).
+- **Feature: Gomory mixed-integer cuts are reachable** — root cutting-plane
+  loop (≤8 rounds, before any B&B push so cuts are caller-scoped) +
+  scope-balanced `check_balanced`.  Cut generators were dead code since v0.3.2.
+- **Feature: `rhai` behind a default-on `scripting` feature** — the MPL-2.0
+  (copyleft, via `smartstring`) crate leaves the `default-features = false,
+  features = ["std"]` licence graph.
+- **Perf/config: BIG-path lazy-hyper-binary filter** (a binary reason provably
+  teaches nothing; 6-31 % of scans disappear on BIG-heavy instances),
+  nextest `terminate-after`, `property-tests` in oxiz-core defaults,
+  `allow-wildcard-paths` in deny.toml, bench history-dir CWD-first resolution,
+  no_std `::core::cmp::Reverse`, RegLan message accuracy.
+
+### Already present independently (verified against upstream's own suites)
+
+The A1/A2/lazy-mode arith-disequality family (24 upstream tests pass), the
+`let`-wrapper fix, array-budget honesty, load-dependent-verdict removal
+(stronger: the wall-clock gate is gone entirely), LP-based int ranges
+(`lp_int_bounds`), the `solve_with_theory` trail-clone fix, and the lucky
+phase (this fork's own July implementation).
+
+### Deliberately not ported (documented in the study)
+
+The NLA relaxation engine, algebraic-number witnesses, model blocking, the
+`oxiz-time` wasm crate, intern single-retention, the `oxiz-core` Nelson-Oppen
+theory layer, the `nlsat` feature gate, deep-recursion test hygiene,
+`[profile.release-speed]` (N/A — our release is already speed-tuned), BVE
+preset enablement (a measured knob decision, needs the benchmarking
+protocol), and `oxiarc` version bumps.
+
 ## [0.3.2] - Unreleased
 
 ### Changed
