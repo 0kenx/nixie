@@ -278,6 +278,15 @@ pub struct SolverConfig {
     /// docs/studies/2026-08-chronoreusetrail-rejected.md.  Revisit with a
     /// full multi-seed study before flipping.
     pub chrono_reuse: bool,
+    /// Late-enable gate for `chrono_reuse` (cadical `chronoreusetrail`):
+    /// reuse stops fire only once the search has seen this many conflicts.
+    /// **Measured dead as a default** (standing-gap study, 2026-08-21):
+    /// the ungated port's residue wins need reuse from conflict 0 — a
+    /// 400 k gate captured 0/25 residue files while still flipping (and
+    /// losing) noL, whose default trajectory runs 1.5 M conflicts.  Kept
+    /// as A/B infrastructure with `OXIZ_CHRONO_REUSE_AFTER`;
+    /// `0` = always active when `chrono_reuse` is on.
+    pub chrono_reuse_after: u64,
     /// Debug knob (`OXIZ_CHRONO_ALWAYS=1`): force chronological backtracking
     /// on every non-unit conflict (cadical `chronoalways`).  Exercises the
     /// out-of-order trail paths far more densely than the distance-threshold
@@ -498,6 +507,7 @@ impl Default for SolverConfig {
             enable_chronological_backtrack: true,
             chrono_always: std::env::var("OXIZ_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
             chrono_reuse: std::env::var("OXIZ_CHRONO_REUSE").is_ok_and(|v| v == "1"),
+            chrono_reuse_after: 0,
             chrono_backtrack_threshold: 100,
             luby_cap: 64,
             enable_stabilize: true,
@@ -1291,6 +1301,12 @@ impl Solver {
         let mut config = config;
         if let Ok(v) = std::env::var("OXIZ_CHRONO_REUSE") {
             config.chrono_reuse = v == "1";
+        }
+        if let Ok(v) = std::env::var("OXIZ_CHRONO_REUSE_AFTER")
+            && let Ok(n) = v.parse::<u64>()
+        {
+            config.chrono_reuse_after = n;
+            config.chrono_reuse = true;
         }
         if let Ok(v) = std::env::var("OXIZ_CHRONO_ALWAYS") {
             config.chrono_always = v == "1";

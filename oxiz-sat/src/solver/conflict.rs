@@ -617,6 +617,7 @@ impl Solver {
             assertion_level,
         );
         let backtrack_level = if self.config.chrono_reuse
+            && self.stats.conflicts >= self.config.chrono_reuse_after
             && plain == assertion_level
             && uip_level > assertion_level.saturating_add(1)
         {

@@ -387,3 +387,37 @@ accident.  The dead-knob fix lands regardless — it un-deadens the A/B
 infrastructure for every future revisit (and `OXIZ_CHRONO_ALWAYS` too,
 which the `chrono_trail_level_filter_regression` path relies on being able
 to set).
+
+
+## Post-`00e83be` default-on attempt (2026-08-21): rejected twice more — ungated is a corpus-negative trade, late-gating is dead
+
+The phase landing invited re-measuring reuse (cadical runs both
+mechanisms; every remaining standing-loss file shows cadical chrono
+15–40 %).
+
+**Ungated ON vs OFF, post-landing** (60-file seed-71 corpus, 45 s):
+ticks geomean softened to **0.988** (was 1.269 pre-landing — the
+mechanisms partially synergize) but solved **27 vs 29**: gained
+Timetable, lost noL (the phase landing's flagship, 1.5 M conflicts under
+default), pb_30, Break_triple; 0 mismatches.  On the 25-file standing
+residue ungated ON solves **8** (worker ×2, Timetable ×2, g2-slp ×2,
+Ptn-7824, WS_500).  Net standing arithmetic ≈ +8 −(4..8 extrapolated
+corpus losses) — a trade of mechanism-won files for trajectory
+coin-flips, failing the enablement rule's solved-not-worse.
+
+**Late-enable gate** (`chrono_reuse_after = 400 k`, new field):
+corpus 26/27 both-solved files bit-identical (the gate works) but the
+residue capture was **0/25** — the ungated wins need reuse shaping the
+whole trajectory from conflict 0 (worker solves at 106 k under pure
+default: the gate never fires where it would help), while noL (1.53 M
+default conflicts) still gets flipped and killed.  A conflict threshold
+cannot separate noL from Ptn.
+
+**Verdict**: default stays OFF, third measurement, now against the
+post-landing landscape.  Kept as landed infrastructure:
+`chrono_reuse_after` field + `OXIZ_CHRONO_REUSE_AFTER` env (0 = ungated
+when on) — for users/benchmarks that want it on endurance instances,
+where it is genuinely decisive.  The residual gap (≈17 files) is not
+reachable by gating this mechanism; it needs the upstream clause-length/
+decision-quality work or cadical's walk-SAT phase improvements (its
+`walked 4–18` on every residue file).
