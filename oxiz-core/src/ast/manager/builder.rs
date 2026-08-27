@@ -1184,6 +1184,72 @@ impl TermManager {
     /// so release builds keep the historical `32` fallback as a last
     /// resort rather than panicking on malformed input.
     pub fn mk_bv_concat(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        self.try_mk_bv_concat(lhs, rhs)
+            .unwrap_or_else(|_| self.mk_bv_concat_fallback(lhs, rhs))
+    }
+
+    /// The checked form of [`TermManager::mk_bv_concat`].
+    ///
+    /// The infallible version defaulted an unresolvable operand's width to a
+    /// fabricated `32` in release builds; a fabricated width is not cosmetic,
+    /// because it interns a well-formed term at the wrong sort, which can
+    /// flip a query between `sat` and `unsat`.  The checked function returns
+    /// [`OxizError::SortMismatchSimple`] naming both operand sorts.
+    /// (Ported from upstream v0.3.3.)
+    pub fn try_mk_bv_concat(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+    ) -> Result<TermId, crate::error::OxizError> {
+        let lhs_width = self
+            .get(lhs)
+            .and_then(|t| self.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width());
+        let rhs_width = self
+            .get(rhs)
+            .and_then(|t| self.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width());
+        let (Some(lhs_width), Some(rhs_width)) = (lhs_width, rhs_width) else {
+            let sort_name = |t: TermId| -> String {
+                self.get(t)
+                    .and_then(|d| self.sorts.sort_name(d.sort))
+                    .unwrap_or_else(|| "?".to_string())
+            };
+            let (lhs_sort, rhs_sort) = (sort_name(lhs), sort_name(rhs));
+            return Err(crate::error::OxizError::SortMismatchSimple {
+                expected: format!("(_ BitVec w) for concat lhs ({lhs_sort})"),
+                found: format!("(_ BitVec w) for concat rhs ({rhs_sort})"),
+            });
+        };
+        Ok(self.mk_bv_concat_checked(lhs, rhs, lhs_width, rhs_width))
+    }
+
+    /// `mk_bv_concat` over operands whose widths are already resolved.
+    fn mk_bv_concat_checked(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        lhs_width: u32,
+        rhs_width: u32,
+    ) -> TermId {
+        let width = lhs_width + rhs_width;
+
+        // Both halves literal: splice them into a single literal.
+        if let (Some(lhs_value), Some(rhs_value)) =
+            (self.bv_const_unsigned(lhs, lhs_width), self.bv_const_unsigned(rhs, rhs_width))
+        {
+            return self.mk_bitvec(bv_fold::bv_concat(&lhs_value, &rhs_value, rhs_width), width);
+        }
+
+        let sort = self.sorts.bitvec(width);
+        self.intern(TermKind::BvConcat(lhs, rhs), sort)
+    }
+
+    /// Historical infallible `mk_bv_concat` body: keeps the debug-time
+    /// diagnosis and the release `32` fallback for existing callers that
+    /// cannot propagate an error (the sort-checked parser paths), while the
+    /// substitution/ematching paths move to the checked form.
+    fn mk_bv_concat_fallback(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let lhs_width = self
             .get(lhs)
             .and_then(|t| self.sorts.get(t.sort))
@@ -1196,18 +1262,19 @@ impl TermManager {
             lhs_width.is_some() && rhs_width.is_some(),
             "mk_bv_concat: both operands must have a bit-vector sort (lhs_width={lhs_width:?}, rhs_width={rhs_width:?})"
         );
-        let width = lhs_width.unwrap_or(32) + rhs_width.unwrap_or(32);
-
-        // Both halves literal: splice them into a single literal.
-        if let (Some(lhs_width), Some(rhs_width)) = (lhs_width, rhs_width)
-            && let Some(lhs_value) = self.bv_const_unsigned(lhs, lhs_width)
-            && let Some(rhs_value) = self.bv_const_unsigned(rhs, rhs_width)
-        {
-            return self.mk_bitvec(bv_fold::bv_concat(&lhs_value, &rhs_value, rhs_width), width);
+        match (lhs_width, rhs_width) {
+            (Some(lw), Some(rw)) => self.mk_bv_concat_checked(lhs, rhs, lw, rw),
+            (lw, rw) => {
+                // Release-build last resort, unchanged from history: fabricate
+                // the historical 32 for an unresolvable operand rather than
+                // panicking on malformed input.  Every producer of terms goes
+                // through the sort checker first; only already-malformed input
+                // can reach this.
+                let width = lw.unwrap_or(32) + rw.unwrap_or(32);
+                let sort = self.sorts.bitvec(width);
+                self.intern(TermKind::BvConcat(lhs, rhs), sort)
+            }
         }
-
-        let sort = self.sorts.bitvec(width);
-        self.intern(TermKind::BvConcat(lhs, rhs), sort)
     }
 
     /// Create a bit vector NAND: `bvnand(a, b) = bvnot(bvand(a, b))`.

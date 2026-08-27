@@ -790,9 +790,18 @@ impl TermManager {
 
             // ======== Bit vectors ========
             TermKind::BvConcat(a, b) => {
-                let a = sub(a);
-                let b = sub(b);
-                self.mk_bv_concat(a, b)
+                let (orig_a, orig_b) = (a, b);
+                let a = sub(orig_a);
+                let b = sub(orig_b);
+                // Decline to apply an ill-typed map and keep the original
+                // term: a substitution that cannot rebuild the concat at the
+                // operands' real sorts would intern a wrong-width term that
+                // can flip a verdict.  A sort-preserving substitution can
+                // never take this branch; it exists so the unreachable case
+                // fails safe. (Ported from upstream v0.3.3.)
+                self.try_mk_bv_concat(a, b).unwrap_or_else(|_| {
+                    self.intern(TermKind::BvConcat(orig_a, orig_b), sort)
+                })
             }
             TermKind::BvExtract { high, low, arg } => {
                 let arg = sub(arg);

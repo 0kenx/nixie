@@ -421,9 +421,15 @@ impl PyTermManager {
         PyTerm::bare(tm.mk_bitvec(value, width))
     }
 
-    fn mk_bv_concat(&self, lhs: &PyTerm, rhs: &PyTerm) -> PyTerm {
+    fn mk_bv_concat(&self, lhs: &PyTerm, rhs: &PyTerm) -> PyResult<PyTerm> {
         let mut tm = self.inner.borrow_mut();
-        PyTerm::bare(tm.mk_bv_concat(lhs.id, rhs.id))
+        // Checked form: a non-BitVec operand raises instead of silently
+        // interning a term at a fabricated width. (Ported from upstream
+        // v0.3.3.)
+        match tm.try_mk_bv_concat(lhs.id, rhs.id) {
+            Ok(id) => Ok(PyTerm::bare(id)),
+            Err(e) => Err(PyValueError::new_err(e.to_string())),
+        }
     }
 
     fn mk_bv_extract(&self, high: u32, low: u32, arg: &PyTerm) -> PyTerm {

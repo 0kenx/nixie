@@ -675,7 +675,10 @@ fn rebuild(
         TermKind::BvConcat(a, b) => {
             let a = sub(a);
             let b = sub(b);
-            manager.mk_bv_concat(a, b)
+            // Fail safe on an ill-typed rebuild: keep the original term rather
+            // than interning a wrong-width concat. (Ported from upstream
+            // v0.3.3.)
+            manager.try_mk_bv_concat(a, b).unwrap_or(id)
         }
         TermKind::BvExtract { high, low, arg } => {
             let arg = sub(arg);
