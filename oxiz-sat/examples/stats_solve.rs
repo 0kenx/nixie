@@ -27,16 +27,52 @@ fn main() {
     if std::env::var("NO_STAB").is_ok() {
         cfg.enable_stabilize = false;
     }
+    if std::env::var("REPHASE").as_deref() == Ok("0") {
+        cfg.rephase_interval = 0;
+    }
+    if let Ok(v) = std::env::var("RANDPOL")
+        && let Ok(p) = v.parse::<f64>()
+    {
+        cfg.random_polarity_prob = p;
+    }
+    if let Ok(v) = std::env::var("RANDPOL_STABLE")
+        && let Ok(p) = v.parse::<f64>()
+    {
+        cfg.random_polarity_prob_stable = Some(p);
+    }
     if let Ok(v) = std::env::var("STAB_BASE")
         && let Ok(n) = v.parse::<u64>()
     {
         cfg.stabilize_base = n;
     }
     let mut solver = Solver::with_config(cfg);
+    if let Ok(v) = std::env::var("MAXC")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        solver.set_max_conflicts(Some(n));
+    }
     if let Ok(sd) = std::env::var("SEED") {
         solver.set_random_seed(sd.parse::<u64>().unwrap_or(0));
     }
     parser.parse_file(&path, &mut solver).expect("parse ok");
+    if let Ok(path) = std::env::var("PHASE_HINT") {
+        // cadical model file: `v 1 -2 3 ...` lines.  Index 0 unused.
+        if let Ok(txt) = std::fs::read_to_string(&path) {
+            let nv = solver.num_vars();
+            let mut hint = vec![false; nv + 1];
+            for tok in txt.split_whitespace() {
+                if let Ok(lit) = tok.parse::<i64>() {
+                    // DIMACS literals are 1-based; the phase arrays are
+                    // indexed by 0-based `Var::index()`.
+                    let v = lit.unsigned_abs() as usize;
+                    if v >= 1 && v - 1 < hint.len() {
+                        hint[v - 1] = lit > 0;
+                    }
+                }
+            }
+            solver.set_phase_hint(&hint);
+        }
+    }
     let r = solver.solve();
     let s = solver.stats();
     println!("result={r:?}");

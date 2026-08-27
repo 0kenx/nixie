@@ -380,3 +380,61 @@ Canaries at default (shield inert): wisas `unsat` ~10 s, cxs-bp
 `unsat`; differential 161/0 both arms (one file of load noise vs the
 standing 162 — the paired inert run and the landed-default run agree
 with each other); parity 167/0/1; oxiz-sat 870/870; clippy/fmt clean.
+
+
+## THE GAP MOVER (2026-08-21): random polarity OFF in stable mode — +16 standing files, 129→145 of 261
+
+### The phase-oracle experiment that isolated the root cause
+
+Fresh standing table at `06a86af` (same-day, same box): oxiz **129** vs
+cadical **162**, 0 mismatches, 37 one-sided losses — confirming the landed
+slices had not moved the headline and re-prioritizing to the loss residue.
+
+`worker_550` diagnosis (93 k vars, 10.3 M clauses, SAT; cadical 12 s at
+**5 113 conflicts**, 58 dec/conf, chrono 31 %, **zero random decisions** —
+`rand. dec phase: 0.00`; no walk, no flipping): we burn 200 k+ conflicts
+without finding the model.  A phase-oracle instrument was added
+(`Solver::set_phase_hint`, `PHASE_HINT=` in the stats harness): seed the
+saved/target/best phase arrays with cadical's actual model.
+
+| arm | result |
+|---|---|
+| hint + RANDPOL=0.02 (default randomness) | 100 k conflicts, **no model** |
+| hint + RANDPOL=0 + REPHASE=0 | **sat with 0 conflicts** (28 987 decisions, pure descent) |
+| no hint, RANDPOL=0 | sat in 60 s (default TOs) |
+
+The machinery is sound — model-guided decisions would walk straight to
+the model.  The **2 % random-polarity perturbation (an OxiZ extension;
+cadical's `randec` defaults to 0) single-handedly destroys phase-guided
+descent on model-finding instances**, and rephase-every-1000 wipes
+whatever phase progress accumulates (tested separately: not the breaker;
+randomness is).
+
+### Why stable-mode gating is the right cut
+
+Phase guidance (target phases) is cadical's *stable-mode* mechanism; our
+loss-class files spend 73 %+ of conflicts in stable mode.  Full-off
+(`RANDPOL=0` everywhere) measured corpus **1.082× ticks** (bimodal: wins
+noL 0.52×/Ptn 0.04×, loses x9-06068 35×) — the 2 % is load-bearing
+diversification in focused mode.  Stable-only gate
+(`random_polarity_prob_stable: Some(0.0)`):
+
+| measurement | value |
+|---|---|
+| 120-file corpus, both-solved ticks | **1.017×** (neutral band) |
+| corpus solved | 51 vs 49 (6 gained / 4 lost, bimodal tail both ways) |
+| verdict disagreements | **0** (both A/Bs) |
+| **37 standing losses re-run** | **17 solved** (noL ×2, circuit_64i ×2, x9-09054 ×2, x9-08075 ×2, frb45 ×2, summle ×2, j3037, jgiraldezlevy, crusti_g2io, WS_500) |
+| fresh standing table | **oxiz 145 / cadical 162**, 0 mismatches (was 129/162 same-day; 128/159 at `cc78521`) |
+
+Landed as the preset default (`Some(0.0)` on all presets except the
+intentionally-random `Random`/`Aggressive`, which keep `None`);
+`RANDPOL` / `RANDPOL_STABLE` env knobs remain for A/B.  Gates: workspace
+10 102 green, clippy/fmt/doc clean, differential **162/0** (par2 2 261,
+best yet), parity 167/0/1, canaries hold (wisas `unsat` 7 s, cxs-bp
+`unsat`, sorted `sat`).
+
+Residual gap after this landing: 17 files (was 33) — the taxonomy's
+"hard trio" remainder (noL now solved; fsf/x9-08075-class remain), the
+long tail, and the 4 corpus files the gate loses at fixed caps
+(rbsat/x9-10070/Ptn-7824/6s268r — watch in the next standing run).

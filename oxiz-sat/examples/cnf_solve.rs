@@ -132,6 +132,19 @@ fn main() {
         config.rephase_interval = n;
     }
 
+    if let Ok(v) = std::env::var("RANDPOL")
+        && let Ok(p) = v.parse::<f64>()
+    {
+        config.random_polarity_prob = p;
+    }
+    if let Ok(v) = std::env::var("RANDPOL_STABLE")
+        && let Ok(p) = v.parse::<f64>()
+    {
+        config.random_polarity_prob_stable = Some(p);
+    }
+    if std::env::var("REPHASE").as_deref() == Ok("0") {
+        config.rephase_interval = 0;
+    }
     // Seed-portfolio mode (kissat-style seeded restarts): `SEEDS` gives a
     // comma-separated arm list (`default` keeps the built-in seed), and
     // `ARM_CONFLICTS` an optional per-arm conflict budget.  Each arm is a

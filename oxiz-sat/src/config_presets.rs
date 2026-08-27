@@ -97,6 +97,7 @@ impl ConfigPreset {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
@@ -148,7 +149,8 @@ impl ConfigPreset {
             clause_deletion_threshold: 10000,
             var_decay: 0.90,
             clause_decay: 0.95,
-            random_polarity_prob: 0.10, // Higher randomness
+            random_polarity_prob: 0.10,
+            random_polarity_prob_stable: None, // Higher randomness
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
@@ -201,6 +203,7 @@ impl ConfigPreset {
             var_decay: 0.98,
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
@@ -253,6 +256,7 @@ impl ConfigPreset {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
@@ -305,6 +309,7 @@ impl ConfigPreset {
             var_decay: 0.85,
             clause_decay: 0.90,
             random_polarity_prob: 0.15,
+            random_polarity_prob_stable: None,
             restart_strategy: RestartStrategy::Geometric,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
@@ -357,6 +362,7 @@ impl ConfigPreset {
             var_decay: 0.99,
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
@@ -405,6 +411,7 @@ impl ConfigPreset {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,
@@ -453,6 +460,7 @@ impl ConfigPreset {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.0,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Luby,
             enable_lazy_hyper_binary: false,
             use_vmtf: true,
@@ -501,6 +509,7 @@ impl ConfigPreset {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.01,
+            random_polarity_prob_stable: Some(0.0),
             restart_strategy: RestartStrategy::Glucose,
             enable_lazy_hyper_binary: false, // UNSOUND (wrong UNSAT) + ~12x slower on mrpp; see check_hyper_binary_resolution
             use_vmtf: true,

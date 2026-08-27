@@ -1018,6 +1018,27 @@ impl Solver {
         }
     }
 
+    /// Phase-oracle diagnostic (doc-hidden): seed the saved, target, and
+    /// best phase arrays with an externally supplied model (`PHASE_HINT` in
+    /// the stats harness).  Purely a measurement instrument — it answers
+    /// "would this search find the model fast if its *decisions* guessed
+    /// the model polarity first", isolating phase guidance from clause
+    /// learning on model-finding instances.  Not used by any production
+    /// path; empty/short hints are ignored past their length.
+    #[doc(hidden)]
+    pub fn set_phase_hint(&mut self, hint: &[bool]) {
+        if hint.is_empty() {
+            return;
+        }
+        self.phase.resize(self.num_vars, false);
+        self.target_phase.resize(self.num_vars, false);
+        self.best_phase.resize(self.num_vars, false);
+        let n = hint.len().min(self.num_vars);
+        self.phase[..n].copy_from_slice(&hint[..n]);
+        self.target_phase[..n].copy_from_slice(&hint[..n]);
+        self.best_phase[..n].copy_from_slice(&hint[..n]);
+    }
+
     /// Seed the internal xorshift64 PRNG from a user-supplied `:random-seed`.
     ///
     /// The raw seed is mixed through a splitmix64 step before it becomes the

@@ -215,6 +215,13 @@ pub struct SolverConfig {
     pub clause_decay: f64,
     /// Random polarity probability (0.0 to 1.0)
     pub random_polarity_prob: f64,
+    /// Random-polarity probability override while in **stable** mode
+    /// (cadical parity: random decisions default OFF and phase guidance is
+    /// a stable-mode mechanism — target phases; the standing-gap loss-class
+    /// files are model-finding instances where 2 % random polarity provably
+    /// breaks phase-guided descent).  `None` ⇒ same as
+    /// `random_polarity_prob` (the historical behaviour).
+    pub random_polarity_prob_stable: Option<f64>,
     /// Restart strategy: "luby" or "geometric"
     pub restart_strategy: RestartStrategy,
     /// Enable lazy hyper-binary resolution
@@ -468,6 +475,7 @@ impl Default for SolverConfig {
             var_decay: 0.95,
             clause_decay: 0.999,
             random_polarity_prob: 0.02,
+            random_polarity_prob_stable: None,
             restart_strategy: RestartStrategy::Luby,
             // Off by default: the lazy hyper-binary derivation in
             // `check_hyper_binary_resolution` is not currently sound.  Its learned
@@ -2045,7 +2053,14 @@ impl Solver {
         } else {
             None
         };
-        if self.rand_bool(self.config.random_polarity_prob) {
+        let rand_p = if self.stable {
+            self.config
+                .random_polarity_prob_stable
+                .unwrap_or(self.config.random_polarity_prob)
+        } else {
+            self.config.random_polarity_prob
+        };
+        if self.rand_bool(rand_p) {
             self.rand_bool(0.5)
         } else {
             source
