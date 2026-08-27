@@ -280,6 +280,34 @@ pub fn reduce_used_shield_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_REDUCE_USED_SHIELD").is_ok_and(|v| v != "0"))
 }
 
+/// Cached `OXIZ_VIVIFY_OTF=0` (disable on-the-fly vivify subsumption).
+/// OnceLock: this is checked per subsumption candidate during vivify
+/// rounds — an uncached `env::var` there measured as double-digit
+/// percentages of runtime in `getenv` (profiled 2026-08-21, noL).
+#[doc(hidden)]
+pub fn vivify_otf_disabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_VIVIFY_OTF").as_deref() == Ok("0"))
+}
+
+/// Cached `OXIZ_VIVIFY_TRACE` (per-round vivify diagnostics print).
+#[doc(hidden)]
+pub fn vivify_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_VIVIFY_TRACE").is_ok())
+}
+
+/// Cached `OXIZ_NOPROMOTE` (keep learned clauses out of original-slot
+/// promotion).  Checked per learned-clause subsumption event.
+#[doc(hidden)]
+pub fn nopromote_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_NOPROMOTE").is_ok())
+}
+
 #[doc(hidden)]
 pub fn shrink_null_enabled() -> bool {
     use std::sync::OnceLock;

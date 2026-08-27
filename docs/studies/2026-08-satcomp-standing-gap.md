@@ -605,3 +605,45 @@ multi-seed decision-quality studies (the VSIDS arm already showed
 dec/conf can be fixed to 3.1 — but the corpus lost 33 vs 36, i.e.
 dec/conf and solved-count are decoupled) or new capability (Priority 4
 equivalence sweeping).
+
+
+## Deep-study slice 2 (2026-08-21): fresh release profile; two hygiene fixes landed, hot-map recorded
+
+Re-profiled noL (300 k conflicts) after the landings — first with the
+dev build (misleading: debug invariants + uncached env reads = 10 %
+`getenv`, 8 % LBD checks), then properly via a fixed `--profile perf`
+(the workspace's perf profile inherited `strip = "symbols"` from
+release, defeating itself — fixed in `Cargo.toml`).
+
+**True release self-time map** (noL, post-landings):
+
+| share | site |
+|---|---|
+| 38.6 % | `propagate` (arena `read_header`/`live_lits` ≈ 22 % children) |
+| 20.4 % | `SmallVec<[Lit; 8]>::extend(Copied<slice::Iter>)` — attribution unresolved; the inline-8 pattern lives in eliminate/equiv resolvent building |
+| 14.6 % | `shrink_and_minimize_clause` (10.9 % inside `shrink_block`) |
+| 9.5 % + 8.9 % | `elim_round` + `subsume_round` — **mid-search inprocessing ≈ 18 %** |
+| 5.1 % | `solve_with_theory` loop |
+
+Landed from this slice (trajectory-identical, verified bit-identical on
+the identity file; oxiz-sat 870/870):
+
+1. **Hot-path env knobs cached** — `OXIZ_SHRINK_TRACE` fired once per
+   conflict uncached; `OXIZ_VIVIFY_OTF` per subsumption candidate;
+   `OXIZ_NOPROMOTE`, `OXIZ_VIVIFY_TRACE`, and the reduce-percentage
+   knobs likewise.  All `OnceLock` now.  Honest caveat: a tight 1 M-
+   conflict A/B showed **no measurable release effect** (21.3 s vs
+   21.4 s — glibc's `getenv` over this ~280-entry environ is ~1 %,
+   inside noise); the 10 % in the dev profile was a dev-build artifact.
+   Kept as hygiene: it protects big-environ deployments and debug
+   builds, and removes a class of landmine.
+2. **`clear_minimize_flags` allocation-free** — the per-conflict
+   `drain(..).collect()` (fresh SmallVec + copy per conflict, 11.5 %
+   dev self-time) replaced by disjoint-field index iteration.  ~1.3 %
+   release wall on noL (borderline noise, real by construction).
+
+Next slice targets, in recorded priority: (a) attribute the 20 % extend
+(elim/equiv inline-8 SmallVec growth churn — likely heap
+alloc-per-resolvent); (b) the mid-search elim/subsume weight (18 % —
+schedule/sweep policy, trajectory-sensitive: full A/B required);
+(c) `shrink_block`'s 10.9 % (block walk + arena loads).

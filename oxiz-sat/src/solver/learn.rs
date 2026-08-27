@@ -853,16 +853,28 @@ impl Solver {
         // against cadical's (76 %-deleted overall vs our 96 %) via the
         // `OXIZ_REDUCE_PCT_{CORE,MID,LOCAL}` knobs (percent 0..=100,
         // default = the historical values — unset knobs change nothing).
-        let pct = |name: &str, default: usize| -> usize {
-            std::env::var(name)
-                .ok()
-                .and_then(|v| v.parse::<usize>().ok())
-                .filter(|p| *p <= 100)
-                .unwrap_or(default)
-        };
-        let num_core_delete = core_candidates.len() * pct("OXIZ_REDUCE_PCT_CORE", 10) / 100;
-        let num_mid_delete = mid_candidates.len() * pct("OXIZ_REDUCE_PCT_MID", 30) / 100;
-        let num_local_delete = local_candidates.len() * pct("OXIZ_REDUCE_PCT_LOCAL", 75) / 100;
+        // Cached (this fires per reduce round): the three tier percentages,
+        // historical defaults 10 / 30 / 75 (see the standing-gap study for
+        // the retention experiments behind the knobs).
+        static PCT_CORE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        static PCT_MID: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        static PCT_LOCAL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        let pct =
+            |flag: &'static std::sync::OnceLock<usize>, name: &str, default: usize| -> usize {
+                *flag.get_or_init(|| {
+                    std::env::var(name)
+                        .ok()
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|p| *p <= 100)
+                        .unwrap_or(default)
+                })
+            };
+        let _ = (&PCT_CORE, &PCT_MID, &PCT_LOCAL);
+        let num_core_delete =
+            core_candidates.len() * pct(&PCT_CORE, "OXIZ_REDUCE_PCT_CORE", 10) / 100;
+        let num_mid_delete = mid_candidates.len() * pct(&PCT_MID, "OXIZ_REDUCE_PCT_MID", 30) / 100;
+        let num_local_delete =
+            local_candidates.len() * pct(&PCT_LOCAL, "OXIZ_REDUCE_PCT_LOCAL", 75) / 100;
 
         // Eagerly detach the two watchers of every deleted clause (cadical
         // `detach_clause` in `reduce`). `ClauseDatabase::remove` only flags
@@ -1586,7 +1598,7 @@ impl Solver {
             }
             let _ = self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
         }
-        if std::env::var("OXIZ_VIVIFY_TRACE").is_ok() {
+        if crate::vivify_trace_enabled() {
             eprintln!(
                 "[vivify] cands={} props={} otf_subsumed={}",
                 snapshot.len(),
@@ -1627,7 +1639,7 @@ impl Solver {
     /// `d_id` entails `cand` outright (level-0-false literals are droppable
     /// from `d_id` under the units), so `cand` can be deleted.
     fn vivify_otf_subsumed(&self, cand: &[Lit], cid: ClauseId, d_id: ClauseId) -> bool {
-        if std::env::var("OXIZ_VIVIFY_OTF").as_deref() == Ok("0") {
+        if crate::vivify_otf_disabled() {
             return false;
         }
         // cadical `assert (c != subsuming)`: the subsumer must differ from

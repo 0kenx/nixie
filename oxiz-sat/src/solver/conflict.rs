@@ -1077,9 +1077,15 @@ impl Solver {
     /// seen for level-0 vars reached by the chain walk.
     /// Debug instrumentation for the shrink study (OXIZ_SHRINK_TRACE=1).
     fn shrink_trace_enabled(&self) -> bool {
+        // OnceLock: this fires once per conflict (every
+        // `shrink_and_minimize_clause`); an uncached `env::var` here was
+        // 10 %+ of a profiled dev run in `getenv` (environ is ~280
+        // entries on this box, so each lookup is a linear scan).
         #[cfg(feature = "std")]
         {
-            std::env::var("OXIZ_SHRINK_TRACE").is_ok()
+            use std::sync::OnceLock;
+            static FLAG: OnceLock<bool> = OnceLock::new();
+            *FLAG.get_or_init(|| std::env::var("OXIZ_SHRINK_TRACE").is_ok())
         }
         #[cfg(not(feature = "std"))]
         {
@@ -1103,20 +1109,36 @@ impl Solver {
     fn shrink_trace_record(&mut self, _dbg: ShrinkTraceDbg) {}
 
     fn clear_minimize_flags(&mut self) {
-        let minimized: SmallVec<[i32; 32]> = self.lrat_minimized.drain(..).collect();
-        for vi in minimized {
-            let var = Var::new(vi as u32);
-            self.mf_unset(var, MF_REMOVABLE | MF_POISON | MF_ADDED | MF_SHRINKABLE);
+        // Disjoint-field iteration (index into `lrat_minimized`, mutate
+        // `lrat_flags`): the previous `drain(..).collect()` made a fresh
+        // SmallVec per conflict — a heap allocation + copy on every
+        // conflict whose analyzed set exceeds the inline capacity (the
+        // common case once shrink marks are included; `clear_minimize_flags`
+        // was 11.5 % self-time in the 2026-08-21 noL profile).
+        const MINIMIZED_MASK: u8 = MF_REMOVABLE | MF_POISON | MF_ADDED | MF_SHRINKABLE;
+        let n = self.lrat_minimized.len();
+        for i in 0..n {
+            let vi = self.lrat_minimized[i] as usize;
+            if vi < self.lrat_flags.len() {
+                self.lrat_flags[vi] &= !MINIMIZED_MASK;
+            }
         }
-        let learnt_vars: SmallVec<[Var; 16]> = self.learnt.iter().map(|l| l.var()).collect();
-        for var in learnt_vars {
-            self.mf_unset(var, MF_KEEP);
+        self.lrat_minimized.clear();
+        let m = self.learnt.len();
+        for i in 0..m {
+            let vi = self.learnt[i].var().index();
+            if vi < self.lrat_flags.len() {
+                self.lrat_flags[vi] &= !MF_KEEP;
+            }
         }
-        let analyzed: SmallVec<[i32; 32]> = self.unit_analyzed.drain(..).collect();
-        for vi in analyzed {
-            let var = Var::new(vi as u32);
-            self.mf_unset(var, MF_SEEN);
+        let a = self.unit_analyzed.len();
+        for i in 0..a {
+            let vi = self.unit_analyzed[i] as usize;
+            if vi < self.lrat_flags.len() {
+                self.lrat_flags[vi] &= !MF_SEEN;
+            }
         }
+        self.unit_analyzed.clear();
     }
 
     /// We use a recursive check: a literal l is redundant if its reason clause

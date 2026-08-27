@@ -186,6 +186,7 @@ debug = true
 [profile.perf]
 inherits = "release"
 debug = true
+# `release` strips symbols, which defeats a profiling profile; keep them.
 strip = "none"
 
 [profile.dev]

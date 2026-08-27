@@ -224,7 +224,7 @@ impl Solver {
                     // `crn_11_99_u`, where learned (57∨1101) subsumed
                     // (37∨57∨1101) and reduction later removed it).
                     let subsumed_learned = self.clauses.get(cid).is_some_and(|c| c.learned)
-                        && std::env::var("OXIZ_NOPROMOTE").is_err();
+                        && !crate::nopromote_enabled();
                     if !subsumed_learned && self.clauses.get(subsumer).is_some_and(|s| s.learned) {
                         self.clauses.clear_learned(subsumer);
                     }
