@@ -130,6 +130,27 @@ impl Trail {
         self.values[lit.code() as usize]
     }
 
+    /// Hot-path variant of [`Self::lit_val`] for the propagation scan:
+    /// unchecked index.
+    ///
+    /// **Documented `unsafe` exception** (the crate denies `unsafe_code`;
+    /// this is the single scoped escape in `trail.rs`, mirroring
+    /// `memory.rs`'s module-level exception with its safety model): the
+    /// index is in-bounds by construction — `values` is sized to cover
+    /// every encodable literal by [`Self::resize`], and `Lit::code()` is
+    /// `2·var + sign` with `var < num_vars` for every literal the solver
+    /// constructs.  The elided bounds check was measured as part of the
+    /// propagate `lit_val` bucket (~3 % of search time on noL,
+    /// 2026-08-21); `debug_assert!` retains the check in dev builds.
+    /// Scope discipline: propagation-scan call sites only.
+    #[allow(unsafe_code)]
+    #[inline]
+    pub fn lit_val_hot(&self, lit: Lit) -> i8 {
+        debug_assert!((lit.code() as usize) < self.values.len());
+        // SAFETY: see the doc comment — `resize` guarantees the capacity.
+        unsafe { *self.values.get_unchecked(lit.code() as usize) }
+    }
+
     /// Get the value of a variable
     #[must_use]
     pub fn value(&self, var: Var) -> LBool {

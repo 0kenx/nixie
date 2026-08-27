@@ -124,7 +124,7 @@ impl Solver {
             for read in 0..watches.len() {
                 let watcher = watches[read];
 
-                if self.trail.lit_val(watcher.blocker) > 0 {
+                if self.trail.lit_val_hot(watcher.blocker) > 0 {
                     watches[write] = watcher;
                     write += 1;
                     continue;
@@ -151,7 +151,7 @@ impl Solver {
 
                 // If first watch is true, clause is satisfied
                 let first = clause[0];
-                if self.trail.lit_val(first) > 0 {
+                if self.trail.lit_val_hot(first) > 0 {
                     watches[write] = Watcher {
                         blocker: first,
                         ..watcher
@@ -183,7 +183,7 @@ impl Solver {
                 let mut found = false;
                 for j in 2..clause.len() {
                     let l = clause[j];
-                    let v = self.trail.lit_val(l);
+                    let v = self.trail.lit_val_hot(l);
                     if v > 0 {
                         // Satisfied replacement: keep the watcher here,
                         // refresh the blocker to the satisfied literal.
@@ -220,7 +220,7 @@ impl Solver {
                     ..watcher
                 };
 
-                if self.trail.lit_val(first) < 0 {
+                if self.trail.lit_val_hot(first) < 0 {
                     conflict_found = Some(watcher.clause);
                     write += 1; // keep the conflicting watcher
                     // Copy remaining watchers to preserve them

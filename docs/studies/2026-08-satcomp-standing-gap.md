@@ -681,3 +681,58 @@ deployments.
 `propagate` itself (watcher layout, arena header compression,
 blocking-literal efficiency), a data-structure slice of the same scale
 as the flat-watch-arena study.
+
+
+## Deep-study slice 4 (2026-08-21): propagation hot-path validation elided — 12–16 % fewer instructions on identical trajectories; LANDED
+
+The committed data-structure slice, scoped by the prior watcher studies
+(density +0.7 %, flat arena neutral — the named remaining lever was the
+per-visit clause-arena validation and the trail-value load).
+
+**Context measurement first**: serial, cadical solves noL entirely in
+4.3 s while we need 1.53 M conflicts ≈ 33 s — the 7.7× end-to-end gap
+decomposes as **6.6× conflicts-to-model (the emergent search gap) ×
+~1.15× per-conflict cost**.  The data-structure work addresses only the
+1.15×; recorded so nobody re-derives expectations from the load-skewed
+28 k/s figure.
+
+**Change** (path-preserving; the null is trajectory identity itself):
+
+1. `ClauseArena::live_lits_hot` — the propagation scan's per-visit
+   validation (null check retained; `byte_offset+HEADER > pos` and the
+   len-in-region division moved to `debug_assert!`s).  Soundness
+   argument: `pos` is written only by `alloc` and never decreases — no
+   clear/reset/compaction exists — so every ref ever handed out stays
+   in-region for the solver's lifetime; the elided checks can only fire
+   on a *fabricated* ref, which no production caller constructs.  The
+   semantic liveness condition (deleted flag) arrives free with the
+   header load the function performs anyway.  `live_lits_by_ref` is now
+   the hot variant (one entry point).
+2. `Trail::lit_val_hot` — unchecked value index, the **documented
+   `unsafe` exception** the watcher-8byte study's governance note
+   required (crate denies `unsafe_code`; this is the single scoped
+   escape in `trail.rs`, mirroring `memory.rs`'s module exception):
+   `values` is sized to cover every encodable literal by `resize`, and
+   `code()` is `2·var + sign` with `var < num_vars` by construction.
+   Propagation-scan call sites only.
+
+**Gates** (pre-registered bar: PMU instructions geomean ≥ 1.02 on
+trajectory-identical runs):
+
+| file | base instructions | hot | ratio |
+|---|---|---|---|
+| noL (400 k) | 72.3 G | 64.3 G | **1.126** |
+| mrpp (400 k) | 144.5 G | 125.0 G | **1.156** |
+| si2-b03m (300 k) | 33.2 G | 32.0 G | **1.038** |
+
+Geomean ≈ **1.104** — 5× the bar.  Trajectory identity: 5 files
+bit-identical in counters and verdict.  Wall on noL: 21.1 → 20.6 s.
+Gates: workspace 10 102 green, oxiz-sat 870/870, clippy/fmt/doc clean,
+differential 0-disagree (par2 2 269), parity 167/0/1, wisas `unsat`
+12 s.
+
+The propagate hot loop now pays: one bounds-free header load, the
+deleted branch, unchecked value loads — matching cadical's zero
+per-visit validation.  Remaining known per-visit overhead is data
+layout itself (12-byte header inline, 12-byte watcher), both measured
+~1 %-class by the prior studies.

@@ -570,6 +570,50 @@ impl ClauseArena {
         self.get(r).map_or(0, |v| v.usage_count)
     }
 
+    /// Hot-path variant of [`Self::live_lits_mut`] for the propagation
+    /// scan: identical semantics (null → `None`, deleted → `None`, live →
+    /// the literal slice), with the region-arithmetic validation moved to
+    /// `debug_assert!`s.
+    ///
+    /// Release elision argument: `self.pos` is written only by `alloc`
+    /// (`self.pos = end`) and never decreases — no `clear`/`reset`/
+    /// compaction exists on the arena — so every `ClauseRef` this arena
+    /// has ever handed out remains within `[0, pos)` for the solver's
+    /// lifetime.  The elided checks (`byte_offset + HEADER_BYTES > pos`
+    /// and the len-in-region bound) can therefore only fire on a
+    /// *fabricated* ref, which no production caller constructs (watchers
+    /// carry refs from `alloc`; the only semantic liveness condition is
+    /// the deleted flag, which is checked — it arrives free with the
+    /// header load this function must do anyway).  Measured 2026-08-21:
+    /// the validated path's arithmetic was the bulk of the ~10 %
+    /// `read_header` bucket in the noL propagate profile.
+    #[inline]
+    pub fn live_lits_hot(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
+        if r.is_null() {
+            return None;
+        }
+        debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
+        // SAFETY: `r` is non-null and (by the arena-invariant argument
+        // above, debug-asserted) within the live region at a slot
+        // boundary written by `alloc`; reading by value holds no borrow.
+        let h = unsafe { core::ptr::read(self.header_ptr(r)) };
+        debug_assert!(
+            h.len as usize
+                <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
+        );
+        if h.deleted() {
+            return None;
+        }
+        // SAFETY: slot valid; the literal array holds `h.len` initialised
+        // elements (a shrunk slot's tail is unreachable).
+        Some(unsafe {
+            core::slice::from_raw_parts_mut(
+                Self::lits_ptr_mut(self.header_ptr_mut(r)),
+                h.len as usize,
+            )
+        })
+    }
+
     /// Mutable literal slice for a **live** (non-deleted) clause, or `None`.
     /// Single header read validates both the slot and the deleted flag –
     /// this is the propagation hot path's entry point.
