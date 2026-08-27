@@ -438,3 +438,30 @@ Residual gap after this landing: 17 files (was 33) — the taxonomy's
 "hard trio" remainder (noL now solved; fsf/x9-08075-class remain), the
 long tail, and the 4 corpus files the gate loses at fixed caps
 (rbsat/x9-10070/Ptn-7824/6s268r — watch in the next standing run).
+
+
+### Shrink-fallback `.rev()` reland retest (2026-08-21, post-`00e83be`): canary moved, corpus still says NO — second rejection, now on corpus grounds
+
+The reverted direction fix (cadical parity: fallback minimization
+oldest-first; `4c212a8` reverted it when it exploded wisas 50×) was
+retested against the new default, whose phase landing shifted every
+trajectory.  Worktree build, functional provenance via
+`OXIZ_SHRINK_TRACE` (fallback_saved **2.35/analyze** — the fix's
+signature, matching the original +2.4):
+
+| gate | result |
+|---|---|
+| wisas canary (the old blocker) | **holds** — `unsat` 10 s vs HEAD 12 s |
+| cxs-bp / sorted / 6s167-opt | all hold |
+| oxiz-sat suite | 870/870 |
+| 60-file corpus screen (45 s, seed 71) | **fixed 23 vs HEAD 26**, ticks geomean **1.126×**, 0 verdict mismatches |
+| flips | 0 gained; **lost mp1-klieber, af-synt, and noL** — the very file the phase landing had just won |
+
+The pre-landing rejection (wisas 50×) and this one (corpus-negative,
+different files) are the same phenomenon twice: the fallback's mechanical
+saving is real but every perturbation of learned-clause shape reshuffles
+the trajectory by more than the saving.  **The fix stays unlanded —
+permanently, unless the clause-length gap itself is closed first** (the
+upstream cause per the instrumented-cadical correction above); at that
+point the fallback landscape changes and a third retest would be
+justified.  The worktree was discarded after the measurement.
