@@ -570,3 +570,38 @@ the residue captures land at the cap edge.  Net at 60 s ≈ 0 ± noise;
 at ≥90 s budgets strictly additive (+3–5).  No table run spent on a
 predicted wash; use `SEEDS=default,chrono ARM_CONFLICTS=1000000,700000`
 when the cap allows.
+
+
+## Deep-study slice 1 (2026-08-21): retention and restart-frequency hypotheses FALSIFIED with clean numbers
+
+The instrumented-cadical correction located the gap upstream of shrink:
+clause length at entry (43.9 vs 34.7) with cadical carrying a ~5× larger
+live learned DB (48 k vs 10 k on noL) and us deleting 96 % of learned
+clauses vs its 76 %.  Two cheap causal hypotheses, both falsified:
+
+**Retention** (tier deletion 10/30/75 % → leaner DB is a *symptom* of
+cadical's advantage, maybe its cause): `OXIZ_REDUCE_PCT_LOCAL`
+75→50→30 on noL at a fixed 300 k-conflict budget — net_db 5.6 k→11.4
+k→24.5 k, avg LBD 21.86→**21.26→20.93** (clauses get *shorter*, not
+longer), dec/conf 4.96→5.06→4.99 (unchanged), ticks/conflict
+184→219→**279** (+19 %/+52 % pure cost).  End-to-end at 75 % the file
+solves (1.53 M conflicts); at 50/30 % it exceeds 90 s.  **Our aggressive
+deletion is load-bearing throughput; the clause-length gap does not come
+from retention.**
+
+**Restart frequency** (deeper trails ⇒ longer clauses): cadical noL
+restart interval **22.28**; ours 1 527 676/68 775 = **22.3**.  Exact
+parity — restarts are not the difference.
+
+What survives as the remaining noL deltas: conflicts-to-model 232 k vs
+1.53 M (6.6×), dec/conf 3.1 vs 3.66, conflicts/s 53.5 k vs 28 k, and
+cadical's mid-search probing (35 rounds — our `INPROCESS=1` arm was
+already TO on this file in the every-knob table).  Every mechanism-level
+probe is now at parity or measured-negative; the 6.6× search-efficiency
+gap is emergent — the sum of many small differences (branching score
+dynamics, learning dynamics, phase dynamics), not one missing
+mechanism.  The productive paths from here are the matched-null
+multi-seed decision-quality studies (the VSIDS arm already showed
+dec/conf can be fixed to 3.1 — but the corpus lost 33 vs 36, i.e.
+dec/conf and solved-count are decoupled) or new capability (Priority 4
+equivalence sweeping).

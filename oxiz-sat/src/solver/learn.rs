@@ -848,13 +848,21 @@ impl Solver {
         local_candidates
             .sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(core::cmp::Ordering::Equal));
 
-        // Delete different percentages from each tier
-        // Core: Delete bottom 10% (very conservative)
-        let num_core_delete = core_candidates.len() / 10;
-        // Mid: Delete bottom 30%
-        let num_mid_delete = (mid_candidates.len() * 3) / 10;
-        // Local: Delete bottom 75% (very aggressive)
-        let num_local_delete = (local_candidates.len() * 3) / 4;
+        // Delete different percentages from each tier.  The defaults are
+        // 10 % / 30 % / 75 %; the standing-gap study measures retention
+        // against cadical's (76 %-deleted overall vs our 96 %) via the
+        // `OXIZ_REDUCE_PCT_{CORE,MID,LOCAL}` knobs (percent 0..=100,
+        // default = the historical values — unset knobs change nothing).
+        let pct = |name: &str, default: usize| -> usize {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+                .filter(|p| *p <= 100)
+                .unwrap_or(default)
+        };
+        let num_core_delete = core_candidates.len() * pct("OXIZ_REDUCE_PCT_CORE", 10) / 100;
+        let num_mid_delete = mid_candidates.len() * pct("OXIZ_REDUCE_PCT_MID", 30) / 100;
+        let num_local_delete = local_candidates.len() * pct("OXIZ_REDUCE_PCT_LOCAL", 75) / 100;
 
         // Eagerly detach the two watchers of every deleted clause (cadical
         // `detach_clause` in `reduce`). `ClauseDatabase::remove` only flags
