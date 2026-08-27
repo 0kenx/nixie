@@ -3,6 +3,7 @@
 //! Creates default values for different sorts.
 
 use super::Value;
+use crate::ast::RoundingMode;
 use crate::prelude::HashMap;
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -121,6 +122,10 @@ impl ValueFactory {
                 SortKind::BitVec(width) => break Value::BitVec(width, 0),
                 // Positive zero: sign bit clear, all-zero exponent and mantissa.
                 SortKind::FloatingPoint { .. } => break Value::FloatingPoint(false, 0, 0),
+                // The reserved five-element `RoundingMode` sort: named
+                // inhabitants, so the default is the canonical `RNE`.
+                // (Ported from upstream v0.3.3.)
+                SortKind::RoundingMode => break Value::RoundingMode(RoundingMode::RNE),
                 // The default array is the constant array over the range sort's
                 // own default, with no stored exceptions. Propagates `None` if
                 // the range sort itself cannot be defaulted.
@@ -437,10 +442,12 @@ mod tests {
     #[test]
     fn test_default_value_dispatches_on_sort_kind_not_raw_sort_id() {
         let mut manager = SortManager::new();
-        let bv64 = manager.bitvec(64); // 4th interned sort -> raw id 3
-        let arr = manager.array(manager.int_sort, manager.bool_sort); // 5th -> raw id 4
-        assert_eq!(bv64.raw(), 3);
-        assert_eq!(arr.raw(), 4);
+        // 4th/5th interned sorts -> raw ids 4/5 (RoundingMode now takes 3;
+        // ported from upstream v0.3.3).
+        let bv64 = manager.bitvec(64);
+        let arr = manager.array(manager.int_sort, manager.bool_sort);
+        assert_eq!(bv64.raw(), 4);
+        assert_eq!(arr.raw(), 5);
 
         let mut factory = ValueFactory::new();
 

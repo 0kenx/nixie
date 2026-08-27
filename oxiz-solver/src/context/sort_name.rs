@@ -180,6 +180,13 @@ impl Context {
         let name = name.trim();
         match name {
             "Bool" => return Ok(SortExprStep::Resolved(self.terms.sorts.bool_sort)),
+            // The reserved `RoundingMode` sort (first-class since the
+            // upstream-v0.3.3 port) must resolve to the SAME SortId the
+            // parser hands out, or a declared constant lands on a different
+            // sort than the mode terms it is compared with.
+            "RoundingMode" => {
+                return Ok(SortExprStep::Resolved(self.terms.sorts.rounding_mode_sort));
+            }
             "Int" => return Ok(SortExprStep::Resolved(self.terms.sorts.int_sort)),
             "Real" => return Ok(SortExprStep::Resolved(self.terms.sorts.real_sort)),
             "String" => return Ok(SortExprStep::Resolved(self.terms.sorts.string_sort())),

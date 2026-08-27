@@ -573,6 +573,7 @@ impl StaticFeatures {
             SortKind::Array { .. } => self.has_array = true,
             SortKind::String => self.has_string = true,
             SortKind::FloatingPoint { .. } => self.has_fp = true,
+            SortKind::RoundingMode => self.has_fp = true,
             SortKind::Datatype(_) => self.has_dt = true,
             SortKind::Uninterpreted(_) | SortKind::Parameter(_) | SortKind::Parametric { .. } => {}
         }
@@ -671,6 +672,8 @@ fn sort_class(manager: &TermManager, sort: SortId) -> SortClass {
         SortKind::Array { .. } => SortClass::Array,
         SortKind::String => SortClass::String,
         SortKind::FloatingPoint { .. } => SortClass::Fp,
+        // The rounding modes belong to the FP family for feature routing.
+        SortKind::RoundingMode => SortClass::Fp,
         SortKind::Datatype(_) => SortClass::Dt,
         SortKind::Uninterpreted(_) | SortKind::Parameter(_) | SortKind::Parametric { .. } => {
             SortClass::Other

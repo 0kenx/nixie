@@ -13,6 +13,7 @@ use portable_atomic::{AtomicU32, Ordering};
 mod builder;
 pub mod bv_fold;
 mod query;
+mod rounding_mode;
 pub mod str_fold;
 
 /// Statistics for garbage collection
@@ -41,6 +42,9 @@ pub struct TermManager {
     pub(super) interner: Rodeo,
     /// Sort manager
     pub sorts: SortManager,
+    /// Whether anything has introduced a rounding mode: a mode term, or a
+    /// parser-accepted `RoundingMode` declaration (see `rounding_mode.rs`).
+    pub(super) rounding_mode_used: bool,
     /// Cache for structural sharing.
     ///
     /// Keyed on `(TermKind, SortId)` rather than `TermKind` alone: two
@@ -78,6 +82,7 @@ impl TermManager {
             next_id: AtomicU32::new(0),
             interner: Rodeo::default(),
             sorts,
+            rounding_mode_used: false,
             cache: FxHashMap::default(),
             true_id: TermId(0),
             false_id: TermId(1),
