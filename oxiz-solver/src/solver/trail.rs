@@ -21,6 +21,21 @@ use super::types::Polarity;
 pub(crate) enum TrailOp {
     /// An assertion was added
     AssertionAdded { index: usize },
+    /// A numeric-equality trichotomy pair was recorded (and its clause
+    /// emitted into the *current* SAT scope) by
+    /// `ensure_numeric_equality_splits`.  A `pop` removes the clause with the
+    /// scope, so the dedup entry must go too or the pair is never re-emitted
+    /// after the pop — leaving the equality atom a free Boolean and losing
+    /// disequality reasoning (found via upstream v0.3.3's recfun port: a
+    /// `push / check-sat / pop / assert / check-sat` sequence answered a
+    /// refuted goal `sat`).
+    NumericEqSplitPairAdded { pair: (TermId, TermId) },
+    /// A triangle-axiom (term, constant) pair was recorded (and its clauses
+    /// emitted into the *current* SAT scope) by
+    /// `axiomatize_arith_constant_equalities`.  Same pop-retraction contract
+    /// as `NumericEqSplitPairAdded`: the clauses go with the scope, so the
+    /// dedup key must go with them.
+    ArithConstAxiomPairAdded { pair: (TermId, i64) },
     /// A variable was created
     VarCreated {
         #[allow(dead_code)]

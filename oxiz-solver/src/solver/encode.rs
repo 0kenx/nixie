@@ -954,9 +954,16 @@ impl Solver {
                 let pair = (t, c);
                 if !self.arith_const_axiom_pairs.insert(pair) {
                     // Already axiomatized this (term, const) pair in a prior
-                    // `check` whose clauses survived (no retracting `pop`).
+                    // `check` whose clauses are still live.  Clauses emitted
+                    // inside a `push` scope are NOT still live after the
+                    // matching `pop` — the insert below journals the key so
+                    // the pop retracts it and a later `check` re-emits the
+                    // axioms (the same scope contract as
+                    // `numeric_eq_split_pairs`).
                     continue;
                 }
+                self.trail
+                    .push(crate::solver::trail::TrailOp::ArithConstAxiomPairAdded { pair });
                 let c_term = manager.mk_int(c);
                 if c_term == t {
                     self.arith_const_axiom_pairs.remove(&pair);
@@ -1216,6 +1223,13 @@ impl Solver {
                 // accumulated duplicates forever (scope_rebase). `insert`
                 // returns false for a pair seen this call OR a prior call.
                 if self.numeric_eq_split_pairs.insert(pair) {
+                    // The clause is emitted into the CURRENT SAT scope, so a
+                    // later `pop` retracts it; journal the memo entry so the
+                    // same pop retracts the dedup key and the next `check`
+                    // re-emits the clause (the memo's "persists forever"
+                    // assumption only holds within one scope).
+                    self.trail
+                        .push(crate::solver::trail::TrailOp::NumericEqSplitPairAdded { pair });
                     self.add_arith_trichotomy_clause(a, b, manager);
                 }
             }

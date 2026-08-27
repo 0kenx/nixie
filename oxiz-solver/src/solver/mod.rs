@@ -2507,6 +2507,19 @@ impl Solver {
                                 self.certificate_assertions.truncate(index);
                             }
                         }
+                        TrailOp::NumericEqSplitPairAdded { pair } => {
+                            // The trichotomy clause this entry deduped was
+                            // emitted into the popped SAT scope and is gone
+                            // with it; drop the key so a later check re-emits
+                            // it (the memo's "persists forever" assumption
+                            // only holds within one scope).
+                            self.numeric_eq_split_pairs.remove(&pair);
+                        }
+                        TrailOp::ArithConstAxiomPairAdded { pair } => {
+                            // Same contract for the triangle axioms of
+                            // `axiomatize_arith_constant_equalities`.
+                            self.arith_const_axiom_pairs.remove(&pair);
+                        }
                         TrailOp::VarCreated { var: _, term } => {
                             // Remove the term-to-var mapping
                             self.term_to_var.remove(&term);
