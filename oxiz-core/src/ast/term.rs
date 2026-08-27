@@ -24,6 +24,22 @@ pub enum RoundingMode {
     RTZ,
 }
 
+impl RoundingMode {
+    /// All five rounding modes, in canonical (SMT-LIB) order.
+    ///
+    /// The order is load-bearing: the symbolic-mode case split in the parser
+    /// (`expand_symbolic_rm`) builds its nested `ite` over this array, with the
+    /// LAST mode as the unguarded `else` branch, so the array's order is the
+    /// split's branch order. (Ported from upstream v0.3.3.)
+    pub const ALL: [RoundingMode; 5] = [
+        RoundingMode::RNE,
+        RoundingMode::RNA,
+        RoundingMode::RTP,
+        RoundingMode::RTN,
+        RoundingMode::RTZ,
+    ];
+}
+
 /// Unique identifier for a term in the arena
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TermId(pub u32);

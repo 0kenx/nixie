@@ -449,15 +449,20 @@ fn fp_special_value_constants_are_recognized() {
 // ========  ========
 
 #[test]
-fn rounding_mode_sort_is_honestly_rejected_not_silently_uninterpreted() {
+fn rounding_mode_sort_is_first_class_not_silently_uninterpreted() {
+    // Since the upstream-v0.3.3 port, `(declare-const m RoundingMode)` is
+    // SUPPORTED: it builds a real constant at the reserved five-element sort
+    // (closure + distinctness axioms are asserted by the solver). The old
+    // honest-rejection test pinned the previous state; this pins the new one
+    // — the sort must NOT fall through to a fresh uninterpreted sort, which
+    // was the original silent-wrong bug the rejection existed to prevent.
     let mut manager = TermManager::new();
-    let err = parse_script("(declare-const m RoundingMode)", &mut manager)
-        .expect_err("declaring a RoundingMode-sorted constant must not silently succeed");
-    let msg = format!("{err:?}").to_lowercase();
-    assert!(
-        msg.contains("roundingmode"),
-        "error should mention RoundingMode: {msg}"
-    );
+    let cmds = parse_script("(declare-const m RoundingMode)", &mut manager)
+        .expect("RoundingMode is a first-class sort");
+    assert_eq!(cmds.len(), 1);
+    assert!(manager.rounding_mode_used());
+    let rm = manager.sorts.rounding_mode_sort;
+    assert!(manager.sorts.get(rm).is_some_and(|s| s.is_rounding_mode()));
 }
 
 #[test]
