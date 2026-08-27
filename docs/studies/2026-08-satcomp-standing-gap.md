@@ -736,3 +736,16 @@ deleted branch, unchecked value loads — matching cadical's zero
 per-visit validation.  Remaining known per-visit overhead is data
 layout itself (12-byte header inline, 12-byte watcher), both measured
 ~1 %-class by the prior studies.
+
+
+### Standing table after slice 4 (2026-08-21, under load): 142/159, 0 mismatches
+
+Post-`b5a6fc1` full-table run: oxiz 142, cadical 159 (its lowest window
+yet — box-wide load; the ±3–4 band swallows both sides' movement), 25
+one-sided losses, **0 mismatches**.  The 11 % instruction win is real
+but does not surface as solved-count under 6-way load, exactly as the
+decomposition predicts: it attacked the 1.15× per-conflict term, not
+the 6.6× conflicts-to-model term that owns the table.  The headline
+stays 143–145/162 ± load band; the durable artifact of slices 2–4 is
+the honest map (propagate ≈ 70 %, everything else ≤ 10 %) plus ~11 %
+off every search the solver runs.
