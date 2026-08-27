@@ -1506,6 +1506,18 @@ impl Solver {
             let new_lits: SmallVec<[Lit; 8]> = lits.iter().copied().collect();
             self.proof_strengthen_clause(clause_id, &new_lits);
         }
+
+        // Re-attaching watches is not enough on its own: a watch only ever
+        // fires when its literal is *newly* falsified, and the literals that
+        // falsify a just-shortened clause are typically already on the trail,
+        // propagated long ago.  A clause that had two unassigned literals and
+        // loses one becomes unit under the *current* assignment with no
+        // future event left to notice it — a "hanging unit" that unit
+        // propagation never fires on, losing an implication (which, if it was
+        // the one that closed a branch, can change the search enough to
+        // matter).  Rewinding is always safe: re-propagating a literal that is
+        // still assigned is a no-op. (Ported from upstream v0.3.3.)
+        self.trail.reset_propagation_head();
     }
 
     /// Vivification (asymmetric branching, cadical-style): shorten/strengthen
@@ -1610,6 +1622,13 @@ impl Solver {
         // candidate's end state for reuse; this round is over, so restore
         // the level-0 invariant the surrounding inprocessing passes assume.
         self.backtrack(0);
+
+        // The probe loop above drained any still-pending level-0 propagation
+        // queue under probe decision levels and threw the resulting
+        // assignments away on backtrack.  Rewind the head so the next
+        // `propagate()` re-derives the level-0 consequences that were lost.
+        // (Ported from upstream v0.3.3.)
+        self.trail.reset_propagation_head();
     }
 
     /// Vivify one candidate reusing the still-live decision prefix of the
@@ -2024,6 +2043,14 @@ impl Solver {
                 forced += 1;
             }
         }
+
+        // Every `probe_conflicts` above opened a decision level, propagated
+        // (draining any still-pending level-0 literals *at the probe level*)
+        // and backtracked, discarding the consequences.  Rewind so the next
+        // `propagate()` re-derives the lost level-0 implications — the same
+        // hanging-unit repair as `vivify_clauses`. (Ported from upstream
+        // v0.3.3.)
+        self.trail.reset_propagation_head();
         forced
     }
 
@@ -2235,9 +2262,26 @@ impl Solver {
         // surface as forced level-0 units.
         let (_tred, _tfailed) = self.transred_round();
 
-        // Rebuild watch lists for any modified clauses
-        // This is a simplified approach - in a full implementation,
-        // we would track which clauses were removed and update watches incrementally
+        // Re-arm unit propagation over the whole surviving trail.
+        //
+        // This is not an optimization guard, it repairs a real completeness
+        // hole.  `inprocess` runs right after conflict handling in the search
+        // loop, at which point the level-0 propagation queue is routinely
+        // *non-empty*.  `vivify_clauses` and the probe passes above open
+        // probe decision levels, assign literals speculatively and call
+        // `propagate()` — which drains the still-pending level-0 literals
+        // under the probe's assumptions: any consequence it derives is filed
+        // at the probe level, and the subsequent backtrack throws those
+        // consequences away.  The genuine level-0 implications among them are
+        // then never re-derived — leaving a live clause with one unassigned
+        // literal and every other literal false that nothing will ever fire
+        // on (a "hanging unit").  In-place strengthening
+        // (`remove_literal_and_rewatch`) has the same shape and rewinds at
+        // its own site.  Rewinding the head makes the next `propagate()`
+        // rescan the whole trail and re-derive every lost level-0
+        // consequence; re-propagating an already-assigned literal is a no-op.
+        // (Ported from upstream v0.3.3.)
+        self.trail.reset_propagation_head();
     }
 }
 

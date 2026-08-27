@@ -514,6 +514,18 @@ impl Trail {
 
     /// Reset the propagation head to 0, forcing the whole trail to be
     /// re-propagated on the next propagation pass.
+    /// Rewind the propagation head to the start of the trail.
+    ///
+    /// Used after a clause is strengthened in place, or after a probe pass
+    /// (`vivify` / failed-literal probing / `inprocess`) opened decision
+    /// levels: a watch only ever fires when its literal is *newly* falsified,
+    /// so a clause that becomes unit under an assignment already on the trail
+    /// has no future event to fire on — a "hanging unit" that silently loses
+    /// an implication (and a probe's `propagate()` drains still-pending
+    /// level-0 literals *at the probe level*, whose backtrack then discards
+    /// the consequences).  Re-propagating a literal that is still assigned is
+    /// a no-op, so rewinding is always safe; it only costs one extra pass
+    /// over the retained watch lists. (Doc from upstream v0.3.3.)
     pub fn reset_propagation_head(&mut self) {
         self.prop_head = 0;
     }
