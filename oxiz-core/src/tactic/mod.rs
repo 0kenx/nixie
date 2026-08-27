@@ -55,10 +55,12 @@ pub use pb2bv::{Pb2BvTactic, StatelessPb2BvTactic};
 pub use propagate::{PropagateValuesTactic, StatelessPropagateValuesTactic};
 pub use simplify::{SimplifyTactic, StatelessSimplifyTactic};
 pub use solve_eqs::{
-    CondTactic, FailIfTactic, FourierMotzkinTactic, NnfTactic, ScriptableTactic, SolveEqsTactic,
+    CondTactic, FailIfTactic, FourierMotzkinTactic, NnfTactic, SolveEqsTactic,
     StatelessCnfTactic, StatelessFourierMotzkinTactic, StatelessNnfTactic, StatelessSolveEqsTactic,
     TseitinCnfTactic, WhenTactic,
 };
+#[cfg(feature = "scripting")]
+pub use solve_eqs::ScriptableTactic;
 pub use split::{SplitTactic, StatelessSplitTactic};
 
 // Re-export probe types
@@ -1208,7 +1210,7 @@ mod tests {
     }
 
     // ======== ScriptableTactic tests ========
-
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_basic() {
         let script = r#"
@@ -1228,6 +1230,7 @@ mod tests {
         assert_eq!(tactic.description(), "Test script");
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_return_sat() {
         let script = r#"
@@ -1245,6 +1248,7 @@ mod tests {
         assert!(matches!(result, TacticResult::Solved(SolveResult::Sat)));
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_return_unsat() {
         let script = r#"
@@ -1265,6 +1269,7 @@ mod tests {
         assert!(matches!(result, TacticResult::Solved(SolveResult::Unsat)));
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_return_unknown() {
         let script = r#"
@@ -1285,6 +1290,7 @@ mod tests {
         assert!(matches!(result, TacticResult::Solved(SolveResult::Unknown)));
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_modify_assertions() {
         let script = r#"
@@ -1321,6 +1327,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_compilation_error() {
         let script = r#"
@@ -1338,6 +1345,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_access_assertions() {
         let script = r#"
@@ -1372,6 +1380,7 @@ mod tests {
         assert!(matches!(result, TacticResult::NotApplicable));
     }
 
+    #[cfg(feature = "scripting")]
     #[test]
     fn test_scriptable_tactic_complex_logic() {
         let script = r#"

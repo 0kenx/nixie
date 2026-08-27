@@ -1222,6 +1222,7 @@ impl Tactic for StatelessFourierMotzkinTactic {
 }
 
 // ======== Scriptable Tactic (Rhai-based) ========
+#[cfg(feature = "scripting")]
 
 /// A tactic that executes user-defined Rhai scripts
 ///
@@ -1250,6 +1251,7 @@ pub struct ScriptableTactic {
     description: String,
 }
 
+#[cfg(feature = "scripting")]
 impl ScriptableTactic {
     /// Create a new scriptable tactic with the given Rhai script
     ///
@@ -1362,6 +1364,7 @@ impl ScriptableTactic {
     }
 }
 
+#[cfg(feature = "scripting")]
 impl Tactic for ScriptableTactic {
     fn name(&self) -> &str {
         &self.name

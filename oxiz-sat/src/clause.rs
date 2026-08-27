@@ -244,7 +244,13 @@ impl Clause {
     /// Returns the literal to remove from other if self-subsumption is possible
     #[must_use]
     pub fn self_subsuming_resolvent(&self, other: &Clause) -> Option<Lit> {
-        if self.lits.len() >= other.lits.len() {
+        // `>`, not `>=` (ported from upstream v0.3.3): the old `>=` rejected
+        // *equal-length* pairs — the single most common shape
+        // (`(a∨b∨c)` against `(a∨b∨¬c)` → `(a∨b)`) — so the rule fired on
+        // almost nothing, which is also why its zero production callers went
+        // unnoticed.  (`subsume_round` implements strengthening independently;
+        // this method stays as the Clause-level primitive.)
+        if self.lits.len() > other.lits.len() {
             return None;
         }
 

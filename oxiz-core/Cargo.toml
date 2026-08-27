@@ -31,6 +31,13 @@ oxiz-math = { workspace = true, default-features = false }
 lasso = { workspace = true, optional = true, features = ["multi-threaded"] }
 bumpalo = { workspace = true, features = ["collections"], optional = true }
 winnow = { workspace = true, optional = true }
+# Behind the `scripting` feature (see [features]); named with `dep:` there, so
+# this line does not also create an implicit `rhai` feature. An implicit one
+# would be a trap rather than a courtesy: `features = ["rhai"]` would pull the
+# crate -- and the MPL-2.0 `smartstring` it depends on -- into the licence
+# graph while `ScriptableTactic` stayed compiled out, which is the exact
+# combination this feature exists to make impossible. (Ported from upstream
+# v0.3.3.)
 rhai = { workspace = true, features = ["sync"], optional = true }
 wide = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
@@ -40,12 +47,19 @@ parking_lot = { workspace = true, optional = true }
 # `property-tests` joins the default set (matching `oxiz-solver` and upstream
 # v0.3.3): the proptest suites run on a plain `cargo test -p oxiz-core`
 # instead of only when someone remembers the flag.
-default = ["std", "property-tests"]
+# `scripting` is on by default, so a consumer that says nothing keeps exactly
+# the API surface it had before this feature existed. It is separated out of
+# `std` rather than folded into it because the two answer different questions:
+# `std` is "does this target have an allocator and an OS", `scripting` is "does
+# this build let users write tactics in Rhai". A consumer that only encodes
+# goals and calls `check-sat` wants the first without the second, and writes
+# `default-features = false, features = ["std"]` -- which keeps the licence
+# graph free of rhai's MPL-2.0 `smartstring` dependency.
+default = ["std", "scripting", "property-tests"]
 std = [
     "lasso",
     "bumpalo",
     "winnow",
-    "rhai",
     "wide",
     "rayon",
     "parking_lot",
@@ -60,6 +74,9 @@ std = [
     "rustc-hash/std",
     "oxiz-math/std",
 ]
+# Rhai tactic scripting; implies `std` (the engine needs an OS), never the
+# reverse.
+scripting = ["dep:rhai", "std"]
 arena = ["bumpalo"]
 profiling = ["std"]
 property-tests = []
