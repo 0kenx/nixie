@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "oxiz",
     "oxiz-core",
+    "oxiz-time",
     "oxiz-math",
     "oxiz-sat",
     "oxiz-nlsat",
@@ -25,6 +26,7 @@ members = [
 default-members = [
     "oxiz",
     "oxiz-core",
+    "oxiz-time",
     "oxiz-math",
     "oxiz-sat",
     "oxiz-nlsat",
@@ -79,6 +81,9 @@ oxiz = { version = "0.3.2", path = "oxiz" }
 
 # Core crates (default-features = false so downstream can control std)
 oxiz-core = { version = "0.3.2", path = "oxiz-core", default-features = false }
+# Wasm-safe std::time drop-ins: the single place any OxiZ crate reads a
+# clock (see oxiz-time/src/lib.rs). Depends on nothing, sits below oxiz-math.
+oxiz-time = { version = "0.3.2", path = "oxiz-time", default-features = false }
 oxiz-math = { version = "0.3.2", path = "oxiz-math", default-features = false }
 oxiz-sat = { version = "0.3.2", path = "oxiz-sat", default-features = false }
 oxiz-nlsat = { version = "0.3.2", path = "oxiz-nlsat" }

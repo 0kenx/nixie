@@ -265,16 +265,16 @@ impl OmtObjective {
 /// `OmtConfig::timeout_ms` – previously accepted into the config but never
 /// read anywhere in this module – actually bounds each search loop instead
 /// of running until `max_iterations` regardless of elapsed time.
-fn omt_deadline(timeout_ms: u64) -> Option<std::time::Instant> {
+fn omt_deadline(timeout_ms: u64) -> Option<oxiz_time::Instant> {
     if timeout_ms == 0 {
         return None;
     }
-    std::time::Instant::now().checked_add(core::time::Duration::from_millis(timeout_ms))
+    oxiz_time::Instant::now().checked_add(core::time::Duration::from_millis(timeout_ms))
 }
 
 /// True once `deadline` (if any) has passed.
-fn omt_deadline_passed(deadline: Option<std::time::Instant>) -> bool {
-    deadline.is_some_and(|d| std::time::Instant::now() >= d)
+fn omt_deadline_passed(deadline: Option<oxiz_time::Instant>) -> bool {
+    deadline.is_some_and(|d| oxiz_time::Instant::now() >= d)
 }
 
 impl OmtSolver {
@@ -947,7 +947,7 @@ mod tests {
         // honored, this would instead run for the full `max_iterations`
         // budget (or until convergence).
         let checker = |c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(oxiz_time::Duration::from_millis(10));
             let point: FxHashMap<u32, BigRational> = [(0u32, BigRational::from(BigInt::from(2)))]
                 .into_iter()
                 .collect();
@@ -958,12 +958,12 @@ mod tests {
             }
         };
 
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let result = solver.optimize_binary_search(0, checker);
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
+            elapsed < oxiz_time::Duration::from_secs(5),
             "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
         );
         assert!(
@@ -994,7 +994,7 @@ mod tests {
         // comes back UNSAT, so the loop can only ever exit via the deadline.
         let mut counter = 0i64;
         let checker = move |_c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(oxiz_time::Duration::from_millis(10));
             counter -= 1;
             let point: FxHashMap<u32, BigRational> =
                 [(0u32, BigRational::from(BigInt::from(counter)))]
@@ -1003,12 +1003,12 @@ mod tests {
             Some(point)
         };
 
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let result = solver.optimize_linear_search(0, checker);
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
+            elapsed < oxiz_time::Duration::from_secs(5),
             "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
         );
         assert!(
@@ -1039,7 +1039,7 @@ mod tests {
         // deadline.
         let mut counter = 0i64;
         let checker = move |_c: &ArithConstraint| -> Option<FxHashMap<u32, BigRational>> {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::sleep(oxiz_time::Duration::from_millis(10));
             counter -= 1;
             let point: FxHashMap<u32, BigRational> =
                 [(0u32, BigRational::from(BigInt::from(counter)))]
@@ -1048,12 +1048,12 @@ mod tests {
             Some(point)
         };
 
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let result = solver.optimize_geometric_search(0, checker);
         let elapsed = start.elapsed();
 
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
+            elapsed < oxiz_time::Duration::from_secs(5),
             "a 30ms timeout must bound the search even with max_iterations=1_000_000, took {elapsed:?}"
         );
         assert!(

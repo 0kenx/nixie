@@ -173,7 +173,7 @@ impl DynamicSubsumption {
         }
 
         #[cfg(feature = "std")]
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let mut results = Vec::new();
 
         self.stats.checks_performed += 1;
@@ -278,7 +278,7 @@ impl DynamicSubsumption {
         }
 
         #[cfg(feature = "std")]
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let mut results = Vec::new();
 
         // Check all learned clauses against each other
@@ -286,7 +286,7 @@ impl DynamicSubsumption {
         #[cfg(feature = "std")]
         {
             let budget_ms = 10; // 10ms budget for periodic checks
-            let deadline = start + std::time::Duration::from_millis(budget_ms);
+            let deadline = start + oxiz_time::Duration::from_millis(budget_ms);
 
             let clause_ids: Vec<ClauseId> = clause_db.iter_ids().collect();
             let n = clause_ids.len();
@@ -307,7 +307,7 @@ impl DynamicSubsumption {
                 }
 
                 for &id_j in clause_ids[(i + 1)..].iter() {
-                    if std::time::Instant::now() > deadline {
+                    if oxiz_time::Instant::now() > deadline {
                         self.stats.checks_timeout += 1;
                         break 'outer;
                     }

@@ -24,6 +24,8 @@ hashbrown.workspace = true
 portable-atomic = { workspace = true }
 portable-atomic-util = { workspace = true }
 oxiz-math = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see oxiz-time).
+oxiz-time = { workspace = true }
 
 # Optional (std-only)
 # All of these are defined under [workspace.dependencies] (root Cargo.toml)
@@ -57,6 +59,7 @@ parking_lot = { workspace = true, optional = true }
 # graph free of rhai's MPL-2.0 `smartstring` dependency.
 default = ["std", "scripting", "property-tests"]
 std = [
+    "oxiz-time/std",
     "lasso",
     "bumpalo",
     "winnow",

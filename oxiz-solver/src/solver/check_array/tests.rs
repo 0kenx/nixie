@@ -366,7 +366,7 @@ fn a_cyclic_alias_returns_through_the_public_api() {
         .expect("spawn worker thread");
 
     let result = receiver
-        .recv_timeout(std::time::Duration::from_secs(30))
+        .recv_timeout(oxiz_time::Duration::from_secs(30))
         .expect("check-sat on a cyclic array alias must return, not hang");
     assert_ne!(
         result,

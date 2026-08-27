@@ -1044,7 +1044,7 @@ mod deep_walk_tests {
         }
         let x_spur = tm.intern_str("x");
 
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let mut atoms = Vec::new();
         collect_x_atoms(f, x_spur, &tm, &mut atoms).expect("collect must succeed");
         let neg_inf = inf_rewrite(f, x_spur, false, &mut tm).expect("inf rewrite must succeed");
@@ -1055,7 +1055,7 @@ mod deep_walk_tests {
         assert!(!mentions_var(neg_inf, x_spur, &tm));
         assert!(!mentions_var(eps, x_spur, &tm));
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
+            elapsed < oxiz_time::Duration::from_secs(5),
             "nested-Xor walk took {elapsed:?}: the sharing memo regressed"
         );
     }

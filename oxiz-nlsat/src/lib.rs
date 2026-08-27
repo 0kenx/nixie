@@ -33,6 +33,11 @@
 //! working features; each retains a header note explaining the triage. They
 //! remain compiled and tested so they can be wired in later without rework.
 
+// Native builds must never silently end up on oxiz-time's frozen stub clock
+// (the `std` feature forward in this crate's manifest is what selects the real
+// one; see oxiz-time/src/lib.rs).
+const _: () = assert!(!oxiz_time::IS_FROZEN);
+
 pub mod assignment;
 pub(crate) mod assumptions;
 pub(crate) mod asymmetric_literal_addition;

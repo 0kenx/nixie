@@ -13,6 +13,8 @@ categories = ["algorithms", "mathematics"]
 oxiz-core = { workspace = true, default-features = false }
 oxiz-sat = { workspace = true, default-features = false }
 oxiz-math = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see oxiz-time).
+oxiz-time = { workspace = true }
 tracing = { workspace = true, default-features = false, optional = true }
 smallvec = { workspace = true }
 rustc-hash = { workspace = true }
@@ -29,6 +31,7 @@ oxiz-nlsat = { workspace = true, optional = true }
 [features]
 default = ["std"]
 std = [
+    "oxiz-time/std",
     "oxiz-core/std",
     "oxiz-sat/std",
     "oxiz-math/std",

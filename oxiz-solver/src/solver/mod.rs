@@ -1305,8 +1305,8 @@ impl Solver {
         // rounds here and (b) mid-search inside the theory callbacks, so a
         // single long `solve_with_theory` call cannot run past the budget.
         #[cfg(feature = "std")]
-        let deadline: Option<std::time::Instant> = if self.config.timeout_ms > 0 {
-            std::time::Instant::now()
+        let deadline: Option<oxiz_time::Instant> = if self.config.timeout_ms > 0 {
+            oxiz_time::Instant::now()
                 .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
         } else {
             None
@@ -1477,7 +1477,7 @@ impl Solver {
             // enforcement lives in the theory callbacks (see TheoryManager).
             #[cfg(feature = "std")]
             if let Some(d) = deadline {
-                if std::time::Instant::now() >= d {
+                if oxiz_time::Instant::now() >= d {
                     return SolverResult::Unknown;
                 }
             }

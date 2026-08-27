@@ -1511,7 +1511,7 @@ mod deep_walk_tests {
             f = tm.mk_xor(f, atom_y);
         }
 
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let mut elim = CooperEliminator::new();
         let result = elim
             .eliminate_exists("x".to_string(), f, &mut tm)
@@ -1521,7 +1521,7 @@ mod deep_walk_tests {
         let x_spur = tm.intern_str("x");
         assert!(!elim.mentions_x(result, x_spur, &tm), "x still present");
         assert!(
-            elapsed < std::time::Duration::from_secs(5),
+            elapsed < oxiz_time::Duration::from_secs(5),
             "nested-Xor elimination took {elapsed:?}: the sharing memo regressed"
         );
     }

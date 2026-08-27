@@ -27,6 +27,11 @@
 //! - **Diff**: Proof comparison and similarity metrics
 //! - **Normalize**: Proof normalization for canonical representation
 
+// Native builds must never silently end up on oxiz-time's frozen stub clock
+// (the `std` feature forward in this crate's manifest is what selects the real
+// one; see oxiz-time/src/lib.rs).
+const _: () = assert!(!oxiz_time::IS_FROZEN);
+
 pub mod alethe;
 pub mod carcara;
 pub mod checker;

@@ -6,7 +6,7 @@
 #[allow(unused_imports)]
 use crate::prelude::*;
 #[cfg(feature = "std")]
-use std::time::Duration;
+use oxiz_time::Duration;
 
 /// Configuration for the solver
 #[derive(Debug, Clone, Default)]

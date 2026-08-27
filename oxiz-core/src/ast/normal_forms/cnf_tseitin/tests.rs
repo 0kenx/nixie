@@ -382,7 +382,7 @@ fn thirty_nested_iffs_stay_linear() {
     }
 
     let terms_before = manager.len();
-    let started = std::time::Instant::now();
+    let started = oxiz_time::Instant::now();
     let cnf = to_cnf_tseitin(formula, &mut manager);
     let elapsed = started.elapsed();
 
@@ -398,7 +398,7 @@ fn thirty_nested_iffs_stay_linear() {
         manager.len() - terms_before
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(5),
+        elapsed < oxiz_time::Duration::from_secs(5),
         "conversion took {elapsed:?}"
     );
 }

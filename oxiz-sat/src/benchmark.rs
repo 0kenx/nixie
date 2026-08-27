@@ -9,8 +9,8 @@ use crate::dimacs::{DimacsError, DimacsParser};
 use crate::prelude::*;
 use crate::solver::{Solver, SolverConfig, SolverResult};
 use crate::stats_dashboard::{StatsAggregator, StatsDashboard};
+use oxiz_time::{Duration, Instant};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 /// Result of a single benchmark run
 #[derive(Debug, Clone)]

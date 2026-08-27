@@ -52,13 +52,13 @@ pub mod diag {
     /// Scoped wall-clock timer that adds elapsed nanos to `target` on drop
     /// (so early returns in the timed function are covered).
     pub struct Timer {
-        start: std::time::Instant,
+        start: oxiz_time::Instant,
         target: &'static AtomicU64,
     }
     impl Timer {
         pub fn new(target: &'static AtomicU64) -> Self {
             Self {
-                start: std::time::Instant::now(),
+                start: oxiz_time::Instant::now(),
                 target,
             }
         }

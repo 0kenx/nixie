@@ -11,13 +11,16 @@ categories = ["algorithms"]
 
 [features]
 default = ["std"]
-std = ["rayon", "tracing", "rustc-hash/std", "oxiz-core/std"]
+std = [
+    "oxiz-time/std","rayon", "tracing", "rustc-hash/std", "oxiz-core/std"]
 profiling = ["std", "oxiz-core/profiling"]
 # Enable verbose debug output in conflict analysis
 analyze-debug = []
 
 [dependencies]
 oxiz-core = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see oxiz-time).
+oxiz-time = { workspace = true }
 tracing = { workspace = true, default-features = false, optional = true }
 smallvec = { workspace = true }
 rustc-hash = { workspace = true }

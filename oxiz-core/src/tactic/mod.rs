@@ -1155,9 +1155,9 @@ mod tests {
 
     #[test]
     fn test_timeout_tactic_exceeds() {
+        use oxiz_time::Duration;
         use std::sync::Arc;
         use std::thread;
-        use std::time::Duration;
 
         // Create a custom slow tactic for testing
         struct SlowTactic {

@@ -822,11 +822,11 @@ fn quantifier_instantiation_handles_a_shared_dag_quickly() {
     }
 
     let goal = Goal::new(vec![current]);
-    let start = std::time::Instant::now();
+    let start = oxiz_time::Instant::now();
     let mut tactic = QuantifierInstantiationTactic::new(&mut m);
     let _ = tactic.apply_mut(&goal);
     assert!(
-        start.elapsed() < std::time::Duration::from_secs(10),
+        start.elapsed() < oxiz_time::Duration::from_secs(10),
         "shared-DAG traversal must not re-expand exponentially"
     );
 }
