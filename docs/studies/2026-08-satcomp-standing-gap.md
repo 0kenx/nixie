@@ -465,3 +465,15 @@ permanently, unless the clause-length gap itself is closed first** (the
 upstream cause per the instrumented-cadical correction above); at that
 point the fallback landscape changes and a third retest would be
 justified.  The worktree was discarded after the measurement.
+
+
+### Focused-mode randomness re-tune post-landing (2026-08-21): 2 % is locally optimal
+
+The phase landing changed the landscape, so the inherited focused-mode 2 %
+was re-screened (same 60-file seed-71 sample, 45 s cap, three arms):
+focused 2 % (default) **29 solved**; full-off **25** (ticks 1.191×);
+0.05 **27** (1.167×); 0 verdict mismatches anywhere.  Both directions
+worsen — the pre-landing "2 % is load-bearing in focused mode" verdict
+(1.082× then) reproduces strengthened.  Focused-mode diversification and
+stable-mode phase guidance are genuinely complementary in this engine;
+the configuration is settled on this axis.
