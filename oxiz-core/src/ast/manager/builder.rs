@@ -1194,7 +1194,7 @@ impl TermManager {
     /// fabricated `32` in release builds; a fabricated width is not cosmetic,
     /// because it interns a well-formed term at the wrong sort, which can
     /// flip a query between `sat` and `unsat`.  The checked function returns
-    /// [`OxizError::SortMismatchSimple`] naming both operand sorts.
+    /// `OxizError::SortMismatchSimple` naming both operand sorts.
     /// (Ported from upstream v0.3.3.)
     pub fn try_mk_bv_concat(
         &mut self,
@@ -1235,9 +1235,10 @@ impl TermManager {
         let width = lhs_width + rhs_width;
 
         // Both halves literal: splice them into a single literal.
-        if let (Some(lhs_value), Some(rhs_value)) =
-            (self.bv_const_unsigned(lhs, lhs_width), self.bv_const_unsigned(rhs, rhs_width))
-        {
+        if let (Some(lhs_value), Some(rhs_value)) = (
+            self.bv_const_unsigned(lhs, lhs_width),
+            self.bv_const_unsigned(rhs, rhs_width),
+        ) {
             return self.mk_bitvec(bv_fold::bv_concat(&lhs_value, &rhs_value, rhs_width), width);
         }
 

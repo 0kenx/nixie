@@ -766,15 +766,6 @@ fn record_alias(
     }
 }
 
-/// Build read-over-write instances for every collected `select`.
-///
-/// The axiom is emitted as its two case-split implications rather than a single
-/// `ite`-valued equality, because the arithmetic / EUF theory solvers reduce a
-/// guarded equality (`cond ⇒ x = y`) directly, whereas a term-level `ite`
-/// operand of an equality would be handed to them opaque.
-///
-///   * RoW-1: `store_idx = index  ⇒  select_term = stored_val`
-///   * RoW-2: `store_idx != index ⇒  select_term = select(base, index)`
 /// Order-awareness guard for one entry of a *flat* read-over-write
 /// encoding.
 ///
@@ -802,12 +793,11 @@ fn row_same_guard(
 ) -> Option<TermId> {
     let kp = entries[pos].0;
     let mut guards: Vec<TermId> = Vec::new();
-    for q in 0..pos {
-        let kq = entries[q].0;
-        if kq != kp && provably_distinct_indices(kp, kq, manager) {
+    for (kq, _) in &entries[..pos] {
+        if *kq != kp && provably_distinct_indices(kp, *kq, manager) {
             continue;
         }
-        let eq = manager.mk_eq(index, kq);
+        let eq = manager.mk_eq(index, *kq);
         guards.push(manager.mk_not(eq));
     }
     match guards.len() {
@@ -817,6 +807,15 @@ fn row_same_guard(
     }
 }
 
+/// Build read-over-write instances for every collected `select`.
+///
+/// The axiom is emitted as its two case-split implications rather than a single
+/// `ite`-valued equality, because the arithmetic / EUF theory solvers reduce a
+/// guarded equality (`cond ⇒ x = y`) directly, whereas a term-level `ite`
+/// operand of an equality would be handed to them opaque.
+///
+///   * RoW-1: `store_idx = index  ⇒  select_term = stored_val`
+///   * RoW-2: `store_idx != index ⇒  select_term = select(base, index)`
 fn build_read_over_write(
     manager: &mut TermManager,
     collected: &ArrayStructure,
@@ -1730,8 +1729,14 @@ pub(super) fn provably_distinct_indices(a: TermId, b: TermId, manager: &TermMana
         (Some(TermKind::IntConst(x)), Some(TermKind::IntConst(y))) => x != y,
         (Some(TermKind::RealConst(x)), Some(TermKind::RealConst(y))) => x != y,
         (
-            Some(TermKind::BitVecConst { value: xv, width: xw }),
-            Some(TermKind::BitVecConst { value: yv, width: yw }),
+            Some(TermKind::BitVecConst {
+                value: xv,
+                width: xw,
+            }),
+            Some(TermKind::BitVecConst {
+                value: yv,
+                width: yw,
+            }),
         ) => xw == yw && xv != yv,
         _ => false,
     }

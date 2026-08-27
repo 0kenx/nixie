@@ -54,13 +54,13 @@ pub use eliminate::{EliminateUnconstrainedTactic, StatelessEliminateUnconstraine
 pub use pb2bv::{Pb2BvTactic, StatelessPb2BvTactic};
 pub use propagate::{PropagateValuesTactic, StatelessPropagateValuesTactic};
 pub use simplify::{SimplifyTactic, StatelessSimplifyTactic};
-pub use solve_eqs::{
-    CondTactic, FailIfTactic, FourierMotzkinTactic, NnfTactic, SolveEqsTactic,
-    StatelessCnfTactic, StatelessFourierMotzkinTactic, StatelessNnfTactic, StatelessSolveEqsTactic,
-    TseitinCnfTactic, WhenTactic,
-};
 #[cfg(feature = "scripting")]
 pub use solve_eqs::ScriptableTactic;
+pub use solve_eqs::{
+    CondTactic, FailIfTactic, FourierMotzkinTactic, NnfTactic, SolveEqsTactic, StatelessCnfTactic,
+    StatelessFourierMotzkinTactic, StatelessNnfTactic, StatelessSolveEqsTactic, TseitinCnfTactic,
+    WhenTactic,
+};
 pub use split::{SplitTactic, StatelessSplitTactic};
 
 // Re-export probe types

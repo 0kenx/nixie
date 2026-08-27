@@ -799,9 +799,8 @@ impl TermManager {
                 // can flip a verdict.  A sort-preserving substitution can
                 // never take this branch; it exists so the unreachable case
                 // fails safe. (Ported from upstream v0.3.3.)
-                self.try_mk_bv_concat(a, b).unwrap_or_else(|_| {
-                    self.intern(TermKind::BvConcat(orig_a, orig_b), sort)
-                })
+                self.try_mk_bv_concat(a, b)
+                    .unwrap_or_else(|_| self.intern(TermKind::BvConcat(orig_a, orig_b), sort))
             }
             TermKind::BvExtract { high, low, arg } => {
                 let arg = sub(arg);

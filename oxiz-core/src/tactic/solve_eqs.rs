@@ -1222,8 +1222,6 @@ impl Tactic for StatelessFourierMotzkinTactic {
 }
 
 // ======== Scriptable Tactic (Rhai-based) ========
-#[cfg(feature = "scripting")]
-
 /// A tactic that executes user-defined Rhai scripts
 ///
 /// This allows users to create custom simplification strategies by writing
@@ -1243,6 +1241,7 @@ impl Tactic for StatelessFourierMotzkinTactic {
 ///     #{result: "unchanged", assertions: assertions}
 /// }
 /// ```
+#[cfg(feature = "scripting")]
 #[derive(Debug)]
 pub struct ScriptableTactic {
     engine: rhai::Engine,

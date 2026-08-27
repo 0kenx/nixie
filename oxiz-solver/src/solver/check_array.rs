@@ -1634,18 +1634,13 @@ impl Solver {
         // indices pairwise distinct in EVERY model – provable only for
         // distinct literals.  (See the doc comment; this is the guard that
         // keeps the permutation fast path from fabricating equalities.)
-        let pairwise_provably_distinct =
-            |entries: &[(TermId, TermId)]| -> bool {
-                entries
-                    .iter()
-                    .enumerate()
-                    .all(|(p, (ip, _))| {
-                        entries[..p].iter().all(|(iq, _)| {
-                            iq == ip
-                                || super::array_axioms::provably_distinct_indices(*ip, *iq, manager)
-                        })
-                    })
-            };
+        let pairwise_provably_distinct = |entries: &[(TermId, TermId)]| -> bool {
+            entries.iter().enumerate().all(|(p, (ip, _))| {
+                entries[..p].iter().all(|(iq, _)| {
+                    iq == ip || super::array_axioms::provably_distinct_indices(*ip, *iq, manager)
+                })
+            })
+        };
         if !pairwise_provably_distinct(&ex) || !pairwise_provably_distinct(&ey) {
             return None;
         }

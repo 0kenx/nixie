@@ -31,6 +31,14 @@ slow-timeout = { period = "60s", terminate-after = 3 }
 [profile.ci]
 slow-timeout = { period = "60s", terminate-after = 2 }
 
+# The cxs-bp non-convex-gap canary is a known-slow DEBUG-profile soundness
+# guard (release: ~25 s; debug under load: several minutes). It is not a
+# runaway allocation - the thing terminate-after exists to kill - so give it
+# a wider budget rather than letting the 3x60s default terminate it.
+[[profile.default.overrides]]
+filter = 'test(pete_cxs_bp_is_unsat_on_every_trajectory)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 [[profile.default.overrides]]
 filter = 'package(oxiz-cli) and (test(timeout) or test(bench))'
 test-group = 'oxiz-cli-subprocess'
