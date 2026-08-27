@@ -378,6 +378,12 @@ pub struct SolverConfig {
     /// Relative walk effort in per-mille of the search ticks accumulated since
     /// the last walk (cadical `opts.walkeffort`, default 80 = 8%).
     pub walk_effort: u64,
+    /// Pre-walk propagation warmup (cadical `opts.warmup`, default ON there):
+    /// before a walk round, decide+propagate to a full assignment IGNORING
+    /// conflicts and seed the walk from it — ProbSAT cannot discover
+    /// propagation chains, so this gives local search a consistent start.
+    /// Default OFF in OxiZ pending measurement (see the walk study).
+    pub walk_warmup: bool,
     /// Whether restarts reuse the decision trail prefix (Heule/cadical
     /// reuse-trail) instead of backtracking to the root. Default true.
     pub reuse_trail: bool,
@@ -523,6 +529,7 @@ impl Default for SolverConfig {
             walk: true,
             walk_nonstable: true,
             walk_effort: 80,
+            walk_warmup: std::env::var("OXIZ_WARMUP").is_ok_and(|v| v != "0"),
             reuse_trail: true,
             // Off by default: BOTH probing passes previously had a proven
             // false-UNSAT on satisfiable input (`circuit_48in64out_with_700gates…cnf`,
@@ -646,6 +653,11 @@ pub struct WalkCounters {
     pub broken: u64,
     /// Ticks consumed by walks.
     pub ticks: u64,
+    /// Pre-walk propagation warmups performed (cadical `stats.warmup.count`).
+    pub warmups: u64,
+    /// Conflicts ignored during warmup passes (cadical
+    /// `stats.warmup.conflicts`).
+    pub warmup_conflicts: u64,
 }
 
 impl SolverStats {
@@ -3145,6 +3157,14 @@ impl Solver {
 
     /// Shrink-study failure-reason counters (debug instrumentation).
     #[must_use]
+    /// Local-search walk counters (see [`WalkCounters`]).
+    pub fn walk_counters(&self) -> WalkCounters {
+        self.stats.walk
+    }
+
+    /// Shrink-study failure-reason counters (doc-hidden measurement API;
+    /// see `OXIZ_SHRINK_TRACE` in `conflict.rs`).
+    #[doc(hidden)]
     pub fn shrink_fail_stats(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
         (
             self.shrink_fail_low,

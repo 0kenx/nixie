@@ -45,7 +45,67 @@ impl Solver {
         let delta = ticks.saturating_sub(self.last_walk_ticks);
         self.last_walk_ticks = ticks;
         let limit = delta.saturating_mul(self.config.walk_effort) / 1000;
+        if self.config.walk_warmup {
+            self.warmup();
+        }
         self.walk_round(limit.min(10_000_000_000));
+    }
+
+    /// cadical `warmup()` (plain-CNF shape): decide + propagate to a full
+    /// assignment, IGNORING conflicts, and seed the saved phases with it.
+    ///
+    /// Local search is bad at following propagation chains; CDCL propagation
+    /// is nothing but.  Each conflict is counted and skipped — the queue
+    /// literal is consumed by `next_to_propagate` before its watchers are
+    /// scanned, so re-invoking `propagate` after an ignored conflict drains
+    /// onward without spinning.  Values never flip mid-pass (assignment is
+    /// monotone), so one post-pass trail→phase copy equals cadical's
+    /// write-at-assign-time.  Eliminated variables stay unassigned (their
+    /// phases persist from the search) exactly like cadical's dummy
+    /// decisions leave them at their current phase.  The pass ends with the
+    /// trail back at root, same state the rephase step guarantees today.
+    fn warmup(&mut self) {
+        if self.num_vars == 0 {
+            return;
+        }
+        self.stats.walk.warmups += 1;
+        // Decision order: a flat index cursor, NOT the decision queues —
+        // `pick_branch_var` pops the VMTF/VSIDS heaps destructively and
+        // falls back to an O(num_vars) scan once they drain, which is
+        // quadratic over a full-assignment pass.  cadical decides by score
+        // order; the pass is propagation-consistent-from-phases either way
+        // (measurement below judges whether score order matters here).
+        for i in 0..self.num_vars {
+            let var = Var::new(i as u32);
+            if self.trail.is_assigned(var) || self.var_eliminated(var) {
+                continue;
+            }
+            self.trail.new_decision_level();
+            let pol = self.decision_polarity(var);
+            self.trail
+                .assign_decision(if pol { Lit::pos(var) } else { Lit::neg(var) });
+            while let Some(_conflict) = self.propagate() {
+                self.stats.walk.warmup_conflicts += 1;
+                // `propagate`'s conflict paths re-queue the conflicted
+                // literal for the CDCL re-visit contract; popping it again
+                // here would re-find the same conflict forever (warmup
+                // never backtracks).  Pop-and-discard the re-queued entry:
+                // the pass moves on to the next queue literal; the skipped
+                // literal's remaining watchers are only ever *more*
+                // falsified later in the pass, so re-scanning could not
+                // have produced new assignments.  (`backtrack_to_root`
+                // clamps the head at pass end; the queue contract is
+                // restored for the next solve.)
+                let _ = self.trail.next_to_propagate();
+            }
+        }
+        for &lit in self.trail.assignments() {
+            let vi = lit.var().index();
+            if vi < self.phase.len() {
+                self.phase[vi] = lit.is_pos();
+            }
+        }
+        self.backtrack_to_root();
     }
 
     /// cadical `walk_round (limit, false)` over the original clauses.

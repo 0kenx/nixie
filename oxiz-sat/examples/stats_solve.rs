@@ -30,6 +30,9 @@ fn main() {
     if std::env::var("REPHASE").as_deref() == Ok("0") {
         cfg.rephase_interval = 0;
     }
+    if std::env::var("WALK").as_deref() == Ok("0") {
+        cfg.walk = false;
+    }
     if let Ok(v) = std::env::var("RANDPOL")
         && let Ok(p) = v.parse::<f64>()
     {
@@ -75,6 +78,13 @@ fn main() {
     }
     let r = solver.solve();
     let s = solver.stats();
+    {
+        let w = solver.walk_counters();
+        println!(
+            "walk: count={} flips={} minimum={} broken={} ticks={}",
+            w.count, w.flips, w.minimum, w.broken, w.ticks
+        );
+    }
     println!("result={r:?}");
     if std::env::var("OXIZ_REASON_STATS").is_ok() {
         let l = oxiz_sat::DIAG_REASON_LEARNED.load(std::sync::atomic::Ordering::Relaxed);

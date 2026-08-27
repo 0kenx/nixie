@@ -514,3 +514,39 @@ study) and **walked 4–18** (walk-SAT phase improvements; our rephase
 cycle contains a walk step but its effectiveness on these files is
 unmeasured — the next candidate).  Residue list recoverable by re-running
 the table script shape documented above (both solvers, 60 s, 6-way).
+
+
+## Walk audit + warmup port (2026-08-21): walk is at parity and load-bearing; warmup is NEGATIVE as seeded here — and the propagate-requeue livelock is a landmine worth recording
+
+The residue diagnosis named cadical's `walked 4–18` as the next
+candidate.  Measured first: our walk **fires at parity** (count 4–8 per
+400 k conflicts on residue files, cadical 4–18 per solve) and **is
+load-bearing**: WALK=0 A/B on the 60-file corpus = 28 vs 29 solved,
+off/on ticks 1.031× — walk helps mp1-klieber and noL, hurts rbsat.
+Parity confirmed, mechanism intact.
+
+Then the one noted divergence: cadical's **warmup** (`opts.warmup`,
+default ON — decide+propagate to a full assignment IGNORING conflicts
+before each walk, seeding local search with a propagation-consistent
+start that ProbSAT cannot build itself).  Ported (`walk_warmup`,
+`OXIZ_WARMUP=1`, default off):
+
+- **A livelock landed first and is the real finding**: our `propagate`
+  conflict paths call `requeue_last_propagated` (the CDCL re-visit
+  contract).  A consumer that ignores the conflict and calls
+  `propagate` again re-pops the same literal, re-finds the same
+  conflict, forever — 80 % of samples in one address, zero progress.
+  Any future "propagate past conflicts" consumer must pop-and-discard
+  the re-queued entry (`next_to_propagate()`) after each ignored
+  conflict; done in `warmup`, documented at the call site.  Pass cost
+  after the fix: **5 ms** on worker_550 (93 k vars, 10.3 M clauses).
+- **Effectiveness is negative in this engine**: the warmup-seeded walk
+  reaches WORSE minima on worker_550 (17 vs 4 broken) — the
+  propagation-consistent seed concentrates falsified clauses where the
+  phase-greedy walk starts closer to models.  Corpus A/B: **27 vs 29
+  solved** (loses the walk-beneficiaries noL and mp1-klieber — the
+  same files every walk perturbation threatens), ticks 1.034×, 0
+  mismatches.  Default stays **off**; the port, the counters
+  (`warmups`/`warmup_conflicts`), and the knob remain for a future
+  score-ordered variant (cadical decides by decision-queue order; we
+  use an index cursor — the one semantic difference left).

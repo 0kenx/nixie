@@ -132,6 +132,9 @@ fn main() {
         config.rephase_interval = n;
     }
 
+    if std::env::var("WALK").as_deref() == Ok("0") {
+        config.walk = false;
+    }
     if let Ok(v) = std::env::var("RANDPOL")
         && let Ok(p) = v.parse::<f64>()
     {
