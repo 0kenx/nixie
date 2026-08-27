@@ -104,11 +104,31 @@ impl<'a> Parser<'a> {
                     directly inside an fp.* operator)"
                     .to_string(),
             }),
+            // `RegLan` is *implemented*, just not user-declarable.
+            //
+            // The regular-language sublanguage itself works end to end:
+            // `str.to_re`, `re.++`, `re.union`, `re.inter`, `re.*`, `re.none`,
+            // `re.all`, `re.allchar`, `re.range`, `re.opt`, `re.+`, `(_ re.loop
+            // l u)` and `str.in_re` all parse, and the strings theory compiles
+            // them into a Brzozowski-derivative automaton for membership
+            // solving. What makes the sort name itself off limits is that the
+            // encoding *reserves* it: every regex term is interned at the
+            // built-in sort `TermManager::reglan_sort()`, which is
+            // `Uninterpreted("RegLan")`. Accepting `RegLan` here would let a
+            // user-declared symbol be minted at that very sort, aliasing a free
+            // constant into the regex encoding's own namespace — a regex
+            // operand the derivative engine cannot compile and has no way to
+            // recognise as foreign. This rejection is therefore load-bearing,
+            // not a placeholder: it is what keeps the reserved name reserved.
+            // (Ported from upstream v0.3.3.)
             "RegLan" => Err(OxizError::ParseError {
                 position: self.lexer.position(),
-                message: "sort 'RegLan' is a reserved SMT-LIB Strings theory sort; the regular \
-                    language sublanguage (re.*, str.to_re, and RegLan-sorted \
-                    constants/functions) is not yet implemented"
+                message: "sort 'RegLan' is a reserved SMT-LIB Strings theory sort name: it names \
+                    the built-in encoding OxiZ interns every regular-expression term at, so it \
+                    cannot also name a user-declared constant or function. The regular-language \
+                    operators themselves are fully supported — build regular expressions with \
+                    str.to_re / re.++ / re.union / re.inter / re.* / re.range / re.none / re.all \
+                    / re.allchar and test membership with str.in_re"
                     .to_string(),
             }),
             _ => {

@@ -174,9 +174,17 @@ pub struct RecFunSolver {
     next_id: usize,
     /// Seen function applications
     seen_apps: HashSet<FunApp>,
+    /// Applications in the order they were first recorded.
+    ///
+    /// `seen_apps` alone cannot support `pop`: a `HashSet` has no insertion
+    /// order, so "the entries added since the push" is not a question it can
+    /// answer. This trail is that answer, and it is why [`RecFunSolver::pop`]
+    /// retracts exactly the applications the popped scope introduced.
+    /// (Ported from upstream v0.3.3.)
+    app_trail: Vec<FunApp>,
     /// Current depth of each function application
     app_depth: HashMap<FunApp, usize>,
-    /// Context stack for push/pop
+    /// Context stack for push/pop: the `app_trail` length at each push.
     context_stack: Vec<usize>,
 }
 
@@ -195,6 +203,7 @@ impl RecFunSolver {
             name_to_id: HashMap::new(),
             next_id: 0,
             seen_apps: HashSet::new(),
+            app_trail: Vec::new(),
             app_depth: HashMap::new(),
             context_stack: Vec::new(),
         }
@@ -257,23 +266,36 @@ impl RecFunSolver {
             return Ok(());
         }
 
-        self.seen_apps.insert(app);
+        if self.seen_apps.insert(app.clone()) {
+            self.app_trail.push(app);
+        }
         Ok(())
     }
 
     /// Push a new context level
     pub fn push(&mut self) {
-        self.context_stack.push(self.seen_apps.len());
+        self.context_stack.push(self.app_trail.len());
     }
 
-    /// Pop a context level
+    /// Pop a context level, retracting exactly the applications recorded since
+    /// the matching [`RecFunSolver::push`].
+    ///
+    /// This used to read `seen_apps.iter().skip(size)`, which is wrong twice
+    /// over: a `HashSet` iterates in an unspecified, hash-dependent order, so
+    /// `skip(size)` names an **arbitrary** subset of the applications rather
+    /// than the ones the scope introduced — retracting applications from an
+    /// enclosing scope (they then look unseen, and get re-registered and
+    /// re-counted) while keeping ones the scope owned (they survive their own
+    /// retraction, and a later re-entry into the scope silently skips them).
+    /// The insertion-ordered `app_trail` is what makes the retraction exact.
+    /// (Ported from upstream v0.3.3.)
     pub fn pop(&mut self) {
-        if let Some(size) = self.context_stack.pop() {
-            // Remove applications added after the push
-            let to_remove: Vec<_> = self.seen_apps.iter().skip(size).cloned().collect();
-            for app in &to_remove {
-                self.seen_apps.remove(app);
-                self.app_depth.remove(app);
+        if let Some(mark) = self.context_stack.pop() {
+            while self.app_trail.len() > mark {
+                if let Some(app) = self.app_trail.pop() {
+                    self.seen_apps.remove(&app);
+                    self.app_depth.remove(&app);
+                }
             }
         }
     }
@@ -281,6 +303,7 @@ impl RecFunSolver {
     /// Reset the solver
     pub fn reset(&mut self) {
         self.seen_apps.clear();
+        self.app_trail.clear();
         self.app_depth.clear();
         self.context_stack.clear();
         self.stats.reset();
@@ -351,6 +374,83 @@ mod tests {
         solver.push();
         solver.pop();
         solver.pop();
+    }
+
+    /// A solver with a definition registered and nothing else.
+    /// (Ported from upstream v0.3.3.)
+    fn solver_with_one_definition() -> (RecFunSolver, Spur) {
+        let mut solver = RecFunSolver::new();
+        let name = Spur::try_from_usize(0).expect("valid spur");
+        let predicate = Spur::try_from_usize(1).expect("valid spur");
+        solver
+            .define_function(
+                name,
+                vec![Spur::try_from_usize(2).expect("valid spur")],
+                vec![SortId::new(0)],
+                SortId::new(0),
+                vec![CaseDef::new(Vec::new(), TermId::new(0), predicate)],
+            )
+            .expect("definition should register");
+        (solver, name)
+    }
+
+    /// `pop` must retract exactly the applications recorded since the matching
+    /// `push` — no more (an enclosing scope's application would look unseen and
+    /// be re-counted) and no fewer (a retracted scope's application would
+    /// survive, so re-entering the scope would silently skip it).
+    ///
+    /// The old implementation took `seen_apps.iter().skip(n)`, which names an
+    /// arbitrary hash-ordered subset. Thirty-two outer applications are enough
+    /// that the set's iteration order differs from the insertion order, so this
+    /// test fails against it. (Ported from upstream v0.3.3.)
+    #[test]
+    fn pop_retracts_exactly_the_applications_of_the_popped_scope() {
+        let (mut solver, name) = solver_with_one_definition();
+
+        for i in 0..32u32 {
+            solver
+                .register_application(name, vec![TermId::new(i)])
+                .expect("registration should succeed");
+        }
+        let outer = solver.seen_apps.clone();
+        assert_eq!(outer.len(), 32);
+
+        solver.push();
+        for i in 100..116u32 {
+            solver
+                .register_application(name, vec![TermId::new(i)])
+                .expect("registration should succeed");
+        }
+        assert_eq!(solver.seen_apps.len(), 48, "the scope adds 16 applications");
+
+        solver.pop();
+        assert_eq!(
+            solver.seen_apps, outer,
+            "pop must restore exactly the pre-push application set"
+        );
+        assert_eq!(solver.app_trail.len(), 32, "the trail shrinks with the set");
+        assert!(
+            solver.app_depth.keys().all(|app| outer.contains(app)),
+            "no depth entry may outlive its application"
+        );
+    }
+
+    /// Re-registering an application already seen must not grow the trail, or
+    /// `pop` would retract it once per registration and lose an enclosing
+    /// scope's entry. (Ported from upstream v0.3.3.)
+    #[test]
+    fn repeated_registration_does_not_double_count_the_trail() {
+        let (mut solver, name) = solver_with_one_definition();
+        solver.push();
+        for _ in 0..5 {
+            solver
+                .register_application(name, vec![TermId::new(7)])
+                .expect("registration should succeed");
+        }
+        assert_eq!(solver.app_trail.len(), 1);
+        solver.pop();
+        assert!(solver.seen_apps.is_empty());
+        assert!(solver.app_trail.is_empty());
     }
 
     #[test]

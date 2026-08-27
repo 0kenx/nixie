@@ -397,11 +397,16 @@ impl StringTheory {
                 manager.mk_implies(suffix, contains)
             }
             StringAxiom::IndexOfBounds { s, t, i } => {
-                // 0 <= indexof(s, t, i) <= len(s)
-                let zero = manager.mk_int(0);
+                // -1 <= indexof(s, t, i) <= len(s)
+                //
+                // The lower bound is -1, not 0: `str.indexof` answers -1 when
+                // `t` does not occur in `s` at or after `i`, and when `i` is
+                // out of range. A 0 lower bound would rule that answer out.
+                // (Ported from upstream v0.3.3.)
+                let minus_one = manager.mk_int(-1);
                 let indexof = manager.mk_str_indexof(*s, *t, *i);
                 let len_s = manager.mk_str_len(*s);
-                let lower = manager.mk_geq(indexof, zero);
+                let lower = manager.mk_geq(indexof, minus_one);
                 let upper = manager.mk_leq(indexof, len_s);
                 manager.mk_and([lower, upper])
             }
@@ -514,6 +519,39 @@ mod tests {
         let theory = StringTheory::new();
         assert_eq!(theory.strings.len(), 0);
         assert_eq!(theory.concats.len(), 0);
+    }
+
+    #[test]
+    fn test_indexof_bounds_allow_the_not_found_answer() {
+        // Ported from upstream v0.3.3: the lower bound must be -1, not 0 —
+        // `str.indexof` answers -1 when the needle does not occur.
+        let mut manager = TermManager::new();
+        let theory = StringTheory::new();
+
+        let s = manager.mk_string_lit("hello");
+        let t = manager.mk_string_lit("z");
+        let start = manager.mk_int(0);
+
+        let term =
+            theory.axiom_to_term(&StringAxiom::IndexOfBounds { s, t, i: start }, &mut manager);
+
+        let minus_one = manager.mk_int(-1);
+        let TermKind::And(conjuncts) = manager
+            .get(term)
+            .map(|t| t.kind.clone())
+            .unwrap_or_else(|| panic!("the axiom term should exist"))
+        else {
+            panic!("expected a conjunction of the two bounds");
+        };
+
+        let lower = conjuncts
+            .first()
+            .copied()
+            .unwrap_or_else(|| panic!("expected a lower bound"));
+        match manager.get(lower).map(|t| t.kind.clone()) {
+            Some(TermKind::Ge(_, bound)) => assert_eq!(bound, minus_one),
+            other => panic!("expected `indexof >= -1`, got {other:?}"),
+        }
     }
 
     #[test]
