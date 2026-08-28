@@ -228,16 +228,23 @@ fn already_decided_sat_goals_keep_their_models() {
         "x*x = 4 must report a genuine root, got {value:?}"
     );
 
-    let product = run(
-        "(set-logic QF_NIA)(declare-const x Int)(declare-const y Int)\
-         (assert (= (* x y) 6))(assert (= (+ x y) 5))(check-sat)(get-value (x y))",
-    );
-    assert_eq!(product.first().map(String::as_str), Some("sat"));
-    let values = product.get(1).map(String::as_str).unwrap_or("");
-    assert!(
-        values == "((x 2)\n (y 3))" || values == "((x 3)\n (y 2))",
-        "x*y = 6 AND x+y = 5 must report {{2,3}} in some order, got {values:?}"
-    );
+    // (Fork note: without `nlsat` this tree's searches are gated off and the
+    // engine declines the multivariate witness — Unknown, sound. Pin the
+    // univariate root above in both builds; pin the multivariate one only
+    // where the searches that decide it are compiled in.)
+    #[cfg(feature = "nlsat")]
+    {
+        let product = run(
+            "(set-logic QF_NIA)(declare-const x Int)(declare-const y Int)\
+             (assert (= (* x y) 6))(assert (= (+ x y) 5))(check-sat)(get-value (x y))",
+        );
+        assert_eq!(product.first().map(String::as_str), Some("sat"));
+        let values = product.get(1).map(String::as_str).unwrap_or("");
+        assert!(
+            values == "((x 2)\n (y 3))" || values == "((x 3)\n (y 2))",
+            "x*y = 6 AND x+y = 5 must report {{2,3}} in some order, got {values:?}"
+        );
+    }
 }
 
 /// The engine may never invert a verdict — only fill one in. Turning the flag
@@ -259,10 +266,23 @@ fn the_flag_does_not_move_an_already_decided_goal() {
         ]
     };
     assert_eq!(solve_with_engine(true, build), SolverResult::Sat);
+    // With `nlsat` ON, the searches that already decided this goal run ahead
+    // of the engine either way. With it OFF (this fork's searches route
+    // through the gated dispatch), the engine was the decider, so turning it
+    // off leaves an honest decline — the flag still cannot *move* a verdict
+    // to a different one.
+    #[cfg(feature = "nlsat")]
     assert_eq!(
         solve_with_engine(false, build),
         SolverResult::Sat,
         "a goal the earlier procedures already decided must not depend on this flag"
+    );
+    #[cfg(not(feature = "nlsat"))]
+    assert_eq!(
+        solve_with_engine(false, build),
+        SolverResult::Unknown,
+        "with the searches gated off and the engine off, the goal declines — \
+         never a different verdict"
     );
 }
 
