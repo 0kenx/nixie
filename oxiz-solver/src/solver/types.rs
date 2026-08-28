@@ -255,6 +255,13 @@ pub struct SolverConfig {
     /// refutation gate also fires on the evaluator's width limit), so while
     /// any is live a SAT-core `Unsat` is downgraded to `Unknown`.
     pub enable_model_blocking: bool,
+    /// NIA-over-LP relaxation engine (`oxiz_theories::arithmetic::nla`):
+    /// linearize every product into a fresh monic variable, then loop LP
+    /// feasibility / exact monic-consistency checks / interval propagation /
+    /// McCormick+tangent cuts / exhaustive integer case splits. Converts
+    /// previously-`unknown` QF_NIA goals into proof-backed `unsat` and
+    /// re-verified `sat`. (Upstream v0.3.3; true everywhere but `minimal`.)
+    pub nonlinear_relaxation_engine: bool,
     /// Lifetime budget of model-blocking clauses per context scope.  Each
     /// round is a full re-solve, so the budget bounds a pathological formula's
     /// ability to turn a fast `unknown` into a grind.  (Upstream default: 64.)
@@ -335,6 +342,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
@@ -368,6 +376,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
@@ -401,6 +410,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
@@ -435,6 +445,7 @@ impl SolverConfig {
             timeout_ms: 0,
             // `minimal` opts out (upstream #40: on everywhere except here).
             enable_model_blocking: false,
+            nonlinear_relaxation_engine: false,
             max_model_blocking_rounds: 0,
             parallel: false,
             num_threads: 1,

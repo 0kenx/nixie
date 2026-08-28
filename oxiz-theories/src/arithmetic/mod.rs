@@ -24,3 +24,13 @@ pub use simplex::{LinExpr, Simplex, VarId};
 pub use simplex_opt::SimplexOptStatus;
 pub use solver::ArithEqualityStatus;
 pub use solver::ArithSolver;
+
+// Nonlinear integer arithmetic over the linear relaxation (NIA-over-LP). The
+// module documents itself; this declaration is gated on `std` because the
+// witness type and the exact re-verification `nla` performs before returning
+// `sat` both live in `crate::nl_eval`, which is itself std-only.
+// (Ported from upstream v0.3.3.)
+#[cfg(feature = "std")]
+pub mod nla;
+#[cfg(feature = "std")]
+pub use nla::{NlaConfig, NlaVerdict, check_assertions as check_nonlinear};

@@ -110,6 +110,10 @@ pub mod nia_cdcl;
 pub mod nl_dispatch;
 #[cfg(feature = "nlsat")]
 pub mod nl_dpll;
+/// Exact BigRational re-verification of a candidate nonlinear witness against
+/// the untouched assertions (std-only; ported from upstream v0.3.3).
+#[cfg(feature = "std")]
+pub mod nl_eval;
 pub mod nl_model_search;
 pub mod nl_preprocess;
 #[cfg(feature = "nlsat")]

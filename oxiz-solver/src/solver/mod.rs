@@ -24,6 +24,7 @@ pub(crate) mod logic_contract;
 pub(super) mod model_blocking;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
+pub(super) mod nla_relax;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
 pub(super) mod static_features;
@@ -1170,15 +1171,44 @@ impl Solver {
         // solver first (NiaSolver or NlsatSolver). This gives a definitive
         // SAT/UNSAT for most benchmark problems without the CDCL(T) loop.
         // The nonlinear cell-decomposition dispatch is behind the `nlsat`
-        // feature; without it this goal falls through to the search below,
-        // whose honesty gate (`arith_atoms_need_theory`) answers `unknown`
-        // for the nonlinear atoms no theory could take. (Upstream v0.3.3.)
+        // feature; without it this goal falls through to the relaxation
+        // engine below and then to the search, whose honesty gate
+        // (`arith_atoms_need_theory`) answers `unknown` for the nonlinear
+        // atoms no theory could take. (Upstream v0.3.3.)
         #[cfg(feature = "nlsat")]
         if let Some(nl_result) = self.dispatch_nl_solver(manager) {
             match nl_result {
                 SolverResult::Sat => return SolverResult::Sat,
                 SolverResult::Unsat => return SolverResult::Unsat,
                 SolverResult::Unknown => {}
+            }
+        }
+
+        // The NIA-over-LP relaxation engine is `std`-gated, not `nlsat`-gated
+        // (upstream v0.3.3), so it runs in BOTH builds — with the feature OFF
+        // it is the only nonlinear decider left. It declines Real-sorted
+        // variables outright, so QF_NRA goals pass through untouched.
+        #[cfg(feature = "std")]
+        {
+            let is_nia =
+                crate::solver::logic_contract::lookup(self.logic.as_deref().unwrap_or("ALL"))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|spec| spec.arith && spec.nonlinear && spec.integer)
+                    || (self
+                        .assertions
+                        .iter()
+                        .any(|&a| nla_relax::term_is_nonlinear_pub(a, manager))
+                        && self
+                            .assertions
+                            .iter()
+                            .all(|&a| nla_relax::term_is_integer_sorted_pub(a, manager)));
+            if is_nia && let Some(nl_result) = self.dispatch_nla_relaxation(manager) {
+                match nl_result {
+                    SolverResult::Sat => return SolverResult::Sat,
+                    SolverResult::Unsat => return SolverResult::Unsat,
+                    SolverResult::Unknown => {}
+                }
             }
         }
 

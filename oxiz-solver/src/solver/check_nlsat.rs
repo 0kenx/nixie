@@ -95,6 +95,22 @@ impl Solver {
     pub(super) fn dispatch_nl_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
         let backend = self.nl_backend(manager)?;
 
+        // The NIA-over-LP relaxation engine runs BEFORE the cell-decomposition
+        // dispatch in this fork's wiring (upstream slots it after; the fork's
+        // `dispatch_nia_constraints` internally chains to the sat-only model
+        // searches, so a post-slot would never fire for a goal that chain
+        // already declined). Ordering note: both procedures' verdicts are
+        // proof-backed on `unsat` and re-verified on `sat`, so either order
+        // preserves every verdict; what can differ on multi-solution goals is
+        // WHICH verified witness is reported. The relaxation engine declines
+        // Real-sorted variables outright (its case splits are tautologies over
+        // `Z`, not `R`), so QF_NRA never reaches it.
+        if matches!(backend, NlBackend::Nia)
+            && let Some(verdict) = self.dispatch_nla_relaxation(manager)
+        {
+            return Some(verdict);
+        }
+
         let result = match backend {
             NlBackend::Nia => dispatch_nia_constraints(
                 &self.assertions,

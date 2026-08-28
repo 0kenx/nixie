@@ -270,7 +270,7 @@ fn checked_mul_add_r64(x: Rational64, f: Rational64, y: Rational64) -> Option<Ra
 /// the `i128` gcd instead dominated pivot runtime on dense LIA rows
 /// (CAV_2009: ~75% of cycles in `__umodti3`/`u128_div_rem`, the software
 /// 128-bit division the `i128` gcd lowers to).
-fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
+pub(crate) fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
     if denom == 0 {
         return None;
     }
@@ -314,7 +314,7 @@ fn checked_ratio_i128(numer: i128, denom: i128) -> Option<Rational64> {
 /// `Rational64` multiplication used by `num-rational`'s `Mul` impl does not
 /// check for overflow: it panics in debug builds and silently wraps to a
 /// wrong coefficient in release builds).
-fn checked_mul_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+pub(crate) fn checked_mul_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     // Cross-wise pre-reduction (the classic exact-rational multiply, as in
     // GMP's `mpq_mul`): cancel gcd(an, bd) and gcd(bn, ad) BEFORE the two
     // multiplies.  The raw cross-products then stay inside `i64` far longer
@@ -361,7 +361,7 @@ fn checked_sub_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     checked_add_r64(a, nb)
 }
 
-fn checked_add_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+pub(crate) fn checked_add_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     // Integer fast path: plain checked `i64` add.
     if a.denom() == &1 && b.denom() == &1 {
         return Rational64::new_raw(a.numer().checked_add(*b.numer())?, 1).into();

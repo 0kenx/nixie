@@ -161,32 +161,26 @@ fn linear_real_arithmetic_stays_correct() {
     );
 }
 
-/// OFF-build counterpart: in this fork the whole NL dispatch (including the
-/// ground searches, which route through `dispatch_nia_constraints` and its
-/// `oxiz-nlsat` translator) is behind the feature, so a QF_NIA goal that needs
-/// a *witness* declines honestly. What must still hold: never the opposite
-/// verdict, and the static `unsat` patterns still refute.
+/// OFF-build counterpart: the cell-decomposition core is gone, but the
+/// NIA-over-LP relaxation engine (std-gated, ported from upstream v0.3.3)
+/// still decides these — every `sat` re-verified, every `unsat` proof-backed.
 #[cfg(not(feature = "nlsat"))]
 #[test]
-fn qf_nia_declines_honestly_without_the_feature() {
-    for script in [
-        "(set-logic QF_NIA)(declare-const x Int)(assert (= (* x x) 4))(check-sat)",
-        "(set-logic QF_NIA)(declare-const x Int)(declare-const y Int)\
-         (assert (= (* x y) 6))(assert (= (+ x y) 5))(check-sat)",
-    ] {
-        let out = run(script);
-        assert!(
-            out.as_slice() == ["unknown"],
-            "without `nlsat` a witness-needing QF_NIA goal must decline, not \
-             guess: {script} -> {out:?}"
-        );
-    }
-    // (Fork note: even the static square-sign patterns route through the
-    // gated dispatch here, so they decline too — `unknown`, still never a
-    // wrong verdict.)
+fn qf_nia_is_decided_by_the_relaxation_engine_without_the_feature() {
+    assert_eq!(
+        run("(set-logic QF_NIA)(declare-const x Int)(assert (= (* x x) 4))(check-sat)"),
+        vec!["sat"]
+    );
+    assert_eq!(
+        run(
+            "(set-logic QF_NIA)(declare-const x Int)(declare-const y Int)\
+         (assert (= (* x y) 6))(assert (= (+ x y) 5))(check-sat)"
+        ),
+        vec!["sat"]
+    );
     assert_eq!(
         run("(set-logic QF_NIA)(declare-const x Int)(assert (= (* x x) (- 1)))(check-sat)"),
-        vec!["unknown"]
+        vec!["unsat"]
     );
 }
 
@@ -243,9 +237,15 @@ fn qf_nia_is_decided_identically_in_both_builds() {
         vec!["unsat"],
         "two integer factors of at least 3 cannot multiply to 8 or less"
     );
-    // (Fork note: the second engine case — `x*x + y*y + 1 = 0` — is parked
-    // until the NIA-over-LP relaxation engine lands; it answers `unknown` in
-    // both builds here, correctly declining. Restored with that port.)
+    assert_eq!(
+        run(
+            "(set-logic QF_NIA)(declare-const x Int)(declare-const y Int)\
+             (assert (= (+ (* x x) (* y y) 1) 0))(check-sat)"
+        ),
+        vec!["unsat"],
+        "a sum of two squares plus one is never zero (the relaxation engine, \
+         compiled in either build)"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -335,11 +335,9 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
     // builds now report `Unsat` for it — which is why this test carries no
     // `cfg` any more.
     //
-    // Upstream's relaxation engine (not yet ported to this fork) makes both
-    // builds refute this level; here the OFF build reaches it with nothing
-    // left that can refute — the dispatch is compiled out, the honesty gate
-    // speaks, and the answer is Unknown, which is correct: the solver has
-    // proven nothing while `x*x = 4` is in scope.
+    // The relaxation engine (upstream v0.3.3, ported) is compiled into both
+    // builds and refutes this level; what the test still exists to catch is
+    // the honesty gate being skipped — a Sat here is wrong in every build.
     //
     // What this test exists to catch is the third outcome — the honesty gate
     // being skipped and the SAT layer treating `x*x = 4` as a free Boolean,
@@ -356,22 +354,16 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
     let eq = ctx.terms.mk_eq(square, four);
     ctx.assert(eq);
 
-    // Level 0 — `x*x = 4`. Decided by a re-verified witness with the
-    // feature; declined honestly (Unknown) without it.
-    #[cfg(feature = "nlsat")]
+    // Level 0 — `x*x = 4`. Decided by a re-verified witness in both builds:
+    // the relaxation engine is `std`-gated, not `nlsat`-gated.
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
-    #[cfg(not(feature = "nlsat"))]
-    assert!(matches!(ctx.check_sat(), SolverResult::Unknown));
 
     ctx.push();
     let zero = ctx.terms.mk_int(0);
     let x_lt = ctx.terms.mk_lt(x, zero);
     ctx.assert(x_lt);
-    // Level 1 — `x*x = 4 ∧ x < 0`. Witness x = -2 with the feature.
-    #[cfg(feature = "nlsat")]
+    // Level 1 — `x*x = 4 ∧ x < 0`. Witness x = -2, both builds.
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
-    #[cfg(not(feature = "nlsat"))]
-    assert!(matches!(ctx.check_sat(), SolverResult::Unknown));
 
     ctx.push();
     let x_gt = ctx.terms.mk_gt(x, zero);
@@ -385,29 +377,17 @@ fn push_pop_over_a_nonlinear_atom_never_guesses() {
         !matches!(at_conflict, SolverResult::Sat),
         "x < 0 AND x > 0 must never be reported Sat, got {at_conflict:?}"
     );
-    #[cfg(feature = "nlsat")]
     assert!(
         matches!(at_conflict, SolverResult::Unsat),
-        "the nlsat build refutes this, got {at_conflict:?}"
-    );
-    #[cfg(not(feature = "nlsat"))]
-    assert!(
-        matches!(at_conflict, SolverResult::Unknown),
-        "without nlsat (and until the relaxation engine lands) this build \
-         declines honestly, got {at_conflict:?}"
+        "both builds refute this: the relaxation engine is compiled in either \
+         way, got {at_conflict:?}"
     );
 
     // And the scopes still unwind to the answers they had on the way in.
     ctx.pop();
-    #[cfg(feature = "nlsat")]
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
-    #[cfg(not(feature = "nlsat"))]
-    assert!(matches!(ctx.check_sat(), SolverResult::Unknown));
     ctx.pop();
-    #[cfg(feature = "nlsat")]
     assert!(matches!(ctx.check_sat(), SolverResult::Sat));
-    #[cfg(not(feature = "nlsat"))]
-    assert!(matches!(ctx.check_sat(), SolverResult::Unknown));
 }
 
 #[cfg(feature = "nlsat")]
