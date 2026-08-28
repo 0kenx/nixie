@@ -1851,6 +1851,19 @@ impl Solver {
                         // is what makes "recompute after every re-solve" fall
                         // out of the loop structure instead of being a rule
                         // to remember.
+                        // COLLISION REPAIR (lazy A1): emit the colliding
+                        // pair's trichotomy before blocking, so the NEXT
+                        // candidate must separate the values.  See the study
+                        // postscript (fourth session) for the measured
+                        // history (blanket -13 / scoped -10 on the
+                        // differential canary) and the known residual.
+                        if !self.refuted_by_assertion_only(manager)
+                            && let Some((l, r)) = self.refuted_negated_equality(manager)
+                            && self.emit_collision_trichotomy(l, r, manager)
+                        {
+                            // fall through to block+rebase: this candidate is
+                            // still refuted; the clause changes the next one.
+                        }
                         if self.model_refutes_assertions(manager) {
                             // Bounded blocking (upstream #40): this one
                             // assignment did not hold up, which says nothing

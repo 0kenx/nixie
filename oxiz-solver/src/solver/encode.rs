@@ -1185,6 +1185,38 @@ impl Solver {
     /// calls `add_arith_trichotomy_clause` for each.  This makes the arith
     /// solver SEE the equality, enabling the combination to reason about array
     /// select results.
+    /// Emit `(a = b) ∨ (a < b) ∨ (a > b)` for one collision-discovered pair
+    /// (the lazy form of upstream v0.3.3's A1 trichotomy).  Journaled by the
+    /// same per-scope memo the assertion walk uses; `false` = pair covered.
+    ///
+    /// KNOWN RESIDUAL (fourth session, see the study postscript): the clause
+    /// is verifiably added and the next candidate commits the strict arm, yet
+    /// the model values still collide - the strict bound's relay vs the
+    /// value source (DL/simplex routing or the rebase/reset assignment
+    /// lifecycle) does not close the loop.  Three extensionality/datatype
+    /// tests still fail under this variant.
+    pub(super) fn emit_collision_trichotomy(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        manager: &mut TermManager,
+    ) -> bool {
+        let is_numeric = manager
+            .get(lhs)
+            .is_some_and(|t| t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort);
+        if !is_numeric {
+            return false;
+        }
+        let pair = if lhs < rhs { (lhs, rhs) } else { (rhs, lhs) };
+        if !self.numeric_eq_split_pairs.insert(pair) {
+            return false;
+        }
+        self.trail
+            .push(crate::solver::trail::TrailOp::NumericEqSplitPairAdded { pair });
+        self.add_arith_trichotomy_clause(lhs, rhs, manager);
+        true
+    }
+
     pub(super) fn ensure_numeric_equality_splits(&mut self, manager: &mut TermManager) {
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;
