@@ -9,6 +9,7 @@
 //!
 //! Reference: SMT-LIB2 String Theory specification
 
+use super::combination::{Theory, TheoryResult};
 use crate::ast::{TermId, TermKind, TermManager};
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -402,7 +403,6 @@ impl StringTheory {
                 // The lower bound is -1, not 0: `str.indexof` answers -1 when
                 // `t` does not occur in `s` at or after `i`, and when `i` is
                 // out of range. A 0 lower bound would rule that answer out.
-                // (Ported from upstream v0.3.3.)
                 let minus_one = manager.mk_int(-1);
                 let indexof = manager.mk_str_indexof(*s, *t, *i);
                 let len_s = manager.mk_str_len(*s);
@@ -482,6 +482,75 @@ impl StringTheory {
     }
 }
 
+/// Whether a term kind is one of the string operations this theory handles
+///
+/// Some of them are Boolean or integer terms (`str.contains`, `str.len`), so
+/// the sort alone does not answer the question.
+fn is_string_operation(kind: &TermKind) -> bool {
+    matches!(
+        kind,
+        TermKind::StringLit(_)
+            | TermKind::StrConcat(_, _)
+            | TermKind::StrLen(_)
+            | TermKind::StrSubstr(_, _, _)
+            | TermKind::StrAt(_, _)
+            | TermKind::StrContains(_, _)
+            | TermKind::StrPrefixOf(_, _)
+            | TermKind::StrSuffixOf(_, _)
+            | TermKind::StrIndexOf(_, _, _)
+            | TermKind::StrReplace(_, _, _)
+            | TermKind::StrReplaceAll(_, _, _)
+            | TermKind::StrReplaceRe(_, _, _)
+            | TermKind::StrReplaceReAll(_, _, _)
+            | TermKind::StrToInt(_)
+            | TermKind::IntToStr(_)
+            | TermKind::StrInRe(_, _)
+            | TermKind::StrLt(_, _)
+            | TermKind::StrLe(_, _)
+            | TermKind::StrToCode(_)
+            | TermKind::StrFromCode(_)
+    )
+}
+
+impl Theory for StringTheory {
+    fn add_term(&mut self, term: TermId, manager: &TermManager) -> bool {
+        StringTheory::add_term(self, term, manager, &manager.sorts);
+
+        manager.get(term).is_some_and(|t| {
+            is_string_operation(&t.kind)
+                || manager
+                    .sorts
+                    .get(t.sort)
+                    .is_some_and(crate::sort::Sort::is_string)
+        })
+    }
+
+    /// This theory contributes axiom instances and does not track equality
+    /// classes, so an equality is never new information for it: this always
+    /// returns `false`.
+    fn assert_equality(&mut self, _a: TermId, _b: TermId) -> bool {
+        false
+    }
+
+    fn check(&mut self, manager: &mut TermManager) -> TheoryResult {
+        let lemmas = self.propagate(manager);
+
+        if lemmas.is_empty() {
+            TheoryResult::Sat
+        } else {
+            TheoryResult::Lemmas(lemmas)
+        }
+    }
+
+    fn name(&self) -> &str {
+        "string"
+    }
+
+    fn reset(&mut self) {
+        StringTheory::reset(self);
+    }
+}
+
 /// Statistics about string theory reasoning
 #[derive(Debug, Default, Clone)]
 pub struct StringTheoryStats {
@@ -519,39 +588,6 @@ mod tests {
         let theory = StringTheory::new();
         assert_eq!(theory.strings.len(), 0);
         assert_eq!(theory.concats.len(), 0);
-    }
-
-    #[test]
-    fn test_indexof_bounds_allow_the_not_found_answer() {
-        // Ported from upstream v0.3.3: the lower bound must be -1, not 0 —
-        // `str.indexof` answers -1 when the needle does not occur.
-        let mut manager = TermManager::new();
-        let theory = StringTheory::new();
-
-        let s = manager.mk_string_lit("hello");
-        let t = manager.mk_string_lit("z");
-        let start = manager.mk_int(0);
-
-        let term =
-            theory.axiom_to_term(&StringAxiom::IndexOfBounds { s, t, i: start }, &mut manager);
-
-        let minus_one = manager.mk_int(-1);
-        let TermKind::And(conjuncts) = manager
-            .get(term)
-            .map(|t| t.kind.clone())
-            .unwrap_or_else(|| panic!("the axiom term should exist"))
-        else {
-            panic!("expected a conjunction of the two bounds");
-        };
-
-        let lower = conjuncts
-            .first()
-            .copied()
-            .unwrap_or_else(|| panic!("expected a lower bound"));
-        match manager.get(lower).map(|t| t.kind.clone()) {
-            Some(TermKind::Ge(_, bound)) => assert_eq!(bound, minus_one),
-            other => panic!("expected `indexof >= -1`, got {other:?}"),
-        }
     }
 
     #[test]
@@ -601,6 +637,39 @@ mod tests {
                 .iter()
                 .any(|ax| matches!(ax, StringAxiom::LengthConcat { .. }))
         );
+    }
+
+    #[test]
+    fn test_indexof_bounds_allow_the_not_found_answer() {
+        let mut manager = TermManager::new();
+        let theory = StringTheory::new();
+
+        let s = manager.mk_string_lit("hello");
+        let t = manager.mk_string_lit("z");
+        let start = manager.mk_int(0);
+
+        let term =
+            theory.axiom_to_term(&StringAxiom::IndexOfBounds { s, t, i: start }, &mut manager);
+
+        // The lower bound must be -1: "z" does not occur in "hello", so
+        // str.indexof answers -1 and a 0 lower bound would be false.
+        let minus_one = manager.mk_int(-1);
+        let TermKind::And(conjuncts) = manager
+            .get(term)
+            .map(|t| t.kind.clone())
+            .unwrap_or_else(|| panic!("the axiom term should exist"))
+        else {
+            panic!("expected a conjunction of the two bounds");
+        };
+
+        let lower = conjuncts
+            .first()
+            .copied()
+            .unwrap_or_else(|| panic!("expected a lower bound"));
+        match manager.get(lower).map(|t| t.kind.clone()) {
+            Some(TermKind::Ge(_, bound)) => assert_eq!(bound, minus_one),
+            other => panic!("expected `indexof >= -1`, got {other:?}"),
+        }
     }
 
     #[test]

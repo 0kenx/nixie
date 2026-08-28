@@ -2419,16 +2419,145 @@ impl<'a> RealPolyTranslator<'a> {
 
 /// Map NRA poly-var indices back to TermIds via the translator cache.
 fn extract_nra_model(translator: &RealPolyTranslator<'_>) -> HashMap<TermId, BigRational> {
+    // All-or-nothing (upstream v0.3.3): a variable holding an algebraic point
+    // answers None from `arith_value`, and a partial rational map would be
+    // completed with sort defaults by whatever renders the model — an
+    // assignment that satisfies nothing. Refusing wholesale keeps the
+    // modelless-but-correct `sat` of old, always safe; the algebraic channel
+    // carries the case this declines.
     let mut out = HashMap::new();
     let Some(nlsat_model) = translator.nlsat.get_model() else {
         return out;
     };
     for (&term, &poly_var) in translator.var_cache() {
-        if let Some(val) = nlsat_model.arith_value(poly_var) {
-            out.insert(term, val.clone());
-        }
+        let Some(val) = nlsat_model.arith_value(poly_var) else {
+            return HashMap::new();
+        };
+        out.insert(term, val.clone());
     }
     out
+}
+
+/// The exact-value witness, for the real models [`extract_nra_model`] has to
+/// decline. Empty map = "channel does not apply, use the rational one";
+/// otherwise it covers **every** variable, rationals included. (Ported from
+/// upstream v0.3.3.)
+fn algebraic_witness_from_real_translator(
+    translator: &RealPolyTranslator<'_>,
+) -> rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue> {
+    use crate::nl_witness::{AlgebraicValue, NlWitnessValue};
+    use oxiz_nlsat::cad::CadPoint;
+
+    let empty = rustc_hash::FxHashMap::default;
+    let Some(model) = translator.nlsat.get_model() else {
+        return empty();
+    };
+    let mut values = rustc_hash::FxHashMap::default();
+    let mut saw_algebraic = false;
+    for (&term, &poly_var) in translator.var_cache() {
+        let Some(point) = model.arith_point(poly_var) else {
+            return empty();
+        };
+        let value = match point {
+            CadPoint::Rational(value) => NlWitnessValue::Rational(value.clone()),
+            CadPoint::Algebraic {
+                lo,
+                hi,
+                poly,
+                index,
+            } => {
+                let Some(coefficients) = root_obj_coefficients(poly) else {
+                    return empty();
+                };
+                saw_algebraic = true;
+                NlWitnessValue::Algebraic(AlgebraicValue {
+                    coefficients,
+                    root_index: *index,
+                    lower: lo.clone(),
+                    upper: hi.clone(),
+                })
+            }
+        };
+        values.insert(term, value);
+    }
+    if saw_algebraic { values } else { empty() }
+}
+
+/// Put a `CadPoint::Algebraic` defining polynomial into `root-obj` normal
+/// form: integer coefficients indexed by degree, primitive, positive leading
+/// coefficient. `None` when not a univariate polynomial of degree >= 1.
+/// (Ported from upstream v0.3.3; the normalisation-is-sound argument lives
+/// there — clearing denominators / dividing content / sign flipping reorder
+/// no root.)
+fn root_obj_coefficients(
+    poly: &oxiz_math::polynomial::Polynomial,
+) -> Option<Vec<num_bigint::BigInt>> {
+    use num_bigint::BigInt;
+    use num_traits::{Signed, Zero};
+
+    // num-integer's lcm/gcd over BigInt, inlined (the crate is not a
+    // dependency here): gcd by Euclid on absolute values, lcm = |a*b|/gcd.
+    fn gcd(a: &BigInt, b: &BigInt) -> BigInt {
+        let (mut a, mut b) = (a.abs(), b.abs());
+        while !b.is_zero() {
+            let r = &a % &b;
+            a = b;
+            b = r;
+        }
+        a
+    }
+
+    let vars = poly.vars();
+    let &[var] = vars.as_slice() else {
+        return None;
+    };
+    let degree = poly.degree(var) as usize;
+    if degree == 0 {
+        return None;
+    }
+
+    let mut rational = vec![BigRational::zero(); degree + 1];
+    for term in poly.terms() {
+        let power = match term.monomial.vars() {
+            [] => 0usize,
+            [vp] if vp.var == var => vp.power as usize,
+            _ => return None,
+        };
+        let slot = rational.get_mut(power)?;
+        *slot = &*slot + &term.coeff;
+    }
+
+    let mut denominator_lcm = BigInt::from(1);
+    for coefficient in &rational {
+        denominator_lcm =
+            &denominator_lcm * coefficient.denom() / gcd(&denominator_lcm, coefficient.denom());
+    }
+    let mut integral: Vec<BigInt> = rational
+        .iter()
+        .map(|coefficient| coefficient.numer() * (&denominator_lcm / coefficient.denom()))
+        .collect();
+
+    let mut content = BigInt::from(0);
+    for coefficient in &integral {
+        content = gcd(&content, coefficient);
+    }
+    if content.is_zero() {
+        return None;
+    }
+    for coefficient in &mut integral {
+        *coefficient /= &content;
+    }
+
+    let leading = integral.last()?;
+    if leading.is_zero() {
+        return None;
+    }
+    if leading < &BigInt::from(0) {
+        for coefficient in &mut integral {
+            *coefficient = -&*coefficient;
+        }
+    }
+    Some(integral)
 }
 
 impl PolyVarSource for RealPolyTranslator<'_> {
@@ -2582,8 +2711,15 @@ pub fn dispatch_nra_constraints(
 
     match translator.nlsat.solve() {
         SolverResult::Sat if sat_is_trustworthy => {
-            let model = extract_nra_model(&translator);
-            Some(NlDispatchResult::sat_with(model))
+            // Exactly one of the two witness channels, never both (upstream
+            // v0.3.3): the algebraic one applies only when some variable's
+            // value is irrational, and then it carries the whole model.
+            let algebraic = algebraic_witness_from_real_translator(&translator);
+            Some(if algebraic.is_empty() {
+                NlDispatchResult::sat_with(extract_nra_model(&translator))
+            } else {
+                NlDispatchResult::sat_algebraic(algebraic)
+            })
         }
         SolverResult::Unsat if unsat_is_trustworthy => Some(NlDispatchResult::Unsat),
         SolverResult::Sat | SolverResult::Unsat | SolverResult::Unknown => None,

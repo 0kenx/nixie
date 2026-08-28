@@ -116,6 +116,10 @@ pub mod nl_dpll;
 pub mod nl_eval;
 pub mod nl_model_search;
 pub mod nl_preprocess;
+/// Exact-value language for nonlinear witnesses (rational or `root-obj`
+/// algebraic). Ungated data: only its *population* is feature-dependent.
+/// (Ported from upstream v0.3.3.)
+pub mod nl_witness;
 #[cfg(feature = "nlsat")]
 pub mod nlsat;
 #[cfg(feature = "std")]

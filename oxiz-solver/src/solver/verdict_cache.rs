@@ -173,6 +173,9 @@ impl Solver {
         self.model = None;
         self.unsat_core = None;
         self.last_check = None;
+        // The algebraic side-channel belongs to the check that populated it
+        // (upstream v0.3.3): it travels with the model, not the stack.
+        self.nl_algebraic_values.clear();
         // Drop the cached feature snapshot: the assertion stack moved, so the
         // features (and the knob decisions derived from them) are stale.
         self.last_features = None;
@@ -220,6 +223,9 @@ impl Solver {
     #[cfg(test)]
     pub(crate) fn forget_cached_verdict(&mut self) {
         self.last_check = None;
+        // The algebraic side-channel belongs to the check that populated it
+        // (upstream v0.3.3): it travels with the model, not the stack.
+        self.nl_algebraic_values.clear();
     }
 
     /// Remember `result` for the goal as it stands *now*.

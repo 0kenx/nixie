@@ -10,8 +10,11 @@ mod conflict;
 mod decide;
 mod inprocess;
 mod propagate;
+mod resample;
+mod witness_algebraic;
 
 use crate::assignment::{Assignment, Justification};
+use crate::cad::CadPoint;
 use crate::clause::{ClauseDatabase, ClauseId, NULL_CLAUSE};
 use crate::restart::{RestartManager, RestartStrategy};
 use crate::types::{Atom, AtomKind, BoolVar, IneqAtom, Lbool, Literal, NULL_BOOL_VAR, PolyFactor};
@@ -160,6 +163,9 @@ pub struct NlsatSolver {
     pub(super) clauses: ClauseDatabase,
     /// Variable assignment.
     pub(super) assignment: Assignment,
+    /// Per-search ledger of sampled arithmetic witnesses (`resample.rs`).
+    /// (Ported from upstream v0.3.3 with the algebraic-witness work.)
+    pub(super) arith_witnesses: resample::WitnessLedger,
     /// Atoms (polynomial constraints).
     pub(super) atoms: Vec<Atom>,
     /// Map from polynomial hash to atom IDs (for deduplication).
@@ -256,6 +262,7 @@ impl NlsatSolver {
             stats: SolverStats::default(),
             clauses: ClauseDatabase::new(),
             assignment: Assignment::new(),
+            arith_witnesses: resample::WitnessLedger::default(),
             atoms: Vec::new(),
             atom_map: HashMap::new(),
             num_arith_vars: 0,
@@ -873,7 +880,7 @@ impl NlsatSolver {
 
             // No more decisions - check if we have a complete assignment
             if self.is_complete() {
-                return SolverResult::Sat;
+                return self.sat_or_unknown();
             }
 
             // Need to assign arithmetic variables
@@ -899,6 +906,16 @@ impl NlsatSolver {
                         self.install_theory_conflict(lemma);
                         continue;
                     }
+                    ArithDecision::AlgebraicValue { point } => {
+                        // The feasible region holds no rational point but a
+                        // real-algebraic one was found and *proved* to satisfy
+                        // every constraint on `var` that is decidable now.
+                        // Commit it exactly as the rational arm commits its
+                        // value. (Ported from upstream v0.3.3.)
+                        self.commit_arith_witness_point(var, point);
+                        // New propagations may follow the arithmetic assignment.
+                        continue;
+                    }
                     ArithDecision::IrrationalOnly | ArithDecision::GreedyEmpty => {
                         // Cell failure under the current greedy samples: undo
                         // the latest arithmetic choice and try another point.
@@ -920,7 +937,29 @@ impl NlsatSolver {
             }
 
             // All variables assigned and satisfiable
-            return SolverResult::Sat;
+            return self.sat_or_unknown();
+        }
+    }
+
+    /// The `Sat` gate.
+    ///
+    /// On the rational search path this is `SolverResult::Sat` unchanged —
+    /// `algebraic_model_is_verified` short-circuits to `true` when no algebraic
+    /// value is installed, so not a single existing verdict moves.
+    ///
+    /// When an algebraic value *is* installed it is the only thing standing
+    /// between an unverified model and a published verdict:
+    /// `oxiz_theories::nlsat::dispatch_nra_constraints` trusts this result
+    /// directly (unlike its integer sibling, which re-checks the model), and
+    /// atoms coupling the algebraic variable with a later-assigned one are
+    /// invisible to the region computation that chose the witness. So every
+    /// assigned atom is re-evaluated exactly here, and anything undecidable
+    /// yields `Unknown`.
+    fn sat_or_unknown(&self) -> SolverResult {
+        if self.algebraic_model_is_verified() {
+            SolverResult::Sat
+        } else {
+            SolverResult::Unknown
         }
     }
 
@@ -941,15 +980,20 @@ impl NlsatSolver {
         }
 
         let mut arith_values = HashMap::new();
+        let mut algebraic_values = HashMap::new();
         for var in 0..self.num_arith_vars {
             if let Some(val) = self.assignment.arith_value(var) {
                 arith_values.insert(var, val.clone());
+            }
+            if let Some(point) = self.assignment.arith_point(var) {
+                algebraic_values.insert(var, point.clone());
             }
         }
 
         Some(Model {
             bool_values,
             arith_values,
+            algebraic_values,
         })
     }
 }
@@ -961,12 +1005,23 @@ impl Default for NlsatSolver {
 }
 
 /// A model (satisfying assignment).
-#[derive(Debug, Clone)]
+///
+/// Arithmetic values appear twice, and the two maps answer different
+/// questions. [`Model::algebraic_values`] holds *every* assigned arithmetic
+/// variable's exact value as a [`CadPoint`]; [`Model::arith_values`] holds only
+/// those whose value is a rational, so that a caller which can only handle
+/// rationals (every caller that predates algebraic witnesses) sees a variable
+/// it cannot represent as simply absent rather than as a rounded — and
+/// therefore wrong — number.
+#[derive(Debug, Clone, Default)]
 pub struct Model {
     /// Boolean variable assignments.
     pub bool_values: HashMap<BoolVar, bool>,
-    /// Arithmetic variable assignments.
+    /// Arithmetic variable assignments that are exactly rational.
     pub arith_values: HashMap<Var, BigRational>,
+    /// Every arithmetic variable assignment as an exact point, algebraic ones
+    /// included. A superset of `arith_values`.
+    pub algebraic_values: HashMap<Var, CadPoint>,
 }
 
 impl Model {
@@ -975,9 +1030,17 @@ impl Model {
         self.bool_values.get(&var).copied()
     }
 
-    /// Get the value of an arithmetic variable.
+    /// Get the value of an arithmetic variable, **only if it is rational**.
+    ///
+    /// A variable whose witness is algebraic (`√2`) answers `None`; use
+    /// [`Self::arith_point`] to see it.
     pub fn arith_value(&self, var: Var) -> Option<&BigRational> {
         self.arith_values.get(&var)
+    }
+
+    /// Get the exact value of an arithmetic variable, rational or algebraic.
+    pub fn arith_point(&self, var: Var) -> Option<&CadPoint> {
+        self.algebraic_values.get(&var)
     }
 }
 

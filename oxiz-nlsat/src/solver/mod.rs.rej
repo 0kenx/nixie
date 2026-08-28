@@ -1,0 +1,35 @@
+diff a/oxiz-nlsat/src/solver/mod.rs b/oxiz-nlsat/src/solver/mod.rs	(rejected hunks)
+@@ -11,8 +11,10 @@ mod decide;
+ mod inprocess;
+ mod propagate;
+ mod resample;
++mod witness_algebraic;
+ 
+ use crate::assignment::{Assignment, Justification};
++use crate::cad::CadPoint;
+ use crate::clause::{ClauseDatabase, ClauseId, NULL_CLAUSE};
+ use crate::restart::{RestartManager, RestartStrategy};
+ use crate::types::{Atom, AtomKind, BoolVar, IneqAtom, Lbool, Literal, NULL_BOOL_VAR, PolyFactor};
+@@ -878,9 +880,20 @@ impl NlsatSolver {
+                         self.install_theory_conflict(lemma);
+                         continue;
+                     }
++                    ArithDecision::AlgebraicValue { point } => {
++                        // The feasible region holds no rational point but a
++                        // real-algebraic one was found and *proved* to satisfy
++                        // every constraint on `var` that is decidable now.
++                        // Commit it exactly as the rational arm commits its
++                        // value; no region travels with it (see
++                        // `ArithDecision::AlgebraicValue`).
++                        self.commit_arith_witness_point(var, point);
++                        // New propagations may follow the arithmetic assignment.
++                        continue;
++                    }
+                     ArithDecision::IrrationalOnly => {
+-                        // A real (algebraic) solution exists but has no rational
+-                        // representation in the current model: report Unknown
++                        // A real (algebraic) solution exists but could neither
++                        // be represented nor refuted exactly: report Unknown
+                         // rather than a fabricated model or a wrong Unsat.
+                         return SolverResult::Unknown;
+                     }

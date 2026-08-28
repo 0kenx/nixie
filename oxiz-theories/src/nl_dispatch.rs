@@ -19,7 +19,13 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NlSatModel {
     /// TermId → rational value for every free arithmetic variable assigned.
+    /// Empty when `algebraic` is populated (the two channels are exclusive;
+    /// see `nl_witness`).
     pub assignments: HashMap<TermId, BigRational>,
+    /// Exact values (`root-obj` form) for EVERY variable of the problem,
+    /// populated only when at least one of them is irrational — then
+    /// `assignments` is left empty. (Upstream v0.3.3.)
+    pub algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
 }
 
 /// The definitive result from a nonlinear dispatch call.
@@ -44,6 +50,21 @@ impl NlDispatchResult {
     /// Satisfiable with the given term→value map.
     #[must_use]
     pub fn sat_with(assignments: HashMap<TermId, BigRational>) -> Self {
-        Self::Sat(NlSatModel { assignments })
+        Self::Sat(NlSatModel {
+            assignments,
+            algebraic: rustc_hash::FxHashMap::default(),
+        })
+    }
+
+    /// A `Sat` whose witness is algebraic: exact `root-obj` values for every
+    /// variable, no rational channel. (Upstream v0.3.3.)
+    #[must_use]
+    pub fn sat_algebraic(
+        algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
+    ) -> Self {
+        Self::Sat(NlSatModel {
+            assignments: HashMap::new(),
+            algebraic,
+        })
     }
 }

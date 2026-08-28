@@ -415,6 +415,15 @@ pub struct Solver {
     /// Nonzero means "the search space is restricted": see
     /// [`Solver::blocking_clauses_present`].
     pub(super) model_blocking_active: usize,
+    /// Exact model values for the nonlinear-real variables that [`Model`]
+    /// cannot hold — the `(get-model)` side-channel for algebraic witnesses
+    /// (`√2`-style values with no rational form). Populated ONLY all-or-nothing
+    /// and only by a real cell decomposition's `Sat` (see `check_nlsat`);
+    /// cleared on entry to every nonlinear dispatch and invalidated by
+    /// `invalidate_results` with the rest of the last check's state.
+    /// (Ported from upstream v0.3.3.)
+    pub(super) nl_algebraic_values:
+        rustc_hash::FxHashMap<TermId, oxiz_theories::nl_witness::NlWitnessValue>,
     /// Test-only event log: one entry per ground candidate model, recording
     /// whether `self.model` was still populated when `check_core` reached the
     /// case-split / array-axiom repair paths.
@@ -648,6 +657,7 @@ impl Solver {
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
             model_blocking_active: 0,
+            nl_algebraic_values: rustc_hash::FxHashMap::default(),
             #[cfg(test)]
             repair_paths_saw_model: Vec::new(),
             arrangement_rounds: 0,
@@ -2458,6 +2468,24 @@ impl Solver {
         }
 
         Some(minimized)
+    }
+
+    /// The algebraic side-channel (see the field doc). Consulted by the
+    /// model renderer before the ordinary `Model`; empty = not in play.
+    #[must_use]
+    pub fn nl_algebraic_values(
+        &self,
+    ) -> &rustc_hash::FxHashMap<TermId, oxiz_theories::nl_witness::NlWitnessValue> {
+        &self.nl_algebraic_values
+    }
+
+    /// One constant's exact algebraic value, if the side-channel pins it.
+    #[must_use]
+    pub fn nl_algebraic_value(
+        &self,
+        term: TermId,
+    ) -> Option<&oxiz_theories::nl_witness::NlWitnessValue> {
+        self.nl_algebraic_values.get(&term)
     }
 
     /// Get the model (if sat)

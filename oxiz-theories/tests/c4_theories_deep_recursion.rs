@@ -154,6 +154,7 @@ fn deep_arith_chain(manager: &mut TermManager, levels: usize) -> TermId {
     term
 }
 
+#[cfg(feature = "nlsat")]
 #[test]
 fn deep_arith_term_nonlinearity_check_returns() {
     const LEVELS: usize = 12_500;
@@ -166,6 +167,7 @@ fn deep_arith_term_nonlinearity_check_returns() {
     assert!(!nonlinear);
 }
 
+#[cfg(feature = "nlsat")]
 #[test]
 fn deep_arith_term_translation_returns() {
     const LEVELS: usize = 12_500;
