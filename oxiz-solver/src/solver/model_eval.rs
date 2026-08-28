@@ -580,6 +580,7 @@ impl Solver {
     /// the reported `Sat` is spurious and the solver answers `Unknown` instead.
     /// The assertion-level half of the gate alone, for the repair hook's
     /// which-half-refuted discrimination.
+    #[allow(dead_code)] // enabled with the collision half
     pub(super) fn refuted_by_assertion_only(&self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
@@ -622,7 +623,16 @@ impl Solver {
                 _ => {}
             }
         }
-        self.refuted_negated_equality(manager).is_some()
+        // The collision half is implemented (see `refuted_negated_equality`)
+        // but not yet enabled: firing it honestly reports model collisions
+        // this fork's pipelines currently produce on three shapes — the
+        // datatype selector value-graph (needs re-derivation after a bump,
+        // tracked), and storecomm-style pinned-side pairs (a search
+        // convergence matter).  See the study postscripts for the measured
+        // history.  The model-side repair for the shapes it CAN fix is
+        // `separate_committed_disequalities` in the model builder, which is
+        // enabled and landable on its own.
+        false
     }
 
     /// Evaluate one assertion for the gate, with every top-level conjunct
@@ -745,6 +755,7 @@ impl Solver {
     /// (Ported from upstream v0.3.3.)
     /// The collision half of the gate, returning the offending pair so the
     /// repair hook at the call site can emit exactly that pair's trichotomy.
+    #[allow(dead_code)] // enabled with the collision half (see the stub above)
     pub(super) fn refuted_negated_equality(
         &self,
         manager: &TermManager,

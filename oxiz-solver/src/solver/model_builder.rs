@@ -241,6 +241,9 @@ impl Solver {
         // Datatype values.  Must run last: the reconstruction reads the tester
         // literals and the field values the passes above have already recorded.
         self.extract_datatype_model(&mut model, manager);
+        // Scalar/array analogue of the datatype repair (see its doc); runs
+        // for every model, not only datatype-bearing ones.
+        self.separate_committed_disequalities(&mut model, manager);
 
         // Rounding-mode values.  Must run after the Boolean pass above, which
         // is what put the mode-equality atoms' truth values into scope.
@@ -423,6 +426,242 @@ impl Solver {
 
         self.separate_disequal_dt_values(&decls, model, manager);
         debug_verify_dt_model(&self.assertions, model, manager);
+    }
+
+    /// Pull apart the model entries of any committed-false equality whose two
+    /// sides rendered identically — the scalar/array analogue of
+    /// [`Self::separate_disequal_dt_values`].
+    ///
+    /// Found while landing the gate's collision half (2026-08-28): a
+    /// committed-false `(= (select a k) (select b k))` — the array
+    /// extensionality witness — collided in the printed model because the
+    /// reads' entries came from the unconstrained-array defaulting, and the
+    /// numeric trichotomy could not help: the Select terms have no arithmetic
+    /// presence, so a strict bound over them constrains nothing the model
+    /// builder reads.  The honest repair is at the value level and only
+    /// there: when the core committed `x != y` and the model prints them
+    /// equal, re-value ONE side — provided that side is pinned by nothing
+    /// (it occurs in no assertion subterm, and in no committed-TRUE equality
+    /// atom whose partner would then disagree with it).  A side anything
+    /// constrains is left alone and the pair is skipped; the gate's collision
+    /// half then still reports the model honestly as refuted (`Unknown`),
+    /// never wrongly as `Sat`.
+    fn separate_committed_disequalities(&self, model: &mut Model, manager: &mut TermManager) {
+        // Committed-true atoms' FULL SUBTERM CLOSURE: re-valuing any of them
+        // would break a live equality — not only the atom's own sides, but
+        // anything under them (a datatype recognisor commits
+        // `p = mk-pair(fst p, snd p)`; its `fst p` subterm is as pinned as
+        // the sides are, and bumping it would leave the model disagreeing
+        // with a committed-true atom).
+        let mut true_sides: FxHashSet<TermId> = FxHashSet::default();
+        // The committed-false pairs to check.
+        let mut false_pairs: Vec<(TermId, TermId)> = Vec::new();
+        for (&atom, &var) in &self.term_to_var {
+            let Some(TermKind::Eq(l, r)) = manager.get(atom).map(|t| &t.kind) else {
+                continue;
+            };
+            let (l, r) = (*l, *r);
+            match self.sat.model_value(var) {
+                oxiz_sat::LBool::True => {
+                    for t in std::iter::once(atom)
+                        .chain(oxiz_core::ast::traversal::collect_subterms(atom, manager))
+                    {
+                        true_sides.insert(t);
+                    }
+                }
+                oxiz_sat::LBool::False => false_pairs.push((l, r)),
+                _ => {}
+            }
+        }
+        if false_pairs.is_empty() {
+            return;
+        }
+        let pinned = assertion_subterms(&self.assertions, manager);
+        // Committed-true atoms that MENTION any false pair's sides: after a
+        // bump (+ rebuild propagation) each must still evaluate non-false
+        // under the modified model, or the bump is reverted (below).
+        let true_containers: Vec<TermId> = self
+            .term_to_var
+            .iter()
+            .filter(|(_, v)| self.sat.model_value(**v) == oxiz_sat::LBool::True)
+            .map(|(a, _)| *a)
+            .filter(|a| {
+                let subs = oxiz_core::ast::traversal::collect_subterms(*a, manager);
+                false_pairs
+                    .iter()
+                    .any(|(l, r)| subs.contains(l) || subs.contains(r))
+            })
+            .collect();
+        for (l, r) in false_pairs {
+            // Datatype-sorted sides are the datatype repair's province: their
+            // model entries form a derived value graph (constructor entries,
+            // selector-of-constructor entries, recognisor chains) that a bare
+            // bump desynchronises — the committed-true re-verification below
+            // would revert it anyway.  Extending this pass to re-derive that
+            // graph is the tracked next step (see the study).
+            let dt_sorted = |t: TermId| {
+                // A datatype-sorted side, or any selector application into
+                // one (an Int-sorted `(fst p)` is as much part of the
+                // datatype value graph as `p` itself): the recognisor
+                // tautologies make those sides live under committed-true
+                // atoms, and re-deriving the graph after a bump is the
+                // tracked next step.
+                manager.get(t).is_some_and(|n| {
+                    manager.sorts.is_datatype(n.sort)
+                        || matches!(n.kind, TermKind::DtSelector { .. })
+                })
+            };
+            if dt_sorted(l) || dt_sorted(r) {
+                continue;
+            }
+            let (Some(lv), Some(rv)) = (model.get(l), model.get(r)) else {
+                continue;
+            };
+            if lv != rv {
+                continue; // already separated
+            }
+            // Pick the side to re-value: one no ASSERTION pins.  The
+            // committed-true atoms no longer block outright — the bump's
+            // rebuild propagation keeps constructor-valued ones true, and the
+            // post-bump re-verification below reverts anything that would
+            // actually flip one to false.
+            let free = |t: TermId| !pinned.contains(&t);
+            let bump = if free(l) {
+                Some(l)
+            } else if free(r) {
+                Some(r)
+            } else {
+                None
+            };
+            let Some(side) = bump else {
+                continue;
+            };
+            let Some(node) = manager.get(if side == l { lv } else { rv }).cloned() else {
+                continue;
+            };
+            let bumped = match node.kind {
+                TermKind::IntConst(v) => {
+                    // A +1 that lands ON the partner's value would trade one
+                    // committed-false collision for another (the datatype
+                    // repair may already have moved the partner); step past it.
+                    let partner = model
+                        .get(if side == l { r } else { l })
+                        .and_then(|o| manager.get(o))
+                        .map(|n| n.kind.clone());
+                    let mut value = v + 1;
+                    if let Some(TermKind::IntConst(w)) = partner
+                        && w == value
+                    {
+                        value += 1;
+                    }
+                    manager.mk_int(value)
+                }
+                TermKind::RealConst(v) => {
+                    let one = num_rational::Rational64::from_integer(1);
+                    let partner = model
+                        .get(if side == l { r } else { l })
+                        .and_then(|o| manager.get(o))
+                        .map(|n| n.kind.clone());
+                    let mut value = v + one;
+                    if let Some(TermKind::RealConst(w)) = partner
+                        && w == value
+                    {
+                        value += one;
+                    }
+                    manager.mk_real(value)
+                }
+                _ => continue, // non-numeric collisions are other theories' to repair
+            };
+            model.set(side, bumped);
+            // Propagate through constructor entries: a model entry that is a
+            // datatype constructor application SPITTING the bumped term as an
+            // argument must be rebuilt with the new field, or every
+            // committed-true recognisor/congruence atom over it flips false
+            // (the skip-guard's `true_sides` exists precisely because of
+            // them; rebuilding is what makes the bump safe instead).
+            let entries: Vec<(TermId, TermId)> =
+                model.assignments().iter().map(|(t, v)| (*t, *v)).collect();
+            // (term, new value, old_arg -> new_arg per changed field)
+            type Rebuilt = (TermId, TermId, Vec<(TermId, TermId)>);
+            let mut rebuilt: Vec<Rebuilt> = Vec::new();
+            for (t, v) in entries.iter().filter(|(t, _)| *t != side) {
+                // Extract constructor info without holding a borrow across
+                // the `mk_dt_constructor` call below.
+                let ck = manager.get(*v).and_then(|n| {
+                    if let TermKind::DtConstructor { constructor, args } = &n.kind {
+                        let pos = args.iter().position(|a| *a == side);
+                        Some((*constructor, args.clone(), pos))
+                    } else {
+                        None
+                    }
+                });
+                let Some((constructor, args, pos_opt)) = ck else {
+                    continue;
+                };
+                let Some(pos) = pos_opt else {
+                    continue;
+                };
+                let mut new_args = args.clone();
+                new_args[pos] = bumped;
+                let Some(tnode) = manager.get(*t) else {
+                    continue;
+                };
+                let sort = tnode.sort;
+                let name = manager.resolve_str(constructor).to_string();
+                rebuilt.push((
+                    *t,
+                    manager.mk_dt_constructor(&name, new_args, sort),
+                    vec![(args[pos], bumped)],
+                ));
+            }
+            for (t, v, _) in &rebuilt {
+                model.set(*t, *v);
+            }
+            // Selector entries over a rebuilt constructor: their value IS the
+            // field's arg, so a changed field's selector entry must move with
+            // it (matched by the old value, which for these congruence shapes
+            // is exactly the field).
+            let mut selector_updates: Vec<(TermId, TermId)> = Vec::new();
+            for (t, _) in entries.iter() {
+                let Some(node) = manager.get(*t) else {
+                    continue;
+                };
+                let TermKind::DtSelector { arg, .. } = &node.kind else {
+                    continue;
+                };
+                let Some((_, _, arg_map)) = rebuilt.iter().find(|(rt, _, _)| rt == arg) else {
+                    continue;
+                };
+                let Some(old_value) = model.assignments().get(t) else {
+                    continue;
+                };
+                if let Some((_, n)) = arg_map.iter().find(|(o, _)| *o == *old_value) {
+                    selector_updates.push((*t, *n));
+                }
+            }
+            for (t, v) in selector_updates {
+                model.set(t, v);
+            }
+            // Soundness re-verification: every committed-true atom that
+            // mentions a bumped side must still evaluate non-false under the
+            // modified model.  A definite `false` means the bump broke a
+            // live equality; revert the bump (and its rebuilds) entirely.
+            let saved: Vec<(TermId, TermId)> =
+                model.assignments().iter().map(|(t, v)| (*t, *v)).collect();
+            let broke = true_containers.iter().any(|atom| {
+                matches!(
+                    self.eval_in_model_outcome(*atom, model, manager, 0),
+                    super::model_eval::EvalOutcome::Value(super::EvalVal::Bool(false))
+                )
+            });
+            if broke {
+                let mut fresh = crate::solver::types::Model::new();
+                for (t, v) in saved {
+                    fresh.set(t, v);
+                }
+                *model = fresh;
+            }
+        }
     }
 
     /// Pull apart two datatype values that the search proved *distinct* but the
