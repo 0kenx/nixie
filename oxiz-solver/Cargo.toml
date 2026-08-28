@@ -30,7 +30,7 @@ rayon = { workspace = true, optional = true }
 oxiz-proof = { workspace = true, optional = true }
 
 [features]
-default = ["std", "property-tests"]
+default = ["std", "property-tests", "nlsat"]
 std = [
     "oxiz-time/std",
     "oxiz-core/std",
@@ -45,6 +45,11 @@ std = [
     "rustc-hash/std",
     "oxiz-proof",
 ]
+# Nonlinear dispatch: forwards to `oxiz-theories/nlsat` (which pulls the
+# `oxiz-nlsat` crate). With it OFF the `NlsatTheory` field and the
+# cell-decomposition dispatch compile out and the honesty gate answers
+# `unknown` for nonlinear atoms. (Ported from upstream v0.3.3.)
+nlsat = ["oxiz-theories/nlsat", "std"]
 parallel-theories = ["rayon"]
 property-tests = []
 profiling = [

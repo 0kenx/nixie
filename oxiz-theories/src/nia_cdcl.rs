@@ -37,7 +37,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ania_ground::eval_assertions_true;
 use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
-use crate::nlsat::NlDispatchResult;
+use crate::nl_dispatch::NlDispatchResult;
 
 /// Wall-clock budget (ms). Overridable with `OXIZ_NIA_CDCL_MS`.
 const DEFAULT_DEADLINE_MS: u64 = 4_000;

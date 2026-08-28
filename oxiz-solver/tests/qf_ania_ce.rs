@@ -1,4 +1,5 @@
 //! QF_ANIA fixtures: nonlinear products over array `select` terms.
+#![cfg(feature = "nlsat")]
 #![allow(clippy::unwrap_used)]
 
 use oxiz_solver::{Context, SolverResult};

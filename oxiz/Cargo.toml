@@ -36,7 +36,10 @@ oxiz-proof = { workspace = true, optional = true }
 num-bigint = { workspace = true, features = ["std"] }
 
 [features]
-default = ["std"]
+# `nlsat` joins the defaults (upstream v0.3.3): a consumer that says nothing
+# keeps the nonlinear dispatch it had; a wasm-size consumer writes
+# default-features = false, features = ["std"] to drop it.
+default = ["std", "nlsat"]
 std = [
     "oxiz-core/std",
     "oxiz-math/std",
@@ -44,7 +47,7 @@ std = [
     "oxiz-theories/std",
     "oxiz-solver/std",
 ]
-nlsat = ["dep:oxiz-nlsat", "std"]
+nlsat = ["dep:oxiz-nlsat", "oxiz-theories/nlsat", "oxiz-solver/nlsat", "std"]
 optimization = ["dep:oxiz-opt", "std"]
 spacer = ["dep:oxiz-spacer", "std"]
 proof = ["dep:oxiz-proof", "std"]

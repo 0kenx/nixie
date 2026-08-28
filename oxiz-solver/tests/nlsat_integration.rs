@@ -6,6 +6,8 @@
 //! The `Context` API dispatches nonlinear assertions through the
 //! `Term→Polynomial` translator and `NiaSolver` / `NlsatSolver`.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_solver::{Context, SolverResult};
 
 // ========  ========

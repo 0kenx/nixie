@@ -31,7 +31,7 @@
 //!   theories, exotic connectives) makes the driver return `None` – never
 //!   a guess.
 
-use crate::nlsat::NlDispatchResult;
+use crate::nl_dispatch::NlDispatchResult;
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 
 /// Maximum number of explored case frames before the driver concedes.

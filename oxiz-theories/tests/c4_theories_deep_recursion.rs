@@ -14,6 +14,8 @@
 //! depths pin *together* is a bytes-per-frame threshold, never either number on
 //! its own; see [`WORKER_STACK`].
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_core::ast::{TermId, TermManager};
 use oxiz_theories::combination::TheoryCombiner;
 use oxiz_theories::euf::ProofStep;

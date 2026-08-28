@@ -29,14 +29,19 @@ egg = { workspace = true, optional = true }
 oxiz-nlsat = { workspace = true, optional = true }
 
 [features]
-default = ["std"]
+# `nlsat` is on by default: an existing consumer that says nothing keeps the
+# nonlinear dispatch it had before the feature existed. It is separated out of
+# `std` because `std` is "does this target have an OS" while `nlsat` is "does
+# this build carry the cell-decomposition nonlinear core" (~5% of a wasm
+# module; the COOLJAPAN Playground consumer that first needed it gone).
+# (Ported from upstream v0.3.3.)
+default = ["std", "nlsat"]
 std = [
     "oxiz-time/std",
     "oxiz-core/std",
     "oxiz-sat/std",
     "oxiz-math/std",
     "egg",
-    "oxiz-nlsat",
     "tracing",
     "tracing/std",
     "num-rational/std",
@@ -44,6 +49,12 @@ std = [
     "num-traits/std",
     "rustc-hash/std",
 ]
+# Nonlinear real/integer arithmetic (QF_NRA / QF_NIA / QF_NIRA): the
+# `oxiz-nlsat` crate and the `theories::nlsat` wrapper. With it OFF the
+# wrapper is compiled out and oxiz-solver's honesty gate answers `unknown`
+# for goals left holding a nonlinear arithmetic atom no theory could take.
+# The cost is completeness, never soundness.
+nlsat = ["dep:oxiz-nlsat", "std"]
 profiling = ["std", "oxiz-core/profiling", "oxiz-sat/profiling"]
 
 [dev-dependencies]

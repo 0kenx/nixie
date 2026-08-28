@@ -49,7 +49,7 @@ use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
 use oxiz_core::ast::{TermId, TermKind, TermManager};
 
 use crate::ania_ground::{ArrayInterp, eval_assertions_true, eval_bool, eval_int};
-use crate::nlsat::NlDispatchResult;
+use crate::nl_dispatch::NlDispatchResult;
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 

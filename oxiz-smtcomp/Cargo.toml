@@ -19,7 +19,7 @@ ws-progress = ["dep:tokio", "dep:axum", "dep:tower-http"]
 
 [dependencies]
 oxiz-core = { workspace = true, features = ["std"] }
-oxiz-solver = { workspace = true, features = ["std"] }
+oxiz-solver = { workspace = true, features = ["std", "nlsat"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

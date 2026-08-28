@@ -15,6 +15,8 @@
 //! Verdicts are cross-checked against Z3 semantics conceptually; no external
 //! solver is invoked.
 
+#![cfg(feature = "nlsat")]
+
 use num_rational::Rational64;
 use oxiz_core::ast::TermManager;
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints, dispatch_nra_constraints};

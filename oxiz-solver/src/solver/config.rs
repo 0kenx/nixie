@@ -152,7 +152,7 @@ impl Solver {
             // Nonlinear: NLSAT primary; the linear fallback keeps every
             // linear atom answerable.  Per-sort integrality in the
             // translator handles mixed NIRA.
-            #[cfg(feature = "std")]
+            #[cfg(feature = "nlsat")]
             {
                 self.nlsat = Some(oxiz_theories::nlsat::NlsatTheory::new(spec.integer));
             }

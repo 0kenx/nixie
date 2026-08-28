@@ -107,9 +107,12 @@ pub mod ania_ground;
 #[cfg(feature = "std")]
 pub mod checking;
 pub mod nia_cdcl;
+pub mod nl_dispatch;
+#[cfg(feature = "nlsat")]
 pub mod nl_dpll;
 pub mod nl_model_search;
 pub mod nl_preprocess;
+#[cfg(feature = "nlsat")]
 pub mod nlsat;
 #[cfg(feature = "std")]
 pub mod sls;

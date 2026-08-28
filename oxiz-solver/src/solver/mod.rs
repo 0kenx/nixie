@@ -10,6 +10,7 @@ pub(super) mod check_bv;
 pub(super) mod check_dt;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
+#[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -92,6 +93,7 @@ pub struct Solver {
     pub(super) derived_reasons: theory_manager::DerivedReasons,
     /// NLSAT solver for nonlinear arithmetic (QF_NIA/QF_NRA)
     #[cfg(feature = "std")]
+    #[cfg(feature = "nlsat")]
     pub(super) nlsat: Option<oxiz_theories::nlsat::NlsatTheory>,
     /// MBQI solver for quantified formulas
     pub(super) mbqi: MBQIIntegration,
@@ -570,6 +572,7 @@ impl Solver {
             diff: oxiz_theories::DiffLogicSolver::new(true),
             derived_reasons: theory_manager::DerivedReasons::default(),
             #[cfg(feature = "std")]
+            #[cfg(feature = "nlsat")]
             nlsat: None,
             mbqi: MBQIIntegration::new(),
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
@@ -1166,6 +1169,11 @@ impl Solver {
         // For NIA/NRA logics: dispatch all assertions to the full polynomial
         // solver first (NiaSolver or NlsatSolver). This gives a definitive
         // SAT/UNSAT for most benchmark problems without the CDCL(T) loop.
+        // The nonlinear cell-decomposition dispatch is behind the `nlsat`
+        // feature; without it this goal falls through to the search below,
+        // whose honesty gate (`arith_atoms_need_theory`) answers `unknown`
+        // for the nonlinear atoms no theory could take. (Upstream v0.3.3.)
+        #[cfg(feature = "nlsat")]
         if let Some(nl_result) = self.dispatch_nl_solver(manager) {
             match nl_result {
                 SolverResult::Sat => return SolverResult::Sat,
@@ -1176,6 +1184,11 @@ impl Solver {
 
         // Check nonlinear arithmetic constraints for early conflict detection
         // (static pattern matching, complementary to the dispatch above).
+        // The static nonlinear UNSAT pattern detector is part of the `nlsat`
+        // feature cluster (it lives in `check_nlsat`); without the feature
+        // the honesty gate below owns the verdict. (Upstream v0.3.3 keeps the
+        // detector compiled in; this fork's cluster is one module.)
+        #[cfg(feature = "nlsat")]
         if self.check_nonlinear_constraints(manager) {
             return SolverResult::Unsat;
         }
@@ -2551,7 +2564,7 @@ impl Solver {
         // three theory solvers at its entry and re-derives their state from the
         // SAT trail, so nothing between this `push` and the next verdict can
         // observe the scope, and `pop` resets regardless.
-        #[cfg(feature = "std")]
+        #[cfg(feature = "nlsat")]
         if let Some(nlsat) = &mut self.nlsat {
             nlsat.push();
         }
@@ -2779,7 +2792,7 @@ impl Solver {
             // for a level it is already at – in particular it does not disturb
             // the propagation head that `sat.pop()` deliberately rewound.
             self.rebase_theory_state();
-            #[cfg(feature = "std")]
+            #[cfg(feature = "nlsat")]
             if let Some(nlsat) = &mut self.nlsat {
                 nlsat.pop();
             }
@@ -2812,7 +2825,7 @@ impl Solver {
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());
         self.has_quantifiers = false;
-        #[cfg(feature = "std")]
+        #[cfg(feature = "nlsat")]
         {
             self.nlsat = None;
         }

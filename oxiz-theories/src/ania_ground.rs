@@ -9,7 +9,7 @@
 //! Works on purified assertions (`c = select(A,i)` interfaces + pure arith)
 //! and on residual `ite`/`select` still present under arith after purification.
 
-use crate::nlsat::NlDispatchResult;
+use crate::nl_dispatch::NlDispatchResult;
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{ToPrimitive, Zero};

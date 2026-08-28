@@ -13,7 +13,7 @@ categories = ["algorithms", "development-tools::testing"]
 oxiz-core = { workspace = true, features = ["std"] }
 # The single place this crate reads a clock (wasm-safe; see oxiz-time).
 oxiz-time = { workspace = true, features = ["std"] }
-oxiz-solver = { workspace = true, features = ["std"] }
+oxiz-solver = { workspace = true, features = ["std", "nlsat"] }
 smallvec.workspace = true
 rustc-hash = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }

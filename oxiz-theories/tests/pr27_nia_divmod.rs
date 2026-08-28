@@ -25,6 +25,8 @@
 //! sub-term) and the caller fell back to CDCL(T), which cannot handle the
 //! nonlinear part either – so these formulas answered `unknown` end to end.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_core::ast::TermManager;
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints};
 
