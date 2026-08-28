@@ -580,7 +580,7 @@ impl Solver {
     /// the reported `Sat` is spurious and the solver answers `Unknown` instead.
     /// The assertion-level half of the gate alone, for the repair hook's
     /// which-half-refuted discrimination.
-    #[allow(dead_code)] // enabled with the collision half
+    #[allow(dead_code)] // used by the repair hook when the collision half lands with a clause emitter
     pub(super) fn refuted_by_assertion_only(&self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
@@ -623,16 +623,7 @@ impl Solver {
                 _ => {}
             }
         }
-        // The collision half is implemented (see `refuted_negated_equality`)
-        // but not yet enabled: firing it honestly reports model collisions
-        // this fork's pipelines currently produce on three shapes — the
-        // datatype selector value-graph (needs re-derivation after a bump,
-        // tracked), and storecomm-style pinned-side pairs (a search
-        // convergence matter).  See the study postscripts for the measured
-        // history.  The model-side repair for the shapes it CAN fix is
-        // `separate_committed_disequalities` in the model builder, which is
-        // enabled and landable on its own.
-        false
+        self.refuted_negated_equality(manager).is_some()
     }
 
     /// Evaluate one assertion for the gate, with every top-level conjunct
@@ -755,13 +746,26 @@ impl Solver {
     /// (Ported from upstream v0.3.3.)
     /// The collision half of the gate, returning the offending pair so the
     /// repair hook at the call site can emit exactly that pair's trichotomy.
-    #[allow(dead_code)] // enabled with the collision half (see the stub above)
     pub(super) fn refuted_negated_equality(
         &self,
         manager: &TermManager,
     ) -> Option<(TermId, TermId)> {
         use super::types::Constraint;
         use oxiz_sat::LBool;
+
+        // Array-bearing stacks are out of scope for the collision half: their
+        // reads live in a value graph this fork re-derives incompletely (the
+        // purification proxies of `select` results carry no `Select` node to
+        // filter on), and the store-store congruence conflict — equal writes
+        // at equal indices force equal chains — never propagates, so the
+        // blocking loop cannot converge on store-commutativity shapes and
+        // dies at its budget with an honest but avoidable `Unknown`.  Both
+        // are the tracked next items (array value-graph re-derivation;
+        // functional store equality).  Every array-free collision shape is
+        // repaired and gated.
+        if self.has_array_ops || !self.config.enable_collision_gate {
+            return None;
+        }
 
         let model = self.model.as_ref()?;
         for (&var, constraint) in &self.var_to_constraint {
@@ -772,11 +776,40 @@ impl Solver {
                 continue;
             }
             // Numeric operands only: a Bool/BV/EUF equality has its own
-            // theory and no arithmetic value to compare.
-            let is_numeric = manager.get(lhs).is_some_and(|t| {
-                t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort
-            });
-            if !is_numeric {
+            // theory and no arithmetic value to compare.  ARRAY READS are
+            // additionally excluded for now: their collision repair needs
+            // the array value-graph re-derivation (reads must follow the
+            // store chains' semantics), and on store-commutativity shapes
+            // the blocking loop cannot converge either — the store-store
+            // congruence conflict (equal writes at equal indices force equal
+            // chains) never propagates, so the core re-proposes the same
+            // vacuous candidate until the block budget dies.  Both are the
+            // tracked next items; every other collision shape is repaired
+            // (`separate_committed_disequalities`, the datatype hints and
+            // selector re-derivation) and gated here.
+            // `dt.size!` measure variables are excluded alongside array
+            // reads: a tree's size is DERIVED from its reconstructed value
+            // (1 + the children's sizes), so a size collision is retired by
+            // re-deriving the size graph after a separation — the same class
+            // of work as the array value-graph, and equally tracked.
+            // Scope: the collision half fires only on sides whose collisions
+            // the model repairs demonstrably retire — plain numeric vars and
+            // compound arithmetic.  Excluded, each for a root-caused reason
+            // (see the study): array reads (`Select`) and their purification
+            // proxies (array value-graph; store-store congruence never
+            // propagates), `dt.size!` measures (derived from the
+            // reconstructed tree), and `DtSelector` applications (the
+            // datatype value-graph: enum-heavy goals produce thousands of
+            // same-constructor selector pairs no value bump can retire).
+            let side_ok = |t: TermId| {
+                manager.get(t).is_some_and(|n| {
+                    (n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort)
+                        && !matches!(&n.kind, TermKind::Select(..) | TermKind::DtSelector { .. })
+                        && !matches!(&n.kind, TermKind::Var(v)
+                            if manager.resolve_str(*v).starts_with("dt.size"))
+                })
+            };
+            if !side_ok(lhs) || !side_ok(rhs) {
                 continue;
             }
             let (
@@ -931,6 +964,34 @@ impl Solver {
                 // the whole evaluation inconclusive (never a false downgrade) –
                 // exactly the variables `build_model` would have defaulted to 0.
                 if sort == manager.sorts.int_sort || sort == manager.sorts.real_sort {
+                    // PURIFICATION PROXIES ONLY: a concrete model entry wins
+                    // over the tableau for the solver's own introduced
+                    // variables (the `__oxiz_*`/`$p*` names), because the
+                    // model repairs (`separate_disequal_dt_values`,
+                    // `separate_committed_disequalities`, selector
+                    // re-derivation) publish the separated constants there,
+                    // while the tableau holds only the unconstrained default
+                    // (0) for them — reading the tableau first made every
+                    // proxy collide and starved those repairs.  USER
+                    // variables stay tableau-first: their model entries are
+                    // derived FROM the tableau, and preferring them on
+                    // array/arith goals flipped two parity benchmarks
+                    // (`array_unique`) by changing which assertions the gate
+                    // could evaluate.
+                    let is_proxy = matches!(
+                        &t.kind,
+                        TermKind::Var(name)
+                            if manager
+                                .resolve_str(*name)
+                                .starts_with("__oxiz")
+                                || manager.resolve_str(*name).starts_with("$p")
+                    );
+                    if is_proxy && let Some(value_term) = model.get(term) {
+                        let parsed = parse_value_term(value_term, manager);
+                        if !matches!(parsed, EvalOutcome::UNDETERMINED) {
+                            return Opened::Done(parsed);
+                        }
+                    }
                     match self.arith.value(term) {
                         Some(n) => EvalOutcome::number(n),
                         None => EvalOutcome::UNDETERMINED,

@@ -244,6 +244,15 @@ impl ModelCounter {
         script: &str,
         start: std::time::Instant,
     ) -> ModelCountResult {
+        // The collision gate's honest `Unknown`s (a blocked candidate whose
+        // collision the repairs cannot retire) would read as
+        // end-of-enumeration here and cut counts short; enumeration wants
+        // the raw search, exactly like the `minimal` config does.
+        {
+            let mut cfg = ctx.solver_config().clone();
+            cfg.enable_collision_gate = false;
+            ctx.set_solver_config(cfg);
+        }
         if let Err(e) = ctx.execute_script(script) {
             return ModelCountResult::error(format!("failed to load script: {e}"), start);
         }

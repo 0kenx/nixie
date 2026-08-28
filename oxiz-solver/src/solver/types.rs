@@ -255,6 +255,14 @@ pub struct SolverConfig {
     /// refutation gate also fires on the evaluator's width limit), so while
     /// any is live a SAT-core `Unsat` is downgraded to `Unknown`.
     pub enable_model_blocking: bool,
+    /// Enable the `Sat` gate's negated-equality collision half
+    /// ([`crate::solver::Solver::model_refutes_assertions`]): a numeric
+    /// equality the core committed FALSE whose model values collide is a
+    /// definite model refutation.  Default on; the model counter opts out —
+    /// its exhaustive-enumeration contract treats every `Unknown` as
+    /// end-of-enumeration, and the blocking loop an honest collision fires
+    /// would cut counts short.
+    pub enable_collision_gate: bool,
     /// NIA-over-LP relaxation engine (`oxiz_theories::arithmetic::nla`):
     /// linearize every product into a fresh monic variable, then loop LP
     /// feasibility / exact monic-consistency checks / interval propagation /
@@ -342,6 +350,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            enable_collision_gate: true,
             nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
@@ -376,6 +385,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            enable_collision_gate: true,
             nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
@@ -410,6 +420,7 @@ impl SolverConfig {
         Self {
             timeout_ms: 0,
             enable_model_blocking: true,
+            enable_collision_gate: true,
             nonlinear_relaxation_engine: true,
             max_model_blocking_rounds: 64,
             parallel: false,
@@ -445,6 +456,7 @@ impl SolverConfig {
             timeout_ms: 0,
             // `minimal` opts out (upstream #40: on everywhere except here).
             enable_model_blocking: false,
+            enable_collision_gate: false,
             nonlinear_relaxation_engine: false,
             max_model_blocking_rounds: 0,
             parallel: false,

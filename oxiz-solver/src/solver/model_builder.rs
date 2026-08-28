@@ -240,10 +240,85 @@ impl Solver {
 
         // Datatype values.  Must run last: the reconstruction reads the tester
         // literals and the field values the passes above have already recorded.
-        self.extract_datatype_model(&mut model, manager);
+        // Field hints for the datatype repair: when a committed-false
+        // equality names two selectors of the SAME field (`(fst p)` vs
+        // `(fst q)`), separating that field — not whichever the repair
+        // happens to pick first — is what retires the collision (and each
+        // blocked round otherwise re-picks a different field and the loop
+        // never converges).
+        let mut dt_field_hints: FxHashMap<TermId, Vec<String>> = FxHashMap::default();
+        let mut dt_injectivity_pairs: Vec<(TermId, TermId)> = Vec::new();
+        for (&_var, constraint) in &self.var_to_constraint {
+            let super::types::Constraint::Eq(l, r) = constraint else {
+                continue;
+            };
+            let (Some(nl), Some(nr)) = (manager.get(*l), manager.get(*r)) else {
+                continue;
+            };
+            let (
+                TermKind::DtSelector {
+                    selector: sl,
+                    arg: al,
+                },
+                TermKind::DtSelector {
+                    selector: sr,
+                    arg: ar,
+                },
+            ) = (&nl.kind, &nr.kind)
+            else {
+                continue;
+            };
+            if sl != sr {
+                continue;
+            }
+            if self.sat.model_value(_var) != oxiz_sat::LBool::False {
+                continue;
+            }
+            let name = manager.resolve_str(*sl).to_string();
+            for arg in [*al, *ar] {
+                dt_field_hints.entry(arg).or_default().push(name.clone());
+            }
+            // Same committed constructor on both args?  Constructor
+            // injectivity then turns the false selector equality into a
+            // disequality of the ARGS themselves (distinct fields of one
+            // constructor are distinct values).
+            let ctor_of = |arg: TermId| -> Option<String> {
+                self.term_to_var.iter().find_map(|(&atom, &v)| {
+                    let n = manager.get(atom)?;
+                    let TermKind::DtTester {
+                        constructor,
+                        arg: a,
+                    } = &n.kind
+                    else {
+                        return None;
+                    };
+                    if *a != arg || self.sat.model_value(v) != oxiz_sat::LBool::True {
+                        return None;
+                    }
+                    Some(manager.resolve_str(*constructor).to_string())
+                })
+            };
+            if let (Some(ca), Some(cb)) = (ctor_of(*al), ctor_of(*ar))
+                && ca == cb
+            {
+                let (lo, hi) = if al < ar { (*al, *ar) } else { (*ar, *al) };
+                if !dt_injectivity_pairs.contains(&(lo, hi)) {
+                    dt_injectivity_pairs.push((lo, hi));
+                }
+            }
+        }
+        self.extract_datatype_model(&mut model, manager, &dt_field_hints, &dt_injectivity_pairs);
         // Scalar/array analogue of the datatype repair (see its doc); runs
         // for every model, not only datatype-bearing ones.
         self.separate_committed_disequalities(&mut model, manager);
+        // Selector re-derivation: a `DtSelector` term's value IS the
+        // corresponding field of its argument's constructor value, so after
+        // the repairs above move any constructor-valued entry, every selector
+        // entry over it (and over any term whose value is that constructor)
+        // must follow.  Without this the recognisor/congruence selector terms
+        // keep their pre-separation defaults and the committed-false
+        // equalities between them still collide.
+        self.rederive_selector_entries(&mut model, manager);
 
         // Rounding-mode values.  Must run after the Boolean pass above, which
         // is what put the mode-equality atoms' truth values into scope.
@@ -351,7 +426,13 @@ impl Solver {
     /// `RealConst`.  A datatype entry therefore always evaluates to `None`
     /// ("inconclusive"), never to `Some(Bool(false))`, so no reconstruction –
     /// complete, partial, or absent – can turn a correct `sat` into `unknown`.
-    fn extract_datatype_model(&self, model: &mut Model, manager: &mut TermManager) {
+    fn extract_datatype_model(
+        &self,
+        model: &mut Model,
+        manager: &mut TermManager,
+        dt_field_hints: &FxHashMap<TermId, Vec<String>>,
+        injectivity_pairs: &[(TermId, TermId)],
+    ) {
         // O(1) guard: datatype lemmas exist iff the assertion set mentions a
         // datatype term, so a datatype-free problem never pays for the walk.
         if self.dt_axiom_instances.is_empty() {
@@ -424,8 +505,116 @@ impl Solver {
             }
         }
 
-        self.separate_disequal_dt_values(&decls, model, manager);
+        self.separate_disequal_dt_values(&decls, dt_field_hints, injectivity_pairs, model, manager);
         debug_verify_dt_model(&self.assertions, model, manager);
+    }
+
+    /// Re-derive every `DtSelector` term's model entry from its argument's
+    /// current constructor value (`sel(C(a…)) = a_i`), iterating to a
+    /// fixpoint so selector chains settle.  This is what makes a separated
+    /// datatype value propagate to the whole derived selector graph — the
+    /// missing piece that left recognisor/congruence selector terms colliding
+    /// after `separate_disequal_dt_values` had already separated the
+    /// constructors themselves.
+    fn rederive_selector_entries(&self, model: &mut Model, manager: &TermManager) {
+        // Selector terms to consider: every DtSelector term the encoding
+        // knows (term_to_var keys) plus any DtSelector already in the model.
+        let mut selector_terms: Vec<TermId> = self
+            .term_to_var
+            .keys()
+            .copied()
+            .filter(|t| {
+                manager
+                    .get(*t)
+                    .is_some_and(|n| matches!(n.kind, TermKind::DtSelector { .. }))
+            })
+            .collect();
+        // Selector terms that never got a variable of their own but appear as
+        // the SIDES of encoded equality constraints (the recognisor/congruence
+        // atoms name `(fst p)` etc. directly).
+        for constraint in self.var_to_constraint.values() {
+            if let super::types::Constraint::Eq(l, r) = constraint {
+                for side in [*l, *r] {
+                    if manager
+                        .get(side)
+                        .is_some_and(|n| matches!(n.kind, TermKind::DtSelector { .. }))
+                        && !selector_terms.contains(&side)
+                    {
+                        selector_terms.push(side);
+                    }
+                }
+            }
+        }
+        selector_terms.sort_unstable_by_key(|t| t.raw());
+        selector_terms.dedup();
+        // One fixpoint iteration: for each selector term, if its argument's
+        // value is a constructor application, set the selector's entry to the
+        // named field's arg.  Repeat while anything changes (chains).
+        for _ in 0..8 {
+            let mut changed = false;
+            for &sel_term in &selector_terms {
+                let Some(TermKind::DtSelector { selector, arg }) =
+                    manager.get(sel_term).map(|n| n.kind.clone())
+                else {
+                    continue;
+                };
+                // Fold order: (1) the argument term is ITSELF a literal
+                // constructor application — `sel(C(a…))` is `a_i`
+                // syntactically, no model entry needed (the pure-equality
+                // path never reconstructs axiom-internal constructor terms,
+                // so their selectors have nothing else to read); (2) the
+                // argument's model VALUE is a constructor — read the field
+                // from it.
+                let (constructor, args): (oxiz_core::interner::Spur, Vec<TermId>) =
+                    match manager.get(arg).map(|n| n.kind.clone()) {
+                        Some(TermKind::DtConstructor { constructor, args }) => {
+                            (constructor, args.to_vec())
+                        }
+                        _ => {
+                            let Some(arg_val) = model.get(arg) else {
+                                continue;
+                            };
+                            let Some(val_node) = manager.get(arg_val) else {
+                                continue;
+                            };
+                            let TermKind::DtConstructor { constructor, args } = &val_node.kind
+                            else {
+                                continue;
+                            };
+                            (*constructor, args.iter().copied().collect())
+                        }
+                    };
+                let arg_val_ctor_sort = match manager.get(arg).map(|n| n.kind.clone()) {
+                    Some(TermKind::DtConstructor { .. }) => manager.get(arg).map(|n| n.sort),
+                    _ => model.get(arg).and_then(|v| manager.get(v).map(|n| n.sort)),
+                };
+                // Field position by selector name via the declaration.
+                let Some(sort) = arg_val_ctor_sort else {
+                    continue;
+                };
+                let Some(decl) = super::dt_axioms::resolve_decl(sort, manager) else {
+                    continue;
+                };
+                let ctor_name = manager.resolve_str(constructor).to_string();
+                let Some(cinfo) = decl.constructors.iter().find(|c| c.name == ctor_name) else {
+                    continue;
+                };
+                let sel_name = manager.resolve_str(selector).to_string();
+                let Some(pos) = cinfo.fields.iter().position(|f| f.selector == sel_name) else {
+                    continue;
+                };
+                let Some(field_val) = args.get(pos) else {
+                    continue;
+                };
+                if model.get(sel_term) != Some(*field_val) {
+                    model.set(sel_term, *field_val);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
     }
 
     /// Pull apart the model entries of any committed-false equality whose two
@@ -683,10 +872,16 @@ impl Solver {
     fn separate_disequal_dt_values(
         &self,
         decls: &FxHashMap<SortId, DeclInfo>,
+        dt_field_hints: &FxHashMap<TermId, Vec<String>>,
+        injectivity_pairs: &[(TermId, TermId)],
         model: &mut Model,
         manager: &mut TermManager,
     ) {
-        let (disequal, equal_adjacency) = self.decided_dt_equalities(model, manager);
+        let (mut disequal, equal_adjacency) = self.decided_dt_equalities(model, manager);
+        // Injectivity-derived pairs (see the hint builder): the top-level
+        // equality atom may never be committed false on its own, but the
+        // values must render distinct all the same.
+        disequal.extend(injectivity_pairs.iter().copied());
         if disequal.is_empty() {
             return;
         }
@@ -709,7 +904,16 @@ impl Solver {
             let Some(sort) = manager.get(right).map(|node| node.sort) else {
                 continue;
             };
-            self.separate_dt_value(right, sort, &class, &asserted, decls, model, manager);
+            self.separate_dt_value(
+                right,
+                sort,
+                &class,
+                &asserted,
+                decls,
+                dt_field_hints,
+                model,
+                manager,
+            );
         }
     }
 
@@ -816,6 +1020,7 @@ impl Solver {
         class: &[TermId],
         asserted: &FxHashSet<TermId>,
         decls: &FxHashMap<SortId, DeclInfo>,
+        dt_field_hints: &FxHashMap<TermId, Vec<String>>,
         model: &mut Model,
         manager: &mut TermManager,
     ) {
@@ -844,7 +1049,18 @@ impl Solver {
         }
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;
-        for (position, (selector, field_sort)) in fields.into_iter().enumerate() {
+        // Try the hinted field first (see `dt_field_hints`' builder), then
+        // the rest in declaration order.
+        let hinted: Vec<String> = dt_field_hints.get(&term).cloned().unwrap_or_default();
+        let mut order: Vec<usize> = (0..fields.len()).collect();
+        for hint in hinted.iter().rev() {
+            if let Some(pos) = fields.iter().position(|(sel, _)| sel == hint) {
+                order.retain(|&i| i != pos);
+                order.insert(0, pos);
+            }
+        }
+        for position in order {
+            let (selector, field_sort) = fields[position].clone();
             if field_sort != int_sort && field_sort != real_sort {
                 continue;
             }
@@ -856,7 +1072,19 @@ impl Solver {
             if pinned || asserted.contains(&accessor) {
                 continue;
             }
-            let current = args[position];
+            // Cumulative: `model[term]` may already carry an earlier
+            // iteration's bump (the core can commit BOTH selector pairs of a
+            // disequal pair false), so read the CURRENT value, not the
+            // pre-loop snapshot.
+            let current = model
+                .get(term)
+                .and_then(|v| manager.get(v).cloned().map(|n| n.kind))
+                .and_then(|kind| match kind {
+                    TermKind::DtConstructor { args, .. } => Some(args.to_vec()),
+                    _ => None,
+                })
+                .map(|cur_args| cur_args[position])
+                .unwrap_or(args[position]);
             let bumped = match manager.get(current).map(|node| node.kind.clone()) {
                 Some(TermKind::IntConst(value)) => manager.mk_int(value + 1),
                 Some(TermKind::RealConst(value)) => {
@@ -864,7 +1092,14 @@ impl Solver {
                 }
                 _ => continue,
             };
-            let mut new_args = args.to_vec();
+            let mut new_args = model
+                .get(term)
+                .and_then(|v| manager.get(v).cloned().map(|n| n.kind))
+                .and_then(|kind| match kind {
+                    TermKind::DtConstructor { args, .. } => Some(args.to_vec()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| args.to_vec());
             new_args[position] = bumped;
             let value = manager.mk_dt_constructor(&name, new_args, sort);
             // Publish the field too, so `(get-value ((fst q)))` reports the very
@@ -873,6 +1108,11 @@ impl Solver {
             model.set(term, value);
             for &member in class {
                 model.set(member, value);
+            }
+            if hinted.iter().any(|h| h == &selector) {
+                // More hinted fields may need separating (the core can commit
+                // BOTH selector pairs of a disequal pair false); keep going.
+                continue;
             }
             return;
         }
