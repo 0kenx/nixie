@@ -78,14 +78,21 @@ The A1/A2/lazy-mode arith-disequality family (24 upstream tests pass), the
 (`lp_int_bounds`), the `solve_with_theory` trail-clone fix, and the lucky
 phase (this fork's own July implementation).
 
-### Deliberately not ported (documented in the study)
+### Deferred items — all landed 2026-08-28 (see the study's closing postscript)
 
-The NLA relaxation engine, algebraic-number witnesses, model blocking, the
-`oxiz-time` wasm crate, intern single-retention, the `oxiz-core` Nelson-Oppen
-theory layer, the `nlsat` feature gate, deep-recursion test hygiene,
-`[profile.release-speed]` (N/A — our release is already speed-tuned), BVE
-preset enablement (a measured knob decision, needs the benchmarking
-protocol), and `oxiarc` version bumps.
+Model blocking (which also fixed the fork's restriction-without-downgrade
+false-`unsat` hazard) · `oxiz-time` (wasm-safe clocks, 126 references) ·
+intern single-retention (HashTable, slope-test pinned) · the `oxiz-core`
+Nelson-Oppen theory layer · the `nlsat` feature gate (honest cfg splits,
+both builds tested) · the NLA relaxation engine (previously-`unknown` QF_NIA
+goals now proof-backed `unsat`) · algebraic-number witnesses (`x*x = 2.0` →
+`sat` with z3's byte-identical `root-obj`; five root-isolation fixes) ·
+symbolic-rounding-mode FP solving (IteBranch; 3 pinned tests un-pinned) ·
+deep-recursion test hygiene. Z3 parity at the close: **169/170 Correct,
+1 Inconclusive, 0 Wrong**. Deliberately NOT ported: BVE preset enablement
+(a heuristic change this repo's benchmarking protocol gates; upstream's data
+point recorded) and `[profile.release-speed]` (N/A — our release is already
+speed-tuned), plus `oxiarc` version bumps (no behavior).
 
 ## [0.3.2] - Unreleased
 
