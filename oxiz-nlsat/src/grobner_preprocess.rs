@@ -159,7 +159,7 @@ impl GroebnerPreprocessor {
     /// (p = 0) and returns a simplified equivalent system.
     pub fn preprocess(&mut self, equations: &[Polynomial]) -> PreprocessResult {
         self.stats.invocations += 1;
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
 
         if !self.config.enabled {
             self.stats.skipped += 1;
@@ -276,8 +276,8 @@ impl GroebnerPreprocessor {
     /// damage at a small, fixed number of background threads rather than
     /// letting it grow without limit.
     fn compute_grobner_with_timeout(&self, polys: &[Polynomial]) -> Option<Vec<Polynomial>> {
+        use oxiz_time::Duration;
         use std::sync::mpsc;
-        use std::time::Duration;
 
         // Reserve a slot, or honestly skip if we're already at the cap on
         // outstanding (potentially permanently-running) worker threads.
@@ -656,7 +656,7 @@ mod tests {
         // `preprocess` (it produced a plausible, non-overflowing value)
         // without depending on machine speed.  The `invocations` counter and
         // `reset_stats` cover the rest of the stats machinery.
-        let outer = std::time::Instant::now();
+        let outer = oxiz_time::Instant::now();
         let _result = preprocessor.preprocess(std::slice::from_ref(&p1));
         let outer_us = outer.elapsed().as_micros() as u64;
 
@@ -781,7 +781,7 @@ mod tests {
                 released = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            std::thread::sleep(oxiz_time::Duration::from_millis(5));
         }
         assert!(
             released,

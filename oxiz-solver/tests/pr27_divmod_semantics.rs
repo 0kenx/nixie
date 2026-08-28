@@ -53,6 +53,8 @@
 //! `arith_axioms`'s (already-correct) constraint semantics. Every case here
 //! that checks `get-value` output pins the fix for that gap too.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_solver::Context;
 
 /// Run `script` through a fresh [`Context`], returning its output lines.

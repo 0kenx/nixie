@@ -1,3 +1,5 @@
+#![cfg(feature = "nlsat")]
+
 use oxiz_core::ast::TermManager;
 use oxiz_core::smtlib::{Command, parse_script};
 use oxiz_theories::ania_ground::try_decide_ground_ania;

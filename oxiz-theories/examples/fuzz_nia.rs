@@ -12,9 +12,12 @@
 //! This harness is what surfaced the Tseitin gate-aliasing wrong-unsat and
 //! the simplex frame leak; run it after touching the encoder or the theory
 //! loop.
+#[cfg(feature = "nlsat")]
 use num_bigint::BigInt;
+#[cfg(feature = "nlsat")]
 use oxiz_core::ast::{TermId, TermManager};
 
+#[cfg(feature = "nlsat")]
 fn main() {
     let seed: u64 = std::env::args()
         .nth(1)
@@ -63,7 +66,9 @@ fn main() {
     println!("all {} iterations sound (misses are budget-bound)", n_iters);
 }
 
+#[cfg(feature = "nlsat")]
 struct Rng(u64);
+#[cfg(feature = "nlsat")]
 impl Rng {
     fn new(seed: u64) -> Self {
         Rng(seed | 1)
@@ -81,6 +86,7 @@ impl Rng {
     }
 }
 
+#[cfg(feature = "nlsat")]
 fn rand_lin(m: &mut TermManager, vars: &[TermId], rng: &mut Rng) -> TermId {
     let build = |m: &mut TermManager, rng: &mut Rng| -> TermId {
         let mut parts = vec![m.mk_int((rng.below(7) as i64) - 3)];
@@ -106,6 +112,7 @@ fn rand_lin(m: &mut TermManager, vars: &[TermId], rng: &mut Rng) -> TermId {
     }
 }
 
+#[cfg(feature = "nlsat")]
 fn random_atom(m: &mut TermManager, vars: &[TermId], rng: &mut Rng) -> TermId {
     let l = rand_lin(m, vars, rng);
     let r = m.mk_int((rng.below(5) as i64) - 2);
@@ -118,6 +125,7 @@ fn random_atom(m: &mut TermManager, vars: &[TermId], rng: &mut Rng) -> TermId {
     }
 }
 
+#[cfg(feature = "nlsat")]
 fn brute_force(m: &mut TermManager, vars: &[TermId], goal: TermId) -> bool {
     for a in -6..=6 {
         for b in -6..=6 {
@@ -135,6 +143,7 @@ fn brute_force(m: &mut TermManager, vars: &[TermId], goal: TermId) -> bool {
     false
 }
 
+#[cfg(feature = "nlsat")]
 fn print_formula(t: TermId, m: &TermManager) {
     fn go(t: TermId, m: &TermManager, out: &mut String) {
         use oxiz_core::ast::TermKind;
@@ -203,4 +212,9 @@ fn print_formula(t: TermId, m: &TermManager) {
     let mut s = String::new();
     go(t, m, &mut s);
     println!("{}", s);
+}
+
+#[cfg(not(feature = "nlsat"))]
+fn main() {
+    eprintln!("fuzz_nia requires the nlsat feature");
 }

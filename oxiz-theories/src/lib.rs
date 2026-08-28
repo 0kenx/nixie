@@ -58,6 +58,11 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+// Native builds must never silently end up on oxiz-time's frozen stub clock
+// (the `std` feature forward in this crate's manifest is what selects the real
+// one; see oxiz-time/src/lib.rs).
+const _: () = assert!(!oxiz_time::IS_FROZEN);
+
 #[cfg(not(feature = "std"))]
 extern crate alloc;
 
@@ -102,9 +107,16 @@ pub mod ania_ground;
 #[cfg(feature = "std")]
 pub mod checking;
 pub mod nia_cdcl;
+pub mod nl_dispatch;
+#[cfg(feature = "nlsat")]
 pub mod nl_dpll;
+/// Exact BigRational re-verification of a candidate nonlinear witness against
+/// the untouched assertions (std-only; ported from upstream v0.3.3).
+#[cfg(feature = "std")]
+pub mod nl_eval;
 pub mod nl_model_search;
 pub mod nl_preprocess;
+#[cfg(feature = "nlsat")]
 pub mod nlsat;
 #[cfg(feature = "std")]
 pub mod sls;

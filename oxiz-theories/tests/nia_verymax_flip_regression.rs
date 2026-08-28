@@ -27,6 +27,8 @@
 //! These tests pin the *procedure*: each formula must be decided by
 //! `dispatch_nia_constraints` (model-based NIA search), not by luck.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_core::ast::{TermId, TermManager};
 use oxiz_theories::nlsat::{NlDispatchResult, dispatch_nia_constraints};
 

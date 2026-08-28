@@ -37,7 +37,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ania_ground::eval_assertions_true;
 use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
-use crate::nlsat::NlDispatchResult;
+use crate::nl_dispatch::NlDispatchResult;
 
 /// Wall-clock budget (ms). Overridable with `OXIZ_NIA_CDCL_MS`.
 const DEFAULT_DEADLINE_MS: u64 = 4_000;
@@ -52,8 +52,8 @@ pub fn cdcl_nia_search(
     verify: &[TermId],
     manager: &mut TermManager,
 ) -> Option<NlDispatchResult> {
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_millis(
+    let deadline = oxiz_time::Instant::now()
+        + oxiz_time::Duration::from_millis(
             env_u64("OXIZ_NIA_CDCL_MS", DEFAULT_DEADLINE_MS).max(100),
         );
     let max_conflicts = env_u64("OXIZ_NIA_CDCL_CONFLICTS", DEFAULT_MAX_CONFLICTS);
@@ -1117,7 +1117,7 @@ impl<'a> CdclSolver<'a> {
         &mut self,
         assertions: &[TermId],
         manager: &TermManager,
-        deadline: std::time::Instant,
+        deadline: oxiz_time::Instant,
         max_conflicts: u64,
     ) -> Option<NlDispatchResult> {
         // Level-0 propagation.
@@ -1137,7 +1137,7 @@ impl<'a> CdclSolver<'a> {
             if self.conflicts >= max_conflicts && max_conflicts != 0 {
                 return None;
             }
-            if std::time::Instant::now() >= deadline {
+            if oxiz_time::Instant::now() >= deadline {
                 return None;
             }
 

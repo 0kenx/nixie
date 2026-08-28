@@ -12,6 +12,8 @@ categories = ["algorithms", "mathematics"]
 [dependencies]
 oxiz-core = { workspace = true, features = ["std"] }
 oxiz-math = { workspace = true, features = ["std"] }
+# The single place this crate reads a clock (wasm-safe; see oxiz-time).
+oxiz-time = { workspace = true, features = ["std"] }
 num-rational = { workspace = true, features = ["std"] }
 num-bigint = { workspace = true, features = ["std"] }
 num-traits = { workspace = true, features = ["std"] }

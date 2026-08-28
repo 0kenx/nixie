@@ -351,6 +351,7 @@ fn is_foreign_numeric(manager: &TermManager, t: TermId) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(feature = "nlsat")]
 mod tests {
     use super::*;
     use oxiz_core::ast::TermManager;

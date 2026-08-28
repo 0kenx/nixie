@@ -388,9 +388,9 @@ impl Tactic for TimeoutTactic {
     }
 
     fn apply(&self, goal: &Goal) -> Result<TacticResult> {
+        use oxiz_time::Duration;
         use std::sync::mpsc;
         use std::thread;
-        use std::time::Duration;
 
         let (tx, rx) = mpsc::channel();
         let goal_clone = goal.clone();
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn timeout_tactic_reclaims_a_cooperative_worker_on_timeout() {
-        use std::time::Duration;
+        use oxiz_time::Duration;
 
         /// Loops checking `cancellation_requested()`, incrementing
         /// `iterations` each pass, until cancelled or a large iteration
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn timeout_tactic_returns_promptly_for_a_non_cooperative_worker() {
-        use std::time::{Duration, Instant};
+        use oxiz_time::{Duration, Instant};
 
         /// Never checks `cancellation_requested()`; simulates a tactic
         /// that cannot be cooperatively cancelled.

@@ -64,17 +64,32 @@ fn nonlinear_body_without_header_solves_via_structural_routing() {
         "(set-logic QF_NIA)
 {body}"
     ));
+    // Without `nlsat` the NL backend is compiled out and the goal must
+    // decline honestly rather than guess (upstream v0.3.3 feature split).
+    #[cfg(feature = "nlsat")]
     assert_eq!(
         via_nia, "unsat",
         "explicit header must engage the NL backend"
     );
+    #[cfg(not(feature = "nlsat"))]
+    assert_eq!(via_nia, "unknown", "no-NL builds decline nonlinear goals");
     let via_none = last_verdict(body);
-    assert_eq!(via_none, "unsat", "missing header must route structurally");
     let via_all = last_verdict(&format!(
         "(set-logic ALL)
 {body}"
     ));
-    assert_eq!(via_all, "unsat", "ALL header must route structurally");
+    // (Routing itself is unchanged by the `nlsat` feature; what the routed
+    // NL backend can decide is not. Without it these goals decline.)
+    #[cfg(feature = "nlsat")]
+    {
+        assert_eq!(via_none, "unsat", "missing header must route structurally");
+        assert_eq!(via_all, "unsat", "ALL header must route structurally");
+    }
+    #[cfg(not(feature = "nlsat"))]
+    {
+        assert_eq!(via_none, "unknown");
+        assert_eq!(via_all, "unknown");
+    }
 }
 
 /// 3. Disallowed nested array signatures are rejected even when all array

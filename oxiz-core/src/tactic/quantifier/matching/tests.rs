@@ -185,7 +185,7 @@ fn nested_eq_does_not_blow_up_exponentially() {
     let bound = bound_int_vars(&mut manager, &["x"]);
     let matcher = PatternMatcher::new();
 
-    let started = std::time::Instant::now();
+    let started = oxiz_time::Instant::now();
     let subst = matcher
         .try_match_term(pattern, ground, &bound, &manager)
         .expect("every level matches after swapping");
@@ -196,7 +196,7 @@ fn nested_eq_does_not_blow_up_exponentially() {
         vec![("x".to_string(), expected)]
     );
     assert!(
-        elapsed < std::time::Duration::from_secs(10),
+        elapsed < oxiz_time::Duration::from_secs(10),
         "16 nested equalities took {elapsed:?}; the search is no longer linear"
     );
 }

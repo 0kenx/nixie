@@ -453,7 +453,7 @@ impl CodeTree {
     /// Returns a list of matches (quantifier, pattern_index, substitution).
     pub fn find_matches(&mut self, tm: &TermManager) -> Vec<Match> {
         #[cfg(feature = "std")]
-        let start = std::time::Instant::now();
+        let start = oxiz_time::Instant::now();
         let mut matches = Vec::new();
 
         // Match patterns indexed by symbol

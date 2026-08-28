@@ -10,9 +10,9 @@ use crate::frames::{FrameManager, LemmaId};
 use crate::pob::PobId;
 use crate::smt::{SmtSolver, build_frame_formula};
 use oxiz_core::TermManager;
+use oxiz_time::Duration;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 use thiserror::Error;
 use tracing::{debug, trace};
 

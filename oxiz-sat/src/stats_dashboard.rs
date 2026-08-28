@@ -8,7 +8,7 @@
 use crate::prelude::*;
 use crate::solver::SolverStats;
 use core::fmt;
-use std::time::Duration;
+use oxiz_time::Duration;
 
 /// Comprehensive statistics dashboard
 #[derive(Debug, Clone)]

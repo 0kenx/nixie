@@ -41,12 +41,12 @@ use crate::pdr::{Spacer, SpacerConfig, SpacerError, SpacerResult, SpacerStats};
 use crate::pob::{Pob, PobId};
 use crate::portfolio::Strategy;
 use oxiz_core::{TermId, TermManager};
+use oxiz_time::{Duration, Instant};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 use thiserror::Error;
 
 /// Errors that can occur in distributed solving

@@ -13,6 +13,8 @@
 //! A `sat` with no usable model would pass a verdict-only test while being
 //! useless – and, worse, a `sat` with a *wrong* model would too.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_core::ast::TermManager;
 use oxiz_solver::{Context, Solver, SolverConfig, SolverResult};
 

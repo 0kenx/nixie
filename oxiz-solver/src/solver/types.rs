@@ -247,6 +247,25 @@ pub enum CertificationMode {
 pub struct SolverConfig {
     /// Timeout in milliseconds (0 = no timeout)
     pub timeout_ms: u64,
+    /// Exclude a refuted candidate model from the search and re-solve, up to
+    /// `max_model_blocking_rounds` times per context scope, instead of
+    /// conceding `Unknown` on the first unlucky candidate (upstream #40).
+    ///
+    /// The blocking clauses are a *search restriction*, not lemmas (the
+    /// refutation gate also fires on the evaluator's width limit), so while
+    /// any is live a SAT-core `Unsat` is downgraded to `Unknown`.
+    pub enable_model_blocking: bool,
+    /// NIA-over-LP relaxation engine (`oxiz_theories::arithmetic::nla`):
+    /// linearize every product into a fresh monic variable, then loop LP
+    /// feasibility / exact monic-consistency checks / interval propagation /
+    /// McCormick+tangent cuts / exhaustive integer case splits. Converts
+    /// previously-`unknown` QF_NIA goals into proof-backed `unsat` and
+    /// re-verified `sat`. (Upstream v0.3.3; true everywhere but `minimal`.)
+    pub nonlinear_relaxation_engine: bool,
+    /// Lifetime budget of model-blocking clauses per context scope.  Each
+    /// round is a full re-solve, so the budget bounds a pathological formula's
+    /// ability to turn a fast `unknown` into a grind.  (Upstream default: 64.)
+    pub max_model_blocking_rounds: usize,
     /// Enable parallel solving
     pub parallel: bool,
     /// Number of threads for parallel solving
@@ -322,6 +341,9 @@ impl SolverConfig {
     pub fn fast() -> Self {
         Self {
             timeout_ms: 0,
+            enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
+            max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
             proof: false,
@@ -353,6 +375,9 @@ impl SolverConfig {
     pub fn balanced() -> Self {
         Self {
             timeout_ms: 0,
+            enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
+            max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
             proof: false,
@@ -384,6 +409,9 @@ impl SolverConfig {
     pub fn thorough() -> Self {
         Self {
             timeout_ms: 0,
+            enable_model_blocking: true,
+            nonlinear_relaxation_engine: true,
+            max_model_blocking_rounds: 64,
             parallel: false,
             num_threads: 4,
             proof: false,
@@ -415,6 +443,10 @@ impl SolverConfig {
     pub fn minimal() -> Self {
         Self {
             timeout_ms: 0,
+            // `minimal` opts out (upstream #40: on everywhere except here).
+            enable_model_blocking: false,
+            nonlinear_relaxation_engine: false,
+            max_model_blocking_rounds: 0,
             parallel: false,
             num_threads: 1,
             proof: false,
@@ -504,6 +536,9 @@ impl SolverConfig {
 pub struct Statistics {
     /// Number of decisions made
     pub decisions: u64,
+    /// Model-blocking clauses asserted by
+    /// `solver::model_blocking` (upstream #40).
+    pub model_blocking_clauses: u64,
     /// Number of conflicts encountered
     pub conflicts: u64,
     /// Number of propagations performed

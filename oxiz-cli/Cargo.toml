@@ -18,7 +18,7 @@ doc = false
 mimalloc = { workspace = true }
 oxiz-core = { workspace = true, features = ["std"] }
 oxiz-sat = { workspace = true, features = ["std"] }
-oxiz-solver = { workspace = true, features = ["std"] }
+oxiz-solver = { workspace = true, features = ["std", "nlsat"] }
 oxiz-proof = { workspace = true }
 oxiz-smtcomp = { workspace = true }
 oxiz-ml = { workspace = true }

@@ -37,41 +37,9 @@ use std::collections::HashMap;
 // Public result type for dispatch functions
 // ========  ========
 
-/// Concrete arithmetic assignment produced by a nonlinear decision procedure.
-///
-/// Keys are free arithmetic terms (`Var`, purified `select` constants, …);
-/// values are the rational witnesses found by NIA/NRA/ANIA ground search.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct NlSatModel {
-    /// TermId → rational value for every free arithmetic variable assigned.
-    pub assignments: HashMap<TermId, BigRational>,
-}
-
-/// The definitive result from a nonlinear dispatch call.
-///
-/// `Unknown` is not included: `dispatch_*` functions return `None` to signal
-/// "fall through to CDCL(T)" instead of wrapping Unknown.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum NlDispatchResult {
-    /// The constraint set is satisfiable, with a concrete model witness.
-    Sat(NlSatModel),
-    /// The constraint set is unsatisfiable.
-    Unsat,
-}
-
-impl NlDispatchResult {
-    /// Satisfiable with an empty assignment map (defaults fill gaps).
-    #[must_use]
-    pub fn sat_empty() -> Self {
-        Self::Sat(NlSatModel::default())
-    }
-
-    /// Satisfiable with the given term→value map.
-    #[must_use]
-    pub fn sat_with(assignments: HashMap<TermId, BigRational>) -> Self {
-        Self::Sat(NlSatModel { assignments })
-    }
-}
+// The dispatch vocabulary lives in the ungated `nl_dispatch` module (see its
+// doc) so the ground searches stay compiled in the no-`nlsat` build.
+pub use crate::nl_dispatch::{NlDispatchResult, NlSatModel};
 
 // ========  ========
 // Term→Polynomial translator

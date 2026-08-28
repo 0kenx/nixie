@@ -10,6 +10,8 @@ keywords = ["smt", "math", "simplex", "polynomial", "algebra"]
 categories = ["algorithms", "mathematics"]
 
 [dependencies]
+# The single place this crate reads a clock (wasm-safe; see oxiz-time).
+oxiz-time = { workspace = true }
 num-rational = { workspace = true, default-features = false, features = ["num-bigint"] }
 num-bigint = { workspace = true, default-features = false }
 num-traits = { workspace = true, default-features = false }
@@ -23,6 +25,7 @@ hashbrown.workspace = true
 [features]
 default = ["std"]
 std = [
+    "oxiz-time/std",
     "num-rational/std",
     "num-bigint/std",
     "num-traits/std",

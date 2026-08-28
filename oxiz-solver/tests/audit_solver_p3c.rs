@@ -86,13 +86,18 @@ fn mod_atom_is_not_spuriously_decided() {
 #[test]
 fn nonlinear_atom_is_not_spuriously_decided() {
     // (* x y) > 5 ∧ (* x y) < 3 is unsat, but the product is nonlinear.
-    // The honest answer is Unknown, never a free-Boolean spurious Sat.
+    // Since the NIA-over-LP relaxation engine landed (upstream v0.3.3 port),
+    // this is a genuine, proof-backed Unsat: the relaxation replaces the
+    // product with a monic variable `v` and `v > 5 ∧ v < 3` is LP-infeasible,
+    // and an infeasible relaxation soundly refutes the original. What is
+    // still excluded — and what this test was written for — is a free-Boolean
+    // spurious Sat.
     let r = run_script(
         r#"(declare-const x Int)(declare-const y Int)
 (assert (> (* x y) 5))(assert (< (* x y) 3))(check-sat)"#,
     );
     assert_ne!(r, vec![SolverResult::Sat]);
-    assert_ne!(r, vec![SolverResult::Unsat]);
+    assert_eq!(r, vec![SolverResult::Unsat]);
 }
 
 #[test]

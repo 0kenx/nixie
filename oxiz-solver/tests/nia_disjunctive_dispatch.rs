@@ -10,6 +10,8 @@
 //! these tests drive the full solver pipeline (parse → dispatch → verdict)
 //! over both polarities of the canonical goal shape.
 
+#![cfg(feature = "nlsat")]
+
 use oxiz_solver::{Context, SolverResult};
 
 fn check(script: &str) -> SolverResult {

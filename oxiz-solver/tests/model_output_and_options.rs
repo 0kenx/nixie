@@ -628,7 +628,13 @@ fn test_reset_assertions_keeps_logic_selected_theory() {
         (assert (< x 0.0))
         (check-sat)
     "#);
+    #[cfg(feature = "nlsat")]
     assert_eq!(fresh, vec!["sat".to_string()]);
+    // Without `nlsat` the NRA backend is compiled out; the goal declines
+    // honestly (the subject of the test — the logic surviving reset — is the
+    // second check below, which is logic-independent).
+    #[cfg(not(feature = "nlsat"))]
+    assert_eq!(fresh, vec!["unknown".to_string()]);
 
     let after_reset = run(r#"
         (set-logic QF_NRA)
@@ -640,10 +646,18 @@ fn test_reset_assertions_keeps_logic_selected_theory() {
         (assert (< x 0.0))
         (check-sat)
     "#);
+    #[cfg(feature = "nlsat")]
     assert_eq!(
         after_reset,
         vec!["sat".to_string(), "sat".to_string()],
         "reset-assertions must keep the logic's theory selection"
+    );
+    #[cfg(not(feature = "nlsat"))]
+    assert_eq!(
+        after_reset,
+        vec!["sat".to_string(), "unknown".to_string()],
+        "reset-assertions keeps the selection; the NRA goal itself declines \
+         without the feature"
     );
 }
 

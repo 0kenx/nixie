@@ -10,6 +10,7 @@ pub(super) mod check_bv;
 pub(super) mod check_dt;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
+#[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -20,8 +21,10 @@ pub(super) mod equality_graph;
 pub(super) mod int_case_split;
 pub(super) mod ite_table;
 pub(crate) mod logic_contract;
+pub(super) mod model_blocking;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
+pub(super) mod nla_relax;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
 pub(super) mod static_features;
@@ -49,7 +52,7 @@ use oxiz_core::sort::SortId;
 #[cfg(test)]
 use oxiz_sat::RestartStrategy;
 use oxiz_sat::{
-    Lit, Reason, Solver as SatSolver, SolverConfig as SatConfig, SolverResult as SatResult, Var,
+    Lit, Solver as SatSolver, SolverConfig as SatConfig, SolverResult as SatResult, Var,
 };
 use oxiz_theories::Theory;
 use oxiz_theories::arithmetic::ArithSolver;
@@ -91,6 +94,7 @@ pub struct Solver {
     pub(super) derived_reasons: theory_manager::DerivedReasons,
     /// NLSAT solver for nonlinear arithmetic (QF_NIA/QF_NRA)
     #[cfg(feature = "std")]
+    #[cfg(feature = "nlsat")]
     pub(super) nlsat: Option<oxiz_theories::nlsat::NlsatTheory>,
     /// MBQI solver for quantified formulas
     pub(super) mbqi: MBQIIntegration,
@@ -393,6 +397,37 @@ pub struct Solver {
     /// case-splitting within the current `check`.  Capped by
     /// [`MAX_CASE_SPLIT_ROUNDS`] in `int_case_split`.
     pub(super) case_split_rounds: u32,
+    /// How many refuted candidate models have been excluded by
+    /// [`model_blocking::Solver::block_refuted_model`] at the *current*
+    /// context scope, and equivalently how many model-blocking clauses are
+    /// live in the SAT database.
+    ///
+    /// Deliberately **not** per-search (unlike `case_split_rounds`): the
+    /// clauses are permanent in `self.sat` until `Solver::pop` retracts them
+    /// with `self.sat.pop()`, so a counter reset at `check_core` entry would
+    /// let a second `check` report `Unsat` off a database still restricted by
+    /// the first one's blocking clauses — a wrong `unsat`, strictly worse than
+    /// the spurious `Unknown` the whole mechanism exists to remove.  It is
+    /// snapshotted in [`trail::ContextState`] (restored by `pop` in lockstep
+    /// with `sat.pop()`), zeroed only by `Solver::reset`, and never touched by
+    /// `invalidate_results`.
+    ///
+    /// Nonzero means "the search space is restricted": see
+    /// [`Solver::blocking_clauses_present`].
+    pub(super) model_blocking_active: usize,
+    /// Test-only event log: one entry per ground candidate model, recording
+    /// whether `self.model` was still populated when `check_core` reached the
+    /// case-split / array-axiom repair paths.
+    ///
+    /// The repairs read the candidate model to decide what needs repairing
+    /// (`instantiate_array_axioms` reads it to skip axiom instances the
+    /// candidate already satisfies), and the refutation gate used to run
+    /// *before* them and clear it. Nothing observable from outside
+    /// distinguishes "the repairs ran on a live model" from "the repairs ran
+    /// on `None` and degenerated into eager instantiation", so the ordering
+    /// is pinned here instead. (Upstream #40.)
+    #[cfg(test)]
+    pub(super) repair_paths_saw_model: Vec<bool>,
     /// Arrangement-split refinement rounds used (see
     /// `refine_arrangement_splits`); capped by `MAX_ARRANGEMENT_ROUNDS`.
     pub(super) arrangement_rounds: u32,
@@ -538,6 +573,7 @@ impl Solver {
             diff: oxiz_theories::DiffLogicSolver::new(true),
             derived_reasons: theory_manager::DerivedReasons::default(),
             #[cfg(feature = "std")]
+            #[cfg(feature = "nlsat")]
             nlsat: None,
             mbqi: MBQIIntegration::new(),
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
@@ -611,6 +647,9 @@ impl Solver {
             settings_epoch: 0,
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
+            model_blocking_active: 0,
+            #[cfg(test)]
+            repair_paths_saw_model: Vec::new(),
             arrangement_rounds: 0,
             last_features: None,
         }
@@ -805,35 +844,6 @@ impl Solver {
             self.arrangement_rounds += 1;
         }
         added
-    }
-
-    fn block_current_model(&mut self) -> bool {
-        let trail = self.sat.trail();
-        let level = trail.decision_level();
-        if level == 0 {
-            return false;
-        }
-        let mut clause: Vec<Lit> = Vec::with_capacity(level as usize);
-        for lev in 1..=level {
-            let Some(var) = trail.decision_var_at_level(lev) else {
-                continue;
-            };
-            // Reconstruct the decision literal from the assigned value.
-            let lit = if trail.value(var).is_true() {
-                Lit::pos(var)
-            } else {
-                Lit::neg(var)
-            };
-            // Only true decisions (not theory-as-decision mis-tags).
-            if matches!(trail.reason(var), Reason::Decision) {
-                clause.push(lit.negate());
-            }
-        }
-        if clause.is_empty() {
-            return false;
-        }
-        self.sat.add_clause(clause);
-        true
     }
 
     /// Return the incremental theory solvers to their base scope, keeping every
@@ -1160,6 +1170,12 @@ impl Solver {
         // For NIA/NRA logics: dispatch all assertions to the full polynomial
         // solver first (NiaSolver or NlsatSolver). This gives a definitive
         // SAT/UNSAT for most benchmark problems without the CDCL(T) loop.
+        // The nonlinear cell-decomposition dispatch is behind the `nlsat`
+        // feature; without it this goal falls through to the relaxation
+        // engine below and then to the search, whose honesty gate
+        // (`arith_atoms_need_theory`) answers `unknown` for the nonlinear
+        // atoms no theory could take. (Upstream v0.3.3.)
+        #[cfg(feature = "nlsat")]
         if let Some(nl_result) = self.dispatch_nl_solver(manager) {
             match nl_result {
                 SolverResult::Sat => return SolverResult::Sat,
@@ -1168,8 +1184,41 @@ impl Solver {
             }
         }
 
+        // The NIA-over-LP relaxation engine is `std`-gated, not `nlsat`-gated
+        // (upstream v0.3.3), so it runs in BOTH builds — with the feature OFF
+        // it is the only nonlinear decider left. It declines Real-sorted
+        // variables outright, so QF_NRA goals pass through untouched.
+        #[cfg(feature = "std")]
+        {
+            let is_nia =
+                crate::solver::logic_contract::lookup(self.logic.as_deref().unwrap_or("ALL"))
+                    .ok()
+                    .flatten()
+                    .is_some_and(|spec| spec.arith && spec.nonlinear && spec.integer)
+                    || (self
+                        .assertions
+                        .iter()
+                        .any(|&a| nla_relax::term_is_nonlinear_pub(a, manager))
+                        && self
+                            .assertions
+                            .iter()
+                            .all(|&a| nla_relax::term_is_integer_sorted_pub(a, manager)));
+            if is_nia && let Some(nl_result) = self.dispatch_nla_relaxation(manager) {
+                match nl_result {
+                    SolverResult::Sat => return SolverResult::Sat,
+                    SolverResult::Unsat => return SolverResult::Unsat,
+                    SolverResult::Unknown => {}
+                }
+            }
+        }
+
         // Check nonlinear arithmetic constraints for early conflict detection
         // (static pattern matching, complementary to the dispatch above).
+        // The static nonlinear UNSAT pattern detector is part of the `nlsat`
+        // feature cluster (it lives in `check_nlsat`); without the feature
+        // the honesty gate below owns the verdict. (Upstream v0.3.3 keeps the
+        // detector compiled in; this fork's cluster is one module.)
+        #[cfg(feature = "nlsat")]
         if self.check_nonlinear_constraints(manager) {
             return SolverResult::Unsat;
         }
@@ -1299,8 +1348,8 @@ impl Solver {
         // rounds here and (b) mid-search inside the theory callbacks, so a
         // single long `solve_with_theory` call cannot run past the budget.
         #[cfg(feature = "std")]
-        let deadline: Option<std::time::Instant> = if self.config.timeout_ms > 0 {
-            std::time::Instant::now()
+        let deadline: Option<oxiz_time::Instant> = if self.config.timeout_ms > 0 {
+            oxiz_time::Instant::now()
                 .checked_add(core::time::Duration::from_millis(self.config.timeout_ms))
         } else {
             None
@@ -1466,14 +1515,12 @@ impl Solver {
         // search is the user's resource limit's business (`timeout_ms` →
         // honest `unknown`), never a silent verdict flip.
 
-        let mut model_block_rounds: u32 = 0;
-
         loop {
             // Enforce the wall-clock timeout between MBQI rounds.  Mid-`solve`
             // enforcement lives in the theory callbacks (see TheoryManager).
             #[cfg(feature = "std")]
             if let Some(d) = deadline {
-                if std::time::Instant::now() >= d {
+                if oxiz_time::Instant::now() >= d {
                     return SolverResult::Unknown;
                 }
             }
@@ -1507,6 +1554,25 @@ impl Solver {
             let arrangement_pairs = theory_manager.take_arrangement_splits();
             match sat_result {
                 SatResult::Unsat => {
+                    // Soundness gate: a model-blocking clause (see
+                    // `model_blocking`) is a restriction of the search space,
+                    // not a consequence of the assertions — the gate that
+                    // triggered it fires on the *evaluator's* width limit as
+                    // well as on a genuine violation.  "No model outside the
+                    // excluded region" is therefore not `unsat`, and there is
+                    // no core to hand over: the resolution proof rests on
+                    // clauses no assertion entails, so `unsat_core` is cleared
+                    // rather than built.  (Upstream #40.)
+                    //
+                    // Accepted cost: a *genuine* refutation found after
+                    // blocking started also surfaces as `Unknown`.  That is
+                    // precision, not soundness, and the verdict lattice stays
+                    // `Unknown -> {Sat, Unknown}`.
+                    if self.blocking_clauses_present() {
+                        self.model = None;
+                        self.unsat_core = None;
+                        return SolverResult::Unknown;
+                    }
                     self.build_unsat_core();
                     // After a theory/Boolean conflict has been turned into an
                     // unsat core: the core must name assertions that still
@@ -1532,60 +1598,28 @@ impl Solver {
                     // If no quantifiers, we're done
                     if !self.has_quantifiers {
                         self.build_model(manager);
-                        // Soundness gate: never return `Sat` for a model that
-                        // provably violates an assertion (see
-                        // `model_refutes_assertions`).  This backstops the SAT
-                        // core: if it commits an inconsistent trail and reports a
-                        // full assignment that falsifies a Boolean clause the
-                        // theory layer cannot observe, we answer `Unknown`
-                        // instead of a wrong `Sat`.
-                        let _gate = self.model_refutes_assertions(manager);
-                        if _gate {
-                            self.model = None;
-                            self.unsat_core = None;
-                            // Incomplete theory can accept a trail that fails
-                            // concrete eval.  Block that decision assignment and
-                            // keep searching rather than giving up with Unknown
-                            // (critical for large discrete LIA after table fold).
-                            if model_block_rounds < 256 && self.block_current_model() {
-                                model_block_rounds += 1;
-                                self.sat.backtrack_to_root();
-                                self.euf.reset();
-                                self.arith.reset();
-                                self.bv.reset();
-                                self.diff.reset();
-                                let zero_term = manager.mk_int(0);
-                                theory_manager = TheoryManager::new(
-                                    manager,
-                                    &mut self.euf,
-                                    &mut self.arith,
-                                    &mut self.bv,
-                                    &mut self.diff,
-                                    &mut self.array_theory,
-                                    &self.bv_terms,
-                                    &self.var_to_constraint,
-                                    &self.var_to_parsed_arith,
-                                    &self.term_to_var,
-                                    &self.var_to_term,
-                                    &self.numarg_proxies,
-                                    &self.quant_uf_const_pins,
-                                    zero_term,
-                                    &self.ite_result_terms,
-                                    &mut self.derived_reasons,
-                                    self.config.theory_mode,
-                                    &mut self.statistics,
-                                    self.config.max_conflicts,
-                                    self.config.max_decisions,
-                                    self.has_bv_arith_ops,
-                                    self.config.timeout_ms,
-                                    self.logic.as_deref(),
-                                    pure_dl,
-                                    sparse_dl,
-                                );
-                                continue;
-                            }
-                            return SolverResult::Unknown;
-                        }
+                        #[cfg(test)]
+                        self.repair_paths_saw_model.push(self.model.is_some());
+                        // ORDER (upstream #40): the repair paths below run
+                        // *before* the `model_refutes_assertions` gate, which
+                        // used to sit right here and bail out.
+                        //
+                        // Both repairs exist precisely to fix a candidate
+                        // model that does not hold up — the case-split lemmas
+                        // force the search to branch on a value the LP was
+                        // free to collide, the array lemmas retract a
+                        // `select` the candidate got wrong — so bailing out
+                        // first made them unreachable for the very models
+                        // they were written for.  Every gate they sit behind
+                        // is unchanged; only the order is.
+                        //
+                        // `self.model` therefore stays *set* through both:
+                        // `instantiate_array_axioms` reads it to decide which
+                        // axiom instances the candidate already satisfies, and
+                        // a `None` there is read as "nothing is satisfied",
+                        // degenerating the round into eager instantiation of
+                        // every candidate instance.  Clearing moved to the
+                        // final `Unknown` exit below.
                         // Non-convex LIA refinement: an integer UF argument
                         // pinned to a small finite domain by arithmetic bounds is
                         // invisible to Nelson–Oppen equality sharing (the
@@ -1714,6 +1748,15 @@ impl Solver {
                             if array_refinement_rounds >= max_array_refinement_rounds {
                                 // Could not saturate the array axioms within the
                                 // round budget: do not fabricate a verdict.
+                                //
+                                // The model goes with it (upstream #40): since
+                                // the refutation gate moved *below* this path,
+                                // the candidate on the table here may be one
+                                // the gate would have rejected, and a rejected
+                                // model must not stay readable behind an
+                                // `Unknown`.
+                                self.model = None;
+                                self.unsat_core = None;
                                 return SolverResult::Unknown;
                             }
                             // A read-over-write lemma is an `ite` over the two
@@ -1784,6 +1827,70 @@ impl Solver {
                         // candidate first; a pre-placement starved them and
                         // exploded wisas (256 blocking rounds without
                         // learning).
+                        // Soundness gate: never return `Sat` for a model
+                        // that provably violates an assertion (see
+                        // `model_refutes_assertions`).  This backstops the SAT
+                        // core: if it commits an inconsistent trail and
+                        // reports a full assignment that falsifies a Boolean
+                        // clause the theory layer cannot observe, we answer
+                        // `Unknown` instead of a wrong `Sat`.
+                        //
+                        // Recomputed here, at the point of use, rather than
+                        // hoisted above the repairs: neither repair mutates
+                        // `self.model`, but computing it where it is consumed
+                        // is what makes "recompute after every re-solve" fall
+                        // out of the loop structure instead of being a rule
+                        // to remember.
+                        if self.model_refutes_assertions(manager) {
+                            // Bounded blocking (upstream #40): this one
+                            // assignment did not hold up, which says nothing
+                            // about the *next* one.  Exclude it and re-solve
+                            // rather than concede on the first unlucky
+                            // candidate.  See `model_blocking` for why the
+                            // resulting clause is a search restriction rather
+                            // than a lemma, and for the `Unsat` downgrade that
+                            // pays for it.  (This fork removed the wall-clock
+                            // refinement ceiling on principle, so the round
+                            // budget is the only bound.)
+                            if self.block_refuted_model_and_rebase() {
+                                let zero_term = manager.mk_int(0);
+                                theory_manager = TheoryManager::new(
+                                    manager,
+                                    &mut self.euf,
+                                    &mut self.arith,
+                                    &mut self.bv,
+                                    &mut self.diff,
+                                    &mut self.array_theory,
+                                    &self.bv_terms,
+                                    &self.var_to_constraint,
+                                    &self.var_to_parsed_arith,
+                                    &self.term_to_var,
+                                    &self.var_to_term,
+                                    &self.numarg_proxies,
+                                    &self.quant_uf_const_pins,
+                                    zero_term,
+                                    &self.ite_result_terms,
+                                    &mut self.derived_reasons,
+                                    self.config.theory_mode,
+                                    &mut self.statistics,
+                                    self.config.max_conflicts,
+                                    self.config.max_decisions,
+                                    self.has_bv_arith_ops,
+                                    self.config.timeout_ms,
+                                    self.logic.as_deref(),
+                                    pure_dl,
+                                    sparse_dl,
+                                );
+                                continue;
+                            }
+                            // Nothing left to try: the budget is spent, the
+                            // feature is off, or the assignment projects onto
+                            // no mapped variable.  This is the exit that owns
+                            // clearing the model (see the ORDER note above).
+                            self.model = None;
+                            self.unsat_core = None;
+                            return SolverResult::Unknown;
+                        }
                         self.unsat_core = None;
                         self.debug_check_invariants("check_core: before returning sat");
                         return SolverResult::Sat;
@@ -2265,7 +2372,17 @@ impl Solver {
                 self.build_model(manager);
                 SolverResult::Sat
             }
-            SatResult::Unsat => SolverResult::Unsat,
+            SatResult::Unsat => {
+                // Model-blocking clauses are a search restriction, not
+                // lemmas: an Unsat over a restricted database is not `unsat`
+                // (see `model_blocking`; upstream #40).
+                if self.blocking_clauses_present() {
+                    self.model = None;
+                    self.unsat_core = None;
+                    return SolverResult::Unknown;
+                }
+                SolverResult::Unsat
+            }
             SatResult::Unknown => SolverResult::Unknown,
         };
         self.certify_result(raw_result, manager)
@@ -2459,6 +2576,7 @@ impl Solver {
             encode_depth_exceeded: self.encode_depth_exceeded,
             dt_axioms_incomplete: self.dt_axioms_incomplete,
             array_theory_scope: self.array_theory.snapshot(),
+            model_blocking_active: self.model_blocking_active,
         });
         self.sat.push();
         // No EUF / arithmetic scope is opened here on purpose.
@@ -2476,7 +2594,7 @@ impl Solver {
         // three theory solvers at its entry and re-derives their state from the
         // SAT trail, so nothing between this `push` and the next verdict can
         // observe the scope, and `pop` resets regardless.
-        #[cfg(feature = "std")]
+        #[cfg(feature = "nlsat")]
         if let Some(nlsat) = &mut self.nlsat {
             nlsat.push();
         }
@@ -2636,6 +2754,9 @@ impl Solver {
             // (Stage 5 array theory).  Encode runs at `assert` time, so these
             // are not individual `TrailOp`s; the scope snapshot retracts them.
             self.array_theory.pop(state.array_theory_scope);
+            // The blocking clauses are retracted by `self.sat.pop()` above;
+            // roll the counter back in lockstep (see the field doc).
+            self.model_blocking_active = state.model_blocking_active;
 
             // Quantifier reasoning state: MBQI and the e-matching engine turn a
             // registered quantifier into hard ground lemmas, so a quantifier
@@ -2701,7 +2822,7 @@ impl Solver {
             // for a level it is already at – in particular it does not disturb
             // the propagation head that `sat.pop()` deliberately rewound.
             self.rebase_theory_state();
-            #[cfg(feature = "std")]
+            #[cfg(feature = "nlsat")]
             if let Some(nlsat) = &mut self.nlsat {
                 nlsat.pop();
             }
@@ -2718,6 +2839,9 @@ impl Solver {
     /// Reset the solver
     pub fn reset(&mut self) {
         self.sat.reset();
+        // The database (and every blocking clause in it) is gone with the
+        // `sat.reset()` above.
+        self.model_blocking_active = 0;
         self.euf.reset();
         self.arith.reset();
         self.bv.reset();
@@ -2731,7 +2855,7 @@ impl Solver {
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());
         self.has_quantifiers = false;
-        #[cfg(feature = "std")]
+        #[cfg(feature = "nlsat")]
         {
             self.nlsat = None;
         }

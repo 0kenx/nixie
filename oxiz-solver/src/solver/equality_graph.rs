@@ -43,6 +43,14 @@ impl Solver {
     ) -> super::SolverResult {
         match self.sat.solve() {
             oxiz_sat::SolverResult::Unsat => {
+                // Model-blocking clauses are a search restriction, not
+                // lemmas: an Unsat over a restricted database is not `unsat`
+                // (see `model_blocking`; upstream #40).
+                if self.blocking_clauses_present() {
+                    self.model = None;
+                    self.unsat_core = None;
+                    return super::SolverResult::Unknown;
+                }
                 self.build_unsat_core();
                 super::SolverResult::Unsat
             }

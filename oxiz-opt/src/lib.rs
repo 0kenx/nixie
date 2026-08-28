@@ -108,6 +108,11 @@
 //! - `optsmt.cpp` - Objective optimization
 //! - `opt_pareto.cpp` - Pareto optimization
 
+// Native builds must never silently end up on oxiz-time's frozen stub clock
+// (the `std` feature forward in this crate's manifest is what selects the real
+// one; see oxiz-time/src/lib.rs).
+const _: () = assert!(!oxiz_time::IS_FROZEN);
+
 pub mod cardinality_network;
 pub mod context;
 pub mod hybrid;
