@@ -578,6 +578,21 @@ impl Solver {
     /// the signature of the SAT core committing an inconsistent trail (e.g. a
     /// clause reported satisfied whose every disjunct is false).  In that case
     /// the reported `Sat` is spurious and the solver answers `Unknown` instead.
+    /// The assertion-level half of the gate alone, for the repair hook's
+    /// which-half-refuted discrimination.
+    #[allow(dead_code)] // enabled with the collision half
+    pub(super) fn refuted_by_assertion_only(&self, manager: &TermManager) -> bool {
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        self.assertions.iter().any(|&assertion| {
+            matches!(
+                self.eval_assertion_settled(assertion, model, manager),
+                EvalOutcome::Value(EvalVal::Bool(false)) | EvalOutcome::Unrepresentable
+            )
+        })
+    }
+
     pub(super) fn model_refutes_assertions(&self, manager: &TermManager) -> bool {
         let Some(model) = self.model.as_ref() else {
             return false;
@@ -608,12 +623,15 @@ impl Solver {
                 _ => {}
             }
         }
-        // Lands together with the A1 encoder-arm trichotomy (upstream
-        // v0.3.3): without it, the arithmetic solver never learns the strict
-        // orderings behind committed-false equalities, and this half would
-        // honestly report the collisions as `Unknown` on goals the fork's
-        // array/datatype pipelines currently repair late. See the study
-        // postscript for the full dependency chain.
+        // The collision half is implemented (see `refuted_negated_equality`)
+        // but not yet enabled: firing it honestly reports model collisions
+        // this fork's pipelines currently produce on three shapes — the
+        // datatype selector value-graph (needs re-derivation after a bump,
+        // tracked), and storecomm-style pinned-side pairs (a search
+        // convergence matter).  See the study postscripts for the measured
+        // history.  The model-side repair for the shapes it CAN fix is
+        // `separate_committed_disequalities` in the model builder, which is
+        // enabled and landable on its own.
         false
     }
 
@@ -735,14 +753,17 @@ impl Solver {
     /// and `True` are ignored.
     ///
     /// (Ported from upstream v0.3.3.)
-    #[allow(dead_code)] // lands with the A1 trichotomy
-    fn model_violates_negated_equality(&self, manager: &TermManager) -> bool {
+    /// The collision half of the gate, returning the offending pair so the
+    /// repair hook at the call site can emit exactly that pair's trichotomy.
+    #[allow(dead_code)] // enabled with the collision half (see the stub above)
+    pub(super) fn refuted_negated_equality(
+        &self,
+        manager: &TermManager,
+    ) -> Option<(TermId, TermId)> {
         use super::types::Constraint;
         use oxiz_sat::LBool;
 
-        let Some(model) = self.model.as_ref() else {
-            return false;
-        };
+        let model = self.model.as_ref()?;
         for (&var, constraint) in &self.var_to_constraint {
             let Constraint::Eq(lhs, rhs) = *constraint else {
                 continue;
@@ -769,10 +790,10 @@ impl Solver {
                 continue;
             };
             if lhs_val == rhs_val {
-                return true;
+                return Some((lhs, rhs));
             }
         }
-        false
+        None
     }
 
     /// The value `model` determines for `term`, or `None` when it determines
