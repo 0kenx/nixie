@@ -167,6 +167,33 @@ impl Interpretation {
     }
 }
 
+/// Whether some term in `formulas` evaluates to a definite **`false`** under
+/// `interp`.
+///
+/// This is [`holds_under`]'s strict-negative dual, and the right question for
+/// a caller that already has an independent licence for its `Sat` verdict and
+/// is deciding whether to *publish* a candidate witness as the model: an
+/// evaluator that abstains on an opaque leaf (an array read the interpretation
+/// says nothing about, an unpinned Boolean) must not veto the publication —
+/// abstention is "this check cannot help", not "the witness is wrong" — while
+/// a definite `false` the witness *does* determine is a proof that publishing
+/// it would print values contradicting the very assertions they answer.
+///
+/// (Upstream v0.3.3's `adopt_nl_witness` uses the all-positive form because
+/// its dispatcher's verdict *is* the verification; this fork's nonlinear
+/// model searches carry their own goal-specific verification, so publication
+/// is gated on the weaker, still-sound "definitely not a model" test.)
+#[must_use]
+pub fn refuted_under(formulas: &[TermId], manager: &TermManager, interp: &Interpretation) -> bool {
+    let mut memo: HashMap<TermId, Value> = HashMap::new();
+    formulas.iter().any(|&f| {
+        matches!(
+            evaluate_memo(f, manager, interp, &mut memo),
+            Some(Value::Truth(false))
+        )
+    })
+}
+
 /// Whether every term in `formulas` evaluates to a definite `true` under
 /// `interp`.
 ///

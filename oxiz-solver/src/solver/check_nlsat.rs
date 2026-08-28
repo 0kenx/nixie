@@ -95,6 +95,17 @@ impl Solver {
     pub(super) fn dispatch_nl_solver(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
         let backend = self.nl_backend(manager)?;
 
+        // The algebraic side-channel is cleared here, at the entry of the
+        // only procedure that populates it (upstream v0.3.3): `invalidate_
+        // results` fires when the assertion stack moves, but a repeated
+        // `check` on an unchanged stack does not go through that hook, and
+        // neither does a `check` whose verdict this time comes from the
+        // relaxation engine or a search rather than from the cell
+        // decomposition. Clearing on entry makes "populated" mean
+        // "populated by the procedure that just answered", with no path
+        // that inherits a stale root-obj from an earlier check.
+        self.nl_algebraic_values.clear();
+
         // The NIA-over-LP relaxation engine runs BEFORE the cell-decomposition
         // dispatch in this fork's wiring (upstream slots it after; the fork's
         // `dispatch_nia_constraints` internally chains to the sat-only model
@@ -198,6 +209,7 @@ impl Solver {
     /// Install an NL-dispatch model into `self.model` for `(get-model)`.
     fn install_nl_model(&mut self, nl_model: NlSatModel, manager: &mut TermManager) {
         let mut model = Model::new();
+        let mut interpretation = oxiz_theories::nl_eval::Interpretation::empty();
         for (term, value) in nl_model.assignments {
             let is_int = manager
                 .get(term)
@@ -209,6 +221,20 @@ impl Solver {
                 big_rational_to_real_term(manager, &value)
             };
             model.set(term, value_term);
+            interpretation.pin_num(term, value);
+        }
+        // Publication gate (upstream v0.3.3's `adopt_nl_witness`, fork-adapted
+        // to `refuted_under`): the witness is re-evaluated against every
+        // current assertion in exact `BigRational`, over the *original*
+        // assertion terms, before anything is installed. A witness some
+        // assertion definitely evaluates FALSE under is a proof it is not a
+        // model — publishing it would print values contradicting the very
+        // assertions they answer, so nothing is installed. An evaluator that
+        // merely abstains (an array read this exact-arithmetic walk cannot
+        // resolve) does not veto: the fork's nonlinear model searches verify
+        // their goals their own way, and abstention is not refutation.
+        if oxiz_theories::nl_eval::refuted_under(&self.assertions, manager, &interpretation) {
+            return;
         }
         self.model = Some(model);
     }

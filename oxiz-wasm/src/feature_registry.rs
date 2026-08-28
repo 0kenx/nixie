@@ -2,21 +2,50 @@
 //!
 //! # Bundle size strategy
 //!
-//! The `minimal` Cargo feature produces a significantly smaller WASM bundle by
-//! excluding subsystems that are large but rarely needed in browser contexts:
+//! The `minimal` Cargo feature is meant to produce a smaller WASM bundle by
+//! excluding subsystems that are large but rarely needed in browser contexts.
+//! Exactly one of the six delivers that today, and it is the only one with a
+//! measurement behind it (ported from upstream v0.3.3):
 //!
-//! | Excluded subsystem          | Approx. saving |
-//! |-----------------------------|---------------|
-//! | Proof generation (DAG)      | ~180 KB        |
-//! | Craig interpolation         | ~90 KB         |
-//! | Spacer PDR engine           | ~220 KB        |
-//! | ML branching heuristics     | ~130 KB        |
-//! | WASM bench harness          | ~25 KB         |
-//! | **Total (estimated)**       | **~645 KB**    |
+//! | Excluded subsystem                  | Saving                        | Basis         |
+//! |-------------------------------------|-------------------------------|---------------|
+//! | Nonlinear arithmetic (`oxiz-nlsat`) | **194,260 raw / 68,268 gzip** | measured      |
+//! | Proof generation (DAG)              | 0                             | gates nothing |
+//! | Craig interpolation                 | 0                             | gates nothing |
+//! | Spacer PDR engine                   | 0                             | gates nothing |
+//! | ML branching heuristics             | 0                             | gates nothing |
+//! | WASM bench harness                  | 0                             | gates nothing |
+//!
+//! **The estimates this table used to carry were never true.** `proof`,
+//! `interpolation`, `spacer`, `ml_branching` and `wasm_bench` are empty feature
+//! lists: they pull in no dependency and gate no code. Choosing `minimal` over
+//! `full` therefore could not remove anything before the `nlsat` gate, because
+//! there was nothing gated to remove — checkable in one command:
+//!
+//! ```text
+//! grep -rn 'cfg(feature\|cfg!(feature' oxiz-wasm/src/
+//! ```
+//!
+//! returns the accessors below and nothing else.
+//!
+//! `nlsat` is different in kind: it is a real dependency edge,
+//! `oxiz-solver/nlsat` → `oxiz-theories/nlsat` → the `oxiz-nlsat` crate, so
+//! dropping it removes compiled code. The figures above were measured on a
+//! comparably-shaped browser shim — same `[profile.release]` (`opt-level =
+//! "z"`, fat LTO, `codegen-units = 1`, `panic = "abort"`, stripped) and the same
+//! `wasm-opt -Oz --converge` pass — at 1,557,287 → 1,363,027 bytes raw and
+//! 573,181 → 504,913 after `gzip -9`. Expect a different absolute size here,
+//! since this crate's reachable set is not that one's; expect a delta of the
+//! same order.
+//!
+//! What dropping `nlsat` costs is completeness on nonlinear arithmetic: a
+//! QF_NIA/NRA goal that needs the cell-decomposition core answers `unknown`
+//! instead of `sat`/`unsat` (see `oxiz-solver`'s `nlsat` feature gate). No
+//! verdict ever becomes wrong.
 //!
 //! Always included regardless of feature flags:
 //! - Core DPLL(T) solver and SAT engine
-//! - All 19 theory solvers (EUF, LIA, LRA, NIA, NRA, BV, Arrays, Strings, FP,
+//! - The linear theory solvers (EUF, LIA, LRA, BV, Arrays, Strings, FP,
 //!   Datatypes, Sets, Sequences, …)
 //! - SMT-LIB2 parser and pretty-printer
 //! - Model generation and unsat-core extraction
@@ -72,6 +101,14 @@ impl FeatureRegistry {
         cfg!(feature = "ml_branching")
     }
 
+    /// Returns `true` when the nonlinear-arithmetic core (`oxiz-nlsat`) is
+    /// compiled in — the one optional feature that gates real code.
+    ///
+    /// Controlled by the `nlsat` Cargo feature; excluded in `minimal` builds.
+    pub const fn has_nlsat() -> bool {
+        cfg!(feature = "nlsat")
+    }
+
     /// Returns `true` when the WASM benchmark harness is compiled in.
     ///
     /// Controlled by the `wasm_bench` Cargo feature.  Excluded in `minimal` builds.
@@ -94,11 +131,15 @@ impl FeatureRegistry {
             && !Self::has_spacer()
             && !Self::has_ml_branching()
             && !Self::has_wasm_bench()
+            && !Self::has_nlsat()
     }
 
     /// Human-readable list of enabled optional features.
     pub fn enabled_features() -> Vec<&'static str> {
         let mut features = Vec::new();
+        if Self::has_nlsat() {
+            features.push("nlsat");
+        }
         if Self::has_proof() {
             features.push("proof");
         }
@@ -131,6 +172,11 @@ impl FeatureRegistry {
         }
         if !Self::has_ml_branching() {
             features.push("ml_branching");
+        }
+        if !Self::has_nlsat() {
+            // The one exclusion that actually removes code (see the module
+            // doc's table); costs completeness on nonlinear arithmetic.
+            features.push("nlsat");
         }
         if !Self::has_wasm_bench() {
             features.push("wasm_bench");

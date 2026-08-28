@@ -593,6 +593,81 @@ impl Solver {
         false
     }
 
+    /// The half of the gate [`combine_eq`] structurally cannot see: a numeric
+    /// equality atom the SAT core assigned **false** whose two sides the
+    /// arithmetic model gives the **same** value.
+    ///
+    /// # Why `combine_eq` cannot do this itself
+    ///
+    /// [`combine_eq`] answers `Undetermined` — deliberately, and it must keep
+    /// doing so — when two numeric operands are equal.  Its input is a pair of
+    /// *values* and nothing else, and a *collision* in the LP model is not by
+    /// itself evidence of anything: the tableau enforces a disequality by case
+    /// splitting, not by pinning distinct witnesses, so two variables that were
+    /// never asserted equal routinely share a value in a perfectly good model.
+    /// Returning `Bool(true)` there would turn every satisfiable `distinct`
+    /// into a spurious `Unknown`.
+    ///
+    /// The missing information is not in the values — it is the **trail
+    /// polarity**.  If the core committed `(= a b)` to *false* and the model it
+    /// then produced makes `a` and `b` equal, the assignment and the model
+    /// contradict each other outright.  That is a definite refutation, not a
+    /// coincidence, and it is exactly the witness the false-`sat` family left
+    /// behind: the disequality never reached the tableau, so the LP was free to
+    /// collide the two sides while the Boolean level believed they differed.
+    ///
+    /// This gate has the trail (`sat.model_value`) even though `combine_eq`
+    /// does not, so the check lives here and `combine_eq` is left untouched.
+    ///
+    /// # Conservatism
+    ///
+    /// Both sides must evaluate to a *definite* number.  A term the tableau
+    /// does not constrain reads back `Undetermined` and is skipped — so a
+    /// variable `build_model` merely defaulted can never trigger this.  Only
+    /// atoms the core actually assigned `False` are considered; `LBool::Undef`
+    /// and `True` are ignored.
+    ///
+    /// (Ported from upstream v0.3.3.)
+    #[allow(dead_code)] // lands with the A1 trichotomy port (next session)
+    fn model_violates_negated_equality(&self, manager: &TermManager) -> bool {
+        use super::types::Constraint;
+        use oxiz_sat::LBool;
+
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        for (&var, constraint) in &self.var_to_constraint {
+            let Constraint::Eq(lhs, rhs) = *constraint else {
+                continue;
+            };
+            if self.sat.model_value(var) != LBool::False {
+                continue;
+            }
+            // Numeric operands only: a Bool/BV/EUF equality has its own
+            // theory and no arithmetic value to compare.
+            let is_numeric = manager.get(lhs).is_some_and(|t| {
+                t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort
+            });
+            if !is_numeric {
+                continue;
+            }
+            let (
+                EvalOutcome::Value(EvalVal::Num(lhs_val)),
+                EvalOutcome::Value(EvalVal::Num(rhs_val)),
+            ) = (
+                self.eval_in_model_outcome(lhs, model, manager, 0),
+                self.eval_in_model_outcome(rhs, model, manager, 0),
+            )
+            else {
+                continue;
+            };
+            if lhs_val == rhs_val {
+                return true;
+            }
+        }
+        false
+    }
+
     /// The value `model` determines for `term`, or `None` when it determines
     /// none.
     ///

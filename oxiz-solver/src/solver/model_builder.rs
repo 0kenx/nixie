@@ -496,7 +496,27 @@ impl Solver {
             {
                 continue;
             }
-            match model.get(atom).and_then(|value| bool_value(value, manager)) {
+            // The polarity is read from the SAT core's final assignment —
+            // the trail itself — with the atom's model entry as a fallback
+            // for atoms that predate the encoding of this round.  Reading
+            // only the model entry made the repair depend on whether
+            // `build_model` happened to record a Boolean for the atom, which
+            // a different search trajectory (e.g. the numeric trichotomy
+            // riding on the encoder's `Eq` atom since upstream v0.3.3's A1
+            // fix) can change without changing the commitment: the core
+            // committing `(= a b)` to false while the reconstruction renders
+            // both sides identically needs the repair whichever artifact
+            // recorded the polarity.
+            let decided = self
+                .term_to_var
+                .get(&atom)
+                .and_then(|&var| match self.sat.model_value(var) {
+                    oxiz_sat::LBool::True => Some(true),
+                    oxiz_sat::LBool::False => Some(false),
+                    _ => None,
+                })
+                .or_else(|| model.get(atom).and_then(|value| bool_value(value, manager)));
+            match decided {
                 Some(false) => disequal.push((left.min(right), left.max(right))),
                 Some(true) => {
                     adjacency.entry(left).or_default().push(right);
@@ -927,10 +947,28 @@ impl Solver {
         let mut informed = false;
         for (index, name) in names.iter().enumerate() {
             let tester = manager.mk_dt_tester(name, term);
-            match model
-                .get(tester)
-                .and_then(|value| bool_value(value, manager))
-            {
+            // Tester polarity comes from the SAT core's final assignment —
+            // the trail — with the atom's model entry as a fallback, the same
+            // source-of-truth rule `decided_dt_equalities` follows: whether
+            // `build_model` happened to record a Boolean entry for the atom
+            // is an artifact of the search trajectory (one the numeric
+            // trichotomy riding on the encoder's `Eq` atom can change without
+            // changing the commitment), while the committed assignment is
+            // the fact the reconstruction is supposed to read.
+            let decided = self
+                .term_to_var
+                .get(&tester)
+                .and_then(|&var| match self.sat.model_value(var) {
+                    oxiz_sat::LBool::True => Some(true),
+                    oxiz_sat::LBool::False => Some(false),
+                    _ => None,
+                })
+                .or_else(|| {
+                    model
+                        .get(tester)
+                        .and_then(|value| bool_value(value, manager))
+                });
+            match decided {
                 // Mutual exclusivity makes at most one tester true.
                 Some(true) => return Some((index, true)),
                 Some(false) => {
