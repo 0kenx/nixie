@@ -583,14 +583,121 @@ impl Solver {
             return false;
         };
         for &assertion in &self.assertions {
-            match self.eval_in_model_outcome(assertion, model, manager, 0) {
+            // An assertion that is (or unfolds at its top level to) a
+            // conjunction is checked conjunct by conjunct, and a conjunct
+            // that is an `Eq`/`Not(Eq)` ATOM is decided by the SAT core's
+            // committed polarity, not by re-deriving both sides from the
+            // model.  The re-derivation is a category error for interface
+            // atoms: a purification definition `(= (f x) $p)` commits
+            // `f(x)`'s value to the EUF/model side and `$p`'s to the
+            // arithmetic side, and reading the two artifacts back and
+            // comparing them reports the very artifact mismatch the
+            // definition exists to paper over — the gate then refuted
+            // perfectly good candidates in a loop (found while landing the
+            // A1 trichotomy, whose trajectory change made every candidate
+            // of the `sum(k) = 6` refinement loop hit it, starving the
+            // loop to `unknown`).  The core's committed polarity for a
+            // FORCED conjunct is the fact; a contradicting commitment is
+            // still a refutation (a core/trail inconsistency the gate
+            // exists to catch), and every other conjunct shape keeps its
+            // value-based evaluation.
+            match self.eval_assertion_settled(assertion, model, manager) {
                 EvalOutcome::Value(EvalVal::Bool(false)) | EvalOutcome::Unrepresentable => {
                     return true;
                 }
                 _ => {}
             }
         }
+        // Lands together with the A1 encoder-arm trichotomy (upstream
+        // v0.3.3): without it, the arithmetic solver never learns the strict
+        // orderings behind committed-false equalities, and this half would
+        // honestly report the collisions as `Unknown` on goals the fork's
+        // array/datatype pipelines currently repair late. See the study
+        // postscript for the full dependency chain.
         false
+    }
+
+    /// Evaluate one assertion for the gate, with every top-level conjunct
+    /// that is a settled `Eq`/`Not(Eq)` atom (SAT polarity committed, and
+    /// consistent with the assertion's sense) replaced by its committed
+    /// truth value instead of re-derived from the model artifacts.  A
+    /// single non-conjunction assertion goes through the same treatment at
+    /// depth 0 (it may itself be an `Eq` atom).  See
+    /// [`Self::model_refutes_assertions`] for why the committed polarity is
+    /// the authority for these atoms.
+    fn eval_assertion_settled(
+        &self,
+        assertion: TermId,
+        model: &Model,
+        manager: &TermManager,
+    ) -> EvalOutcome {
+        let conjuncts: Vec<TermId> = match manager.get(assertion).map(|t| &t.kind) {
+            Some(TermKind::And(args)) => args.to_vec(),
+            _ => vec![assertion],
+        };
+        // Short-circuit free: evaluate conjuncts that need evaluation
+        // individually — the `And`'s result is the conjunction of the
+        // outcomes, and an already-`true` settled atom contributes `true`.
+        let mut saw_false = false;
+        let mut saw_unrepresentable = false;
+        let mut any_evaluated = false;
+        for conj in conjuncts {
+            let (eq_atom, negated) = match manager.get(conj).map(|t| &t.kind) {
+                Some(TermKind::Eq(..)) => (conj, false),
+                Some(TermKind::Not(inner))
+                    if manager
+                        .get(*inner)
+                        .is_some_and(|t| matches!(t.kind, TermKind::Eq(..))) =>
+                {
+                    (*inner, true)
+                }
+                _ => {
+                    any_evaluated = true;
+                    match self.eval_in_model_outcome(conj, model, manager, 0) {
+                        EvalOutcome::Value(EvalVal::Bool(false)) => saw_false = true,
+                        EvalOutcome::Unrepresentable => saw_unrepresentable = true,
+                        _ => {}
+                    }
+                    continue;
+                }
+            };
+            let committed =
+                self.term_to_var
+                    .get(&eq_atom)
+                    .and_then(|&var| match self.sat.model_value(var) {
+                        oxiz_sat::LBool::True => Some(true),
+                        oxiz_sat::LBool::False => Some(false),
+                        _ => None,
+                    });
+            match committed {
+                // Contradicts the asserted sense: the trail itself refutes.
+                Some(p) if p == negated => return EvalOutcome::boolean(false),
+                // Settled-true: contributes `true`, no re-derivation.
+                Some(_) => {}
+                // Uncommitted: evaluate from values after all (nothing was
+                // committed either way; the artifacts are all we have).
+                None => {
+                    any_evaluated = true;
+                    match self.eval_in_model_outcome(conj, model, manager, 0) {
+                        EvalOutcome::Value(EvalVal::Bool(false)) => saw_false = true,
+                        EvalOutcome::Unrepresentable => saw_unrepresentable = true,
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if saw_false {
+            EvalOutcome::boolean(false)
+        } else if saw_unrepresentable {
+            EvalOutcome::Unrepresentable
+        } else if any_evaluated {
+            // Nothing definite went wrong; the assertion is not refuted by
+            // this gate (the ordinary `Undetermined`s keep it unconcluded).
+            EvalOutcome::UNDETERMINED
+        } else {
+            // Every conjunct settled-true by commitment.
+            EvalOutcome::boolean(true)
+        }
     }
 
     /// The half of the gate [`combine_eq`] structurally cannot see: a numeric
@@ -628,7 +735,7 @@ impl Solver {
     /// and `True` are ignored.
     ///
     /// (Ported from upstream v0.3.3.)
-    #[allow(dead_code)] // lands with the A1 trichotomy port (next session)
+    #[allow(dead_code)] // lands with the A1 trichotomy
     fn model_violates_negated_equality(&self, manager: &TermManager) -> bool {
         use super::types::Constraint;
         use oxiz_sat::LBool;

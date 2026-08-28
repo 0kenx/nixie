@@ -496,18 +496,28 @@ impl Solver {
             {
                 continue;
             }
-            // The polarity is read from the SAT core's final assignment —
-            // the trail itself — with the atom's model entry as a fallback
-            // for atoms that predate the encoding of this round.  Reading
-            // only the model entry made the repair depend on whether
-            // `build_model` happened to record a Boolean for the atom, which
-            // a different search trajectory (e.g. the numeric trichotomy
-            // riding on the encoder's `Eq` atom since upstream v0.3.3's A1
-            // fix) can change without changing the commitment: the core
-            // committing `(= a b)` to false while the reconstruction renders
-            // both sides identically needs the repair whichever artifact
-            // recorded the polarity.
-            let decided = self
+            // Two different sources of truth, one per direction (found by
+            // rooting the wrong-datatype-witness bug to the bottom,
+            // 2026-08-28):
+            //
+            // * DISEQUALITY comes from the SAT core's committed polarity —
+            //   the core committing `(= a b)` to false IS the fact "the
+            //   search decided these distinct", and it is knowable even
+            //   when EUF never interned the terms (the first-round shape of
+            //   the bug: the negative atom was committed but its theory
+            //   processing had been backtracked, so EUF had no nodes and no
+            //   disequality to read).
+            // * EQUALITY comes from the EUF congruence closure ONLY.  The
+            //   SAT-true polarity of an `Eq` atom is *not* an equality
+            //   fact: the recognisor and constructor-congruence axioms are
+            //   implications whose consequents are free Booleans, and a
+            //   trajectory that sets one true under a false (or unproven)
+            //   premise chained `p = C(…) = C'(…) = q` through the old
+            //   adjacency and made the repair decline on a pair it had to
+            //   separate.  An EUF merge, by contrast, is a proven,
+            //   congruence-closed equality the model is then required to
+            //   render identically.
+            let sat_decided = self
                 .term_to_var
                 .get(&atom)
                 .and_then(|&var| match self.sat.model_value(var) {
@@ -516,13 +526,17 @@ impl Solver {
                     _ => None,
                 })
                 .or_else(|| model.get(atom).and_then(|value| bool_value(value, manager)));
-            match decided {
-                Some(false) => disequal.push((left.min(right), left.max(right))),
-                Some(true) => {
+            let euf_merged = match (self.euf.term_to_node(left), self.euf.term_to_node(right)) {
+                (Some(na), Some(nb)) => self.euf.are_equal_immutable(na, nb),
+                _ => false,
+            };
+            match (sat_decided, euf_merged) {
+                (Some(false), _) => disequal.push((left.min(right), left.max(right))),
+                (_, true) => {
                     adjacency.entry(left).or_default().push(right);
                     adjacency.entry(right).or_default().push(left);
                 }
-                None => {}
+                _ => {}
             }
         }
         disequal.sort_unstable();

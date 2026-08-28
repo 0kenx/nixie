@@ -833,6 +833,12 @@ impl Simplex {
         if idx >= self.assignment.len() || self.is_basic(idx) {
             return;
         }
+        // Same discipline as `pivot`: delta-propagating from a stale vector
+        // compounds the staleness into every dependent.  Re-derive first.
+        if !self.assignment_current {
+            self.crash_basis();
+            self.assignment_current = true;
+        }
         let var = idx as VarId;
         let old = self.assignment[idx];
         let mut new = old;
@@ -2112,6 +2118,26 @@ impl Simplex {
     /// this module's scope to change) and relies on the subsequent
     /// pivot-budget/optimality bookkeeping to notice a stalled search.
     pub(super) fn pivot(&mut self, basic_var: VarId, nonbasic_var: VarId) -> bool {
+        // The `assignment_current` flag is the "this vector needs a full
+        // re-derivation before it may be consumed" mark, and `check` is not
+        // the only consumer: rows can be *added* while the flag is down (a
+        // pop sets it, and the div/mod/abs axiom feed adds rows right after),
+        // which leaves the new slack's entry at its `zero()` default —
+        // `intern_row_cached` only computes it when the flag is up — and the
+        // pivot-driven paths that run before the next `check`
+        // (`propagate_bounds` / `tighten_bounds` / the SOI drivers) would
+        // then read, propagate, and DECIDE on a stale value.  (This is not
+        // hypothetical: the div/mod differential test hit exactly that,
+        // `assignment[71] = 0` against a row evaluating to -3.)  Honoring
+        // the flag here, at the single choke point every pivot passes
+        // through, restores the contract for every caller at the cost of one
+        // branch; `crash_basis` is the same re-derivation `check` performs
+        // when it sees the flag, so no new invariant is introduced.
+        if !self.assignment_current {
+            self.crash_basis();
+            self.assignment_current = true;
+        }
+
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
         self.ensure_scope_snapshot();
@@ -2743,6 +2769,10 @@ impl Simplex {
         // snapshot below.
         let saved_tableau = self.saved_tableaux.pop().flatten();
         let cached_assignment = self.cached_assignments.pop().flatten();
+        // Whether this scope mutated the tableau or assignment at all (a
+        // `Some` snapshot exists only from `ensure_scope_snapshot`, taken at
+        // the first mutation).
+        let restored_mutation = saved_tableau.is_some() || cached_assignment.is_some();
         if let Some((saved_tableau, mut saved_basic, saved_columns)) = saved_tableau {
             saved_basic.resize(self.basic.len(), false);
             self.basic = saved_basic;
@@ -2780,7 +2810,18 @@ impl Simplex {
                 // their rows.  The next `check` must re-derive the basic
                 // assignments via `crash_basis` instead of trusting the
                 // incremental flag.
-                if self.assignment.len() > restore_len {
+                // The growth-only condition this replaced missed two stale
+                // shapes (found via the div/mod differential debug-assert,
+                // 2026-08-28): (a) a scope whose pivots rewrote rows — the
+                // restored assignment is the pre-mutation vector, which does
+                // not satisfy the restored tableau even at unchanged length;
+                // (b) a slack interned while the flag was already down (its
+                // entry stayed at the `zero()` default) whose error the
+                // scope snapshot then froze as if consistent.  Any scope that
+                // mutated (a `Some` cache exists) must re-derive on its next
+                // consumer — the flag is exactly that "needs re-derivation"
+                // mark, and `pivot` now honors it too.
+                if restored_mutation || self.assignment.len() > restore_len {
                     self.assignment_current = false;
                 }
             }
