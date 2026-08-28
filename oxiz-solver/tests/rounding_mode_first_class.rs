@@ -214,11 +214,6 @@ fn the_five_distinct_modes_get_five_different_values() {
 /// verifies the result. `concrete_rounding_mode_path_is_unchanged` is the
 /// control: same formula, literal mode.
 #[test]
-#[ignore = "blocked by a pre-existing FP-model gap on main: even a fully \
-            concrete (fp.add RNE c1 c2) answers sat but (get-value) reports 'No model \
-            available' - the FP theory does not compute fp.* values for the model. The \
-            RoundingMode semantics these tests need (closure, distinctness, symbolic \
-            five-way ite) are covered by the other tests in this file."]
 fn a_symbolic_rounding_mode_inside_fp_add_is_sat() {
     assert_eq!(
         verdict(
@@ -258,11 +253,6 @@ fn concrete_rounding_mode_path_is_unchanged() {
 
 /// The indexed conversions take a symbolic mode through the same case split.
 #[test]
-#[ignore = "blocked by a pre-existing FP-model gap on main: even a fully \
-            concrete (fp.add RNE c1 c2) answers sat but (get-value) reports 'No model \
-            available' - the FP theory does not compute fp.* values for the model. The \
-            RoundingMode semantics these tests need (closure, distinctness, symbolic \
-            five-way ite) are covered by the other tests in this file."]
 fn a_symbolic_rounding_mode_inside_an_indexed_conversion_is_sat() {
     assert_eq!(
         verdict(
@@ -281,11 +271,6 @@ fn a_symbolic_rounding_mode_inside_an_indexed_conversion_is_sat() {
 /// the two disagree on this value and only one of the two verdicts can be
 /// `sat`.
 #[test]
-#[ignore = "blocked by a pre-existing FP-model gap on main: even a fully \
-            concrete (fp.add RNE c1 c2) answers sat but (get-value) reports 'No model \
-            available' - the FP theory does not compute fp.* values for the model. The \
-            RoundingMode semantics these tests need (closure, distinctness, symbolic \
-            five-way ite) are covered by the other tests in this file."]
 fn a_pinned_symbolic_mode_selects_that_modes_arithmetic() {
     // 1/3 is not representable in float32. Rounding toward zero lands strictly
     // below rounding to nearest, so asserting `<` between the two results is
