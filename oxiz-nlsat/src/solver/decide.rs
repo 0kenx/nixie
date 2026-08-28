@@ -4,6 +4,7 @@
 //! and cylindrical algebraic decomposition (CAD) projection for feasibility.
 
 use super::NlsatSolver;
+use super::witness_algebraic::AlgebraicWitness;
 use crate::cad::SturmSequence;
 use crate::interval_set::IntervalSet;
 use crate::types::{Atom, AtomKind, BoolVar, IneqAtom, Literal};
@@ -26,10 +27,14 @@ use rustc_hash::{FxHashMap, FxHashSet};
 ///   variable are jointly infeasible over the reals (verified exactly via Sturm
 ///   root isolation). The attached literals form a valid theory lemma
 ///   (`¬l_1 ∨ … ∨ ¬l_k`) that can be learned and back-jumped over.
-/// * `IrrationalOnly` – the true real feasible region is non-empty but contains
-///   no rational point (e.g. `x^2 = 2`). We cannot represent an algebraic
-///   witness in the current rational assignment, so the honest answer is
-///   `Unknown` rather than a fabricated model or a wrong `Unsat`.
+/// * `AlgebraicValue` – the true real feasible region is non-empty but contains
+///   no rational point (e.g. `x^2 = 2`), and an exact real-algebraic witness
+///   for it *was* found. See `solver/witness_algebraic.rs`.
+/// * `IrrationalOnly` – as above, but no algebraic witness could be produced
+///   *and* emptiness could not be proved either: the exact sign machinery ran
+///   out of refinement budget, or a second algebraic value would have been
+///   needed. The honest answer is `Unknown` rather than a fabricated model or
+///   a wrong `Unsat`.
 /// * `GreedyEmpty` – the intersection is empty but involves a constraint that
 ///   couples this variable with earlier-assigned variables, so emptiness is
 ///   conditional on those (greedy) choices and cannot be turned into a valid
@@ -37,6 +42,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 pub(super) enum ArithDecision {
     /// A concrete rational witness inside the feasible region.
     Value(BigRational),
+    /// An exact real-algebraic witness (defining polynomial + isolating
+    /// interval), committed for a variable whose feasible set holds no
+    /// rational point. (Ported from upstream v0.3.3.)
+    AlgebraicValue { point: crate::cad::CadPoint },
     /// Provably infeasible over the reals; carries a valid conflict lemma.
     ProvedEmpty(Vec<Literal>),
     /// Feasible over the reals but with no rational witness (algebraic only).
@@ -277,7 +286,16 @@ impl NlsatSolver {
         }
         if regions.pure && regions.reliable && !regions.outer.is_empty() {
             // Real solutions exist but none are rational (algebraic only).
-            return ArithDecision::IrrationalOnly;
+            // Try for an exact real-algebraic witness before conceding: the
+            // candidate walk over the cells of the sign-invariant
+            // decomposition is a decision procedure for this (pure) case, so
+            // exhausting it without a satisfying cell is a *proof* of
+            // emptiness, not a shrug. (Ported from upstream v0.3.3.)
+            return match self.sample_algebraic_witness(var) {
+                AlgebraicWitness::Found(point) => ArithDecision::AlgebraicValue { point },
+                AlgebraicWitness::NoRealPoint(lemma) => ArithDecision::ProvedEmpty(lemma),
+                AlgebraicWitness::Inconclusive => ArithDecision::IrrationalOnly,
+            };
         }
 
         // Emptiness is conditional on earlier greedy variable choices (the

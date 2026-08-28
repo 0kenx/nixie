@@ -123,7 +123,23 @@ impl Solver {
 
         match result {
             NlDispatchResult::Sat(nl_model) => {
-                self.install_nl_model(nl_model, manager);
+                // The exact-value channel (upstream v0.3.3): when the
+                // dispatcher's witness is algebraic there is no rational
+                // `Model` to install at all — √2 has no term in the rational
+                // term language — so the channel carries the whole assignment
+                // and the ordinary model stays unset. The two are exclusive
+                // by `NlDispatchResult`'s contract; a debug build must not
+                // let a future dispatcher break it.
+                debug_assert!(
+                    nl_model.algebraic.is_empty() || nl_model.assignments.is_empty(),
+                    "the nonlinear dispatcher populated both witness channels \
+                     for one Sat; they are alternatives, not layers"
+                );
+                if nl_model.algebraic.is_empty() {
+                    self.install_nl_model(nl_model, manager);
+                } else {
+                    self.nl_algebraic_values = nl_model.algebraic;
+                }
                 Some(SolverResult::Sat)
             }
             NlDispatchResult::Unsat => Some(SolverResult::Unsat),

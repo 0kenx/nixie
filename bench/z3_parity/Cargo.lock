@@ -572,6 +572,7 @@ dependencies = [
  "num-traits",
  "oxiz-core",
  "oxiz-math",
+ "oxiz-nlsat",
  "oxiz-sat",
  "oxiz-solver",
  "oxiz-theories",
@@ -590,6 +591,7 @@ dependencies = [
  "num-rational",
  "num-traits",
  "oxiz-math",
+ "oxiz-time",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -612,6 +614,7 @@ dependencies = [
  "num-integer",
  "num-rational",
  "num-traits",
+ "oxiz-time",
  "rand",
  "rustc-hash",
  "smallvec",
@@ -628,6 +631,7 @@ dependencies = [
  "num_cpus",
  "oxiz-core",
  "oxiz-math",
+ "oxiz-time",
  "rayon",
  "rustc-hash",
  "smallvec",
@@ -643,6 +647,7 @@ dependencies = [
  "num-rational",
  "num-traits",
  "oxiz-core",
+ "oxiz-time",
  "regex",
  "rustc-hash",
  "smallvec",
@@ -657,6 +662,7 @@ dependencies = [
  "hashbrown 0.17.0",
  "libm",
  "oxiz-core",
+ "oxiz-time",
  "portable-atomic-util",
  "rayon",
  "rustc-hash",
@@ -677,6 +683,7 @@ dependencies = [
  "oxiz-proof",
  "oxiz-sat",
  "oxiz-theories",
+ "oxiz-time",
  "portable-atomic-util",
  "rayon",
  "rustc-hash",
@@ -697,11 +704,16 @@ dependencies = [
  "oxiz-math",
  "oxiz-nlsat",
  "oxiz-sat",
+ "oxiz-time",
  "portable-atomic-util",
  "rustc-hash",
  "smallvec",
  "tracing",
 ]
+
+[[package]]
+name = "oxiz-time"
+version = "0.3.2"
 
 [[package]]
 name = "oxiz-z3-parity"

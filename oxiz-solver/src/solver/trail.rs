@@ -271,6 +271,9 @@ impl super::Solver {
             // next search reads it (the case-split lemmas are SAT-scoped and
             // retracted by `pop`; the dedup set must not outlive them).
             case_split_rounds: _, // PER-SEARCH: same lifetime as `case_split_terms`
+            nl_algebraic_values: _, // RESULT: cleared with the cached verdict by
+            // `invalidate_results` — the channel belongs to the check that
+            // populated it, exactly as the model does.
             #[cfg(test)]
                 repair_paths_saw_model: _, // INVARIANT: test-only event log,
             // deliberately cumulative across `check`s and scopes; restoring it
