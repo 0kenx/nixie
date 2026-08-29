@@ -278,6 +278,7 @@ impl super::Solver {
                 repair_paths_saw_model: _, // INVARIANT: test-only event log,
             // deliberately cumulative across `check`s and scopes; restoring it
             // would defeat what it measures.
+            dt_derived_size_vars: _, // RESULT: cleared and repopulated per build
             model_blocking_active: _, // SNAPSHOT: restored from ContextState in
             // lockstep with `sat.pop()` retracting the blocking clauses (the
             // counter is a *lifetime* count for the scope, deliberately NOT

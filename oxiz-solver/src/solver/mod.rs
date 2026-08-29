@@ -424,6 +424,12 @@ pub struct Solver {
     /// (Ported from upstream v0.3.3.)
     pub(super) nl_algebraic_values:
         rustc_hash::FxHashMap<TermId, oxiz_theories::nl_witness::NlWitnessValue>,
+    /// `dt.size!` variables whose model entries the CURRENT build actually
+    /// re-derived from a reconstructed value (`rederive_size_measures`).
+    /// The collision gate consults this: a size side is only in scope when
+    /// its value is authoritative (a failed derivation leaves the tableau
+    /// default, which is noise for this purpose).
+    pub(super) dt_derived_size_vars: rustc_hash::FxHashSet<TermId>,
     /// Test-only event log: one entry per ground candidate model, recording
     /// whether `self.model` was still populated when `check_core` reached the
     /// case-split / array-axiom repair paths.
@@ -657,6 +663,7 @@ impl Solver {
             case_split_terms: FxHashSet::default(),
             case_split_rounds: 0,
             model_blocking_active: 0,
+            dt_derived_size_vars: rustc_hash::FxHashSet::default(),
             nl_algebraic_values: rustc_hash::FxHashMap::default(),
             #[cfg(test)]
             repair_paths_saw_model: Vec::new(),

@@ -319,6 +319,7 @@ impl Solver {
         // keep their pre-separation defaults and the committed-false
         // equalities between them still collide.
         self.rederive_selector_entries(&mut model, manager);
+        self.rederive_size_measures(&mut model, manager);
 
         // Rounding-mode values.  Must run after the Boolean pass above, which
         // is what put the mode-equality atoms' truth values into scope.
@@ -507,6 +508,124 @@ impl Solver {
 
         self.separate_disequal_dt_values(&decls, dt_field_hints, injectivity_pairs, model, manager);
         debug_verify_dt_model(&self.assertions, model, manager);
+    }
+
+    /// Re-derive every `dt.size!<id>` measure variable's model entry from
+    /// the reconstructed value of the term it measures:
+    /// `size(C(fields)) = 1 + Σ size(datatype fields)`.
+    ///
+    /// The measure is only ever *constrained* by the axioms (non-negative,
+    /// `outer > inner`, congruence), never defined — so the model's entry is
+    /// whatever the tableau defaulted it to, and a committed-false size
+    /// equality reported by the collision gate could not be trusted OR
+    /// repaired.  Deriving from the reconstruction satisfies every constraint
+    /// (strictly greater than each datatype child, ≥ 0, equal for equal
+    /// values) and makes equal derived sizes on a committed-false equality a
+    /// genuine "the search must separate the trees" signal — which the
+    /// blocking loop can act on.
+    fn rederive_size_measures(&mut self, model: &mut Model, manager: &mut TermManager) {
+        const DT_SIZE_PREFIX: &str = "dt.size!";
+        // (measured term, size var) for every encoded measure variable.
+        let mut pairs: Vec<(TermId, TermId)> = Vec::new();
+        for (&t, _) in self.term_to_var.iter() {
+            let Some(TermKind::Var(name)) = manager.get(t).map(|n| &n.kind) else {
+                continue;
+            };
+            let name = manager.resolve_str(*name);
+            let Some(id) = name.strip_prefix(DT_SIZE_PREFIX) else {
+                continue;
+            };
+            let Ok(id) = id.parse::<u32>() else {
+                continue;
+            };
+            pairs.push((TermId::new(id), t));
+        }
+        if pairs.is_empty() {
+            return;
+        }
+        // Memoised size computation over the reconstructed values.  The
+        // closure cannot call itself, so the recursion is expressed as a
+        // two-phase worklist: expand each term's children first (memo
+        // misses), then fold.  Values are finite trees; the phase bound is
+        // belt-and-braces against a malformed cycle.
+        const MAX_SIZE: i64 = 1 << 40;
+        fn size_of(
+            term: TermId,
+            model: &Model,
+            memo: &mut FxHashMap<TermId, Option<i64>>,
+            manager: &TermManager,
+        ) -> Option<i64> {
+            let mut stack: Vec<TermId> = vec![term];
+            while let Some(t) = stack.pop() {
+                if memo.contains_key(&t) {
+                    continue;
+                }
+                let Some(val) = model.get(t) else {
+                    memo.insert(t, None);
+                    continue;
+                };
+                let Some(node) = manager.get(val) else {
+                    memo.insert(t, None);
+                    continue;
+                };
+                let TermKind::DtConstructor { args, .. } = &node.kind else {
+                    memo.insert(t, None);
+                    continue;
+                };
+                let mut pending: Vec<TermId> = Vec::new();
+                for &arg in args {
+                    let is_dt = manager
+                        .get(arg)
+                        .is_some_and(|n| manager.sorts.is_datatype(n.sort));
+                    if is_dt && !memo.contains_key(&arg) {
+                        pending.push(arg);
+                    }
+                }
+                if pending.is_empty() {
+                    let mut total: i64 = 1;
+                    for &arg in args {
+                        let is_dt = manager
+                            .get(arg)
+                            .is_some_and(|n| manager.sorts.is_datatype(n.sort));
+                        if !is_dt {
+                            continue;
+                        }
+                        match memo.get(&arg).copied().flatten() {
+                            Some(child) => {
+                                total = total.saturating_add(child);
+                                if total > MAX_SIZE {
+                                    memo.insert(t, None);
+                                    return size_from(memo, term);
+                                }
+                            }
+                            None => {
+                                memo.insert(t, None);
+                                return size_from(memo, term);
+                            }
+                        }
+                    }
+                    memo.insert(t, Some(total));
+                } else {
+                    // Re-visit after the children; marker None prevents
+                    // infinite re-push of the same node.
+                    memo.insert(t, None);
+                    stack.push(t);
+                    stack.extend(pending);
+                }
+            }
+            size_from(memo, term)
+        }
+        fn size_from(memo: &FxHashMap<TermId, Option<i64>>, term: TermId) -> Option<i64> {
+            memo.get(&term).copied().flatten()
+        }
+        let mut memo: FxHashMap<TermId, Option<i64>> = FxHashMap::default();
+        self.dt_derived_size_vars.clear();
+        for (measured, svar) in pairs {
+            if let Some(n) = size_of(measured, model, &mut memo, manager) {
+                model.set(svar, manager.mk_int(num_bigint::BigInt::from(n)));
+                self.dt_derived_size_vars.insert(svar);
+            }
+        }
     }
 
     /// Re-derive every `DtSelector` term's model entry from its argument's

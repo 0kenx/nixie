@@ -787,20 +787,28 @@ impl Solver {
             // tracked next items; every other collision shape is repaired
             // (`separate_committed_disequalities`, the datatype hints and
             // selector re-derivation) and gated here.
-            // `dt.size!` measure variables are excluded alongside array
-            // reads: a tree's size is DERIVED from its reconstructed value
-            // (1 + the children's sizes), so a size collision is retired by
-            // re-deriving the size graph after a separation — the same class
-            // of work as the array value-graph, and equally tracked.
+            // `dt.size!` measures are RE-DERIVED from the reconstructed
+            // values before this gate runs (`rederive_size_measures`), so
+            // their sides are in scope: a committed-false size equality with
+            // equal derived sizes is a genuine "the search must separate the
+            // trees" signal the blocking loop can act on.
             // Scope: the collision half fires only on sides whose collisions
             // the model repairs demonstrably retire — plain numeric vars and
             // compound arithmetic.  Excluded, each for a root-caused reason
             // (see the study): array reads (`Select`) and their purification
-            // proxies (array value-graph; store-store congruence never
-            // propagates), `dt.size!` measures (derived from the
-            // reconstructed tree), and `DtSelector` applications (the
+            // proxies (array value-graph; store-store congruence now
+            // propagates but the read-graph re-derivation is incomplete),
+            // and `DtSelector` applications (the
             // datatype value-graph: enum-heavy goals produce thousands of
             // same-constructor selector pairs no value bump can retire).
+            // `dt.size!` measures stay excluded even though they are now
+            // re-derived from the reconstructed values: distinct trees can
+            // GENUINELY have equal sizes (two leaves), the core commits
+            // `size_a != size_b` as a free Boolean (no axiom forces it), and
+            // on a structurally forced goal the blocking loop cannot
+            // converge (dt_05: 38 block rounds, measured).  The derivation
+            // still improves the model — real sizes in `(get-value)`
+            // instead of tableau defaults.
             let side_ok = |t: TermId| {
                 manager.get(t).is_some_and(|n| {
                     (n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort)
@@ -823,6 +831,19 @@ impl Solver {
                 continue;
             };
             if lhs_val == rhs_val {
+                #[cfg(debug_assertions)]
+                if std::env::var("OXIZ_DT_TRACE").is_ok() {
+                    let nm = |t: TermId| {
+                        manager
+                            .get(t)
+                            .map(|n| match &n.kind {
+                                TermKind::Var(v) => manager.resolve_str(*v).to_string(),
+                                k => format!("{k:?}"),
+                            })
+                            .unwrap_or_default()
+                    };
+                    eprintln!("[coll] ({lhs:?},{rhs:?}) {} vs {}", nm(lhs), nm(rhs));
+                }
                 return Some((lhs, rhs));
             }
         }
