@@ -230,6 +230,25 @@ impl Context {
         // one witness while distinct constants get distinct ones.
         let mut per_sort_next: crate::prelude::HashMap<SortId, usize> =
             crate::prelude::HashMap::new();
+        let mut int_class_value: crate::prelude::HashMap<u64, i64> = crate::prelude::HashMap::new();
+        let mut int_class_next: i64 = 0;
+        // Integer values already pinned by the solver model (the completion
+        // must not collide a completed argument with a real one).
+        let mut used_int_values: crate::prelude::HashSet<i64> = crate::prelude::HashSet::new();
+        for v in solver_model.assignments().values() {
+            if let Some(TermKind::IntConst(n)) = self.terms.get(*v).map(|t| &t.kind)
+                && let (sign, bytes) = n.to_bytes_le()
+            {
+                let mut i: i64 = 0;
+                for (k, b) in bytes.iter().take(7).enumerate() {
+                    i |= i64::from(*b) << (8 * k);
+                }
+                if sign == num_bigint::Sign::Minus {
+                    i = -i;
+                }
+                used_int_values.insert(i);
+            }
+        }
         let mut class_witness: crate::prelude::HashMap<(SortId, u64), usize> =
             crate::prelude::HashMap::new();
 
@@ -267,6 +286,36 @@ impl Context {
                     i
                 };
                 format!("@uc_{}_{}", self.format_sort_name(decl.sort), idx)
+            } else if decl.sort == self.terms.sorts.int_sort
+                && self.solver.euf_app_argument(decl.term)
+            {
+                // Unassigned INTEGER constants that feed uninterpreted
+                // applications complete PER EUF CLASS with distinct
+                // integers: defaulting every free argument to 0 collapses
+                // the applications' arguments in the printed model while
+                // the core never decided them — the UCLID-pred wrong-model
+                // class (`fdi0 = emi0 = 0` completed, the structurally
+                // identical ite chains over `ifield(fdi0)` /
+                // `ifield(emi0)` then demanding opposite branches of one
+                // function value).  Distinct-per-class completions keep
+                // the printed model congruence-honest without deciding
+                // anything the search left open.
+                let class_key: u64 = match self.solver.euf_class_representative(decl.term) {
+                    Some(rep) => (1u64 << 32) | u64::from(rep),
+                    None => u64::from(decl.term.0),
+                };
+                let v = if let Some(&i) = int_class_value.get(&class_key) {
+                    i
+                } else {
+                    let mut i = int_class_next;
+                    while used_int_values.contains(&i) {
+                        i += 1;
+                    }
+                    int_class_value.insert(class_key, i);
+                    int_class_next = i + 1;
+                    i
+                };
+                v.to_string()
             } else {
                 // Default value based on sort
                 self.default_value(decl.sort)

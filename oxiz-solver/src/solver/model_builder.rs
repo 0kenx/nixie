@@ -17,6 +17,40 @@ use super::types::{Model, UnsatCore};
 type DecidedEqualities = (Vec<(TermId, TermId)>, FxHashMap<TermId, Vec<TermId>>);
 
 impl Solver {
+    /// Distinct default for an unconstrained integer-sorted UF argument:
+    /// the first non-negative value not already used by a pinned entry,
+    /// reusing an EUF-merged partner's value when one is already pinned
+    /// (merged arguments MUST share).
+    fn next_unconstrained_uf_arg_value(
+        &self,
+        term: TermId,
+        model: &Model,
+        manager: &TermManager,
+    ) -> i64 {
+        let mut used: Vec<i64> = Vec::new();
+        let my_node = self.euf.term_to_node(term);
+        for (&t, &v) in model.assignments().iter() {
+            let Some(TermKind::IntConst(n)) = manager.get(v).map(|n| &n.kind) else {
+                continue;
+            };
+            let Some(i) = n.to_i64() else { continue };
+            if t != term {
+                used.push(i);
+                // EUF-merged partners keep ONE value: reuse it.
+                if let (Some(na), Some(nb)) = (self.euf.term_to_node(t), my_node)
+                    && self.euf.find_immutable(na) == self.euf.find_immutable(nb)
+                {
+                    return i;
+                }
+            }
+        }
+        let mut candidate = 0i64;
+        while used.contains(&candidate) {
+            candidate += 1;
+        }
+        candidate
+    }
+
     pub(super) fn build_model(&mut self, manager: &mut TermManager) {
         let mut model = Model::new();
         let sat_model = self.sat.model();
@@ -152,8 +186,24 @@ impl Solver {
                     .map(|t| t.sort == manager.sorts.int_sort)
                     .unwrap_or(true);
 
+                // Unconstrained UF ARGUMENTS default pairwise-distinct
+                // (unless EUF-merged): two free arguments both defaulting
+                // to 0 collide the applications' arguments in every
+                // printed model while the core never decided them — the
+                // UCLID-pred wrong-model class (`fdi0 = emi0 = 0` pinned,
+                // the structurally identical ite chains over
+                // `ifield(fdi0)` / `ifield(emi0)` then demanding opposite
+                // branches of one function value).  Distinct defaults keep
+                // the printed model congruence-honest without deciding
+                // anything the search left open.
+                let is_uf_arg = self.euf.app_argument_terms().contains(&term);
                 let value_term = if is_int {
-                    manager.mk_int(0i64)
+                    let v = if is_uf_arg {
+                        self.next_unconstrained_uf_arg_value(term, &model, manager)
+                    } else {
+                        0i64
+                    };
+                    manager.mk_int(v)
                 } else {
                     manager.mk_real(num_rational::Rational64::from_integer(0))
                 };
@@ -1868,6 +1918,13 @@ impl Solver {
     /// treated as distinct.  Model output uses this to give uninterpreted-sort
     /// constants proven equal a *shared* abstract witness while keeping
     /// distinct constants distinct.
+    /// Whether `term` is an argument of some uninterpreted application
+    /// interned in the EUF solver (used by the model completion to keep
+    /// free UF arguments pairwise-distinct).
+    pub(crate) fn euf_app_argument(&self, term: TermId) -> bool {
+        self.euf.app_argument_terms().contains(&term)
+    }
+
     pub(crate) fn euf_class_representative(&self, term: TermId) -> Option<u32> {
         let node = self.euf.term_to_node(term)?;
         Some(self.euf.find_immutable(node))

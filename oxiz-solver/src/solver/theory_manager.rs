@@ -1464,9 +1464,27 @@ impl<'a> TheoryManager<'a> {
         let uf_args = self.euf.app_argument_terms();
         let mut by_val: FxHashMap<(Rational64, oxiz_core::SortId), Vec<TermId>> =
             FxHashMap::default();
-        for &t in self.arith.interface_terms() {
-            if uf_args.contains(&t)
-                && let Some(v) = self.arith.value(t)
+        // Group over the UF ARGUMENT terms themselves, not their
+        // intersection with `arith.interface_terms()`: an argument that is
+        // only ever used under the application (e.g. `ifield impl.fdi0`,
+        // never an arithmetic operand) is exactly the term whose model
+        // collapse must reach the arrangement — the UCLID-pred class hung
+        // on this filter (`fdi0 = emi0 = 0` in the tableau, both absent
+        // from the interface list, the split never proposed).
+        for &t in &uf_args {
+            // Same value chain as `build_model`'s pinning: an argument the
+            // tableau left free can still carry the difference-logic
+            // solver's basis value — grouping only on `arith.value` left
+            // those invisible to the arrangement (the UCLID-pred class:
+            // all three arguments read 0 from the DL basis, no group, no
+            // split, and the final model printed them collapsed).
+            let v = self.arith.value(t).or_else(|| {
+                self.diff
+                    .dense_value(t)
+                    .map(Rational64::from_integer)
+                    .or_else(|| self.diff.sparse_value_of(t))
+            });
+            if let Some(v) = v
                 && let Some(sort) = self.manager.get(t).map(|tm| tm.sort)
             {
                 let e = by_val.entry((v, sort)).or_default();
@@ -1522,7 +1540,21 @@ impl<'a> TheoryManager<'a> {
                     self.euf.pop();
 
                     let Some(core) = conflict else {
-                        continue; // arrangement-consistent; not kept (v1)
+                        // POSITIVE half (2026-08-29): the merge is
+                        // arrangement-consistent — the model collapsed `x`
+                        // and `y`, but the core never DECIDED them, so the
+                        // candidate can still print divergent values for
+                        // applications whose arguments collided (the
+                        // UCLID-pred wrong-model class).  Push the pair as
+                        // a care-split — the same channel the disequality
+                        // branch uses — so CDCL commits the equality either
+                        // way: `true` merges the applications in congruence
+                        // closure (conflicting incompatible downstream
+                        // commitments), `false` separates the arguments in
+                        // the tableau.  The merge itself stays a DECISION;
+                        // only the split is asserted.
+                        self.arrangement_splits.push((x, y));
+                        continue;
                     };
                     // C = the proof's premises minus the tentative edge
                     // itself: `C ⊢ x ≠ y` with every C premise currently
