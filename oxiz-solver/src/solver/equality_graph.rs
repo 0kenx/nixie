@@ -152,10 +152,14 @@ impl Solver {
         // the first non-equality-logic construct.
         let mut edge_var: FxHashMap<(TermId, TermId), Var> = FxHashMap::default();
         let mut pure = true;
+        let euf_apps = self.euf.has_app_nodes();
+        let arr_ops = self.has_array_ops;
         for &assertion in &self.assertions {
             Self::collect_eq_edges(
                 assertion,
                 manager,
+                euf_apps,
+                arr_ops,
                 &self.term_to_var,
                 &mut edge_var,
                 &mut pure,
@@ -270,6 +274,8 @@ impl Solver {
     fn collect_eq_edges(
         term: TermId,
         manager: &TermManager,
+        self_euf_apps: bool,
+        self_arr_ops: bool,
         term_to_var: &FxHashMap<TermId, Var>,
         edge_var: &mut FxHashMap<(TermId, TermId), Var>,
         pure: &mut bool,
@@ -284,23 +290,60 @@ impl Solver {
         match &t.kind {
             TermKind::True | TermKind::False => {}
             TermKind::Not(inner) => {
-                Self::collect_eq_edges(*inner, manager, term_to_var, edge_var, pure);
+                Self::collect_eq_edges(
+                    *inner,
+                    manager,
+                    self_euf_apps,
+                    self_arr_ops,
+                    term_to_var,
+                    edge_var,
+                    pure,
+                );
             }
             TermKind::And(ts) | TermKind::Or(ts) => {
                 for &c in ts {
-                    Self::collect_eq_edges(c, manager, term_to_var, edge_var, pure);
+                    Self::collect_eq_edges(
+                        c,
+                        manager,
+                        self_euf_apps,
+                        self_arr_ops,
+                        term_to_var,
+                        edge_var,
+                        pure,
+                    );
                     if !*pure {
                         return;
                     }
                 }
             }
             TermKind::Eq(a, b) => {
+                // Numeric equality is NOT pure equality logic: `(= x y)` over
+                // Int/Real needs the arithmetic theory (the trichotomy split
+                // and the tableau) to produce a model that separates the
+                // sides — the chordal-SAT path has none of that, and on
+                // `(not (= x y))` it answered with a colliding model the
+                // collision gate honestly refused (root-caused 2026-08-29;
+                // the pre-gate behaviour was a wrong-model `sat`).
+                // Opt out of the fast path only for the PLAIN-ARITHMETIC shape
+                // (no uninterpreted applications, no arrays): there the goal
+                // needs the trichotomy + tableau to produce a separating
+                // model.  UF- and array-bearing goals keep the chordal path —
+                // routing them to the general loop was measured at several
+                // differential timeouts (Hash, RDS), and their compound
+                // numeric equalities are the arrangement's province anyway.
+                let plain_arith = || !self_euf_apps && !self_arr_ops;
+                let numeric = |t: &oxiz_core::ast::TermId| {
+                    manager.get(*t).is_some_and(|n| {
+                        n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort
+                    })
+                };
                 let ok = manager
                     .get(*a)
                     .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
                     && manager
                         .get(*b)
-                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)));
+                        .is_some_and(|x| matches!(x.kind, TermKind::Var(_)))
+                    && !(plain_arith() && (numeric(a) || numeric(b)));
                 if !ok {
                     *pure = false;
                     return;

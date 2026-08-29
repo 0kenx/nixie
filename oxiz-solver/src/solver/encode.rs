@@ -1185,6 +1185,30 @@ impl Solver {
     /// calls `add_arith_trichotomy_clause` for each.  This makes the arith
     /// solver SEE the equality, enabling the combination to reason about array
     /// select results.
+    /// Emit `(a = b) ∨ (a < b) ∨ (a > b)` for one pair, journaled by the same
+    /// per-scope memo the assertion walk uses; `false` = pair already covered.
+    pub(super) fn emit_collision_trichotomy(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        manager: &mut TermManager,
+    ) -> bool {
+        let is_numeric = manager
+            .get(lhs)
+            .is_some_and(|t| t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort);
+        if !is_numeric {
+            return false;
+        }
+        let pair = if lhs < rhs { (lhs, rhs) } else { (rhs, lhs) };
+        if !self.numeric_eq_split_pairs.insert(pair) {
+            return false;
+        }
+        self.trail
+            .push(crate::solver::trail::TrailOp::NumericEqSplitPairAdded { pair });
+        self.add_arith_trichotomy_clause(lhs, rhs, manager);
+        true
+    }
+
     pub(super) fn ensure_numeric_equality_splits(&mut self, manager: &mut TermManager) {
         let int_sort = manager.sorts.int_sort;
         let real_sort = manager.sorts.real_sort;

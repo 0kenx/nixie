@@ -171,6 +171,13 @@ impl Solver {
             &interface_pairs,
             &mut candidates,
         );
+        let mut ssc_premise_pairs: Vec<(TermId, TermId)> = Vec::new();
+        build_store_congruence(manager, &collected, &mut candidates, &mut ssc_premise_pairs);
+        // Trichotomy for the premise pairs (lazy A1 for lemma-borne atoms:
+        // the assertion walk structurally cannot see them).
+        for (l, r) in &ssc_premise_pairs {
+            self.emit_collision_trichotomy(*l, *r, manager);
+        }
         // The upward closure runs FIRST: it defines synthetic reads one
         // chain level at a time, and the reads it defines must not also pay a
         // full flat chain-unfold in `build_read_over_write` (that duplication
@@ -252,6 +259,7 @@ impl Solver {
             interface_atoms_encoded += 1;
         }
 
+        // ORIGIN TRACE: dump the candidate list tagged by which builder ran.
         // ======== Phase 3: filter (dedup) and assert ========
         // Deduplication (by interned lemma term) is the real limiter: every
         // candidate below is a *theorem* of the array theory, so asserting it
@@ -426,6 +434,9 @@ struct ArrayStructure {
     /// `(base, store_result)` for every `store` term, used to seed
     /// base↔store extensionality (see [`collect_array_structure`]).
     store_base_pairs: Vec<(TermId, TermId)>,
+    /// Every `store(b, i, v)` application the walk encountered; the
+    /// store-congruence family instantiates over these.
+    store_apps: Vec<TermId>,
     /// Distinct indices read on each array operand (for select congruence).
     read_indices: FxHashMap<TermId, Vec<TermId>>,
     /// Constant-function array terms: `((as const S) v)` parses as an
@@ -556,6 +567,7 @@ fn collect_array_structure(
                 // because `(a, b)` is not an *asserted* equality atom.
                 if *base != term {
                     out.store_base_pairs.push((*base, term));
+                    out.store_apps.push(term);
                 }
                 stack.push(WalkFrame {
                     term: *value,
@@ -595,7 +607,18 @@ fn collect_array_structure(
                 // read-over-write – POSITIVE equalities only.  A disequality
                 // `(not (= var store))` is not an alias; its inner `Eq` reaches
                 // here at `positive == false`.
-                if positive {
+                if positive && from_input {
+                    // Aliases are only meaningful for equalities the INPUT
+                    // states.  The saturation walk below re-walks every
+                    // asserted lemma, and a lemma's ANTECEDENT equality —
+                    // e.g. a store-congruence premise `(= a (store a i x))`,
+                    // true in no model — recorded here as an unconditional
+                    // alias makes the upward/row builders reason "a IS that
+                    // store", from which they derive `x = select(a, i)` and
+                    // kin: lemmas valid individually, jointly refuting
+                    // satisfiable goals (found via the store-commutativity
+                    // shape, where the poisoned alias chain forced `x = y`
+                    // and the solver reported `unsat` for a `sat` goal).
                     record_alias(*lhs, *rhs, manager, &mut out.aliases);
                     record_alias(*rhs, *lhs, manager, &mut out.aliases);
                     // A level-0 `var = store(...)` conjunct is a fact: the
@@ -1221,11 +1244,13 @@ fn build_connected_upward_read_over_write(
             let read_s = manager.mk_select(store_term, j);
             let idx_eq = manager.mk_eq(store_idx, j);
             let hit = manager.mk_eq(read_s, stored_val);
-            candidates.push(manager.mk_implies(idx_eq, hit));
+            let __c1 = manager.mk_implies(idx_eq, hit);
             let idx_neq = manager.mk_not(idx_eq);
             let base_read = manager.mk_select(base, j);
             let miss = manager.mk_eq(read_s, base_read);
-            candidates.push(manager.mk_implies(idx_neq, miss));
+            let __c2 = manager.mk_implies(idx_neq, miss);
+            candidates.push(__c1);
+            candidates.push(__c2);
             upward_defined.insert((store_term, j));
         }
     }
@@ -1360,6 +1385,95 @@ fn row_implications(
 /// arrays need not be eagerly unfolded (the clause decides them), which is the
 /// lever that makes a depth-60 `storecomm` chain one flat clause instead of a
 /// 60-deep unfolding.
+/// One instance of the store congruence axiom per pair of distinct `store`
+/// applications: `(= b1 b2) ∧ (= i1 i2) ∧ (= v1 v2) → (= S1 S2)`.
+fn build_store_congruence(
+    manager: &mut TermManager,
+    collected: &ArrayStructure,
+    candidates: &mut Vec<TermId>,
+    numeric_premise_pairs: &mut Vec<(TermId, TermId)>,
+) {
+    const MAX_STORE_PAIRS: usize = 512;
+    let mut apps = collected.store_apps.clone();
+    apps.sort_unstable_by_key(|t| t.raw());
+    apps.dedup();
+    // Emission filter (measured 2026-08-29: the unrestricted O(n^2) family
+    // cost the differential canary 12 net solves — deep `storecomm`/`pp_sf`
+    // chains carry dozens of stores and saturated the refinement loop with
+    // hundreds of pairwise implications).  A pair can matter only when the
+    // formula already relates the two stores: either their bases are the
+    // SAME term (the permutation shape), or the pair's own equality atom is
+    // present as an input equality (the goal compares the chains directly).
+    // Both are O(n) in practice and cover the store-commutativity shapes
+    // exactly; cross-level pairs with distinct bases and no equality atom
+    // never close a refutation the other families do not already carry.
+    let input_pairs: FxHashSet<(TermId, TermId)> = collected
+        .eq_pairs
+        .iter()
+        .map(|(a, b)| if a < b { (*a, *b) } else { (*b, *a) })
+        .collect();
+    let mut pairs = 0usize;
+    for w in 0..apps.len() {
+        for v in (w + 1)..apps.len() {
+            if pairs >= MAX_STORE_PAIRS {
+                return;
+            }
+            let (s1, s2) = (apps[w], apps[v]);
+            let same_base = |x: TermId, y: TermId| match (
+                manager.get(x).map(|n| n.kind.clone()),
+                manager.get(y).map(|n| n.kind.clone()),
+            ) {
+                (Some(TermKind::Store(bx, _, _)), Some(TermKind::Store(by, _, _))) => bx == by,
+                _ => false,
+            };
+            let key = if s1 < s2 { (s1, s2) } else { (s2, s1) };
+            if !same_base(s1, s2) && !input_pairs.contains(&key) {
+                continue;
+            }
+            pairs += 1;
+            let (Some(TermKind::Store(b1, i1, v1)), Some(TermKind::Store(b2, i2, v2))) = (
+                manager.get(s1).map(|n| n.kind.clone()),
+                manager.get(s2).map(|n| n.kind.clone()),
+            ) else {
+                continue;
+            };
+            let mut eqs: Vec<TermId> = Vec::new();
+            for (l, r) in [(b1, b2), (i1, i2), (v1, v2)] {
+                // Numeric premise pairs are reported so the caller emits
+                // their trichotomy: when the core commits such a premise
+                // FALSE, the arithmetic solver owes a strict split it never
+                // learns otherwise, and the model collides the two sides
+                // (the store-commutativity candidates kept `x = y` for
+                // exactly this reason).
+                let numeric_pair = |t: &TermId| {
+                    manager.get(*t).is_some_and(|n| {
+                        n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort
+                    })
+                };
+                if numeric_pair(&l) && numeric_pair(&r) && l != r {
+                    let key = if l < r { (l, r) } else { (r, l) };
+                    if !numeric_premise_pairs.contains(&key) {
+                        numeric_premise_pairs.push(key);
+                    }
+                }
+                let e = manager.mk_eq(l, r);
+                let trivial = manager
+                    .get(e)
+                    .is_some_and(|n| matches!(n.kind, TermKind::True));
+                if !trivial {
+                    eqs.push(e);
+                }
+            }
+            if eqs.is_empty() {
+                continue;
+            }
+            let antecedent = manager.mk_and(eqs);
+            let conclusion = manager.mk_eq(s1, s2);
+            candidates.push(manager.mk_implies(antecedent, conclusion));
+        }
+    }
+}
+
 fn build_extensionality_and_congruence(
     manager: &mut TermManager,
     collected: &ArrayStructure,
