@@ -620,10 +620,108 @@ impl Solver {
         }
         let mut memo: FxHashMap<TermId, Option<i64>> = FxHashMap::default();
         self.dt_derived_size_vars.clear();
-        for (measured, svar) in pairs {
-            if let Some(n) = size_of(measured, model, &mut memo, manager) {
-                model.set(svar, manager.mk_int(num_bigint::BigInt::from(n)));
-                self.dt_derived_size_vars.insert(svar);
+        for (measured, svar) in pairs.iter() {
+            if let Some(n) = size_of(*measured, model, &mut memo, manager) {
+                model.set(*svar, manager.mk_int(num_bigint::BigInt::from(n)));
+                self.dt_derived_size_vars.insert(*svar);
+            }
+        }
+
+        // ===== Size-splitting repair =====
+        // A committed-false size equality whose two sides derived EQUAL
+        // canonical sizes is not necessarily a refutation: distinct values
+        // may carry distinct sizes (the congruence axiom forces equal sizes
+        // only for EQUAL terms), so the model is free to split them — which
+        // is also what the search's committed atom asks for.  Override one
+        // side by +1 and re-derive everything through the override: ancestor
+        // sizes recompute with the bumped child, which re-establishes
+        // `outer > inner` by construction (1 + Σ children > each child).
+        //
+        // Soundness guard: only bump a side whose measured term's
+        // reconstructed VALUE is distinct from every other measured term's
+        // value — a shared value means some committed-true term equality
+        // may hold between the two sides' terms, and congruence would then
+        // require the sizes to stay equal.
+        if std::env::var("OXIZ_NO_SIZE_SPLIT").is_err() {
+            let value_of = |t: TermId| model.get(t);
+            let mut committed_false_size_pairs: Vec<(TermId, TermId)> = Vec::new();
+            for (&var, constraint) in self.var_to_constraint.iter() {
+                let super::types::Constraint::Eq(l, r) = constraint else {
+                    continue;
+                };
+                let is_size = |t: TermId| {
+                    self.dt_derived_size_vars.contains(&t)
+                        && manager
+                            .get(t)
+                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                };
+                if !is_size(*l) || !is_size(*r) {
+                    continue;
+                }
+                if self.sat.model_value(var) != oxiz_sat::LBool::False {
+                    continue;
+                }
+                // equal entries => a collision to repair
+                if model.get(*l) == model.get(*r) {
+                    committed_false_size_pairs.push((*l, *r));
+                }
+            }
+            if !committed_false_size_pairs.is_empty() {
+                // measured term for each size var
+                let mut var_to_measured: FxHashMap<TermId, TermId> = FxHashMap::default();
+                for (measured, svar) in pairs.iter() {
+                    var_to_measured.insert(*svar, *measured);
+                }
+                // all measured values (for the shared-value guard)
+                let measured_values: Vec<Option<TermId>> =
+                    pairs.iter().map(|(m, _)| value_of(*m)).collect();
+                let mut overrides: FxHashMap<TermId, i64> = FxHashMap::default();
+                for (sl, sr) in committed_false_size_pairs {
+                    let Some(ml) = var_to_measured.get(&sl) else {
+                        continue;
+                    };
+                    let Some(mr) = var_to_measured.get(&sr) else {
+                        continue;
+                    };
+                    // prefer bumping the side whose value is unshared
+                    let bump_side = |m: TermId| -> bool {
+                        let Some(v) = value_of(m) else {
+                            return false;
+                        };
+                        measured_values.iter().filter(|x| **x == Some(v)).count() == 1
+                    };
+                    let target = if bump_side(*ml) {
+                        *ml
+                    } else if bump_side(*mr) {
+                        *mr
+                    } else {
+                        continue;
+                    };
+                    // canonical size + 1
+                    if let Some(base) = size_of(target, model, &mut memo, manager) {
+                        overrides.insert(target, base + 1);
+                    }
+                }
+                if !overrides.is_empty() {
+                    // re-derive with overrides: seed the memo so the folded
+                    // parents see the bumped children.
+                    let mut memo2: FxHashMap<TermId, Option<i64>> = FxHashMap::default();
+                    for (t, v) in &overrides {
+                        memo2.insert(*t, Some(*v));
+                    }
+                    // size_of must respect pre-seeded values: it already
+                    // skips memo hits, so recompute every pair fresh.
+                    for (measured, svar) in pairs.iter() {
+                        if overrides.contains_key(measured) {
+                            let v = overrides[measured];
+                            model.set(*svar, manager.mk_int(num_bigint::BigInt::from(v)));
+                            continue;
+                        }
+                        if let Some(n) = size_of(*measured, model, &mut memo2, manager) {
+                            model.set(*svar, manager.mk_int(num_bigint::BigInt::from(n)));
+                        }
+                    }
+                }
             }
         }
     }

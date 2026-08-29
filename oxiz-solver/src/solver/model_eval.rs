@@ -813,8 +813,9 @@ impl Solver {
                 manager.get(t).is_some_and(|n| {
                     (n.sort == manager.sorts.int_sort || n.sort == manager.sorts.real_sort)
                         && !matches!(&n.kind, TermKind::Select(..) | TermKind::DtSelector { .. })
-                        && !matches!(&n.kind, TermKind::Var(v)
+                        && (!matches!(&n.kind, TermKind::Var(v)
                             if manager.resolve_str(*v).starts_with("dt.size"))
+                            || self.dt_derived_size_vars.contains(&t))
                 })
             };
             if !side_ok(lhs) || !side_ok(rhs) {
@@ -831,19 +832,6 @@ impl Solver {
                 continue;
             };
             if lhs_val == rhs_val {
-                #[cfg(debug_assertions)]
-                if std::env::var("OXIZ_DT_TRACE").is_ok() {
-                    let nm = |t: TermId| {
-                        manager
-                            .get(t)
-                            .map(|n| match &n.kind {
-                                TermKind::Var(v) => manager.resolve_str(*v).to_string(),
-                                k => format!("{k:?}"),
-                            })
-                            .unwrap_or_default()
-                    };
-                    eprintln!("[coll] ({lhs:?},{rhs:?}) {} vs {}", nm(lhs), nm(rhs));
-                }
                 return Some((lhs, rhs));
             }
         }
