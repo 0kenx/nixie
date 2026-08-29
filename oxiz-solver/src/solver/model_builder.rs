@@ -161,6 +161,40 @@ impl Solver {
             }
         }
 
+        // EUF-class reconciliation for arith-pinned entries: two terms the
+        // congruence closure MERGED (e.g. `ifield(fdi0)` and `ifield(emi0)`
+        // once `fdi0 = emi0` committed) are one value in any real model,
+        // but the tableau pins each term's OWN value above — printing both
+        // contradicts the merge itself (found on UCLID-pred `DLX1C0`: the
+        // model pinned `fdi0 = emi0 = 0` yet the merged applications read
+        // `-1` and `4`).  Overwrite every member's entry with its class
+        // representative's value.
+        {
+            let keys: Vec<TermId> = model.assignments().keys().copied().collect();
+            let mut reconciled: Vec<(TermId, TermId)> = Vec::new();
+            for term in keys {
+                let Some(node) = self.euf.term_to_node(term) else {
+                    continue;
+                };
+                let rep_node = self.euf.find_immutable(node);
+                if rep_node == node {
+                    continue;
+                }
+                let Some(rep_term) = self.euf.node_term(rep_node) else {
+                    continue;
+                };
+                if rep_term == term {
+                    continue;
+                }
+                reconciled.push((term, rep_term));
+            }
+            for (term, rep_term) in reconciled {
+                if let Some(rep_value) = model.get(rep_term) {
+                    model.set(term, rep_value);
+                }
+            }
+        }
+
         // Get bitvector values.  Which theory owns a BV variable's value depends
         // on how it was actually constrained (see `bv_solver_is_authoritative`):
         //

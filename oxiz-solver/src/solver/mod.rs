@@ -1915,6 +1915,12 @@ impl Solver {
 
                     // Build partial model for MBQI
                     self.build_model(manager);
+                    // Lazy ite-congruence repair: the final model may
+                    // collide two ite abstractions' triples while keeping
+                    // their result values apart (the UCLID-pred wrong-model
+                    // shape).  The repair asserts the tautological
+                    // congruence lemma for exactly those pairs; when it
+                    // fires the candidate is not final - re-solve.
 
                     // Certified `sat`: for the fragments `mbqi::model_certify`
                     // covers, a *total* interpretation of every symbol can be
