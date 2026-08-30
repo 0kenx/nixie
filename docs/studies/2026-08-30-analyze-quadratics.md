@@ -140,3 +140,55 @@ plus the SMT-side CDCL(T) core which executes the same analyze path.
   arena-layout slice, same scale as the flat-watch-arena study.
 - The 9 losses remain search-efficiency-bound; the conflict-count gap
   (4× on summle53, 100× on worker) is the standing deep-study item.
+
+## Follow-up slice (same day): elimination-phase costs
+
+g2-slp-synthesis (60 % of variables eliminable) profiles at **44.7 %
+`eliminate_phase` + ~14 % malloc-family** — the remaining 2.1× per-conflict
+excess vs cadical on that file is entirely elimination cost. Two fixes:
+
+1. **`elim_resolve_clauses` arena iteration** — both antecedents were
+   snapshot-copied into heap SmallVecs per resolution (the same borrow-
+   checker-appeasement shape as `analyze`). Rewritten as a pure marking
+   phase (immutable arena borrows only) + effect phase (deferred
+   retire/shrink). En route this exposed and fixed a **mark-leak parity
+   divergence**: the c-side satisfied-antecedent path returned without
+   clearing `ctx.mark` (the d-side path and cadical's `unmark(c)` both
+   clear); stale ±1 marks could misclassify shared literals in later
+   resolutions.
+   The first cut of this rewrite also introduced (and the
+   trajectory-identity gate caught) a **wrong-UNSAT**: the
+   "antecedent missing" breaks fell through to the size checks with a
+   partial resolvent, fabricating `trivially_unsat` from an empty c-side
+   on `circuit_48in64…seed1` (CaDiCaL: `sat`, model verified). Fixed with
+   an explicit `missing` skip before any size logic. Lesson re-confirmed:
+   every phase-restructure needs the counter-identity check against the
+   pre-change binary *and* a verdict cross-check on any divergence.
+
+2. **`elim_flush_sort_occs` decorated sort** — the occurrence-list sort
+   (twice per scheduled variable per round) keyed on an arena lookup
+   *inside the comparator*: O(n log n) dependent-load pointer chases per
+   list. Keys are now pre-extracted (`(len, cid)` pairs, stable sort).
+   Equal-size tie groups now keep occurrence-list order instead of
+   driftsort's internal permutation — an arbitrary-tie reordering, so
+   this slice's trajectories legitimately diverge; verified by verdicts
+   instead of counter identity: 54-file corpus sweep vs cadical
+   **0 mismatches**, **1 800 differential-CNF fuzz iterations 0
+   mismatches** (stratified generator: 2/3/k-SAT families), workspace
+   10 415/10 415, differential 160/0, parity 169/0/1, wisas canary
+   `unsat` fast.
+
+Cumulative instruction ratios vs the pre-study binary (fixed 40 k caps):
+
+| file | pre | post | ratio |
+|---|---|---|---|
+| worker_550 | 729.7 G | 187.4 G | 3.89× |
+| timetable | 127.3 G | 104.7 G | **1.22×** |
+| g2-slp | 68.8 G | 63.6 G | 1.08× |
+| mdp-28 | 9.8 G | 9.2 G | 1.07× |
+| frb65 | 11.0 G | 10.3 G | 1.06× |
+
+(One 3.5 %-of-total residual in `eliminate` is counter increments inside
+the resolution loops — cadical pays the same per-resolution count. The
+elim schedule itself — which variables, how often — is heuristic
+territory and untouched here.)

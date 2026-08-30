@@ -646,14 +646,37 @@ impl Solver {
 
     /// Compact (drop deleted) and sort an occurrence list by clause size,
     /// ascending (cadical `clause_smaller_size`), and refresh the noccs count.
+    ///
+    /// Keys are **decorated**: clause sizes are read from the arena once per
+    /// entry and the sort runs on the pre-extracted keys. Sorting with an
+    /// arena-lookup key closure pays a dependent-load pointer chase per
+    /// *comparison* (O(n log n) random arena accesses per list, twice per
+    /// scheduled variable per round), which dominated elimination-heavy
+    /// instances' profiles. Tie groups (equal size – and deleted clauses,
+    /// both keyed `usize::MAX`) keep their occurrence-list order (stable
+    /// sort); the previous `sort_unstable_by_key` left tie order to the
+    /// sort algorithm's internals, so this changes which equal-size clause
+    /// resolves first – an arbitrary-tie reordering, not a heuristic signal.
     fn elim_flush_sort_occs(&mut self, ctx: &mut Eliminator, lit: Lit) {
         let list = &mut ctx.occs[lit.code() as usize];
         if list.is_empty() {
             return;
         }
         let clauses = &self.clauses;
-        list.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
-        list.sort_unstable_by_key(|&cid| clauses.get(cid).map_or(usize::MAX, |c| c.lits.len()));
+        let mut keyed: Vec<(usize, ClauseId)> = list
+            .iter()
+            .filter_map(|&cid| {
+                if let Some(c) = clauses.get(cid)
+                    && !c.deleted
+                {
+                    return Some((c.lits.len(), cid));
+                }
+                None
+            })
+            .collect();
+        keyed.sort_by_key(|&(len, _)| len);
+        list.clear();
+        list.extend(keyed.into_iter().map(|(_, cid)| cid));
         ctx.noccs[lit.code() as usize] = list.len() as u32;
     }
 
@@ -714,6 +737,15 @@ impl Solver {
     /// (containing `¬pivot`) – cadical `resolve_clauses` with eager
     /// propagation. Satisfied antecedents are retired; self-subsumptions
     /// shrink the antecedent on the fly; units are reported to the caller.
+    ///
+    /// Structure: a **pure marking phase** that iterates both antecedents'
+    /// literals directly in the arena (holding only `&self.clauses` – the
+    /// previous shape copied each antecedent into a heap SmallVec per
+    /// resolution, which dominated allocation profiles on elimination-heavy
+    /// instances), followed by an **effect phase** that applies the deferred
+    /// retire/shrink once the arena borrows have ended. Ordering is
+    /// preserved: the eager form retired/shrank at exactly these return
+    /// points, and nothing between the phases reads the affected state.
     fn elim_resolve_clauses(
         &mut self,
         ctx: &mut Eliminator,
@@ -721,10 +753,17 @@ impl Solver {
         pivot: Lit,
         nid: ClauseId,
     ) -> ElimResolve {
-        let c_lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-            Some(c) if !c.deleted => c.lits.iter().copied().collect(),
-            _ => return ElimResolve::Skip,
-        };
+        // Deferred side effects from the marking phase.
+        let mut retire: Option<ClauseId> = None;
+        // A missing (already deleted) antecedent: Skip outright – the partial
+        // resolvent built so far is NOT a resolution consequence and must
+        // never reach the size checks below (an empty c-side would fabricate
+        // `trivially_unsat`).
+        let mut missing = false;
+        // (clause, literal to drop) – the self-subsumption shrinks always
+        // drop exactly one literal here (the pivot side).
+        let mut shrink: Option<(ClauseId, Lit)> = None;
+
         // Marks: +1 on c's literals, -1 on their complements. The resolvent
         // accumulates c's unassigned non-pivot literals *and* d's unassigned
         // non-shared ones (cadical builds `clause` the same way – forgetting
@@ -732,62 +771,79 @@ impl Solver {
         let mut s = 0usize;
         let mut marked: SmallVec<[Lit; 8]> = SmallVec::new();
         let mut resolvent: SmallVec<[Lit; 8]> = SmallVec::new();
-        for &lit in &c_lits {
-            if lit == pivot {
-                s += 1;
-                continue;
-            }
-            match ctx.lit_val(lit) {
-                1 => {
-                    // Antecedent satisfied: retire it.
-                    self.elim_retire_clause(ctx, cid);
-                    return ElimResolve::Skip;
-                }
-                -1 => continue, // falsified: dropped from the resolvent
-                _ => {
-                    ctx.mark[lit.code() as usize] = 1;
-                    ctx.mark[lit.negate().code() as usize] = -1;
-                    marked.push(lit);
-                    resolvent.push(lit);
+
+        let mut t = 0usize;
+        let mut tautological = false;
+
+        // ---- pure marking phase (immutable arena borrows only) ----
+        'phases: {
+            let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) else {
+                missing = true;
+                break 'phases;
+            };
+            for &lit in c.lits.iter() {
+                if lit == pivot {
                     s += 1;
+                    continue;
+                }
+                match ctx.lit_val(lit) {
+                    1 => {
+                        // Antecedent satisfied: retire it.
+                        retire = Some(cid);
+                        break 'phases;
+                    }
+                    -1 => continue, // falsified: dropped from the resolvent
+                    _ => {
+                        ctx.mark[lit.code() as usize] = 1;
+                        ctx.mark[lit.negate().code() as usize] = -1;
+                        marked.push(lit);
+                        resolvent.push(lit);
+                        s += 1;
+                    }
+                }
+            }
+
+            let Some(d) = self.clauses.get(nid).filter(|c| !c.deleted) else {
+                missing = true;
+                break 'phases;
+            };
+            'd: for &lit in d.lits.iter() {
+                if lit == pivot.negate() {
+                    t += 1;
+                    continue;
+                }
+                match ctx.lit_val(lit) {
+                    1 => {
+                        retire = Some(nid);
+                        break 'phases;
+                    }
+                    -1 => continue,
+                    _ => {
+                        let m = ctx.mark[lit.code() as usize];
+                        if m < 0 {
+                            tautological = true;
+                            break 'd;
+                        }
+                        if m == 0 {
+                            resolvent.push(lit);
+                        }
+                        t += 1;
+                    }
                 }
             }
         }
 
-        let d_lits: SmallVec<[Lit; 8]> = match self.clauses.get(nid) {
-            Some(c) if !c.deleted => c.lits.iter().copied().collect(),
-            _ => {
-                self.elim_unmark(ctx, &marked);
-                return ElimResolve::Skip;
-            }
-        };
-        let mut t = 0usize;
-        let mut tautological = false;
-        'd: for &lit in &d_lits {
-            if lit == pivot.negate() {
-                t += 1;
-                continue;
-            }
-            match ctx.lit_val(lit) {
-                1 => {
-                    self.elim_retire_clause(ctx, nid);
-                    self.elim_unmark(ctx, &marked);
-                    return ElimResolve::Skip;
-                }
-                -1 => continue,
-                _ => {
-                    let m = ctx.mark[lit.code() as usize];
-                    if m < 0 {
-                        tautological = true;
-                        break 'd;
-                    }
-                    if m == 0 {
-                        resolvent.push(lit);
-                    }
-                    t += 1;
-                }
-            }
+        // ---- effect phase ----
+        if missing {
+            self.elim_unmark(ctx, &marked);
+            return ElimResolve::Skip;
         }
+        if let Some(r) = retire {
+            self.elim_unmark(ctx, &marked);
+            self.elim_retire_clause(ctx, r);
+            return ElimResolve::Skip;
+        }
+
         self.elim_unmark(ctx, &marked);
 
         if tautological {
@@ -806,19 +862,17 @@ impl Solver {
         // Double self-subsuming resolution: c and d are identical except for
         // the pivot; shrinking c (dropping the pivot) is equivalent to adding
         // the resolvent and deleting both clauses, and keeps the clause
-        // instead of growing the database.
-        if s > size && t > size {
-            self.elim_shrink_clause(ctx, cid, &[pivot]);
-            return ElimResolve::Skip;
-        }
-        // Single self-subsuming resolution against c: drop the pivot from c.
+        // instead of growing the database. (The double case `s > size &&
+        // t > size` shrinks c, same as single-s-vs-c.)
         if s > size {
-            self.elim_shrink_clause(ctx, cid, &[pivot]);
-            return ElimResolve::Skip;
+            shrink = Some((cid, pivot));
         }
         // Single self-subsuming resolution against d: drop ¬pivot from d.
-        if t > size {
-            self.elim_shrink_clause(ctx, nid, &[pivot.negate()]);
+        else if t > size {
+            shrink = Some((nid, pivot.negate()));
+        }
+        if let Some((sid, drop_lit)) = shrink {
+            self.elim_shrink_clause(ctx, sid, &[drop_lit]);
             return ElimResolve::Skip;
         }
         ElimResolve::Resolvent(resolvent)
