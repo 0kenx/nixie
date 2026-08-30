@@ -505,17 +505,29 @@ impl Solver {
         // formulas (measured 0.77 s vs cadical's ~0.03 s on 6s167) – for
         // no semantic difference: retiring and connecting happen on
         // disjoint clause sets within one iteration.
-        let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in ids {
-            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-                Some(c) if !c.deleted && !c.learned && c.lits.len() >= 2 => {
-                    c.lits.iter().copied().collect()
-                }
-                _ => continue,
+        // Deferred-side-effect scan: satisfied clauses retire and
+        // falsified-clause variables get marked AFTER the whole pass, so the
+        // scan itself needs no `&mut self` and iterates every clause's
+        // literals **in the arena** (the previous shape collected all clause
+        // ids into a fresh `Vec` per round and snapshot-copied every
+        // original clause's literals into a heap SmallVec – the dominant
+        // allocation churn of elimination-heavy instances' profiles).
+        // Equivalence: nothing in the scan reads deletion flags or the mark
+        // vector (each clause is visited once, `ctx.lit_val` is a local
+        // snapshot), and both deferred effects are consumed before the
+        // schedule is seeded below, in the same clause-id order.
+        let mut to_retire: SmallVec<[ClauseId; 64]> = SmallVec::new();
+        let mut to_mark: SmallVec<[Var; 64]> = SmallVec::new();
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
             };
+            if c.deleted || c.learned || c.lits.len() < 2 {
+                continue;
+            }
             let mut satisfied = false;
             let mut falsified = false;
-            for &lit in &lits {
+            for &lit in c.lits.iter() {
                 match ctx.lit_val(lit) {
                     1 => satisfied = true,
                     -1 => falsified = true,
@@ -523,25 +535,31 @@ impl Solver {
                 }
             }
             if satisfied {
-                self.elim_retire(cid);
-                self.stats.deleted_clauses += 1;
-                ctx.dirty = true;
+                to_retire.push(cid);
                 continue;
             }
             if falsified {
-                for &lit in &lits {
+                for &lit in c.lits.iter() {
                     if ctx.lit_val(lit) == 0 {
-                        self.mark_elim_one(lit.var());
+                        to_mark.push(lit.var());
                     }
                 }
             }
-            for &lit in &lits {
+            for &lit in c.lits.iter() {
                 if ctx.lit_val(lit) == 0 {
                     let code = lit.code() as usize;
                     ctx.occs[code].push(cid);
                     ctx.noccs[code] += 1;
                 }
             }
+        }
+        for cid in to_retire {
+            self.elim_retire(cid);
+            self.stats.deleted_clauses += 1;
+            ctx.dirty = true;
+        }
+        for v in to_mark {
+            self.mark_elim_one(v);
         }
 
         // Seed the schedule from the mark vector (cheapest first).
@@ -693,6 +711,18 @@ impl Solver {
         collected: &mut Vec<SmallVec<[Lit; 8]>>,
     ) -> bool {
         let bound = (pos + neg) as i64 + self.elim_bound;
+        // NOTE: these clones are LOAD-BEARING, not borrow-appeasement. The
+        // pair loop below mutates the live `ctx.occs[±pivot]` lists through
+        // `elim_shrink_clause`'s self-subsumption path: dropping the pivot
+        // from a clause physically `swap_remove`s it from `occs[pivot]`
+        // (see the stale-entry false-SAT note there). A take/put-back
+        // "optimization" leaves those lists empty during the loop, the
+        // removal silently no-ops, and the restore reintroduces a stale
+        // entry – the exact hazard class that swap_remove exists to prevent
+        // (measured as a trajectory divergence on
+        // `circuit_48in64…dist128_seed1` before being caught by the
+        // identity gate and reverted). Do not replace the clones without
+        // threading the drop-removals through the taken window.
         let ps: Vec<ClauseId> = ctx.occs[pivot.code() as usize].clone();
         let ns: Vec<ClauseId> = ctx.occs[pivot.negate().code() as usize].clone();
         let mut resolvents: i64 = 0;

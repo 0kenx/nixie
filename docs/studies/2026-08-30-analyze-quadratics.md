@@ -246,3 +246,36 @@ layout — each a further data-structure slice, none a missing mechanism.
 SMT-side paired check over the 270-instance differential sample:
 geomean 1.007 (neutral — the sample is easy-instance-dominated; the
 differential's 0-disagreement is the load-bearing gate there).
+
+## Second follow-up slice: the elimination connect pass + a reverted take/put-back
+
+Setup-subtracted search-cost ratios (instructions at cap 40 k minus
+instructions at cap 1, both solvers) after the landed slices put five of
+the nine standing losses at ≤ 1.23× (mdp 0.98, crypto 1.09, summle53
+1.11, timetable 1.10, summle11 1.23) with worker 3.3×, circuit 2.2×,
+g2-slp 2.1×, rbsat 1.4× left. The elimination-heavy outliers' profiles
+pinpointed `elim_round`'s connect pass (a fresh `Vec` of all clause ids
+per round + a heap SmallVec copy of every original clause's literals)
+and the per-variable occurrence-list clones.
+
+**Landed** (bit-identical trajectories on 6 instances incl. the fragile
+`circuit_48in64…seed1`): the connect pass now defers retire/mark effects
+to after the scan and iterates every clause's literals in the arena.
+circuit_64in 1.094×, circuit_48 1.045×, timetable 1.027×, g2-slp 1.015×
+instructions at fixed caps.
+
+**Reverted with prejudice**: replacing the `ps`/`ns` occurrence clones in
+`elim_resolvents_bounded` with take/put-back diverged circuit_48's
+trajectory. Root cause: the clones are **load-bearing** — the pair loop
+mutates the live lists underneath them (`elim_shrink_clause`'s
+self-subsumption path `swap_remove`s the shrunken clause from the
+dropped literal's occurrence list; with the lists taken the removal
+no-ops and the restore reintroduces a stale entry — exactly the
+false-SAT hazard class the swap_remove's comment documents). A warning
+comment now guards the clone site. Third time this session the
+trajectory-identity gate caught a wrong-direction change before landing;
+the fourth candidate (radix) was caught by measurement instead.
+
+Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
+(par2 2 320), z3 parity 169/0/1, 800 differential-CNF fuzz iterations
+0 mismatches, wisas canary `unsat` fast.
