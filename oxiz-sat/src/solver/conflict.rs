@@ -1965,26 +1965,39 @@ impl Solver {
                 // Binary-implication-graph propagation does not move the implied
                 // literal to index 0, so a positional `[1..]` skip would drop the
                 // false antecedent at index 0 and yield unsound learned clauses.
-                // (Snapshot: `note_seen_level` takes `&mut self` below.)
-                let reason_lits: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
-                for &lit in &reason_lits {
-                    if lit == current_lit {
-                        continue;
-                    }
-                    let reason_var = lit.var();
-                    let level = self.trail.level(reason_var);
-
-                    if !self.seen[reason_var.index()] && level > 0 {
-                        self.seen[reason_var.index()] = true;
-                        vars_to_bump.push(reason_var);
-                        self.note_seen_level(reason_var, level);
-
-                        if level == current_level {
-                            counter += 1;
-                        } else {
-                            // Add the literal itself to the learned clause
-                            self.learnt.push(lit);
+                //
+                // Split-borrow through [`AnalysisMark`] so the literals are
+                // iterated IN THE ARENA (the old shape snapshotted every reason
+                // into a heap SmallVec – see the Boolean `analyze` fix).
+                // `lrat: false` preserves this path's exact semantics: it has
+                // no LRAT level-0 branch (unlike `analyze`), so the bundle's
+                // level-0 deferral must stay dormant here.
+                {
+                    let Solver {
+                        seen,
+                        trail,
+                        learnt,
+                        seen_levels,
+                        seen_level_count,
+                        seen_level_trail,
+                        ..
+                    } = self;
+                    let mut dormant_units: SmallVec<[i32; 4]> = SmallVec::new();
+                    let mut mark = AnalysisMark {
+                        seen: &mut seen[..],
+                        trail,
+                        learnt,
+                        seen_levels,
+                        seen_level_count: &mut seen_level_count[..],
+                        seen_level_trail: &mut seen_level_trail[..],
+                        lrat: false,
+                        lrat_units: &mut dormant_units,
+                    };
+                    for &lit in clause.lits.iter() {
+                        if lit == current_lit {
+                            continue;
                         }
+                        mark.mark_antecedent(lit, current_level, &mut counter, &mut vars_to_bump);
                     }
                 }
             } else if counter > 0
