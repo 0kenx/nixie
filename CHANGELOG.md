@@ -5,6 +5,68 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Upstream 0.3.2/0.3.3 re-audit] - 2026-08-31
+
+Full re-audit of the upstream delta (`88b7971..e7c7bca` + the codeless 0.3.4
+tip) against current main, closing the two blind spots the 2026-08-27 port
+study named against itself: the changelog-driven first pass and the
+v0.3.1→v0.3.2 half that only `INTEGRATION_NOTES.md` §3 covered (whose
+bucket C admitted pure-perf hunks were "invisible by construction").
+Method and per-item evidence in
+`docs/studies/2026-08-31-upstream-0.3.2-0.3.3-reaudit.md`. Outcome: all
+dispositions verified on the current tree; two residues found and ported;
+every recorded refusal re-verified and (where the ground moved) re-grounded.
+
+### Ported
+
+- **Perf (proof): the JSON proof renderer's Theta(depth²) live-heap defect**
+  (`oxiz-proof/src/visualization.rs`; upstream v0.3.3, missed by the second-pass
+  scan because the escaping half of the same file's changes *was* absorbed).
+  The iterative JSON writer built its structural delimiters (`]`, `}`, `},`,
+  `{`) as fully-indented `String`s pushed below the child frame — three O(d)
+  strings alive per ancestor level, ~6·d² bytes, ~14–15 GB at depth 60 000,
+  live heap no output sink can avoid.  `JsonFrame` is now `Copy` and
+  fixed-size (`Delim { indent, kind }`, indent rendered at pop time), pinned
+  by a compile-time `assert!(!needs_drop::<JsonFrame>())`.  Output is
+  byte-identical (proved by four new byte-exact JSON goldens: nested,
+  truncated, zero-premise, dangling-premises); a closed-form (bytes, lines)
+  size formula cross-checked against real renderings and a depth-10 000
+  counting-sink regression pin the format; the module doc gains upstream's
+  per-format cost table (and why `AsciiTree`'s quadratic live cost is NOT
+  fixable this way — its prefix records per-ancestor last-child bits).
+- **Test (wasm): the objective-term guard pin** (`oxiz-wasm/src/js_api/optimize.rs`;
+  upstream v0.3.3).  With `define-fun-rec` parsable, a recursive definition
+  must route to `parse_objective_term`'s rejection arm rather than slide
+  through as an objective with its definition dropped; the pin asserts the
+  parse yields `Command::DefineFunsRec`, never `Simplify` (the rejection
+  itself builds a `JsValue` and cannot run natively).
+- **Docs: `cargo doc -D warnings` repaired** — six intra-doc-link errors
+  (private/out-of-scope targets) across `oxiz-sat`, `oxiz-solver` and
+  `oxiz-theories` were breaking the documented gate on pristine main;
+  de-linked to plain code spans, no semantic change.
+
+### Verified (no action)
+
+- All five v0.3.2 Performance items present (two stronger than upstream:
+  class-bucketed EUF→arith scan asserts representative chains, not all pairs;
+  EUF disequality has O(1) pair counts on top of the watch lists).
+- All v0.3.2 capability modules present under fork names (`equality_graph.rs`,
+  `ite_table.rs`+`branch_priority.rs`, `nl_model_search.rs`, numarg
+  purification in `encode.rs`, `WitnessLedger` resampling).
+- Refusals re-verified: A1 trichotomy (measured −13/−10; the gate it targeted
+  is live via model-side repairs); BVE preset flips (CaDiCaL already on with
+  a full study; SMT-side rides freeze-collapse; **Industrial** stays off —
+  upstream's Industrial is BVE-only and the elimination study's BVE-only
+  column measured 3.1–6.3× regressions on qwh.50/constraints_17/j3037, plus
+  the standing corpora are currently off-disk post-incident);
+  `[profile.release-speed]` (our release is already opt-level 3 + fat LTO);
+  `REFINEMENT_TIME_CEILING_MS` (no wall-clock policy inputs, standing rule);
+  oxiarc/0.3.4 bumps (no code).
+
+- Gates: workspace 10 413/10 413, clippy/fmt/doc clean, Z3 parity vs a real
+  4.15.4 binary **170/170 Correct / 0 Wrong / 0 Inconclusive** (standing
+  level 169/0/1; the 170th reached a decisive agreeing verdict this run).
+
 ## [Upstream v0.3.3 port] - 2026-08-27
 
 Selective behavior port of upstream `cool-japan/oxiz` **v0.3.3** (tag `e7c7bca`,
