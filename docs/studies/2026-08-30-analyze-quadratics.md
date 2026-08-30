@@ -380,3 +380,34 @@ as such. No aggregate solve-count claim is made from this.
 
 Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
 (par2 2 315), z3 parity 169/0/1, wisas canary `unsat` fast.
+
+## Final session ledger (all continuation passes, 2026-08-30)
+
+Landed: `1d9de4d` (analyze quadratics: bump-sort hybrid, stamped LBD,
+arena reason iteration, LBD-wraparound fix), `b382263` (theory-walk
+arena iteration), `218355c` (elim resolution arena iteration +
+decorated occurrence sort + mark-leak parity fix), `2b1495e` (elim
+connect pass arena iteration + load-bearing-clone warning),
+`d4820fb` (iterative minimizer), `b8fdc0f` (flush scratch reuse +
+cadical gate order).
+
+Cumulative per-conflict instructions vs the session-start binary:
+worker **4.27×**, timetable 1.24×, summle53 1.16×, circuit64 1.19×,
+g2-slp 1.09×, mdp 1.08×, noL 1.06×. Serial solve flips: Timetable
+never→always (multi-seed consistent), rbsat/g2-slp/summle ×2 at the
+canonical seed, worker 63.8 s→42.5 s. Recorded regressions: FmlaEqu
+36.8 s→62 s at the canonical seed (chaos-class, swaps across seeds).
+
+Negative results / near-misses recorded for the next agent: rsort
+radix (neutral, reverted); missing-antecedent wrong-UNSAT (caught by
+identity gate, fixed pre-landing); take/put-back stale-entry hazard
+(caught, reverted, clone site now warned); the `Reverse(complement)`
+sort inversion (caught by identity gate).
+
+Remaining after this session, in recorded priority: (1) the
+conflicts-to-model gap on the standing losses (the deep multi-seed
+study; every single-policy port remains null-beaten); (2) worker's
+shrink block-walk (~26 % of its remaining profile) and the propagate
+watch layout – constant-factor data-structure slices; (3) g2-slp's
+eliminate/subsume residue (~2×, occurrence churn beyond the
+load-bearing clones).
