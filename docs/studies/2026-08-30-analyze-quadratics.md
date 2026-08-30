@@ -344,3 +344,39 @@ plus three documented negative results / near-misses (rsort radix
 neutral-reverted; missing-antecedent wrong-UNSAT caught pre-landing;
 take/put-back stale-entry hazard caught and reverted with a warning at
 the clone site).
+
+## Fourth follow-up slice: occurrence-flush scratch reuse + cadical gate order
+
+`elim_flush_sort_occs`'s decorated sort collected into a fresh
+`Vec<(usize, ClauseId)>` per call — twice per scheduled variable, and
+6.2 % of circuit-class instructions. Now collected into a round-scoped
+scratch buffer on the `Eliminator` (trajectory-identical: pure
+allocation reuse, verified bit-identical on 5 instances).
+
+On top of it, the **gate order** now matches cadical's
+`try_to_eliminate_variable`: the raw (uncompacted) occurrence-list
+lengths gate `pos == 0 || neg == 0` and the occ-limit **before** any
+flush+sort work (cadical reads `ps.size()`/`ns.size()` and rejects
+before `elim_resolvents_are_bounded` flushes). The previous order
+flushed+sorted both lists for every scheduled variable only to throw
+the work away for the majority that fail these gates in later rounds.
+Raw lengths only over-estimate live counts, so the occ-limit gate can
+newly skip a variable whose compacted count would have fit – a
+heuristic-order divergence (verified by verdicts: 54-file corpus sweep
+0 mismatches, 1 000 differential-CNF fuzz iterations 0 mismatches, not
+by trajectory identity).
+
+**Deterministic effect**: the collect is gone by construction; circuit
+files −3.6…−9 % instructions at fixed caps.
+
+**Search effect (single-draw, multi-seed honest)**: Timetable now
+solves at *every* completed seed (32.8 k–470 k conflicts; previously
+never) and rbsat/g2-slp solve at the canonical seed. rbsat and
+FmlaEquivChain swap wins/losses across seeds 0–3 (rbsat: NEW solves
+seed0/PRE solves seed2; FmlaEqu: PRE solves seed0/NEW solves seed3) –
+per-file chaos redistribution, not attributable merit. FmlaEqu at the
+canonical seed regresses reproducibly (36.8 s → 62 s) and is recorded
+as such. No aggregate solve-count claim is made from this.
+
+Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
+(par2 2 315), z3 parity 169/0/1, wisas canary `unsat` fast.

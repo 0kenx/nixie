@@ -139,6 +139,12 @@ struct Eliminator {
     bw_marked: Vec<Lit>,
     bw_dlits: Vec<Lit>,
     bw_cands: Vec<ClauseId>,
+    /// Scratch for [`Solver::elim_flush_sort_occs`]'s decorated sort,
+    /// reused across every occurrence-list flush of the round (the
+    /// per-call `Vec` collect measured 6.2 % of instructions on
+    /// elimination-heavy circuit instances – one malloc + copy per
+    /// scheduled variable, twice).
+    occ_scratch: Vec<(usize, ClauseId)>,
     /// Variables eliminated this round.
     eliminated: usize,
     /// Whether anything structurally changed (clause added/removed/shrunk),
@@ -172,6 +178,7 @@ impl Eliminator {
             bw_marked: Vec::new(),
             bw_dlits: Vec::new(),
             bw_cands: Vec::new(),
+            occ_scratch: Vec::new(),
         }
     }
 
@@ -631,13 +638,37 @@ impl Solver {
             return;
         }
         let mut pivot = Lit::pos(v);
+        // Cheap gates BEFORE the flush+sort, on the raw (uncompacted) list
+        // lengths – cadical's `try_to_eliminate_variable` order: it reads
+        // `ps.size()`/`ns.size()` and rejects `!pos || !neg` and
+        // `max > elimocclim` before `elim_resolvents_are_bounded` does any
+        // flushing or sorting. Our previous order flushed+sorted both
+        // occurrence lists for every scheduled variable, only to throw the
+        // work away for the (majority, in later rounds) variables that fail
+        // these gates. Raw lengths only over-estimate the live counts, so
+        // the occ-limit gate can newly skip a variable whose *compacted*
+        // count would have squeaked under the limit – a heuristic-order
+        // divergence from the previous behavior, verified by verdicts
+        // (corpus sweep + differential fuzz), not by trajectory identity.
+        let raw_pos = ctx.occs[pivot.code() as usize].len();
+        let raw_neg = ctx.occs[pivot.negate().code() as usize].len();
+        if raw_pos == 0 || raw_neg == 0 {
+            // Pure/one-sided variable: leave it to the pure-literal pass
+            // (our model reconstruction only covers resolution
+            // elimination).
+            return;
+        }
+        if raw_pos.max(raw_neg) > ELIM_OCC_LIMIT {
+            return;
+        }
         self.elim_flush_sort_occs(ctx, pivot);
         self.elim_flush_sort_occs(ctx, pivot.negate());
         let mut pos = ctx.noccs[pivot.code() as usize] as usize;
         let mut neg = ctx.noccs[pivot.negate().code() as usize] as usize;
         if pos == 0 || neg == 0 {
-            // Pure variable: leave it to the pure-literal pass (our model
-            // reconstruction only covers resolution elimination).
+            // All entries dead since the raw check above (retirements from
+            // this round's earlier variables): same skip the flushed-count
+            // order always took.
             return;
         }
         if pos > neg {
@@ -681,20 +712,19 @@ impl Solver {
             return;
         }
         let clauses = &self.clauses;
-        let mut keyed: Vec<(usize, ClauseId)> = list
-            .iter()
-            .filter_map(|&cid| {
-                if let Some(c) = clauses.get(cid)
-                    && !c.deleted
-                {
-                    return Some((c.lits.len(), cid));
-                }
-                None
-            })
-            .collect();
-        keyed.sort_by_key(|&(len, _)| len);
+        let scratch = &mut ctx.occ_scratch;
+        scratch.clear();
+        scratch.extend(list.iter().filter_map(|&cid| {
+            if let Some(c) = clauses.get(cid)
+                && !c.deleted
+            {
+                return Some((c.lits.len(), cid));
+            }
+            None
+        }));
+        scratch.sort_by_key(|&(len, _)| len);
         list.clear();
-        list.extend(keyed.into_iter().map(|(_, cid)| cid));
+        list.extend(scratch.iter().copied().map(|(_, cid)| cid));
         ctx.noccs[lit.code() as usize] = list.len() as u32;
     }
 
