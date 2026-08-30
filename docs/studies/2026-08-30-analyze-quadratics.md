@@ -192,3 +192,31 @@ Cumulative instruction ratios vs the pre-study binary (fixed 40 k caps):
 the resolution loops — cadical pays the same per-resolution count. The
 elim schedule itself — which variables, how often — is heuristic
 territory and untouched here.)
+
+## Negative result (same day): cadical `rsort` radix port — neutral, not landed
+
+Ported cadical's `radix.hpp` `rsort` (stable byte-wise LSD radix with
+constant-byte pass skipping and sortedness detection) and wired it into the
+two per-conflict decorated sorts (bump-order timestamps; the shrink
+`(level<<32|trail_index)` order via the order-reversing complement key),
+switching above cadical's own `radixsortlim` (800). Keys are unique per
+element at both call sites (VMTF stamps for bumped vars, trail indices for
+literals), so the output order — and the trajectory — is bit-identical;
+verified directly.
+
+En route the small-branch comparison briefly sorted the complement key
+with `Reverse`, silently *ascending* the original order — the
+trajectory-identity gate flagged it instantly (every file diverged; worker
+"got lucky" and solved). The corrected port measured:
+
+| file | comparison sort | radix | ratio |
+|---|---|---|---|
+| worker_550 (40 k) | 187.2 G | 184.6 G | 1.015× |
+| summle53/11, timetable, g2-slp, mdp-28 | — | — | ≈ 1.000× |
+
+Bump sets exceed 800 elements only on giant-clause conflicts, which the
+first slice already made rare. Well inside the ±5 % neutrality band →
+**reverted, not landed** (the port lives in this study's history and in
+cadical's `radix.hpp` if the clause-length gap is ever closed and the
+bump sets grow again). The `Reverse(complement)` inversion is recorded as
+the kind of off-by-one the identity gate exists to catch.
