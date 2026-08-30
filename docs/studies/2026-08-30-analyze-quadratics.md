@@ -312,3 +312,35 @@ g2-slp, circuit_48 – the fragile one – si2-b03m, Timetable, j3037) at a
 Gates: workspace 10 415/10 415, clippy/fmt/doc clean, differential
 160/0 (par2 2 311), z3 parity 169/0/1, 1 200 differential-CNF fuzz
 iterations 0 mismatches, wisas canary `unsat` fast.
+
+## Session totals (2026-08-30, both continuation passes)
+
+Cumulative instruction ratios vs the session-start binary (fixed 40 k
+caps, `cpu_core` PMU; baselines recorded above): **worker_550 4.24×**
+(729.7 G → 172.2 G), timetable 1.25×, summle53 1.16×, summle11 1.14×,
+g2-slp 1.10×, circuit 1.09×, mdp-28 1.08×, noL 1.06×; five further
+corpus files measured 1.00–1.05× in the per-slice tables. End-to-end:
+worker_550 63.8 s → 42.5 s serial (now cap-edge), summle ×2 moved from
+certain standing-losses to solving under the 40 s / 6-way cap.
+
+Setup-subtracted search cost vs cadical is now: mdp 0.98×, crypto 1.09×,
+summle53 1.11×, timetable 1.10× (parity class), rbsat 1.43×, g2-slp
+2.07×, circuit 2.22×, worker 3.3× (was 10.1×). What remains in the
+outliers, per profile: worker's shrink block-walk + pivot trail scans
+over ~1 900-literal clauses; g2-slp/circuit's eliminate/subsume rounds
+(occurrence-list churn — the `ps`/`ns` clones are now documented as
+load-bearing); and the propagate watch layout (the named next
+data-structure slice). None is a missing mechanism; all are constant
+factors on files whose *losses* are conflicts-to-model-bound.
+
+Final 54-file table (40 s, 6-way, load 3–16): oxiz 43 / cadical 49,
+0 mismatches, 10 one-sided losses (summle ×2 solved; shuff / FmlaEqu /
+frb45 flap at the cap edge with load as they always have).
+
+Landed this session: `1d9de4d` (analyze quadratics), `b382263` (theory
+walk arena iteration), `218355c` (elim resolution + decorated occs
+sort), `2b1495e` (elim connect pass), `d4820fb` (iterative minimizer) —
+plus three documented negative results / near-misses (rsort radix
+neutral-reverted; missing-antecedent wrong-UNSAT caught pre-landing;
+take/put-back stale-entry hazard caught and reverted with a warning at
+the clone site).
