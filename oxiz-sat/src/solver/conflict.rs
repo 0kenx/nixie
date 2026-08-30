@@ -1019,13 +1019,23 @@ impl Solver {
     /// (`minimize_literal_lrat`, itself a port of cadical's
     /// `minimize_literal`), minus the LRAT chain bookkeeping.  `lit` is the
     /// TRUE form of a learnt literal; returns `true` if it can be resolved out.
-    fn minimize_literal_plain(&mut self, lit: Lit, depth: u32) -> bool {
+    /// Early-exit classification shared by the root and every pushed child
+    /// of [`Solver::minimize_literal_plain`]: `Ok(cid)` means the literal
+    /// must be resolved through its reason clause; `Err(res)` is an early
+    /// exit with that result (no flag marking, no `lrat_minimized` record –
+    /// exactly the recursive form's pre-children returns).
+    ///
+    /// Counter/debug gates mirror the recursive form: the `mini_reject_*`
+    /// diagnostics and Don Knuth's `seen.count < 2` gate fire only at
+    /// depth 0; the `v.trail <= l.seen.trail` early abort fires at every
+    /// depth (its counter still only at depth 0).
+    fn minimize_classify(&mut self, lit: Lit, depth: u32) -> Result<ClauseId, bool> {
         const MINIMIZE_DEPTH_LIMIT: u32 = 100;
         let var = lit.var();
         let f = self.mf_get(var);
         let level = self.trail.level(var);
         if level == 0 || (f & MF_REMOVABLE) != 0 || (f & MF_KEEP) != 0 {
-            return true;
+            return Err(true);
         }
         let reason = self.trail.reason(var);
         let no_reason = !matches!(reason, Reason::Propagation(_));
@@ -1045,7 +1055,7 @@ impl Solver {
         // it into a clause resolution does not derive (false UNSAT on
         // `circuit_48in64out…dist128_seed1`, SAT verified by CaDiCaL).
         if no_reason || (f & MF_POISON) != 0 || level == self.current_conflict_level {
-            return false;
+            return Err(false);
         }
         // Don Knuth's gate (cadical `!depth && l.seen.count < 2`): at the top
         // of the recursion, a literal whose level contributed only one seen
@@ -1054,7 +1064,7 @@ impl Solver {
             let lv = level as usize;
             if lv < self.seen_level_count.len() && self.seen_level_count[lv] < 2 {
                 self.mini_reject_knuth += 1;
-                return false;
+                return Err(false);
             }
         }
         // Early abort (cadical `v.trail <= l.seen.trail`): assigned before
@@ -1068,43 +1078,124 @@ impl Solver {
                 if depth == 0 {
                     self.mini_reject_early_abort += 1;
                 }
-                return false;
+                return Err(false);
             }
         }
         if depth > MINIMIZE_DEPTH_LIMIT {
-            return false;
+            return Err(false);
         }
         let Reason::Propagation(cid) = reason else {
-            return false;
+            return Err(false);
         };
-        let others: SmallVec<[Lit; 8]> = self
-            .clauses
-            .get(cid)
-            .map(|c| {
-                c.lits
-                    .iter()
-                    .filter(|&&l| l.var() != var)
-                    .copied()
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mut res = true;
-        for &other in others.iter() {
-            if !self.minimize_literal_plain(other.negate(), depth + 1) {
-                res = false;
-                break;
+        Ok(cid)
+    }
+
+    /// Removable check, **iterative** (explicit heap stack per the repo's
+    /// recursion policy – the previous recursive form was depth-capped at
+    /// 100 but paid a frame and a reason-clause SmallVec copy per node).
+    /// `lit` is the TRUE form of a learnt literal; returns `true` if it can
+    /// be resolved out (its reason graph reaches only level-0 literals,
+    /// kept clause literals, or already-removable literals). Sets
+    /// `MF_REMOVABLE`/`MF_POISON` and records the var for cleanup.
+    ///
+    /// Semantics are the recursive form's, including its short-circuit: a
+    /// child returning `false` stops the parent's remaining children (they
+    /// are never classified) and poisons it. Frames keep `(var, reason id,
+    /// cursor)` and re-read literals from the arena on demand – the clause
+    /// set is not mutated during analysis, so this equals the recursive
+    /// form's per-node snapshot. A missing reason clause reads as "no
+    /// children" (removable), matching the old `unwrap_or_default`.
+    fn minimize_literal_plain(&mut self, lit: Lit, depth: u32) -> bool {
+        let root_cid = match self.minimize_classify(lit, depth) {
+            Err(res) => return res,
+            Ok(cid) => cid,
+        };
+
+        struct Frame {
+            var: Var,
+            cid: ClauseId,
+            next: usize,
+            depth: u32,
+            failed: bool,
+        }
+        let mut stack: SmallVec<[Frame; 32]> = SmallVec::new();
+        stack.push(Frame {
+            var: lit.var(),
+            cid: root_cid,
+            next: 0,
+            depth,
+            failed: false,
+        });
+
+        while !stack.is_empty() {
+            // Post-order for a failed frame: poison this literal and
+            // short-circuit the parent (its remaining children are never
+            // classified, exactly like the recursive form's `break`).
+            if stack.last().is_some_and(|f| f.failed) {
+                if let Some(frame) = stack.pop() {
+                    self.mf_set(frame.var, MF_POISON);
+                    self.lrat_minimized.push(frame.var.index() as i32);
+                }
+                if let Some(parent) = stack.last_mut() {
+                    parent.failed = true;
+                }
+                continue;
+            }
+            // Next child: the next reason literal after `next` that is not
+            // the frame's own variable (the recursive form skipped the
+            // resolved-out literal BY VALUE, not position).
+            let (child, child_depth) = {
+                let Some(frame) = stack.last_mut() else {
+                    break;
+                };
+                let depth = frame.depth + 1;
+                let mut child: Option<Lit> = None;
+                if let Some(clause) = self.clauses.get(frame.cid) {
+                    let mut i = frame.next;
+                    while i < clause.lits.len() {
+                        let l = clause.lits[i];
+                        i += 1;
+                        if l.var() != frame.var {
+                            child = Some(l);
+                            break;
+                        }
+                    }
+                    frame.next = i;
+                } else {
+                    // Missing reason clause: no children (removable), like
+                    // the recursive form's `unwrap_or_default`.
+                    frame.next = usize::MAX;
+                }
+                (child, depth)
+            };
+            let Some(child_lit) = child else {
+                // Children exhausted without failure: removable.
+                if let Some(frame) = stack.pop() {
+                    self.mf_set(frame.var, MF_REMOVABLE);
+                    self.lrat_minimized.push(frame.var.index() as i32);
+                }
+                continue;
+            };
+            match self.minimize_classify(child_lit.negate(), child_depth) {
+                Err(true) => {} // early-true child: skip it
+                Err(false) => {
+                    if let Some(frame) = stack.last_mut() {
+                        frame.failed = true; // short-circuit this frame
+                    }
+                }
+                Ok(cid) => stack.push(Frame {
+                    var: child_lit.var(),
+                    cid,
+                    next: 0,
+                    depth: child_depth,
+                    failed: false,
+                }),
             }
         }
-        if res {
-            self.mf_set(var, MF_REMOVABLE);
-        } else {
-            self.mf_set(var, MF_POISON);
-        }
-        // Record the var so `clear_minimize_flags` can reset its flags; a
-        // leaked REMOVABLE/POISON bit across conflicts would poison later
-        // decisions (same bookkeeping `minimize_literal_lrat` does).
-        self.lrat_minimized.push(var.index() as i32);
-        res
+
+        // The root's outcome: it was marked by its own post-order step; a
+        // root that never failed is removable. (`stack` is empty here.)
+        (self.mf_get(lit.var()) & MF_REMOVABLE) != 0
     }
 
     /// Recursive removable check (faithful port of `minimize_literal`). `lit` is

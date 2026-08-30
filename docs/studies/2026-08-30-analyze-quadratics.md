@@ -279,3 +279,36 @@ the fourth candidate (radix) was caught by measurement instead.
 Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
 (par2 2 320), z3 parity 169/0/1, 800 differential-CNF fuzz iterations
 0 mismatches, wisas canary `unsat` fast.
+
+## Third follow-up slice: iterative `minimize_literal_plain`
+
+The last snapshot-copy site in the conflict path (and the repo's
+recursion-policy target): the recursive removable check copied every
+node's reason clause into a heap SmallVec (`others`, filtered by value)
+and burned a native frame per node (depth-capped at 100, so no overflow
+risk – but the cap itself silently *weakened* minimization on deep
+reason graphs, and the per-node allocation dominated its cost).
+
+Rewritten as an explicit heap stack (`Frame { var, cid, cursor, depth,
+failed }`) that re-reads literals from the arena on demand (the clause
+set is not mutated during analysis, so this equals the recursive form's
+per-node snapshot; a missing reason clause reads as "no children",
+matching the old `unwrap_or_default`). The short-circuit is preserved
+exactly: a child's `false` stops the parent's remaining children before
+they are ever classified, and poisons it. The pre-children checks moved
+to a shared `minimize_classify` (early exits mark nothing and record
+nothing, as before; the depth-0 counter/Knuth gating is unchanged).
+
+**Bit-identical trajectories on 8 instances** (worker, noL, summle53,
+g2-slp, circuit_48 – the fragile one – si2-b03m, Timetable, j3037) at a
+60 k cap, pre/post binaries.
+
+| file | recursive | iterative | ratio |
+|---|---|---|---|
+| worker_550 (40 k) | 184.5 G | 172.2 G | **1.071×** |
+| noL (40 k) | 5.15 G | 5.05 G | 1.019× |
+| summle53 / timetable / g2-slp / circuit64 | — | — | ≈ 1.000× |
+
+Gates: workspace 10 415/10 415, clippy/fmt/doc clean, differential
+160/0 (par2 2 311), z3 parity 169/0/1, 1 200 differential-CNF fuzz
+iterations 0 mismatches, wisas canary `unsat` fast.
