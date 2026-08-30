@@ -623,7 +623,194 @@ impl Solver {
                 _ => {}
             }
         }
+        // Congruence-gap half: two applications of one function whose
+        // ARGUMENTS carry equal model values but whose own model values
+        // diverge cannot coexist in a real interpretation — a function has
+        // one value per argument tuple.  The search's EUF merges only
+        // follow COMMITTED equalities, so arguments that collide only at
+        // model level (never a decided atom) leave the applications
+        // unmerged, each purifying to its own arithmetic variable, and the
+        // tableau free-rides the difference (`wisas/xs_22_42`: the chain
+        // binds `s_count(4) = 1` while `a16`'s `s_count(fmt1-2-fmt0)` —
+        // the same function point at `fmt1 = 6, fmt0 = 0` — reads 11).
+        // Refuting such a model and blocking its projection is the same
+        // pete-gate treatment the arrangement regressions converged under.
         self.refuted_negated_equality(manager).is_some()
+    }
+
+    /// Whether the current model gives two same-function applications
+    /// equal-valued arguments but divergent results.  Argument values fold
+    /// from the tableau (`ArithSolver::value`, plus a linear walk for
+    /// expressions that were never asserted — the numarg abstraction means
+    /// most arguments arrive as `__oxiz_numarg_N` proxy vars, whose
+    /// defining equalities give them values); application values read
+    /// `ArithSolver::value` directly (integer-sorted applications inside
+    /// arithmetic contexts are interned as tableau variables).
+    fn congruence_gap_splits(&self, manager: &TermManager) -> Vec<(TermId, TermId)> {
+        use num_rational::Rational64;
+        use num_traits::ToPrimitive;
+        const MAX_PAIRS: usize = 4096;
+
+        fn eval_linear(
+            term: TermId,
+            arith: &oxiz_theories::arithmetic::ArithSolver,
+            manager: &TermManager,
+            depth: u32,
+        ) -> Option<Rational64> {
+            if depth > 64 {
+                return None;
+            }
+            let node = manager.get(term)?;
+            match &node.kind {
+                TermKind::IntConst(n) => n.to_i64().map(Rational64::from_integer),
+                TermKind::RealConst(r) => Some(*r),
+                TermKind::Var(_) => arith.value(term),
+                TermKind::Add(args) => {
+                    let mut acc = Rational64::from_integer(0);
+                    for &a in args {
+                        acc += eval_linear(a, arith, manager, depth + 1)?;
+                    }
+                    Some(acc)
+                }
+                TermKind::Sub(a, b) => Some(
+                    eval_linear(*a, arith, manager, depth + 1)?
+                        - eval_linear(*b, arith, manager, depth + 1)?,
+                ),
+                TermKind::Neg(a) => Some(-eval_linear(*a, arith, manager, depth + 1)?),
+                TermKind::Mul(args) => {
+                    let mut acc = Rational64::from_integer(1);
+                    for &a in args {
+                        acc *= eval_linear(a, arith, manager, depth + 1)?;
+                    }
+                    Some(acc)
+                }
+                _ => None,
+            }
+        }
+
+        let apps = self.euf.app_nodes();
+        if apps.len() < 2 {
+            return Vec::new();
+        }
+        let mut by_func: rustc_hash::FxHashMap<u32, Vec<u32>> = rustc_hash::FxHashMap::default();
+        for &a in &apps {
+            if let Some(f) = self.euf.node_func(a) {
+                by_func.entry(f).or_default().push(a);
+            }
+        }
+        let mut probed = 0usize;
+        let mut splits: Vec<(TermId, TermId)> = Vec::new();
+        'outer: for group in by_func.values() {
+            for i in 0..group.len() {
+                for j in (i + 1)..group.len() {
+                    if probed >= MAX_PAIRS {
+                        break 'outer;
+                    }
+                    probed += 1;
+                    let (a, b) = (group[i], group[j]);
+                    if self.euf.are_equal_immutable(a, b) {
+                        continue;
+                    }
+                    let (Some(ka), Some(kb)) = (self.euf.node_args(a), self.euf.node_args(b))
+                    else {
+                        continue;
+                    };
+                    if ka.len() != kb.len() || ka.is_empty() {
+                        continue;
+                    }
+                    let (Some(ta), Some(tb)) = (self.euf.node_term(a), self.euf.node_term(b))
+                    else {
+                        continue;
+                    };
+                    let mut all_equal = true;
+                    for (&x, &y) in ka.iter().zip(kb.iter()) {
+                        let (Some(tx), Some(ty)) = (self.euf.node_term(x), self.euf.node_term(y))
+                        else {
+                            all_equal = false;
+                            break;
+                        };
+                        if tx == ty {
+                            continue;
+                        }
+                        let (Some(vx), Some(vy)) = (
+                            eval_linear(tx, &self.arith, manager, 0),
+                            eval_linear(ty, &self.arith, manager, 0),
+                        ) else {
+                            all_equal = false;
+                            break;
+                        };
+                        if vx != vy {
+                            all_equal = false;
+                            break;
+                        }
+                    }
+                    if !all_equal {
+                        continue;
+                    }
+                    // Equal-valued arguments with divergent application
+                    // values: the pair must be DECIDED (a merge forces the
+                    // congruence conflict; a separation changes the argument
+                    // model) — blocking the projection cannot invent either.
+                    if let (Some(va), Some(vb)) = (self.arith.value(ta), self.arith.value(tb))
+                        && va != vb
+                        && let (Some(tx0), Some(ty0)) =
+                            (self.euf.node_term(ka[0]), self.euf.node_term(kb[0]))
+                        && tx0 != ty0
+                    {
+                        splits.push((tx0, ty0));
+                    }
+                }
+            }
+        }
+        splits
+    }
+
+    /// Lazy congruence-gap repair: assert the colliding argument pair as a
+    /// care-split atom (the core must decide it either way — a `true`
+    /// commitment merges the applications in congruence closure and
+    /// conflicts the divergent values downstream; a `false` commitment
+    /// separates the arguments in the tableau) and report `true` so the
+    /// caller re-solves.  Blocking the projection instead starved: the
+    /// block cannot invent the argument separation (`x+y<=2 ∧ f(x)≠f(y)`
+    /// refuted every candidate until its budget died, state-hygiene audit
+    /// case 78).
+    pub(super) fn repair_congruence_gap(&mut self, manager: &mut TermManager) -> bool {
+        const MAX_GAP_REPAIR_ROUNDS: u32 = 4;
+        if self.congruence_gap_repair_rounds >= MAX_GAP_REPAIR_ROUNDS {
+            return false;
+        }
+        let splits = self.congruence_gap_splits(manager);
+        if splits.is_empty() {
+            return false;
+        }
+        let mut added = false;
+        for (a, b) in splits {
+            let pair = if a < b { (a, b) } else { (b, a) };
+            if !self.care_split_pairs.insert(pair) {
+                continue;
+            }
+            let eq_term = manager.mk_eq(pair.0, pair.1);
+            let eq_lit = self.encode(eq_term, manager);
+            // No merge bias: the separating branch carries the valid model
+            // on satisfiable goals; the core's own heuristics pick.
+            let _ = eq_lit;
+            // The pair's trichotomy must also exist: a committed-false
+            // split atom otherwise never reaches the arithmetic solver as
+            // a strict bound (the negative-Eq processing tells EUF and BV,
+            // not arith), the tableau keeps the two sides' values equal,
+            // and the collision half blocks every candidate until its
+            // budget dies — the exact starvation that failed the audit.
+            self.emit_collision_trichotomy(pair.0, pair.1, manager);
+            self.trail.push(super::trail::TrailOp::CareSplitAdded {
+                a: pair.0,
+                b: pair.1,
+            });
+            added = true;
+        }
+        if added {
+            self.congruence_gap_repair_rounds += 1;
+        }
+        added
     }
 
     /// Evaluate one assertion for the gate, with every top-level conjunct

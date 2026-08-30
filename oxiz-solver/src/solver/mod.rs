@@ -446,6 +446,11 @@ pub struct Solver {
     /// Arrangement-split refinement rounds used (see
     /// `refine_arrangement_splits`); capped by `MAX_ARRANGEMENT_ROUNDS`.
     pub(super) arrangement_rounds: u32,
+    /// Rounds of the lazy congruence-gap repair used by the current check.
+    /// Budgeted: the repair's care-splits perturb the search, and on goals
+    /// the plain search already decides (`wisas/xs_8_13`, ~7 s `unsat`) an
+    /// unbounded loop turned it into a timeout.  The budget trades back.
+    pub(super) congruence_gap_repair_rounds: u32,
     /// Static formula features collected from `self.assertions` at the start of
     /// the most recent [`Solver::check_core`] – the oxiz port of Z3's
     /// `ast/static_features`.  `None` before the first check (or after the goal
@@ -668,6 +673,7 @@ impl Solver {
             #[cfg(test)]
             repair_paths_saw_model: Vec::new(),
             arrangement_rounds: 0,
+            congruence_gap_repair_rounds: 0,
             last_features: None,
         }
     }
@@ -1908,6 +1914,55 @@ impl Solver {
                             self.unsat_core = None;
                             return SolverResult::Unknown;
                         }
+                        // Lazy congruence-gap repair — runs ONLY on a
+                        // candidate the refutation gate already ACCEPTED
+                        // (model_refutes passed): on goals the blocking path
+                        // decides productively (`wisas/xs_8_13`), firing
+                        // earlier hijacked that trajectory into a timeout;
+                        // on goals where nothing committed is violated but
+                        // two same-function applications carry equal-valued
+                        // arguments and divergent results
+                        // (`wisas/xs_22_42`), the gap is the only witness
+                        // and the argument-pair care-split plus its
+                        // trichotomy force the decision.
+                        if self.repair_congruence_gap(manager) {
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.bv.reset();
+                            self.diff.reset();
+                            self.rebase_theory_state();
+                            let zero_term = manager.mk_int(0);
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &mut self.diff,
+                                &mut self.array_theory,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                &self.numarg_proxies,
+                                &self.quant_uf_const_pins,
+                                zero_term,
+                                &self.ite_result_terms,
+                                &mut self.derived_reasons,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.config.timeout_ms,
+                                self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
+                            );
+                            continue;
+                        }
+
                         self.unsat_core = None;
                         self.debug_check_invariants("check_core: before returning sat");
                         return SolverResult::Sat;

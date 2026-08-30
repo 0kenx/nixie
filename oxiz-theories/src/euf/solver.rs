@@ -880,6 +880,18 @@ impl EufSolver {
             .collect()
     }
 
+    /// Production accessor for the application-node indices (same set as
+    /// [`Self::debug_app_nodes`], available in release builds — the
+    /// congruence-gap repair walks it on the final candidate).
+    pub fn app_nodes(&self) -> Vec<u32> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.is_app())
+            .map(|(i, _)| i as u32)
+            .collect()
+    }
+
     /// Look up the node index for a given TermId
     pub fn term_to_node(&self, term: TermId) -> Option<u32> {
         self.term_to_node.get(&term).copied()

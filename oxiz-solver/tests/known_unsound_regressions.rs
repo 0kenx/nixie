@@ -97,15 +97,6 @@ fn vhard7_is_not_sat() {
 
 // ======== Found by the fresh-sample differential (seed 424243, 2026-08-30) ========
 
-#[ignore = "pre-existing wrong-sat on wisas guarded-recursion shape: xs_22_42 \
-            (:status unsat, z3 unsat) answered sat.  Root cause: the refutation \
-            chains the guarded s_count/x_count definitions over (format i) \
-            atoms (a41..a94 in z3's core) into a16's arithmetic; the search \
-            never commits the count equalities so no committed atom is \
-            violated and the model gate cannot rescue.  Search-level \
-            propagation work - see docs/studies/2026-08-27-v0.3.3-port.md, \
-            the thirteenth session.  Un-ignore when the wisas shape is \
-            decided honestly (unsat, or unknown as the floor)."]
 #[test]
 fn xs_22_42_is_not_sat() {
     assert_not_sat(

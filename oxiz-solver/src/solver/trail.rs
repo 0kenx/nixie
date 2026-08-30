@@ -284,7 +284,8 @@ impl super::Solver {
             // counter is a *lifetime* count for the scope, deliberately NOT
             // per-search: a second `check` must keep downgrading over the
             // first one's still-live restrictions).
-            arrangement_rounds: _, // PER-SEARCH: mirrors `case_split_rounds`;
+            congruence_gap_repair_rounds: _, // PER-CHECK: budget of the lazy congruence-gap repair
+            arrangement_rounds: _,           // PER-SEARCH: mirrors `case_split_rounds`;
             // the internalized atoms are SAT-scoped (retracted by `pop`), so
             // the round counter must not outlive them.
             last_features: _, // SNAPSHOT: recomputed in `check_core`; dropped
