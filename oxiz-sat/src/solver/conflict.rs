@@ -19,6 +19,54 @@ use smallvec::SmallVec;
 /// It is a pure function (no shared scratch state) so it can be called at sites where a
 /// `&mut self` borrow of the solver is unavailable – in particular after `self.learnt`
 /// has been finalized but while `&self.trail` is borrowed to fire the external hook.
+/// Compute LBD (Literal Block Distance) of a clause: the number of distinct
+/// decision levels (excluding level 0) among its literals.
+///
+/// Slow reference form (linear scan with a `contains` over a SmallVec,
+/// O(n·levels)): used by the unit tests below and as the semantics oracle
+/// for the stamped hot-path variant [`Solver::compute_learnt_lbd_stamped`].
+/// Stamped O(n) LBD over `literals`, excluding level 0 – the exact
+/// semantics of [`compute_lbd_from_literals`] without the O(n·levels)
+/// `contains` scan. `mark` is a generation counter owned by the caller
+/// (shared with [`Solver::compute_lbd`]'s `lbd_mark`); `level_marks` grows on
+/// demand so a literal at decision level == num_vars is *counted*, not
+/// silently skipped – the reference function has no bound and neither does
+/// this one.
+fn compute_lbd_stamped(
+    level_marks: &mut Vec<u32>,
+    mark: &mut u32,
+    literals: &[Lit],
+    trail: &Trail,
+) -> u32 {
+    *mark = mark.wrapping_add(1);
+    if *mark == 0 {
+        // Wrapped onto the sentinel value virgin slots carry (`0`): a fresh
+        // generation 0 would collide with every never-touched slot and
+        // undercount. Reset the table once (O(num_levels), once per 2^32
+        // analyses) and restart the generation sequence at 1.
+        level_marks.fill(0);
+        *mark = 1;
+    }
+    let m = *mark;
+    let mut count = 0u32;
+    for &lit in literals.iter() {
+        let level = trail.level(lit.var());
+        if level == 0 {
+            continue;
+        }
+        let lv = level as usize;
+        if lv >= level_marks.len() {
+            level_marks.resize(lv + 1, 0);
+        }
+        if level_marks[lv] != m {
+            level_marks[lv] = m;
+            count += 1;
+        }
+    }
+    count
+}
+
+#[cfg(test)]
 fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
     let mut levels: SmallVec<[u32; 32]> = SmallVec::new();
     for &lit in literals {
@@ -35,10 +83,21 @@ fn compute_lbd_from_literals(literals: &[Lit], trail: &Trail) -> u32 {
 /// Output is element-for-element identical to `[T]::sort_by_key` (both are
 /// stable: equal keys keep their original relative order), so swapping this in
 /// cannot change the search trajectory. Used for the per-conflict VMTF bump
-/// sort, whose arrays are tiny (typically ≤ 40 analyzed variables) where the
-/// generic driftsort machinery costs more than the quadratic move count of a
-/// plain insertion sweep; keys are read once (decorated) so the sweep does
-/// O(n) score lookups instead of O(n²).
+/// sort, whose arrays are usually tiny (typically ≤ 40 analyzed variables)
+/// where the generic driftsort machinery costs more than the quadratic move
+/// count of a plain insertion sweep; keys are read once (decorated) so the
+/// sweep does O(n) score lookups instead of O(n²).
+///
+/// Only used up to [`BUMP_SORT_INSERTION_LIMIT`] elements. Above that the
+/// sweep degenerates exactly where CDCL hurts for it: instances whose
+/// conflicts resolve through giant clauses (the worker-scheduling class
+/// resolves ~1900 analyzed literals per conflict) burn millions of
+/// instructions per conflict in the element-shifting loop. Above the limit
+/// the caller uses the stable O(n log n) `sort_by_key` instead – identical
+/// output either way, mirroring cadical's `MSORT` (std::sort below its
+/// `radixsortlim`, default 800; radix sort above).
+pub(super) const BUMP_SORT_INSERTION_LIMIT: usize = 64;
+
 fn insertion_sort_by_key_stable<K: Copy + PartialOrd, T: Copy>(v: &mut [(K, T)]) {
     for i in 1..v.len() {
         let cur = v[i];
@@ -49,6 +108,89 @@ fn insertion_sort_by_key_stable<K: Copy + PartialOrd, T: Copy>(v: &mut [(K, T)])
             j -= 1;
         }
         v[j] = cur;
+    }
+}
+
+/// Split-borrow bundle for the 1-UIP reason-literal marking step.
+///
+/// `analyze`'s reason walk must iterate a reason clause's literals *in the
+/// arena* while mutating the analysis tables. The previous shape copied
+/// every reason clause into a heap-allocating SmallVec per resolution step
+/// ("snapshot the literals so the shared marking helper may take `&mut
+/// self`") – linear, but one allocation plus a full literal copy per
+/// non-inline reason, which dominates on instances whose conflicts resolve
+/// through giant clauses (worker-scheduling class: ~1900-literal reasons).
+/// Bundling exactly the tables the marker touches lets the walk hold the
+/// immutable arena borrow across the whole loop.
+///
+/// The LRAT level-0 branch cannot resolve `proof_unit_id` from inside the
+/// split borrow, so it records the dimacs literal in `lrat_units` for the
+/// caller to flush **immediately after the marking loop** – nothing else
+/// appends to `unit_chain` inside the loop, so the pushed sequence is
+/// identical to the eager form.
+struct AnalysisMark<'a> {
+    seen: &'a mut [bool],
+    trail: &'a Trail,
+    learnt: &'a mut SmallVec<[Lit; 32]>,
+    seen_levels: &'a mut Vec<u32>,
+    seen_level_count: &'a mut [u32],
+    seen_level_trail: &'a mut [u32],
+    lrat: bool,
+    lrat_units: &'a mut SmallVec<[i32; 4]>,
+}
+
+impl AnalysisMark<'_> {
+    /// Record that `var` at decision level `level` (both > 0) was marked
+    /// `seen` during the current analysis, maintaining the per-level
+    /// statistics clause minimization depends on. Faithful port of the tail
+    /// of cadical's `analyze_literal` (same body as
+    /// [`Solver::note_seen_level`], on the split-borrowed tables).
+    fn note_seen_level(&mut self, var: Var, level: u32) {
+        let lv = level as usize;
+        if lv >= self.seen_level_count.len() {
+            return;
+        }
+        if self.seen_level_count[lv] == 0 {
+            self.seen_levels.push(level);
+        }
+        self.seen_level_count[lv] += 1;
+        let ti = self.trail.trail_index(var);
+        if ti < self.seen_level_trail[lv] {
+            self.seen_level_trail[lv] = ti;
+        }
+    }
+
+    /// Mark one reason-clause literal (same body as the removed
+    /// `Solver::analyze_mark_antecedent`, on the split-borrowed tables).
+    fn mark_antecedent(
+        &mut self,
+        lit: Lit,
+        current_level: u32,
+        counter: &mut i32,
+        vars_to_bump: &mut SmallVec<[Var; 32]>,
+    ) {
+        let var = lit.var();
+        let level = self.trail.level(var);
+
+        if !self.seen[var.index()] && level > 0 {
+            self.seen[var.index()] = true;
+            vars_to_bump.push(var);
+            self.note_seen_level(var, level);
+            if level == current_level {
+                *counter += 1;
+            } else {
+                // The conflict clause has all literals FALSE; keeping the
+                // literal as-is means the learned clause demands it TRUE.
+                self.learnt.push(lit);
+            }
+        } else if self.lrat && level == 0 && !self.seen[var.index()] {
+            // LRAT: a level-0 (fixed) antecedent. With the level-0 flush
+            // every level-0 literal is a unit with an id, so reference it
+            // directly (cadical's `analyze_literal` level-0 branch). `lit`
+            // is FALSE; its true form `¬lit` is the unit.
+            self.seen[var.index()] = true;
+            self.lrat_units.push(lit.negate().to_dimacs());
+        }
     }
 }
 
@@ -85,36 +227,19 @@ impl Solver {
     /// antecedents instead. Shared by the stored-clause path and the lazy
     /// theory-explanation path so both resolve with identical semantics.
     #[inline]
-    fn analyze_mark_antecedent(
-        &mut self,
-        lit: Lit,
-        current_level: u32,
-        counter: &mut i32,
-        vars_to_bump: &mut SmallVec<[Var; 32]>,
-    ) {
-        let var = lit.var();
-        let level = self.trail.level(var);
-
-        if !self.seen[var.index()] && level > 0 {
-            self.seen[var.index()] = true;
-            vars_to_bump.push(var);
-            self.note_seen_level(var, level);
-            if level == current_level {
-                *counter += 1;
-            } else {
-                // The conflict clause has all literals FALSE; keeping the
-                // literal as-is means the learned clause demands it TRUE.
-                self.learnt.push(lit);
-            }
-        } else if self.lrat && level == 0 && !self.seen[var.index()] {
-            // LRAT: a level-0 (fixed) antecedent. With the level-0 flush every
-            // level-0 literal is a unit with an id, so reference it directly
-            // (cadical's `analyze_literal` level-0 branch). `lit` is FALSE; its
-            // true form `¬lit` is the unit.
-            self.seen[var.index()] = true;
-            self.unit_chain
-                .push(self.proof_unit_id(lit.negate().to_dimacs()));
-        }
+    /// Stamped hot-path LBD over `self.learnt`, excluding level 0 – the exact
+    /// semantics of [`compute_lbd_from_literals`] at O(n) instead of
+    /// O(n·levels). See [`compute_lbd_stamped`] for the equivalence argument;
+    /// the property test below pins the two implementations together.
+    fn compute_learnt_lbd_stamped(&mut self) -> u32 {
+        let Self {
+            level_marks,
+            lbd_mark,
+            learnt,
+            trail,
+            ..
+        } = self;
+        compute_lbd_stamped(level_marks, lbd_mark, learnt, trail)
     }
 
     /// Record that `var` at decision level `level` (both > 0) was marked
@@ -333,24 +458,62 @@ impl Solver {
             let Some(clause) = self.clauses.get(reason_clause) else {
                 break;
             };
-            // Snapshot the literals so the shared marking helper may take
-            // `&mut self` (reason clauses are short – inline SmallVec copy).
-            let antecedent_lits: SmallVec<[Lit; 8]> = clause.lits.iter().copied().collect();
-            for lit in antecedent_lits {
-                // When resolving a *reason* clause (`p` is Some), the propagated
-                // literal `p` is the one being resolved out: it is TRUE on the trail
-                // and must NOT be added to the learned clause. We skip it BY VALUE
-                // rather than by a fixed index, because binary-implication-graph
-                // propagation (propagate.rs) records the reason without moving the
-                // implied literal to index 0 – so the propagated literal may sit at
-                // index 1. Skipping index 0 positionally would drop the false
-                // antecedent at index 0, producing over-strong (unsound) learned
-                // clauses. For the initial conflict clause `p` is None, so every
-                // literal is processed.
-                if p == Some(lit) {
-                    continue;
+            // Iterate the reason clause's literals IN THE ARENA (no snapshot
+            // copy): the marking tables are split-borrowed through
+            // [`AnalysisMark`], so the immutable clause-arena borrow lives
+            // across the whole loop. Each reason used to pay one heap
+            // allocation plus a full literal copy here (`SmallVec<[Lit; 8]>`
+            // collect), which dominated on giant-clause instances.
+            {
+                let Solver {
+                    seen,
+                    trail,
+                    learnt,
+                    seen_levels,
+                    seen_level_count,
+                    seen_level_trail,
+                    lrat,
+                    ..
+                } = self;
+                let mut lrat_units: SmallVec<[i32; 4]> = SmallVec::new();
+                {
+                    let mut mark = AnalysisMark {
+                        seen: &mut seen[..],
+                        trail,
+                        learnt,
+                        seen_levels,
+                        seen_level_count: &mut seen_level_count[..],
+                        seen_level_trail: &mut seen_level_trail[..],
+                        lrat: *lrat,
+                        lrat_units: &mut lrat_units,
+                    };
+                    for &lit in clause.lits.iter() {
+                        // When resolving a *reason* clause (`p` is Some), the
+                        // propagated literal `p` is the one being resolved
+                        // out: it is TRUE on the trail and must NOT be added
+                        // to the learned clause. We skip it BY VALUE rather
+                        // than by a fixed index, because
+                        // binary-implication-graph propagation (propagate.rs)
+                        // records the reason without moving the implied
+                        // literal to index 0 – so the propagated literal may
+                        // sit at index 1. Skipping index 0 positionally would
+                        // drop the false antecedent at index 0, producing
+                        // over-strong (unsound) learned clauses. For the
+                        // initial conflict clause `p` is None, so every
+                        // literal is processed.
+                        if p == Some(lit) {
+                            continue;
+                        }
+                        mark.mark_antecedent(lit, current_level, &mut counter, &mut vars_to_bump);
+                    }
                 }
-                self.analyze_mark_antecedent(lit, current_level, &mut counter, &mut vars_to_bump);
+                // LRAT level-0 units, flushed in walk order the moment the
+                // arena borrow ends (nothing inside the loop could have
+                // appended to `unit_chain`, so the sequence is identical to
+                // the eager form).
+                for dimacs in lrat_units {
+                    self.unit_chain.push(self.proof_unit_id(dimacs));
+                }
             }
 
             // Find next literal to resolve on: the most recently assigned
@@ -401,13 +564,41 @@ impl Solver {
                             // decision and stop resolving, mirroring `_ =>`.
                             break 'resolve;
                         };
-                        for &lit in &tail {
-                            self.analyze_mark_antecedent(
-                                lit,
-                                current_level,
-                                &mut counter,
-                                &mut vars_to_bump,
-                            );
+                        {
+                            let Solver {
+                                seen,
+                                trail,
+                                learnt,
+                                seen_levels,
+                                seen_level_count,
+                                seen_level_trail,
+                                lrat,
+                                ..
+                            } = self;
+                            let mut lrat_units: SmallVec<[i32; 4]> = SmallVec::new();
+                            {
+                                let mut mark = AnalysisMark {
+                                    seen: &mut seen[..],
+                                    trail,
+                                    learnt,
+                                    seen_levels,
+                                    seen_level_count: &mut seen_level_count[..],
+                                    seen_level_trail: &mut seen_level_trail[..],
+                                    lrat: *lrat,
+                                    lrat_units: &mut lrat_units,
+                                };
+                                for &lit in &tail {
+                                    mark.mark_antecedent(
+                                        lit,
+                                        current_level,
+                                        &mut counter,
+                                        &mut vars_to_bump,
+                                    );
+                                }
+                            }
+                            for dimacs in lrat_units {
+                                self.unit_chain.push(self.proof_unit_id(dimacs));
+                            }
                         }
                         let Some(next) = Self::analyze_scan_pivot(
                             &self.seen,
@@ -534,11 +725,21 @@ impl Solver {
             // checked btab load), which measured *slower* than the generic
             // driftsort it replaced; decorating makes it O(n) reads and keeps
             // the stable tie order intact.
+            //
+            // Giant-clause instances push thousands of analyzed variables
+            // through here per conflict; the insertion sweep is quadratic and
+            // cadical switches algorithms at 800 (`MSORT`). Both branches
+            // below are stable, so the order – and therefore the whole search
+            // trajectory – is identical to the pure insertion sweep.
             let mut keyed: SmallVec<[(u64, Var); 32]> = vars_to_bump
                 .iter()
                 .map(|&v| (self.vmtf.activity(v), v))
                 .collect();
-            insertion_sort_by_key_stable(&mut keyed);
+            if keyed.len() <= BUMP_SORT_INSERTION_LIMIT {
+                insertion_sort_by_key_stable(&mut keyed);
+            } else {
+                keyed.sort_by_key(|&(k, _)| k);
+            }
             for (i, &(_, v)) in keyed.iter().enumerate() {
                 vars_to_bump[i] = v;
             }
@@ -566,7 +767,7 @@ impl Solver {
         // levels in the learned clause itself (level 0 excluded), not the larger
         // `vars_to_bump` set. It is computed AFTER minimization so it reflects the
         // exact clause that will be stored, and therefore satisfies lbd <= clause len.
-        let lbd = compute_lbd_from_literals(&self.learnt, &self.trail);
+        let lbd = self.compute_learnt_lbd_stamped();
 
         // Notify external heuristic of each conflict-involved variable with the
         // learned-clause LBD score.
@@ -1836,7 +2037,7 @@ impl Solver {
         // `vars_to_bump` proxy. For theory conflicts the learned clause shape may differ
         // from Boolean conflicts, but the distinct-decision-level count of the actual
         // learned clause is the correct glue score and never exceeds the clause length.
-        let lbd = compute_lbd_from_literals(&self.learnt, &self.trail);
+        let lbd = self.compute_learnt_lbd_stamped();
 
         // Notify external heuristic of each conflict-involved variable with the
         // learned-clause LBD score.
@@ -2876,5 +3077,98 @@ mod tests {
             "1-UIP asserting literal level {uip_level} must be strictly above the \
              backtrack level {backtrack_level}"
         );
+    }
+}
+
+#[cfg(test)]
+mod stamped_lbd_equivalence {
+    use super::*;
+
+    /// The stamped hot-path LBD must agree with the reference
+    /// `contains`-scan implementation on *every* input, including repeated
+    /// calls (generation-counter reuse), level-0 literals, duplicate
+    /// literals, and level indices at/above the table's initial size.
+    #[test]
+    fn stamped_lbd_matches_reference_over_randomized_calls() {
+        // Deterministic LCG so the property is reproducible.
+        let mut state = 0x2545F4914F6CDD1Du64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            state >> 33
+        };
+
+        for case in 0..200 {
+            let n_vars = 2 + (next() % 40) as usize;
+            let mut trail = Trail::new(n_vars);
+            // Random number of decision levels; vars assigned in order.
+            let n_levels = 1 + (next() % (n_vars as u64 + 3)) as usize;
+            for _ in 0..n_levels {
+                trail.new_decision_level();
+                let vars_here = next() % 3;
+                for k in 0..vars_here {
+                    let v = Var::new(((next() % n_vars as u64) as u32).min(n_vars as u32 - 1));
+                    let lit = if k % 2 == 0 { Lit::pos(v) } else { Lit::neg(v) };
+                    if !trail.is_assigned(v) {
+                        trail.assign_decision(lit);
+                    }
+                }
+            }
+            // NOTE: `n_levels` can exceed the number of *populated* levels;
+            // assigning a literal at level L makes `trail.level` return L for
+            // its var. Vars never assigned report level 0 and are excluded by
+            // both implementations.
+
+            let mut level_marks: Vec<u32> = Vec::new();
+            let mut mark: u32 = 0;
+            for _ in 0..5 {
+                // Interleave calls of varying sizes; the stamp must survive
+                // reuse across calls with overlapping level sets.
+                let n_lits = 1 + (next() % 24) as usize;
+                let mut lits: SmallVec<[Lit; 32]> = SmallVec::new();
+                for _ in 0..n_lits {
+                    let v = Var::new((next() % n_vars as u64) as u32);
+                    let lit = if next() % 2 == 0 {
+                        Lit::pos(v)
+                    } else {
+                        Lit::neg(v)
+                    };
+                    lits.push(lit);
+                    // Occasional duplicate literal (allowed in raw walks).
+                    if next() % 4 == 0 {
+                        lits.push(lit);
+                    }
+                }
+                let reference = compute_lbd_from_literals(&lits, &trail);
+                let stamped = compute_lbd_stamped(&mut level_marks, &mut mark, &lits, &trail);
+                assert_eq!(
+                    reference, stamped,
+                    "case {case}: stamped LBD diverged from reference \
+                     (n_vars={n_vars}, lits={n_lits})"
+                );
+            }
+        }
+    }
+
+    /// The generation counter must be reusable after `u32` wraparound: the
+    /// wrapped value is simply a fresh id, and correctness never depends on
+    /// ordering.
+    #[test]
+    fn stamped_lbd_survives_mark_wraparound() {
+        let n = 3;
+        let mut trail = Trail::new(n);
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(0)));
+        trail.new_decision_level();
+        trail.assign_decision(Lit::pos(Var::new(1)));
+
+        let lits = [Lit::pos(Var::new(0)), Lit::pos(Var::new(1))];
+        let mut level_marks: Vec<u32> = vec![0; 2];
+        let mut mark = u32::MAX;
+        let first = compute_lbd_stamped(&mut level_marks, &mut mark, &lits, &trail);
+        assert_eq!(first, 2);
+        let second = compute_lbd_stamped(&mut level_marks, &mut mark, &lits, &trail);
+        assert_eq!(second, 2, "recount after wraparound must still be 2");
     }
 }

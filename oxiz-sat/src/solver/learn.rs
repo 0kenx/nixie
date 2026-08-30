@@ -91,7 +91,14 @@ impl Solver {
     /// Compute LBD (Literal Block Distance) of a clause
     /// LBD is the number of distinct decision levels in the clause
     pub(super) fn compute_lbd(&mut self, lits: &[Lit]) -> u32 {
-        self.lbd_mark += 1;
+        self.lbd_mark = self.lbd_mark.wrapping_add(1);
+        if self.lbd_mark == 0 {
+            // Wrapped onto the virgin-slot sentinel: reset once and restart
+            // the generation sequence (same guard as
+            // `conflict::compute_lbd_stamped`, which shares this counter).
+            self.level_marks.fill(0);
+            self.lbd_mark = 1;
+        }
         let mark = self.lbd_mark;
 
         let mut count = 0u32;
