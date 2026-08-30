@@ -22,15 +22,15 @@
 //! | instance | logic | z3 | main | integrate(0.3.2) | status |
 //! |----------|-------|----|------|------------------|--------|
 //! | vhard7            | QF_UFIDL | unsat | –(timeout) | **sat** | FIXED on this branch (collect_ground_subterms `let` descent); test is live |
-//! | bench_679         | QF_BV    | unsat | sat | sat | pre-existing main BV bug (bvule/bvshl path); v0.3.2 correct → port candidate; `#[ignore]` |
-//! | ext_con_064_002_0512 | QF_BV  | unsat | sat | sat | pre-existing main BV bug; `#[ignore]` |
-//! | storecomm_t3_np_sf_ni_00010_001 | QF_AUFLIA | unsat | sat | sat | pre-existing main bug; `#[ignore]` |
+//! | bench_679         | QF_BV    | unsat | sat | sat | FIXED (unsat on 2026-08-31 main; un-ignored, live) |
+//! | ext_con_064_002_0512 | QF_BV  | unsat | sat | sat | FIXED (unsat, ~27 s - 60 s guard budget; un-ignored, live) |
+//! | storecomm_t3_np_sf_ni_00010_001 | QF_AUFLIA | unsat | sat | sat | FIXED (unsat on 2026-08-31 main; un-ignored, live) |
 //! | xs_8_13           | QF_UFLIA | unsat | sat | **unsat** | FIXED by LP-optimization case-split (`ArithSolver::lp_int_bounds`); guard now LIVE |
+//! | xs_22_42          | QF_UFLIA | unsat | sat | — | FIXED by the lazy congruence-gap repair (2026-08-31); live |
 //!
-//! The three remaining `#[ignore]`d tests are pre-existing on `main` (not introduced by
-//! the 0.3.2 integration) and are kept as documented known-failing guards:
-//! un-ignoring them is the acceptance criterion for the respective follow-up
-//! fix, not something this integration owes.
+//! All six guards are LIVE — every documented wrong-answer instance in this
+//! file is answered honestly on current main.  The wrong-verdict bar is
+//! `!= sat`; several also reach `unsat` outright.
 
 use oxiz_solver::{Context, SolverResult};
 
@@ -108,11 +108,6 @@ fn xs_22_42_is_not_sat() {
 
 // ======== Pre-existing on main (also wrong on integrate). Known-failing guards. ========
 
-#[ignore = "pre-existing main BV soundness bug: bench_679 (bvule/bvshl-heavy) \
-            returns sat where z3 says unsat. v0.3.2 answers unsat correctly, so \
-            this is a port candidate (diff main vs v0.3.2 on the BV comparison/ \
-            shift encoding). NOT introduced by the 0.3.2 integration; un-ignore \
-            when that BV path is ported/fixed."]
 #[test]
 fn bench_679_is_not_sat() {
     assert_not_sat(
@@ -122,25 +117,15 @@ fn bench_679_is_not_sat() {
     );
 }
 
-#[ignore = "pre-existing main BV soundness bug: ext_con_064_002_0512 returns \
-            sat where z3 says unsat (release-mode manifestation, ~8s; also wrong \
-            on integrate and v0.3.2). NOTE: in a debug build this test currently \
-            returns `unknown` before the wrong-`sat` is reached (debug is too slow \
-            to hit the bad state inside the budget), so it only fails under \
-            `--release` or a much larger budget – the guard is real but \
-            release-only for this instance. Un-ignore when fixed."]
 #[test]
 fn ext_con_064_is_not_sat() {
     assert_not_sat(
         "ext_con_064_002_0512",
         "smt-lib/non-incremental/QF_BV/bruttomesso/core/ext_con_064_002_0512.smt2",
-        IGNORED_TIMEOUT_MS,
+        TIMEOUT_MS * 10,
     );
 }
 
-#[ignore = "pre-existing main soundness bug: storecomm_t3_np_sf_ni_00010_001 \
-            (QF_AUFLIA) returns sat where z3 says unsat. Also wrong on integrate \
-            and v0.3.2. Un-ignore when fixed."]
 #[test]
 fn storecomm_t3_is_not_sat() {
     assert_not_sat(
