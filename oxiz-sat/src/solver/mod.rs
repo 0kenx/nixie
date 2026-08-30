@@ -3105,9 +3105,9 @@ impl Solver {
     }
 
     /// Freeze the variables the caller's theory observes (see
-    /// [`Solver::frozen_vars`]).  Must be called before the first `solve*`
+    /// `Solver::frozen_vars`).  Must be called before the first `solve*`
     /// pre-search pass; later calls extend the set (idempotent).  After
-    /// this, [`Solver::elimination_allowed`]-class gates treat destructive
+    /// this, `Solver::elimination_allowed`-class gates treat destructive
     /// preprocessing as safe: the passes still refuse every frozen
     /// variable, so only Boolean-structure variables are touched.
     pub fn freeze_theory_vars<I: IntoIterator<Item = Var>>(&mut self, vars: I) {
@@ -3157,7 +3157,7 @@ impl Solver {
 
     /// Shrink-study failure-reason counters (debug instrumentation).
     #[must_use]
-    /// Local-search walk counters (see [`WalkCounters`]).
+    /// Local-search walk counters (see `WalkCounters`).
     pub fn walk_counters(&self) -> WalkCounters {
         self.stats.walk
     }

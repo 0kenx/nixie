@@ -4,7 +4,7 @@
 //!
 //! [`crate::nl_eval::Interpretation`] — the witness carrier every other
 //! nonlinear procedure in this crate uses — pins a term to a
-//! [`BigRational`]. That is the right value language for it: `holds_under`
+//! `BigRational`. That is the right value language for it: `holds_under`
 //! re-evaluates an interpretation against the original assertions in exact
 //! rational arithmetic, and every consumer downstream of it (the solver's
 //! `Model`, `(get-value ..)`'s ordinary path) stores a rational too.
@@ -18,7 +18,7 @@
 //!
 //! This module is the value language that lets it report the witness
 //! honestly instead: `NlWitnessValue` is either an ordinary rational or an
-//! [`AlgebraicValue`] — a defining integer polynomial plus the index of the
+//! `AlgebraicValue` — a defining integer polynomial plus the index of the
 //! root it denotes, which is precisely what SMT-LIB's `root-obj` notation
 //! spells and what Z3 prints for the same goals.
 //!

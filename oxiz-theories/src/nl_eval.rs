@@ -2,14 +2,14 @@
 //!
 //! Every satisfiability verdict produced by the nonlinear search paths in this
 //! crate is a *claim about a witness*, and this module is what turns the claim
-//! into a check. Given a candidate interpretation ([`Interpretation`]) that
-//! pins every free leaf a formula mentions, [`holds_under`] recomputes each
+//! into a check. Given a candidate interpretation (`Interpretation`) that
+//! pins every free leaf a formula mentions, `holds_under` recomputes each
 //! assertion from its leaves in exact arithmetic and reports whether the whole
 //! set is definitely true.
 //!
 //! Three properties are deliberate:
 //!
-//! * **Exact.** Values are [`BigRational`], never a machine float and never a
+//! * **Exact.** Values are `BigRational`, never a machine float and never a
 //!   fixed-width rational, so no intermediate product silently wraps or
 //!   rounds. A search that overflows a machine word cannot launder a wrong
 //!   answer past this gate.

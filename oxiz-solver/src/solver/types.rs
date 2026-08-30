@@ -256,7 +256,7 @@ pub struct SolverConfig {
     /// any is live a SAT-core `Unsat` is downgraded to `Unknown`.
     pub enable_model_blocking: bool,
     /// Enable the `Sat` gate's negated-equality collision half
-    /// ([`crate::solver::Solver::model_refutes_assertions`]): a numeric
+    /// (`crate::solver::Solver::model_refutes_assertions`): a numeric
     /// equality the core committed FALSE whose model values collide is a
     /// definite model refutation.  Default on; the model counter opts out —
     /// its exhaustive-enumeration contract treats every `Unknown` as
