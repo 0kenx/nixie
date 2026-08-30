@@ -749,3 +749,16 @@ the 6.6× conflicts-to-model term that owns the table.  The headline
 stays 143–145/162 ± load band; the durable artifact of slices 2–4 is
 the honest map (propagate ≈ 70 %, everything else ≤ 10 %) plus ~11 %
 off every search the solver runs.
+
+## 2026-08-30 addendum: the throughput half of the residue addressed
+
+The conflict-analysis quadratics study
+(`2026-08-30-analyze-quadratics.md`) removed the per-conflict cost
+anomalies this study's decomposition flagged: worker-class 18.2 M → 4.7 M
+instructions/conflict (3.9×, bit-identical trajectories), timetable 1.22×,
+g2-slp 1.08×, summle +12–15 %, plus a mark-leak parity fix in BVE
+resolution and a decorated occurrence sort. Standing composition after:
+summle ×2 solve under the 40 s cap (were losses), worker_550 63.8 s →
+42.5 s serial. The losses that remain are all conflicts-to-model-bound —
+this study's recorded deep-study items (decision quality, learned-clause
+quality) are unchanged and still the biggest lever.

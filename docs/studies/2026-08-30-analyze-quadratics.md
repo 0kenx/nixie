@@ -220,3 +220,29 @@ first slice already made rare. Well inside the ±5 % neutrality band →
 cadical's `radix.hpp` if the clause-length gap is ever closed and the
 bump sets grow again). The `Reverse(complement)` inversion is recorded as
 the kind of off-by-one the identity gate exists to catch.
+
+## Session close: standing table after the three landed slices
+
+54-file table (40 s, 6-way, load ~4–6): **oxiz 43 / cadical 48, 0
+mismatches, 5 ox-only wins** — headline unchanged (the losses are
+conflicts-to-model-bound, as the deep study catalogue says), but the
+composition moved exactly where a pure throughput win predicts:
+
+- **summle_X4053 and summle_X11112 now solve under the cap** (were certain
+  losses; serial 36.8 s → 35.7 s and capped-run instructions −12/15 %).
+- **worker_550 solves serially in 42.5 s** (was 63.8 s) — sits at the
+  cap edge and flaps under parallel load.
+- `shuff`/`FmlaEqu`/`frb45` (34–39 s solves) flap with load margin, as
+  they always have.
+
+Per-conflict instruction state vs cadical after the three slices
+(cap 40 k, `cpu_core` PMU): worker 4.7 M vs 1.8 M (was 18.2 M), timetable
+2.6 M vs 2.4 M (was 3.2 M), g2-slp 1.6 M vs 0.8 M (was 1.7 M), summle
+1.05 M vs 0.95 M, mdp/crypto at parity. The remaining excess concentrates
+in (a) the shrink/minimize walk over giant clauses (worker: 34 % of
+instructions), (b) elimination phases (g2-slp: 45 %), (c) propagate watch
+layout — each a further data-structure slice, none a missing mechanism.
+
+SMT-side paired check over the 270-instance differential sample:
+geomean 1.007 (neutral — the sample is easy-instance-dominated; the
+differential's 0-disagreement is the load-bearing gate there).
