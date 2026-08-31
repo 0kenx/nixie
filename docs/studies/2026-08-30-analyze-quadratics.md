@@ -648,3 +648,30 @@ satisfied-binary visits), fixable only structurally — cadical-style
 **tagged binary watchers** (binaries carried inline in the watcher,
 clause load skipped structurally) or the 8-byte watcher packing the
 earlier study scoped. Naive prefetch is measured out.
+
+## Pass-5 close: the propagate slice's true shape (circuit characterized)
+
+`circuit_64in64out_with_64gates…cnf` is **384 variables and 507 904
+clauses of length exactly 13** (plus 64 units) – a pathologically dense
+formula: ~8 600 watchers per literal, every value/level/seen array
+L1/L2-resident, and a 32 MB clause arena as the only DRAM-class
+structure. The propagate cost on this class is **scan volume ×
+per-visit constant**, and the prefetch experiment shows the loop is
+issue/bandwidth-shaped, not stall-shaped – there is no latency to hide.
+
+With the blocker-refresh already at cadical parity, the two-watched
+invariant intact, and the visit path at one header load + deleted
+branch + unchecked value loads, the remaining 1.8× vs cadical is the
+**watcher/arena layout differential** (12-byte watcher vs cadical's
+tagged pairs; header-prefixed arena vs cadical's inline arrays) – the
+same data-structure slice the flat-watch-arena and 8-byte-watcher
+studies scoped, needing a whole-pass redesign to move. That, the
+per-variable layout change for worker's shrink scatter, and the
+conflicts-to-model deep study are the three remaining programs, in
+recorded priority order.
+
+Pass-5 ledger: two structural hypotheses implemented and falsified
+cleanly (shrink key retention: neutral; clause prefetch: negative on
+the target class), one target characterized to its exact shape, ten
+negative results total now standing guard over the boundary of what
+local optimization can reach in this engine.
