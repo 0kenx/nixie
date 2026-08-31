@@ -421,3 +421,33 @@ where it is genuinely decisive.  The residual gap (≈17 files) is not
 reachable by gating this mechanism; it needs the upstream clause-length/
 decision-quality work or cadical's walk-SAT phase improvements (its
 `walked 4–18` on every residue file).
+
+## Revisit (2026-08-30, post the analyze/elim throughput session): still no
+
+Requested by this study's own tail ("revisit with a full ≥10-seed study
+before flipping the default"), re-run after the 2026-08-30 session
+landed the analyze de-quadratics, the elimination scratch/gate slices
+and the phase landing's aftermath – a substantially different engine
+from the one that measured 0.837×/0.921×.
+
+Multi-seed conflicts-to-verdict (default / `OXIZ_CHRONO_REUSE=1`,
+600 k cap): worker_550 wins big at 3 of 4 seeds (106 k→45 k, 107 k→
+**10 k**, 57 k→15 k; one seed worse); summle53 and Timetable split
+their seeds both ways (17 k-vs-281 k, 22 k-vs-105 k); j3037 wash;
+crypto1/frb45/FmlaEqu TO in both arms at the cap.
+
+Full 54-file corpus A/B (40 s, 6-way, verdicts cross-checked against
+cadical): **default 45, reuse 42, 0 mismatches**. Reuse-only wins:
+j3037 (36.6 s), worker_550 (26.8 s – its first under-cap solve),
+FmlaEqu (32 s). Default-only wins: mp1-klieber, summle53, noL-11-14,
+frb65, x9-08075, rbsat. The broad middle still pays more than the
+model-finding tail gains.
+
+**Verdict unchanged: default stays off.** The mechanism is real and
+cadical uses it heavily exactly where it wins for us (worker), but on
+this engine's phase/schedule machinery the aggregate is net-negative –
+now measured twice, three weeks of engine work apart, with the same
+shape. The knob remains for portfolio arms: a per-arm
+`SEEDS=default,chrono` portfolio (already supported) captures the
+worker-class wins without paying the middle's losses, and is the
+recorded way to use this if the standing table ever needs them.
