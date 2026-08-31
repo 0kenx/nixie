@@ -774,3 +774,69 @@ Timetable 8.2 s (with NOSTRIP).
 wrong-`sat` mechanism in the BV-CEGAR interaction. The winning table
 above sits behind one soundness answer — understand it, and five
 standing losses close at once.
+
+## Pass 8: the wrong-`sat` root cause traced to its final fork
+
+The question "apart from the guards, what is the root cause?" reopened
+the closed conclusion — correctly. Re-deriving the evidence showed the
+guards never fixed anything: **every configuration with strip OFF
+(retire-only) answers the wrong `sat`, every configuration with strip
+ON answers `unsat`** — the earlier "guards fixed it" reading was the
+strip-on configurations, and at least one intermediate observation was
+also a stale-shared-target artifact. The guards are defense in depth,
+not the cure. Live reproducer (all instrumentation in this section was
+temporary and reverted): `OXIZ_ROOT_SWEEP=1 OXIZ_ROOT_SWEEP_NOSTRIP=1`
+on `cegar_mul_low_word_identity_refuted`'s input.
+
+### The causal chain, layer by layer (each instrumented and verified)
+
+1. **The CEGAR loop behaves correctly.** Round 4's `bv.check()` returns
+   Sat with `spurious=0` — every abstracted mul carries its exact
+   product value in the model. That is a *relaxation-consistent* model,
+   not a formula model, and the dispatch's whole-assertion validation
+   correctly refutes it (`validation refuted=true`) and correctly
+   refuses to answer (`return None`).
+2. **The general path produces the wrong `Sat`.** `check_core`'s CDCL(T)
+   loop returns `raw_result=Sat`, `certified=Sat`; neither of the two
+   instrumented loop arms nor any early exit fired — the verdict comes
+   from `SatResult::Sat` → `!has_quantifiers` → `build_model` → `Sat`.
+3. **Two tempting theories falsified by measurement.** The fallback
+   does *not* inherit an abstracted encoding (`terminal=2 of 2` — the
+   exact circuits are all in place), and the theory layer is *not*
+   starved (`bv_terms=2, var_to_constraint=1` — the final check's
+   empty-`bv_terms` short-circuit at theory_manager.rs:3926 does not
+   apply).
+4. **What remains is the embedded SAT solver itself.** `self.bv` owns
+   its own `oxiz_sat::Solver` (the sweep fired *there*, during the
+   CEGAR rounds — `self.sat`, the main solver, is a different
+   instance). The general path's BV final check re-solves that embedded
+   instance and accepts its answer. The embedded instance carries the
+   full exact encoding yet reports satisfiable — **either** (a) the
+   retire-only sweep is unsound *at the pure-SAT level* on this
+   unit-dense instance (thousands of constant bit-pins make almost
+   every clause "satisfied at level 0" — the sweep retires nearly the
+   whole formula, and any flaw in the permanence argument shows up
+   immediately), **or** (b) the embedded solver's *incremental* state
+   is poisoned (the BV layer drives `push`/`pop` on it —
+   `bv/solver.rs`'s `ContextMark` machinery — and a pop rewinds
+   level-0 trail literals that retirements were justified by; the
+   CEGAR rounds also re-`check()` the same instance repeatedly).
+
+### The decisive next experiment (recorded for the next session)
+
+Dump the embedded instance at the failing check
+(`Solver::export_problem_dimacs` exists) and solve it standalone:
+from-scratch + no sweep, from-scratch + retire-only, incremental
+replay. If from-scratch + retire-only answers `sat` on a satisfiable
+export — the export includes the level-0 pins, so cross-check with
+cadical — the SAT-level retirement argument itself has a hole on
+unit-dense inputs. If only the incremental replay lies, the hole is
+the BV layer's `push`/`pop` × sweep interaction, and the correct fix
+is restoring sweep-retired clauses on pop (the same bookkeeping
+`assertion_clause_ids` does for pop-retractable clauses) or sweeping
+only behind literals whose justification is an *original* clause.
+
+The sweep stays knob-gated default-off; the five-file winning table
+stands behind that one soundness answer, now with the search space for
+it reduced from "somewhere in the BV path" to two sharp, testable
+hypotheses.
