@@ -615,3 +615,36 @@ the ±5 % band. The shrink cost on worker is intrinsic to the flag/mark
 random access over ~1 900 literals per conflict; packing it away is the
 whole-engine per-variable layout change the standing-gap study already
 scoped, not a local fix.
+
+## Negative result 4 (pass 5): propagation clause prefetch — net-negative
+
+The last bounded idea for the propagate bucket (33–40 % on
+circuit/frb45): software-prefetch the clause of a watcher
+`PREFETCH_DIST` iterations ahead (the dependent clause load is the
+loop's only L3/DRAM-class miss; the arena is tens of MB while value
+arrays are L2-resident). Implemented as a documented `unsafe`
+exception (address computation identical to `header_ptr`'s, prefetch
+side-effect-free), trajectory-identical, measured on **cycles** (3
+reps, pinned core, identical instruction streams):
+
+| file | pre-cycles | prefetch-3 cycles | Δ |
+|---|---|---|---|
+| circuit_64in | 3.50 G | 3.79–3.90 G | **+8…+11 %** |
+| frb45 | 2.90 G | 2.96 G | +2.2 % |
+| noL | 1.98 G | 1.95 G | −1.6 % |
+| summle53 | 14.43 G | 14.49–14.80 G | +0.4…+2.5 % |
+
+Why it loses on exactly the target class: circuit's watch-list
+iterations are dominated by cheap blocker-hit paths (~10 instructions,
+often satisfied binaries that never load the clause at all) — the
+prefetch's address computation (arena-base load + offset arithmetic)
+adds ~50 % to that path, and the prefetched lines are dead work for
+every blocker hit. Latency hiding only pays when the loop body stalls
+on the miss it hides; this loop body mostly doesn't. Reverted.
+
+**Conclusion for the propagate slice**: the remaining 1.8× on
+circuit-class files is work-shape (long watch lists, many
+satisfied-binary visits), fixable only structurally — cadical-style
+**tagged binary watchers** (binaries carried inline in the watcher,
+clause load skipped structurally) or the 8-byte watcher packing the
+earlier study scoped. Naive prefetch is measured out.
