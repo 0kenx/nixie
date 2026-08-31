@@ -722,9 +722,11 @@ known to be **throughput-shaped after all** for j3037 (equal conflicts,
 growing per-conflict cost from unswept root state), and the sweep
 closes most of its gap when enabled. The conflicts-to-model framing
 survives only for files where the instrumented comparison still shows
-a real conflict-count gap. The instrumented cadical tree lives at
-`/tmp/cad-ist` for the next session (rebuildable via the recipe in
-this section; never touches the reference tree).
+a real conflict-count gap. (The instrumented-cadical scratch tree was cleaned up after the
+session; rebuild it the same way – copy `src/` + `configure` +
+`scripts/` + `makefile.in` to a `/tmp` dir, add one `fprintf` after the
+glue `UPDATE_AVERAGE`s in `analyze.cpp`, `CXXFLAGS=-DCADICAL_CONF_TRACE
+./configure && make`. Never patch the reference tree.)
 
 Addendum: with `OXIZ_ROOT_SWEEP=1`, `combined-crypto1` solves `sat` in
 53.5 s (default TO) and `FmlaEquivChain` `unsat` in 60.4 s (default
