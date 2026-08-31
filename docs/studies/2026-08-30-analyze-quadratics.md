@@ -411,3 +411,37 @@ shrink block-walk (~26 % of its remaining profile) and the propagate
 watch layout – constant-factor data-structure slices; (3) g2-slp's
 eliminate/subsume residue (~2×, occurrence churn beyond the
 load-bearing clones).
+
+## Fifth follow-up slice: resolution scratch buffers (the 21.5 % push)
+
+The call-graph under `eliminate_phase` on g2-slp finally attributed the
+elimination excess: **`SmallVec::push` and its grow/spill path measured
+21.5 % of the entire process** inside `elim_resolve_clauses` – the
+per-resolution `marked` and `resolvent` SmallVecs spilled to the heap on
+long-antecedent resolutions (g2-slp phase 1 alone runs **6.2 M
+resolutions**; CaDiCaL's whole elimination takes **0.56 s / 1.79 %** on
+the identical instance for the same 61 k eliminated variables – it
+reuses member `clause`/`marked` vectors across every resolution).
+
+Both buffers are now Eliminator-scoped scratch (`res_marked`,
+`res_resolvent`), cleared per resolution, capacity retained across the
+round; the single owned allocation left is the `Resolvent` outcome's
+clone (only ~6 % of resolutions produce a non-tautological resolvent).
+The unmark moved inline over the disjoint ctx fields (the shared helper
+takes `&mut ctx` and cannot borrow the scratch).
+
+**Bit-identical trajectories** on 6 instances (g2-slp, both circuits,
+Timetable, constraints_17, j3037) vs the previous binary.
+
+| file | before | after | ratio |
+|---|---|---|---|
+| g2-slp (40 k) | 63.1 G | 48.2 G | **1.311×** |
+| timetable (40 k) | 102.3 G | 88.7 G | **1.154×** |
+| worker / circuits / mdp | — | — | ≈ 1.000× |
+
+Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
+(par2 2 310), z3 parity 169/0/1, 800 differential-CNF fuzz iterations
+0 mismatches, wisas canary `unsat` fast.
+
+Session cumulative vs the start binary: worker 4.27×, timetable 1.43×,
+g2-slp 1.43×, circuit64 1.19×, summle53 1.16×.

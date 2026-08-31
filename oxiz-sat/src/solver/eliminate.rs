@@ -145,6 +145,15 @@ struct Eliminator {
     /// elimination-heavy circuit instances – one malloc + copy per
     /// scheduled variable, twice).
     occ_scratch: Vec<(usize, ClauseId)>,
+    /// Scratch for [`Solver::elim_resolve_clauses`]'s marking phase, reused
+    /// across every resolution of the round (cadical reuses its member
+    /// `clause`/`marked` vectors the same way). The previous per-call
+    /// SmallVecs spilled to the heap on long-antecedent resolutions and
+    /// their push/grow path measured **21.5 % of the whole process** on
+    /// g2-slp (8 M resolutions per phase-1 round). `res_resolvent` is only
+    /// cloned into an owned clause on the rare non-tautological outcome.
+    res_marked: Vec<Lit>,
+    res_resolvent: Vec<Lit>,
     /// Variables eliminated this round.
     eliminated: usize,
     /// Whether anything structurally changed (clause added/removed/shrunk),
@@ -179,6 +188,8 @@ impl Eliminator {
             bw_dlits: Vec::new(),
             bw_cands: Vec::new(),
             occ_scratch: Vec::new(),
+            res_marked: Vec::new(),
+            res_resolvent: Vec::new(),
         }
     }
 
@@ -828,9 +839,13 @@ impl Solver {
         // accumulates c's unassigned non-pivot literals *and* d's unassigned
         // non-shared ones (cadical builds `clause` the same way – forgetting
         // the c side yields an over-strong clause and a false UNSAT).
+        // Both buffers are Eliminator-scoped scratch, cleared per resolution
+        // and reused across the round (cadical's member `clause`/`marked`);
+        // per-call SmallVecs here spilled to the heap on every long-antecedent
+        // resolution and dominated the whole phase.
+        ctx.res_marked.clear();
+        ctx.res_resolvent.clear();
         let mut s = 0usize;
-        let mut marked: SmallVec<[Lit; 8]> = SmallVec::new();
-        let mut resolvent: SmallVec<[Lit; 8]> = SmallVec::new();
 
         let mut t = 0usize;
         let mut tautological = false;
@@ -854,10 +869,11 @@ impl Solver {
                     }
                     -1 => continue, // falsified: dropped from the resolvent
                     _ => {
-                        ctx.mark[lit.code() as usize] = 1;
+                        let code = lit.code() as usize;
+                        ctx.mark[code] = 1;
                         ctx.mark[lit.negate().code() as usize] = -1;
-                        marked.push(lit);
-                        resolvent.push(lit);
+                        ctx.res_marked.push(lit);
+                        ctx.res_resolvent.push(lit);
                         s += 1;
                     }
                 }
@@ -885,7 +901,7 @@ impl Solver {
                             break 'd;
                         }
                         if m == 0 {
-                            resolvent.push(lit);
+                            ctx.res_resolvent.push(lit);
                         }
                         t += 1;
                     }
@@ -894,29 +910,32 @@ impl Solver {
         }
 
         // ---- effect phase ----
+        // Unmark inlined over the disjoint ctx fields (borrowing
+        // `ctx.res_marked` while mutating `ctx.mark` – the shared
+        // `elim_unmark` helper takes `&mut ctx` and cannot be used here).
+        for &lit in ctx.res_marked.iter() {
+            ctx.mark[lit.code() as usize] = 0;
+            ctx.mark[lit.negate().code() as usize] = 0;
+        }
         if missing {
-            self.elim_unmark(ctx, &marked);
             return ElimResolve::Skip;
         }
         if let Some(r) = retire {
-            self.elim_unmark(ctx, &marked);
             self.elim_retire_clause(ctx, r);
             return ElimResolve::Skip;
         }
-
-        self.elim_unmark(ctx, &marked);
 
         if tautological {
             return ElimResolve::Skip;
         }
 
-        let size = resolvent.len();
+        let size = ctx.res_resolvent.len();
         if size == 0 {
             self.trivially_unsat = true;
             return ElimResolve::Skip;
         }
         if size == 1 {
-            return ElimResolve::Unit(resolvent[0]);
+            return ElimResolve::Unit(ctx.res_resolvent[0]);
         }
 
         // Double self-subsuming resolution: c and d are identical except for
@@ -935,7 +954,9 @@ impl Solver {
             self.elim_shrink_clause(ctx, sid, &[drop_lit]);
             return ElimResolve::Skip;
         }
-        ElimResolve::Resolvent(resolvent)
+        // The one owned allocation: only ~6 % of resolutions on
+        // elimination-heavy instances produce a non-tautological resolvent.
+        ElimResolve::Resolvent(ctx.res_resolvent.iter().copied().collect())
     }
 
     /// Add the resolvents collected by [`Self::elim_resolvents_bounded`]
