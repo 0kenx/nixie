@@ -463,3 +463,33 @@ either parity (mdp/crypto/summle/timetable-class) or structural work
 resolution machinery). The standing losses that remain are
 conflicts-to-model-bound – unchanged in kind from the deep study's
 catalogue.
+
+## Sixth follow-up slice: the watch rebuild's hidden collections
+
+`rebuild_watches_and_binary_graph` (the eliminate/ELS/BVE epilogue,
+rebuilt whole whenever a phase dirtied the database) collected every
+clause id into a fresh `Vec` and copied every clause's literals into a
+heap SmallVec before re-attaching – on worker's 10.3 M clauses that is a
+~40 MB Vec plus 10.3 M copies per rebuild. Rewritten to iterate ids
+directly and read each clause's first two literals in the arena through
+split-borrowed fields (same shape as all the other arena-iteration
+fixes; the debug-missing-ref assert is preserved).
+
+Bit-identical trajectories on 6 instances. Instructions at fixed 40 k
+caps: circuit_64in **1.090×**, circuit_48 1.037×, timetable 1.025×,
+worker 1.016×, g2-slp 1.006×, constraints 1.003×.
+
+Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
+(par2 2 311), z3 parity 169/0/1, 800 differential-CNF fuzz iterations
+0 mismatches, wisas canary `unsat` fast.
+
+### Loss-file classification after all seven slices (setup-subtracted
+### search cost vs cadical, cap 40 k)
+
+mdp-28 0.97×, FmlaEqu 0.67×, crypto1 1.06×, j3037 1.07× (parity or
+better – their losses are purely conflicts-to-model), frb45 1.36×,
+g2-slp 1.55×, circuit64 1.79×, worker 2.98×. A counterfactual on
+g2-slp is instructive: `--elim=false` costs cadical 13 % there but
+costs us 2× – our bare search is the residual gap, and BVE rescues us
+disproportionately; the resolvent bloat (323 k → 789 k originals) is
+not the problem.
