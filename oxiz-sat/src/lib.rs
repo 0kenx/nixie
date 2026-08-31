@@ -233,26 +233,26 @@ pub fn probe_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
-/// A/B switch for the root-fixed clause sweep (cadical `collect.cpp`'s
-/// satisfied-retire + falsified-strip at reduce time): default OFF - the
-/// trade on the 54-file corpus measured net -1 (j3037/g2-slp win big,
-/// Timetable/noL regress to timeouts). See
-/// `docs/studies/2026-08-30-analyze-quadratics.md`.
+/// Opt-OUT for the root-sweep's retire half (cadical `collect.cpp`'s
+/// satisfied-clause retirement at reduce time, permanence-guarded):
+/// DEFAULT ON since the pass-8/9 root-cause work. `OXIZ_ROOT_SWEEP=0`
+/// restores the pre-sweep behavior for A/B.
 #[doc(hidden)]
 pub fn root_sweep_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
-    *FLAG.get_or_init(|| std::env::var("OXIZ_ROOT_SWEEP").is_ok_and(|v| !v.is_empty() && v != "0"))
+    *FLAG.get_or_init(|| std::env::var("OXIZ_ROOT_SWEEP").map_or(true, |v| v != "0"))
 }
 
-/// Diagnostic sub-knob for the root sweep study: `OXIZ_ROOT_SWEEP_NOSTRIP=1`
-/// retires satisfied clauses but skips falsified-literal stripping.
+/// Sub-knob for the root sweep's STRIP half (falsified-literal removal):
+/// `OXIZ_ROOT_SWEEP_STRIP=1`, default OFF - it answered wrong `unsat` on
+/// two SAT corpus files (see the study); only its g2-slp win is behind it.
 #[doc(hidden)]
-pub fn root_sweep_strip_disabled() -> bool {
+pub fn root_sweep_strip_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("OXIZ_ROOT_SWEEP_NOSTRIP").is_ok_and(|v| !v.is_empty() && v != "0")
+        std::env::var("OXIZ_ROOT_SWEEP_STRIP").is_ok_and(|v| !v.is_empty() && v != "0")
     })
 }
 

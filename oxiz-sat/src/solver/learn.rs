@@ -1010,11 +1010,10 @@ impl Solver {
         // the proof stream or assumption solving. Unlike elimination, the
         // sweep may run above decision level 0: the scan considers only
         // literals *recorded* at level 0, which are prefix-stable.
-        // The whole sweep (retire AND strip) is knob-gated: the retire half
-        // answered a WRONG `sat` on `cegar_mul_low_word_identity_refuted`
-        // (BV-CEGAR) even with the reason, scope, proof and theory gates
-        // below in place - root cause open, reproducer recorded in the
-        // study. Default off; SAT-only use under the knob fuzzed clean.
+        // Retire half default ON (`OXIZ_ROOT_SWEEP=0` opts out): the
+        // pass-8 wrong-`sat` root cause (embedded-SAT consumers park
+        // non-permanent literals at level 0 - see the permanence guard
+        // below) is fixed and the full battery is green.
         if !crate::root_sweep_enabled() {
             return;
         }
@@ -1062,6 +1061,7 @@ impl Solver {
                     continue;
                 }
                 let mut satisfied = false;
+                let mut justifier_entailed = false;
                 let mut false_pos: SmallVec<[usize; 4]> = SmallVec::new();
                 for (i, &l) in c.lits.iter().enumerate() {
                     let var = l.var();
@@ -1070,33 +1070,74 @@ impl Solver {
                     // reason of ANY of its literals must not be retired or
                     // stripped - the trail's reason pointer would dangle and
                     // later conflict resolutions would walk a deleted or
-                    // reshaped clause (caught as a wrong `sat` by
-                    // `cegar_mul_low_word_identity_refuted` before this
-                    // guard existed).
+                    // reshaped clause.
                     if matches!(trail.reason(var), Reason::Propagation(r) if r == cid) {
                         continue;
                     }
                     if trail.level(var) != 0 {
-                        continue; // only ROOT facts are permanent
+                        continue; // only ROOT facts are eligible
                     }
                     match trail.lit_value(l) {
                         LBool::True => {
                             satisfied = true;
+                            // Permanence guard (the pass-8 root cause): a
+                            // level-0 `true` is only a PERMANENT fact when it
+                            // is re-derivable from the live original clause
+                            // set - i.e. its reason is a live ORIGINAL clause.
+                            // Embedded-SAT consumers (the BV layer's
+                            // `check_body`) park arbitrary *model decisions*
+                            // at level 0 between probes and rewind the trail
+                            // with `restore_to_trail_size` on their Unsat
+                            // retry; `assert_const` installs constant pins as
+                            // bare `Decision`s with no backing clause; and
+                            // `forget_learned_since` drops learned units. A
+                            // retirement justified by any of those becomes
+                            // UN-justified by the rewind (measured: literal
+                            // `-670` true-at-level-0 at retirement, false
+                            // after; wrong `sat` on
+                            // `cegar_mul_low_word_identity_refuted`).
+                            if let Reason::Propagation(r) = trail.reason(var)
+                                && let Some(rc) = clauses.get(r)
+                                && !rc.deleted
+                                && !rc.learned
+                            {
+                                justifier_entailed = true;
+                            }
                             break;
                         }
                         LBool::False => false_pos.push(i),
                         LBool::Undef => {}
                     }
                 }
+                // Strip eligibility uses the same permanence rule per
+                // stripped literal: a falsified literal must be
+                // re-derivable-false from the permanent clause set, else the
+                // strengthening is unsound after a rewind.
+                if !false_pos.is_empty() {
+                    false_pos.retain(|i| {
+                        let var = c.lits[*i].var();
+                        if let Reason::Propagation(r) = trail.reason(var)
+                            && let Some(rc) = clauses.get(r)
+                            && !rc.deleted
+                            && !rc.learned
+                        {
+                            return true;
+                        }
+                        false
+                    });
+                }
+                let satisfied = satisfied && justifier_entailed;
                 if satisfied {
                     to_retire.push(cid);
-                } else if false_pos.is_empty() || crate::root_sweep_strip_disabled() {
-                    // retire-only mode (diagnostic): skip the strip path
-                } else if !false_pos.is_empty() && !crate::root_sweep_strip_disabled() {
-                    // Sub-knob OXIZ_ROOT_SWEEP_NOSTRIP=1 disables stripping:
-                    // essential on resolvent-bloated instances (g2-slp
-                    // 36 s -> 22 s) but multiplies noL-class searches'
-                    // conflicts 2.4x.
+                } else if !false_pos.is_empty() && crate::root_sweep_strip_enabled() {
+                    // Stripping lives behind its OWN knob
+                    // (OXIZ_ROOT_SWEEP_STRIP=1, default off): it answered a
+                    // WRONG `unsat` on `circuit_48in64out_700g/800g` and
+                    // `si2-b03m` (SAT files, seed-stable at default,
+                    // deterministically unsat with the strip on) - a second,
+                    // still-open soundness hole separate from the retire
+                    // path's level-0-permanence bug. Its only measured win
+                    // (g2-slp 36 s -> 22 s) stays reachable behind the knob.
                     to_strip.push((cid, false_pos));
                 }
             }

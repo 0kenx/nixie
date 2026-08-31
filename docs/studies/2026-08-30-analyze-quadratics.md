@@ -840,3 +840,58 @@ The sweep stays knob-gated default-off; the five-file winning table
 stands behind that one soundness answer, now with the search space for
 it reduced from "somewhere in the BV path" to two sharp, testable
 hypotheses.
+
+## Pass 9: the root cause FOUND, fixed, and the retire default flipped ON
+
+The decisive experiment ran with a retirement log (clause, justifying
+literal) verified at the failing check. Direct evidence:
+
+```
+RETIREMENT BROKEN: clause #1852 justified by -670 now val=Some(false) level0=false
+retire log 76 entries, 2 broken, 10 true-but-not-level0
+```
+
+**Root cause (complete)**: the BV layer's `check_body` parks arbitrary
+*model decisions* at decision level 0 between probes (its own doc: "some
+assignments (even a branch `Decision`) land at decision level 0"), and on
+a first-`Unsat` verdict rewinds the trail with `restore_to_trail_size` —
+un-assigning level-0 literals. The sweep (firing *inside* those solves)
+treated every level-0-true literal as a permanent cadical-style fact and
+retired clauses justified by them; the rewind un-justified the
+retirements; the re-solve answered `Sat` on the weakened formula. The
+`assert_const` pins install bare `Decision` reasons (no backing clause),
+and `forget_learned_since` drops learned units on the retry path — three
+distinct non-permanent level-0 sources. No scope gate can see
+`restore_to_trail_size`; that is why the guards never fixed it (and the
+strip-on/strip-off difference was pure trajectory luck, as pass 8
+concluded).
+
+**The fix (permanence guard)**: a clause may be retired/stripped only
+behind a literal whose reason is a **live original clause** — a fact
+re-derivable from the permanent clause set, so any rewind followed by
+re-propagation re-establishes the justification. Bare decisions (model
+leftovers, constant pins without backing clauses) and learned units
+(dropped by `forget_learned_since`) are not eligible justifiers.
+With the guard, the wrong-`sat` reproducer answers `unsat` in every
+configuration; the guard is in the sweep's scan (both retire and strip
+paths), cost one reason-clause lookup per candidate.
+
+**A second hole surfaced and quarantined**: the STRIP half (with the
+guard) answered a wrong `unsat` on `circuit_48in64out_700g/800g` and
+`si2-b03m` — SAT files, seed-stable `sat` at default (verified across
+4 seeds), deterministically `unsat` with the strip on. A different
+mechanism from the level-0 permanence bug (this one over-strengthens);
+root cause open. **The strip now lives behind its own
+`OXIZ_ROOT_SWEEP_STRIP=1` (default off)** — its only measured win
+(g2-slp 36 s → 22 s) stays reachable; the wrong-unsat reproducers are
+recorded.
+
+**Default flip**: the permanence-guarded retire (satisfied non-binary
+clauses, original-clause-justified only) is **ON by default**
+(`OXIZ_ROOT_SWEEP=0` opts out). Gates at the new default: cegar repro
+`unsat`; fragile files `sat`; corpus verdict sweep 34/0; 1 000 fuzz
+iterations 0 mismatches; workspace 10 415/10 415; differential 160/0
+(par2 2 316); z3 parity 169/0/1; wisas canary. Corpus A/B under load
+8.5: 43 vs 43, 0 mismatches (headline-neutral at load; the low-load
+wins stand from the pass-7 table: Timetable 33 s → 8.4 s, j3037/crypto1/
+FmlaEqu solved, noL unchanged).
