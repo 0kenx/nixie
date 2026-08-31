@@ -451,3 +451,12 @@ shape. The knob remains for portfolio arms: a per-arm
 `SEEDS=default,chrono` portfolio (already supported) captures the
 worker-class wins without paying the middle's losses, and is the
 recorded way to use this if the standing table ever needs them.
+
+Portfolio addendum (same day): `SEEDS=default,chrono
+ARM_CONFLICTS=1500000,900000` at the 40 s / 6-way cap measures
+**default 45 vs portfolio 44** (0 mismatches) – the chrono arm's
+worker-class captures (worker_550 solves serially in 38.2 s, j3037
+34.9 s) do not survive parallel load at this cap, and the budget split
+costs noL its default solve. Wash-to-negative at 40 s, as the earlier
+study found at 60 s; the portfolio remains worth it only at ≥ 90 s
+budgets.
