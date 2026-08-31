@@ -349,7 +349,13 @@ impl Solver {
             }
         }
 
-        if self.stats.walk.minimum == 0 || minimum < self.stats.walk.minimum {
+        // Monotone best-across-walks: an earlier 0 must never be
+        // overwritten by a later walk's worse minimum. The previous
+        // `== 0 ||` disjunct re-assigned on *every* later walk, hiding
+        // completions that had actually happened (found while studying the
+        // zero-broken shadowing below – see
+        // `docs/studies/2026-08-30-analyze-quadratics.md`).
+        if minimum < self.stats.walk.minimum {
             self.stats.walk.minimum = minimum;
         }
         self.stats.walk.ticks += ticks;

@@ -508,3 +508,42 @@ Eight code commits this session, every one gated on trajectory identity
 heuristic-ordered), with the workspace suite, clippy/fmt, the z3 parity
 suite and the SMT differential clean at every landing, and ~7 000
 differential-CNF fuzz iterations in total across the passes.
+
+## Negative result: unshadowing zero-broken walks — the shadowing is protective
+
+The session-opening mystery (a walk reaching `minimum == 0` on
+`summle_X4053` at conflict 21 006 while the search ground on to 90 909)
+root-caused to **stable-mode target-phase shadowing**: the walk writes
+the completed assignment into the saved phases, but stable-mode
+decisions read the target array (`target > 1 || (stable && target)`),
+so the write-back is invisible for the ~70 % of conflicts spent in
+stable mode. Trace evidence: walks completed at conflicts 21 006 and
+55 010 in stable mode (shadowed, search continued); the 78 013 walk
+landed in focused mode (target inactive) and the solve closed 12 k
+conflicts later.
+
+The obvious fix — on a zero-broken walk, copy the assignment into the
+target/best arrays too (phases-only, no verdict claimed; the descent
+still confirms) — was implemented and **rejected on multi-seed
+evidence**:
+
+| file (conflicts to verdict, pre → post) | s0 | s1 | s2 | s3 |
+|---|---|---|---|---|
+| summle53 | 90.9 k→124.1 k | 58.1 k→58.1 k | 59.7 k→86.8 k | 74.8 k→167.3 k |
+| summle11 | 25.0 k→25.0 k | 91.9 k→91.9 k | 246.5 k→**131.1 k** | 168.9 k→168.9 k |
+| worker / timetable / rbsat / mdp | identical (no walk0 ever fires) | | | |
+
+summle53 is consistently **worse** at every diverging seed: the
+zero-broken test is computed over the walk's slot set, which excludes
+clauses containing fixed literals — a completed walk is a satisfying
+assignment *of the slots only*, and following it as phases leads the
+descent into regions that cost more than the accidental shadowing did.
+One summle11 seed improved 1.9×; the aggregate is chaos-shaped with a
+negative lean. Reverted per the matched-null discipline; the shadowing
+stays, deliberately, with this study as the record.
+
+**Kept**: the `stats.walk.minimum` monotonicity fix — the update's
+`== 0 ||` disjunct let every later walk's worse minimum overwrite an
+earlier completion, hiding walk0 events from the counter (this exact
+misdirection cost an hour of diagnosis mid-study; the search never
+reads the counter, so the fix is trajectory-neutral, verified).
