@@ -445,3 +445,21 @@ Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0
 
 Session cumulative vs the start binary: worker 4.27×, timetable 1.43×,
 g2-slp 1.43×, circuit64 1.19×, summle53 1.16×.
+
+## Standing table at low load after all six slices
+
+54-file table (40 s, 6-way, load 2.1): **oxiz 45 / cadical 49,
+0 mismatches** – up from 43/48 at the same load at session start
+(cadical's own count stable at 48–49 across the day). Losses reduced to
+8: mdp-28 (45 s serial, cap-edge), j3037 (37 s), worker (43 s),
+circuit_64in (deeper search gap), g2-slp (35.7 s serial – flaps under
+parallel load), combined-crypto1, FmlaEqu (the recorded canonical-seed
+regression), frb45 (cap-edge). Timetable, rbsat, summle ×2, shuffli and
+x9-08075 now solve under the cap.
+
+The throughput program has now taken every profiled outlier down to
+either parity (mdp/crypto/summle/timetable-class) or structural work
+(worker's shrink walk, circuit's propagate layout, g2-slp's remaining
+resolution machinery). The standing losses that remain are
+conflicts-to-model-bound – unchanged in kind from the deep study's
+catalogue.
