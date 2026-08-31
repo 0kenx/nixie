@@ -590,3 +590,28 @@ shadowing is *accidentally protective* because walk0 over the exclusion
 objective is not a full model; the faithful objective makes walk0 a
 model but the port is corpus-negative in our engine. The walk's
 `minimum` counter bug that hid all of this is fixed (monotone).
+
+## Negative result 3 (pass 5): shrink packed-key retention — neutral
+
+Hypothesis: the shrink block walk's `trail.level()`/`trail.trail_index()`
+per-literal loads are scattered random accesses (the profile's shrink
+share on worker is cache-miss shaped), so retaining the sort's packed
+`(level << 32) | trail_index` keys in a dense array (serving the block
+boundary walk and `shrink_block`'s `max_trail`) should win on
+giant-clause instances. Implemented (trajectory-identical, verified on
+7 instances) and measured at fixed 40 k caps:
+
+| file | before | after | ratio |
+|---|---|---|---|
+| worker_550 | 168.2 G | 169.2 G | **0.994×** |
+| frb45 / noL | — | — | 0.996× |
+| summle ×2 / circuit64 / j3037 | — | — | 0.999–1.000× |
+
+Neutral-to-slightly-negative everywhere: the per-literal key push costs
+what the saved lookups saved — after the descending sort the boundary
+walk's `trail.level` accesses are already effectively sequential (same
+level-table region), so the scatter hypothesis was wrong. Reverted per
+the ±5 % band. The shrink cost on worker is intrinsic to the flag/mark
+random access over ~1 900 literals per conflict; packing it away is the
+whole-engine per-variable layout change the standing-gap study already
+scoped, not a local fix.
