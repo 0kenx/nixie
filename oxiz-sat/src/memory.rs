@@ -1,7 +1,7 @@
 //! Clause arena: contiguous header+literals storage for the clause database.
 //!
 //! This is the backing store `ClauseDatabase` (`clause.rs`) is built on. Each
-//! clause occupies one slot – a 32-byte header immediately followed by its
+//! clause occupies one slot – a 12-byte header immediately followed by its
 //! `Lit` array – packed back-to-back in a single `Vec<u64>` buffer. A clause
 //! reference ([`ClauseRef`]) is the byte offset of its slot.
 //!
@@ -9,8 +9,8 @@
 //!
 //! The buffer is a `Vec<u64>`, so the allocation is 8-byte aligned by
 //! construction. Slot sizes are rounded up to a multiple of 8 bytes, so every
-//! header sits at an 8-aligned offset (headers are `#[repr(C, align(8))]`,
-//! 32 bytes). Literal arrays start at `header + 32`, which is 4-aligned –
+//! header sits at an 8-aligned offset (headers are `#[repr(C, align(4))]`,
+//! 12 bytes). Literal arrays start at `header + 12`, which is 4-aligned –
 //! exactly what `Lit` (`#[repr(transparent)]` over `u32`) requires. The
 //! previous version of this arena stored headers in a `Vec<u8>` (align-1
 //! guaranteed only) while reading them through aligned references –

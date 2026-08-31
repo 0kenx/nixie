@@ -335,7 +335,7 @@ impl ClauseDatabaseStats {
 /// Database of clauses backed by the contiguous clause arena (`memory.rs`).
 pub struct ClauseDatabase {
     /// Contiguous clause storage (see `memory.rs`): every clause is a
-    /// 16-byte header immediately followed by its literals, packed into one
+    /// 12-byte header immediately followed by its literals, packed into one
     /// `Vec<u64>`. Slots are append-only: a `ClauseRef` names exactly one
     /// clause forever.
     arena: ClauseArena,
