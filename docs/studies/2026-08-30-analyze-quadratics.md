@@ -895,3 +895,45 @@ iterations 0 mismatches; workspace 10 415/10 415; differential 160/0
 8.5: 43 vs 43, 0 mismatches (headline-neutral at load; the low-load
 wins stand from the pass-7 table: Timetable 33 s → 8.4 s, j3037/crypto1/
 FmlaEqu solved, noL unchanged).
+
+## Pass 10: the strip wrong-unsat pinned to an unentailed level-0 fact
+
+Chasing the strip's wrong `unsat` (`circuit_48in64out_700g/800g`,
+`si2-b03m`) with the same methodology as the retire fix:
+
+1. **The reason-guard shape was wrong and is fixed** (`62e0254` follow-up
+   in this pass): the pass-7 guard `continue`d the *literal* loop, so a
+   clause that was the current propagation reason of one of its literals
+   could still be retired (satisfied via another literal) or stripped
+   (via other falsified literals), dangling/reshaping the reason
+   mid-analysis. Hoisted to clause level (skip the clause entirely,
+   reduce's `is_reason` semantics). It did **not** fix the wrong
+   unsat — the mechanism is elsewhere — but it is correct regardless.
+
+2. **The strip products were audited against the pristine input** (log
+   every strip pre/post, verify each strengthened clause with cadical):
+   18 of 3 008 post-strip clauses on `si2-b03m` are **not entailed**
+   (first bad: strip #710 removed literals 410 and 411 from an entailed
+   clause; `input ⊨ ¬410` holds, **`input ⊨ ¬411` does not**). All 18
+   cluster around the `-412` gate region — a poison cascade through the
+   shared literal.
+
+3. **The poison is upstream of the strip**: the falsification of 411
+   was a level-0 trail fact whose reason passed the permanence guard
+   (live original clause), yet is not entailed by the input. So some
+   level-0 prefix fact on this trajectory is unentailed — the strip
+   merely *harvests* it into a permanent clause. The default (retire
+   only) answers `sat` on this file seed-stably, so the unentailed
+   fact arises only on the strip trajectory; whether the producer is a
+   learned unit, a BVE product, or a propagation chain through an
+   earlier in-place rewrite is the open question.
+
+The strip stays behind `OXIZ_ROOT_SWEEP_STRIP=1` (default off) with
+these reproducers and the audit method recorded — the next session can
+binary-search the first unentailed level-0 assignment by logging every
+level-0 propagation's (var, reason) and running the same cadical
+entailment check per fact.
+
+Default (permanence-guarded retire) re-verified after the guard fix:
+cegar repro `unsat`, fragile files `sat`, oxiz-sat+oxiz-solver 2 902
+tests, clippy/fmt clean.

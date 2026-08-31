@@ -1060,20 +1060,28 @@ impl Solver {
                     // residual cost is a single blocker check.
                     continue;
                 }
+                // Reason guard (reduce's `is_reason`, widened to every
+                // literal, CLAUSE-level): a clause that is the current
+                // propagation reason of ANY of its literals must not be
+                // retired or stripped at all - the trail's reason pointer
+                // would dangle (retire) or the reason's resolution
+                // semantics would change mid-analysis (strip: the literal
+                // the clause propagated its literal WITH disappears).
+                // The earlier per-literal `continue` shape only skipped the
+                // reason literal itself, leaving the clause eligible via
+                // its other literals - measured as the strip path's wrong
+                // `unsat` on `circuit_48in64out_700g/800g` and `si2-b03m`.
+                if c.lits
+                    .iter()
+                    .any(|&l| matches!(trail.reason(l.var()), Reason::Propagation(r) if r == cid))
+                {
+                    continue;
+                }
                 let mut satisfied = false;
                 let mut justifier_entailed = false;
                 let mut false_pos: SmallVec<[usize; 4]> = SmallVec::new();
                 for (i, &l) in c.lits.iter().enumerate() {
                     let var = l.var();
-                    // Reason guard (reduce's `is_reason`, widened to every
-                    // literal): a clause that is the current propagation
-                    // reason of ANY of its literals must not be retired or
-                    // stripped - the trail's reason pointer would dangle and
-                    // later conflict resolutions would walk a deleted or
-                    // reshaped clause.
-                    if matches!(trail.reason(var), Reason::Propagation(r) if r == cid) {
-                        continue;
-                    }
                     if trail.level(var) != 0 {
                         continue; // only ROOT facts are eligible
                     }
