@@ -725,3 +725,11 @@ survives only for files where the instrumented comparison still shows
 a real conflict-count gap. The instrumented cadical tree lives at
 `/tmp/cad-ist` for the next session (rebuildable via the recipe in
 this section; never touches the reference tree).
+
+Addendum: with `OXIZ_ROOT_SWEEP=1`, `combined-crypto1` solves `sat` in
+53.5 s (default TO) and `FmlaEquivChain` `unsat` in 60.4 s (default
+TO) – the bloat signature covers at least three of the four
+"conflicts-parity" losses. The sweep knob is the recorded way to reach
+them; flipping it default-on needs the Timetable/noL regressions
+understood (why unit-heavy searches derail) or a portfolio/schedule
+that gets both.
