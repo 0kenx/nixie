@@ -1049,6 +1049,53 @@ impl Solver {
         let mut to_strip: SmallVec<[(ClauseId, SmallVec<[usize; 4]>); 32]> = SmallVec::new();
         {
             let Solver { clauses, trail, .. } = self;
+            // Full-chain derivability for the level-0 prefix (trail order,
+            // one pass): a level-0 fact is DERIVED iff its reason is a live
+            // original clause and every falsified literal of that clause is
+            // itself an earlier DERIVED level-0 fact. This closes the
+            // one-level-deep hole (measured on `si2-b03m`: a stripped
+            // literal's immediate reason was a live original, but its chain
+            // ran through a literal whose reason clause had been retired -
+            // `retire_clause`'s reason hygiene re-points those to `Decision`,
+            // an unentailed-in-practice fact the strip then harvested into a
+            // permanent clause; 18/3008 post-strip clauses unentailed).
+            // Propagation appends in causal order, so the reason's other
+            // literals always sit earlier on the trail.
+            let l0_len = trail.level_start(1).min(trail.assignments().len());
+            let mut derived: Vec<bool> = vec![false; l0_len.min(trail.assignments().len()).max(1)];
+            derived.truncate(l0_len);
+            for ti in 0..l0_len {
+                let lit = trail.assignments()[ti];
+                let Reason::Propagation(r) = trail.reason(lit.var()) else {
+                    continue; // Decision / Theory: not clause-derived
+                };
+                let Some(rc) = clauses.get(r) else {
+                    continue;
+                };
+                if rc.deleted || rc.learned {
+                    continue;
+                }
+                let chain_ok = rc.lits.iter().all(|&l| {
+                    let lv = l.var();
+                    if lv == lit.var() {
+                        return true;
+                    }
+                    // Every other literal must be FALSE (that is why the
+                    // clause propagated `lit`); its fact must be DERIVED.
+                    if !trail.lit_value(l).is_false() {
+                        return false;
+                    }
+                    let ti2 = trail.trail_index(lv) as usize;
+                    ti2 < ti && derived[ti2]
+                });
+                if chain_ok {
+                    derived[ti] = true;
+                }
+            }
+            let fact_derived = |var: crate::Var| -> bool {
+                let ti = trail.trail_index(var) as usize;
+                ti < l0_len && derived[ti]
+            };
             for cid in clauses.iter_ids() {
                 let Some(c) = clauses.get(cid) else {
                     continue;
@@ -1104,11 +1151,7 @@ impl Solver {
                             // `-670` true-at-level-0 at retirement, false
                             // after; wrong `sat` on
                             // `cegar_mul_low_word_identity_refuted`).
-                            if let Reason::Propagation(r) = trail.reason(var)
-                                && let Some(rc) = clauses.get(r)
-                                && !rc.deleted
-                                && !rc.learned
-                            {
+                            if fact_derived(var) {
                                 justifier_entailed = true;
                             }
                             break;
@@ -1122,17 +1165,7 @@ impl Solver {
                 // re-derivable-false from the permanent clause set, else the
                 // strengthening is unsound after a rewind.
                 if !false_pos.is_empty() {
-                    false_pos.retain(|i| {
-                        let var = c.lits[*i].var();
-                        if let Reason::Propagation(r) = trail.reason(var)
-                            && let Some(rc) = clauses.get(r)
-                            && !rc.deleted
-                            && !rc.learned
-                        {
-                            return true;
-                        }
-                        false
-                    });
+                    false_pos.retain(|i| fact_derived(c.lits[*i].var()));
                 }
                 let satisfied = satisfied && justifier_entailed;
                 if satisfied {

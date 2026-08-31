@@ -937,3 +937,48 @@ entailment check per fact.
 Default (permanence-guarded retire) re-verified after the guard fix:
 cegar repro `unsat`, fragile files `sat`, oxiz-sat+oxiz-solver 2 902
 tests, clippy/fmt clean.
+
+## Pass 11: the strip's wrong-unsat root-caused (the guard was one level deep) and fixed
+
+Reason-chain instrumentation at the first bad strip closed the case:
+
+```
+var 411: clause 10180 [412, 413, -411, 410, 1646] (original, live)
+  var 410: DECISION        var 412: DECISION        var 1645: DECISION
+```
+
+and the entailment checks: `input ⊨ ¬410` ✓, `input ⊨ ¬413` ✓,
+`input ⊨ ¬1646` ✓, **`input ⊨ ¬412` ✗** — the falsification 411's
+propagation rests on is *not entailed*, and 412's trail reason reads
+`Decision`. Two mechanisms combined:
+
+1. **The permanence guard was one level deep.** It checked the
+   stripped literal's *immediate* reason (clause 10180: original,
+   live ✓) but not the chain under it — 10180 propagated ¬411 only
+   because 412/410/1646 were already falsified, and those
+   falsifications were not clause-derived.
+2. **Where the phantom `Decision` came from**: no level-0
+   `assign_decision` for 412 was ever logged at assign time — the
+   reason was *re-pointed* to `Decision` afterwards by
+   `retire_clause`'s deleted-reason hygiene (`Trail::set_reason`),
+   which fires exactly when a reason clause is retired. The sweep's
+   own retire (default-on) retires reason clauses of still-assigned
+   level-0 literals, their facts surviving on the trail with
+   reason=Decision — unverifiable, and in this case not entailed.
+
+**Fix (full-chain derivability)**: before the scan, one pass over the
+level-0 trail prefix in trail order computes `derived[i]` — a level-0
+fact counts as derived iff its reason is a live original clause AND
+every falsified literal of that clause is an *earlier derived* fact
+(propagation appends in causal order, so one pass suffices). Both the
+retire justifier and every stripped falsified literal must be
+`derived`. With the full-chain guard all three strip reproducers
+answer `sat`, the cegar repro stays `unsat`, and the fuzz is clean —
+but **g2-slp's strip win (22 s) vanishes** (36.4 s ≈ retire-only):
+that win was harvesting unverifiable chain facts. Recorded honestly:
+the strip's only measured advantage was an artifact of the unsound
+harvest; it stays quarantined (`OXIZ_ROOT_SWEEP_STRIP=1`) and sound.
+
+Gates at default: corpus 34/0, 600+400 fuzz iterations 0 mismatches,
+workspace 10 415/10 415, differential 160/0, z3 parity 169/0/1, wisas
+canary, cegar repro.
