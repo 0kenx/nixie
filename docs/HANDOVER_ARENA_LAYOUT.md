@@ -1,5 +1,14 @@
 # Handover: clause-arena layout — header density & slot packing
 
+> **CLOSED 2026-09-01** — executed as
+> [`studies/2026-09-arena-8byte-header.md`](studies/2026-09-arena-8byte-header.md).
+> Approach A: Gate 1 (trajectory identity) clean, Gate 2 failed at
+> 0.998 (bar ≥ 1.02) → reverted. The hot scan's fields already lived in
+> header bytes 0–8, so only the inter-clause stride shrank (~1% cycles on
+> the most propagate-heavy file; approaches B/C recorded as not worth
+> running). The remaining propagate lever is structural visit-count
+> reduction (cadical tagged binary watchers), not layout.
+
 ## Read first
 
 - `AGENTS.md` — the non-negotiables (soundness-first, read kissat/cadical before
