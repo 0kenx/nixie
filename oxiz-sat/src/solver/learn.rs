@@ -967,6 +967,124 @@ impl Solver {
         }
     }
 
+    /// cadical `mark_satisfied_clauses_as_garbage` + `remove_falsified_literals`
+    /// (`collect.cpp`), applied after a scheduled reduction when new root-level
+    /// facts appeared since the last sweep (cadical's `last.collect.fixed <
+    /// stats.all.fixed` gate).
+    ///
+    /// Why this matters here: without it the database only ever *grows* with
+    /// root-fixed state - clauses satisfied at level 0 stay in the watch
+    /// lists, and clauses with root-falsified literals carry them forever.
+    /// Instrumented-cadical comparison on `j3037` (the conflicts-parity
+    /// file): cadical's mean trail *shrinks* over the run (2901 -> 2324
+    /// literals) while ours stays flat (3349 -> 3190), and our per-conflict
+    /// instruction ratio grows from 1.07x (early window) to 1.36x (full
+    /// run) - the late-search bloat this sweep removes.
+    ///
+    /// Semantics: a clause containing a literal **true at level 0** is
+    /// permanently satisfied and retires. A clause containing a literal
+    /// **false at level 0** has that literal stripped via
+    /// [`Self::remove_literal_and_rewatch`], which re-selects watches and
+    /// keeps the proof stream consistent (stripping is exactly
+    /// strengthening). Watched positions are safe by the two-watch
+    /// invariant: a root-falsified literal can never be a watched literal
+    /// (its falsification at level 0 fires the watch and moves it), so the
+    /// strip only touches the clause tail; the helper re-selects watches
+    /// regardless. Binaries are never stripped (the helper requires >= 3
+    /// literals); a root-falsified binary makes its partner a unit, applied
+    /// directly at level 0.
+    ///
+    /// Gated behind `OXIZ_ROOT_SWEEP=1` (**default off**): the mechanism is
+    /// cadical-faithful and wins strongly on the database-bloat class
+    /// (`j3037` 37 s -> 29 s, `g2-slp` 36 s -> 22 s serial), but unit-heavy
+    /// searches regress deeply (Timetable and noL-11-14 go from solving to
+    /// 90 s timeouts) - the trade measured net -1 on the 54-file corpus at
+    /// the 40 s cap. See the root-sweep section of
+    /// `docs/studies/2026-08-30-analyze-quadratics.md`.
+    pub(super) fn sweep_root_fixed_clauses(&mut self) {
+        if !crate::root_sweep_enabled() {
+            return;
+        }
+        let fixed_now = self
+            .trail
+            .level_start(1)
+            .min(self.trail.assignments().len());
+        if fixed_now <= self.last_sweep_fixed {
+            return;
+        }
+        self.last_sweep_fixed = fixed_now;
+
+        // Deferred effects so the scan itself holds only the immutable arena
+        // borrow (same shape as the elimination connect pass).
+        let mut to_retire: SmallVec<[ClauseId; 64]> = SmallVec::new();
+        // (clause, root-falsified positions)
+        let mut to_strip: SmallVec<[(ClauseId, SmallVec<[usize; 4]>); 32]> = SmallVec::new();
+        let mut units: SmallVec<[Lit; 8]> = SmallVec::new();
+        {
+            let Solver { clauses, trail, .. } = self;
+            for cid in clauses.iter_ids() {
+                let Some(c) = clauses.get(cid) else {
+                    continue;
+                };
+                if c.deleted || c.lits.len() < 2 {
+                    continue;
+                }
+                let mut satisfied = false;
+                let mut false_pos: SmallVec<[usize; 4]> = SmallVec::new();
+                for (i, &l) in c.lits.iter().enumerate() {
+                    let var = l.var();
+                    if trail.level(var) != 0 {
+                        continue; // only ROOT facts are permanent
+                    }
+                    match trail.lit_value(l) {
+                        LBool::True => {
+                            satisfied = true;
+                            break;
+                        }
+                        LBool::False => false_pos.push(i),
+                        LBool::Undef => {}
+                    }
+                }
+                if satisfied {
+                    to_retire.push(cid);
+                } else if !false_pos.is_empty() {
+                    if c.lits.len() == 2 {
+                        // Binary with a root-false literal: the partner is a
+                        // unit (it cannot be root-false too - level-0
+                        // propagation would have refuted the formula - nor
+                        // root-true, or the clause were satisfied).
+                        let other = c.lits[1 - false_pos[0]];
+                        if !trail.is_assigned(other.var()) {
+                            units.push(other);
+                        }
+                        to_retire.push(cid);
+                    } else {
+                        to_strip.push((cid, false_pos));
+                    }
+                }
+            }
+        }
+        for (cid, mut pos) in to_strip {
+            // Descending order keeps earlier indices valid across removals;
+            // the helper returns early if the clause died or shrank to a
+            // binary meanwhile (e.g. an earlier strip retired it).
+            pos.sort_unstable();
+            for idx in pos.iter().rev().copied() {
+                self.remove_literal_and_rewatch(cid, idx);
+            }
+        }
+        for cid in to_retire {
+            self.retire_clause(cid);
+            self.stats.deleted_clauses += 1;
+        }
+        for lit in units {
+            if self.trail.lit_value(lit) == LBool::Undef && self.trail.decision_level() == 0 {
+                self.trail.assign_decision(lit);
+                let _ = self.propagate();
+            }
+        }
+    }
+
     /// Handle clause deletion check and restart check
     pub(super) fn handle_clause_deletion_and_restart(&mut self) {
         self.conflicts_since_deletion += 1;
@@ -979,8 +1097,10 @@ impl Solver {
         if self.cadical_reduce_enabled() {
             // cadical `reducing ()`: schedule-driven, not threshold-driven.
             self.cadical_reduce_if_due();
+            self.sweep_root_fixed_clauses();
         } else if self.conflicts_since_deletion >= self.config.clause_deletion_threshold as u64 {
             self.reduce_clause_database();
+            self.sweep_root_fixed_clauses();
             self.debug_check_invariants("after clause database reduction");
             self.conflicts_since_deletion = 0;
         }

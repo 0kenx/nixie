@@ -233,6 +233,18 @@ pub fn probe_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// A/B switch for the root-fixed clause sweep (cadical `collect.cpp`'s
+/// satisfied-retire + falsified-strip at reduce time): default OFF - the
+/// trade on the 54-file corpus measured net -1 (j3037/g2-slp win big,
+/// Timetable/noL regress to timeouts). See
+/// `docs/studies/2026-08-30-analyze-quadratics.md`.
+#[doc(hidden)]
+pub fn root_sweep_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("OXIZ_ROOT_SWEEP").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// A/B switch for the walk-objective fixed-literal study (see the
 /// zero-broken section of `docs/studies/2026-08-30-analyze-quadratics.md`):
 /// when set, the walk's objective strips fixed-false literals from

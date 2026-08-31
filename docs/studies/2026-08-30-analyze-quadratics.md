@@ -675,3 +675,53 @@ cleanly (shrink key retention: neutral; clause prefetch: negative on
 the target class), one target characterized to its exact shape, ten
 negative results total now standing guard over the boundary of what
 local optimization can reach in this engine.
+
+## Pass 6: the root-fixed sweep port (cadical collect.cpp) — mechanistic win, corpus trade, knob-gated
+
+The deep study's first instrumented step (a patched `/tmp/cadical`
+printing `conflicts/level/size/glue/trail` per conflict, exactly the
+earlier studies' harness) **inverted the j3037 diagnosis**: our search
+shape is cadical's (level 20.3→15.0 vs 19.6→13.8, learnt sizes 32 vs
+36, **377 k vs 361 k conflicts — 4 % apart**). j3037 was never a
+search-quality gap. The wall gap (37 s vs 22.9 s) decomposes as
+instructions 1.36× (growing from 1.07× early) + CPI 1.13× – and the
+smoking gun is the **trail**: cadical's mean trail *shrinks* over the
+run (2901 → 2324 literals) while ours stays flat (3349 → 3190).
+Cadical garbage-collects root-fixed state (satisfied clauses retired,
+root-falsified literals flushed — `collect.cpp`, the piece the reduce
+study deliberately left out); our DB only ever grows with it.
+
+Ported as `sweep_root_fixed_clauses` (after each scheduled reduce, when
+new level-0 facts appeared: satisfied → retire via the standard
+retire; root-falsified literals → strip via
+`remove_literal_and_rewatch`, which re-selects watches and keeps the
+proof stream consistent; root-falsified binaries → partner unit +
+retire; deferred-effect scan over the arena, same shape as the
+elimination connect pass).
+
+**Effects** (all verdicts identical everywhere; workspace, corpus
+sweep, 1 000 fuzz iterations, differential 160/0, parity 169/0/1):
+
+- `j3037` 37 s → **29.5 s** `unsat` (first sub-cap solve), `g2-slp`
+  35.7 s → **22.3 s**, worker 42.5 s → 40.6 s.
+- **Timetable and noL-11-14 regress from solving to 90 s timeouts**
+  (unit-heavy searches: mid-search root facts flow constantly there,
+  and sweeping their DBs derails the search).
+- 54-file corpus at the 40 s cap: **45 → 44** (sweep-only: j3037,
+  g2-slp; pre-only: Timetable, noL, x9-08075-cap-edge).
+
+Same shape as `chrono_reuse`: cadical-faithful mechanism, strong
+mechanistic wins, broad regress. **Knob-gated
+(`OXIZ_ROOT_SWEEP=1`), default off** — the default path is
+trajectory-identical to pre-change (verified bit-exact on j3037).
+
+### The deep study's first hard result
+
+j3037, crypto1 and FmlaEqu — the "conflicts-bound" losses — are now
+known to be **throughput-shaped after all** for j3037 (equal conflicts,
+growing per-conflict cost from unswept root state), and the sweep
+closes most of its gap when enabled. The conflicts-to-model framing
+survives only for files where the instrumented comparison still shows
+a real conflict-count gap. The instrumented cadical tree lives at
+`/tmp/cad-ist` for the next session (rebuildable via the recipe in
+this section; never touches the reference tree).

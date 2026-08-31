@@ -960,6 +960,10 @@ pub struct Solver {
     pub(super) learned_clause_ids: Vec<ClauseId>,
     /// Number of conflicts since last clause deletion
     pub(super) conflicts_since_deletion: u64,
+    /// Level-0 trail length at the last [`Solver::sweep_root_fixed_clauses`]
+    /// (cadical `last.collect.fixed`): the sweep only runs when new root
+    /// facts appeared since the previous one.
+    pub(super) last_sweep_fixed: usize,
     /// cadical-reduce port (`OXIZ_CADICAL_REDUCE`, study in
     /// `docs/studies/`): conflict count at which the next cadical-style
     /// reduction fires (cadical `lim.reduce`; first at `reduceinit` = 300).
@@ -1383,6 +1387,7 @@ impl Solver {
             lbd_mark: 0,
             learned_clause_ids: Vec::new(),
             conflicts_since_deletion: 0,
+            last_sweep_fixed: 0,
             cadical_reduce_next: 300,
             cadical_reductions: 0,
             cadical_used: Vec::new(),
