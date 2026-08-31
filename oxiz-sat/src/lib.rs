@@ -233,6 +233,21 @@ pub fn probe_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_PROBE_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// A/B switch for the walk-objective fixed-literal study (see the
+/// zero-broken section of `docs/studies/2026-08-30-analyze-quadratics.md`):
+/// when set, the walk's objective strips fixed-false literals from
+/// participating clauses instead of excluding those clauses (cadical
+/// walk-objective parity after garbage collection).  Default OFF – the
+/// multi-seed verdict was chaos-shaped with deep regressions.
+#[doc(hidden)]
+pub fn walk_strip_fixed_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_WALK_STRIP_FIXED").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Matched-null switch for the analysis-walk-glue restart-EMA experiment
 /// (see `docs/studies/`): when set, the restart EMAs receive the *previous*
 /// conflict's walk glue instead of the current one – same distribution,

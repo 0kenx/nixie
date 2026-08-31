@@ -142,17 +142,30 @@ impl Solver {
         }
 
         // Occurrence lists over the original (irredundant), non-deleted
-        // clauses of size >= 2; units are level-0 facts already in `fixed`.
+        // clauses; units are level-0 facts already in `fixed`.
         // `slots` dense-indexes the participants; `true_count` counts true
         // literals per clause so flip updates are O(occurrences). Literal
         // lists are copied into `slots` (the clause database stays borrowed
         // only during collection, and the flip loop needs `&mut self` for the
         // RNG) – the same order of work cadical pays rebuilding its walk
         // watches each round.
+        // **Fixed-false literal stripping** (`OXIZ_WALK_STRIP_FIXED=1`,
+        // default OFF): cadical runs `garbage_collection()` before every
+        // walk with new fixed variables, flushing fixed literals out of all
+        // clauses globally, so its walk optimizes the FULL residual clause
+        // set and a zero-broken completion is a true residual model. Our
+        // default keeps the historical exclusion of fixed-literal clauses:
+        // the stripping port (walk-objective parity) measured chaos-shaped
+        // on multi-seed – summle53/summle11 wins at half the seeds, deep
+        // regressions at the others (Timetable seed-0 32.8 k conflicts →
+        // timeout) – the same single-policy-port failure mode the four
+        // 2026-08 cadical ports hit. The knob keeps the study reproducible.
+        let strip_fixed = crate::walk_strip_fixed_enabled();
         let mut occ: Vec<Vec<u32>> = vec![Vec::new(); self.num_vars * 2];
         let mut slots: Vec<Vec<Lit>> = Vec::new();
         let mut true_count: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
+        let mut stripped: SmallVec<[Lit; 8]> = SmallVec::new();
         for id in self.clauses.iter_ids() {
             let Some(clause) = self.clauses.get(id) else {
                 continue;
@@ -160,33 +173,57 @@ impl Solver {
             if clause.learned || clause.lits.len() < 2 {
                 continue;
             }
-            // Permanently satisfied by a fixed true literal / permanently
-            // broken only if every literal is fixed-false (impossible: that
-            // clause is falsified at level 0 and the solver is UNSAT).
+            // Permanently satisfied by a fixed true literal: out of the
+            // objective entirely.
             if clause.lits.iter().any(|&l| {
                 let vi = l.var().index();
                 vi < self.num_vars && fixed[vi] && values[vi] == l.is_pos()
             }) {
                 continue;
             }
-            // A clause with a fixed literal can never be repaired by
-            // flipping (its fixed-false literals stay false), so keep it out
-            // of `broken` (it would wedge the picker) and out of the
-            // occurrence lists entirely.
-            if clause.lits.iter().any(|&l| fixed[l.var().index()]) {
+            // Fixed-literal clauses: with `OXIZ_WALK_STRIP_FIXED`, their
+            // fixed-false literals are constant and the clause's
+            // satisfiability rides on the remaining (flippable) literals
+            // alone; by default the whole clause stays out of the objective
+            // (flipping can never repair its fixed-false literals).
+            // (The explicit borrow sidesteps SmallVec's `Deref` coercion –
+            // every alternate spelling trips a different clippy lint here.)
+            #[allow(clippy::needless_borrow)]
+            let full: &[Lit] = &clause.lits;
+            stripped.clear();
+            let mut has_fixed = false;
+            if strip_fixed {
+                for &l in full.iter() {
+                    if fixed[l.var().index()] {
+                        has_fixed = true;
+                    } else {
+                        stripped.push(l);
+                    }
+                }
+            } else if full.iter().any(|&l| fixed[l.var().index()]) {
                 continue;
             }
+            let lits: &[Lit] = if has_fixed {
+                if stripped.is_empty() {
+                    // Every literal fixed-false: falsified at level 0 – the
+                    // solver is UNSAT and will say so on the next propagate;
+                    // a permanently-broken slot would wedge the picker.
+                    continue;
+                }
+                &stripped
+            } else {
+                full
+            };
             let slot = slots.len() as u32;
-            let n_true = clause
-                .lits
+            let n_true = lits
                 .iter()
                 .filter(|&&l| values[l.var().index()] == l.is_pos())
                 .count() as u32;
-            for &l in clause.lits {
+            for &l in lits {
                 occ[l.code() as usize].push(slot);
                 lit_sum = lit_sum.saturating_add(1);
             }
-            slots.push(clause.lits.to_vec());
+            slots.push(lits.to_vec());
             let _ = &clause;
             true_count.push(n_true);
         }

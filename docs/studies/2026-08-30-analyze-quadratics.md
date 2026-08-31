@@ -547,3 +547,46 @@ stays, deliberately, with this study as the record.
 earlier completion, hiding walk0 events from the counter (this exact
 misdirection cost an hour of diagnosis mid-study; the search never
 reads the counter, so the fix is trajectory-neutral, verified).
+
+## Negative result 2: the walk-objective stripping port (cadical parity) — knob-gated, default off
+
+The shadowing study's root cause pointed one level deeper: cadical
+garbage-collects fixed variables before every walk with new fixed
+vars, flushing them from all clauses, so its walk objective covers the
+**full residual clause set** and a zero-broken completion is a true
+residual model. Our port excluded fixed-literal clauses from the
+objective instead, so walk0 completions satisfied only the fixed-free
+subset — which is exactly why following them (the unshadowing
+experiment) hurt.
+
+The faithful port (strip fixed-false literals from participating
+clauses, keep permanently-satisfied ones out, single-flippable-literal
+clauses now visible to the objective) works as designed — summle53's
+canonical-seed solve improves 90 909 → 56 438 conflicts, walk0 now a
+genuine residual model — but the multi-seed verdict is chaos-shaped:
+
+| file (conflicts, pre → post) | s0 | s1 | s2 | s3 |
+|---|---|---|---|---|
+| summle53 | 90.9 k→56.4 k | 58.1 k→115.6 k | 59.7 k→112.5 k | 74.8 k→57.3 k |
+| summle11 | = | 91.9 k→34.7 k | 246.5 k→294.5 k | 168.9 k→352.3 k |
+| timetable | **32.8 k→TO** | TO→TO | TO→349.2 k | TO→TO |
+| worker / rbsat / mdp | identical / TO→TO | | | |
+
+Timetable's canonical-seed 32.8 k solve (this session's consistent win)
+regresses to timeout — the fifth instance of the single-policy-port
+failure mode: porting one cadical policy onto this engine's surrounding
+phase/schedule machinery redistributes trajectories both ways.
+
+**Disposition**: landed behind `OXIZ_WALK_STRIP_FIXED=1`, **default
+off** (historical exclusion behavior, trajectory-identical at default —
+verified bit-exact). The knob keeps the study reproducible and the port
+available if the surrounding machinery ever moves closer to cadical's.
+Gates: workspace 10 415/10 415, clippy/fmt clean, differential 160/0,
+wisas canary `unsat` fast.
+
+**Complete story of the session-opening mystery**: walk0 events are
+real (summle family), shadowed by target phases in stable mode; the
+shadowing is *accidentally protective* because walk0 over the exclusion
+objective is not a full model; the faithful objective makes walk0 a
+model but the port is corpus-negative in our engine. The walk's
+`minimum` counter bug that hid all of this is fixed (monotone).
