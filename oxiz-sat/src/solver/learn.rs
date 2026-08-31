@@ -1002,7 +1002,36 @@ impl Solver {
     /// the 40 s cap. See the root-sweep section of
     /// `docs/studies/2026-08-30-analyze-quadratics.md`.
     pub(super) fn sweep_root_fixed_clauses(&mut self) {
+        // Destructive-simplification gate, mirroring
+        // [`Solver::elimination_allowed`]: a retired original is gone from
+        // the formula, so it must never outrun an assertion scope that a
+        // `pop` could restore (the BV-CEGAR probe scopes caught exactly this
+        // as a wrong `sat` before the gate existed), and it must not fight
+        // the proof stream or assumption solving. Unlike elimination, the
+        // sweep may run above decision level 0: the scan considers only
+        // literals *recorded* at level 0, which are prefix-stable.
+        // The whole sweep (retire AND strip) is knob-gated: the retire half
+        // answered a WRONG `sat` on `cegar_mul_low_word_identity_refuted`
+        // (BV-CEGAR) even with the reason, scope, proof and theory gates
+        // below in place - root cause open, reproducer recorded in the
+        // study. Default off; SAT-only use under the knob fuzzed clean.
         if !crate::root_sweep_enabled() {
+            return;
+        }
+        // Destructive-simplification gate, mirroring
+        // [`Solver::elimination_allowed`]: a retired original is gone from
+        // the formula, so it must never outrun an assertion scope that a
+        // `pop` could restore, the CDCL(T) refinement loop, the proof
+        // stream, or assumption solving. Unlike elimination, the sweep may
+        // run above decision level 0: the scan considers only literals
+        // *recorded* at level 0, which are prefix-stable.
+        if self.assertion_levels.len() > 1
+            || self.real_theory_attached
+            || !self.destructive_preprocessing_safe()
+            || self.proof.is_some()
+            || self.lrat
+            || self.assumptions_active
+        {
             return;
         }
         let fixed_now = self
@@ -1019,20 +1048,34 @@ impl Solver {
         let mut to_retire: SmallVec<[ClauseId; 64]> = SmallVec::new();
         // (clause, root-falsified positions)
         let mut to_strip: SmallVec<[(ClauseId, SmallVec<[usize; 4]>); 32]> = SmallVec::new();
-        let mut units: SmallVec<[Lit; 8]> = SmallVec::new();
         {
             let Solver { clauses, trail, .. } = self;
             for cid in clauses.iter_ids() {
                 let Some(c) = clauses.get(cid) else {
                     continue;
                 };
-                if c.deleted || c.lits.len() < 2 {
+                if c.deleted || c.lits.len() < 3 || c.learned {
+                    // Binaries are left entirely alone: their retire-side
+                    // binary-graph purge reorders edge lists (a trajectory
+                    // changer measured to derail Timetable) and their
+                    // residual cost is a single blocker check.
                     continue;
                 }
                 let mut satisfied = false;
                 let mut false_pos: SmallVec<[usize; 4]> = SmallVec::new();
                 for (i, &l) in c.lits.iter().enumerate() {
                     let var = l.var();
+                    // Reason guard (reduce's `is_reason`, widened to every
+                    // literal): a clause that is the current propagation
+                    // reason of ANY of its literals must not be retired or
+                    // stripped - the trail's reason pointer would dangle and
+                    // later conflict resolutions would walk a deleted or
+                    // reshaped clause (caught as a wrong `sat` by
+                    // `cegar_mul_low_word_identity_refuted` before this
+                    // guard existed).
+                    if matches!(trail.reason(var), Reason::Propagation(r) if r == cid) {
+                        continue;
+                    }
                     if trail.level(var) != 0 {
                         continue; // only ROOT facts are permanent
                     }
@@ -1047,20 +1090,14 @@ impl Solver {
                 }
                 if satisfied {
                     to_retire.push(cid);
-                } else if !false_pos.is_empty() {
-                    if c.lits.len() == 2 {
-                        // Binary with a root-false literal: the partner is a
-                        // unit (it cannot be root-false too - level-0
-                        // propagation would have refuted the formula - nor
-                        // root-true, or the clause were satisfied).
-                        let other = c.lits[1 - false_pos[0]];
-                        if !trail.is_assigned(other.var()) {
-                            units.push(other);
-                        }
-                        to_retire.push(cid);
-                    } else {
-                        to_strip.push((cid, false_pos));
-                    }
+                } else if false_pos.is_empty() || crate::root_sweep_strip_disabled() {
+                    // retire-only mode (diagnostic): skip the strip path
+                } else if !false_pos.is_empty() && !crate::root_sweep_strip_disabled() {
+                    // Sub-knob OXIZ_ROOT_SWEEP_NOSTRIP=1 disables stripping:
+                    // essential on resolvent-bloated instances (g2-slp
+                    // 36 s -> 22 s) but multiplies noL-class searches'
+                    // conflicts 2.4x.
+                    to_strip.push((cid, false_pos));
                 }
             }
         }
@@ -1076,12 +1113,6 @@ impl Solver {
         for cid in to_retire {
             self.retire_clause(cid);
             self.stats.deleted_clauses += 1;
-        }
-        for lit in units {
-            if self.trail.lit_value(lit) == LBool::Undef && self.trail.decision_level() == 0 {
-                self.trail.assign_decision(lit);
-                let _ = self.propagate();
-            }
         }
     }
 

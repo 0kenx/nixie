@@ -245,6 +245,17 @@ pub fn root_sweep_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("OXIZ_ROOT_SWEEP").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Diagnostic sub-knob for the root sweep study: `OXIZ_ROOT_SWEEP_NOSTRIP=1`
+/// retires satisfied clauses but skips falsified-literal stripping.
+#[doc(hidden)]
+pub fn root_sweep_strip_disabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_ROOT_SWEEP_NOSTRIP").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// A/B switch for the walk-objective fixed-literal study (see the
 /// zero-broken section of `docs/studies/2026-08-30-analyze-quadratics.md`):
 /// when set, the walk's objective strips fixed-false literals from

@@ -733,3 +733,42 @@ TO) – the bloat signature covers at least three of the four
 them; flipping it default-on needs the Timetable/noL regressions
 understood (why unit-heavy searches derail) or a portfolio/schedule
 that gets both.
+
+## Pass 7: the sweep decomposition, a wrong answer caught, and the knob kept
+
+Decomposing the sweep's damage isolated each half:
+
+| variant | Timetable | noL | j3037 | g2-slp | crypto1 | FmlaEqu |
+|---|---|---|---|---|---|---|
+| default (no sweep) | 33 s | 36 s | TO | 36 s | TO | TO |
+| retire+strip (full) | **TO-90s** | **TO-4M-conf** | **29.5 s** | **22.3 s** | 53.5 s | 60.4 s |
+| retire only | TO-70s | bit-identical¹ | 33.5 s | TO | 54.9 s | **41.3 s** |
+| retire non-binary only | **8.2 s** | 33.2 s | 32.2 s | TO | 54.1 s | **35.3 s** |
+
+¹ noL never sweeps (all its root facts predate the first reduce).
+
+**Retiring satisfied non-binary clauses is a pure win on every file
+measured** (Timetable 33 s → **8.2 s**!, three losses solved), and
+**stripping root-falsified literals is the mixed half** (g2-slp needs
+it, noL's conflicts multiply 2.4×). Binary retirement alone also
+damages (its binary-graph edge purge reorders edge lists).
+
+**Then the default flip was caught by the suite answering a wrong
+`sat`**: `cegar_mul_low_word_identity_refuted` (BV-CEGAR, UNSAT input)
+answered `sat` with retire-on — surviving the corpus verdict sweep,
+1 000 fuzz iterations and 3 gates added along the way (reason-pointer
+guard à la reduce's `is_reason`; assertion-scope/proof/assumption
+gates; `real_theory_attached` gate — the BV path is near-pure-SAT so
+the last one doesn't even engage). Root cause still open; reproducer:
+the SMT2 above, `precompile/48ae97a` + retire-on default. **Disposition:
+everything back behind `OXIZ_ROOT_SWEEP=1`, default off, hardened**
+(the three gates and the reason guard stay — they are correct
+regardless and make the knobbed sweep safer than the first landing).
+The knobbed SAT-only configuration fuzzed clean (1 000 iterations) and
+delivers: j3037 29–33 s, g2-slp 22 s, crypto1 54 s, FmlaEqu 35–41 s,
+Timetable 8.2 s (with NOSTRIP).
+
+**Open item (next session, highest value)**: find the retire-path
+wrong-`sat` mechanism in the BV-CEGAR interaction. The winning table
+above sits behind one soundness answer — understand it, and five
+standing losses close at once.
