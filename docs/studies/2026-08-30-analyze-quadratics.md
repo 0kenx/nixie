@@ -493,3 +493,18 @@ g2-slp is instructive: `--elim=false` costs cadical 13 % there but
 costs us 2× – our bare search is the residual gap, and BVE rescues us
 disproportionately; the resolvent bloat (323 k → 789 k originals) is
 not the problem.
+
+## Pass-3 close
+
+Landed `cf12e5f` (watch-rebuild arena iteration). Standing table holds
+at **45/49** (load 3.3; 7 losses this draw – mdp-28 flapped in, the
+cap-edge files continue trading with load). Session cumulative
+instructions vs the start binary at fixed caps: worker 4.34×, g2-slp
+1.44×, timetable 1.47×, circuit64 1.30×, summle53 1.16×, mdp 1.08×,
+noL 1.06×.
+
+Eight code commits this session, every one gated on trajectory identity
+(where semantics-preserving) or full verdict batteries (where
+heuristic-ordered), with the workspace suite, clippy/fmt, the z3 parity
+suite and the SMT differential clean at every landing, and ~7 000
+differential-CNF fuzz iterations in total across the passes.
