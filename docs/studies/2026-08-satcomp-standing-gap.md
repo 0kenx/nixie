@@ -329,6 +329,19 @@ Two corrections to the record:
 
 ## Recorded follow-ups
 
+- **The reference in this table is the wrong bar (2026-09-01).** Every number here is
+  measured against CaDiCaL, which is the *parity source* for this core, not the
+  competition bar — recent SAT Competition main tracks are won by kissat and its
+  derivatives, so "145 vs 162" understates the distance to a medal by an unmeasured
+  amount. kissat 4.0.4 is now built at `../temp/kissat/build/kissat`; re-running this
+  table with a kissat column is the first item in
+  [`../2026-08-novel-research-agenda.md`](../2026-08-novel-research-agenda.md)
+  §*2026-09 addendum*, and the two-reference protocol is `../BENCHMARKING.md` §12.
+- **The 31.6%-vs-7.6% learned-clause propagation-share figure is the unfollowed thread**
+  behind the deletion/clause-length/trail-depth/chrono cluster above; it is picked up as
+  N11 (reduction as a closed-loop controller) in the same addendum, with the chrono
+  firing rate as its pre-registered side-effect prediction.
+
 - **Decision quality on dense 3-CNF** (the worker550-class item, with the
   noL diagnosis attached): cadical reaches the model at 232 k conflicts
   where we pass 400 k (3.1 vs 4.7 decisions/conflict).  Both "obvious"

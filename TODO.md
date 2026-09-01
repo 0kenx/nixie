@@ -690,6 +690,11 @@ oxiz-core (foundation)
 
 Refreshed for v0.3.1 (2026-07-31). The v0.3.0-era entries (hot-path profiling, performance-regression infrastructure, extended theory coverage, SMT-COMP entry preparation, Python/WASM bindings) are all delivered – see the checked items under "Post-Parity Priorities" and the Roadmap below.
 
+0. **Competition next steps (added 2026-09-01)** – see `docs/2026-08-novel-research-agenda.md` §*2026-09 addendum*
+   - Re-measure the 261-file SAT standing table with a **kissat** column; kissat 4.0.4 is built at `../temp/kissat/build/kissat` (`docs/BENCHMARKING.md` §12). CaDiCaL is the parity source, kissat is the bar — until the column exists the SAT gap is unmeasured.
+   - Ahead of any SAT research: SMT-COMP Model Validation / Unsat Core / Proof Exhibition / Incremental dry runs. These convert existing `AGENTS.md` invariants into score and cannot falsify.
+   - New hypotheses N9–N13 (trajectory re-seeding; in-run successive halving over pre-search compositions; reduction as a closed-loop controller on the unfollowed 31.6%-vs-7.6% measurement; oracle-agreement phase screening; lift–optimise–lower CNF re-encoding). All start telemetry-only.
+
 1. **v0.3.2 backlog – deep-recursion test OOM investigation** (see "v0.3.2 backlog (added 2026-07-31, from the deep-recursion test OOM investigation)")
 
 2. **Empirical performance-parity verification** (EP-6e, v0.4.0)

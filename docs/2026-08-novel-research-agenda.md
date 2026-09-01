@@ -468,3 +468,401 @@ the reports' generic competition protocols:
 
 This ordering makes every novel proposal compete with the strongest known baseline,
 rather than earning an apparent win by filling a missing established feature.
+
+---
+
+# 2026-09 addendum: competition targeting and five further hypotheses
+
+Date: 2026-09-01
+Status: next-steps document. Targeting decisions are arguments; N9–N13 are hypotheses at
+the bottom of the §*Escalation ladder* (`BENCHMARKING.md` §10.1) — telemetry/oracle first,
+nothing default-on.
+
+The eight proposals above are unchanged and keep their ranking. This addendum adds what
+the ranking did not cover: **which competition we are actually playing for**, **which
+statistic decides it**, and five hypotheses that did not exist when N1–N8 were written —
+each grounded in a measurement already sitting in this repo, unfollowed.
+
+## A. Targeting: SATComp main track is the worst medal-per-effort target we have
+
+Three facts, each already recorded here:
+
+1. The standing table is **145 vs 162 against CaDiCaL**
+   ([`studies/2026-08-satcomp-standing-gap.md`](studies/2026-08-satcomp-standing-gap.md)).
+2. CaDiCaL is the **parity source, not the bar** — recent SAT Competition main tracks are
+   won by kissat and its derivatives (`BENCHMARKING.md` §12, added same day). The real gap
+   is therefore larger than 145/162 suggests, and unmeasured until the standing table gets
+   its kissat column.
+3. The one entry in living memory that won a main track on a *new idea* did it with a
+   **preprocessing pass on an unmodified backend** (SBVA, 2023), not a search heuristic.
+
+Read together: no single novel search heuristic closes a SATComp main-track gap of that
+size in one cycle, and the search-heuristic lever is exactly the one this repo has already
+worked hardest (four CaDiCaL policy ports, an inprocessing schedule, probe ranking, chrono
+reuse, the used-shield — all null-neutral or null-beaten; see the studies index).
+
+**SMT-COMP is the winnable competition, and not because our solving power is better.**
+Its scoring shape is different: per-division across ~40 divisions and several tracks, and
+the non-single-query tracks are thinly populated. The `AGENTS.md` invariants — never `sat`
+without a concretely verified model; stale models/cores/proofs invalidated on
+`push`/`pop`/`assert`; no fabrication — are a *structural* advantage in exactly the tracks
+where entrants lose points to output correctness rather than to search power:
+
+| track | why we are positioned | what is missing |
+|---|---|---|
+| Model Validation | model construction is already verify-or-`Unknown` by policy | per-division MV dry runs; the QF_* model printer under adversarial inputs |
+| Unsat Core | `oxiz-sat/src/unsat_core.rs` + scope-consistent invalidation | core minimisation quality measurement; no study exists |
+| Proof Exhibition | Alethe/LFSC/DRAT already emitted (`oxiz-proof`) | end-to-end external checking of emitted proofs at competition scale |
+| Incremental | push/pop discipline is an enforced project rule | incremental-track benchmark runs; none recorded |
+
+None of that is research — it is verification work on machinery that exists, aimed at the
+tracks where the field is thinnest. It should be scheduled **ahead of** N1–N13, because it
+converts existing invariants into score, whereas every entry below is a hypothesis that may
+falsify. Confirm the 2026 rules and track list before committing effort.
+
+Corollary for the SAT side: keep it, but aim it at **preprocessing/encoding**, per fact 3
+and per N13 below — that lever is measurable deterministically, composes with any backend,
+and is the one that has actually produced a competition win.
+
+## B. Measurement: two changes to how the studies above get scored
+
+Both landed in `BENCHMARKING.md` on the same day as this addendum; recorded here because
+they change the verdicts N1–N8 will produce.
+
+- **§11.1–11.2 — score is `P(solve < T)`, not geomean.** Every study above pre-registers a
+  geomean bar. That bar governs *cost* claims only. A cost-neutral change with a paired,
+  repeatable solved-at-cap gain is landable; a variance-increasing change is not
+  automatically worthless when we are the trailing player on the class it targets. Both
+  numbers must now be reported, from the same paired runs.
+- **§11.3 — oracle-agreement screening.** Where ground truth for the decision under test
+  can be obtained offline, candidates can be screened at a fraction of the ~1 791 runs
+  §5's power table demands. This is the single biggest lever on the *rate* at which this
+  agenda can be executed, and N11 below is its first application.
+
+## N9. Trajectory re-seeding with monotone clause carryover
+
+### Hypothesis
+
+The 7.31× seed swing is not only measurement noise; it means the runtime distribution is
+heavy-tailed, and for a heavy tail a single trajectory held for the whole budget is not the
+optimal use of that budget. Periodically resampling the *chaotic* state while retaining the
+*monotone* state (learned clauses) will improve survival at the cap without discarding work.
+
+### Mechanism
+
+At a cutoff derived from the empirical survival function, reset every trajectory-carrying
+structure — saved/target/best phase arrays, VMTF/VSIDS scores, restart and mode schedules,
+tier ages, the RNG stream — while **retaining the learned clause database**. Learned clauses
+are entailed by the input, so carryover is sound and monotone by construction; the reset
+touches only heuristic state, and no consequence is ever fabricated across it.
+
+Cutoffs are fitted, not universal: the 261-file × multi-seed corpus already in the result
+store (`BENCHMARKING.md` §9) is enough to estimate the survival function and derive a
+schedule, rather than falling back on a universal Luby-style sequence.
+
+### Prior art and delta
+
+Optimal restart under heavy tails is classical (Luby–Sinclair–Zuckerman; Gomes et al. on
+heavy-tailed behaviour in backtrack search), and rapid randomised restarts predate clause
+learning. Modern CDCL abandoned *solver-level* restarts because clause carryover makes
+successive runs dependent — the delta here is that the dependence is precisely what we
+keep, and the resampled component is isolated to heuristic state.
+
+This is **not** the §*Ideas that do not qualify* entry "sequential heterogeneous-slice
+portfolio with lemma carryover", which was correctly deprioritised as config switching with
+substantial prior art. N9 changes **no configuration**: same config, resampled trajectory.
+The justification is our own 7.31× number, which says the trajectory alone is worth more
+than any config difference we have measured. It also needs no distributed substrate, which
+is the stated reason "hazard-rate portfolios" were ruled out of scope.
+
+### First experiment
+
+Offline, from stored cells only: fit the per-family survival function, compute the optimal
+cutoff under the competition cap, and estimate the achievable gain assuming *independent*
+resampling. If the idealised gain is small, stop — no code is written. If it is large,
+measure the actual post-reset trajectory divergence (do retained clauses simply re-derive
+the same path?) before building the policy.
+
+### Matched null
+
+Identical reset at identical cutoffs and identical action count, but the RNG re-seeded to
+the **same** seed — isolating "resampling the trajectory" from "performing the reset", which
+perturbs plenty on its own and would otherwise take the credit.
+
+### Falsification
+
+Reject if retained clauses reconstruct the pre-reset trajectory (divergence measured
+directly), if the idealised survival gain is inside the noise of the standing table, or if
+treatment/null on solved-at-cap is ≤ 1.
+
+## N10. In-run successive halving over pre-search compositions
+
+### Hypothesis
+
+The pre-search composition (BVE / ELS / inprocessing, ~8 points) is an unpredictable
+lottery per instance, and cannot be predicted statically — but it can be *measured* in-run
+from a short probe, cheaply enough to pay for itself inside a competition budget.
+
+### Mechanism
+
+The standing-gap taxonomy's category 1 is verbatim: *"solved by disabling exactly one
+pre-search pass (BVE=0 or EQUIV=0) or enabling inprocessing … Not a family property: single
+files, opposite fixes."* That is a description of a lottery over a small discrete space.
+
+Run 4–8 compositions as bounded probes at ~2% of budget each, rank them by a deterministic
+**trajectory-health surrogate**, and commit the remaining budget to the winner. Probes
+double as N9's reseeds, so the two compose rather than compete for budget.
+
+Candidate surrogates, all already instrumented or trivial to add: decisions per conflict,
+LBD distribution shape, learned-clause-sourced propagation share (see N12), trail-depth
+distribution.
+
+### Prior art and delta
+
+Static per-instance configuration selection is established (SATzilla and successors), as is
+parallel portfolio. Successive halving / Hyperband is established in AutoML. The delta is
+the transfer: *sequential, in-run* successive halving over pre-search composition, selected
+by a search-health surrogate rather than by a predicted runtime, with clause carryover
+between probe and commit. The established-candidates document classes offline configuration
+selection as engineering, not research — this is a different mechanism with a different
+information source (the instance's own early trajectory, not its static features).
+
+### First experiment
+
+Pure oracle study, on stored cells: does any cheap surrogate measured at ~5 k conflicts
+correlate with final solvability under each composition? If nothing correlates, the idea is
+dead and the negative result is worth recording on its own — it would also constrain N7.
+
+### Matched null
+
+Identical probes at identical cost, winner selected by **permuted** surrogate scores. Same
+number of selection opportunities (§2's rule 2), same committed budget.
+
+### Falsification
+
+Reject if no surrogate predicts on held-out instances, if probe cost exceeds the selection
+gain, or if the permuted-score arm selects equally well — which would mean the gain came
+from best-of-k variance, exactly as it did in the rephase study.
+
+## N11. Reduction as a closed-loop controller on learned-clause propagation share
+
+### Hypothesis
+
+Our clause database is regulated by an **open-loop schedule** (fixed 12 000-conflict
+interval, fixed tier percentages); CaDiCaL's is closer to closed-loop. The observable that
+schedule is implicitly trying to regulate varies by orders of magnitude across instances,
+which is precisely the situation in which a fixed schedule is the wrong control structure.
+
+### The unfollowed measurement
+
+From the established-candidates document, recorded and never chased: on `6s167-opt`,
+learned clauses supplied **31.6%** of OxiZ's propagation reasons versus **7.6%** in the
+instrumented CaDiCaL reference. Downstream, all measured in the standing-gap study:
+
+| observable | oxiz | cadical |
+|---|---|---|
+| propagation reasons from learned clauses | 31.6% | 7.6% |
+| reduction deletions / conflict | 96.2% | 76.3% |
+| literals at shrink entry | 34.7 | 43.9 |
+| chronological backtracks | 0% | 26% |
+
+These are one phenomenon, not four: over-aggressive deletion keeps the database small and
+learned-clause-dominated, which shallows the trail, which starves both chronological
+backtracking (trails never span the 100-level threshold) and the shrink fallback, which is
+where the twice-rejected `.rev()` fix keeps dying. The study's own conclusion names the
+clause-length gap as the upstream cause that must be closed *first*.
+
+### Mechanism
+
+Do not ship another deletion heuristic — several have already died at the matched null.
+Change the control structure: make deletion aggressiveness a **feedback controller** holding
+a measured observable at a setpoint, rather than a fixed schedule. Observable: learned-clause
+propagation share, or mean trail depth. Setpoint: calibrated from the instrumented reference
+(7.6%), per family, not a constant guessed here.
+
+Cross-domain: this is congestion control / process control, and it is the standard answer
+whenever a fixed schedule is asked to regulate a quantity that varies by orders of magnitude
+across inputs. The tier-promotion ladder stays; only the deletion *target* becomes regulated.
+
+### Testable side effect
+
+If the mechanism is right it predicts a consequence that costs nothing to check: trails
+deepen, **chronological backtracking starts firing** (currently 0% against CaDiCaL's 26%,
+with the feature enabled and semantics verified identical), and the shrink-fallback
+landscape changes. That is a falsifiable prediction distinct from the headline metric, and
+per §10.2 it should be pre-registered as such. It would also make a third `.rev()` retest
+legitimate for the first time — the study says relanding requires closing the clause-length
+gap first, and this is the named upstream cause.
+
+### Matched null
+
+Same controller, same action magnitudes, same trigger points and same action count, driven
+by a **permuted or phase-shifted** signal. This is the §2 clause-deletion row: delete the
+same number of clauses on the same schedule, chosen by a scrambled score.
+
+### Falsification
+
+Reject if the setpoint cannot be held without pathological database growth, if the predicted
+side effects (trail depth, chrono firing rate) do not move, if the controller's benefit does
+not survive per-family reporting, or if treatment/null ≤ 1 on both cost and solved-at-cap.
+
+## N12. Phase sources screened by oracle-agreement, starting with message passing on the learned database
+
+### Hypothesis
+
+The model-finding loss class is a **phase-guidance** deficit with a known correct answer,
+so candidate phase sources can be screened against ground truth instead of against runtime
+— and the learned-clause database is a materially better substrate for estimating that
+answer than the input formula.
+
+### Why the setup is unusually clean
+
+Already measured, in the standing-gap study's phase-oracle experiment on `worker_550`:
+
+| arm | result |
+|---|---|
+| oracle phases + default 2% random polarity | 100 k conflicts, no model |
+| oracle phases + `RANDPOL=0` + `REPHASE=0` | **sat with 0 conflicts** (28 987 decisions, pure descent) |
+
+The machinery is sound and the correct decision is *known* for these instances. That makes
+oracle-agreement (`BENCHMARKING.md` §11.3) available as a per-instance, near-deterministic
+screening metric — no seeds, no matched null, no cap — for any candidate phase source.
+
+### Mechanism
+
+Screen candidate phase sources on held-out oracle-agreement, then promote survivors to the
+normal ladder. First candidate, and the novel one:
+
+**Belief propagation over the union of original and learned clauses.** BP and survey
+propagation are established for random k-SAT and known to be weak on structured CNF — but
+the object they are usually run on is the *input formula*. The learned-clause database is a
+different distribution, materially more informative about the region the search is actually
+in, and it evolves; running message passing over it periodically (at restarts, deterministic,
+cheap) as a target-phase source does not appear in the reviewed baselines. The loss class in
+question — dense combinatorial 3-CNF (`noL`, `frb`, `Ptn`) — is BP's home turf.
+
+Further candidates worth screening under the same metric, cheaper to build: the local-search
+best assignment weighted by learned-clause participation (our walk plateaus at 74 broken
+clauses on `noL-11-14`, so its *output* is being discarded rather than exploited), and a
+backbone estimate from probing.
+
+### Prior art and delta
+
+BP/SP phase initialisation is established, as are target/best phases, rephasing and
+walk-based phases — all of which we already implement and which the standing-gap study
+confirmed are firing. The delta is the **substrate** (learned clauses rather than the input
+formula, re-run as the database evolves) and the **evaluation protocol** (oracle-agreement
+screening rather than a runtime A/B). The second half is reusable by every other entry here.
+
+### First experiment
+
+No solver change. Compute oracle-agreement for each candidate phase source on the loss class,
+held out from any instance used to tune it. Report agreement, not runtime.
+
+### Matched null
+
+At the screening stage: a phase source with the same marginal polarity distribution and zero
+dependence on the formula (the §2 "any learned model" row — preserve the output distribution,
+sever the input→output mapping). At the ladder stage: the standard rephase-action null.
+
+### Falsification
+
+Reject if agreement does not exceed the distribution-matched null, if it does not transfer
+to held-out instances, if message passing does not converge on structured instances within a
+deterministic budget, or if agreement gains do not convert to solved-at-cap at the ladder
+stage. Per §11.3, agreement is a screen — a source that agrees and still loses is falsified.
+
+## N13. Lift–optimise–lower: CNF re-encoding as a compiler pipeline
+
+### Hypothesis
+
+Structure recovery from CNF is currently used only to *simplify in place*. Recovering the
+structure, optimising at that level, and **re-lowering with a deliberately chosen encoding**
+is a strictly larger transformation space, and it is the space in which the one recent
+competition-winning idea (SBVA) sits.
+
+### Relation to N8
+
+This is N8 with the reversibility removed, and that removal is the point. N8 is rated *very
+high* risk because it wants online, reversible, proof-carrying transitions between
+representations while the search runs. N13 is **offline preprocessing only**: lift, optimise,
+lower, then hand a plain CNF to an unmodified backend. No runtime morphing, no proof-carrying
+transition machinery, no reversibility — and therefore none of N8's cost. N8's oracle study
+remains the right gate for the *online* version; N13 does not depend on it.
+
+### Mechanism
+
+Treat CNF as an object file and run decompile → optimise → recompile:
+
+1. **Lift.** Recover cardinality, at-most-one, PB, XOR and gate structure. Substantial
+   machinery exists: `oxiz-sat/src/cardinality.rs`, `xor.rs`, `gate.rs`,
+   `solver/bva.rs`, `solver/congruence.rs`.
+2. **Optimise at the recovered level**, where the constraint is a first-class object rather
+   than a clause set.
+3. **Lower with a chosen encoding.** A recovered cardinality constraint can be re-emitted as
+   totalizer, sequential counter, commander, or others; the encoding the input happened to
+   use is an artefact of whatever produced the file, not a decision anyone made with this
+   solver in mind.
+
+Every step is equivalence- or equisatisfiability-preserving with an explicit derivation, and
+model reconstruction is mandatory — the existing preprocessing rules apply unchanged.
+
+### Prior art and delta
+
+Cardinality detection and re-encoding, BVA, SBVA, XOR extraction, gate extraction and AIG
+rewriting are all established. The delta is running the **full pipeline** — recover, optimise
+at the higher level, re-lower with an encoding chosen for the downstream solver — rather than
+the usual single-step in-place simplification. SBVA is one narrow instance of it, and it won
+a main track.
+
+### Why it suits this repo specifically
+
+- Preprocessing effects are measurable **deterministically** (variables, clauses, encoding
+  size, propagation strength) *before* paying the §1 trajectory-chaos tax. Most of the
+  evaluation happens outside the regime that has killed this repo's last several studies.
+- It composes with any backend, including an unmodified reference — so the effect can be
+  isolated from our search heuristics entirely by measuring it in front of kissat (§12).
+- It is the lever fact 3 in §A identifies as the one that has actually won.
+
+### First experiment
+
+Telemetry only, over satcomp2024/2025: how much recoverable structure is present, of which
+kinds, and how much of it was encoded in a form other than the one we would choose? If
+recovered structure is rare or already well-encoded, the pipeline is dead before any lowering
+code is written.
+
+### Matched null
+
+An encoding change of the same magnitude (same constraints re-emitted, same clause/variable
+delta) with the target encoding chosen arbitrarily rather than by the selection rule. This
+separates "we re-encoded" from "we re-encoded *well*" — and given §1, the first alone will
+move results.
+
+### Falsification
+
+Reject if recoverable structure is rare, if the arbitrary-encoding null matches the chosen
+one, if re-encoding inflates the formula without a propagation-strength gain, or if the gain
+does not survive in front of an unmodified reference backend.
+
+## Revised sequence
+
+The §*Recommended sequence* above governs the theory/BV work and is unchanged. This addendum
+inserts work ahead of and alongside it:
+
+1. **Verification, not research, first** (§A): SMT-COMP Model Validation / Unsat Core / Proof
+   Exhibition / Incremental dry runs. Converts existing invariants into score; nothing here
+   can falsify.
+2. **Re-measure the standing table with a kissat column** (`BENCHMARKING.md` §12). Until it
+   exists, the size of the SAT gap is unknown and every SAT-side priority is a guess.
+3. **N11** — the strongest technical entry, because it is the only one grounded in a
+   quantified, unexplained, four-way-consistent divergence from the reference that nobody has
+   chased. Costs one instrumented run to confirm the observable before any policy is written.
+4. **N12's screening protocol** — cheap, and it lowers the cost of everything after it.
+5. **N9 and N10 offline studies** — both are analysis over cells already in the result store;
+   neither writes solver code to reach a go/no-go.
+6. **N13 telemetry** — a structure census over the competition corpora.
+7. Then the established sequence (BV abstraction baseline → N1 → N2 → …).
+
+Entries 2, 5 and 6 write no solver code at all, and 1 writes none either. That is deliberate:
+after the negative-result run this repo has had on search heuristics, the next several steps
+should be ones that cannot be reshuffled into looking good.

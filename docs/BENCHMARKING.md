@@ -101,6 +101,18 @@ either metric. That is a silent ~6% understatement that biases toward walk-heavy
 Report wall-clock separately, measured on a quiet machine, as a sanity check that the
 deterministic proxy tracks reality.
 
+### Cost is not score: report both
+
+A geomean tick ratio answers *“is the search cheaper?”*. A competition — and this repo's
+standing table — scores `P(solve < T)`: the fraction of instances that finish inside a
+fixed cap. Under the heavy tail measured in §5 those two objectives come apart, and a
+change can be flat on one while moving the other in either direction.
+
+**Report both**, always: the paired geomean ratio against the matched null, *and* the
+change in solved-at-cap over the same paired runs. It is the same data, joined the same
+way, at no extra machine cost. §11 says why the second number sometimes disagrees with
+the first, and when to believe it.
+
 ### The neutrality band: ±5%
 
 A geomean effect within **±5%** is **neutral** — reported as neutral, never as a win or a
@@ -231,6 +243,8 @@ Before claiming a heuristic change helped:
 - [ ] Geomean within ±5% reported as **neutral** (§3 band) — no win/loss language, no landing or reverting on it alone
 - [ ] Any hindsight-selected configuration replayed at a fresh seed
 - [ ] Per-family and SAT/UNSAT breakdowns reported
+- [ ] Solved-at-cap reported alongside the geomean ratio, over the same paired runs (§3, §11)
+- [ ] Reference arms present for SAT-side work: **kissat** (goal) and cadical (parity) (§12)
 - [ ] Wall-clock confirmed on a quiet machine
 - [ ] `./bench/z3_parity/run_parity.sh` clean (soundness is unaffected by any of the above)
 - [ ] Go/no-go metrics and falsification criteria written down **before** running (§10)
@@ -384,8 +398,10 @@ measure; these rules say how an experiment is allowed to proceed.
    proxies are not success: "a stronger relaxation violation by itself is not success"; "a reduced
    pivot count is insufficient if row work or coefficient growth increases".
 3. **Strongest-baseline rule.** The baseline arm is the strongest relevant existing OxiZ path, and
-   where a reference implementation exists (CaDiCaL/Kissat/Z3), the treatment is also compared
-   against it. Beating a weakened arm proves nothing.
+   where a reference implementation exists the treatment is also compared against it. Beating a
+   weakened arm proves nothing — and beating a *superseded* reference proves less than it looks
+   (§12). For SAT-side work the reference arms are **kissat** (the goal) and cadical (the parity
+   source); for SMT, `z3`.
 4. **Tick-accounting changes are schedule changes.** They alter budgets globally and therefore
    need their own matched-null study before being classed as "engineering" improvements.
 5. **Never tune isolated policies against PAR-2 or wall-clock.** Explicit non-priority in the
@@ -395,3 +411,170 @@ measure; these rules say how an experiment is allowed to proceed.
    `Unknown`; exhaustion never fabricates a consequence, a model, or an answer.
 7. **Negative results land in `docs/studies/`.** Already `AGENTS.md` policy; a cancelled idea with
    a recorded verdict is a finished step.
+
+---
+
+## 11. The scoring objective: survival at the cap, and variance as a resource
+
+Added 2026-09-01. Sections 1–8 treat the heavy tail measured in §5 purely as an obstacle
+to measurement. It is also a property of the solver, and the two facts have different
+consequences.
+
+### 11.1 Geomean cost and solved-at-cap are different objectives
+
+Recall the measured distribution: sd of log cost **0.52**, per-instance seed spread from
+1.1× (`c7552`) to **203×** (`fsf-300-354`). A distribution that wide means:
+
+- A change that shifts probability mass across the cap on a handful of tail instances
+  **scores**, while barely moving a geomean dominated by the well-behaved middle.
+- A change that cheapens instances already solved in 2 s moves the geomean and **scores
+  nothing**.
+
+Both appear as "an x% geomean effect". So the ±5% neutrality band in §3 governs *cost*
+claims; it is not a verdict on *score*. A change inside the band with a real, paired,
+repeatable solved-at-cap gain is a legitimate landing candidate — reported honestly as
+"cost-neutral, +N solved at cap", never as "N% faster".
+
+The converse guard matters more, because it is the easier mistake: **a solved-at-cap
+gain of a few files is well inside the noise of a 261-file table.** Two runs of the same
+binary at different seeds routinely differ by several files (see the standing-gap study's
+own load-margin erratum, where the 60 s 6-way cap turned two ~51 s solves into TOs).
+Treat solved-at-cap exactly like any other measurement: paired, ≥10 seeds, matched null,
+per-family. The flip *list* is the evidence, not the flip *count* — a change that gains 6
+and loses 4 has produced a reshuffle, not an improvement, unless the gains concentrate
+somewhere the mechanism predicts.
+
+### 11.2 When behind, variance is worth buying
+
+This follows from the same distribution and is the non-obvious half.
+
+Competition score is `P(cost < T)` per instance. If your expected cost on a class of
+instances is above the cap and the opponent's is below it, **reducing your variance
+lowers your score and increasing it raises your score** — the trailing player wants a
+wider distribution, because only the lucky tail crosses the line. This is the standard
+trailing-team result from optimal-stopping and portfolio theory, and it applies to the
+17 residual files in the standing table more or less exactly.
+
+Practical consequences for study design:
+
+- A mean-neutral, variance-**increasing** change is not automatically worthless. Score it
+  on the survival function, not the geomean, and say which regime it is aimed at.
+- Symmetrically, a variance-**reducing** change (determinising a policy, removing a
+  randomised action) can be geomean-positive and score-negative on the classes where we
+  are behind. The stable-mode `RANDPOL` landing is the counter-example worth remembering:
+  removing randomness there was **+16 standing files**, because on those instances we
+  were *not* behind on expectation — the randomness was destroying a working descent.
+  Both directions are real; which one applies is an empirical question about where the
+  class's cost distribution sits relative to the cap, and that is measurable before the
+  change is built.
+- State the regime in the pre-registration (§10.2): *"this change targets instances whose
+  median cost is above/below the cap"*. A change evaluated in the wrong regime will be
+  scored by a statistic that cannot see it.
+
+### 11.3 Oracle-agreement: a metric that is not chaotic
+
+§5's power table (~1 791 unpaired runs for a 5% effect) is the reason most ideas here are
+never evaluated. Where a **ground-truth answer for the decision under test** can be
+obtained offline, the runtime metric can be bypassed entirely.
+
+The worked instance already exists in this repo. `Solver::set_phase_hint` (the phase
+oracle from the standing-gap study) seeds the saved/target/best arrays with a known model;
+on `worker_550` that produced **sat with 0 conflicts, 28 987 decisions, pure descent**.
+That experiment establishes that for the model-finding loss class, the *correct decision
+is known*. So a candidate phase source can be scored by **agreement with the oracle
+phases** — a per-instance, near-deterministic quantity needing no seeds, no matched null,
+and no cap.
+
+Generalised: any instance solvable twice yields an oracle for some decision — the model
+(correct polarity), the final proof's clause usage (which learned clauses mattered), the
+minimised core (which assumptions mattered). Screening candidate heuristics on
+oracle-agreement costs a fraction of a runtime A/B and has no chaos term.
+
+Two rules keep this honest:
+
+- Oracle-agreement is a **screening** metric, not a result. It ranks candidates cheaply;
+  the survivor still climbs the §10.1 ladder and still needs the full matched-null A/B
+  before a default flip. A heuristic that agrees with the oracle and still loses at the
+  cap has been falsified, not vindicated.
+- The oracle is hindsight (§6). Agreement measured on the instance the oracle came from
+  is an upper bound; report agreement on **held-out** instances whose oracles were not
+  used to build the heuristic.
+
+---
+
+## 12. The reference bar: kissat is the goal, cadical is the parity source
+
+Added 2026-09-01. Every standing SAT measurement in this repo to date used **CaDiCaL** as
+the reference — most recently 145 vs 162 on the 261-file table
+([`studies/2026-08-satcomp-standing-gap.md`](studies/2026-08-satcomp-standing-gap.md)).
+That choice is correct for one purpose and wrong for the other, and the two were conflated.
+
+**CaDiCaL is the parity source.** It is the implementation this SAT core is ported from;
+its counters are the ones our instrumentation is matched against; a differential conflict
+count against it is the most sensitive signal available for a port bug, and it caught one
+(the inverted shrink-fallback direction). Keep it.
+
+**CaDiCaL is not the bar.** Recent SAT Competition main tracks are won by kissat and its
+derivatives, so "close to CaDiCaL" systematically understates the distance to a medal.
+A standing table measured only against CaDiCaL can be improved to parity and still be far
+from competitive.
+
+From 2026-09, SAT-side benchmarking carries **two reference arms**:
+
+| arm | binary | role |
+|---|---|---|
+| **goal** | `../temp/kissat/build/kissat` (4.0.4) | the bar. Every standing table reports oxiz / kissat / cadical. |
+| **parity** | `../temp/cadical/build/cadical` | port fidelity; differential counters; matched instrumentation |
+
+Both are recorded with `arm.role: reference` in the result store (§9), so a reference cell
+is measured once per `(host, instance, seed)` and reused like any other.
+
+### Building the reference
+
+The binary is built in the sibling reference tree, mirroring the existing
+`../temp/cadical/build/cadical`. No reference source is modified:
+
+```bash
+cd ../temp/kissat && ./configure && make -j8      # -> ../temp/kissat/build/kissat
+../temp/kissat/build/kissat --version             # 4.0.4
+```
+
+Invocation for benchmarking:
+
+```bash
+kissat -q --time=<cap> <file.cnf>     # verdict only; exit 10 = sat, 20 = unsat
+kissat --statistics <file.cnf>        # deterministic counters
+```
+
+### Counter completeness (§3) applies, differently
+
+§3's warning — CaDiCaL's printed `ticks` is `searchticks + inprobeticks` and silently
+excludes local search — has a kissat analogue that is easier to get wrong. kissat splits
+its deterministic work across **at least seven** counters:
+
+```
+search_ticks  probing_ticks  factor_ticks  kitten_ticks
+backbone_ticks  substitute_ticks  transitive_ticks
+```
+
+Measured on `constraints_17_0.4_1`: `search_ticks` 230.9 M, `probing_ticks` 40.8 M,
+`factor_ticks` 19.9 M, `kitten_ticks` 3.2 M, the remaining three 2.3 M — so
+**`search_ticks` alone is 78% of the summed total on that instance**, and the shortfall is
+largest exactly on the instances where kissat's inprocessing is doing the winning. Sum the counters, or compare on a metric whose
+coverage has been verified on the instance at hand
+(`metrics.counter_coverage_verified` is a required record field for this reason).
+
+Two of those counters name inprocessing components OxiZ does not have — `factor_ticks`
+(structured factoring/BVA) and `kitten_ticks` (the embedded sub-solver used for sweeping).
+Where a kissat comparison shows a large gap, check first whether the gap lives in a
+component we simply do not run; that is a different (and cheaper) finding than a decision-
+quality deficit.
+
+### What to re-measure
+
+The standing table is the repo's headline number, and it currently has no kissat column.
+Re-running it is a mechanical, well-defined job that produces the first honest statement
+of the actual competitive gap — recorded as a follow-up in
+[`2026-08-novel-research-agenda.md`](2026-08-novel-research-agenda.md) §*2026-09 addendum*.
+Until it exists, no document in this repo should describe the SAT core's standing in
+competition terms.
