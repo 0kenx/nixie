@@ -1,0 +1,242 @@
+diff --git a/oxiz-sat/src/lib.rs b/oxiz-sat/src/lib.rs
+index 39d0faa..e29ff04 100644
+--- a/oxiz-sat/src/lib.rs
++++ b/oxiz-sat/src/lib.rs
+@@ -163,6 +163,7 @@ mod occurrence;
+ pub mod preprocessing;
+ mod preprocessing_core;
+ mod recursive_minimization;
++mod reap;
+ mod reluctant;
+ mod resolution_graph;
+ mod restart_model;
+diff --git a/oxiz-sat/src/solver/conflict.rs b/oxiz-sat/src/solver/conflict.rs
+index 2d15b30..6de6ee5 100644
+--- a/oxiz-sat/src/solver/conflict.rs
++++ b/oxiz-sat/src/solver/conflict.rs
+@@ -1648,25 +1648,67 @@ impl Solver {
+         // Mark every block literal shrinkable; `open` counts undischarged
+         // shrinkable literals.
+         let mut open: u32 = 0;
+-        let mut max_trail: usize = 0;
+         let mut shrinkable: SmallVec<[Var; 32]> = SmallVec::new();
+         // Literals at `blevel` marked shrinkable by this block's reason walk
+         // (not in the block itself); cadical's `shrinkable` vector holds both
+         // and is fully reset after every block.
+         let mut walk_marked: SmallVec<[Var; 32]> = SmallVec::new();
++        // Distance base for the reap, decided before marking: any constant
++        // ≥ every block literal's trail index works — `pos = base - dist`
++        // reconstructs the literal's own trail position, so the base cancels
++        // (cadical uses the block's max trail index; the trail end is
++        // equivalent and known a priori, which keeps the marking loop
++        // single-pass as before the port). Monotonicity is relative to the
++        // same base: walk-discovered antecedents sit strictly below the
++        // literal being discharged, so their distances strictly increase.
++        let base = self.trail.assignments().len().saturating_sub(1);
++        // Scan-vs-reap selection, keyed off the same `base` everywhere it
++        // is consulted (here and in `shrink_literal`), so a block uses
++        // exactly one mechanism:
++        //
++        // * linear scan (the original loop): cost grows with the unflagged
++        //   stretch it walks, which is bounded by the trail — cheap on
++        //   small instances (measured 2–7 skipped entries per pop on
++        //   frb45/noL/circuit-class), and identical to the pre-reap code;
++        // * reap (cadical `opts.shrinkreap`, default on): constant work per
++        //   shrinkable literal, independent of trail length — the only
++        //   viable mechanism when trails span millions of entries
++        //   (worker-class: 52.5 skipped entries per pop measured).
++        //
++        // Both pop the identical sequence (newest flagged trail position
++        // first; the flagged set is exactly the pushed set, flags being
++        // reset per block), so the threshold changes no observable state —
++        // Gate 1 of the reap study re-verifies trajectory identity over
++        // the 54-file corpus either way. 4096 sits between the measured
++        // scan-wins class (≤ 2848 vars in the corpus) and the reap-wins
++        // class; any value in that gap classifies every measured file the
++        // same way.
++        let use_reap = base > SHRINK_REAP_MIN_TRAIL;
++        // Max trail position over the block: the scan cursor start and the
++        // `uip_pos` fallback (cadical computes it while finding the block
++        // bounds).
++        let mut max_trail: usize = 0;
+         for k in start..=end {
+             let var = self.learnt[k].var();
++            let ti = self.trail.trail_index(var) as usize;
++            max_trail = max_trail.max(ti);
+             self.mf_set(var, MF_SHRINKABLE);
+             self.lrat_minimized.push(var.index() as i32);
+             shrinkable.push(var);
+-            max_trail = max_trail.max(self.trail.trail_index(var) as usize);
++            // cadical `shrink_literal` under `opts.shrinkreap` (default on):
++            // push the trail distance so `shrink_next` pops the newest
++            // shrinkable position directly, never scanning unflagged
++            // entries.
++            if use_reap {
++                self.shrink_reap.push((base - ti) as u32);
++            }
+             open += 1;
+         }
+ 
+-        // Backward trail scan (cadical `shrink_next` without the reap): the
+-        // next literal to discharge is the most recently assigned shrinkable
+-        // one.  The cursor only descends; reason antecedents always sit
+-        // below their implier on the trail, so nothing is missed.
++        // Discharge loop (cadical `shrink_next` + `shrink_along_reason`):
++        // the next literal to discharge is the most recently assigned
++        // shrinkable one, popped from the reap.  Reason antecedents always
++        // sit below their implier on the trail, so nothing is missed.
+         //
+         // The popped literal's trail index is captured *at pop time*
+         // (`uip_pos = pos` inside the loop below).  A previous revision
+@@ -1678,20 +1720,38 @@ impl Solver {
+         // incremental tautology regression this produced the unentailed
+         // clause `[3,4,5,-7,6,-8]` (block `{-8,-1}` at level 1, UIP = the
+         // level-1 decision `-1`, replaced by `-8`) and a false `unsat`.
+-        let mut cursor = max_trail;
+         let mut failed = false;
+         let mut uip_var: Option<Var> = None;
+         let mut uip_pos: usize = max_trail;
++        // Scan-mode cursor (see `use_reap` above): starts at the block's
++        // newest trail position and only descends.
++        let mut cursor = max_trail;
+         while !failed {
+-            // `shrink_next`: pop the newest shrinkable literal.
++            // `shrink_next`: pop the newest shrinkable literal — from the
++            // reap on large trails, or by the linear backward scan (the
++            // pre-reap loop) on small ones. The two pop sequences are
++            // identical (see `use_reap`).
+             let mut uip_lit;
+             let mut pos;
+-            loop {
+-                pos = cursor;
+-                uip_lit = self.trail.assignments()[cursor];
+-                cursor = cursor.saturating_sub(1);
+-                if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
++            if use_reap {
++                let Some(dist) = self.shrink_reap.pop() else {
++                    // Cannot happen while the open-count invariant holds;
++                    // degrade to the sound fallback rather than fabricate a
++                    // UIP.
++                    failed = true;
+                     break;
++                };
++                pos = base - dist as usize;
++                uip_lit = self.trail.assignments()[pos];
++                debug_assert!(self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0);
++            } else {
++                loop {
++                    pos = cursor;
++                    uip_lit = self.trail.assignments()[cursor];
++                    cursor = cursor.saturating_sub(1);
++                    if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
++                        break;
++                    }
+                 }
+             }
+             open -= 1;
+@@ -1723,7 +1783,7 @@ impl Solver {
+                 break;
+             }
+             for &lit in &reason_lits {
+-                match self.shrink_literal(lit, blevel) {
++                match self.shrink_literal(lit, blevel, base) {
+                     ShrinkStep::Fail => {
+                         failed = true;
+                         break;
+@@ -1752,6 +1812,7 @@ impl Solver {
+             // per-literal recursive minimization inside the block.  Reset
+             // covers the walk-marked literals too (cadical resets its whole
+             // `shrinkable` vector).
++            self.shrink_reap.clear();
+             for &var in shrinkable.iter().chain(walk_marked.iter()) {
+                 self.mf_unset(var, MF_SHRINKABLE);
+             }
+@@ -1782,6 +1843,7 @@ impl Solver {
+             // UIP.  `uip_lit` is TRUE on the trail; the clause stores false
+             // literals, so the replacement is its negation, at `blevel`.
+             let Some(uvar) = uip_var else {
++                self.shrink_reap.clear();
+                 return (0, 0);
+             };
+             let repl = self.trail.assignments()[uip_pos].negate();
+@@ -1809,6 +1871,7 @@ impl Solver {
+             // `mark_shrinkable_as_removable`: block and chain literals were
+             // resolved away; they carry the REMOVABLE flag until the
+             // analysis-wide reset (recorded above via `lrat_minimized`).
++            self.shrink_reap.clear();
+             for &var in shrinkable.iter().chain(walk_marked.iter()) {
+                 self.mf_unset(var, MF_SHRINKABLE);
+                 self.mf_set(var, MF_REMOVABLE);
+@@ -1822,7 +1885,7 @@ impl Solver {
+     /// already-shrinkable ones, and lower-level literals that are (or probe)
+     /// removable; `Fail` aborts the block walk (a lower-level antecedent that
+     /// is not removable).
+-    fn shrink_literal(&mut self, lit: Lit, blevel: u32) -> ShrinkStep {
++    fn shrink_literal(&mut self, lit: Lit, blevel: u32, base: usize) -> ShrinkStep {
+         let var = lit.var();
+         let level = self.trail.level(var);
+         if level == 0 {
+@@ -1853,6 +1916,16 @@ impl Solver {
+         }
+         self.mf_set(var, MF_SHRINKABLE);
+         self.lrat_minimized.push(var.index() as i32);
++        // cadical `shrink_literal` under `opts.shrinkreap` (default on):
++        // record the trail distance so `shrink_next` pops this literal
++        // directly instead of scanning down to it.  Gated on the same
++        // `base` (trail end) the block's discharge loop uses (see
++        // `SHRINK_REAP_MIN_TRAIL`): walk-discovered and block literals of
++        // one block always share the mechanism.
++        if base > SHRINK_REAP_MIN_TRAIL {
++            let dist = (base - self.trail.trail_index(var) as usize) as u32;
++            self.shrink_reap.push(dist);
++        }
+         ShrinkStep::NewlyShrinkable
+     }
+ 
+diff --git a/oxiz-sat/src/solver/mod.rs b/oxiz-sat/src/solver/mod.rs
+index 0df4915..71eb7c6 100644
+--- a/oxiz-sat/src/solver/mod.rs
++++ b/oxiz-sat/src/solver/mod.rs
+@@ -28,6 +28,7 @@ use crate::lrb::LRB;
+ use crate::memory_opt::{MemoryAction, MemoryOptimizer};
+ #[allow(unused_imports)]
+ use crate::prelude::*;
++use crate::reap::Reap;
+ use crate::restart_model::{GlueAverages, Reluctant};
+ use crate::trail::{Reason, Trail};
+ use crate::vmtf::VMTF;
+@@ -46,6 +47,14 @@ pub(super) const MF_ADDED: u8 = 8;
+ pub(super) const MF_SEEN: u8 = 16;
+ pub(super) const MF_SHRINKABLE: u8 = 32;
+ 
++/// Trail-scale gate between the two `shrink_next` mechanisms (see
++/// `shrink_block` in `conflict.rs`): blocks whose newest literal sits at
++/// or below this trail index use the linear backward scan (bounded work,
++/// measured cheaper at small scale); larger trails pop from the reap
++/// (cadical `opts.shrinkreap`, default on). Both pop the identical
++/// newest-flagged-first sequence, so the gate is trajectory-neutral.
++pub(super) const SHRINK_REAP_MIN_TRAIL: usize = 32768;
++
+ /// Convert a path to a UTF-8 string for the file tracers (which take `&str`,
+ /// faithful to upstream). Returns an error for non-UTF8 paths.
+ fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
+@@ -1231,6 +1240,11 @@ pub struct Solver {
+     ///  multi_block_lits, walk_success, walk_fail, fallback_saved).
+     pub(super) shrink_trace: (u64, u64, u64, u64, u64, u64, u64, u64),
+     /// Shrink-study failure-reason counters (OXIZ_SHRINK_TRACE=1).
++    /// Monotone radix heap for the shrink block walk (cadical `reap`,
++    /// `opts.shrinkreap` default-on): pops the newest shrinkable trail
++    /// position directly instead of scanning unflagged trail entries.
++    /// Cleared once per block (capacity retained across conflicts).
++    pub(super) shrink_reap: Reap,
+     pub(super) shrink_fail_low: u64,
+     pub(super) shrink_fail_above: u64,
+     pub(super) mini_reject_no_reason: u64,
+@@ -1489,6 +1503,7 @@ impl Solver {
+             lrat_minimized: Vec::new(),
+             seen_level_count: Vec::new(),
+             shrink_trace: (0, 0, 0, 0, 0, 0, 0, 0),
++            shrink_reap: Reap::new(),
+             shrink_fail_low: 0,
+             shrink_fail_above: 0,
+             mini_reject_no_reason: 0,
