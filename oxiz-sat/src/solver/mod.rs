@@ -36,6 +36,25 @@ use crate::watched::{WatchLists, Watcher};
 use core::sync::atomic::{AtomicBool, Ordering};
 use smallvec::SmallVec;
 
+/// One 64-position chunk of the shrink scan's `MF_SHRINKABLE` summary
+/// (see [`Solver::shrink_summary`]).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ShrinkChunk {
+    /// Block epoch this `bits` word belongs to; anything else reads as empty.
+    pub(super) epoch: u64,
+    /// Bit `i` set iff the literal at trail position `chunk*64 + i` is
+    /// flagged `MF_SHRINKABLE` in that block. Exact within the block:
+    /// every marking site sets it, the flagged set only grows, positions
+    /// never move.
+    pub(super) bits: u64,
+}
+
+impl ShrinkChunk {
+    /// Fresh entry: epoch 0 is never a valid block epoch (the counter
+    /// starts at 1 after the first bump), so `bits` is never consulted.
+    pub(super) const EMPTY: ShrinkChunk = ShrinkChunk { epoch: 0, bits: 0 };
+}
+
 // Packed per-variable LRAT minimization flags (`Flags` in upstream), stored
 // in [`Solver::lrat_flags`] indexed by `Var::index()`. The bit layout mirrors
 // cadical's `Flags` fields used by `minimize.cpp`.
@@ -1230,6 +1249,17 @@ pub struct Solver {
     /// (analyzes, learnt_lits, singleton_blocks, multi_blocks,
     ///  multi_block_lits, walk_success, walk_fail, fallback_saved).
     pub(super) shrink_trace: (u64, u64, u64, u64, u64, u64, u64, u64),
+    /// Position-indexed summary of `MF_SHRINKABLE` for the shrink block
+    /// scan (`solver/conflict.rs`): one [`ShrinkChunk`] per 64 trail
+    /// positions, epoch-stamped per block so stale entries read as empty
+    /// without a clearing pass. Capacity retained across conflicts.
+    pub(super) shrink_summary: Vec<ShrinkChunk>,
+    /// Monotone block counter stamping [`Solver::shrink_summary`].
+    pub(super) shrink_epoch: u64,
+    /// Epoch of the current block's active summary, or `None` while the
+    /// block's scan is still probe-only (see `solver/conflict.rs`:
+    /// activation is lazy, so dense blocks never pay for the summary).
+    pub(super) shrink_active_epoch: Option<u64>,
     /// Shrink-study failure-reason counters (OXIZ_SHRINK_TRACE=1).
     pub(super) shrink_fail_low: u64,
     pub(super) shrink_fail_above: u64,
@@ -1489,6 +1519,9 @@ impl Solver {
             lrat_minimized: Vec::new(),
             seen_level_count: Vec::new(),
             shrink_trace: (0, 0, 0, 0, 0, 0, 0, 0),
+            shrink_summary: Vec::new(),
+            shrink_epoch: 0,
+            shrink_active_epoch: None,
             shrink_fail_low: 0,
             shrink_fail_above: 0,
             mini_reject_no_reason: 0,

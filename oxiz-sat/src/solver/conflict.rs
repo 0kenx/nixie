@@ -205,6 +205,14 @@ enum ShrinkStep {
     NewlyShrinkable,
 }
 
+/// Consecutive missed trail positions after which the block scan consults
+/// the chunk summary (see `shrink_block`): dense blocks stay under it and
+/// keep the original pure-scan cost, sparse stretches start jumping 64
+/// positions per summary read.  Any small value behaves equivalently
+/// (the pop sequence is unchanged for all of them); 8 keeps dense-class
+/// blocks (measured 2–7 misses per pop) on the fast path.
+const SHRINK_SUMMARY_AFTER: u32 = 8;
+
 /// One analyze's block-walk statistics (debug instrumentation).
 #[derive(Default, Clone, Copy)]
 struct ShrinkTraceDbg {
@@ -1654,12 +1662,19 @@ impl Solver {
         // (not in the block itself); cadical's `shrinkable` vector holds both
         // and is fully reset after every block.
         let mut walk_marked: SmallVec<[Var; 32]> = SmallVec::new();
+        // Chunk-summary state for this block: lazily activated by the scan
+        // below after `SHRINK_SUMMARY_AFTER` consecutive probe misses (the
+        // signature of a sparse stretch).  Until then the block pays
+        // nothing — no epoch bump, no sizing, no marking.  `shrink_literal`
+        // reads this to decide whether to mark walk-discovered literals.
+        self.shrink_active_epoch = None;
         for k in start..=end {
             let var = self.learnt[k].var();
+            let ti = self.trail.trail_index(var) as usize;
             self.mf_set(var, MF_SHRINKABLE);
             self.lrat_minimized.push(var.index() as i32);
             shrinkable.push(var);
-            max_trail = max_trail.max(self.trail.trail_index(var) as usize);
+            max_trail = max_trail.max(ti);
             open += 1;
         }
 
@@ -1684,16 +1699,108 @@ impl Solver {
         let mut uip_pos: usize = max_trail;
         while !failed {
             // `shrink_next`: pop the newest shrinkable literal.
-            let mut uip_lit;
-            let mut pos;
-            loop {
-                pos = cursor;
-                uip_lit = self.trail.assignments()[cursor];
-                cursor = cursor.saturating_sub(1);
-                if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
-                    break;
+            //
+            // Two mechanisms, one pop order:
+            //
+            // * **Probe** (always first): plain per-position descent, in
+            //   groups of `SHRINK_SUMMARY_AFTER` positions.  Dense blocks
+            //   (2–7 skipped entries per pop, the frb45/noL/circuit class)
+            //   always find their literal inside the first group and never
+            //   touch the summary — their cost is the original scan plus
+            //   the group-loop induction, nothing else.
+            // * **Summary jump** (after a full group misses): a 64-position
+            //   chunk summary of `MF_SHRINKABLE`, epoch-stamped per
+            //   activation.  Sparse stretches (worker-class: 52 skipped
+            //   entries per pop) then descend one summary word per chunk
+            //   instead of one load per position.
+            //
+            // The summary is exact for this block: at activation the
+            // complete flagged set (`shrinkable` + `walk_marked`) is
+            // bulk-marked, and every later marking site marks
+            // incrementally under the same epoch; the flagged set only
+            // grows and positions never move within a block.  Stale
+            // entries from earlier blocks read as empty (epoch mismatch).
+            // `mf_get` remains authoritative for every popped literal —
+            // the summary only decides where to look next, never what
+            // pops — so the pop order (newest flagged first) is the scan's
+            // in every mix, and even a wrong summary could not mis-pop.
+            let popped;
+            'pop: loop {
+                if self.shrink_active_epoch.is_none() {
+                    let mut probes = 0;
+                    loop {
+                        let pos = cursor;
+                        let uip_lit = self.trail.assignments()[pos];
+                        cursor = cursor.saturating_sub(1);
+                        if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
+                            popped = Some((pos, uip_lit));
+                            break 'pop;
+                        }
+                        probes += 1;
+                        if probes == SHRINK_SUMMARY_AFTER {
+                            break;
+                        }
+                    }
+                    // A whole group missed: activate the summary for this
+                    // block.  One-time O(open + walk-marked) bulk mark of
+                    // the complete flagged set (positions already popped
+                    // included — harmless, the cursor never revisits them),
+                    // then the summary-jump path below takes over.
+                    self.shrink_epoch = self.shrink_epoch.wrapping_add(1);
+                    let epoch = self.shrink_epoch;
+                    let chunks_needed = self.trail.assignments().len().div_ceil(64);
+                    if self.shrink_summary.len() < chunks_needed {
+                        self.shrink_summary
+                            .resize(chunks_needed, ShrinkChunk::EMPTY);
+                    }
+                    for &var in shrinkable.iter().chain(walk_marked.iter()) {
+                        self.shrink_flag_position(self.trail.trail_index(var) as usize, epoch);
+                    }
+                    self.shrink_active_epoch = Some(epoch);
                 }
+                // Summary-jump descent (the epoch is always valid here:
+                // the probe path above activates before falling through).
+                let epoch = self.shrink_active_epoch.unwrap_or(u64::MAX);
+                let c = cursor >> 6;
+                let in_pos = cursor & 63;
+                let avail = {
+                    let s = &self.shrink_summary[c];
+                    if s.epoch == epoch {
+                        s.bits & (u64::MAX >> (63 - in_pos))
+                    } else {
+                        0
+                    }
+                };
+                if avail == 0 {
+                    if c == 0 {
+                        // Trail exhausted with flagged literals unaccounted:
+                        // impossible while the open-count invariant holds
+                        // (every open literal is flagged, hence summarized).
+                        // Degrade to the sound fallback rather than spin or
+                        // fabricate a UIP.
+                        popped = None;
+                        break 'pop;
+                    }
+                    cursor = (c << 6) - 1;
+                    continue 'pop;
+                }
+                let pos = (c << 6) + (63 - avail.leading_zeros() as usize);
+                cursor = pos.saturating_sub(1);
+                let uip_lit = self.trail.assignments()[pos];
+                if self.mf_get(uip_lit.var()) & MF_SHRINKABLE != 0 {
+                    popped = Some((pos, uip_lit));
+                    break 'pop;
+                }
+                // Exactness makes this unreachable; clear the phantom bit
+                // anyway so the descent always makes progress (liveness
+                // guard, not a correctness path).
+                self.shrink_summary[c].bits &= !(1 << (pos & 63));
             }
+            // `popped` is `None` only on the impossible-exhaustion path above.
+            let Some((pos, uip_lit)) = popped else {
+                failed = true;
+                break;
+            };
             open -= 1;
             if open == 0 {
                 uip_var = Some(uip_lit.var());
@@ -1817,6 +1924,23 @@ impl Solver {
         }
     }
 
+    /// OR trail position `ti` into the current block's chunk summary (see
+    /// [`Solver::shrink_summary`]).  Called from every `MF_SHRINKABLE`
+    /// marking site; the summary is sized by the caller for the whole
+    /// trail (immutable during analysis).
+    #[inline]
+    fn shrink_flag_position(&mut self, ti: usize, epoch: u64) {
+        let c = ti >> 6;
+        debug_assert!(c < self.shrink_summary.len());
+        let e = &mut self.shrink_summary[c];
+        if e.epoch != epoch {
+            e.epoch = epoch;
+            e.bits = 1 << (ti & 63);
+        } else {
+            e.bits |= 1 << (ti & 63);
+        }
+    }
+
     /// One step of the block's resolution walk (cadical `shrink_literal`).
     /// `lit` is FALSE on the trail.  `Skip` covers level-0 literals,
     /// already-shrinkable ones, and lower-level literals that are (or probe)
@@ -1853,6 +1977,12 @@ impl Solver {
         }
         self.mf_set(var, MF_SHRINKABLE);
         self.lrat_minimized.push(var.index() as i32);
+        // Walk-discovered marking site: keep the chunk summary exact once
+        // the block's scan has activated it (dense blocks never do — see
+        // `shrink_block`).
+        if let Some(epoch) = self.shrink_active_epoch {
+            self.shrink_flag_position(self.trail.trail_index(var) as usize, epoch);
+        }
         ShrinkStep::NewlyShrinkable
     }
 
