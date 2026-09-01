@@ -151,8 +151,10 @@ struct Eliminator {
     /// SmallVecs spilled to the heap on long-antecedent resolutions and
     /// their push/grow path measured **21.5 % of the whole process** on
     /// g2-slp (8 M resolutions per phase-1 round). `res_resolvent` is only
-    /// cloned into an owned clause on the rare non-tautological outcome.
-    res_marked: Vec<Lit>,
+    /// cloned into an owned clause on the rare non-tautological outcome;
+    /// it also carries the marked-literal prefix `[..marked_n]` used to
+    /// unmark c's literals (the separate `res_marked` vector it replaces
+    /// was measured at ~4 % of g2-slp and removed).
     res_resolvent: Vec<Lit>,
     /// Variables eliminated this round.
     eliminated: usize,
@@ -188,7 +190,7 @@ impl Eliminator {
             bw_dlits: Vec::new(),
             bw_cands: Vec::new(),
             occ_scratch: Vec::new(),
-            res_marked: Vec::new(),
+
             res_resolvent: Vec::new(),
         }
     }
@@ -843,13 +845,20 @@ impl Solver {
         // and reused across the round (cadical's member `clause`/`marked`);
         // per-call SmallVecs here spilled to the heap on every long-antecedent
         // resolution and dominated the whole phase.
-        ctx.res_marked.clear();
+        // (No separate marking bookkeeping is kept — cadical `unmark(c)`
+        // re-derives the set from the clause; the marked literals are the
+        // `res_resolvent` prefix captured as `marked_n` after the c-scan.)
         ctx.res_resolvent.clear();
         let mut s = 0usize;
 
         let mut t = 0usize;
         let mut tautological = false;
 
+        // The marked prefix length, captured right after the c-scan: the
+        // marked literals are exactly `res_resolvent[0..marked_n]` (the
+        // d-scan only appends below it and never writes marks). Zero when
+        // the c-scan broke before marking anything (missing/satisfied).
+        let mut marked_n = 0usize;
         // ---- pure marking phase (immutable arena borrows only) ----
         'phases: {
             let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) else {
@@ -872,12 +881,12 @@ impl Solver {
                         let code = lit.code() as usize;
                         ctx.mark[code] = 1;
                         ctx.mark[lit.negate().code() as usize] = -1;
-                        ctx.res_marked.push(lit);
                         ctx.res_resolvent.push(lit);
                         s += 1;
                     }
                 }
             }
+            marked_n = ctx.res_resolvent.len();
 
             let Some(d) = self.clauses.get(nid).filter(|c| !c.deleted) else {
                 missing = true;
@@ -910,10 +919,11 @@ impl Solver {
         }
 
         // ---- effect phase ----
-        // Unmark inlined over the disjoint ctx fields (borrowing
-        // `ctx.res_marked` while mutating `ctx.mark` – the shared
-        // `elim_unmark` helper takes `&mut ctx` and cannot be used here).
-        for &lit in ctx.res_marked.iter() {
+        // Unmark inlined over the disjoint ctx fields: the marked literals
+        // are `res_resolvent[0..marked_n]` (the c-scan's prefix; the d-scan
+        // only appends below it and never writes marks). Clearing writes 0
+        // over the +1/-1 pair set above.
+        for &lit in ctx.res_resolvent[..marked_n].iter() {
             ctx.mark[lit.code() as usize] = 0;
             ctx.mark[lit.negate().code() as usize] = 0;
         }
