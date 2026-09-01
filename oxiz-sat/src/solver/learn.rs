@@ -225,10 +225,8 @@ impl Solver {
             let lit0 = learnt_clause[0];
             let lit1 = learnt_clause[1];
 
-            // Add to binary graph
-            self.binary_graph.add(lit0.negate(), lit1, clause_id);
-            self.binary_graph.add(lit1.negate(), lit0, clause_id);
-
+            // BIG registration (and the phantom tick count) happens inside
+            // `attach_watchers` for binaries – BIG-authoritative BCP, 2026-09.
             self.attach_watchers(clause_id, lit0, lit1);
 
             self.assert_learned_clause(&learnt_clause, clause_id);
@@ -570,12 +568,8 @@ impl Solver {
 
         let lit0 = clause_lits[0];
         let lit1 = clause_lits[1];
-        if n == 2 {
-            // Binary clause: also register in the binary implication graph,
-            // matching how `learn_clause` attaches binaries.
-            self.binary_graph.add(lit0.negate(), lit1, clause_id);
-            self.binary_graph.add(lit1.negate(), lit0, clause_id);
-        }
+        // BIG registration (and the phantom tick count) for a binary reason
+        // clause happens inside `attach_watchers` – BIG-authoritative BCP.
         self.attach_watchers(clause_id, lit0, lit1);
 
         clause_id
@@ -2221,8 +2215,8 @@ impl Solver {
             let lbd = self.compute_lbd(&[r.negate(), q]);
             self.clauses.set_lbd(id, lbd);
             self.debug_check_learned_clause_lbd(id);
-            self.binary_graph.add(r, q, id);
-            self.binary_graph.add(q.negate(), r.negate(), id);
+            // BIG registration (and the phantom tick count) happens inside
+            // `attach_watchers` for binaries.
             self.attach_watchers(id, r.negate(), q);
             self.clause_hyper.resize(id.index() + 1, false);
             self.clause_hyper[id.index()] = true;

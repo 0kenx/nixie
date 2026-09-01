@@ -44,10 +44,26 @@ impl Watcher {
 /// is just a (ptr,len,cap) move; with `SmallVec` it copied the inline buffer
 /// (up to 128 bytes) on every propagated literal and paid a heap spill once a
 /// list exceeded the inline capacity – a measurable propagation hot spot.
+///
+/// # Binary clauses are NOT watched (2026-09, BIG-authoritative BCP)
+///
+/// A live clause of length 2 is propagated exclusively by the binary
+/// implication graph (`Solver::binary_graph`), which `propagate()` scans
+/// *before* these lists; its watch entries were pure redundancy (measured:
+/// binary entries never reached their arena load – the BIG had already
+/// assigned the blocker true). `bin_phantom` exists for **tick parity**: the
+/// cadical-style tick counters are computed from watch-list sizes and drive
+/// restart / stable-mode schedules, so the removed binary entries must still
+/// be *counted* exactly as the old scheme counted them (including lingering
+/// after a retire, until the next rebuild). See
+/// `studies/2026-09-big-authoritative-bcp.md`.
 #[derive(Debug, Clone)]
 pub struct WatchLists {
-    /// Watch list for each literal
+    /// Watch list for each literal (length ≥ 3 clauses only).
     watches: Vec<Vec<Watcher>>,
+    /// Per-literal count of binary clauses keyed here in the old scheme
+    /// (tick parity bookkeeping – see the module-level note above).
+    bin_phantom: Vec<u32>,
 }
 
 impl WatchLists {
@@ -56,7 +72,36 @@ impl WatchLists {
     pub fn new(num_vars: usize) -> Self {
         Self {
             watches: vec![Vec::new(); num_vars * 2],
+            bin_phantom: vec![0; num_vars * 2],
         }
+    }
+
+    /// Record one binary clause direction keyed under `lit` (tick parity;
+    /// see the struct-level note). Idempotent across resets only via
+    /// [`Self::phantom_reset`] – every attach of a binary calls this once per
+    /// direction, exactly where the old scheme pushed one watch entry.
+    pub fn phantom_bump(&mut self, lit: Lit) {
+        let idx = lit.index();
+        if idx >= self.bin_phantom.len() {
+            self.bin_phantom.resize(idx + 1, 0);
+        }
+        self.bin_phantom[idx] = self.bin_phantom[idx].saturating_add(1);
+    }
+
+    /// Reset every phantom count (the full watch rebuild's bookkeeping:
+    /// the old scheme's rebuild re-created entries for exactly the live
+    /// binaries, so the refill that follows this must add one bump per live
+    /// binary direction).
+    pub fn phantom_reset(&mut self, num_lits: usize) {
+        self.bin_phantom.clear();
+        self.bin_phantom.resize(num_lits, 0);
+    }
+
+    /// Phantom binary count under `lit` (tick parity read; 0 when the
+    /// table has not grown that far).
+    #[must_use]
+    pub fn phantom_len(&self, lit: Lit) -> usize {
+        self.bin_phantom.get(lit.index()).map_or(0, |&c| c as usize)
     }
 
     /// Add a watcher for a literal
@@ -99,12 +144,18 @@ impl WatchLists {
         if new_size > self.watches.len() {
             self.watches.resize(new_size, Vec::new());
         }
+        if new_size > self.bin_phantom.len() {
+            self.bin_phantom.resize(new_size, 0);
+        }
     }
 
     /// Clear all watch lists
     pub fn clear(&mut self) {
         for watches in &mut self.watches {
             watches.clear();
+        }
+        for c in &mut self.bin_phantom {
+            *c = 0;
         }
     }
 

@@ -287,13 +287,13 @@ impl Solver {
     }
 
     /// Strengthen `clause_id` by dropping the literal at `idx`, keeping
-    /// watches, binary graph and proof stream consistent.
+    /// watches/BIG, and proof stream consistent.
     ///
-    /// A result of length 2 is additionally entered into the binary
-    /// implication graph (mirroring what `learn_clause` does for binary
-    /// learned clauses), so binary propagation keeps seeing it.
+    /// A result of length 2 is entered into the binary implication graph by
+    /// the `attach_watchers` call inside `remove_literal_and_rewatch`
+    /// (BIG-authoritative BCP, 2026-09), so binary propagation keeps seeing
+    /// it.
     fn strengthen_clause_in_subsume(&mut self, clause_id: ClauseId, idx: usize) {
-        let len_before = self.clauses.get(clause_id).map_or(0, |c| c.lits.len());
         let learned = self.clauses.get(clause_id).is_some_and(|c| c.learned);
         self.remove_literal_and_rewatch(clause_id, idx);
         if learned
@@ -310,14 +310,10 @@ impl Solver {
                 self.clauses.set_lbd(clause_id, cap);
             }
         }
-        if len_before == 3
-            && let Some(c) = self.clauses.get(clause_id)
-            && c.lits.len() == 2
-        {
-            let l0 = c.lits[0];
-            let l1 = c.lits[1];
-            self.binary_graph.add(l0.negate(), l1, clause_id);
-            self.binary_graph.add(l1.negate(), l0, clause_id);
-        }
+        // A result of length 2 needs no extra registration here: the
+        // `attach_watchers` call inside `remove_literal_and_rewatch`
+        // above enters new binaries into the BIG (BIG-authoritative BCP,
+        // 2026-09) – adding edges here again would duplicate them and
+        // double the phantom tick count.
     }
 }

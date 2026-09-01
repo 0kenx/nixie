@@ -395,6 +395,12 @@ impl Solver {
         let num_vars = self.num_vars;
         self.watches = WatchLists::new(num_vars);
         self.binary_graph.clear();
+        // Phantom tick-parity reset: the old scheme's rebuild re-created one
+        // watch entry per live-binary direction; the refill below bumps one
+        // phantom per direction in exactly the same places (see
+        // `WatchLists`'s module note and
+        // `studies/2026-09-big-authoritative-bcp.md`).
+        self.watches.phantom_reset(num_vars * 2);
         // Iterate clause ids directly (no id-Vec collection) and read each
         // clause's literals IN THE ARENA (no per-clause SmallVec copy): only
         // the first two literals and the arena slot are needed, and all
@@ -426,12 +432,20 @@ impl Solver {
                 continue;
             };
             let (a, b) = (c.lits[0], c.lits[1]);
-            watches.add(a.negate(), Watcher::new(cid, r, b));
-            watches.add(b.negate(), Watcher::new(cid, r, a));
             if c.lits.len() == 2 {
+                // BIG-authoritative BCP (2026-09): a live binary registers
+                // ONLY in the binary implication graph (plus its phantom
+                // tick count) – never in the watch lists. The BIG scan in
+                // `propagate()` runs before the watch scan, so a watch entry
+                // for a binary could never reach its arena load.
                 binary_graph.add(a.negate(), b, cid);
                 binary_graph.add(b.negate(), a, cid);
+                watches.phantom_bump(a.negate());
+                watches.phantom_bump(b.negate());
+                continue;
             }
+            watches.add(a.negate(), Watcher::new(cid, r, b));
+            watches.add(b.negate(), Watcher::new(cid, r, a));
         }
         learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
     }

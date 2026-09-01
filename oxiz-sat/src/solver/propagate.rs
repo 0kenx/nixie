@@ -110,13 +110,20 @@ impl Solver {
             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
             //
             // NOTE: deliberately counts 8 bytes/watcher even though our
-            // Watcher is 12 (id + arena slot + blocker). The tick counters
+            // `Watcher` is 12 (id + arena slot + blocker). The tick counters
             // drive restart/mode-switch schedules – changing the accounting
             // changes the search trajectory, which makes every before/after
             // measurement a different-search comparison. Any correction here
             // must go through the matched-null methodology in
             // docs/BENCHMARKING.md first.
-            let ticks = 1u64 + (watches.len() as u64 * 8).div_ceil(128);
+            //
+            // Binary clauses left the watch lists (BIG-authoritative BCP,
+            // 2026-09) but MUST still be counted here: the phantom counter
+            // models exactly the binary entries the old scheme scanned
+            // (attach/rebuild bump it; retirement leaves it lingering, as the
+            // old entries lingered) so the schedules stay bit-identical.
+            let phantom_bins = self.watches.phantom_len(lit);
+            let ticks = 1u64 + (((watches.len() + phantom_bins) as u64) * 8).div_ceil(128);
             if self.stable {
                 self.ticks_stable = self.ticks_stable.saturating_add(ticks);
             } else {

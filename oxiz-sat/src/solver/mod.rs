@@ -99,8 +99,22 @@ impl BinaryImplicationGraph {
         &mut self.implications[idx]
     }
 
-    fn get(&self, lit: Lit) -> &[(Lit, ClauseId)] {
+    pub(crate) fn get(&self, lit: Lit) -> &[(Lit, ClauseId)] {
         &self.implications[lit.code() as usize]
+    }
+
+    /// Iterate every edge as `(trigger, implied, clause_id)`, in key order.
+    /// Debug-invariant use (BIG-authoritative BCP backing check): the hot
+    /// loop trusts edges without a liveness probe, so every non-sentinel
+    /// edge must reference a live binary clause.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (Lit, Lit, ClauseId)> + '_ {
+        self.implications
+            .iter()
+            .enumerate()
+            .flat_map(|(code, list)| {
+                let from = Lit::from_code(code as u32);
+                list.iter().map(move |&(to, cid)| (from, to, cid))
+            })
     }
 
     fn clear(&mut self) {
@@ -1286,7 +1300,26 @@ impl Solver {
     /// attachment for a missing ref (a watcher-less clause degrades search
     /// completeness for that clause but is not a soundness hazard: dropping a
     /// watch never fabricates implications).
+    ///
+    /// **Binary clauses (len == 2) are registered in the binary implication
+    /// graph, not in the watch lists** (BIG-authoritative BCP, 2026-09):
+    /// `propagate()` scans the BIG first, so a binary watch entry could never
+    /// reach its arena load (measured; see
+    /// `studies/2026-09-big-authoritative-bcp.md`) – the entry was pure scan
+    /// volume. The phantom counter is bumped one per direction so the
+    /// tick-driven schedules keep seeing the old watch-list sizes. Callers
+    /// must NOT also add the BIG edges themselves (this is the single
+    /// registration point; double edges are sound but double-scan and break
+    /// tick parity).
     pub(super) fn attach_watchers(&mut self, cid: ClauseId, l0: Lit, l1: Lit) {
+        let is_binary = self.clauses.get(cid).is_some_and(|c| c.lits.len() == 2);
+        if is_binary {
+            self.binary_graph.add(l0.negate(), l1, cid);
+            self.binary_graph.add(l1.negate(), l0, cid);
+            self.watches.phantom_bump(l0.negate());
+            self.watches.phantom_bump(l1.negate());
+            return;
+        }
         let Some(r) = self.clauses.ref_of(cid) else {
             debug_assert!(
                 false,
@@ -2497,8 +2530,9 @@ impl Solver {
                     if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
                         current_level_clauses.push(clause_id);
                     }
-                    self.binary_graph.add(lit0.negate(), lit1, clause_id);
-                    self.binary_graph.add(lit1.negate(), lit0, clause_id);
+                    // BIG registration (and the phantom tick count) happens
+                    // inside `attach_watchers` for binaries – BIG-authoritative
+                    // BCP, 2026-09.
                     self.attach_watchers(clause_id, lit0, lit1);
                     return true;
                 }
@@ -2529,8 +2563,8 @@ impl Solver {
                 if let Some(current_level_clauses) = self.assertion_clause_ids.last_mut() {
                     current_level_clauses.push(clause_id);
                 }
-                self.binary_graph.add(lit0.negate(), lit1, clause_id);
-                self.binary_graph.add(lit1.negate(), lit0, clause_id);
+                // BIG registration (and the phantom tick count) happens
+                // inside `attach_watchers` for binaries.
                 self.attach_watchers(clause_id, lit0, lit1);
 
                 if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {

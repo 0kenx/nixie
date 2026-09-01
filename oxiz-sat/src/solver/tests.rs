@@ -1315,3 +1315,124 @@ fn pigeonhole_inprocessing_interval_1_stays_unsat() {
     }
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
+
+// ---------------------------------------------------------------------------
+// BIG-authoritative BCP (2026-09): binaries live in the binary implication
+// graph only; the watch lists carry length >= 3 clauses and a phantom tick
+// count. See studies/2026-09-big-authoritative-bcp.md.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn big_authoritative_binaries_have_no_watch_entries() {
+    // A pure binary formula: every clause registers in the BIG, none in the
+    // watch lists; the phantom counts match the old scheme's entry count
+    // (one per clause per direction).
+    let mut solver = Solver::new();
+    for _ in 0..6 {
+        let _ = solver.new_var();
+    }
+    // (¬x0 ∨ x1) ∧ (¬x1 ∨ x2) ∧ (x0 ∨ x3) ∧ (¬x2 ∨ x4): a chain forcing x1,
+    // x2, x4 true once x0 is false; x3 covers the x0-true branch.
+    solver.add_clause_dimacs(&[-1, 2]);
+    solver.add_clause_dimacs(&[-2, 3]);
+    solver.add_clause_dimacs(&[1, 4]);
+    solver.add_clause_dimacs(&[-3, 5]);
+
+    assert_eq!(solver.solve(), SolverResult::Sat);
+
+    // No live clause of len 2 may carry watch entries.
+    for cid in solver.clauses.iter_ids() {
+        let Some(c) = solver.clauses.get(cid) else {
+            continue;
+        };
+        if c.lits.len() == 2 {
+            let (a, b) = (c.lits[0], c.lits[1]);
+            assert!(
+                !solver
+                    .watches
+                    .get(a.negate())
+                    .iter()
+                    .any(|w| w.clause == cid)
+                    && !solver
+                        .watches
+                        .get(b.negate())
+                        .iter()
+                        .any(|w| w.clause == cid),
+                "binary clause {cid:?} carries watch entries"
+            );
+        }
+    }
+    // Both BIG edges per binary clause (spot-check the chain edge ¬x1 ∨ x2:
+    // x1 => x2 and ¬x2 => ¬x1).
+    let from = Lit::from_code(2); // x1 (Var 0, positive)
+    assert!(
+        solver
+            .binary_graph
+            .get(from)
+            .iter()
+            .any(|&(l, _)| l.code() == 2 * 2)
+    );
+}
+
+#[test]
+fn big_authoritative_invariant_catches_purged_edge() {
+    // Tripwire for the new load-bearing invariant: remove one BIG edge of a
+    // live binary and the backing check must fire (a missing edge is a lost
+    // implication, i.e. a wrong answer, not a slowdown).
+    let mut solver = Solver::new();
+    for _ in 0..3 {
+        let _ = solver.new_var();
+    }
+    solver.add_clause_dimacs(&[1, 2]);
+    solver.add_clause_dimacs(&[-1, 3]);
+    assert_eq!(solver.solve(), SolverResult::Sat);
+
+    // Purge both edges of clause 0 behind the API's back (simulating a
+    // missed purge/attach site): the checker must now report the clause as
+    // missing its edges.
+    let cid = crate::clause::ClauseId::new(0);
+    let (a, b) = {
+        let c = solver.clauses.get(cid).expect("clause 0 live");
+        (c.lits[0], c.lits[1])
+    };
+    solver.binary_graph.remove_clause_edges(a.negate(), cid);
+    solver.binary_graph.remove_clause_edges(b.negate(), cid);
+    assert!(
+        crate::invariants::check_binary_registration(&solver).is_err(),
+        "purged BIG edges must trip the structural registration invariant"
+    );
+    assert!(
+        crate::invariants::check_all_sat_invariants(&solver).is_err(),
+        "purged BIG edges must trip the full invariant set"
+    );
+}
+
+#[test]
+fn big_authoritative_phantom_tick_parity_counters() {
+    // The phantom counters exist to keep the tick-driven schedules
+    // bit-identical to the old binary-watch-entry accounting. Pin their
+    // semantics: bump per attach direction, reset+refill at rebuild, and
+    // read-back through phantom_len.
+    let mut solver = Solver::new();
+    for _ in 0..4 {
+        let _ = solver.new_var();
+    }
+    solver.add_clause_dimacs(&[1, 2]);
+    solver.add_clause_dimacs(&[-1, 3]);
+    solver.add_clause_dimacs(&[2, 4]);
+    solver.add_clause_dimacs(&[-2, -3]);
+
+    // DIMACS x_k is Var::new(k-1); ¬x2 = Lit::neg(Var::new(1)).
+    let neg1 = Lit::neg(Var::new(0));
+    let neg2 = Lit::neg(Var::new(1));
+    // Old scheme: one watch entry per clause direction — under ¬x2 the
+    // clauses (1∨2) and (2∨4) each held an entry (2); under ¬x1 only (1∨2)
+    // (the clause (¬1∨3) keys under x1 and ¬x3, not ¬x1).
+    assert_eq!(solver.watches.phantom_len(neg2), 2);
+    assert_eq!(solver.watches.phantom_len(neg1), 1);
+
+    // The rebuild resets and refills identically.
+    solver.rebuild_watches_and_binary_graph();
+    assert_eq!(solver.watches.phantom_len(neg2), 2);
+    assert_eq!(solver.watches.phantom_len(neg1), 1);
+}

@@ -78,6 +78,110 @@ pub(crate) fn check_all_sat_invariants(solver: &Solver) -> Result<(), String> {
     check_learned_clause_bounds(solver)?;
     check_reason_clauses_live(solver)?;
     check_implication_graph_acyclic(solver)?;
+    check_binary_graph_backing(solver)?;
+    check_binary_registration(solver)?;
+    Ok(())
+}
+
+/// Structural (context-free) registration check for every live clause,
+/// shared by [`check_all_sat_invariants`] and [`check_watched_literals`]:
+///
+/// * Length >= 3: registered in the general watch lists on both watched
+///   literals (the only mechanism able to enforce it).
+/// * Length == 2 (BIG-authoritative BCP, 2026-09): registered in the
+///   binary implication graph in both directions and in NO watch list.
+///   The BIG is the only propagation mechanism for binaries, so a missing
+///   edge is a lost implication (wrong answer), not a slowdown.
+pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
+    for id in solver.clauses.iter_ids() {
+        let Some(clause) = solver.clauses.get(id) else {
+            continue;
+        };
+        if clause.lits.len() < 2 {
+            continue;
+        }
+        let w0 = clause.lits[0];
+        let w1 = clause.lits[1];
+        if clause.lits.len() >= 3 {
+            if !solver
+                .watches
+                .get(w0.negate())
+                .iter()
+                .any(|w| w.clause == id)
+            {
+                return Err(format!(
+                    "clause {id:?} treats {w0:?} as a watched literal, but it is not registered \
+                     in the watch list keyed by its negation"
+                ));
+            }
+            if !solver
+                .watches
+                .get(w1.negate())
+                .iter()
+                .any(|w| w.clause == id)
+            {
+                return Err(format!(
+                    "clause {id:?} treats {w1:?} as a watched literal, but it is not registered \
+                     in the watch list keyed by its negation"
+                ));
+            }
+        } else {
+            let has_edge =
+                |from: Lit, to: Lit| solver.binary_graph.get(from).iter().any(|&(l, _)| l == to);
+            if !has_edge(w0.negate(), w1) || !has_edge(w1.negate(), w0) {
+                return Err(format!(
+                    "binary clause {id:?} ({w0:?} ∨ {w1:?}) is missing its binary-implication \
+                     edges; the BIG is the only propagation mechanism for binaries \
+                     (BIG-authoritative BCP) – a missing edge is a lost implication"
+                ));
+            }
+            if solver
+                .watches
+                .get(w0.negate())
+                .iter()
+                .any(|w| w.clause == id)
+                || solver
+                    .watches
+                    .get(w1.negate())
+                    .iter()
+                    .any(|w| w.clause == id)
+            {
+                return Err(format!(
+                    "binary clause {id:?} carries watch-list entries; binaries are \
+                     BIG-only (BIG-authoritative BCP)"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// BIG-authoritative BCP (2026-09): every non-sentinel binary-implication
+/// edge must be *backed* by a live length-2 clause whose literals match the
+/// edge. The BIG is the only propagation mechanism for binaries and its hot
+/// loop trusts its edges without a liveness check, so a dangling edge is a
+/// wrong implication (wrong answer), not a slowdown. Sentinel edges
+/// (`ClauseId(u32::MAX)`, the gate-congruence augmentation) exist only
+/// mid-ELS-round and are skipped.
+pub(crate) fn check_binary_graph_backing(solver: &Solver) -> Result<(), String> {
+    for (from, to, cid) in solver.binary_graph.iter() {
+        if cid.0 == u32::MAX {
+            continue; // gate-congruence sentinel (valid implications, no clause)
+        }
+        let backed = solver.clauses.get(cid).is_some_and(|c| {
+            !c.deleted
+                && c.lits.len() == 2
+                && ((c.lits[0] == from.negate() && c.lits[1] == to)
+                    || (c.lits[1] == from.negate() && c.lits[0] == to))
+        });
+        if !backed {
+            return Err(format!(
+                "binary-implication edge {from:?} => {to:?} references clause {cid:?} \
+                 which is not a live binary clause with those literals; the BIG \
+                 is authoritative for binary propagation"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -165,6 +269,10 @@ pub(crate) fn check_assignment_consistency(solver: &Solver) -> Result<(), String
 /// mid-scan it is routine for a clause to transiently have both watches
 /// false while its watcher entry has simply not been revisited yet.
 pub(crate) fn check_watched_literals(solver: &Solver) -> Result<(), String> {
+    // Structural registration (watched ≥ 3; BIG-only binaries) is shared
+    // with `check_all_sat_invariants` – see `check_binary_registration`.
+    check_binary_registration(solver)?;
+
     for id in solver.clauses.iter_ids() {
         let Some(clause) = solver.clauses.get(id) else {
             continue;
@@ -175,52 +283,11 @@ pub(crate) fn check_watched_literals(solver: &Solver) -> Result<(), String> {
         let w0 = clause.lits[0];
         let w1 = clause.lits[1];
 
-        // Structural registration check: only for length >= 3.
-        //
-        // A length-2 clause has *two* independent, mutually sufficient
-        // propagation mechanisms in this solver: the general two-watched-
-        // literal scheme (`solver.watches`) and the direct-indexed binary
-        // implication graph (`solver.binary_graph`, see `propagate()`'s
-        // "backed" check, which accepts any live 2-literal clause matching
-        // an edge). Different call sites pick different ones --
-        // `Solver::add_clause` and `learn_clause`'s binary branch register
-        // *both* (redundant but harmless), `check_hyper_binary_resolution`
-        // registers *only* the binary graph, and `add_theory_reason_clause`
-        // registers *only* the watch list -- so a length-2 clause lacking a
-        // watch-list entry is not a violation, only evidence that the binary
-        // graph is the one enforcing it. A length >= 3 clause has no such
-        // alternative: the binary graph only ever stores 2-literal edges, so
-        // the general watched-literal scheme is the *only* mechanism able to
-        // enforce it, and registration is mandatory there.
-        if clause.lits.len() >= 3 {
-            if !solver
-                .watches
-                .get(w0.negate())
-                .iter()
-                .any(|w| w.clause == id)
-            {
-                return Err(format!(
-                    "clause {id:?} treats {w0:?} as a watched literal, but it is not registered \
-                     in the watch list keyed by its negation"
-                ));
-            }
-            if !solver
-                .watches
-                .get(w1.negate())
-                .iter()
-                .any(|w| w.clause == id)
-            {
-                return Err(format!(
-                    "clause {id:?} treats {w1:?} as a watched literal, but it is not registered \
-                     in the watch list keyed by its negation"
-                ));
-            }
-        }
-
-        // The "not both watches false while unsatisfied" semantic property,
-        // though, holds for every clause of length >= 2 regardless of which
+        // The "not both watches false while unsatisfied" semantic property
+        // holds for every clause of length >= 2 regardless of which
         // mechanism enforces it -- it is a statement about the assignment,
-        // not about `solver.watches` specifically.
+        // not about `solver.watches` specifically. Only meaningful at a
+        // propagation fixpoint (see the module doc).
         let satisfied = clause
             .lits
             .iter()

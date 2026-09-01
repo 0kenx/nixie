@@ -305,8 +305,8 @@ impl Solver {
             let lbd = self.compute_lbd(&[neg_dom, q]);
             self.clauses.set_lbd(id, lbd);
             self.debug_check_learned_clause_lbd(id);
-            self.binary_graph.add(dom_lit, q, id);
-            self.binary_graph.add(q.negate(), neg_dom, id);
+            // BIG registration (and the phantom tick count) happens inside
+            // `attach_watchers` for binaries – BIG-authoritative BCP, 2026-09.
             self.attach_watchers(id, neg_dom, q);
             self.clause_hyper.resize(id.index() + 1, false);
             self.clause_hyper[id.index()] = true;
