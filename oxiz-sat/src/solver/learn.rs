@@ -762,6 +762,11 @@ impl Solver {
             self.clauses.remove(cid);
             self.stats.deleted_clauses += 1;
         }
+
+        // Arena reclamation, same as the legacy reduce path (cadical runs
+        // its garbage collection inside reduce too).
+        self.compact_clause_arena_if_due();
+
         self.debug_check_invariants("after cadical-style reduction");
 
         // Schedule the next reduction (cadical reduceopt=1 default).
@@ -945,11 +950,16 @@ impl Solver {
         self.learned_clause_ids
             .retain(|&cid| self.clauses.get(cid).is_some_and(|c| !c.deleted));
 
+        // Arena reclamation (standing-gap lever 1): reclaim the deleted
+        // slots this round (and earlier rounds) created, gated on the
+        // garbage ratio so the cost is amortized. Trajectory-neutral by
+        // construction: contents, ids and watch-list order all survive.
+        self.compact_clause_arena_if_due();
+
         // Apply memory optimizer recommendations after deletion
         match self.memory_optimizer.recommend_action() {
             MemoryAction::Compact => {
                 self.memory_optimizer.compact();
-                self.clauses.compact();
             }
             MemoryAction::ReduceClauseDatabase => {
                 // Already reduced; just compact the pool
@@ -958,6 +968,28 @@ impl Solver {
             MemoryAction::ExpandPools | MemoryAction::None => {
                 // No action needed
             }
+        }
+    }
+
+    /// Clause-arena reclamation (standing-gap lever 1,
+    /// `docs/studies/2026-09-01-standing-vs-kissat-gap-decomposition.md`):
+    /// relocate live clauses downward in place (kissat-style sweep),
+    /// dropping deleted slots and shrink padding, and rewriting the refs
+    /// table and every watcher's arena slot in place. Called from both reduce paths every
+    /// round (cadical/kissat shape: GC is part of reduce); the gate inside
+    /// keeps it amortized O(1) per byte of garbage.
+    ///
+    /// Trajectory-neutral by construction – clause bytes, ids, watch-list
+    /// order and every counter the search reads are preserved; only
+    /// physical addresses move (verified by the 54-file identity gate).
+    /// `OXIZ_NO_ARENA_COMPACT=1` disables it (A/B and emergency switch).
+    pub(super) fn compact_clause_arena_if_due(&mut self) {
+        if !crate::arena_compact_enabled() {
+            return;
+        }
+        if self.clauses.compact_arena(&mut self.watches) {
+            self.stats.arena_compactions = self.stats.arena_compactions.saturating_add(1);
+            self.debug_check_invariants("after clause-arena compaction");
         }
     }
 

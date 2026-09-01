@@ -624,6 +624,9 @@ pub struct SolverStats {
     pub chrono_backtracks: u64,
     /// Number of non-chronological backtracks
     pub non_chrono_backtracks: u64,
+    /// Clause-arena compactions performed (arena garbage collection;
+    /// see `Solver::compact_clause_arena_if_due`).
+    pub arena_compactions: u64,
     /// Number of CaDiCaL-style "lucky" pre-solving attempts (see `lucky_phases`).
     pub lucky_tried: u64,
     /// Number of "lucky" attempts that produced a model without search.
@@ -760,6 +763,7 @@ impl SolverStats {
         println!("Literals removed:       {:>12}", self.literals_removed);
         println!("Chrono backtracks:      {:>12}", self.chrono_backtracks);
         println!("Non-chrono backtracks:  {:>12}", self.non_chrono_backtracks);
+        println!("Arena compactions:      {:>12}", self.arena_compactions);
         println!("Rephases:               {:>12}", self.rephased.total);
         println!(
             "  original/inverted:    {:>5}/{:<8}",

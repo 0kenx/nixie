@@ -128,8 +128,13 @@ impl ClauseMaintenance {
             self.optimize_tier(clause_id, clauses);
         }
 
-        // Compact the database periodically
-        clauses.compact();
+        // NOTE: no arena compaction here. Reclaiming arena slots relocates
+        // clauses, which requires rewriting every `ClauseRef` holder in the
+        // same breath – the database's `refs` table *and* the solver's
+        // watcher slots (`ClauseDatabase::compact_arena` takes both). This
+        // queue-scoped helper only sees the database, so compaction is
+        // owned by the solver's reduce paths instead
+        // (`Solver::compact_clause_arena_if_due`).
 
         removed_clauses
     }

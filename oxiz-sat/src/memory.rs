@@ -19,18 +19,29 @@
 //!
 //! # Lifetime invariants (the load-bearing ones)
 //!
-//! * **Append-only.** Slots are never reused and never relocated. A
-//!   `ClauseRef` therefore names exactly one clause for the entire life of
-//!   the arena. This mirrors the no-slot-reuse soundness rule of
-//!   `ClauseDatabase::add`: stale watch-list entries and trail reasons can
-//!   hold a `ClauseRef` across deletions, and they must never come to name a
-//!   *different* clause. There is no compaction that moves slots.
+//! * **Slots are never reused, and relocation rewrites every holder.**
+//!   Between compactions the arena is append-only: allocation only ever
+//!   extends `pos`, so a `ClauseRef` names exactly one clause. This mirrors
+//!   the no-slot-reuse soundness rule of `ClauseDatabase::add`: stale
+//!   watch-list entries and trail reasons can hold a `ClauseRef` across
+//!   deletions, and they must never come to name a *different* clause.
+//!   [`ClauseArena::compact`] is the single exception to append-only: it
+//!   relocates every live clause downward **in place** and **synchronously
+//!   rewrites every outstanding ref holder** (the database's `refs` table,
+//!   then each watcher's `.r` via `WatchLists::relocate_refs`)
+//!   – an audit confirmed watchers are the only `ClauseRef` holders outside
+//!   the database (`ClauseRef`'s inner offset is private to this module, so
+//!   the audit is enforced by the type system). Deleted ids relocate to a
+//!   **permanent tombstone slot** at the end of the compacted region that
+//!   always reads as a deleted clause, so a stale ref can never dangle
+//!   past the shrunken live region nor name an unrelated clause.
 //! * **Shrink-in-slot.** [`ClauseArena::shrink`] rewrites a clause with a
 //!   shorter literal array *in place* (the tail bytes of the old slot become
 //!   unreachable padding). Growing a clause is not possible in place and the
 //!   API refuses it; every in-solver rewrite site only ever shrinks (drops
 //!   redundant literals). Shrinking keeps the `ClauseRef` stable, which
-//!   watchers and reasons require.
+//!   watchers and reasons require. (Compaction later re-tightens shrunk
+//!   slots to their current length, reclaiming that padding.)
 //! * Offsets are `u32`; [`ClauseRef::NULL`] (`u32::MAX`) is reserved.
 //!
 //! # Deleted-flag reads
@@ -163,6 +174,15 @@ impl ClauseHeader {
 const HEADER_BYTES: usize = core::mem::size_of::<ClauseHeader>();
 const ALIGN: usize = 8;
 
+/// Compaction gate: minimum unreachable bytes before a compaction can pay
+/// for itself (smaller arenas never reach the [`ClauseArena::should_compact`]
+/// gate – sub-64-KiB waste is irrelevant to RSS and not worth a copy).
+const COMPACT_MIN_WASTED: usize = 64 * 1024;
+/// Compaction gate divisor: garbage must reach `live / COMPACT_WASTE_DIV`
+/// (a third) before firing. Bounds total copy work at ~3× the bytes ever
+/// garbage-collected (see [`ClauseArena::should_compact`]).
+const COMPACT_WASTE_DIV: usize = 3;
+
 #[inline]
 fn slot_size(len: usize) -> usize {
     let raw = HEADER_BYTES + len * core::mem::size_of::<Lit>();
@@ -213,7 +233,9 @@ pub struct ClauseArena {
     /// alignment; all offsets are byte offsets into this buffer and every
     /// slot starts at a multiple of 8.
     buffer: Vec<u64>,
-    /// Write position, in bytes (always a multiple of 8).
+    /// Write position, in bytes (always a multiple of 8). Decreases only in
+    /// [`Self::compact`], which synchronously rewrites every outstanding
+    /// ref holder.
     pos: usize,
     /// Bytes occupied by deleted (unreachable) slots.
     wasted_bytes: usize,
@@ -221,6 +243,8 @@ pub struct ClauseArena {
     num_clauses: usize,
     /// Slots deleted.
     num_deleted: usize,
+    /// Compactions performed (see [`Self::compact`]).
+    compactions: u64,
 }
 
 impl Default for ClauseArena {
@@ -240,6 +264,7 @@ impl ClauseArena {
             wasted_bytes: 0,
             num_clauses: 0,
             num_deleted: 0,
+            compactions: 0,
         }
     }
 
@@ -396,6 +421,201 @@ impl ClauseArena {
             return None;
         }
         Some(h)
+    }
+
+    /// Header of the slot at byte offset `off`, read from `base` (the
+    /// buffer holding the slot), validated against the live region
+    /// `[0, arena_end)`: the header must lie fully inside it and the
+    /// declared literal array must fit between the header and the region
+    /// end – the same bound every arena read applies (`get`/`read_header`).
+    /// `None` for out-of-range offsets or a length that would cross the
+    /// region – refuse rather than trust a fabricated length.
+    ///
+    /// SAFETY: `base` must point at the buffer that holds a slot starting
+    /// at `off`, and `[base, base + arena_end)` must be initialised.
+    #[inline]
+    unsafe fn header_in_extent(
+        base: *const u8,
+        off: usize,
+        arena_end: usize,
+    ) -> Option<ClauseHeader> {
+        if off + HEADER_BYTES > arena_end {
+            return None;
+        }
+        // SAFETY: caller contract; reading by value holds no borrow.
+        let h = unsafe { core::ptr::read(base.add(off).cast::<ClauseHeader>()) };
+        if HEADER_BYTES + h.len as usize * core::mem::size_of::<Lit>() > arena_end - off {
+            return None;
+        }
+        Some(h)
+    }
+
+    /// Amortization gate for [`Self::compact`], checked every reduce round
+    /// (the cadical/kissat shape: garbage collection is part of reduce, and
+    /// the gate keeps it amortized O(1) per byte of garbage).
+    ///
+    /// Fires when the unreachable bytes reach the 64-KiB minimum *and*
+    /// at least a third of the live data (garbage ≥ live/3): after a
+    /// compaction at least `live/3` bytes must therefore be deleted before
+    /// the next one can fire, so the total copy work over a whole run is
+    /// bounded by ~3× the bytes ever garbage-collected – never per-conflict.
+    /// `wasted_bytes` counts deleted slots only; the shrink padding a
+    /// compaction also reclaims is unaccounted (shrink is rare next to
+    /// deletion), so the true reclaim can only exceed the gate's estimate.
+    #[must_use]
+    pub fn should_compact(&self) -> bool {
+        self.wasted_bytes >= COMPACT_MIN_WASTED
+            && self.wasted_bytes >= (self.pos - self.wasted_bytes) / COMPACT_WASTE_DIV
+    }
+
+    /// Relocate every live clause downward in place (kissat-style) and
+    /// reclaim deleted slots *and* shrink padding. This is the real
+    /// implementation of the compaction the reduce loop has always called
+    /// (it was an empty stub until 2026-09; see
+    /// `docs/studies/2026-09-01-standing-vs-kissat-gap-decomposition.md`).
+    ///
+    /// * `slots` must list **every** slot the database has ever allocated,
+    ///   indexed by clause id – the database's `refs` table is exactly
+    ///   this. Live entries' offsets are strictly ascending in id order
+    ///   (debug-asserted below); deleted entries may hold any earlier
+    ///   tombstone offset. Walking the buffer by recomputed strides
+    ///   instead would be unsound: a slot's physical size is fixed at
+    ///   allocation while `shrink` lowers `len` (the stride-desync bug
+    ///   documented on [`Self::scale_activity`]).
+    /// * On return `slots[i]` holds the clause's **new** ref if it was
+    ///   live, or the tombstone ref if it was deleted (or failed
+    ///   validation – an impossible state that must never fabricate a
+    ///   relocation). The caller then rewrites every other ref holder from
+    ///   this table (`WatchLists::relocate_refs`).
+    ///
+    /// The compacted region ends with a permanent **tombstone slot** (a
+    /// `len == 0`, deleted-flagged header) so a stale ref always lands on a
+    /// readable deleted clause; live clauses precede it in slot order,
+    /// re-tightened to their current length (a 4→3 shrink's 8 bytes of
+    /// padding are reclaimed). Clause contents, ids and relative order are
+    /// untouched, so the solver's trajectory is preserved exactly – only
+    /// physical addresses change.
+    ///
+    /// The sweep is **in place**, kissat-style (`collect.c`'s src/dst
+    /// pointers): placing the tombstone at the *end* makes every live
+    /// clause's new offset ≤ its old offset (deleted bytes only ever
+    /// precede it), so clauses are `memmove`d down within the existing
+    /// buffer – **peak RSS never exceeds the pre-compaction footprint**
+    /// (a fresh-buffer copy would transiently hold old + new, which showed
+    /// up as a +25 % peak on si2-b03m before this was rewritten). The tail
+    /// is then returned via
+    /// `shrink_to_fit` (glibc splits the arena's mmap in place), and no
+    /// remap table is needed: the rewritten `slots` array *is* the map.
+    pub fn compact(&mut self, slots: &mut [ClauseRef]) -> CompactSummary {
+        let old_pos = self.pos;
+        let tombstone_bytes = slot_size(0);
+
+        // Pass 1 (read-only): classify every entry and measure the
+        // compacted size (live clauses re-tightened to their current
+        // lengths). Validation is the same bound every arena read uses
+        // (`get`/`read_header`: header inside the live region, declared
+        // literal array fitting between the header and `pos`) – a `slots`
+        // entry that fails it, or whose header is deleted (a slot deleted
+        // since the last compaction, or a previous compaction's tombstone
+        // offset), is tombstoned rather than copied.
+        //
+        // Debug invariant carried through this scan: the **live** entries'
+        // offsets are strictly ascending in id order (ids are handed out in
+        // allocation order, `alloc` only appends, and every compaction
+        // relocates live clauses preserving that order).
+        let mut live_bytes = 0usize;
+        let mut live_count = 0usize;
+        let mut tombstoned = 0usize;
+        let mut prev_live_off: Option<usize> = None;
+        // SAFETY: `self.buffer` holds every real slot listed in `slots`;
+        // reads only, before any in-place write.
+        let base = self.buffer.as_ptr().cast::<u8>();
+        for slot in slots.iter() {
+            let off = slot.byte_offset();
+            match unsafe { Self::header_in_extent(base, off, old_pos) } {
+                Some(h) if !h.deleted() => {
+                    debug_assert!(
+                        prev_live_off.is_none_or(|p| p < off),
+                        "live slot offsets must be strictly ascending in id order"
+                    );
+                    prev_live_off = Some(off);
+                    live_bytes += slot_size(h.len as usize);
+                    live_count += 1;
+                }
+                _ => tombstoned += 1,
+            }
+        }
+
+        // Pass 2 (in place): every live clause moves to
+        // `dst = Σ slot_size(len)` over the live clauses before it, which is
+        // ≤ its current offset (deleted bytes only ever precede it) – a
+        // downward `memmove` inside the existing buffer, so the peak
+        // footprint is never exceeded.
+        let tomb_off = live_bytes;
+        let tomb = ClauseRef::from_byte_offset(tomb_off).unwrap_or(ClauseRef::NULL);
+        let mut dst = 0usize;
+        // SAFETY: within one call, `base` stays valid (no reallocation).
+        // When slot i is processed, the bytes at `[off_i, off_i + bytes)`
+        // are untouched by earlier copies (each copy i' < i ended at
+        // `dst_{i'+1} ≤ off_i`), so its header read is sound; the copy
+        // itself uses `ptr::copy` because `[dst, dst+bytes)` may overlap
+        // `[off, off+bytes)` when the gap is smaller than the slot.
+        let base = self.buffer.as_mut_ptr().cast::<u8>();
+        unsafe {
+            for slot in slots.iter_mut() {
+                let off = slot.byte_offset();
+                let Some(hdr) = Self::header_in_extent(base, off, old_pos) else {
+                    // Unreachable through the public API (every `slots`
+                    // entry came from `alloc` or a prior compaction);
+                    // tombstone rather than fabricate a relocation for a
+                    // corrupt slot.
+                    *slot = tomb;
+                    continue;
+                };
+                if hdr.deleted() {
+                    *slot = tomb;
+                    continue;
+                }
+                let bytes = HEADER_BYTES + hdr.len as usize * core::mem::size_of::<Lit>();
+                core::ptr::copy(base.add(off).cast::<u8>(), base.add(dst), bytes);
+                *slot = ClauseRef::from_byte_offset(dst).unwrap_or(tomb);
+                dst += slot_size(hdr.len as usize);
+            }
+            debug_assert_eq!(dst, live_bytes, "pass-1 measurement must equal the copy");
+
+            // The permanent tombstone at the end of the compacted region.
+            // Room for it exists unless the region is entirely live (only
+            // the ungated test entry can hit that); reserve in that case.
+            if tomb_off + tombstone_bytes > self.buffer.capacity() * ALIGN {
+                self.buffer
+                    .reserve((tomb_off + tombstone_bytes).div_ceil(ALIGN) - self.buffer.len());
+            }
+            let base = self.buffer.as_mut_ptr().cast::<u8>();
+            let mut h = ClauseHeader::new(0, false);
+            h.flags_tier = FLAG_DELETED;
+            base.add(tomb_off).cast::<ClauseHeader>().write(h);
+            let new_pos = tomb_off + tombstone_bytes;
+            self.buffer.set_len(new_pos.div_ceil(ALIGN));
+        }
+
+        self.pos = tomb_off + tombstone_bytes;
+        // Return the freed tail to the allocator (glibc splits the arena's
+        // mmap in place; small brk-backed buffers may keep their capacity,
+        // which is irrelevant at those sizes).
+        self.buffer.truncate(self.pos / ALIGN);
+        self.buffer.shrink_to_fit();
+        self.num_clauses = live_count + 1; // + the tombstone slot
+        self.num_deleted = 1; // the tombstone
+        self.wasted_bytes = tombstone_bytes;
+        self.compactions += 1;
+
+        CompactSummary {
+            live: live_count,
+            tombstoned,
+            old_bytes: old_pos,
+            new_bytes: self.pos,
+            tombstone_offset: tomb_off as u32,
+        }
     }
 
     /// Rewrite the clause at `r` with `new_lits`, in place.
@@ -576,17 +796,24 @@ impl ClauseArena {
     /// `debug_assert!`s.
     ///
     /// Release elision argument: `self.pos` is written only by `alloc`
-    /// (`self.pos = end`) and never decreases — no `clear`/`reset`/
-    /// compaction exists on the arena — so every `ClauseRef` this arena
-    /// has ever handed out remains within `[0, pos)` for the solver's
-    /// lifetime.  The elided checks (`byte_offset + HEADER_BYTES > pos`
-    /// and the len-in-region bound) can therefore only fire on a
-    /// *fabricated* ref, which no production caller constructs (watchers
-    /// carry refs from `alloc`; the only semantic liveness condition is
-    /// the deleted flag, which is checked — it arrives free with the
-    /// header load this function must do anyway).  Measured 2026-08-21:
-    /// the validated path's arithmetic was the bulk of the ~10 %
-    /// `read_header` bucket in the noL propagate profile.
+    /// (`self.pos = end`, monotonic) and by `compact` (`self.pos = dst`,
+    /// shrinking) – and a compaction **synchronously rewrites every
+    /// outstanding ref holder** (the `refs` table, then each watcher's `.r`;
+    /// watchers are the only `ClauseRef` holders outside the database, an
+    /// audit enforced by the privacy of the inner offset). A `ClauseRef`
+    /// this arena has handed out therefore still names its clause after a
+    /// compaction – live clauses at their new offset, deleted clauses at
+    /// the permanent tombstone slot (the end of the compacted region),
+    /// which is always inside the live region and always deleted-flagged.
+    /// The elided checks
+    /// (`byte_offset + HEADER_BYTES > pos` and the len-in-region bound) can
+    /// therefore only fire on a *fabricated* ref, which no production caller
+    /// constructs (watchers carry refs from `alloc`/`relocate_refs`; the
+    /// only semantic liveness condition is the deleted flag, which is
+    /// checked – it arrives free with the header load this function must do
+    /// anyway).  Measured 2026-08-21: the validated path's arithmetic was
+    /// the bulk of the ~10 % `read_header` bucket in the noL propagate
+    /// profile.
     #[inline]
     pub fn live_lits_hot(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
         if r.is_null() {
@@ -687,6 +914,7 @@ impl ClauseArena {
             wasted_bytes: self.wasted_bytes,
             num_clauses: self.num_clauses,
             num_deleted: self.num_deleted,
+            compactions: self.compactions,
         }
     }
 }
@@ -722,6 +950,24 @@ pub struct MemoryStats {
     pub num_clauses: usize,
     /// Number of deleted clauses.
     pub num_deleted: usize,
+    /// Compactions performed (slots reclaimed + re-tightened).
+    pub compactions: u64,
+}
+
+/// What one [`ClauseArena::compact`] reclaimed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompactSummary {
+    /// Live clauses relocated.
+    pub live: usize,
+    /// Deleted slots whose `refs` entries became the tombstone.
+    pub tombstoned: usize,
+    /// Live-region bytes before (old `pos`).
+    pub old_bytes: usize,
+    /// Live-region bytes after (tombstone included).
+    pub new_bytes: usize,
+    /// Byte offset of the permanent deleted-clause tombstone (the end of
+    /// the compacted region); deleted ids relocate here.
+    pub tombstone_offset: u32,
 }
 
 impl MemoryStats {
@@ -1044,5 +1290,159 @@ mod tests {
             a.add_activity(r, 1e20_f32);
         }
         assert!(a.get(r).expect("bumped").activity.is_finite());
+    }
+
+    #[test]
+    fn compact_moves_live_and_tombstones_deleted() {
+        let mut a = ClauseArena::new(0);
+        let r1 = a.alloc(&[l(0), l(1), l(2)], false);
+        let r2 = a.alloc(&[l(3), l(4)], true); // deleted
+        let r3 = a.alloc(&[l(5), l(6), l(7), l(8)], false);
+        a.set_lbd(r1, 4);
+        a.set_tier(r1, ClauseTier::Core);
+        a.bump_usage(r1);
+        a.add_activity(r3, 7.5);
+        a.delete(r2);
+
+        let mut slots = vec![r1, r2, r3];
+        let s = a.compact(&mut slots);
+
+        assert_eq!(s.live, 2);
+        assert_eq!(s.tombstoned, 1);
+        assert!(s.new_bytes < s.old_bytes);
+
+        // Deleted slot's entry became the tombstone (end of the compacted
+        // region), which reads as a deleted clause (never dangles, never
+        // names another clause).
+        assert_eq!(slots[1].byte_offset(), s.tombstone_offset as usize);
+        assert_eq!(slots[1].byte_offset(), slot_size(3) + slot_size(4));
+        assert!(a.get(slots[1]).expect("tombstone readable").deleted);
+
+        // Live clauses relocated in place (downward), contents and metadata
+        // identical; the first live clause now sits at offset 0.
+        assert_eq!(slots[0].byte_offset(), 0);
+        let v1 = a.get(slots[0]).expect("r1 live");
+        assert_eq!(v1.lits, &[l(0), l(1), l(2)]);
+        assert_eq!(v1.lbd, 4);
+        assert_eq!(v1.tier, ClauseTier::Core);
+        assert_eq!(v1.usage_count, 1);
+        assert!(!v1.deleted);
+        let v3 = a.get(slots[2]).expect("r3 live");
+        assert_eq!(v3.lits, &[l(5), l(6), l(7), l(8)]);
+        assert_eq!(v3.activity, 7.5);
+
+        // Counters: live + tombstone only.
+        let st = a.stats();
+        assert_eq!(st.num_clauses, 3);
+        assert_eq!(st.num_deleted, 1);
+        assert_eq!(st.compactions, 1);
+        assert_eq!(st.wasted_bytes, 16);
+        assert_eq!(st.used_bytes, slot_size(3) + slot_size(4) + 16);
+    }
+
+    #[test]
+    fn compact_reclaims_shrink_padding() {
+        // A 4-literal slot (32 B) shrunk to 2 literals still occupies 32 B
+        // until compaction re-tightens it to 24 B.
+        let mut a = ClauseArena::new(0);
+        let r = a.alloc(&[l(0), l(1), l(2), l(3)], false);
+        assert!(a.shrink(r, &[l(2), l(0)]));
+        let before = a.stats().used_bytes;
+        assert_eq!(before, 32);
+
+        let mut slots = vec![r];
+        let s = a.compact(&mut slots);
+        assert_eq!(a.stats().used_bytes, slot_size(2) + 16);
+        assert_eq!(s.tombstone_offset as usize, slot_size(2));
+        assert_eq!(a.get(slots[0]).expect("shrunk live").lits, &[l(2), l(0)]);
+    }
+
+    #[test]
+    fn compact_then_alloc_continues_fresh() {
+        let mut a = ClauseArena::new(0);
+        let r1 = a.alloc(&[l(0), l(1)], false);
+        a.delete(r1);
+        let mut slots = vec![r1];
+        let s = a.compact(&mut slots);
+        assert_eq!(slots[0].byte_offset(), s.tombstone_offset as usize);
+        assert_eq!(s.tombstone_offset, 0, "no live clauses: tombstone at 0");
+
+        // Post-compaction allocation lands after the tombstone-only region.
+        let r2 = a.alloc(&[l(9), l(10), l(11)], true);
+        assert_eq!(r2.byte_offset(), 16);
+        assert_eq!(a.get(r2).expect("fresh").lits, &[l(9), l(10), l(11)]);
+    }
+
+    #[test]
+    fn compact_on_empty_arena_yields_tombstone_only() {
+        let mut a = ClauseArena::new(0);
+        let slots: &mut [ClauseRef] = &mut [];
+        let s = a.compact(slots);
+        assert_eq!(a.stats().used_bytes, 16);
+        let tomb = ClauseRef::from_byte_offset(s.tombstone_offset as usize).expect("in range");
+        assert!(a.get(tomb).expect("tombstone").deleted);
+        assert!(a.get(tomb).expect("tombstone").lits.is_empty());
+    }
+
+    #[test]
+    fn should_compact_gate_is_amortized() {
+        let mut a = ClauseArena::new(0);
+        // Tiny arena: below the absolute floor.
+        let rs: Vec<_> = (0..10).map(|i| a.alloc(&[l(i), l(i + 1)], false)).collect();
+        for r in rs {
+            a.delete(r);
+        }
+        assert!(!a.should_compact());
+
+        // Large arena, garbage < live/3: still no.
+        let big: Vec<_> = (0..3000)
+            .map(|i| a.alloc(&[l(i), l(i + 1), l(i + 2)], false))
+            .collect();
+        for r in big.iter().take(100) {
+            a.delete(*r);
+        }
+        assert!(!a.should_compact());
+
+        // Garbage >= live/3 and above the floor: fire.
+        for r in big.iter() {
+            a.delete(*r);
+        }
+        assert!(a.should_compact());
+    }
+
+    #[test]
+    fn compact_preserves_relative_order_and_interleaving() {
+        // Live clauses must keep their relative order (ids and allocation
+        // order stay aligned after relocation).
+        let mut a = ClauseArena::new(0);
+        let mut slots = Vec::new();
+        for i in 0..8 {
+            let r = a.alloc(&[l(i * 3), l(i * 3 + 1), l(i * 3 + 2)], false);
+            slots.push(r);
+            if i % 2 == 1 {
+                a.delete(r); // delete every second clause
+            }
+        }
+        let live_before: Vec<_> = slots
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .map(|(i, _)| a.get(slots[i]).expect("live").lits.to_vec())
+            .collect();
+        a.compact(&mut slots);
+        let live_after: Vec<_> = slots
+            .iter()
+            .filter(|r| a.get(**r).is_some_and(|v| !v.deleted))
+            .map(|r| a.get(*r).expect("live").lits.to_vec())
+            .collect();
+        assert_eq!(live_before, live_after);
+        // Offsets of surviving entries are strictly ascending (refs-order
+        // invariant preserved across compaction).
+        let offs: Vec<usize> = slots
+            .iter()
+            .filter(|r| a.get(**r).is_some_and(|v| !v.deleted))
+            .map(|r| r.byte_offset())
+            .collect();
+        assert!(offs.windows(2).all(|w| w[0] < w[1]));
     }
 }

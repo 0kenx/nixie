@@ -418,6 +418,21 @@ pub fn cadical_reduce_null_enabled() -> bool {
     })
 }
 
+/// Clause-arena compaction (standing-gap lever 1,
+/// `docs/studies/2026-09-01-standing-vs-kissat-gap-decomposition.md`):
+/// ON by default. `OXIZ_NO_ARENA_COMPACT=1` disables – the A/B switch for
+/// measuring the reclamation (the operation is trajectory-neutral by
+/// construction, so no matched null is needed; the switch exists for RSS
+/// before/after and emergency use).
+#[doc(hidden)]
+pub fn arena_compact_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        !std::env::var("OXIZ_NO_ARENA_COMPACT").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Treatment switch for the cadical `stabilizing ()` schedule port (see
 /// `docs/studies/2026-08-sat-stabilize-schedule.md`): the first
 /// focused/stable switch fires at `stabilizeinit` (1000) **conflicts**; the

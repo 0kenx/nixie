@@ -3,6 +3,7 @@
 use crate::literal::Lit;
 #[allow(unused_imports)]
 use crate::memory::{ClauseArena, ClauseRef, ClauseView};
+use crate::watched::WatchLists;
 
 use smallvec::SmallVec;
 
@@ -690,12 +691,44 @@ impl ClauseDatabase {
         self.update_stats_remove_fields(learned, tier, lbd, size);
     }
 
-    /// Compaction hook. The arena is append-only by design (see
-    /// `memory.rs`): deleted slots are never reclaimed, so this is a no-op
-    /// retained for API compatibility. Memory is bounded the same way the
-    /// old database's was – a deleted slot costs its 24+ bytes instead of a
-    /// full 64-byte `Clause`.
-    pub fn compact(&mut self) {}
+    /// Arena memory statistics (see [`crate::memory::MemoryStats`]).
+    #[must_use]
+    pub fn arena_stats(&self) -> crate::memory::MemoryStats {
+        self.arena.stats()
+    }
+
+    /// Reclaim clause-arena memory: relocate every live clause into a fresh
+    /// exact-capacity buffer (deleted slots and shrink padding dropped),
+    /// rewrite the `refs` table, then rewrite each watcher's arena slot in
+    /// place through `WatchLists::relocate_refs`. Ids are untouched – a
+    /// `ClauseId` keeps naming the same clause – and deleted ids relocate to
+    /// the permanent tombstone, so trail reasons, LRAT tables and the BIG
+    /// (all id-addressed) are unaffected.
+    ///
+    /// Internally gated by [`ClauseArena::should_compact`] (amortized,
+    /// checked every reduce round – the cadical/kissat shape); returns
+    /// `true` iff a compaction ran. Taking the watch lists as an argument
+    /// is the soundness hinge: arena compaction is impossible to request
+    /// without handing over the one other structure that holds `ClauseRef`s
+    /// to be rewritten in the same breath.
+    pub fn compact_arena(&mut self, watches: &mut WatchLists) -> bool {
+        if !self.arena.should_compact() {
+            return false;
+        }
+        self.compact_arena_forced(watches)
+    }
+
+    /// [`Self::compact_arena`] without the amortization gate (tests and
+    /// forced reclamation; production code goes through the gated entry).
+    pub fn compact_arena_forced(&mut self, watches: &mut WatchLists) -> bool {
+        self.arena.compact(&mut self.refs);
+        watches.relocate_refs(&self.refs);
+        debug_assert!(
+            watches.check_ref_consistency(&self.refs).is_ok(),
+            "watcher refs must agree with the relocated refs table"
+        );
+        true
+    }
 
     /// Get the number of live clauses.
     #[must_use]
@@ -787,6 +820,109 @@ mod tests {
         db.remove(c1);
         assert_eq!(db.len(), 1);
         assert_eq!(db.num_original(), 0);
+    }
+
+    #[test]
+    fn test_compact_arena_rewrites_refs_and_watchers() {
+        use crate::watched::{WatchLists, Watcher};
+
+        let mut db = ClauseDatabase::new();
+        let c0 = db.add_original([
+            Lit::pos(Var::new(0)),
+            Lit::pos(Var::new(1)),
+            Lit::pos(Var::new(2)),
+        ]);
+        let c1 = db.add_learned([
+            Lit::pos(Var::new(3)),
+            Lit::pos(Var::new(4)),
+            Lit::pos(Var::new(5)),
+        ]);
+        let c2 = db.add_original([
+            Lit::pos(Var::new(6)),
+            Lit::pos(Var::new(7)),
+            Lit::pos(Var::new(8)),
+        ]);
+        db.set_lbd(c1, 3);
+        db.record_usage(c1);
+        db.record_usage(c1);
+        db.record_usage(c1); // Local -> Mid
+
+        // Watchers exactly as the solver attaches them (id + slot + blocker).
+        let mut wl = WatchLists::new(9);
+        for &cid in &[c0, c1, c2] {
+            let v = db.get(cid).expect("live");
+            let (l0, l1) = (v.lits[0], v.lits[1]);
+            let r = db.ref_of(cid).expect("slot");
+            wl.add(l0.negate(), Watcher::new(cid, r, l1));
+            wl.add(l1.negate(), Watcher::new(cid, r, l0));
+        }
+
+        // Delete the middle clause; compact (forced: below the gate).
+        db.remove(c1);
+        assert!(db.compact_arena_forced(&mut wl));
+
+        // Ids are stable; live clauses read identically (metadata too).
+        let v0 = db.get(c0).expect("c0");
+        assert_eq!(
+            v0.lits,
+            &[
+                Lit::pos(Var::new(0)),
+                Lit::pos(Var::new(1)),
+                Lit::pos(Var::new(2))
+            ]
+        );
+        assert!(!v0.deleted);
+        let v2 = db.get(c2).expect("c2");
+        assert_eq!(
+            v2.lits,
+            &[
+                Lit::pos(Var::new(6)),
+                Lit::pos(Var::new(7)),
+                Lit::pos(Var::new(8))
+            ]
+        );
+        // Deleted id reads as deleted through the tombstone.
+        assert!(db.get(c1).expect("c1 tombstoned").deleted);
+
+        // Watchers: live clauses at their new slot, deleted at the tombstone.
+        for &cid in &[c0, c2] {
+            assert_eq!(
+                db.ref_of(cid),
+                Some(wl.get(db.get(cid).expect("live").lits[0].negate())[0].r)
+            );
+        }
+        assert!(wl.check_ref_consistency(&db_refs(&db)).is_ok());
+
+        // Counters unchanged by compaction.
+        assert_eq!(db.num_original(), 2);
+        assert_eq!(db.num_learned(), 0);
+        assert_eq!(db.len(), 2);
+
+        // New allocations after compaction keep working and stay distinct.
+        let c3 = db.add_learned([
+            Lit::pos(Var::new(9)),
+            Lit::pos(Var::new(10)),
+            Lit::pos(Var::new(11)),
+        ]);
+        assert!(!db.get(c3).expect("fresh").deleted);
+    }
+
+    /// Test-only view of the refs table for consistency checks.
+    fn db_refs(db: &ClauseDatabase) -> Vec<ClauseRef> {
+        (0..db.num_slots())
+            .map(|i| db.ref_of(ClauseId::new(i as u32)).expect("slot"))
+            .collect()
+    }
+
+    #[test]
+    fn test_compact_arena_gate_off_below_threshold() {
+        use crate::watched::WatchLists;
+        let mut db = ClauseDatabase::new();
+        let mut wl = WatchLists::new(2);
+        let c = db.add_original([Lit::pos(Var::new(0)), Lit::pos(Var::new(1))]);
+        db.remove(c);
+        // Far below the 64 KiB / live-thirds gate.
+        assert!(!db.compact_arena(&mut wl));
     }
 
     #[test]

@@ -5,6 +5,45 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [SAT clause-arena compaction] - 2026-09-01
+
+`ClauseArena::compact` was an empty stub the reduce loop called every round
+(`learn.rs` → `clauses.compact()`); the arena was append-only, so every
+learned clause ever allocated kept its bytes for the solver's lifetime —
+the 10–13× peak-RSS ratio vs kissat on small instances (noL-11-14:
+269 MB on a 1.4 k-var formula) and an unbounded-growth hazard under long
+caps. Implemented for real (study:
+`docs/studies/2026-09-01-standing-vs-kissat-gap-decomposition.md`):
+
+- In-place kissat-style sweep: live clauses `memmove` down inside the
+  existing buffer (every new offset ≤ old: the deleted-clause tombstone
+  sits at the *end* of the compacted region), re-tightened to their
+  current length (shrink padding reclaimed), tail returned via
+  `shrink_to_fit`. Peak RSS never exceeds the pre-compaction footprint
+  (a fresh-buffer first cut measurably raised si2-b03m's peak 120→150 MB
+  before being replaced).
+- Deleted ids relocate to the permanent tombstone — a stale `ClauseRef`
+  always reads a deleted-flagged slot, never dangles past the shrunken
+  region, never names an unrelated clause. Ids are untouched (reasons,
+  LRAT, BIG unaffected).
+- Every `ClauseRef` holder is rewritten synchronously: the `refs` table
+  inside `compact`, each watcher's `.r` in place via
+  `WatchLists::relocate_refs` (visit order — hence the trajectory — is
+  untouched; `ClauseDatabase::compact_arena` takes the watch lists as an
+  argument so compaction cannot be requested without them). A debug
+  invariant (`check_watcher_ref_consistency`, wired into the standing
+  `check_all_sat_invariants` net) audits id↔slot agreement after every
+  compaction.
+- Gated on garbage ≥ 64 KiB and ≥ live/3, checked every reduce round
+  (both reduce paths) — total copy work ~3× the bytes ever collected.
+  `OXIZ_NO_ARENA_COMPACT=1` disables.
+
+Gates: 54/54 corpus trajectory identity (verdict+conflicts bit-identical);
+peak RSS noL-11-14 269→32 MB, frb65-874 146→26 MB, FmlaEquivChain
+350→101 MB (si2 120→120: the in-place form's no-regression property);
+wall geomean 1.048× (dense-region locality), solved 50/50; full battery
++ Z3 parity clean.
+
 ## [Upstream 0.3.2/0.3.3 re-audit] - 2026-08-31
 
 Full re-audit of the upstream delta (`88b7971..e7c7bca` + the codeless 0.3.4

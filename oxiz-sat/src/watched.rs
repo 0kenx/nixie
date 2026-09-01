@@ -14,10 +14,11 @@ use smallvec::SmallVec;
 /// reduction, subsumption – everything outside BCP) and by arena slot, so a
 /// propagation visit dereferences the clause **directly** instead of paying
 /// the `refs[id]` table indirection (a second dependent load per visited
-/// watcher). Slots are append-only and never reused (`memory.rs`), so the
-/// slot names exactly the same clause as the id for the watcher's whole
-/// life; deletion keeps the slot readable with the deleted flag set, which
-/// is what makes stale watchers safe.
+/// watcher). Slots are never reused, and arena compaction rewrites `.r`
+/// in place from the id table ([`WatchLists::relocate_refs`]) so the slot
+/// keeps naming exactly the clause the id does for the watcher's whole
+/// life; deletion relocates to a tombstone slot that reads as a deleted
+/// clause, which is what makes stale watchers safe.
 #[derive(Debug, Clone, Copy)]
 pub struct Watcher {
     /// The clause being watched
@@ -164,6 +165,62 @@ impl WatchLists {
     #[allow(dead_code)]
     pub fn count(&self, lit: Lit) -> usize {
         self.watches.get(lit.index()).map_or(0, |w| w.len())
+    }
+
+    /// Rewrite every watcher's arena slot `.r` **in place** from the
+    /// already-rewritten id→ref table of a just-finished
+    /// [`crate::memory::ClauseArena::compact`].
+    ///
+    /// This is the second half of arena compaction (the first rewrote the
+    /// database's `refs`); watchers are the only `ClauseRef` holders outside
+    /// the database. In-place mutation keeps each list's visit order – and
+    /// therefore the propagation trajectory – exactly as it was: only the
+    /// byte offsets change. A watcher whose clause was deleted (or whose id
+    /// is out of range, impossible through the solver's construction)
+    /// relocates to the permanent tombstone, which reads as a deleted clause
+    /// – identical semantics to the pre-compaction deleted-flagged slot.
+    /// Null slots (test-construction only) stay null.
+    pub fn relocate_refs(&mut self, refs: &[ClauseRef]) {
+        for list in &mut self.watches {
+            for w in list.iter_mut() {
+                if w.r.is_null() {
+                    continue;
+                }
+                // An out-of-range id is impossible through the solver's
+                // construction; map it to NULL (reads as "no clause")
+                // rather than fabricating a slot.
+                w.r = refs
+                    .get(w.clause.index())
+                    .copied()
+                    .unwrap_or(ClauseRef::null());
+            }
+        }
+    }
+
+    /// Debug audit of [`Self::relocate_refs`]: every non-null watcher slot
+    /// must agree with the id→ref table (live clauses at their live ref,
+    /// deleted clauses at the tombstone). Returns a description of the first
+    /// inconsistency, so a future `ClauseRef` holder that survives
+    /// compaction unrewritten is caught in debug builds instead of reading
+    /// freed memory.
+    pub(crate) fn check_ref_consistency(&self, refs: &[ClauseRef]) -> Result<(), String> {
+        for (lit_idx, list) in self.watches.iter().enumerate() {
+            for w in list {
+                if w.r.is_null() {
+                    continue;
+                }
+                let expect = refs.get(w.clause.index()).copied();
+                if expect != Some(w.r) {
+                    return Err(format!(
+                        "watcher of clause {:?} under literal index {lit_idx} holds arena \
+                         slot {:?} but the refs table says {expect:?} (stale ref across an \
+                         arena compaction?)",
+                        w.clause, w.r
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }
 

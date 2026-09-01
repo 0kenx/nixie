@@ -113,3 +113,67 @@ closed), not micro-throughput.
 `/tmp/standing3.csv` (54×3 runs, verdict/wall/conflicts/cps) and
 `/tmp/standing3.py` (the runner) on this machine; memory numbers from
 fresh-child `getrusage(RUSAGE_CHILDREN)` peaks.
+
+## Lever 1 landed: arena compaction (2026-09-01, same day)
+
+Implemented as designed in shape, with two deviations the implementation
+itself forced — both improvements:
+
+1. **No word-indexed remap table.** Every watcher carries its `ClauseId`
+   next to its `.r`, and the database's `refs` table *is* the id→slot map
+   the compaction rewrites anyway — so watchers are rewritten from `refs`
+   in place (O(1) per holder, zero transient memory). The planned
+   u32-per-word table (old_pos/2 transient bytes, a 400 MB spike on a
+   worker-class arena) is unnecessary.
+2. **In-place kissat-style sweep, not a fresh buffer.** The tombstone sits
+   at the *end* of the compacted region, so every live clause's new offset
+   ≤ its old offset — clauses `memmove` down inside the existing buffer
+   (kissat `collect.c`'s src/dst shape) and the tail is returned with
+   `shrink_to_fit`. The fresh-buffer version was built first; its
+   transient old+new peak measurably *raised* peak RSS on si2-b03m
+   (120→150 MB, 1.25×) before being replaced. In-place never exceeds the
+   pre-compaction footprint.
+
+Trigger: every reduce round (both the legacy tiered path and the
+cadical-reduce port), gated on garbage ≥ 64 KiB and ≥ live/3 — total copy
+work bounded at ~3× the bytes ever collected. `OXIZ_NO_ARENA_COMPACT=1`
+is the A/B switch.
+
+**The bug the gates caught:** slot physical extents cannot be read off
+list neighbours — after the first compaction, tombstone entries (dead ids)
+interleave with live refs, so `refs[i+1]` can sit *before* `refs[i]`'s
+slot. The first end-to-end run tripped the debug assert on
+`crn_11_99_u.cnf` (BVE garbage → first real compaction). Validation now
+uses the same region bound every arena read uses (`get`/`read_header`).
+
+**Gates (all green):**
+
+- **Identity (Gate 1): 54/54 files, verdicts and conflict counts
+  bit-identical** old (`7e644a7`) vs new — compaction is
+  trajectory-neutral by construction, and measured so.
+- **Peak RSS** (fresh child per run — `RUSAGE_CHILDREN.ru_maxrss` is a
+  cumulative max across children; measuring several runs in one parent
+  silently reports the first run's peak forever):
+
+  | file | before | after | ratio | (kissat) |
+  |---|---|---|---|---|
+  | noL-11-14 | 269 MB | **32 MB** | 8.4× | 20 MB |
+  | frb65-874 | 146 MB | **26 MB** | 5.6× | 13 MB |
+  | FmlaEquivChain | 350 MB | **101 MB** | 3.5× | 52 MB |
+  | worker_550 | 1601 MB | 1425 MB | 1.12× | 282 MB |
+  | g2-slp | 231 MB | 166 MB | 1.39× | 71 MB |
+  | si2-b03m | 120 MB | 120 MB | 1.00× | 103 MB |
+
+  The small-instance blowups (10–13× vs kissat) are gone; the worst
+  remaining ratio vs kissat is ~2× on noL/frb65 (residue: the never-
+  shrunk `refs` id table and inter-compaction live data) and worker-class
+  (1.12× — non-arena structures dominate there; lever 2 territory).
+- **Wall** (serial, same core, 60 s cap): geomean old/new = **1.048×**
+  over the 50 both-solved files (new is 4.8 % faster — the dense live
+  region's locality), solved 50/50.
+- Full battery (10 427 tests), clippy/fmt/doc clean, Z3 parity suite
+  **0 mismatches** (169/170 decisive-agreed; 1 Z3-Unknown inconclusive,
+  Z3 4.16.0 — not the 4.15.4 baseline, verdicts unaffected).
+
+Next per the program: lever 2 (tiered retention, matched-null study) and
+lever 3 (search-path tail study).

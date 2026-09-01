@@ -80,7 +80,27 @@ pub(crate) fn check_all_sat_invariants(solver: &Solver) -> Result<(), String> {
     check_implication_graph_acyclic(solver)?;
     check_binary_graph_backing(solver)?;
     check_binary_registration(solver)?;
+    check_watcher_ref_consistency(solver)?;
     Ok(())
+}
+
+/// Every watcher's arena slot must agree with the database's id→ref table
+/// (live clauses at their live slot, deleted clauses at the compaction
+/// tombstone). A violation means a `ClauseRef` survived an arena compaction
+/// unrewritten and now aliases arbitrary arena bytes – the exact class of
+/// stale-holder bug compaction must make impossible. Checked as part of the
+/// standing debug net so any future `ClauseRef` holder regression is caught
+/// in debug builds.
+pub(crate) fn check_watcher_ref_consistency(solver: &Solver) -> Result<(), String> {
+    let refs: Vec<crate::memory::ClauseRef> = (0..solver.clauses.num_slots())
+        .map(|i| {
+            solver
+                .clauses
+                .ref_of(crate::clause::ClauseId::new(i as u32))
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| "num_slots advertised an id without a slot".to_string())?;
+    solver.watches.check_ref_consistency(&refs)
 }
 
 /// Structural (context-free) registration check for every live clause,
