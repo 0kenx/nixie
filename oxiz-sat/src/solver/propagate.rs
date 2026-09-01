@@ -141,7 +141,13 @@ impl Solver {
                 let watcher = watches[read];
 
                 if self.trail.lit_val_hot(watcher.blocker) > 0 {
-                    watches[write] = watcher;
+                    // Kept watcher. While `write == read` (no watcher dropped
+                    // yet in this scan) the write-back would be a pure
+                    // self-write — skip it; the compaction copy is only
+                    // needed once the pointers have split.
+                    if write != read {
+                        watches[write] = watcher;
+                    }
                     write += 1;
                     continue;
                 }
@@ -160,7 +166,16 @@ impl Solver {
                     }
                 };
 
-                // Make sure the false literal is at position 1
+                // Make sure the false literal is at position 1. The
+                // normalization is kept UNCONDITIONAL (not on-demand): a
+                // pilot that left the watched pair in visit order on the
+                // satisfied/satrepl paths diverged 34/54 corpus trajectories
+                // — stored order is observable beyond direct `lits[0]`
+                // readers (watch-rank tie-breaks, first-wins scans in
+                // vivify/probe/els), so the two arena stores stay on every
+                // miss visit. See
+                // `studies/2026-09-propagate-write-elision.md` (slice a,
+                // reverted).
                 if clause[0] == lit.negate() {
                     clause.swap(0, 1);
                 }
@@ -168,10 +183,13 @@ impl Solver {
                 // If first watch is true, clause is satisfied
                 let first = clause[0];
                 if self.trail.lit_val_hot(first) > 0 {
-                    watches[write] = Watcher {
-                        blocker: first,
-                        ..watcher
-                    };
+                    if write != read {
+                        watches[write] = watcher;
+                    }
+                    // Refresh only the blocker word (the other two words are
+                    // unchanged; while `write == read` a full write-back
+                    // would be a pure self-write).
+                    watches[write].blocker = first;
                     write += 1;
                     continue;
                 }
@@ -202,17 +220,20 @@ impl Solver {
                     let v = self.trail.lit_val_hot(l);
                     if v > 0 {
                         // Satisfied replacement: keep the watcher here,
-                        // refresh the blocker to the satisfied literal.
-                        watches[write] = Watcher {
-                            blocker: l,
-                            ..watcher
-                        };
+                        // refresh the blocker to the satisfied literal
+                        // (blocker word only).
+                        if write != read {
+                            watches[write] = watcher;
+                        }
+                        watches[write].blocker = l;
                         write += 1;
                         found = true;
                         break;
                     }
                     if v == 0 {
-                        // Unassigned replacement: move the watch.
+                        // Unassigned replacement: move the watch (the
+                        // conditional swap above already normalized
+                        // `lits[0]` to the non-false watch).
                         clause.swap(1, j);
                         self.watches.add(
                             clause[1].negate(),
@@ -231,10 +252,10 @@ impl Solver {
                 }
 
                 // No new watch found - clause is unit or conflicting
-                watches[write] = Watcher {
-                    blocker: first,
-                    ..watcher
-                };
+                if write != read {
+                    watches[write] = watcher;
+                }
+                watches[write].blocker = first;
 
                 if self.trail.lit_val_hot(first) < 0 {
                     conflict_found = Some(watcher.clause);
