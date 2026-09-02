@@ -86,6 +86,19 @@ impl Solver {
 
         self.trail
             .assign_propagation_at(asserting, clause_id, level);
+        // LRAT: when every falsified sibling sits at level 0 the asserting
+        // literal is installed as a **level-0 propagation** outside
+        // `propagate()` — the two flush sites there never see it, so without
+        // this flush the literal lands on the trail with no unit-table
+        // entry. The "every level-0 literal is a unit with an id" invariant
+        // that `analyze`'s RUP chains rely on breaks, and the first conflict
+        // chain through such a literal emits a 0 hint — an unverifiable
+        // proof (repro: 6s167-opt with LRAT attached; found 2026-09-02).
+        // The flush builds exactly the right chain: the level-0 units of
+        // the clause's other literals + this clause's id.
+        if level == 0 {
+            self.flush_level0_unit(asserting, clause_id);
+        }
     }
 
     /// Compute LBD (Literal Block Distance) of a clause
@@ -1672,8 +1685,7 @@ impl Solver {
     /// Clauses retired by inprocessing are skipped for a similar reason: they are
     /// re-satisfied by model reconstruction rather than by the assignment, and
     /// their literals need not even be in the model's variable range.
-    #[cfg(debug_assertions)]
-    fn find_model_violation(&self, include_learned: bool) -> Option<ClauseId> {
+    pub(super) fn find_model_violation(&self, include_learned: bool) -> Option<ClauseId> {
         self.clauses.iter_ids().find(|&id| {
             self.clauses.get(id).is_some_and(|clause| {
                 (include_learned || !clause.learned)

@@ -1219,6 +1219,13 @@ pub struct Solver {
     /// `unit_clauses_idx`) and RUP-chain assembly in conflict analysis. DRAT-only
     /// proofs leave this `false` – DRAT needs neither ids nor chains.
     pub(super) lrat: bool,
+    /// Level-0 units forced by `add_clause`'s effective-unit path during
+    /// parsing, waiting for their LRAT flush at solve entry (emitting them
+    /// mid-parse would allocate derived ids inside the original-clause
+    /// prefix and desynchronize every later original's id — see the
+    /// ForceUnitAtLevelZero sites). Each entry is `(forced literal, forcing
+    /// clause)`.
+    pub(super) pending_parse_unit_flushes: Vec<(crate::literal::Lit, ClauseId)>,
     /// Lazy explanations for theory-propagated assignments: for each variable
     /// assigned via [`Solver::assign_theory_propagation`], the antecedent
     /// literal tail a materialized reason clause would have carried (every
@@ -1543,6 +1550,7 @@ impl Solver {
             max_conflicts: None,
             proof: None,
             lrat: false,
+            pending_parse_unit_flushes: Vec::new(),
             theory_prop_reasons: rustc_hash::FxHashMap::default(),
             theory_reason_clauses: 0,
             clause_id: 0,
@@ -2639,6 +2647,13 @@ impl Solver {
 
                 if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
                     self.trail.assign_propagation_at(forced, clause_id, 0);
+                    // LRAT: defer the unit flush to solve entry — emitting a
+                    // derived unit here would allocate a *derived* id inside
+                    // the original-clause prefix (which must stay contiguous
+                    // 1..K in file order for the checker's CNF numbering);
+                    // the collision shifted every later original's id and
+                    // broke every chain referencing them (6s167, 2026-09-02).
+                    self.pending_parse_unit_flushes.push((forced, clause_id));
                 }
                 return true;
             }
@@ -2717,6 +2732,9 @@ impl Solver {
         // it did. Apply that decision now that `clause_id` exists.
         if let PreAttachOutcome::ForceUnitAtLevelZero(forced) = outcome {
             self.trail.assign_propagation_at(forced, clause_id, 0);
+            // LRAT: deferred like the binary branch above — see the comment
+            // there for the original-prefix id-contiguity argument.
+            self.pending_parse_unit_flushes.push((forced, clause_id));
         }
 
         true
@@ -2791,6 +2809,18 @@ impl Solver {
         // sound way to honor it: refuse rather than risk a wrong verdict.
         if self.fatal_error.is_some() {
             return SolverResult::Unknown;
+        }
+        // LRAT: emit the derived units that `add_clause`'s effective-unit
+        // path deferred during parsing. Safe here — the original-clause
+        // prefix is complete, so these derived ids start past it. Must run
+        // before the initial propagation below: that propagate's own unit
+        // flushes reference these literals as antecedents, and the search's
+        // first RUP chains reference their unit ids.
+        if !self.pending_parse_unit_flushes.is_empty() {
+            let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
+            for (lit, cid) in pending {
+                self.flush_level0_unit(lit, cid);
+            }
         }
         // Check if trivially unsatisfiable
         if self.trivially_unsat {

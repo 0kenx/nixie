@@ -994,10 +994,20 @@ impl Solver {
         else if t > size {
             shrink = Some((nid, pivot.negate()));
         }
-        if let Some((sid, drop_lit)) = shrink {
-            self.elim_shrink_clause(ctx, sid, &[drop_lit]);
+        if let Some((sid, drop_lit)) = shrink
+            && self.elim_shrink_clause(ctx, sid, &[drop_lit])
+        {
             return ElimResolve::Skip;
         }
+        // A refused shrink (proof-attached run with an unprovable in-place
+        // rewrite, or a live-reason guard) still owes this pair's resolvent:
+        // the self-subsumption Skip above is only equivalent to *having
+        // performed* the shrink. Returning Skip without either leaves a hole
+        // in the resolution closure — model reconstruction then extends a
+        // partial assignment that violates a retired original (a false Sat;
+        // reproduced on crn_11_99_u under weakened elimination, 2026-09-02).
+        // Fall through and add the ordinary resolvent instead: exactly the
+        // unoptimized form of the refused shrink.
         // The one owned allocation: only ~6 % of resolutions on
         // elimination-heavy instances produce a non-tautological resolvent.
         ElimResolve::Resolvent(ctx.res_resolvent.iter().copied().collect())
@@ -1118,10 +1128,10 @@ impl Solver {
     /// during elimination), updating the occurrence counts of the removed
     /// literals and rescheduling the surviving clause's variables. A result
     /// of length 0/1 becomes UNSAT / an eagerly-applied unit.
-    fn elim_shrink_clause(&mut self, ctx: &mut Eliminator, cid: ClauseId, drop: &[Lit]) {
+    fn elim_shrink_clause(&mut self, ctx: &mut Eliminator, cid: ClauseId, drop: &[Lit]) -> bool {
         let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
             Some(c) if !c.deleted => c.lits.iter().copied().collect(),
-            _ => return,
+            _ => return false,
         };
         // A clause that is currently the level-0 propagation reason of one of
         // its literals must not be rewritten in place: the reason pointer
@@ -1133,7 +1143,7 @@ impl Solver {
             if self.trail.is_assigned(var)
                 && matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
             {
-                return;
+                return false;
             }
         }
         let new_lits: SmallVec<[Lit; 8]> = lits
@@ -1156,7 +1166,7 @@ impl Solver {
                     .iter()
                     .all(|&l| self.proof_unit_id_get_or_zero(l.negate().to_dimacs()) != 0);
             if !provable {
-                return;
+                return false;
             }
             self.proof_strengthen_clause(cid, &new_lits);
         }
@@ -1164,14 +1174,14 @@ impl Solver {
             0 => {
                 self.trivially_unsat = true;
                 self.elim_retire_clause_lits(ctx, cid, &lits);
-                return;
+                return false;
             }
             1 => {
                 // Strengthened to a unit: apply it eagerly.
                 let unit = new_lits[0];
                 self.elim_retire_clause_lits(ctx, cid, &lits);
                 self.elim_assign_unit(ctx, unit);
-                return;
+                return false;
             }
             _ => {}
         }
@@ -1213,6 +1223,7 @@ impl Solver {
         }
         // The shrunken clause may now subsume others: queue it.
         ctx.backward.push(cid);
+        true
     }
 
     /// Assign a unit derived during elimination (cadical `assign_unit` +

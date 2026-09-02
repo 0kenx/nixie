@@ -96,3 +96,68 @@ proofs until root-caused. Reproducer (pre-gate binary):
    not attach EUF: kills the 11% glue and un-gates BVE for them) —
    needs its own soundness note (the freeze-set study's rigor).
 5. Re-measure the certified path after 1–4.
+
+
+## Addendum (same day, later): both findings root-caused and FIXED
+
+### Finding 1 root cause: three level-0 assignment paths bypassed the unit flush
+
+The "every level-0 literal is a unit with an id" invariant is maintained by
+`flush_level0_unit`, called only from `propagate()`'s two assignment sites.
+Three assignment paths assign level-0 **propagations** outside `propagate()`:
+
+1. `assert_learned_clause` (`learn.rs`): a learned clause whose falsified
+   siblings all sit at level 0 installs the asserting literal at level 0 —
+   caught by the debug-assertions build (the existing
+   `debug_assert!(!chain.contains(&0))` in `proof_learn_clause` fired with a
+   backtrace naming the site).
+2. `add_clause`'s `ForceUnitAtLevelZero` (binary + 3+-literal branches):
+   parse-time effective-unit forcing (the ZERO-UNIT diagnostics showed trail
+   positions 3–80 with mid-parse clause reasons).
+
+**Fix**: flush at the `assert_learned_clause` install (mid-search, safe);
+the two parse-time sites **defer** their flushes to solve entry — emitting
+derived units mid-parse would allocate derived ids *inside the original
+prefix* (which must stay contiguous 1..K in file order), desynchronizing
+every later original's id (found the hard way: chains referencing valid
+hints that mapped to the wrong clauses).
+
+Verified: base-config LRAT proofs on 6s167 (the original failure), crn,
+mrpp, FmlaEquivChain all pass `check_lrat`. (noL is SAT — its proof has no
+empty clause by construction; the checker expects UNSAT proofs.)
+
+### Finding 2 root cause: refused self-subsumption shrinks left resolution-closure holes (FALSE SAT — fixed in ALL configs)
+
+Bisection (each alone fixed the wrong verdict → both were load-bearing only
+together): the ELS flag's residual effect (one root backtrack at the shared
+`lim_elim` boundary) only shifted *when* the newly-enabled mid-search
+elimination ran; the corruption was in the elimination itself. Model
+validation against the raw CNF (independent Python check) named violated
+originals; the live-DB check showed every live clause satisfied — pure
+**model-reconstruction failure**. Per-pivot resolution logging on var 6
+showed its elimination complete — the hole was elsewhere in the chain.
+
+The bug: `elim_resolve_clauses`' self-subsumption path returns `Skip` —
+valid ONLY because the in-place shrink *substitutes* for the pair's
+resolvent. The shrink can be **refused** (proof guard, or the pre-existing
+live-reason guard that also fires in default no-proof runs) — and the old
+code returned `Skip` anyway: the pair contributed neither the shrink nor a
+resolvent, the resolution closure grew holes, and `save_model`'s BVE
+reconstruction (provably sound only over a complete closure) extended a
+partial assignment that violated retired originals.
+
+**Fix**: `elim_shrink_clause` now reports whether it shrank; a refused
+shrink falls through to adding the ordinary resolvent (exactly the
+unoptimized form of the shrink). Both wrong-SAT repros (weakened-elim no-
+proof, and proof+midschedule) now return UNSAT with verified proofs where
+applicable. **This also closes a latent false-SAT in default no-proof
+configurations** whenever the live-reason guard refuses a self-subsumption
+shrink — the guard predates the proof work.
+
+### Still gated: mid-search elimination under proofs
+
+With the closure hole fixed, mid-search elimination under proofs now gives
+correct *verdicts*, but its proof emissions can reference parent clauses
+that a subsumption round (running inside `eliminate_phase` under proofs)
+has already deleted — "hint is not unit" (crn line 2004). The gate stays;
+the fix is subsumption-aware chain repair (use the subsumer in the chain).

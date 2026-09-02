@@ -5,6 +5,36 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Two soundness fixes: LRAT zero-unit leaks + BVE resolution-closure hole] - 2026-09-02
+
+**Fix 1 (proofs, pre-existing): default-path LRAT proofs were unverifiable
+on some inputs.** Three level-0 assignment paths bypassed the unit flush
+(`flush_level0_unit` only runs inside `propagate()`): `assert_learned_clause`'s
+all-level-0-siblings install, and `add_clause`'s two `ForceUnitAtLevelZero`
+branches (parse time). Their literals landed on the trail with no unit id,
+and the first RUP chain through them emitted 0 hints. Fixed: flush at the
+install site; the parse-time flushes are deferred to solve entry — emitting
+them mid-parse would allocate derived ids inside the original-clause prefix
+(ids must stay 1..K in file order for the checker) and desynchronize every
+later original. All previously-failing proofs now verify (6s167 base was
+the repro; crn/mrpp/FmlaEquivChain swept clean in both arms).
+
+**Fix 2 (solver soundness, ALL configs incl. default): refused
+self-subsumption shrinks left resolution-closure holes -> false SAT.**
+`elim_resolve_clauses`' self-subsumption path returned `Skip` — valid only
+because the in-place shrink substitutes for the pair's resolvent. The
+shrink can be refused (the new proof guard, or the PRE-EXISTING live-reason
+guard that fires in default no-proof runs), and the old code returned Skip
+anyway: the pair contributed neither the shrink nor a resolvent, BVE's
+resolution closure grew holes, and model reconstruction (sound only over a
+complete closure) produced assignments violating retired originals — a
+wrong SATISFIABLE on UNSAT input (repro: crn_11_99_u with weakened
+elimination; kissat/z3 ground truth). Fixed: `elim_shrink_clause` reports
+whether it shrank; a refused shrink falls through to adding the ordinary
+resolvent. Mid-search elimination under proofs stays gated (its emissions
+can reference parents a subsumption round deleted — hint repair is the
+follow-up). Full battery (10 431), clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [BVE under proofs + LRAT audit] - 2026-09-02
 
 LRAT (certified mode) is the default production path; elimination was

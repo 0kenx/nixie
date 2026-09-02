@@ -34,6 +34,13 @@ impl Solver {
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        // LRAT: solve-entry deferred parse-unit flush (see `Solver::solve`).
+        if !self.pending_parse_unit_flushes.is_empty() {
+            let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
+            for (lit, cid) in pending {
+                self.flush_level0_unit(lit, cid);
+            }
+        }
         // Mark the search as theory-carrying so `inprocess` can drop its
         // pure-literal pass (unsound when theory lemmas may later force the
         // opposite polarity of a Boolean-pure variable – see
