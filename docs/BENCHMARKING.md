@@ -286,8 +286,11 @@ decision point the variance is chaos, not action semantics.
 
 **Conclusion.** The rephase action-selection decision point carries no learnable signal, and a
 planned restart-level RL selector was cancelled on this evidence. Untouched by the study, and
-still open: per-*variable* phase policies, one-shot pre-search phase initialisation, and the
-`target` phase array that OxiZ still lacks entirely (see the study's *Verdict* section).
+still open: per-*variable* phase policies and one-shot pre-search phase initialisation.
+(Corrected 2026-09-02: this list originally included "the `target` phase array that OxiZ
+still lacks entirely" — stale: cadical-faithful target phases landed 2026-08-15 in
+`7cb81f5` and are wired through `decision_polarity` / `update_target_and_best` /
+`copy_phases(PhaseArray::Target)`.)
 
 ---
 

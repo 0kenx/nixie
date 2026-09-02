@@ -97,9 +97,14 @@ smallest everywhere via its tiered retention.
    gap (5.7× vs kissat) and part of the tail's conflict counts.
    Heuristic class — matched-null study required.
 3. **Search-path tail study** (frb65/6s167/shuffling classes, 5–29×
-   conflicts): the standing-gap deep study — target phases (still
-   absent, §8 of BENCHMARKING.md), learned-clause quality levers.
-   Heuristic class — matched-null study required.
+   conflicts): the standing-gap deep study — learned-clause quality
+   levers and the remaining phase-policy openings. (Correction
+   2026-09-02: this item originally listed "target phases, still
+   absent" — stale; cadical-faithful target phases landed 2026-08-15 in
+   `7cb81f5` and are wired through `decision_polarity` /
+   `update_target_and_best` / `copy_phases(PhaseArray::Target)`. The
+   tail gap therefore lives elsewhere.) Heuristic class — matched-null
+   study required.
 4. Throughput residuals beyond 1.22× after 1–2 land: per-conflict
    profile re-rank at that point.
 
