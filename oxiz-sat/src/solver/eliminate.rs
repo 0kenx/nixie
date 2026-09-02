@@ -215,8 +215,19 @@ impl Solver {
         self.trail.decision_level() == 0
             && self.assertion_levels.len() <= 1
             && self.destructive_preprocessing_safe()
-            && self.proof.is_none()
-            && !self.lrat
+            // Proof-attached runs are now admitted (LRAT/DRAT): every
+            // mutation the round makes is emitted as a proof event —
+            // resolvent additions carry the resolving pair as their RUP
+            // chain (negating a resolvent falsifies both parents, so unit
+            // propagation on the pair conflicts), deletions are emitted as
+            // deletion lines (which need no justification in LRAT), and
+            // in-place strengthens reuse `proof_strengthen_clause` when the
+            // dropped literals are falsified on the *real* trail. The one
+            // BVE effect that has no cheap provenance — unit and empty
+            // resolvents, whose justifications depend on elimination-local
+            // assignments — aborts the pivot under an attached proof
+            // instead (see `elim_resolvents_bounded` / `elim_shrink_clause`),
+            // so the round stays strictly weaker, never unprovable.
             && !self.trivially_unsat
             // Assumption solving routes through the limited restart handler
             // and never reaches the inprocessing schedule, but stay
@@ -248,6 +259,15 @@ impl Solver {
     /// original clauses removed/shrunk since the last phase).
     pub(super) fn eliminating(&self) -> bool {
         if !self.config.enable_bve || self.elim_finished {
+            return false;
+        }
+        // Proof-attached runs eliminate in the PRE-SEARCH fixpoint only:
+        // the first LRAT-checker-validated configuration. Mid-search
+        // scheduled rounds under an attached proof produced a wrong
+        // SAT on crn_11_99_u with `--bve --els` (2026-09-02; root-causing
+        // in the study doc) — refused until that interaction is
+        // understood and gated.
+        if self.proof.is_some() {
             return false;
         }
         if self.stats.conflicts < self.lim_elim {
@@ -695,7 +715,7 @@ impl Solver {
             return;
         }
 
-        let mut collected: Vec<SmallVec<[Lit; 8]>> = Vec::new();
+        let mut collected: Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)> = Vec::new();
         if self.elim_resolvents_bounded(ctx, pivot, pos, neg, &mut collected) {
             self.elim_add_resolvents(ctx, &collected);
             self.elim_retire_pivot_clauses(ctx, pivot);
@@ -751,7 +771,7 @@ impl Solver {
         pivot: Lit,
         pos: usize,
         neg: usize,
-        collected: &mut Vec<SmallVec<[Lit; 8]>>,
+        collected: &mut Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)>,
     ) -> bool {
         let bound = (pos + neg) as i64 + self.elim_bound;
         // NOTE: these clones are LOAD-BEARING, not borrow-appeasement. The
@@ -785,6 +805,17 @@ impl Solver {
                 match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
                     ElimResolve::Skip => {}
                     ElimResolve::Unit(u) => {
+                        // Under an attached proof, a unit resolvent has no
+                        // cheap justifiable derivation (its RUP chain
+                        // depends on elimination-local assignments that are
+                        // not proof-active literals), so abort the pivot:
+                        // the variable is not eliminated, its clauses stay,
+                        // and BVE proceeds on other candidates. Strictly
+                        // weaker elimination than the unproven path — never
+                        // unsound.
+                        if self.proof.is_some() {
+                            return false;
+                        }
                         self.elim_assign_unit(ctx, u);
                         if self.trivially_unsat {
                             return false;
@@ -795,7 +826,10 @@ impl Solver {
                         if r.len() > ELIM_CLS_LIMIT || resolvents > bound {
                             return false;
                         }
-                        collected.push(r);
+                        // Record the resolving pair: the proof emission at
+                        // addition time needs both parents' LRAT ids as the
+                        // resolvent's RUP chain.
+                        collected.push((r, cid, nid));
                     }
                 }
                 if ctx.lit_val(pivot) != 0 {
@@ -973,8 +1007,12 @@ impl Solver {
     /// (cadical `elim_add_resolvents`): each non-tautological resolvent
     /// (≥ 2 literals) becomes an original clause, connected into the
     /// occurrence lists and enqueued for backward subsumption.
-    fn elim_add_resolvents(&mut self, ctx: &mut Eliminator, collected: &[SmallVec<[Lit; 8]>]) {
-        for r in collected {
+    fn elim_add_resolvents(
+        &mut self,
+        ctx: &mut Eliminator,
+        collected: &[(SmallVec<[Lit; 8]>, ClauseId, ClauseId)],
+    ) {
+        for (r, pid, nid) in collected {
             if self.trivially_unsat {
                 return;
             }
@@ -984,6 +1022,21 @@ impl Solver {
                 continue;
             }
             let rid = self.clauses.add_original(r.iter().copied());
+            // Proof emission: a resolvent R of C(v) and D(¬v) is RUP with
+            // exactly its parents as the hint chain — negating R falsifies
+            // every literal of both parents except v/¬v, so unit propagation
+            // derives v from C and ¬v from D, a conflict. The parents are
+            // retired only *after* all resolvents of the pivot are added,
+            // so the chain is verifiable at addition time.
+            if self.proof.is_some() {
+                let dimacs: SmallVec<[i32; 8]> = r.iter().map(|l| l.to_dimacs()).collect();
+                let chain = [self.proof_clause_id(*pid), self.proof_clause_id(*nid)];
+                let pfid = self.proof_next_id();
+                if let Some(proof) = &mut self.proof {
+                    proof.add_derived_clause(pfid, false, &dimacs, &chain);
+                }
+                self.proof_set_clause_id(rid, pfid);
+            }
             for &lit in r {
                 if ctx.lit_val(lit) == 0 {
                     let code = lit.code() as usize;
@@ -1042,6 +1095,11 @@ impl Solver {
         if self.clauses.get(cid).is_none_or(|c| c.deleted) {
             return;
         }
+        // Deletion lines need no justification in LRAT (they only shrink
+        // the active set the checker propagates over), so retired
+        // originals are emitted unconditionally when a proof is attached.
+        // Reads the clause before the flag flips.
+        self.drat_delete(cid);
         self.clauses.mark_deleted_raw(cid);
         self.stats.deleted_clauses += 1;
         ctx.dirty = true;
@@ -1083,6 +1141,25 @@ impl Solver {
             .copied()
             .filter(|&l| !drop.contains(&l))
             .collect();
+        // Under an attached proof, an in-place strengthen is only provable
+        // when every dropped literal is falsified by a **proof-backed**
+        // level-0 unit (one recorded in the LRAT unit table): the checker
+        // derives the shorter clause by propagating those units. Trail
+        // falsifiers without a proof unit (e.g. lucky-phase decisions) and
+        // elimination-local falsifiers are not proof-active, and
+        // unit/empty strengthenings have the same provenance problem as
+        // unit resolvents. Abort the strengthen in those cases — the
+        // clause keeps its literals, strictly weaker, never unprovable.
+        if self.proof.is_some() {
+            let provable = new_lits.len() >= 2
+                && drop
+                    .iter()
+                    .all(|&l| self.proof_unit_id_get_or_zero(l.negate().to_dimacs()) != 0);
+            if !provable {
+                return;
+            }
+            self.proof_strengthen_clause(cid, &new_lits);
+        }
         match new_lits.len() {
             0 => {
                 self.trivially_unsat = true;

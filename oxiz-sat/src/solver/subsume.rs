@@ -249,15 +249,23 @@ impl Solver {
                     continue;
                 }
                 Some(SubCheck::Strengthen { remove }) => {
-                    let idx = lits.iter().position(|&l| l == remove);
-                    if let Some(idx) = idx {
+                    // Under an attached proof, self-subsumption
+                    // strengthening has no emitted justification here (the
+                    // RUP chain needs the subsumer's LRAT id, which this
+                    // path does not thread): skip the strengthen, keep the
+                    // clause as-is, and fall through to the connect.
+                    // Pure subsumption (deletion) above is
+                    // justification-free and stays active.
+                    if self.proof.is_none()
+                        && let Some(idx) = lits.iter().position(|&l| l == remove)
+                    {
                         // Re-arm elimination for the shrunken clause's
                         // variables (cadical marks on `shrink_clause`).
                         self.mark_elim_vars(lits.iter().copied());
                         self.strengthen_clause_in_subsume(cid, idx);
                         strengthened += 1;
                     }
-                    // Fall through: also connect the strengthened clause.
+                    // Fall through: also connect the (possibly strengthened) clause.
                 }
                 None => {}
             }

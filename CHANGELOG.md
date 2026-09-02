@@ -5,6 +5,27 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [BVE under proofs + LRAT audit] - 2026-09-02
+
+LRAT (certified mode) is the default production path; elimination was
+refused under any attached proof, costing the 3.6-14x BVE+ELS win on
+elimination-dependent classes. The pre-search elimination fixpoint now
+runs with proofs attached: resolvent additions carry the resolving pair
+as their RUP chain (negating a resolvent conflicts via its two parents),
+deletions are emitted as justification-free deletion lines, in-place
+strengthens are restricted to proof-unit-backed drops, and
+unit/empty-resolvent pivots abort under proofs (weaker, never
+unprovable). Checker-validated on crn_11_99_u in every arm.
+
+Two findings recorded (docs/studies/2026-09-02-lrat-default-path.md):
+(1) PRE-EXISTING: default-path LRAT proofs fail verification on
+6s167-class inputs (level-0 literals without recorded unit ids leak 0s
+into RUP chains; repro: lrat_file 6s167 --lrat + check_lrat; the
+existing debug_assert in proof_learn_clause catches it in debug builds).
+(2) The initial full relaxation exposed a wrong-SAT in the mid-search
+elimination/ELS-latch interaction (gated: scheduled elimination refuses
+under proofs until root-caused).
+
 ## [SAT reduce-arm soundness] - 2026-09-02
 
 Two wrong-UNSAT leaks in the cadical-reduce study arms (env-gated,

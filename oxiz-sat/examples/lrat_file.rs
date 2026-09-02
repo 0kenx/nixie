@@ -26,6 +26,7 @@ fn main() {
     let lrat_binary = flag_value(&args, "--lrat-binary");
     let drat = flag_value(&args, "--drat");
     let bare = args.iter().any(|a| a == "--bare");
+    let bve = args.iter().any(|a| a == "--bve");
 
     let Some(cnf) = cnf else {
         eprintln!(
@@ -36,6 +37,14 @@ fn main() {
     };
 
     let mut config = SolverConfig::default();
+    // BVE+ELS under an attached proof (proof-compatible elimination): the
+    // study arm for LRAT-with-elimination measurement.
+    if bve {
+        config.enable_bve = true;
+    }
+    if args.iter().any(|a| a == "--els") {
+        config.enable_equiv_substitution = true;
+    }
     if bare {
         config.enable_chronological_backtrack = false;
         config.enable_lucky = false;
@@ -44,6 +53,7 @@ fn main() {
         config.use_vmtf = false;
     }
     let mut solver = Solver::with_config(config);
+    let diag = std::env::var("OXIZ_DIAG").is_ok();
 
     // Connect the proof tracer *before* parsing so original clauses draw ids
     // 1..K in file order (matching the checker's CNF numbering).
@@ -62,6 +72,19 @@ fn main() {
     let result = solver.solve();
     solver.disable_proof();
 
+    if diag {
+        let st = solver.stats();
+        eprintln!(
+            "DIAG conflicts={} learned={} deleted={} lucky={}/{} bve_elim={} subst={}",
+            st.conflicts,
+            st.learned_clauses,
+            st.deleted_clauses,
+            st.lucky_succeeded,
+            st.lucky_tried,
+            st.bve_eliminated,
+            st.substitutions
+        );
+    }
     match result {
         oxiz_sat::SolverResult::Sat => println!("s SATISFIABLE"),
         oxiz_sat::SolverResult::Unsat => println!("s UNSATISFIABLE"),

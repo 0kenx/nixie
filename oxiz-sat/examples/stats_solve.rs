@@ -28,6 +28,10 @@ fn main() {
         cfg.enable_failed_literal_probing = false;
         cfg.enable_hyper_binary_probing = false;
     }
+    if std::env::var("NO_BVE").is_ok() {
+        cfg.enable_bve = false;
+        cfg.enable_equiv_substitution = false;
+    }
     if std::env::var("NO_ELIM").is_ok() {
         // Diagnostic arm: keep the pre-search elimination fixpoint, disable
         // the *scheduled* mid-search rounds (memory-composition studies).
