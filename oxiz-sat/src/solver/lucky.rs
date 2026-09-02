@@ -105,12 +105,25 @@ impl Solver {
         // them on failure. On `Sat` we keep the trail (the model) and return.
         // Lucky never learns clauses or bumps VSIDS (see `lucky_discrepancy`),
         // so these three are the *complete* set of persistent mutations.
-        let snap_watches = self.watches.clone();
-        let snap_lits: Vec<(ClauseId, Vec<Lit>)> = self
-            .clauses
-            .iter_ids()
-            .filter_map(|id| self.clauses.get(id).map(|c| (id, c.lits.to_vec())))
-            .collect();
+        //
+        // Both bulk snapshots are PACKED (one buffer each) rather than deep
+        // clones: the previous `Vec<(ClauseId, Vec<Lit>)>` + `watches.clone()`
+        // paid one heap allocation and a 40-byte tuple per clause and doubled
+        // the watch memory – on clause-dense instances (worker-class, 10M+
+        // originals) a ~900 MB transient that dominated peak RSS. The packed
+        // forms restore the identical state (same ids, same literal order,
+        // same watcher contents per list) at a fraction of the footprint.
+        let snap_watches = self.watches.packed_snapshot();
+        let mut snap_ids: Vec<ClauseId> = Vec::new();
+        let mut snap_ends: Vec<u32> = Vec::new();
+        let mut snap_buf: Vec<Lit> = Vec::new();
+        for id in self.clauses.iter_ids() {
+            if let Some(v) = self.clauses.get(id) {
+                snap_ids.push(id);
+                snap_buf.extend_from_slice(v.lits);
+                snap_ends.push(snap_buf.len() as u32);
+            }
+        }
         let snap_ticks = (
             self.ticks_focused,
             self.ticks_stable,
@@ -152,11 +165,16 @@ impl Solver {
             LuckyOutcome::Fail => {
                 // Restore the pre-lucky search state so the probe is fully
                 // transparent to the CDCL search.
-                self.watches = snap_watches;
-                for (id, lits) in snap_lits {
+                self.watches.restore(snap_watches);
+                let mut start = 0u32;
+                for (&id, &end) in snap_ids.iter().zip(snap_ends.iter()) {
                     // Watch-position swaps during the probe are undone by
-                    // rewriting the same-length literal array in place.
-                    self.clauses.shrink(id, &lits);
+                    // rewriting the same-length literal array in place
+                    // (exactly the previous per-clause `shrink(id, &lits)`,
+                    // now slicing one concatenated buffer).
+                    self.clauses
+                        .shrink(id, &snap_buf[start as usize..end as usize]);
+                    start = end;
                 }
                 let (tf, ts, prop) = snap_ticks;
                 self.ticks_focused = tf;

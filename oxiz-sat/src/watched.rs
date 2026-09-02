@@ -67,6 +67,24 @@ pub struct WatchLists {
     bin_phantom: Vec<u32>,
 }
 
+/// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
+/// every watcher concatenated into one buffer plus one end-offset per list.
+/// Restores exactly the same contents as `WatchLists::clone` at a fraction
+/// of the transient memory – a deep `clone()` duplicates every per-literal
+/// `Vec` (headers *and* doubled capacity), which on clause-dense instances
+/// (worker-class: millions of watchers) transiently doubles the watch
+/// memory just to hold a rollback copy.
+#[derive(Debug)]
+pub struct WatchSnapshot {
+    /// All watchers, concatenated in list order.
+    packed: Vec<Watcher>,
+    /// End offset (in watchers) of each list; list i spans
+    /// `[ends[i-1], ends[i])` (0 for i = 0).
+    ends: Vec<u32>,
+    /// Copy of the phantom binary counters (small; cloned verbatim).
+    bin_phantom: Vec<u32>,
+}
+
 impl WatchLists {
     /// Create new watch lists for n variables
     #[must_use]
@@ -148,6 +166,48 @@ impl WatchLists {
         if new_size > self.bin_phantom.len() {
             self.bin_phantom.resize(new_size, 0);
         }
+    }
+
+    /// Packed rollback snapshot: concatenates every list into one buffer
+    /// (one allocation, exact-ish size) instead of deep-cloning every
+    /// per-literal `Vec`. [`Self::restore`] rebuilds lists with identical
+    /// contents; capacity/pointer identity is not observable.
+    #[must_use]
+    pub fn packed_snapshot(&self) -> WatchSnapshot {
+        let total: usize = self.watches.iter().map(Vec::len).sum();
+        let mut snap = WatchSnapshot {
+            packed: Vec::with_capacity(total),
+            ends: Vec::with_capacity(self.watches.len()),
+            bin_phantom: self.bin_phantom.clone(),
+        };
+        for list in &self.watches {
+            snap.packed.extend_from_slice(list);
+            snap.ends.push(snap.packed.len() as u32);
+        }
+        snap
+    }
+
+    /// Restore the exact list contents captured by [`Self::packed_snapshot`]
+    /// (the array length and every watcher, in order; empty lists included).
+    pub fn restore(&mut self, snap: WatchSnapshot) {
+        let WatchSnapshot {
+            packed,
+            ends,
+            bin_phantom,
+        } = snap;
+        self.watches.clear();
+        self.watches.reserve(ends.len());
+        let mut start = 0u32;
+        for &end in &ends {
+            let list: &[Watcher] = &packed[start as usize..end as usize];
+            // Exact-capacity rebuild: no doubling churn, and the restored
+            // list's future growth behaves as from a fresh `Vec`.
+            let mut v = Vec::with_capacity(list.len());
+            v.extend_from_slice(list);
+            self.watches.push(v);
+            start = end;
+        }
+        self.bin_phantom = bin_phantom;
     }
 
     /// Clear all watch lists
