@@ -261,15 +261,11 @@ impl Solver {
         if !self.config.enable_bve || self.elim_finished {
             return false;
         }
-        // Proof-attached runs eliminate in the PRE-SEARCH fixpoint only:
-        // the first LRAT-checker-validated configuration. Mid-search
-        // scheduled rounds under an attached proof produced a wrong
-        // SAT on crn_11_99_u with `--bve --els` (2026-09-02; root-causing
-        // in the study doc) — refused until that interaction is
-        // understood and gated.
-        if self.proof.is_some() {
-            return false;
-        }
+        // Proof-attached runs eliminate in both the pre-search fixpoint and
+        // the mid-search schedule: every mutation carries a checker-valid
+        // justification (resolvent chains lead with the units of dropped
+        // level-0 literals, then the parents; deletions are justification-
+        // free; refuses cover the unprovable cases — see the study).
         if self.stats.conflicts < self.lim_elim {
             return false;
         }
@@ -1031,31 +1027,83 @@ impl Solver {
             if r.iter().any(|&l| ctx.lit_val(l) == 1) {
                 continue;
             }
-            let rid = self.clauses.add_original(r.iter().copied());
-            // Proof emission: a resolvent R of C(v) and D(¬v) is RUP with
-            // exactly its parents as the hint chain — negating R falsifies
-            // every literal of both parents except v/¬v, so unit propagation
-            // derives v from C and ¬v from D, a conflict. The parents are
-            // retired only *after* all resolvents of the pivot are added,
-            // so the chain is verifiable at addition time.
+            // Proof emission: a resolvent R of C(v) and D(¬v) is RUP via
+            // its parents — negating R falsifies every *retained* literal
+            // of both parents except v/¬v, so unit propagation derives v
+            // from C and ¬v from D, a conflict. The parents are retired
+            // only *after* all resolvents of the pivot are added, so parent
+            // hints are verifiable at addition time. The subtlety: the
+            // resolvent DROPS every parent literal falsified at level 0
+            // (unit-simplified away), and an LRAT checker replays each
+            // addition from a fresh assignment — it does not know those
+            // units. Each dropped literal's level-0 unit must therefore be
+            // a hint BEFORE the parents, or the parent clause has two
+            // undetermined literals and the chain fails ("hint is not
+            // unit"; found on crn_11_99_u with mid-search elimination,
+            // 2026-09-02). Units-first ordering: each unit hint has exactly
+            // one literal, so it propagates immediately.
+            let mut proof_skip = false;
             if self.proof.is_some() {
-                let dimacs: SmallVec<[i32; 8]> = r.iter().map(|l| l.to_dimacs()).collect();
-                let chain = [self.proof_clause_id(*pid), self.proof_clause_id(*nid)];
-                let pfid = self.proof_next_id();
-                if let Some(proof) = &mut self.proof {
-                    proof.add_derived_clause(pfid, false, &dimacs, &chain);
+                let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+                for parent in [*pid, *nid] {
+                    let Some(pv) = self.clauses.get(parent) else {
+                        continue;
+                    };
+                    for &lit in pv.lits {
+                        if ctx.lit_val(lit) == -1 && !r.contains(&lit) {
+                            // Falsified at level 0 and dropped from the
+                            // resolvent: its unit must lead the chain.
+                            let uid = self.proof_unit_id_get_or_zero(lit.negate().to_dimacs());
+                            if uid == 0 {
+                                // A level-0 literal without a recorded unit:
+                                // impossible since the flush invariant holds
+                                // (see `assert_learned_clause`), but never
+                                // emit an unverifiable chain — drop this
+                                // resolvent entirely (weaker elimination,
+                                // sound proof).
+                                proof_skip = true;
+                                break;
+                            }
+                            chain.push(uid);
+                        }
+                    }
+                    if proof_skip {
+                        break;
+                    }
                 }
-                self.proof_set_clause_id(rid, pfid);
-            }
-            for &lit in r {
-                if ctx.lit_val(lit) == 0 {
-                    let code = lit.code() as usize;
-                    ctx.occs[code].push(rid);
-                    ctx.noccs[code] += 1;
+                if !proof_skip {
+                    chain.push(self.proof_clause_id(*pid));
+                    chain.push(self.proof_clause_id(*nid));
+                    let dimacs: SmallVec<[i32; 8]> = r.iter().map(|l| l.to_dimacs()).collect();
+                    let pfid = self.proof_next_id();
+                    if let Some(proof) = &mut self.proof {
+                        proof.add_derived_clause(pfid, false, &dimacs, &chain);
+                    }
+                    let rid = self.clauses.add_original(r.iter().copied());
+                    self.proof_set_clause_id(rid, pfid);
+                    for &lit in r {
+                        if ctx.lit_val(lit) == 0 {
+                            let code = lit.code() as usize;
+                            ctx.occs[code].push(rid);
+                            ctx.noccs[code] += 1;
+                        }
+                    }
+                    ctx.backward.push(rid);
+                    ctx.dirty = true;
                 }
+            } else {
+                let rid = self.clauses.add_original(r.iter().copied());
+                for &lit in r {
+                    if ctx.lit_val(lit) == 0 {
+                        let code = lit.code() as usize;
+                        ctx.occs[code].push(rid);
+                        ctx.noccs[code] += 1;
+                    }
+                }
+                ctx.backward.push(rid);
+                ctx.dirty = true;
             }
-            ctx.backward.push(rid);
-            ctx.dirty = true;
+            let _ = &proof_skip;
         }
     }
 
@@ -1443,7 +1491,51 @@ impl Solver {
                     if d_satisfied {
                         self.elim_retire_clause(ctx, did);
                     } else if let Some(u) = unit.filter(|_| !ambiguous) {
-                        self.elim_assign_unit(ctx, u);
+                        // LRAT: this hyper-unary derivation is RUP with the
+                        // same shape as a resolvent — under ¬u, the level-0
+                        // units of d's falsified literals make d unit on
+                        // `neg`, propagating it, and the subsumer c (which
+                        // contains ¬neg and only literals shared with d)
+                        // conflicts. Emit BEFORE `elim_assign_unit` retires
+                        // d as satisfied (its deletion is a separate,
+                        // justification-free line). A missing unit id would
+                        // make the chain unverifiable — skip the derivation
+                        // instead (weaker, sound).
+                        let mut ok_to_assign = true;
+                        if self.proof.is_some() {
+                            let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+                            let d_lits: Option<SmallVec<[Lit; 8]>> = self
+                                .clauses
+                                .get(did)
+                                .map(|c| c.lits.iter().copied().collect());
+                            if let Some(dl) = d_lits {
+                                for &l in &dl {
+                                    if ctx.lit_val(l) == -1 {
+                                        let uid =
+                                            self.proof_unit_id_get_or_zero(l.negate().to_dimacs());
+                                        if uid == 0 {
+                                            ok_to_assign = false;
+                                            break;
+                                        }
+                                        chain.push(uid);
+                                    }
+                                }
+                                if ok_to_assign {
+                                    chain.push(self.proof_clause_id(did));
+                                    chain.push(self.proof_clause_id(cid));
+                                    let pfid = self.proof_next_id();
+                                    if let Some(proof) = &mut self.proof {
+                                        proof.add_derived_unit_clause(pfid, u.to_dimacs(), &chain);
+                                    }
+                                    self.proof_set_unit_id(u.to_dimacs(), pfid);
+                                }
+                            } else {
+                                ok_to_assign = false;
+                            }
+                        }
+                        if ok_to_assign {
+                            self.elim_assign_unit(ctx, u);
+                        }
                         if self.trivially_unsat {
                             break;
                         }

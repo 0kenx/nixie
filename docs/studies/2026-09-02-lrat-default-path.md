@@ -161,3 +161,46 @@ correct *verdicts*, but its proof emissions can reference parent clauses
 that a subsumption round (running inside `eliminate_phase` under proofs)
 has already deleted — "hint is not unit" (crn line 2004). The gate stays;
 the fix is subsumption-aware chain repair (use the subsumer in the chain).
+
+
+## Addendum 2: mid-search elimination under proofs — ungated, all emissions checker-valid
+
+The gate is removed; every elimination mutation now carries a
+checker-valid justification. Three more emission bugs found and fixed on
+the way (each caught by `check_lrat` on 6s167/mrpp `--bve`):
+
+1. **Resolvent chains must lead with the units of dropped literals.**
+   `elim_resolve_clauses` unit-simplifies resolvents (drops parent
+   literals falsified at level 0), and an LRAT checker replays each
+   addition from a *fresh* assignment — it does not know those units.
+   Chain shape is now `[unit ids of every parent literal falsified at
+   level 0 and absent from the resolvent] ++ [parent1, parent2]`
+   (units-first ordering: each unit hint has exactly one literal, so it
+   propagates immediately). A missing unit id drops the resolvent
+   entirely (weaker, never unverifiable).
+2. **`elim_backward_clauses`' hyper-unary path assigned unrecorded
+   level-0 units** — its `elim_assign_unit` call bypassed every guard
+   (the fourth level-0-assignment leak; caught by the ELIM-UNITS drain
+   diagnostic matching the zero-unit literals exactly). Its derivations
+   are RUP with the resolvent shape: `[units of d's falsified literals]
+   ++ [d, subsumer]` (under ¬u the units make d unit on the dropped
+   literal, propagating it, and the subsumer — which contains its
+   negation and only shared literals — conflicts). Emitted before
+   `elim_assign_unit` retires d; missing units skip the derivation.
+3. **`proof_strengthen_clause`'s empty chains are unverifiable** (a
+   checker that replays hints cannot confirm a chainless addition
+   unless the negation self-conflicts). Under-proof call sites
+   guarantee the dropped literals are unit-falsified, so the chain is
+   `[unit ids of dropped literals] ++ [old clause id]`; drops without
+   units (vivify's — never under proofs) keep the historical empty
+   chain.
+
+Verification matrix (verdict + `check_lrat`, 4 files × 4 arms): 16/16
+correct and verified (mrpp `--bve` needs a long cap: 536 s solve +
+15.8 M addition lines — LRAT emission is now measurable overhead on
+conflict-heavy instances; throughput work is the follow-up). Full
+battery (10 431), clippy/fmt/doc, Z3 parity 0 mismatches.
+
+Remaining from the ranked list: unit-resolvent provenance (the Unit-arm
+abort still makes under-proof BVE weaker), `is_real_theory` content
+predicate, certified-path re-measure.

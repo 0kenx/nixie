@@ -1930,8 +1930,31 @@ impl Solver {
             .map(|c| c.lits.iter().map(|l| l.to_dimacs()).collect())
             .unwrap_or_default();
         let new_id = self.proof_next_id();
+        // RUP chain for the strengthened clause: under-proof call sites
+        // guarantee every dropped literal is falsified by a level-0 unit,
+        // so under the negation of `kept` those units falsify the dropped
+        // literals and the OLD clause becomes unit (or conflicting) on the
+        // kept ones — an empty chain is unverifiable by a checker that
+        // only replays hints (found on 6s167 --bve, 2026-09-02). Dropped
+        // literals without a recorded unit (vivify's non-level-0 drops —
+        // that path never runs under proofs) keep the historical
+        // empty-chain emission.
+        let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+        for &lit in old_dimacs.iter() {
+            if !kept_dimacs.contains(&lit) {
+                let uid = self.proof_unit_id_get_or_zero(-lit);
+                if uid == 0 {
+                    chain.clear();
+                    break;
+                }
+                chain.push(uid);
+            }
+        }
+        if !chain.is_empty() || old_dimacs.iter().all(|l| kept_dimacs.contains(l)) {
+            chain.push(old_id);
+        }
         if let Some(proof) = &mut self.proof {
-            proof.strengthen_clause(new_id, false, &kept_dimacs, &[]);
+            proof.strengthen_clause(new_id, false, &kept_dimacs, &chain);
             proof.delete_clause(old_id, false, &old_dimacs);
         }
         self.proof_set_clause_id(cid, new_id);
