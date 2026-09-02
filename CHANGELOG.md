@@ -5,6 +5,32 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Pure-Boolean dispatch fast path] - 2026-09-02
+
+`check_core` attached a `TheoryManager` to every search — including
+formulas with no theory content at all, where the manager's
+per-backtrack bookkeeping (EUF `pop`, congruence, replay) is pure glue
+(measured ~11 % of a certified run on propositional re-encodes). A
+structural pure-Boolean predicate (every assertion is Bool constants and
+Boolean connectives; any theory atom, non-Bool sub-term, or quantifier
+rejects; re-evaluated each check so later assertions re-route) now
+solves the SAT instance directly with no manager.
+
+- Wall-clock budget parity via a detached watchdog thread raising the
+  SAT interrupt flag at the `timeout_ms` deadline (verified: 2 s
+  timeout → `unknown` at 2 s); the guard clears the flag on drop so a
+  timed-out check never poisons the next.
+- `Statistics::propagations` fed from the SAT core's delta (the general
+  path's callbacks bump it per notification) — `:statistics` and the
+  verdict-cache contract unchanged.
+- Blocking-clause honesty caveat and unsat-core construction mirror
+  `check_sat_only`.
+- Certified-mode 6s167 re-encode: **142.9 s → 61.2 s (2.3×)**, verdict
+  unchanged and the LRAT certification gate still passes.
+- Gates: full battery (10 431), clippy/fmt/doc clean, Z3 parity 0
+  mismatches; spot checks for incremental push/pop, mixed-theory
+  re-route, and timeouts.
+
 ## [Two soundness fixes: LRAT zero-unit leaks + BVE resolution-closure hole] - 2026-09-02
 
 **Fix 1 (proofs, pre-existing): default-path LRAT proofs were unverifiable

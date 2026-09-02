@@ -515,6 +515,67 @@ impl Default for Solver {
     }
 }
 
+/// Watchdog guard for [`Solver::deadline_watchdog`]: a detached thread
+/// raises the interrupt flag at the deadline; the flag is cleared when the
+/// guard drops (the solve has returned by then), so a timed-out check
+/// never poisons the next.
+struct DeadlineGuard {
+    flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Structural pure-Boolean predicate for [`Solver::goal_is_pure_boolean`]:
+/// every sub-term is Bool-sorted and built from Boolean constants, Bool
+/// variables, and Boolean connectives (including Bool-sorted `=`/`ite`/
+/// `distinct` — all lowered through the same `encode_bool_node` gates, no
+/// theory atom among them). Anything else (UF applications, arithmetic,
+/// BV, arrays, strings, datatypes, quantifiers) rejects.
+fn term_is_pure_boolean(term: TermId, manager: &TermManager) -> bool {
+    const MAX_VISITED: usize = 2_000_000;
+    let mut stack = vec![term];
+    let mut visited = rustc_hash::FxHashSet::default();
+    while let Some(tid) = stack.pop() {
+        if !visited.insert(tid) {
+            continue;
+        }
+        if visited.len() > MAX_VISITED {
+            return false;
+        }
+        let Some(term_data) = manager.get(tid) else {
+            return false;
+        };
+        let is_bool = manager
+            .sorts
+            .get(term_data.sort)
+            .is_some_and(|s| s.is_bool());
+        let ok = is_bool
+            && matches!(
+                &term_data.kind,
+                TermKind::True
+                    | TermKind::False
+                    | TermKind::Var(_)
+                    | TermKind::Not(_)
+                    | TermKind::And(_)
+                    | TermKind::Or(_)
+                    | TermKind::Xor(_, _)
+                    | TermKind::Implies(_, _)
+                    | TermKind::Distinct(_)
+                    | TermKind::Eq(_, _)
+                    | TermKind::Ite(_, _, _)
+            );
+        if !ok {
+            return false;
+        }
+        stack.extend(oxiz_core::ast::traversal::get_children(&term_data.kind));
+    }
+    true
+}
+
+impl Drop for DeadlineGuard {
+    fn drop(&mut self) {
+        self.flag.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Solver {
     /// Create a new solver
     #[must_use]
@@ -1056,6 +1117,48 @@ impl Solver {
         }
     }
 
+    /// Wall-clock watchdog for the pure-Boolean fast path: mirrors the
+    /// theory callbacks' `timeout_ms` enforcement by raising the SAT
+    /// solver's interrupt flag once the deadline passes. `None` (no
+    /// timeout) releases immediately; the guard clears the flag on drop so
+    /// a timeout on one check never poisons the next.
+    fn deadline_watchdog(&mut self) -> Option<DeadlineGuard> {
+        if self.config.timeout_ms == 0 {
+            return None;
+        }
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.sat.set_interrupt(flag.clone());
+        let deadline =
+            oxiz_time::Instant::now() + core::time::Duration::from_millis(self.config.timeout_ms);
+        // Detached watchdog: raises the interrupt flag at the deadline.
+        // The guard clears the flag when the solve returns, so a timed-out
+        // check never poisons the next; the thread itself exits after its
+        // sleep and only ever touches the AtomicBool.
+        let watch_flag = flag.clone();
+        std::thread::spawn(move || {
+            let now = oxiz_time::Instant::now();
+            if now < deadline {
+                std::thread::sleep(deadline - now);
+            }
+            watch_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        Some(DeadlineGuard { flag })
+    }
+
+    /// Whether every assertion is built purely from Bool constants and
+    /// Boolean connectives (the fast path's dispatch predicate; see the
+    /// fast-path block in [`Self::check_core`]). A conservative structural
+    /// walk over the assertions as written — any theory atom, any
+    /// non-Bool-sorted sub-term, any quantifier rejects. Evaluated fresh at
+    /// every check, so later assertions re-route to the general path.
+    fn goal_is_pure_boolean(&self, manager: &TermManager) -> bool {
+        !self.has_quantifiers
+            && self
+                .assertions
+                .iter()
+                .all(|&a| term_is_pure_boolean(a, manager))
+    }
+
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
         self.array_axioms_saturated = false;
         // Per-search case-split bookkeeping: each CDCL search starts with a
@@ -1479,6 +1582,63 @@ impl Solver {
         // quantified goals whose MBQI rounds the clause budget pins.)
         if pure_dl {
             self.ensure_numeric_equality_splits(manager);
+        }
+
+        // Pure-Boolean fast path: nothing theory-shaped was encoded — no
+        // SAT var maps to a theory constraint, no BV/arith/array/datatype/
+        // float/string terms exist, no quantifier rounds are pending — so
+        // the `TheoryManager` the general path constructs below would be
+        // pure per-backtrack glue (measured ~11 % of a certified run on a
+        // propositional re-encode: EUF `pop`/congruence bookkeeping on a
+        // formula with no theory atoms). Solve the SAT instance directly.
+        //
+        // Soundness: the predicate is evaluated fresh at every `check_core`
+        // from the structural state the encoder just produced, so a later
+        // assertion that introduces theory content re-routes to the general
+        // path on the next check. With no constrained vars the theory
+        // callbacks provably never fire (`on_assignment` early-returns for
+        // unconstrained vars; EUF/arith/BV have no atoms to replay), so
+        // detaching them cannot change the verdict — only the per-conflict
+        // overhead. Model building (`build_model`) and unsat cores read the
+        // same SAT model/database the general path would. Blocking clauses
+        // (a search restriction, not lemmas) keep `check_sat_only`'s
+        // honesty caveat: an Unsat over a restricted database is Unknown.
+        if self.goal_is_pure_boolean(manager) {
+            // Wall-clock budget parity: the general path enforces
+            // `timeout_ms` from inside the theory callbacks; the plain
+            // solver checks only `max_conflicts` and its interrupt flag,
+            // so a deadline runs here as a watchdog that raises the flag.
+            let _watchdog = self.deadline_watchdog();
+            // Statistics parity: `Statistics::propagations` counts search
+            // work the caller can observe (the general path's theory
+            // callbacks bump it per assignment notification). Feed the
+            // SAT core's delta in so `:statistics` and the verdict-cache
+            // tests keep the same contract with no manager attached.
+            let props_before = self.sat.stats().propagations;
+            match self.sat.solve() {
+                SatResult::Unsat => {
+                    self.statistics.propagations +=
+                        self.sat.stats().propagations.saturating_sub(props_before);
+                    if self.blocking_clauses_present() {
+                        self.model = None;
+                        self.unsat_core = None;
+                        return SolverResult::Unknown;
+                    }
+                    self.build_unsat_core();
+                    return SolverResult::Unsat;
+                }
+                SatResult::Unknown => {
+                    self.statistics.propagations +=
+                        self.sat.stats().propagations.saturating_sub(props_before);
+                    return SolverResult::Unknown;
+                }
+                SatResult::Sat => {
+                    self.statistics.propagations +=
+                        self.sat.stats().propagations.saturating_sub(props_before);
+                    self.build_model(manager);
+                    return SolverResult::Sat;
+                }
+            }
         }
 
         // Run SAT solver with theory integration
