@@ -161,8 +161,20 @@ impl Solver {
         // timeout) – the same single-policy-port failure mode the four
         // 2026-08 cadical ports hit. The knob keeps the study reproducible.
         let strip_fixed = crate::walk_strip_fixed_enabled();
-        let mut occ: Vec<Vec<u32>> = vec![Vec::new(); self.num_vars * 2];
-        let mut slots: Vec<Vec<Lit>> = Vec::new();
+        // Packed objective (CSR): slot literals and occurrence lists live in
+        // two flat buffers with cumulative end offsets. The previous
+        // `Vec<Vec<_>>` shapes paid one heap `Vec` per clause (~40 B of
+        // header + block overhead each) and one per literal — on
+        // clause-dense instances (worker-class, 10M originals) that was
+        // ~500 MB of *transient* allocation per walk round and the entire
+        // search-time RSS climb (measured: peak 1387 MB base vs 814 MB with
+        // the walk off; see the standing-gap study's memory map). Packing
+        // preserves contents and per-literal order exactly — the flip loop
+        // reads identical data in identical order, so the trajectory is
+        // untouched (54-file identity gate applies verbatim).
+        let mut occ_end: Vec<u32> = vec![0; self.num_vars * 2];
+        let mut slot_buf: Vec<Lit> = Vec::new();
+        let mut slot_end: Vec<u32> = Vec::new();
         let mut true_count: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
         let mut stripped: SmallVec<[Lit; 8]> = SmallVec::new();
@@ -214,26 +226,81 @@ impl Solver {
             } else {
                 full
             };
-            let slot = slots.len() as u32;
             let n_true = lits
                 .iter()
                 .filter(|&&l| values[l.var().index()] == l.is_pos())
                 .count() as u32;
-            for &l in lits {
-                occ[l.code() as usize].push(slot);
-                lit_sum = lit_sum.saturating_add(1);
-            }
-            slots.push(lits.to_vec());
-            let _ = &clause;
+            slot_buf.extend_from_slice(lits);
+            slot_end.push(slot_buf.len() as u32);
             true_count.push(n_true);
+            lit_sum = lit_sum.saturating_add(lits.len() as u64);
         }
-        if slots.is_empty() {
+        let slot_count = slot_end.len();
+        if slot_count == 0 {
             return;
         }
+        // CSR occurrence build: count per literal (the slot scan above is a
+        // single pass; counts come from the packed slots), prefix into ends,
+        // then fill one flat buffer preserving clause-visit order per
+        // literal exactly as the per-literal `push`es did.
+        for i in 0..slot_count {
+            let start = if i == 0 { 0 } else { slot_end[i - 1] as usize };
+            for &l in &slot_buf[start..slot_end[i] as usize] {
+                occ_end[l.code() as usize] += 1;
+            }
+        }
+        let mut occ_buf: Vec<u32> = {
+            let mut acc = 0u32;
+            for e in occ_end.iter_mut() {
+                acc += *e;
+                *e = acc;
+            }
+            vec![0; acc as usize]
+        };
+        {
+            let mut cursor: Vec<u32> = {
+                let mut c = Vec::with_capacity(occ_end.len());
+                let mut prev = 0u32;
+                for &e in occ_end.iter() {
+                    c.push(prev);
+                    prev = e;
+                }
+                c
+            };
+            for slot in 0..slot_count {
+                let start = if slot == 0 {
+                    0
+                } else {
+                    slot_end[slot - 1] as usize
+                };
+                for &l in &slot_buf[start..slot_end[slot] as usize] {
+                    let code = l.code() as usize;
+                    occ_buf[cursor[code] as usize] = slot as u32;
+                    cursor[code] += 1;
+                }
+            }
+        }
+        // Occurrence slice of `lit` (identical contents and order to the
+        // previous per-literal Vec).
+        let occ_of = |lit: Lit| -> &[u32] {
+            let code = lit.code() as usize;
+            let start = if code == 0 {
+                0
+            } else {
+                occ_end[code - 1] as usize
+            };
+            &occ_buf[start..occ_end[code] as usize]
+        };
+        // Slot literal slice.
+        let slot_of = |slot: u32| -> &[Lit] {
+            let i = slot as usize;
+            let start = if i == 0 { 0 } else { slot_end[i - 1] as usize };
+            &slot_buf[start..slot_end[i] as usize]
+        };
 
         // Broken clauses (true_count == 0), in_broken for O(1) lazy removal.
         let mut broken: Vec<u32> = Vec::new();
-        let mut in_broken = vec![false; slots.len()];
+        let mut in_broken = vec![false; slot_count];
         let mut broken_count: u64 = 0;
         for (slot, &n) in true_count.iter().enumerate() {
             if n == 0 {
@@ -253,7 +320,7 @@ impl Solver {
         // cb^-i with cb picked from the average clause size (Balint's CB
         // values, piecewise-linear interpolated). `use_size_based_cb` only
         // every second round, like cadical.
-        let average_size = lit_sum as f64 / slots.len() as f64;
+        let average_size = lit_sum as f64 / slot_count as f64;
         let cb = if self.stats.walk.count.is_multiple_of(2) {
             fit_cb_value(average_size)
         } else {
@@ -306,7 +373,7 @@ impl Solver {
             if picked == u32::MAX {
                 break;
             }
-            let clause_lits = &slots[picked as usize];
+            let clause_lits: &[Lit] = slot_of(picked);
 
             // Score every candidate literal by its break count: the number of
             // occurrence clauses of the negated literal that are satisfied
@@ -318,12 +385,12 @@ impl Solver {
             let mut sum = 0.0f64;
             for &lit in clause_lits {
                 let mut brk = 0u32;
-                for &slot in &occ[lit.negate().code() as usize] {
+                for &slot in occ_of(lit.negate()) {
                     if true_count[slot as usize] == 1 {
                         brk += 1;
                     }
                 }
-                ticks = ticks.saturating_add(occ[lit.negate().code() as usize].len() as u64);
+                ticks = ticks.saturating_add(occ_of(lit.negate()).len() as u64);
                 let score = table.get(brk as usize).copied().unwrap_or(0.0);
                 scores.push(score);
                 sum += score;
@@ -352,7 +419,7 @@ impl Solver {
                 Lit::neg(Var::new(var_idx as u32))
             };
             values[var_idx] = !values[var_idx];
-            for &slot in &occ[t.code() as usize] {
+            for &slot in occ_of(t) {
                 let n = &mut true_count[slot as usize];
                 *n = n.saturating_sub(1);
                 if *n == 0 && !in_broken[slot as usize] {
@@ -361,7 +428,7 @@ impl Solver {
                     broken_count += 1;
                 }
             }
-            for &slot in &occ[t.negate().code() as usize] {
+            for &slot in occ_of(t.negate()) {
                 let n = &mut true_count[slot as usize];
                 *n += 1;
                 if *n == 1 && in_broken[slot as usize] {
@@ -369,8 +436,8 @@ impl Solver {
                     broken_count -= 1;
                 }
             }
-            ticks = ticks.saturating_add(occ[t.code() as usize].len() as u64);
-            ticks = ticks.saturating_add(occ[t.negate().code() as usize].len() as u64);
+            ticks = ticks.saturating_add(occ_of(t).len() as u64);
+            ticks = ticks.saturating_add(occ_of(t.negate()).len() as u64);
 
             // New global minimum: snapshot the best assignment
             // (cadical `walk_save_minimum`).

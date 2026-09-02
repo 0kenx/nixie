@@ -24,6 +24,15 @@ fn main() {
     if std::env::var("NO_REDUCE").is_ok() {
         cfg.clause_deletion_threshold = usize::MAX;
     }
+    if std::env::var("NO_PROBE").is_ok() {
+        cfg.enable_failed_literal_probing = false;
+        cfg.enable_hyper_binary_probing = false;
+    }
+    if std::env::var("NO_ELIM").is_ok() {
+        // Diagnostic arm: keep the pre-search elimination fixpoint, disable
+        // the *scheduled* mid-search rounds (memory-composition studies).
+        cfg.elim_interval = u64::MAX;
+    }
     if std::env::var("NO_STAB").is_ok() {
         cfg.enable_stabilize = false;
     }

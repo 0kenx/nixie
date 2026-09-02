@@ -279,3 +279,21 @@ clause ids; (2) **elimination-transient budgeting** (stream or DB-size-
 gate the occurrence lists) — targeted, pre-registerable; (3) binary
 retention/reduction — heuristic class, retention-signal thread measured
 dead at this granularity.
+
+## Addendum 5 (2026-09-02): the search-time climb was the walk; packed, −431 MB
+
+A/B of the suspected transients on worker_550 (peak RSS, 40 k conflicts):
+base 1387 MB; scheduled elimination off 1331; probe off 1387; **walk off
+814** — the ProbSAT walk's per-round structures owned the *entire*
+search-time climb. `walk_round` built `slots: Vec<Vec<Lit>>` (one heap
+Vec per original clause — ~40 B header+block overhead each, ~500 MB on a
+10 M-clause formula) plus `occ: Vec<Vec<u32>>` occurrence lists. Both are
+read-only after construction, so they now pack CSR-style into two flat
+buffers with cumulative end offsets — identical contents and per-literal
+order, RNG stream untouched, **trajectory-identical (54/54 corpus gate)**.
+Worker peak: **1387 → 956 MB** (search-time climb now 814→956 MB, i.e.
+~140 MB of packed round data + slack, down from ~570 MB). The remaining
+956 MB is the formula itself (~540 MB standing) plus pre-search
+transients (lucky snapshot ~190 MB packed, pre-search elim/probe
+occurrences) — the binary-representation lever of Addendum 4 is what is
+left.
