@@ -1,5 +1,21 @@
 # Retention signal: usage-ranked vs glue-ranked reduce (2026-09-02, pre-registered)
 
+> ## CORRECTION (2026-09-02, post-fix): every measured cell below was
+> produced by an UNSOUND arm and is invalid
+>
+> The cadical-reduce port had two wrong-UNSAT leaks (O(1) `lits[0]` reason
+> check missing BIG-propagated binaries; binary deletion without BIG-edge
+> purge — see commit `3993905`). On SAT instances the leaks terminate runs
+> early with a spurious Unsat that a conflicts-only harness scores as a
+> *fast solve*; on UNSAT instances the spurious empty clause shortens runs
+> the same way. Re-run on the sound binary: **T/N geomean 1.0020** —
+> usage-ranking has no effect. The "6s167 usage stronghold (47×)" and the
+> "2026-08-22 cells no longer reproduce" finding were both the bug
+> speaking: today's cells reproduce the *sound* behavior, and the 47× was
+> unsound-path speed. The 2026-08-22 study's drop verdict stands (and its
+> own numbers are suspect for the same reason). Original (invalid) table
+> preserved below for the record of the bug's signature.
+
 Open question left by the 2026-08-22 cadical-reduce study
 (`2026-08-sat-cadical-policy-ports-negative.md`): on `stable-300`,
 **random** deletion at the cadical trigger points beat **glue-ranked**
@@ -101,3 +117,35 @@ study: no consistent treatment/null separation.
 * A *state-based* hybrid — e.g. fall back to usage-ranked reduction when
   DB churn stops correlating with progress — is a new design, needs its
   own pre-registration; the 6s167 evidence makes it the candidate.
+
+## Sound re-measurement (post `3993905`, same cells, same harness plus verdict checking)
+
+| instance | treat med | null med | T/N |
+|---|---|---|---|
+| 6s167-opt | 126 600 | 133 722 | 0.947 |
+| crn_11_99_u | 125 900 | 119 822 | 1.051 |
+| constraints_17 | 24 218 | 28 720 | 0.843 |
+| mrpp_4x4 | 270 578 | 348 054 | 0.777 |
+| qwh.50.1250 | 97 459 | 121 201 | 0.804 |
+| summle_X4044 | 100 347 | 111 240 | 0.902 |
+| stable-300 | 619 720 | 467 665 | 1.325 |
+| frb65-12-2 | 638 404 | 324 768 | 1.966 |
+| si2-b03m | 39 751 | 40 473 | 0.982 |
+| Break_unsat_06_07 | 38 104 | 38 299 | 0.995 |
+| barman-pfile06 | 1 043 | 1 228 | 0.849 |
+
+**T/N geomean 1.0020 — no effect.** Verdicts correct on all cells (the
+fix's regression tests pin constraints_17 across all four arms). The
+retention-signal thread is closed at this granularity: neither
+usage-ranking nor glue-ranking separates from random selection once the
+deletion path is sound.
+
+### Methodology lessons (added by this correction)
+
+* **Every study harness must check verdicts, and every "win" on a SAT
+  file must be ground-truthed** (z3/kissat) before it is believed. This
+  study's harness compared conflicts only; the adaptive follow-up added a
+  verdict column late, which is the only reason the bug was caught.
+* An unsound solver arm is an *optimization oracle*: wrong-unsat
+  terminations look like 10–130× speedups. Extraordinary per-file wins on
+  a study arm are a soundness smell first and a discovery second.
