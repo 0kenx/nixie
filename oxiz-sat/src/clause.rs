@@ -782,8 +782,15 @@ impl ClauseDatabase {
     /// `shrink`) rather than walking arena memory by recomputed strides –
     /// see `ClauseArena::scale_activity` for why walking is unsound.
     pub fn scale_live_activities(&mut self, factor: f32) {
-        let refs: Vec<ClauseRef> = self.refs.clone();
-        for r in refs {
+        // `refs` (read) and `arena` (written) are disjoint fields, so the
+        // previous full `refs.clone()` per rescale – one allocation plus
+        // copy of the whole id table every ~46k conflicts (the increment
+        // regrows to its 1e20 bound on that cadence) – bought nothing.
+        // Tombstoned ids all dereference the same tombstone header line,
+        // so after a compaction the dead-id share of this walk is one
+        // cache line repeatedly.
+        for i in 0..self.refs.len() {
+            let r = self.refs[i];
             self.arena.scale_activity(r, factor);
         }
     }
