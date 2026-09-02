@@ -225,3 +225,23 @@ trajectory happened to be unlucky. Lessons:
   the tail is **dead** (kissat solved shuffling-2 with 0 rephases and 0
   walks; our single walk there found a model in 159 flips at ~conflict
   21 k — the mechanism exists but is not the gap).
+
+## Addendum 3 (2026-09-02): reduce-percentage surface probed and closed
+
+Single-seed screen of the legacy tier percentages
+(`OXIZ_REDUCE_PCT_{LOCAL,MID,CORE}`, defaults 75/30/10), conflicts-to-verdict:
+
+| knobs | mrpp_4x4 | 6s167-opt |
+|---|---|---|
+| 75/30/10 (default) | 249 027 | 118 191 |
+| 60/20/5 (softer) | 282 920 | 127 523 |
+| 50/15/5 (softer) | 286 612 | — |
+| 90/50/20 (harder) | 451 754 | 136 247 |
+| 95/60/25 (harder) | 1 234 203 | — |
+
+The defaults are a local optimum in both directions on both files — the
+"smaller DB → fewer watch visits wins" idea (mrpp runs ~40 visits/prop at
+avg list ~93) is dead at this granularity: the DB earns its retention.
+Consistent with the cadical-reduce port's null result. The open retention
+question remains the *signal* (usage vs glue — where random deletion beat
+glue-ranked 2× on stable-300 in the 2026-08-22 study), not the amount.
