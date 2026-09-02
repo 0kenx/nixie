@@ -100,6 +100,16 @@ impl BinaryImplicationGraph {
         }
     }
 
+    /// Total live edges and their allocation slack (diagnostics:
+    /// `OXIZ_MEM_STATS`). The BIG is the propagation backbone for binaries
+    /// and, unlike the clause arena, has no compaction — its footprint is
+    /// live edges plus each per-literal Vec's doubling overshoot.
+    pub(crate) fn edge_accounting(&self) -> (usize, usize) {
+        let edges: usize = self.implications.iter().map(Vec::len).sum();
+        let cap: usize = self.implications.iter().map(Vec::capacity).sum();
+        (edges, cap)
+    }
+
     fn resize(&mut self, num_vars: usize) {
         self.implications.resize(num_vars * 2, Vec::new());
     }
@@ -799,6 +809,29 @@ impl SolverStats {
         );
         println!("=======================================");
     }
+}
+
+/// Search-state memory composition (see [`Solver::memory_composition`]).
+#[derive(Debug, Clone, Copy)]
+pub struct MemoryComposition {
+    /// Clause-arena live region (bytes).
+    pub arena_used_bytes: usize,
+    /// Clause-arena allocation capacity (bytes).
+    pub arena_capacity_bytes: usize,
+    /// Arena bytes in deleted-but-uncompacted slots.
+    pub arena_wasted_bytes: usize,
+    /// The dense id→ref table (4 bytes per clause ever allocated).
+    pub refs_bytes: usize,
+    /// Watch-list live watcher bytes.
+    pub watch_bytes: usize,
+    /// Watch-list capacity (doubling overshoot) bytes.
+    pub watch_capacity_bytes: usize,
+    /// Binary implication graph live edge bytes (8 per edge).
+    pub big_edge_bytes: usize,
+    /// Binary implication graph capacity bytes.
+    pub big_capacity_bytes: usize,
+    /// Arena compactions performed.
+    pub arena_compactions: u64,
 }
 
 /// Soundness error from reintroducing a variable the inprocessing toolkit
@@ -3207,6 +3240,29 @@ impl Solver {
 
     /// Get statistics
     #[must_use]
+    /// Search-state memory composition (diagnostics: `OXIZ_MEM_STATS` in
+    /// the harnesses). Live bytes vs allocation slack for the structures
+    /// that dominate long runs: the clause arena, the id→ref table, watch
+    /// lists, and the binary implication graph. All are live-data
+    /// footprints except the per-list Vec capacity overshoot columns.
+    pub fn memory_composition(&self) -> MemoryComposition {
+        let arena = self.clauses.arena_stats();
+        let (big_edges, big_cap) = self.binary_graph.edge_accounting();
+        let watch: (usize, usize) = self.watches.watcher_accounting();
+        MemoryComposition {
+            arena_used_bytes: arena.used_bytes,
+            arena_capacity_bytes: arena.total_bytes,
+            arena_wasted_bytes: arena.wasted_bytes,
+            refs_bytes: self.clauses.num_slots() * 4,
+            watch_bytes: watch.0 * core::mem::size_of::<crate::watched::Watcher>(),
+            watch_capacity_bytes: watch.1 * core::mem::size_of::<crate::watched::Watcher>(),
+            big_edge_bytes: big_edges * 8,
+            big_capacity_bytes: big_cap * 8,
+            arena_compactions: arena.compactions,
+        }
+    }
+
+    /// Get solver statistics.
     pub fn stats(&self) -> &SolverStats {
         &self.stats
     }

@@ -210,6 +210,14 @@ impl WatchLists {
         self.bin_phantom = bin_phantom;
     }
 
+    /// Live watcher count and total capacity count across all lists
+    /// (diagnostics: `OXIZ_MEM_STATS`).
+    pub(crate) fn watcher_accounting(&self) -> (usize, usize) {
+        self.watches
+            .iter()
+            .fold((0, 0), |(l, c), w| (l + w.len(), c + w.capacity()))
+    }
+
     /// Clear all watch lists
     pub fn clear(&mut self) {
         for watches in &mut self.watches {

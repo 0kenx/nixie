@@ -86,6 +86,22 @@ fn main() {
         );
     }
     println!("result={r:?}");
+    if std::env::var("OXIZ_MEM_STATS").is_ok() {
+        let mc = solver.memory_composition();
+        println!(
+            "memstat arena={}/{}B waste={}B refs={}B watch={}/{}B big={}/{}B compactions={}",
+            mc.arena_used_bytes,
+            mc.arena_capacity_bytes,
+            mc.arena_wasted_bytes,
+            mc.refs_bytes,
+            mc.watch_bytes,
+            mc.watch_capacity_bytes,
+            mc.big_edge_bytes,
+            mc.big_capacity_bytes,
+            mc.arena_compactions
+        );
+    }
+
     if std::env::var("OXIZ_REASON_STATS").is_ok() {
         let l = oxiz_sat::DIAG_REASON_LEARNED.load(std::sync::atomic::Ordering::Relaxed);
         let o = oxiz_sat::DIAG_REASON_ORIGINAL.load(std::sync::atomic::Ordering::Relaxed);

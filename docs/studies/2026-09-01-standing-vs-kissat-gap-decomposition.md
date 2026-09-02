@@ -245,3 +245,37 @@ avg list ~93) is dead at this granularity: the DB earns its retention.
 Consistent with the cadical-reduce port's null result. The open retention
 question remains the *signal* (usage vs glue — where random deletion beat
 glue-ranked 2× on stable-300 in the 2026-08-22 study), not the amount.
+
+## Addendum 4 (2026-09-02): worker-class memory composition, measured
+
+`OXIZ_MEM_STATS=1` (`Solver::memory_composition`) on worker_550
+(10.3 M originals, avg 2.7 lits — 97 %+ binary), same values at conflict
+1 and 40 000 (standing structures do not grow during search):
+
+| structure | live | capacity |
+|---|---|---|
+| clause arena | 247.6 MB | 268.4 MB |
+| BIG (2×8 B edges/binary) | 164.7 MB | **250.0 MB** |
+| refs (4 B/allocated clause) | 41.2 MB | — |
+| watch lists (≥3-lit clauses) | **14 KB** | 107 KB |
+| arena compactions | 0 (gate correct: waste ≪ live/3) | |
+
+Peak RSS: **814 MB before the first conflict**, 1387 MB during search.
+So: (a) the standing footprint is ~540 MB of *original formula* —
+~44 B per binary (24 B arena slot + 16 B BIG edges + 4 B refs) vs
+kissat's watch-resident binaries (`binary_tagged_literal` — no arena
+slot, no clause header, ~16–24 B), the structural ~2×; (b) pre-search
+adds ~270 MB of transients (packed lucky snapshot ~190 MB + probe/BVE
+occurrence lists); (c) search adds ~570 MB of *recurring transients* —
+the scheduled elimination/probe rounds rebuild occurrence lists over the
+whole 10 M-clause DB every round (cadical suffers the same: its measured
+worker_550 peak is 1874 MB). My earlier "watch lists ≈ 250 MB" guess was
+wrong by four orders of magnitude — worker is a BIG-only instance.
+
+Levers, ranked: (1) **binary representation density** (kissat-style
+watch-resident binaries) — major architecture work, made conceivable by
+BIG-authoritative BCP existing, but binary *reasons* currently need
+clause ids; (2) **elimination-transient budgeting** (stream or DB-size-
+gate the occurrence lists) — targeted, pre-registerable; (3) binary
+retention/reduction — heuristic class, retention-signal thread measured
+dead at this granularity.
