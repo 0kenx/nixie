@@ -20,6 +20,7 @@ use oxiz_sat::{DimacsParser, Solver, SolverConfig};
 use std::env;
 
 fn main() {
+    static SEED_OVERRIDE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     let args: Vec<String> = env::args().skip(1).collect();
     let cnf = args.iter().find(|a| !a.starts_with('-')).cloned();
     let lrat = flag_value(&args, "--lrat");
@@ -27,6 +28,12 @@ fn main() {
     let drat = flag_value(&args, "--drat");
     let bare = args.iter().any(|a| a == "--bare");
     let bve = args.iter().any(|a| a == "--bve");
+    if let Some(sd) = flag_value(&args, "--seed") {
+        // Study knob: re-seed the solver RNG (trajectory-variance frames
+        // for LRAT-mode comparisons; see docs/BENCHMARKING.md).
+        // Parsed before solver construction below via a closure-scoped var.
+        SEED_OVERRIDE.set(sd.parse::<u64>().unwrap_or(0)).ok();
+    }
 
     let Some(cnf) = cnf else {
         eprintln!(
@@ -53,6 +60,9 @@ fn main() {
         config.use_vmtf = false;
     }
     let mut solver = Solver::with_config(config);
+    if let Some(&sd) = SEED_OVERRIDE.get() {
+        solver.set_random_seed(sd);
+    }
     let diag = std::env::var("OXIZ_DIAG").is_ok();
 
     // Connect the proof tracer *before* parsing so original clauses draw ids

@@ -204,3 +204,47 @@ battery (10 431), clippy/fmt/doc, Z3 parity 0 mismatches.
 Remaining from the ranked list: unit-resolvent provenance (the Unit-arm
 abort still makes under-proof BVE weaker), `is_real_theory` content
 predicate, certified-path re-measure.
+
+
+## Addendum 3: the LRAT wall-cost is the search, not the emission
+
+mrpp `--bve --lrat` took 536 s vs ~9 s unlogged. Decomposition:
+
+* `--lrat /dev/null` (I/O removed): **546 s** — the writer is not the
+  cost. Per-conflict: 34.5 µs (LRAT) vs 37 µs (plain) — **identical**;
+  emission overhead per conflict is negligible.
+* Conflicts: plain 1.43 M (239 k without `--bve`) vs LRAT 15.8 M
+  (1.98 M base) — the search itself is 8–11× longer under LRAT on
+  this instance.
+
+The conflict multiplier across files is **chaos-shaped**, not a uniform
+regression: crn 0.70×, 6s167 0.80×, FmlaEquivChain 0.84× (all
+*better* under LRAT), noL 3.0×, mrpp 8.3× (worse). Seeds do not move
+either trajectory (the default-config search never consults the RNG on
+these instances), so each mode is one deterministic trajectory and the
+spread is trajectory reshuffling per docs/BENCHMARKING.md §1.
+
+**Root cause**: `improve_learnt_clause` disables block-UIP shrinking
+entirely under LRAT (`if self.lrat { minimize_learnt_clause(); return; }`)
+— the shrink's on-the-fly strengthening has no RUP-chain bookkeeping,
+so LRAT-mode runs a strictly weaker learned-clause postprocess and a
+different (reshuffled) search.
+
+### The fix and why it is a project, not a patch
+
+Porting shrink-with-chains: every block-resolution step that drops a
+literal mid-shrink must extend the learned clause's RUP chain with the
+resolution antecedents in an order a hint-replay checker can propagate
+(the `minimize_clause_lrat` machinery does exactly this for plain
+recursive minimization; the block walk's bidirectional resolution needs
+the same treatment woven through `shrink_block`). **No reference
+implementation exists** — cadical emits DRAT (no chains) and z3 has no
+equivalent — so the chain construction must be derived and every
+instance checker-verified. Design sketch: run the block walk exactly as
+today; for each shrunk literal, its block-resolution obligation set
+(the same antecedents the plain path would walk) is appended to the
+chain at drop time, in reverse-trail order. Gate: proofs verify on the
+4-file × 4-arm matrix + full certification suite.
+
+Interim posture: LRAT wall time is conflict-dominated; nothing to
+optimize in the writer until the search shapes converge.
