@@ -720,7 +720,22 @@ impl Solver {
 
         let mut to_delete: Vec<ClauseId> = Vec::new();
         if !candidates.is_empty() {
-            if null_arm {
+            // Study arm (`OXIZ_REDUCE_BY_USED`, pre-registered in
+            // docs/studies/2026-09-02-retention-signal.md): retention
+            // *signal* experiment – rank least-used-first instead of
+            // worst-glue-first, same schedule, same deletion counts, same
+            // tier protection. The 2026-08-22 reduce study measured random
+            // deletion beating glue-ranked deletion 2x on stable-300,
+            // suggesting the glue signal misleads; usage is the candidate
+            // replacement signal. Off by default.
+            let by_used = crate::reduce_by_used_enabled();
+            if !null_arm && by_used {
+                candidates.sort_by(|a, b| a.2.cmp(&b.2).then(b.0.cmp(&a.0)));
+                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                for c in candidates.iter().take(target) {
+                    to_delete.push(c.3);
+                }
+            } else if null_arm {
                 // MATCHED NULL: delete the same *number* of clauses as the
                 // treatment would (same schedule, same target fraction), but
                 // chosen pseudo-randomly instead of by glue/size/used – the

@@ -418,6 +418,20 @@ pub fn cadical_reduce_null_enabled() -> bool {
     })
 }
 
+/// Retention-signal study arm (`OXIZ_REDUCE_BY_USED=1`, see
+/// `docs/studies/2026-09-02-retention-signal.md`): rank reduce candidates
+/// least-used-first instead of worst-glue-first. Same schedule, counts and
+/// tier protection; pairs with `OXIZ_CADICAL_REDUCE_NULL` as its matched
+/// null. Default off.
+#[doc(hidden)]
+pub fn reduce_by_used_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_REDUCE_BY_USED").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Clause-arena compaction (standing-gap lever 1,
 /// `docs/studies/2026-09-01-standing-vs-kissat-gap-decomposition.md`):
 /// ON by default. `OXIZ_NO_ARENA_COMPACT=1` disables – the A/B switch for
