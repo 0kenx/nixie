@@ -5,6 +5,32 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [SAT reduce-arm soundness] - 2026-09-02
+
+Two wrong-UNSAT leaks in the cadical-reduce study arms (env-gated,
+default-off; the default legacy reducer was never affected — binaries
+skipped, watch-propagated reasons at `lits[0]`):
+
+1. **Reason protection read `lits[0]` only.** BIG-propagated binaries can
+   carry their implied literal at either position, so the guard missed
+   live reasons and conflict analysis resolved against deleted clauses
+   (spurious empty clause → wrong UNSAT). All reducers now use the exact
+   all-literal `is_live_reason_clause` scan — the same escape the
+   pure-literal cleanup's comment already named.
+2. **Binary deletion without BIG-edge purge.** The port deletes len == 2
+   clauses (the legacy reducer never does); stale implication-graph edges
+   kept propagating implications of deleted clauses and re-recording dead
+   reasons — the exact failure `retire_clause`'s purge fixed on
+   Break_unsat_06_07, missing from the port's inline deletion.
+
+Found because the pre-registered adaptive-retention arm returned Unsat on
+a satisfiable instance (constraints_17; SAT per z3/kissat). Pinned by four
+regression tests (constraints_17 × 4 arms, all fail pre-fix). Both
+retention studies re-measured sound: **all their measured effects were
+the bug** (T/N 1.00 both) — unsound terminations masquerading as 10–130×
+speedups; docs carry correction banners. Default-path trajectory identity
+(54/54) and Z3 parity (0 mismatches) re-verified.
+
 ## [SAT clause-arena compaction] - 2026-09-01
 
 `ClauseArena::compact` was an empty stub the reduce loop called every round
