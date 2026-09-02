@@ -182,3 +182,46 @@ uses the same region bound every arena read uses (`get`/`read_header`).
 
 Next per the program: lever 2 (tiered retention, matched-null study) and
 lever 3 (search-path tail study).
+
+## Addendum 2 (2026-09-02): the tail table's seed-selection bias, corrected
+
+The tail table above conditions on the default RNG seed. 10-seed
+distributions (mixed via `set_random_seed`, conflicts-to-verdict, 60 s
+cap, `01dab25` binary) revise it:
+
+| file | default seed | min | median | max | kissat | gap at median |
+|---|---|---|---|---|---|---|
+| shuffling-2-s25 | 23 130 (**max**) | 185 | 1 246 | 23 130 | 784 | **1.6×** (was "29×") |
+| frb65-12-2 | 1 062 010 (near max) | 28 274 | 728 634 | 1 679 062 | 167 k | 4.4× (59× spread!) |
+| FmlaEquivChain | 2 147 581 (**max**) | 811 117 | 1 306 887 | 2 147 581 | 378 k | 3.5× (was 5.7×) |
+| 6s167-opt | 118 191 (median) | 115 371 | 123 801 | 149 261 | 19 k | **6.5×, tight** |
+| mrpp_4x4 | 249 027 | 151 891 | 275 267 | 346 674 | 179 k | 1.5× |
+
+The default seed sat at/near the 10-seed max on 3 of 5 tail files — not a
+degenerate RNG (seed 0 mixes to the historical default xorshift state) but
+pure selection bias: the tail was *read off* the files where the default
+trajectory happened to be unlucky. Lessons:
+
+* **Single-seed tail tables are seed-luck tales.** Any future tail entry
+  must carry a seed distribution (the doc's own §1 chaos warning,
+  quantified: 59× spread on frb65).
+* **The high-variance SAT files (frb65, shuffling, x9/rbsat/crypto1 from
+  the seed-portfolio study) are portfolio territory** — the `SEEDS=`
+  chain in `cnf_solve` already exists and its arithmetic is measured
+  (`2026-08-seed-portfolio-restarts.md`). A default-first chain at ~60 %
+  per-arm budgets converts these classes at bounded caps; competition
+  presets are the consumer.
+* **The genuinely structural residue is 6s167-opt** (6.5×, 1.3× seed
+  spread) and FmlaEquivChain-at-median (3.5×). On 6s167 the shape matches
+  kissat everywhere shallow — restart cadence identical (13
+  conflicts/restart both), decisions/conflict similar (3.5 vs 4.3),
+  rephases/walks comparable — but kissat propagates 3.3× deeper per
+  decision (93 vs 35 propagations/decision) and refutes in 6× fewer
+  conflicts: diffuse per-conflict search quality (branch/clause quality),
+  not a schedule parameter. This is the honest scope of lever 3.
+* Kissat's rephase schedule walks every 3rd round (2/6) with
+  `rephaseint×nlog³n` growth; ours (cadical shape) also walks every 3rd in
+  both modes with `rephaseint×(n+1)` — the walk-frequency hypothesis for
+  the tail is **dead** (kissat solved shuffling-2 with 0 rephases and 0
+  walks; our single walk there found a model in 159 flips at ~conflict
+  21 k — the mechanism exists but is not the gap).
