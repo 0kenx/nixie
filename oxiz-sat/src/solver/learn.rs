@@ -627,7 +627,12 @@ impl Solver {
     /// points and deletion counts, scrambled selection). First use sizes the
     /// used-stamp table (dense over clause ids; ids are dense, append-only).
     pub(super) fn cadical_reduce_enabled(&mut self) -> bool {
-        if crate::cadical_reduce_enabled() || crate::cadical_reduce_null_enabled() {
+        if crate::cadical_reduce_enabled()
+            || crate::cadical_reduce_null_enabled()
+            || crate::reduce_by_used_enabled()
+            || crate::reduce_adapt_enabled()
+            || crate::reduce_adapt_null_enabled()
+        {
             // First use sizes the used-stamp table (dense over clause ids;
             // ids are dense and append-only).
             if self.cadical_used.len() < self.clauses.num_slots() {
@@ -636,6 +641,26 @@ impl Solver {
             return true;
         }
         false
+    }
+
+    /// Whether `cid` is the recorded propagation reason of any of `lits`'s
+    /// variables (exact, all-literal scan). The historical O(1) form checked
+    /// only `lits[0]` — valid for watch-propagated clauses (propagate assigns
+    /// `clause[0]`) but **wrong for BIG-propagated binaries**, whose implied
+    /// literal can sit at either position: the binary edge traversal assigns
+    /// the edge's target independently of the stored clause order. Deleting a
+    /// clause the trail still records as a reason makes conflict analysis
+    /// resolve against a deleted clause and produce a spurious empty clause —
+    /// a wrong UNSAT (reproducer: `constraints_17_0.4_1.sanitized.cnf` under
+    /// `OXIZ_CADICAL_REDUCE_NULL=1`, 2026-09-02; the same escape is named in
+    /// the pure-literal cleanup's comment). All deletion guards use this
+    /// exact form; see also `remove_clause`/`retire_clause`'s re-pointing.
+    pub(super) fn is_live_reason_clause(&self, cid: ClauseId, lits: &[Lit]) -> bool {
+        lits.iter().any(|&l| {
+            let var = l.var();
+            self.trail.is_assigned(var)
+                && matches!(self.trail.reason(var), Reason::Propagation(r) if r == cid)
+        })
     }
 
     /// cadical `reduce.cpp` port: schedule + selection policy.
@@ -687,11 +712,7 @@ impl Solver {
             if v.deleted || !v.learned {
                 continue;
             }
-            let is_reason = matches!(
-                self.trail.reason(v.lits[0].var()),
-                Reason::Propagation(r) if r == cid
-            );
-            if is_reason {
+            if self.is_live_reason_clause(cid, v.lits) {
                 continue;
             }
             // Decrement the used stamp of every surviving candidate first
@@ -729,7 +750,32 @@ impl Solver {
             // suggesting the glue signal misleads; usage is the candidate
             // replacement signal. Off by default.
             let by_used = crate::reduce_by_used_enabled();
-            if !null_arm && by_used {
+            // Adaptive arm (`OXIZ_REDUCE_ADAPT` / `OXIZ_REDUCE_ADAPT_NULL`,
+            // pre-registered in docs/studies/2026-09-02-adaptive-retention.md):
+            // rank by glue only when glue actually ranks usage among the
+            // candidates — the best-glue quartile must have a higher mean
+            // used-stamp than the worst-glue quartile. The null inverts the
+            // choice (same signal, same firing, opposite correlation).
+            let adapt = crate::reduce_adapt_enabled();
+            let adapt_null = crate::reduce_adapt_null_enabled();
+            let rank_by_used = if adapt || adapt_null {
+                let n = candidates.len();
+                let q = (n / 4).max(1);
+                let mut by_glue = candidates.clone();
+                by_glue.sort_by_key(|c| c.0);
+                let mean_used = |cs: &[(u32, u32, u32, ClauseId)]| {
+                    cs.iter().map(|c| f64::from(c.2)).sum::<f64>() / cs.len() as f64
+                };
+                let glue_informative = mean_used(&by_glue[..q]) > mean_used(&by_glue[n - q..]);
+                if adapt {
+                    !glue_informative
+                } else {
+                    glue_informative // inverted matched null
+                }
+            } else {
+                by_used
+            };
+            if !null_arm && rank_by_used {
                 candidates.sort_by(|a, b| a.2.cmp(&b.2).then(b.0.cmp(&a.0)));
                 let target = candidates.len() * REDUCE_TARGET_PCT / 100;
                 for c in candidates.iter().take(target) {
@@ -765,6 +811,23 @@ impl Solver {
             // Detach watchers (watch hygiene identical to the legacy reduce:
             // deleted slots stay readable, so stale watchers are safe, but
             // every visit then pays a cache miss to discover the flag).
+            //
+            // Binaries additionally need their implication-graph edges
+            // purged BEFORE the flag is set: unlike the legacy reducer, this
+            // port deletes len == 2 clauses, and the BIG's edge scan never
+            // consults the deleted flag — a stale edge keeps PROPAGATING
+            // implications of the deleted clause and recording it as fresh
+            // trail reasons, which is a wrong-UNSAT (the exact failure
+            // `retire_clause`'s purge was added for on Break_unsat_06_07;
+            // this port's inline deletion never had it. Reproducer:
+            // constraints_17 under `OXIZ_CADICAL_REDUCE_NULL=1`, 2026-09-02).
+            let is_binary = self
+                .clauses
+                .get(cid)
+                .is_some_and(|c| !c.deleted && c.lits.len() == 2);
+            if is_binary {
+                self.purge_binary_edges(cid);
+            }
             if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
                 && c.lits.len() >= 2
             {
@@ -824,18 +887,18 @@ impl Solver {
                     continue;
                 }
 
-                // A clause is a current propagation reason iff the variable of its
-                // asserting literal (always `lits[0]`) records this clause as its
-                // reason. While a clause is a reason its `lits[0]` is the literal
-                // it propagated and is never swapped away (any watcher visit that
-                // would touch it finds it true and bails), so checking `lits[0]`
-                // alone is both necessary and sufficient – O(1) instead of the
-                // previous O(clause-length) scan over every clause every
-                // reduction.
-                let is_reason = matches!(
-                    self.trail.reason(clause.lits[0].var()),
-                    Reason::Propagation(r) if r == cid
-                );
+                // A clause that is the current propagation reason of any of
+                // its literals must not be deleted: conflict analysis reads
+                // reason clauses, and a deleted reason yields garbage
+                // (wrong UNSAT). The exact all-literal scan is required
+                // even though this path skips binaries: the historical
+                // O(1) `lits[0]`-only form rests on the propagate
+                // watch-position invariant, which BIG-propagated binaries
+                // break (their implied literal can sit at either position)
+                // — the identical bug class the cadical-reduce port
+                // exhibited live (constraints_17, 2026-09-02), hardened
+                // here too so no future edit re-opens it.
+                let is_reason = self.is_live_reason_clause(cid, clause.lits);
 
                 if !is_reason {
                     // cadical `reduce.cpp` protects recently-USED glue

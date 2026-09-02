@@ -418,6 +418,31 @@ pub fn cadical_reduce_null_enabled() -> bool {
     })
 }
 
+/// Adaptive retention arm (`OXIZ_REDUCE_ADAPT=1`, see
+/// `docs/studies/2026-09-02-adaptive-retention.md`): rank reduce
+/// candidates by usage only when the glue signal is uninformative over
+/// the candidate set (best-glue quartile no more used than the worst-glue
+/// quartile). Pairs with [`reduce_adapt_null_enabled`] as its inverted
+/// matched null. Default off.
+#[doc(hidden)]
+pub fn reduce_adapt_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG
+        .get_or_init(|| std::env::var("OXIZ_REDUCE_ADAPT").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Inverted matched null for [`reduce_adapt_enabled`]: the same signal
+/// computation and firing, the opposite ranking choice.
+#[doc(hidden)]
+pub fn reduce_adapt_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_REDUCE_ADAPT_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Retention-signal study arm (`OXIZ_REDUCE_BY_USED=1`, see
 /// `docs/studies/2026-09-02-retention-signal.md`): rank reduce candidates
 /// least-used-first instead of worst-glue-first. Same schedule, counts and
