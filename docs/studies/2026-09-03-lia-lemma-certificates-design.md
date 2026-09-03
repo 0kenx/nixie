@@ -149,3 +149,22 @@ Sample-neutral (57/174): the remaining unsat cells need **lemma
 recording coverage** (the 18 "insufficient" declines), not verifier
 width — the next mover is diagnosing which theory facts flow through
 unrecorded paths, then CG integer certificates.
+
+## Addendum 4 (2026-09-03): verified model blocking — the recording dependency removed
+
+Instead of chasing recording coverage, the gate now derives its own
+lemmas: each SAT model of the Boolean abstraction goes to the
+independent verifiers (CC for EUF atoms, exact LP for arith atoms,
+**both polarities** — a model is refuted also when congruence derives an
+equality the model denies), and an infeasible full assignment becomes a
+blocking clause valid by that verified infeasibility, greedily minimized
+(deletion probes, each re-verified). Two-phase transcript keeps the LRAT
+original prefix sequential (plain blocking loop, then a fresh replay
+solve with all clauses as originals).
+
+Measured: QF_LIA plain-unsat cells 11 → 14 (coverage 60/174); QF_UF
+unchanged at 70/76. The eq_diamond family declines honestly at the 10k
+iteration cap — full-assignment blocks enumerate on densely
+contradictory inputs; the recorded next step is theory-side conflict
+cores (CC returning its own minimal transitivity chain) instead of
+greedy deletion.
