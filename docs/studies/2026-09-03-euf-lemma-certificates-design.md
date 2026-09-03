@@ -122,3 +122,30 @@ skeleton ∪ verified-lemmas:
 ~250 lines of new code (CC verifier ~120, recording ~60, gate wiring ~50,
 Distinct encode ~20) plus tests. No change to any verdict path outside
 certified mode.
+
+## Addendum (2026-09-03, same day): implemented and measured
+
+Landed as `9ac6939`, exactly per the design above. Measured on the
+stratified QF_UF sample (46 plain-unsat cells):
+
+* **25/46 previously-unknown unsat files now certify `unsat`** (families:
+  QG-classification 12, Goel 4, Rodin 3, TypeSafe 3, SEQ 2, PEQ 1).
+* Certified QF_UF coverage: **35/76 → 60/76 (46% → 79%)**.
+* The `sat` side is untouched (all 28 sat files still certify); the
+  arith-eq shape fails closed to `unknown` exactly as designed
+  (regression-pinned).
+
+Residual declines (all fail-closed, never a wrong verdict):
+
+1. **13 files**: an LRAT hint-chain failure *inside the gate's own fresh
+   SAT solve* ("hint N is not unit") on lemma-bearing clause sets. Pure-
+   Boolean skeletons of comparable difficulty (PHP 6/5) verify fine, so
+   the trigger is the clause mix. Same class as the study's Finding 1 but
+   in the in-memory transcript path — the next hunt.
+2. **7 files**: "independent propositional checker found the asserted
+   formula satisfiable" — the recorded lemma set is incomplete for these
+   refutations (some theory fact flowed through a path the recorder does
+   not observe). Recording coverage gap, not soundness.
+
+Both residuals are honest `unknown`s; closing them is follow-up work on
+this same study.
