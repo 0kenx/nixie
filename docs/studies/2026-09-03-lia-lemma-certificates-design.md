@@ -100,3 +100,25 @@ keeps the verifier purely conjunctive-LP.
 
 Option 2: ~300 lines (gate LP ~150, atom decoding ~80, recorder
 predicate ~30, tests). No changes to any search path.
+
+## Addendum (2026-09-03): implemented and measured
+
+Landed as `ba14fe7`, per the design (option 2 — gate-side re-derivation,
+zero solver plumbing beyond the atom predicate). Two Fourier–Motzkin sign
+bugs were caught by the units mid-landing — the upper residual needs
+negation (`v ≤ U` from `E = c·v + R` with matching signs), and the
+violated check is `E ≤ 0` iff `E > 0` — both pinned by regressions.
+
+Measured: `x=1 ∧ x=2` and linear bound conflicts certify `unsat`
+(previously `unknown`); the QF_LIA sample gains 2 unsat cells (6 → 8,
+coverage 52 → 54/174). The modest sample gain reflects the real
+bottleneck: search completeness (99 of 174 cells are unknown-at-cap in
+*plain* mode). The unknown breakdown: 17 cells decline on
+congruence-closure verification (Eq atoms routed to CC on QF_LIA files —
+worth a look at why non-LP atoms appear), 4 on insufficient lemmas, the
+rest are search-incomplete.
+
+Next movers on this frontier, in order: (a) the 17 CC-decline cells'
+atom shapes, (b) disequality literals (currently declined), (c) integer
+certificates (CG cuts) for the parity boundary, (d) mixed EUF+LIA
+lemmas (Nelson–Oppen interface verification).
