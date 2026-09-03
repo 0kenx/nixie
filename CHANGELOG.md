@@ -5,6 +5,36 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Shrink-with-chains + unit-resolvent provenance: the LRAT search-shape convergence] - 2026-09-03
+
+The two remaining LRAT-program items (see
+`docs/studies/2026-09-02-lrat-default-path.md`, addenda 4–5).
+
+**Shrink-with-chains** (port of cadical's direct-LRAT shrink,
+`shrink.cpp`'s `old_clause_lrat` scheme): LRAT mode no longer falls back to
+plain recursive minimization — it runs the same block-UIP shrink as the
+unproven path, extending the learned clause's RUP chain per removed
+literal (snapshot the sorted clause; every position whose literal changed
+owes the original literal's resolution sub-graph via
+`calculate_minimize_chain_lrat`; chains append reversed ahead of
+`analyze`'s unit append + global reverse). Measured on the study matrix,
+deterministic base config: **conflict counts plain vs LRAT are now
+identical** (crn 94 045, 6s167 281 020, FmlaEquivChain 1 879 213, noL
+5 795 876, mrpp 239 278) where the gap was 0.7–8.3×; mrpp `--bve --lrat`
+536 s → 100 s. All 16 matrix cells check_lrat-verified.
+
+**Unit-resolvent provenance**: BVE under an attached proof no longer aborts
+the pivot at a unit resolvent. The unit is emitted as a derived unit
+([unit ids] ++ [parents] RUP chain), recorded in the unit table, and
+applied. Companion fixes: size-0 resolvents and unit contradictions now
+seed the empty-clause chain ([units] ++ [C, D] / [unit, unit]) instead of
+emitting a chainless (unverifiable) empty clause. FmlaEquivChain `--bve
+--lrat`: 89 s → 25 s (conflicts 3.44 M → 1.04 M, plain 1.35 M).
+
+Gates: two new `lrat_e2e` regressions (conflict-count equality + checker
+verification; unit-cascade derivation), full battery (10 433),
+clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [Pure-Boolean dispatch fast path] - 2026-09-02
 
 `check_core` attached a `TheoryManager` to every search — including
