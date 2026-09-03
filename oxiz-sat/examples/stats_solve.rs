@@ -5,6 +5,8 @@
 //!
 //! Environment knobs (all optional):
 //!   SEED=N              seed the solver PRNG (`Solver::set_random_seed`)
+//!   INPROCESS=0|1       flip `enable_inprocessing` (A/B arm for the
+//!                       2026-09-04 standing-corpus inprocessing study)
 //!   OXIZ_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NO_STAB=1           disable stable/focused alternation
@@ -21,6 +23,9 @@ fn main() {
     let path = std::env::args().nth(1).expect("path");
     let mut parser = DimacsParser::new();
     let mut cfg = ConfigPreset::CaDiCaL.config();
+    if let Ok(v) = std::env::var("INPROCESS") {
+        cfg.enable_inprocessing = v != "0";
+    }
     if std::env::var("NO_REDUCE").is_ok() {
         cfg.clause_deletion_threshold = usize::MAX;
     }
