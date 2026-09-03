@@ -219,7 +219,14 @@ fn rup_check(active: &HashMap<i64, Vec<i32>>, clause: &[i32], hints: &[i64]) -> 
                 }
                 LitStatus::False => {}
                 LitStatus::Unassigned => {
-                    if unassigned_lit.is_some() {
+                    // Duplicate literals count once: a clause is a SET of
+                    // literals, so `(-270, -39, -39)` under `270` is unit on
+                    // `-39` (both copies become true by one propagation).
+                    // Counting entries instead would reject correct proofs
+                    // whose clauses carry duplicates (found on the certified
+                    // gate's Tseitin output for or-terms with repeated
+                    // argument terms, 2026-09).
+                    if unassigned_lit.is_some_and(|u| u != lit) {
                         has_multiple_unassigned = true;
                     } else {
                         unassigned_lit = Some(lit);

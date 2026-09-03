@@ -653,7 +653,21 @@ impl BooleanLratChecker {
     /// The pair is exactly equivalent to `l`, contains no unit clause, and
     /// lets every original be registered before `solve` derives anything.
     fn buffer_clause(&mut self, lits: impl IntoIterator<Item = Lit>) {
-        let clause: Vec<Lit> = lits.into_iter().collect();
+        // Dedup literals and drop tautologies, matching what any CNF
+        // consumer does: the Tseitin walk emits one entry per *occurrence*,
+        // and an `or`/`and` term with a repeated argument term (QG-class
+        // inputs have them) otherwise lands duplicate literals in the
+        // canonical CNF. A tautology is trivially satisfied — dropping it
+        // is sound (it never constrains).
+        let mut clause: Vec<Lit> = Vec::new();
+        for lit in lits {
+            if clause.contains(&lit.negate()) {
+                return;
+            }
+            if !clause.contains(&lit) {
+                clause.push(lit);
+            }
+        }
         if let [lit] = clause.as_slice() {
             let padding = Lit::pos(self.solver.new_var());
             self.clauses.push(vec![*lit, padding]);
@@ -745,6 +759,15 @@ impl BooleanLratChecker {
         let transcript = transcript
             .snapshot()
             .map_err(|error| format!("could not read complete LRAT transcript: {error}"))?;
+        // Reproduction aid (env-gated): dump the gate's CNF + proof so the
+        // standalone checker and the lrat_file tool can replay exactly what
+        // the in-process checker rejected.
+        #[cfg(feature = "std")]
+        if let Ok(dir) = std::env::var("OXIZ_CERT_DUMP")
+            && let Err(error) = dump_gate_transcript(&dir, &transcript)
+        {
+            eprintln!("[cert] transcript dump failed: {error}");
+        }
         let report = oxiz_proof::lrat_check::check_lrat_proof(
             &transcript.original_clauses,
             &transcript.proof,
@@ -1112,19 +1135,23 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
         return false;
     }
 
-    // Ground subterm closure of every Eq operand. `ite`-over-uninterpreted
+    // Ground subterm closure of every atom's operands. `ite`-over-uninterpreted
     // operands and nested applications are walked generically — no
     // assumption that the E-graph ever interned them (the addendum-7
-    // candidate-bug class).
+    // candidate-bug class). Bool-sorted `Apply` atoms seed themselves (a
+    // `f(x…)` atom is the equality `f(x…) = true/false`).
     let mut terms: Vec<TermId> = Vec::new();
     let mut visited: FxHashSet<TermId> = FxHashSet::default();
     let mut stack: Vec<TermId> = Vec::new();
+    let true_term = manager.mk_true();
+    let false_term = manager.mk_false();
     for &(atom, _polarity) in lemma {
         match manager.get(atom).map(|t| &t.kind) {
             Some(TermKind::Eq(lhs, rhs)) => {
                 stack.push(*lhs);
                 stack.push(*rhs);
             }
+            Some(TermKind::Apply { .. }) => stack.push(atom),
             _ => return false,
         }
     }
@@ -1172,17 +1199,27 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
     let mut pending: Vec<(TermId, TermId)> = Vec::new();
     for &(atom, polarity) in lemma {
         match manager.get(atom).map(|t| &t.kind) {
+            // An `Eq` atom: positive clause literal → the negated
+            // conjunction asserts the *disequality*; negative → the
+            // *equality*.
             Some(TermKind::Eq(lhs, rhs)) => {
                 parent.entry(*lhs).or_insert(*lhs);
                 parent.entry(*rhs).or_insert(*rhs);
                 if polarity {
-                    // Positive clause literal: the negated conjunction
-                    // asserts the *disequality*.
                     pending.push((*lhs, *rhs));
                 } else {
-                    // Negative clause literal: the negated conjunction
-                    // asserts the *equality*.
                     union(&mut parent, *lhs, *rhs);
+                }
+            }
+            // A Bool-sorted application: `A` is the equality `A = true`,
+            // so a positive clause literal negates to `A = false` (merge
+            // with the false constant) and a negative to `A = true`.
+            Some(TermKind::Apply { .. }) => {
+                parent.entry(atom).or_insert(atom);
+                if polarity {
+                    union(&mut parent, atom, false_term);
+                } else {
+                    union(&mut parent, atom, true_term);
                 }
             }
             _ => return false,
@@ -1231,9 +1268,42 @@ fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
         }
     }
 
-    pending
+    // Contradiction = a pending disequality whose sides merged, OR the
+    // Boolean constants merged (a Bool-sorted application forced both true
+    // and false — the eq_diamond reasoning shape).
+    find(&mut parent, true_term) == find(&mut parent, false_term)
+        || pending
+            .iter()
+            .any(|&(a, b)| find(&mut parent, a) == find(&mut parent, b))
+}
+
+/// Write the gate's CNF (original clauses, id order) and text LRAT proof
+/// under `dir` for offline reproduction (see `OXIZ_CERT_DUMP`).
+#[cfg(feature = "std")]
+fn dump_gate_transcript(dir: &str, transcript: &oxiz_sat::LratTranscript) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::create_dir_all(dir);
+    let max_var = transcript
+        .original_clauses
         .iter()
-        .any(|&(a, b)| find(&mut parent, a) == find(&mut parent, b))
+        .flat_map(|c| c.iter().map(|l| l.unsigned_abs()))
+        .max()
+        .unwrap_or(0);
+    let cnf = std::fs::File::create(std::path::Path::new(dir).join("gate.cnf"))?;
+    let mut w = std::io::BufWriter::new(cnf);
+    writeln!(w, "p cnf {max_var} {}", transcript.original_clauses.len())?;
+    for clause in &transcript.original_clauses {
+        for lit in clause {
+            write!(w, "{lit} ")?;
+        }
+        writeln!(w, "0")?;
+    }
+    w.flush()?;
+    let lrat = std::fs::File::create(std::path::Path::new(dir).join("gate.lrat"))?;
+    let mut w = std::io::BufWriter::new(lrat);
+    write!(w, "{}", transcript.proof)?;
+    w.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1330,6 +1400,48 @@ mod euf_lemma_tests {
             (manager.mk_eq(f_ite, f_b), true),
         ];
         assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// Bool-sorted applications as lemma atoms: `(S)->Bool` function atoms
+    /// are equalities against the Boolean constants — `¬p(a) ∨ ¬p(b) ∨ a≠b`
+    /// hmm, directly: clause `p(a) ∨ p(b)` with a=b... the VALID lemma is
+    /// `¬p(a) ∨ p(b) ∨ a≠b` (if a=b and p(a) then p(b)). Negated
+    /// conjunction: p(a) ∧ ¬p(b) ∧ a=b — congruence merges p(a),p(b), so
+    /// p(a)=true and p(b)=false merge the constants.
+    #[test]
+    fn bool_apply_congruence_verifies() {
+        let mut manager = TermManager::new();
+        let s_name = manager.intern_str("S");
+        let s = manager
+            .sorts
+            .intern(oxiz_core::sort::SortKind::Uninterpreted(s_name));
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let pa = manager.mk_apply("p", [a], manager.sorts.bool_sort);
+        let pb = manager.mk_apply("p", [b], manager.sorts.bool_sort);
+        let eq_ab = manager.mk_eq(a, b);
+        // Clause: ¬(a=b) ∨ ¬p(a) ∨ p(b) — entries in clause polarity.
+        // Negated conjunction: a=b ∧ p(a) ∧ ¬p(b); the merge a=b
+        // congruence-merges p(a),p(b), colliding true with false.
+        let lemma = vec![(eq_ab, false), (pa, false), (pb, true)];
+        assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// Non-valid Bool-Apply lemma: `p(a) ∨ p(b)` alone (nothing forces
+    /// either) must be rejected.
+    #[test]
+    fn bool_apply_non_valid_rejected() {
+        let mut manager = TermManager::new();
+        let s_name = manager.intern_str("S");
+        let s = manager
+            .sorts
+            .intern(oxiz_core::sort::SortKind::Uninterpreted(s_name));
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let pa = manager.mk_apply("p", [a], manager.sorts.bool_sort);
+        let pb = manager.mk_apply("p", [b], manager.sorts.bool_sort);
+        let lemma = vec![(pa, true), (pb, true)];
+        assert!(!verify_euf_lemma(&lemma, &manager));
     }
 
     fn manager_sort_s(manager: &mut TermManager) -> oxiz_core::sort::SortId {

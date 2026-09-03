@@ -3668,28 +3668,49 @@ impl TheoryCallback for TheoryManager<'_> {
         true
     }
 
-    /// Record a candidate theory lemma. Only clauses whose every literal is
-    /// an `Eq` atom over non-Bool operands are recordable — that is the
-    /// fragment certified mode's congruence-closure verifier can check
-    /// independently. Anything else (arithmetic comparisons, Boolean iff,
-    /// unknown atoms) poisons the log: the gate then declines to use it
-    /// (fail closed to the skeleton-only path).
+    /// Record a candidate theory lemma. Recordable atoms: `Eq` over
+    /// non-Bool operands, and **Bool-sorted applications** `f(x…)` (a
+    /// `(S…)->Bool` function's atom is the equality `f(x…) = true/false`, so
+    /// congruence closure verifies it against the Boolean constants — the
+    /// eq_diamond/NEQ family is built on them). Anything else (arithmetic
+    /// comparisons, Boolean iff, unknown atoms) poisons the log: the gate
+    /// then declines to use it (fail closed to the skeleton-only path).
     fn record_lemma(&mut self, clause: &[Lit]) {
         if clause.is_empty() {
             return;
         }
+        let bool_sort = self.manager.sorts.bool_sort;
         let mut entry: Vec<(TermId, bool)> = Vec::with_capacity(clause.len());
         for &lit in clause {
             let Some(&term) = self.var_to_term.get(lit.var().index()) else {
+                #[cfg(feature = "std")]
+                if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+                    eprintln!(
+                        "[lemma-poison] unassigned var {} in clause of {} literals",
+                        lit.var().index(),
+                        clause.len()
+                    );
+                }
                 self.derived_reasons.lemma_log_poisoned = true;
                 return;
             };
-            let atom_ok = self.manager.get(term).is_some_and(|t| {
-                matches!(&t.kind, TermKind::Eq(lhs, rhs)
-                    if self.manager.get(*lhs).is_some_and(|l| l.sort != self.manager.sorts.bool_sort)
-                        && self.manager.get(*rhs).is_some_and(|r| r.sort != self.manager.sorts.bool_sort))
+            let atom_ok = self.manager.get(term).is_some_and(|t| match &t.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    self.manager.get(*lhs).is_some_and(|l| l.sort != bool_sort)
+                        && self.manager.get(*rhs).is_some_and(|r| r.sort != bool_sort)
+                }
+                TermKind::Apply { .. } => t.sort == bool_sort,
+                _ => false,
             });
             if !atom_ok {
+                #[cfg(feature = "std")]
+                if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+                    eprintln!(
+                        "[lemma-poison] literal {} maps to non-recordable atom {:?}",
+                        lit.to_dimacs(),
+                        self.manager.get(term).map(|t| &t.kind)
+                    );
+                }
                 self.derived_reasons.lemma_log_poisoned = true;
                 return;
             }

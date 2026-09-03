@@ -483,6 +483,19 @@ impl Solver {
                             // assignment, so the forced unit opens new search).
                         } else {
                             for (lit, reason_lits) in props {
+                                // Same lemma recording as the assignment-
+                                // sweep site above: the explanation clause
+                                // is a valid theory lemma whether it is
+                                // materialized or lazily resolved.
+                                if !reason_lits.is_empty() {
+                                    let mut lemma_clause: SmallVec<[Lit; 8]> =
+                                        SmallVec::with_capacity(reason_lits.len() + 1);
+                                    lemma_clause.push(lit);
+                                    for &r in &reason_lits {
+                                        lemma_clause.push(r.negate());
+                                    }
+                                    theory.record_lemma(&lemma_clause);
+                                }
                                 if !self.trail.is_assigned(lit.var()) {
                                     if self.theory_lazy_reasons_enabled() && !reason_lits.is_empty()
                                     {
@@ -530,6 +543,11 @@ impl Solver {
             *theory_processed = (*theory_processed).min(self.trail.assignments().len());
         }
         for &lit in units {
+            // Each unconditional unit is a theory tautology — record it as a
+            // unit-clause lemma; the certified gate's congruence-closure
+            // check verifies it (e.g. a reflexivity fact `t = t` verifies,
+            // anything contingent fails and the certification declines).
+            theory.record_lemma(std::slice::from_ref(&lit));
             // The theory's view was just rewound to level 0, so a unit may now
             // collide with a pre-existing level-0 fact.
             match self.trail.lit_value(lit) {

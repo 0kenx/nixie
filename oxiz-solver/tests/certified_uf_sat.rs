@@ -194,3 +194,25 @@ fn certified_qflia_sat_and_boolean_unsat_unchanged() {
     );
     assert_eq!(unsat, "unsat");
 }
+
+/// A Bool-returning function's congruence contradiction (the eq_diamond /
+/// NEQ family shape): `a = b` forces `p(a) = p(b)` as Booleans, so
+/// `p(a) ∧ ¬p(b) ∧ a=b` is unsat. The lemma atoms are Bool-sorted
+/// applications — recordable since the 2026-09 extension that treats them
+/// as equalities against the Boolean constants.
+#[test]
+fn certified_qfuf_bool_function_congruence_unsat_certifies() {
+    let r = check_certified(
+        "(set-logic QF_UF)
+         (set-option :certified-mode true)
+         (declare-sort S 0)
+         (declare-fun p (S) Bool)
+         (declare-const a S)
+         (declare-const b S)
+         (assert (= a b))
+         (assert (p a))
+         (assert (not (p b)))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}
