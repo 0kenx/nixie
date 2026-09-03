@@ -801,18 +801,52 @@ impl Solver {
                 match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
                     ElimResolve::Skip => {}
                     ElimResolve::Unit(u) => {
-                        // Under an attached proof, a unit resolvent has no
-                        // cheap justifiable derivation (its RUP chain
-                        // depends on elimination-local assignments that are
-                        // not proof-active literals), so abort the pivot:
-                        // the variable is not eliminated, its clauses stay,
-                        // and BVE proceeds on other candidates. Strictly
-                        // weaker elimination than the unproven path — never
-                        // unsound.
-                        if self.proof.is_some() {
-                            return false;
+                        // LRAT unit-resolvent provenance (2026-09): the unit
+                        // resolvent {u} of C(v) and D(¬v) is RUP with the
+                        // resolvent shape — under ¬u every parent literal is
+                        // false (dropped literals via their level-0 unit
+                        // hints, u by the negation itself), C is unit on v,
+                        // D is unit on ¬v → conflict. Emit the derived unit,
+                        // record its id in the unit table (later chains may
+                        // hint it), then apply it — full-strength BVE, no
+                        // more pivot abort under proofs. A missing unit id
+                        // skips derivation AND assignment (weaker, sound);
+                        // a unit contradicting an earlier elim unit ends the
+                        // round through `elim_assign_unit`'s contradiction
+                        // arm, which seeds the empty-clause chain from the
+                        // two unit ids.
+                        let mut ok_to_assign = ctx.lit_val(u) != 1;
+                        if ok_to_assign && self.lrat {
+                            let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+                            'u: for parent in [cid, nid] {
+                                let Some(pv) = self.clauses.get(parent) else {
+                                    continue;
+                                };
+                                for &lit in pv.lits {
+                                    if ctx.lit_val(lit) == -1 {
+                                        let uid = self
+                                            .proof_unit_id_get_or_zero(lit.negate().to_dimacs());
+                                        if uid == 0 {
+                                            ok_to_assign = false;
+                                            break 'u;
+                                        }
+                                        chain.push(uid);
+                                    }
+                                }
+                            }
+                            if ok_to_assign {
+                                chain.push(self.proof_clause_id(cid));
+                                chain.push(self.proof_clause_id(nid));
+                                let pfid = self.proof_next_id();
+                                if let Some(proof) = &mut self.proof {
+                                    proof.add_derived_unit_clause(pfid, u.to_dimacs(), &chain);
+                                }
+                                self.proof_set_unit_id(u.to_dimacs(), pfid);
+                            }
                         }
-                        self.elim_assign_unit(ctx, u);
+                        if ok_to_assign {
+                            self.elim_assign_unit(ctx, u);
+                        }
                         if self.trivially_unsat {
                             return false;
                         }
@@ -829,6 +863,14 @@ impl Solver {
                     }
                 }
                 if ctx.lit_val(pivot) != 0 {
+                    return false;
+                }
+                // A size-0 resolvent sets `trivially_unsat` inside
+                // `elim_resolve_clauses`; retire the pair loop immediately
+                // so no later pair can shrink or retire a clause whose id
+                // the seeded empty-clause chain references (a deleted hint
+                // is not active at replay time).
+                if self.trivially_unsat {
                     return false;
                 }
             }
@@ -971,6 +1013,39 @@ impl Solver {
 
         let size = ctx.res_resolvent.len();
         if size == 0 {
+            // LRAT: with every non-pivot parent literal falsified at level
+            // 0, both parents are unit on their pivot literal under those
+            // units — the empty clause is RUP over `[unit ids] ++ [C, D]`.
+            // Seed `lrat_chain` here (the trivially-unsat exit emits the
+            // empty clause through `drat_emit_empty(None)`, which keeps a
+            // non-empty chain intact); a missing unit id leaves the chain
+            // empty (the verdict stays correct — search rediscovers the
+            // conflict — but the proof would not verify).
+            if self.lrat && self.lrat_chain.is_empty() {
+                let mut ok = true;
+                let mut chain: SmallVec<[i64; 8]> = SmallVec::new();
+                'z: for parent in [cid, nid] {
+                    let Some(pv) = self.clauses.get(parent) else {
+                        continue;
+                    };
+                    for &lit in pv.lits {
+                        if lit == pivot || lit == pivot.negate() {
+                            continue;
+                        }
+                        let uid = self.proof_unit_id_get_or_zero(lit.negate().to_dimacs());
+                        if uid == 0 {
+                            ok = false;
+                            break 'z;
+                        }
+                        chain.push(uid);
+                    }
+                }
+                if ok {
+                    chain.push(self.proof_clause_id(cid));
+                    chain.push(self.proof_clause_id(nid));
+                    self.lrat_chain.extend(chain.iter().copied());
+                }
+            }
             self.trivially_unsat = true;
             return ElimResolve::Skip;
         }
@@ -1283,6 +1358,21 @@ impl Solver {
         match ctx.lit_val(lit) {
             1 => return,
             -1 => {
+                // The elimination derived a unit contradicting an earlier
+                // one. Under LRAT both unit clauses are in the proof stream
+                // with ids (every elim unit emission records its id), so the
+                // empty clause is RUP over exactly those two units — the
+                // first propagates its literal, the second conflicts. Seed
+                // the chain for `drat_emit_empty(None)`; a missing id leaves
+                // it empty (verdict still correct, proof degraded).
+                if self.lrat && self.lrat_chain.is_empty() {
+                    let a = self.proof_unit_id_get_or_zero(lit.negate().to_dimacs());
+                    let b = self.proof_unit_id_get_or_zero(lit.to_dimacs());
+                    if a != 0 && b != 0 {
+                        self.lrat_chain.push(a);
+                        self.lrat_chain.push(b);
+                    }
+                }
                 self.trivially_unsat = true;
                 return;
             }

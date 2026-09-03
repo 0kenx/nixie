@@ -334,3 +334,59 @@ fn lrat_shrink_keeps_plain_search_shape() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+/// 2026-09 unit-resolvent provenance regression (full-strength BVE under
+/// proofs): resolving pivot 1 over `(1 2)` and `(-1 2)` derives the UNIT
+/// `{2}`. Before the provenance fix, an attached proof aborted the pivot at
+/// that point (strictly weaker elimination); now the unit is emitted as a
+/// derived unit clause whose RUP chain is `[parents]` (under `¬2` both
+/// parents are unit on their pivot literal → conflict), recorded in the unit
+/// table, and applied — the elimination cascade then shrinks `(-2 3)` and
+/// `(-2 -3)` to contradictory units and the empty clause follows. The whole
+/// derivation, including the two-unit empty-clause chain, must verify.
+#[test]
+fn lrat_bve_unit_resolvent_provenance() {
+    let (nvars, clauses) = (3, vec![vec![1, 2], vec![-1, 2], vec![-2, 3], vec![-2, -3]]);
+
+    let dir = std::env::temp_dir().join(format!("oxiz_lrat_bveunit_{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let cnf = dir.join("in.cnf");
+    let lrat = dir.join("out.lrat");
+    let mut f = fs::File::create(&cnf).unwrap();
+    use std::io::Write;
+    writeln!(f, "p cnf {nvars} {}", clauses.len()).unwrap();
+    for c in &clauses {
+        for &l in c {
+            write!(f, "{l} ").unwrap();
+        }
+        writeln!(f, "0").unwrap();
+    }
+    drop(f);
+
+    let config = oxiz_sat::SolverConfig {
+        enable_bve: true,
+        ..oxiz_sat::SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    solver.ensure_vars(nvars);
+    solver.enable_lrat_proof(&lrat).unwrap();
+    for c in &clauses {
+        solver.add_clause(c.iter().map(|&l| Lit::from_dimacs(l)));
+    }
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    solver.disable_proof();
+    drop(solver);
+
+    if let Some(checker) = lrat_check_bin() {
+        let out = Command::new(&checker)
+            .arg(&cnf)
+            .arg(&lrat)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("VERIFIED") && out.status.success(),
+            "lrat-check rejected the unit-resolvent proof:\n{stdout}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
