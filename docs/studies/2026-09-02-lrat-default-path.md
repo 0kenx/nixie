@@ -406,3 +406,36 @@ store (suite `smtlib-2020-qf{uf,lia}-certifiedpath`, config
 
 Remaining certified-UNSAT frontier, unchanged: theory-lemma certificates
 (the skeleton gate can only certify propositional refutations).
+
+## Addendum 8 (2026-09-03): subsume_round under proofs — the last `--bve` residual
+
+`subsume_round` skipped entirely under LRAT (its strengthen arm had no
+threaded subsumer id). Re-enabled with proof-complete emissions:
+
+* deletions emit by the subsumed clause's LRAT id (the old
+  `drat_delete_lits` fallback keyed multi-literal deletions by id 0 — an
+  invalid line had the arm ever run under proofs);
+* each self-subsuming strengthen emits the resolution pair `[c, subsumer]`
+  as the new clause's RUP chain — under `¬kept` every subsumer literal
+  except the flipped one is false, the subsumer is unit, propagation
+  falsifies the dropped literal, and `c` conflicts. The schedule's
+  no-assigned-literal filter guarantees no level-0 literals participate,
+  so no unit hints are needed;
+* the physical shrink runs through a proof-silent core so the default
+  strengthen emission cannot double-fire.
+
+`--bve` conflict multipliers (LRAT/plain) collapsed from 0.7–14× to
+0.5–1.2×: crn 86660/93521, 6s167 131582/109356, FmlaEquiv
+1381223/1351398 (was 3.44M), mrpp **765494/1433747** (LRAT now ahead —
+the proof-path's BVE+subsume composition found a stronger collapse).
+Wall: mrpp `--bve --lrat` **672 s → 31 s**, addition lines 19.8 M → 874 k;
+mrpp `--bve --els --lrat` 101 s → 53 s. 16/16 matrix cells verified;
+debug-assert clean; battery 10 443; parity 0 mismatches. Regression:
+`lrat_subsume_round_strengthen_under_proof` pins the exact resolution
+hints.
+
+Certified-`unsat` throughput on Boolean-heavy skeletons is now within
+noise of the unproven path at every measured point; the LRAT program's
+throughput items are closed. Remaining open front (unchanged):
+theory-lemma certificates for certified `unsat` beyond the Boolean
+skeleton.
