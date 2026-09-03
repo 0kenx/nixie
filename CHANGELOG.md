@@ -35,6 +35,23 @@ unchanged (no regression); congruence-dependent `unsat` still fails closed
 to `unknown` by design. Gates: 6 end-to-end + 3 evaluator regressions,
 full battery (10 442), clippy/fmt/doc, Z3 parity 0 mismatches.
 
+## [subsume_round under proofs: resolution-justified strengthen chains] - 2026-09-03
+
+The last documented `--bve` trajectory divergence: `subsume_round` skipped
+entirely under LRAT. Re-enabled with proof-complete emissions — deletions
+by the subsumed clause's LRAT id, and each self-subsuming strengthen
+emitting the resolution pair `[c, subsumer]` as the new clause's RUP chain
+(under `¬kept` the subsumer is unit on the flipped literal, propagation
+falsifies the dropped literal, and `c` conflicts); the physical shrink
+runs through a proof-silent core so the default emission cannot
+double-fire.
+
+`--bve` conflict multipliers (LRAT/plain) collapsed from 0.7–14× to
+0.5–1.2×; **mrpp `--bve --lrat` 672 s → 31 s** (addition lines 19.8 M →
+874 k). 16/16 matrix cells `check_lrat`-verified; full battery (10 443),
+clippy/fmt/doc, Z3 parity 0 mismatches; regression pins the exact
+resolution hints.
+
 ## [Shrink-with-chains + unit-resolvent provenance: the LRAT search-shape convergence] - 2026-09-03
 
 The two remaining LRAT-program items (see
