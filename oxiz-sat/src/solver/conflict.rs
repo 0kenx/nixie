@@ -1450,16 +1450,20 @@ impl Solver {
     /// This also performs clause strengthening by checking for stronger implications
     /// Learned-clause improvement dispatcher (cadical `analyze.cpp`:
     /// `if (opts.shrink) shrink_and_minimize_clause (); else if (opts.minimize)
-    /// minimize_clause ();`).  Under LRAT the proof-preserving minimizer port
-    /// stays the only path (the shrink port does not extend proof chains);
-    /// `OXIZ_SHRINK_NULL` runs the full shrink walk and discards its result —
-    /// the matched null for the seed study (docs/BENCHMARKING.md).
+    /// minimize_clause ();`).  With block shrinking enabled the LRAT path runs
+    /// the same shrink walk as the plain path: since the 2026-09 port of
+    /// cadical's direct-LRAT shrink (`shrink.cpp`'s `old_clause_lrat` scheme)
+    /// the walk extends the RUP chain per removed literal, so proofs no
+    /// longer force the weaker plain minimizer and both modes share one
+    /// search shape.  `OXIZ_SHRINK_NULL` runs the full shrink walk and
+    /// discards its result — the matched null for the seed study
+    /// (docs/BENCHMARKING.md).
     ///
     /// Takes `vars_to_bump` so a successful shrink can add each block-UIP
     /// variable to the conflict's bump set exactly where cadical adds it to
     /// `analyzed` (`shrunken_block_uip`), ahead of the batch bump.
     pub(super) fn improve_learnt_clause(&mut self, vars_to_bump: &mut SmallVec<[Var; 32]>) {
-        if self.lrat || !self.config.enable_shrink {
+        if !self.config.enable_shrink {
             self.minimize_learnt_clause();
             return;
         }
@@ -1570,6 +1574,24 @@ impl Solver {
             }
         }
 
+        // Under LRAT, snapshot the sorted clause (cadical `shrink.cpp`'s
+        // `old_clause_lrat`): every position whose literal the block walks
+        // below change (sentinel-replaced block members, the block-UIP
+        // replacement, fallback-minimized literals) owes the ORIGINAL
+        // literal's resolution sub-graph as RUP hints, collected during the
+        // compaction below and appended (reversed) to `lrat_chain` — the
+        // exact scheme cadical added for direct LRAT output, where the same
+        // `calculate_minimize_chain` walk serves both plain minimization and
+        // the shrink ("we cannot create the chain directly during shrinking
+        // but afterwards ... the same algorithm works for both", cadical
+        // `analyze.cpp`).
+        let old_clause: SmallVec<[Lit; 32]> = if self.lrat {
+            self.learnt[1..].iter().copied().collect()
+        } else {
+            SmallVec::new()
+        };
+        let mut minimize_chain: Vec<i64> = Vec::new();
+
         // Blocks: contiguous same-level runs over `learnt[1..]`, visited from
         // the lowest level (clause tail) toward the front.
         let mut total_shrunken: u64 = 0;
@@ -1611,10 +1633,30 @@ impl Solver {
         }
 
         // Compaction: drop the sentinel slots (cadical's in-place `i`/`j`
-        // filter over the clause).
+        // filter over the clause).  Under LRAT, each position whose literal
+        // no longer equals the sorted snapshot's is collected as a chain
+        // obligation FIRST: the stored literal was resolved away by the
+        // block walk (a sentinel slot), replaced by the block's UIP
+        // negation, or minimized by a fallback — in every case the
+        // ORIGINAL literal is the one the resolution derivation owes, and
+        // `calculate_minimize_chain_lrat` walks its reason graph through
+        // the still-live keep/removable/poison flags (so this must run
+        // BEFORE `clear_minimize_flags`).  An unchanged position whose
+        // literal happens to be its own block-UIP replacement owes nothing,
+        // which the equality check expresses exactly.
         let mut w = 1;
         for r in 1..n {
             let lit = self.learnt[r];
+            if self.lrat {
+                let old = old_clause[r - 1];
+                if lit != old {
+                    self.calculate_minimize_chain_lrat(old.negate());
+                    for &id in &self.mini_chain {
+                        minimize_chain.push(id);
+                    }
+                    self.mini_chain.clear();
+                }
+            }
             if lit == sentinel && r != 0 {
                 continue;
             }
@@ -1632,6 +1674,17 @@ impl Solver {
         // variable (caught by the replacement-level debug assert on
         // `si2-b03-m800-03`; in release it would silently mis-shrink).
         self.clear_minimize_flags();
+
+        // LRAT: append the shrink's minimization sub-chains (reversed) to
+        // `lrat_chain`, mirroring `minimize_clause_lrat`'s tail (cadical's
+        // `lrat_chain += reverse (minimize_chain)`); `analyze`'s later unit
+        // append + global reverse turns them into checker replay order.
+        if self.lrat {
+            for &id in minimize_chain.iter().rev() {
+                self.lrat_chain.push(id);
+            }
+        }
+
         let final_len = self.learnt.len();
         if final_len < original_len {
             self.stats.minimizations += 1;

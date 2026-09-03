@@ -239,3 +239,98 @@ fn lrat_text_php3() {
     }
     assert_verified(n * m, &clauses, false);
 }
+
+/// Pigeonhole clauses for `n` pigeons, `m` holes (`p_{i,h}` = 1 + i*m + h).
+fn php_clauses(n: usize, m: usize) -> (usize, Vec<Vec<i32>>) {
+    let var = |i: usize, h: usize| -> i32 { (1 + (i * m + h)) as i32 };
+    let mut clauses = Vec::new();
+    for i in 0..n {
+        clauses.push((0..m).map(|h| var(i, h)).collect());
+    }
+    for h in 0..m {
+        for i1 in 0..n {
+            for i2 in (i1 + 1)..n {
+                clauses.push(vec![-var(i1, h), -var(i2, h)]);
+            }
+        }
+    }
+    (n * m, clauses)
+}
+
+/// 2026-09 shrink-with-chains regression (port of cadical's direct-LRAT
+/// shrink, `shrink.cpp`'s `old_clause_lrat` scheme): with an LRAT proof
+/// attached the solver must run the SAME block-UIP shrink as the unproven
+/// path — the proof must not weaken the learned-clause postprocess — and the
+/// emitted chains must stay checker-verifiable. Before the port, LRAT mode
+/// fell back to plain recursive minimization, silently reshuffling the whole
+/// search trajectory (0.7–8.3× conflict multipliers across files; see
+/// `docs/studies/2026-09-02-lrat-default-path.md`).
+///
+/// Gate 1 (structural): with a deterministic base config the conflict count
+/// under LRAT equals the unproven count exactly — the two modes share one
+/// search shape, the property the port exists to restore.
+/// Gate 2 (soundness): the LRAT proof verifies against `lrat-check`.
+#[test]
+fn lrat_shrink_keeps_plain_search_shape() {
+    let (nvars, clauses) = php_clauses(6, 5);
+
+    // Plain run (no proof): record the conflict count.
+    let mut plain = Solver::new();
+    plain.set_random_seed(42);
+    plain.ensure_vars(nvars);
+    for c in &clauses {
+        plain.add_clause(c.iter().map(|&l| Lit::from_dimacs(l)));
+    }
+    assert_eq!(plain.solve(), SolverResult::Unsat);
+    let plain_conflicts = plain.stats().conflicts;
+    assert!(plain_conflicts > 0, "formula must force real search");
+    drop(plain);
+
+    // Proof run: identical config + seed. Same conflicts, verified proof.
+    let dir = std::env::temp_dir().join(format!("oxiz_lrat_shrink_{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let cnf = dir.join("in.cnf");
+    let lrat = dir.join("out.lrat");
+    let mut f = fs::File::create(&cnf).unwrap();
+    use std::io::Write;
+    writeln!(f, "p cnf {nvars} {}", clauses.len()).unwrap();
+    for c in &clauses {
+        for &l in c {
+            write!(f, "{l} ").unwrap();
+        }
+        writeln!(f, "0").unwrap();
+    }
+    drop(f);
+
+    let mut solver = Solver::new();
+    solver.set_random_seed(42);
+    solver.ensure_vars(nvars);
+    solver.enable_lrat_proof(&lrat).unwrap();
+    for c in &clauses {
+        solver.add_clause(c.iter().map(|&l| Lit::from_dimacs(l)));
+    }
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    let lrat_conflicts = solver.stats().conflicts;
+    solver.disable_proof();
+    drop(solver);
+
+    assert_eq!(
+        plain_conflicts, lrat_conflicts,
+        "LRAT mode must not change the search shape: block-UIP shrink runs \
+         under proofs with chain bookkeeping, not a weaker minimizer"
+    );
+
+    if let Some(checker) = lrat_check_bin() {
+        let out = Command::new(&checker)
+            .arg(&cnf)
+            .arg(&lrat)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("VERIFIED") && out.status.success(),
+            "lrat-check rejected the shrink-chains proof:\n{stdout}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
