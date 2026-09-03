@@ -35,6 +35,27 @@ unchanged (no regression); congruence-dependent `unsat` still fails closed
 to `unknown` by design. Gates: 6 end-to-end + 3 evaluator regressions,
 full battery (10 442), clippy/fmt/doc, Z3 parity 0 mismatches.
 
+## [EUF theory-lemma certificates: certified unsat over congruence] - 2026-09-03
+
+The certified `unsat` gate now accepts congruence-dependent refutations,
+proof-carrying rather than re-solving: the search records every EUF
+theory lemma (conflict clauses and propagation explanations, including
+the lazy-reason path), the gate verifies each with a self-contained
+congruence closure (complete for ground EUF — a failed check is exactly
+"not a valid lemma" and rejects the certification), and LRAT refutes
+skeleton ∪ verified-lemmas. `Distinct` becomes structural in the gate's
+skeleton encoding (the `distinct ⇒ pairwise ¬Eq` link). Only `Eq` atoms
+over non-Bool operands are recordable; anything else poisons the log and
+the gate declines — arithmetic equalities fail closed to `unknown`
+(regression-pinned).
+
+Measured (stratified QF_UF sample): **25/46 previously-unknown unsat
+files certify; coverage 35/76 → 60/76 (46% → 79%)**. Residuals are
+honest fail-closed declines (13 = an LRAT hint-chain bug in the gate's
+fresh solve on lemma-bearing clause sets — next hunt; 7 = incomplete
+lemma recording). Gates: 5 CC units + 3 e2e regressions, battery
+(10 450), clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [subsume_round under proofs: resolution-justified strengthen chains] - 2026-09-03
 
 The last documented `--bve` trajectory divergence: `subsume_round` skipped
