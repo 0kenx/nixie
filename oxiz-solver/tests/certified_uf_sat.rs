@@ -131,18 +131,56 @@ fn certified_qfuf_distinct_transitivity_unsat_certifies() {
     assert_eq!(r, "unsat");
 }
 
-/// Arithmetic equalities are recordable atoms but NOT congruence-closure
-/// verifiable: `(= x 1) ∧ (= x 2)` is contradictory only through integer
-/// semantics, so the lemma fails the independent CC check and certified
-/// mode fails closed to `unknown` (never a wrong `unsat`).
+/// Arithmetic equalities certify since the LP verifier landed
+/// (`verify_lia_lemma`): `(= x 1) ∧ (= x 2)` is LP-infeasible by exact
+/// substitution, so the recorded lemma verifies and the gate refutes
+/// skeleton + lemma. (Before the LIA slice this failed closed to
+/// `unknown` — congruence closure cannot verify arithmetic.)
 #[test]
-fn certified_arith_eq_unsat_stays_unknown() {
+fn certified_qflia_eq_unsat_certifies() {
     let r = check_certified(
         "(set-logic QF_LIA)
          (set-option :certified-mode true)
          (declare-const x Int)
          (assert (= x 1))
          (assert (= x 2))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}
+
+/// A bound collision through linear arithmetic: `y ≥ x+2 ∧ x ≥ 5 ∧ y ≤ 6`
+/// is LP-infeasible (substitution + Fourier–Motzkin), so the recorded
+/// lemmas verify and certified mode accepts `unsat`.
+#[test]
+fn certified_qflia_bound_conflict_certifies() {
+    let r = check_certified(
+        "(set-logic QF_LIA)
+         (set-option :certified-mode true)
+         (declare-const x Int)
+         (declare-const y Int)
+         (assert (>= y (+ x 2)))
+         (assert (>= x 5))
+         (assert (<= y 6))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}
+
+/// The LP verifier's documented completeness boundary: parity-only
+/// infeasibility (`x = 2y+1 ∧ x = 2z`) is rational-feasible, so the
+/// lemmas cannot verify and certified mode fails closed to `unknown` —
+/// never a wrong verdict.
+#[test]
+fn certified_qflia_parity_boundary_stays_unknown() {
+    let r = check_certified(
+        "(set-logic QF_LIA)
+         (set-option :certified-mode true)
+         (declare-const x Int)
+         (declare-const y Int)
+         (declare-const z Int)
+         (assert (= x (+ (* 2 y) 1)))
+         (assert (= x (* 2 z)))
          (check-sat)",
     );
     assert_eq!(r, "unknown");

@@ -3694,10 +3694,28 @@ impl TheoryCallback for TheoryManager<'_> {
                 self.derived_reasons.lemma_log_poisoned = true;
                 return;
             };
+            let int_sort = self.manager.sorts.int_sort;
+            let real_sort = self.manager.sorts.real_sort;
             let atom_ok = self.manager.get(term).is_some_and(|t| match &t.kind {
                 TermKind::Eq(lhs, rhs) => {
                     self.manager.get(*lhs).is_some_and(|l| l.sort != bool_sort)
                         && self.manager.get(*rhs).is_some_and(|r| r.sort != bool_sort)
+                }
+                // Linear (in)equalities over Int/Real — verified by the
+                // certified gate's independent LP check
+                // (`verify_lia_lemma`): rational infeasibility only,
+                // integer-only conflicts fail closed.
+                TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b) => {
+                    self.manager
+                        .get(*a)
+                        .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
+                        && self
+                            .manager
+                            .get(*b)
+                            .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
                 }
                 TermKind::Apply { .. } => t.sort == bool_sort,
                 _ => false,

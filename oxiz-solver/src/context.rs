@@ -2205,6 +2205,37 @@ mod tests {
 
     #[test]
     fn certified_mode_theory_unsat_fails_closed() {
+        // Parity infeasibility is outside both independent verifiers
+        // (LP-feasible, invisible to congruence closure), so certified
+        // mode must fail closed. (Linear bound contradictions moved to
+        // the accepting side with the LP-lemma verifier, 2026-09 — see
+        // `certified_mode_lp_refutable_unsat_accepts` below.)
+        let mut ctx = Context::new();
+        let output = ctx
+            .execute_script(
+                r#"
+                (set-option :certified-mode true)
+                (declare-const x Int)
+                (declare-const y Int)
+                (declare-const z Int)
+                (assert (= x (+ (* 2 y) 1)))
+                (assert (= x (* 2 z)))
+                (check-sat)
+                (get-info :reason-unknown)
+                "#,
+            )
+            .expect("certified theory script should execute");
+
+        assert_eq!(output.len(), 2);
+        assert_eq!(output[0], "unknown");
+        assert!(
+            ctx.certification_failure().is_some(),
+            "parity-only refutation must be declined, not accepted"
+        );
+    }
+
+    #[test]
+    fn certified_mode_lp_refutable_unsat_accepts() {
         let mut ctx = Context::new();
         let output = ctx
             .execute_script(
@@ -2214,18 +2245,12 @@ mod tests {
                 (assert (< x 0))
                 (assert (>= x 0))
                 (check-sat)
-                (get-info :reason-unknown)
                 "#,
             )
             .expect("certified theory script should execute");
 
-        assert_eq!(output.len(), 2);
-        assert_eq!(output[0], "unknown");
-        assert!(output[1].contains("propositional checker found the asserted formula satisfiable"));
-        assert!(
-            ctx.certification_failure()
-                .is_some_and(|reason| reason.contains("satisfiable"))
-        );
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0], "unsat");
     }
 
     #[test]

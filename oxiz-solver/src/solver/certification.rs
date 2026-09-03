@@ -12,6 +12,7 @@ use super::types::{CertificationMode, Model, SolverResult};
 use crate::prelude::*;
 use num_bigint::BigInt;
 use num_rational::BigRational;
+use num_traits::{One, Zero};
 use oxiz_core::ast::{
     CachedEvaluator, Model as CertificateModel, ModelValue, TermId, TermKind, TermManager,
 };
@@ -702,7 +703,50 @@ impl BooleanLratChecker {
         manager: &mut TermManager,
     ) -> Result<(), String> {
         for lemma in lemmas {
-            if !verify_euf_lemma(lemma, manager) {
+            // Route by atom kind: all-EUF atoms (equalities over
+            // non-arith non-Bool operands, Bool-sorted applications) go to
+            // the congruence-closure verifier; all-arithmetic atoms
+            // (linear (in)equalities over Int/Real) to the LP verifier.
+            // Mixed lemmas need interface reasoning (Nelson–Oppen) —
+            // declined (fail closed).
+            let int_sort = manager.sorts.int_sort;
+            let real_sort = manager.sorts.real_sort;
+            let mut euf = false;
+            let mut arith = false;
+            for &(atom, _) in lemma {
+                match manager.get(atom).map(|t| &t.kind) {
+                    Some(TermKind::Lt(_, _))
+                    | Some(TermKind::Le(_, _))
+                    | Some(TermKind::Gt(_, _))
+                    | Some(TermKind::Ge(_, _)) => arith = true,
+                    Some(TermKind::Eq(lhs, rhs)) => {
+                        let side_arith = |x: &TermId| {
+                            manager
+                                .get(*x)
+                                .is_some_and(|s| s.sort == int_sort || s.sort == real_sort)
+                        };
+                        if side_arith(lhs) || side_arith(rhs) {
+                            arith = true;
+                        } else {
+                            euf = true;
+                        }
+                    }
+                    Some(TermKind::Apply { .. }) => euf = true,
+                    _ => return Err("recorded lemma contains an unclassifiable atom".to_string()),
+                }
+            }
+            if euf && arith {
+                return Err(
+                    "mixed EUF+arithmetic lemma: interface verification not implemented"
+                        .to_string(),
+                );
+            }
+            let verified = if arith {
+                verify_lia_lemma(lemma, manager)
+            } else {
+                verify_euf_lemma(lemma, manager)
+            };
+            if !verified {
                 #[cfg(feature = "std")]
                 if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
                     for &(atom, pol) in lemma {
@@ -878,20 +922,30 @@ mod tests {
 
     #[test]
     fn theory_semantic_unsat_fails_closed() {
+        // Parity infeasibility — outside the LP fragment (rational-
+        // feasible) and invisible to congruence closure. (The linear
+        // bound contradiction formerly used here is LP-certifiable since
+        // the 2026-09 LIA lemma verifier: `certified_mode_lp_refutable_
+        // unsat_accepts` in context.rs pins the accepting side.)
         let mut manager = TermManager::new();
         let x = manager.mk_var("x", manager.sorts.int_sort);
-        let zero = manager.mk_int(0);
-        let lt = manager.intern_term(TermKind::Lt(x, zero), manager.sorts.bool_sort);
-        let ge = manager.intern_term(TermKind::Ge(x, zero), manager.sorts.bool_sort);
-        let assertion = manager.mk_and([lt, ge]);
+        let y = manager.mk_var("y", manager.sorts.int_sort);
+        let z = manager.mk_var("z", manager.sorts.int_sort);
+        let two = manager.mk_int(2);
+        let one = manager.mk_int(1);
+        let two_y = manager.mk_mul([two, y]);
+        let e1_body = manager.mk_add([two_y, one]);
+        let e1 = manager.intern_term(TermKind::Eq(x, e1_body), manager.sorts.bool_sort);
+        let two_z = manager.mk_mul([two, z]);
+        let e2 = manager.intern_term(TermKind::Eq(x, two_z), manager.sorts.bool_sort);
+        let assertion = manager.mk_and([e1, e2]);
         let mut solver = certified_solver();
         solver.assert(assertion, &mut manager);
 
         assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
         assert!(
-            solver
-                .certification_failure()
-                .is_some_and(|reason| reason.contains("satisfiable"))
+            solver.certification_failure().is_some(),
+            "parity-only refutation must be declined, not accepted"
         );
         assert!(solver.get_unsat_core().is_none());
     }
@@ -1306,6 +1360,349 @@ fn dump_gate_transcript(dir: &str, transcript: &oxiz_sat::LratTranscript) -> std
     Ok(())
 }
 
+// ======== Independent LP verification of arithmetic lemmas ========
+//
+// The QF_LIA analogue of `verify_euf_lemma`: a recorded lemma whose atoms
+// are linear (in)equalities is valid iff its negation — the conjunction
+// of the negated literals — is infeasible. Each atom decodes into an
+// exact `BigRational` linear constraint over the lemma's own variables;
+// strict bounds tighten over integer-valued expressions (`a < b ⟺ a ≤
+// b-1`); equalities substitute away; the remaining inequalities go
+// through Fourier–Motzkin elimination. A derived constant-only
+// contradiction (`0 ≤ k`, `k < 0`) verifies the lemma.
+//
+// Completeness boundary (documented, fail-closed): rational infeasibility
+// only. Integer-only infeasibility (parity/divisibility conflicts) is
+// LP-feasible and returns `false` — the certification declines, never a
+// wrong verdict. Disequality literals (a positive `Eq` clause literal
+// negates to `≠`) make the conjunction disjunctive and are declined in
+// this slice.
+
+/// A decoded linear expression: variable coefficients plus a constant,
+/// all exact rationals.
+#[derive(Default, Clone)]
+struct LinExpr {
+    coefs: FxHashMap<TermId, BigRational>,
+    constant: BigRational,
+}
+
+impl LinExpr {
+    fn zero() -> Self {
+        Self {
+            coefs: FxHashMap::default(),
+            constant: BigRational::zero(),
+        }
+    }
+
+    /// Add `factor * term` — false when the term is not linear.
+    fn add_term(&mut self, term: TermId, factor: &BigRational, manager: &TermManager) -> bool {
+        if factor.is_zero() {
+            return true;
+        }
+        let Some(t) = manager.get(term) else {
+            return false;
+        };
+        match &t.kind {
+            TermKind::Var(_) => {
+                let slot = self.coefs.entry(term).or_insert_with(BigRational::zero);
+                *slot += factor;
+                if slot.is_zero() {
+                    self.coefs.remove(&term);
+                }
+                true
+            }
+            TermKind::IntConst(n) => {
+                self.constant += factor * BigRational::from(n.clone());
+                true
+            }
+            TermKind::RealConst(r) => {
+                self.constant +=
+                    factor * BigRational::new(BigInt::from(*r.numer()), BigInt::from(*r.denom()));
+                true
+            }
+            TermKind::Add(args) => args.iter().all(|&a| self.add_term(a, factor, manager)),
+            TermKind::Neg(arg) => {
+                let neg = -factor.clone();
+                self.add_term(*arg, &neg, manager)
+            }
+            TermKind::Sub(lhs, rhs) => {
+                if !self.add_term(*lhs, factor, manager) {
+                    return false;
+                }
+                let neg = -factor.clone();
+                self.add_term(*rhs, &neg, manager)
+            }
+            TermKind::Mul(args) => {
+                // Linear only: at most one variable operand.
+                let mut const_factor = BigRational::one();
+                let mut var_arg: Option<TermId> = None;
+                for &arg in args.iter() {
+                    let Some(a) = manager.get(arg) else {
+                        return false;
+                    };
+                    match &a.kind {
+                        TermKind::IntConst(n) => {
+                            const_factor *= BigRational::from(n.clone());
+                        }
+                        TermKind::RealConst(r) => {
+                            const_factor *= BigRational::new(
+                                BigInt::from(*r.numer()),
+                                BigInt::from(*r.denom()),
+                            );
+                        }
+                        TermKind::Var(_) => {
+                            if var_arg.is_some() {
+                                return false; // two variables: nonlinear
+                            }
+                            var_arg = Some(arg);
+                        }
+                        _ => return false,
+                    }
+                }
+                match var_arg {
+                    Some(v) => {
+                        let f = factor * &const_factor;
+                        self.add_term(v, &f, manager)
+                    }
+                    None => {
+                        self.constant += factor * &const_factor;
+                        true
+                    }
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Integer-valued: every variable Int-sorted, every coefficient and
+    /// the constant integral.
+    fn integer_valued(&self, manager: &TermManager) -> bool {
+        self.constant.denom().is_one()
+            && self.coefs.iter().all(|(&var, coef)| {
+                coef.denom().is_one()
+                    && manager
+                        .get(var)
+                        .is_some_and(|t| t.sort == manager.sorts.int_sort)
+            })
+    }
+
+    /// Substitute `var = rhs` (var absent from `rhs`) into the expression.
+    fn substitute(&mut self, var: TermId, rhs: &LinExpr) {
+        if let Some(c) = self.coefs.get(&var).cloned() {
+            self.coefs.remove(&var);
+            self.constant -= &c * &rhs.constant;
+            for (&v2, c2) in rhs.coefs.iter() {
+                let slot = self.coefs.entry(v2).or_insert_with(BigRational::zero);
+                *slot += &c * c2;
+                if slot.is_zero() {
+                    self.coefs.remove(&v2);
+                }
+            }
+        }
+    }
+}
+
+/// Verify an arithmetic lemma: the negated conjunction is LP-infeasible.
+fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Dir {
+        Le,
+        Ge,
+    }
+
+    let int_sort = manager.sorts.int_sort;
+    let real_sort = manager.sorts.real_sort;
+    let arith_sort = |t: TermId| -> bool {
+        manager
+            .get(t)
+            .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
+    };
+
+    let mut inequalities: Vec<(LinExpr, Dir)> = Vec::new();
+    let mut equalities: Vec<LinExpr> = Vec::new();
+
+    for &(atom, polarity) in lemma {
+        let Some(term) = manager.get(atom) else {
+            return false;
+        };
+        enum Rel {
+            Lt,
+            Le,
+            Gt,
+            Ge,
+            Eq,
+        }
+        let (rel, lhs, rhs) = match &term.kind {
+            TermKind::Lt(a, b) => (Rel::Lt, *a, *b),
+            TermKind::Le(a, b) => (Rel::Le, *a, *b),
+            TermKind::Gt(a, b) => (Rel::Gt, *a, *b),
+            TermKind::Ge(a, b) => (Rel::Ge, *a, *b),
+            TermKind::Eq(a, b) => (Rel::Eq, *a, *b),
+            _ => return false,
+        };
+        if !matches!(rel, Rel::Eq) && !arith_sort(lhs) && !arith_sort(rhs) {
+            return false;
+        }
+        let mut expr = LinExpr::zero();
+        if !expr.add_term(lhs, &BigRational::one(), manager)
+            || !expr.add_term(rhs, &BigRational::from(BigInt::from(-1)), manager)
+        {
+            return false;
+        }
+        // Relation of the *asserted* literal (clause negation flips it):
+        // polarity=false → the atom holds; true → its negation holds.
+        let (dir, strict) = match (rel, polarity) {
+            (Rel::Lt, false) => (Some(Dir::Le), true),
+            (Rel::Lt, true) => (Some(Dir::Ge), false),
+            (Rel::Le, false) => (Some(Dir::Le), false),
+            (Rel::Le, true) => (Some(Dir::Ge), true),
+            (Rel::Gt, false) => (Some(Dir::Ge), true),
+            (Rel::Gt, true) => (Some(Dir::Le), false),
+            (Rel::Ge, false) => (Some(Dir::Ge), false),
+            (Rel::Ge, true) => (Some(Dir::Le), true),
+            (Rel::Eq, false) => (None, false),
+            // Negates to a disequality: disjunctive — declined slice.
+            (Rel::Eq, true) => return false,
+        };
+        match dir {
+            None => equalities.push(expr),
+            Some(dir) => {
+                if strict {
+                    // `expr < 0` / `expr > 0` over an integer-valued
+                    // expression tightens to `≤ -1` / `≥ +1`; anything
+                    // else needs ε reasoning — decline.
+                    if !expr.integer_valued(manager) {
+                        return false;
+                    }
+                    // `E < 0` tightens to `E + 1 ≤ 0` and `E > 0` to
+                    // `E - 1 ≥ 0` (the constraint form is `E ⋈ 0`).
+                    match dir {
+                        Dir::Le => expr.constant += BigRational::one(),
+                        Dir::Ge => expr.constant -= BigRational::one(),
+                    }
+                }
+                inequalities.push((expr, dir));
+            }
+        }
+    }
+
+    // Equalities: substitute one variable at a time.
+    let mut eq_i = 0;
+    while eq_i < equalities.len() {
+        let Some((var, coef)) = equalities[eq_i]
+            .coefs
+            .iter()
+            .find(|(_, c)| !c.is_zero())
+            .map(|(v, c)| (*v, c.clone()))
+        else {
+            // Constant equality: `0 = c`.
+            if !equalities[eq_i].constant.is_zero() {
+                return true;
+            }
+            equalities.remove(eq_i);
+            continue;
+        };
+        // var = (const - Σ others) / coef
+        let mut rhs = equalities[eq_i].clone();
+        rhs.coefs.remove(&var);
+        rhs.constant = -&rhs.constant;
+        rhs.constant /= &coef;
+        for c in rhs.coefs.values_mut() {
+            *c /= &coef;
+        }
+        equalities.remove(eq_i);
+        for e in equalities.iter_mut() {
+            e.substitute(var, &rhs);
+        }
+        for (e, _) in inequalities.iter_mut() {
+            e.substitute(var, &rhs);
+        }
+        eq_i = 0;
+    }
+
+    // Fourier–Motzkin elimination.
+    let mut guard = 0usize;
+    loop {
+        for (e, d) in &inequalities {
+            if e.coefs.is_empty() {
+                // The constraint is `E ⋈ 0` with E constant: `E ≤ 0` is
+                // violated iff E > 0, `E ≥ 0` iff E < 0.
+                let violated = match d {
+                    Dir::Le => {
+                        e.constant.numer().sign() == num_bigint::Sign::Plus && !e.constant.is_zero()
+                    }
+                    Dir::Ge => e.constant.numer().sign() == num_bigint::Sign::Minus,
+                };
+                if violated {
+                    return true;
+                }
+            }
+        }
+        let Some(&var) = inequalities.iter().find_map(|(e, _)| e.coefs.keys().next()) else {
+            return false; // eliminated everything without contradiction
+        };
+        // Split into explicit bounds `v ≤ U` / `v ≥ L` on the residual
+        // (v removed, divided by |c|; the residual sign depends on the
+        // arm: E = c·v + R ⋈ 0 with c > 0 gives v ⋈ -R/|c|, so the
+        // direction-matching arms negate their residual).
+        let negate = |mut e: LinExpr| {
+            for c in e.coefs.values_mut() {
+                *c = -std::mem::replace(c, BigRational::zero());
+            }
+            e.constant = -e.constant;
+            e
+        };
+        let mut upper: Vec<LinExpr> = Vec::new();
+        let mut lower: Vec<LinExpr> = Vec::new();
+        let mut rest: Vec<(LinExpr, Dir)> = Vec::new();
+        for (mut e, d) in inequalities.drain(..) {
+            let Some(c) = e.coefs.remove(&var) else {
+                rest.push((e, d));
+                continue;
+            };
+            let abs = if c.numer().sign() == num_bigint::Sign::Minus {
+                -c.clone()
+            } else {
+                c.clone()
+            };
+            for coef in e.coefs.values_mut() {
+                *coef /= &abs;
+            }
+            e.constant /= &abs;
+            let positive = c.numer().sign() == num_bigint::Sign::Plus;
+            match (d, positive) {
+                (Dir::Le, true) => upper.push(negate(e)),
+                (Dir::Le, false) => lower.push(e),
+                (Dir::Ge, true) => lower.push(negate(e)),
+                (Dir::Ge, false) => upper.push(e),
+            }
+        }
+        let mut combined: Vec<(LinExpr, Dir)> = rest;
+        for u in &upper {
+            for l in &lower {
+                // `v ≤ U` and `v ≥ L` combine to `L - U ≤ 0`. (Sign errors
+                // here make feasible systems derive contradictions — the
+                // feasible-pair unit is the regression.)
+                let mut e = l.clone();
+                e.constant -= &u.constant;
+                for (&v2, c2) in u.coefs.iter() {
+                    let slot = e.coefs.entry(v2).or_insert_with(BigRational::zero);
+                    *slot -= c2;
+                    if slot.is_zero() {
+                        e.coefs.remove(&v2);
+                    }
+                }
+                combined.push((e, Dir::Le));
+            }
+        }
+        inequalities = combined;
+        guard += 1;
+        if guard > 64 || inequalities.len() > 4096 {
+            return false; // blowup guard: fail closed
+        }
+    }
+}
+
 #[cfg(test)]
 mod euf_lemma_tests {
     use super::*;
@@ -1442,6 +1839,100 @@ mod euf_lemma_tests {
         let pb = manager.mk_apply("p", [b], manager.sorts.bool_sort);
         let lemma = vec![(pa, true), (pb, true)];
         assert!(!verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// LP verifier units (see `verify_lia_lemma`). Entries are (atom,
+    /// clause-literal polarity): polarity=false asserts the atom in the
+    /// negated conjunction.
+    fn lia_setup() -> (TermManager, TermId, TermId, TermId) {
+        let mut manager = TermManager::new();
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let y = manager.mk_var("y", manager.sorts.int_sort);
+        let z = manager.mk_var("z", manager.sorts.int_sort);
+        (manager, x, y, z)
+    }
+
+    #[test]
+    fn lia_equal_constants_contradiction() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let one = m.mk_int(1);
+        let two = m.mk_int(2);
+        let e1 = m.mk_eq(x, one);
+        let e2 = m.mk_eq(x, two);
+        // Clause ¬(x=1) ∨ ¬(x=2): negated conjunction x=1 ∧ x=2
+        // (negative clause literals assert their atoms).
+        assert!(verify_lia_lemma(&[(e1, false), (e2, false)], &m));
+        // Sanity: a positive (x=1) literal negates to a disequality —
+        // declined in this slice, which also fails.
+        assert!(!verify_lia_lemma(&[(e1, true), (e2, false)], &m));
+    }
+
+    #[test]
+    fn lia_bound_collision() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let three = m.mk_int(3);
+        let one = m.mk_int(1);
+        let ge = m.mk_ge(x, three);
+        let le = m.mk_le(x, one);
+        // Clause ¬(x≥3) ∨ ¬(x≤1): conjunction x≥3 ∧ x≤1.
+        assert!(verify_lia_lemma(&[(ge, false), (le, false)], &m));
+    }
+
+    #[test]
+    fn lia_strict_integer_tightening() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let one = m.mk_int(1);
+        let lt = m.mk_lt(x, one);
+        let ge = m.mk_ge(x, one);
+        // Clause ¬(x<1) ∨ ¬(x≥1): conjunction x<1 ∧ x≥1 over
+        // integers tightens to x≤0 ∧ x≥1.
+        assert!(verify_lia_lemma(&[(lt, false), (ge, false)], &m));
+    }
+
+    #[test]
+    fn lia_feasible_rejected() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let zero = m.mk_int(0);
+        let five = m.mk_int(5);
+        let ge = m.mk_ge(x, zero);
+        let le = m.mk_le(x, five);
+        // Clause ¬(x≥0) ∨ ¬(x≤5): conjunction feasible.
+        assert!(!verify_lia_lemma(&[(ge, false), (le, false)], &m));
+    }
+
+    #[test]
+    fn lia_parity_boundary_declined() {
+        // x = 2y+1 ∧ x = 2z is integer-infeasible but LP-feasible: the
+        // documented completeness boundary — must return false (fail
+        // closed), never a wrong acceptance.
+        let (mut m, x, y, z) = lia_setup();
+        let two = m.mk_int(2);
+        let one = m.mk_int(1);
+        let two_y = m.mk_mul([two, y]);
+        let sum1 = m.mk_add([two_y, one]);
+        let e1 = m.mk_eq(x, sum1);
+        let two_z = m.mk_mul([two, z]);
+        let e2 = m.mk_eq(x, two_z);
+        assert!(!verify_lia_lemma(&[(e1, false), (e2, false)], &m));
+    }
+
+    #[test]
+    fn lia_two_var_substitution() {
+        // y ≥ x+2 ∧ x ≥ 5 ∧ y ≤ 6: substituting y: x+2 ≤ 6 ∧ x ≥ 5 —
+        // feasible (x=5,y=7? y≤6 violated... x+2≤6 → x≤4 ∧ x≥5 —
+        // infeasible). Conjunction: y ≥ x+2, x ≥ 5, y ≤ 6.
+        let (mut m, x, y, _z) = lia_setup();
+        let two2 = m.mk_int(2);
+        let x_plus_2 = m.mk_add([x, two2]);
+        let ge1 = m.mk_ge(y, x_plus_2);
+        let five = m.mk_int(5);
+        let six = m.mk_int(6);
+        let ge2 = m.mk_ge(x, five);
+        let le = m.mk_le(y, six);
+        assert!(verify_lia_lemma(
+            &[(ge1, false), (ge2, false), (le, false)],
+            &m
+        ));
     }
 
     fn manager_sort_s(manager: &mut TermManager) -> oxiz_core::sort::SortId {

@@ -48,8 +48,31 @@ fn certified_mode_verifies_a_boolean_unsat_result() {
 
 #[test]
 fn certified_mode_fails_closed_for_unsupported_theory_unsat() {
+    // Linear bound contradictions have been certifiable since the
+    // LP-lemma verifier landed (2026-09); the fail-closed example is now
+    // a conflict outside both verifiers' fragments — parity reasoning
+    // (`x = 2y+1 ∧ x = 2z` is integer-infeasible but LP-feasible, and
+    // congruence closure cannot see arithmetic at all).
     let script = common::TempPath::write(
         "certified_theory_unsat",
+        "smt2",
+        "(declare-const x Int)\n(declare-const y Int)\n(declare-const z Int)\n(assert (= x (+ (* 2 y) 1)))\n(assert (= x (* 2 z)))\n(check-sat)\n",
+    );
+    let output = Command::new(oxiz_bin())
+        .args(["--certified-mode", "--quiet", script.to_str().unwrap_or("")])
+        .output()
+        .expect("run oxiz in certified mode");
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unknown");
+}
+
+#[test]
+fn certified_mode_accepts_lp_refutable_theory_unsat() {
+    // `(and (< x 0) (>= x 0))` is LP-infeasible: the recorded theory
+    // lemma verifies by exact Fourier–Motzkin and the gate refutes.
+    let script = common::TempPath::write(
+        "certified_lp_theory_unsat",
         "smt2",
         "(declare-const x Int)\n(assert (< x 0))\n(assert (>= x 0))\n(check-sat)\n",
     );
@@ -59,7 +82,7 @@ fn certified_mode_fails_closed_for_unsupported_theory_unsat() {
         .expect("run oxiz in certified mode");
 
     assert!(output.status.success());
-    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unknown");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "unsat");
 }
 
 #[test]
