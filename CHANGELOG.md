@@ -35,6 +35,29 @@ unchanged (no regression); congruence-dependent `unsat` still fails closed
 to `unknown` by design. Gates: 6 end-to-end + 3 evaluator regressions,
 full battery (10 442), clippy/fmt/doc, Z3 parity 0 mismatches.
 
+## [Duplicate-literal LRAT clauses + Bool-apply lemma atoms] - 2026-09-03
+
+Both residual hunts from the EUF-lemma work:
+
+- **Duplicate-literal clauses**: the certified gate's canonical CNF
+  contained duplicate literals (Tseitin emission is per-occurrence;
+  `or`-terms with repeated arguments), and the LRAT checker counted the
+  copies as distinct undetermined literals, rejecting semantically-unit
+  hint clauses. The gate now dedups (and drops tautologies), and the
+  checker counts **distinct** unassigned literals — standing-wide, any
+  proof with dup-literal clauses verifies correctly.
+- **Bool-sorted applications as lemma atoms**: an `(S…)->Bool` function
+  atom is the equality `f(x…) = true/false`; the recorder accepts
+  `Apply` atoms and the congruence-closure verifier merges against the
+  Boolean constants, with constants-merged as an additional contradiction
+  condition. Plus two more recording surfaces (final-check propagation
+  loop, unconditional theory tautologies).
+
+**QF_UF certified coverage 79% → 92%** (42/46 plain-unsat cells certify;
+13 + 4 recovered by the two hunts). Residual: 3 eq_diamond files with
+clean-but-insufficient lemma logs (fail closed). Gates: 2 CC units + 1
+e2e, battery (10 453), clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [EUF theory-lemma certificates: certified unsat over congruence] - 2026-09-03
 
 The certified `unsat` gate now accepts congruence-dependent refutations,
