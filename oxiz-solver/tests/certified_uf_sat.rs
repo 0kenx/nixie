@@ -254,3 +254,20 @@ fn certified_qfuf_bool_function_congruence_unsat_certifies() {
     );
     assert_eq!(r, "unsat");
 }
+
+/// A refutation that needs a disequality fact (`distinct x 5` splits the
+/// integers): the LP verifier branches over the disequality — both sides
+/// infeasible — and certified mode accepts `unsat`.
+#[test]
+fn certified_qflia_disequality_refutation_certifies() {
+    let r = check_certified(
+        "(set-logic QF_LIA)
+         (set-option :certified-mode true)
+         (declare-const x Int)
+         (assert (distinct x 5))
+         (assert (<= x 4))
+         (assert (>= x 6))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}

@@ -1525,13 +1525,22 @@ impl LinExpr {
     }
 }
 
+/// Inequality direction for the LP verifier's constraints (`E ⋈ 0`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiaDir {
+    Le,
+    Ge,
+}
+
 /// Verify an arithmetic lemma: the negated conjunction is LP-infeasible.
+///
+/// Disequality literals (a positive `Eq` clause literal negates to `≠`)
+/// split exactly over integer-valued expressions (`t ≠ k ⟺ t ≤ k-1 ∨
+/// t ≥ k+1`), so the check branches over every combination and requires
+/// **all** branches infeasible (capped at 5 disequalities — 32 branches;
+/// beyond that the lemma is declined).
 fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Dir {
-        Le,
-        Ge,
-    }
+    use num_traits::One;
 
     let int_sort = manager.sorts.int_sort;
     let real_sort = manager.sorts.real_sort;
@@ -1541,8 +1550,9 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
             .is_some_and(|x| x.sort == int_sort || x.sort == real_sort)
     };
 
-    let mut inequalities: Vec<(LinExpr, Dir)> = Vec::new();
+    let mut inequalities: Vec<(LinExpr, LiaDir)> = Vec::new();
     let mut equalities: Vec<LinExpr> = Vec::new();
+    let mut disequalities: Vec<LinExpr> = Vec::new();
 
     for &(atom, polarity) in lemma {
         let Some(term) = manager.get(atom) else {
@@ -1574,22 +1584,30 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
         }
         // Relation of the *asserted* literal (clause negation flips it):
         // polarity=false → the atom holds; true → its negation holds.
-        let (dir, strict) = match (rel, polarity) {
-            (Rel::Lt, false) => (Some(Dir::Le), true),
-            (Rel::Lt, true) => (Some(Dir::Ge), false),
-            (Rel::Le, false) => (Some(Dir::Le), false),
-            (Rel::Le, true) => (Some(Dir::Ge), true),
-            (Rel::Gt, false) => (Some(Dir::Ge), true),
-            (Rel::Gt, true) => (Some(Dir::Le), false),
-            (Rel::Ge, false) => (Some(Dir::Ge), false),
-            (Rel::Ge, true) => (Some(Dir::Le), true),
+        let (lia_dir, strict) = match (rel, polarity) {
+            (Rel::Lt, false) => (Some(LiaDir::Le), true),
+            (Rel::Lt, true) => (Some(LiaDir::Ge), false),
+            (Rel::Le, false) => (Some(LiaDir::Le), false),
+            (Rel::Le, true) => (Some(LiaDir::Ge), true),
+            (Rel::Gt, false) => (Some(LiaDir::Ge), true),
+            (Rel::Gt, true) => (Some(LiaDir::Le), false),
+            (Rel::Ge, false) => (Some(LiaDir::Ge), false),
+            (Rel::Ge, true) => (Some(LiaDir::Le), true),
             (Rel::Eq, false) => (None, false),
-            // Negates to a disequality: disjunctive — declined slice.
-            (Rel::Eq, true) => return false,
+            // Negates to a disequality: disjunctive, but over an
+            // integer-valued expression it splits exactly into two
+            // bounds — handled by branching after the decode.
+            (Rel::Eq, true) => {
+                if !expr.integer_valued(manager) {
+                    return false;
+                }
+                disequalities.push(expr);
+                continue;
+            }
         };
-        match dir {
+        match lia_dir {
             None => equalities.push(expr),
-            Some(dir) => {
+            Some(lia_dir) => {
                 if strict {
                     // `expr < 0` / `expr > 0` over an integer-valued
                     // expression tightens to `≤ -1` / `≥ +1`; anything
@@ -1599,16 +1617,53 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
                     }
                     // `E < 0` tightens to `E + 1 ≤ 0` and `E > 0` to
                     // `E - 1 ≥ 0` (the constraint form is `E ⋈ 0`).
-                    match dir {
-                        Dir::Le => expr.constant += BigRational::one(),
-                        Dir::Ge => expr.constant -= BigRational::one(),
+                    match lia_dir {
+                        LiaDir::Le => expr.constant += BigRational::one(),
+                        LiaDir::Ge => expr.constant -= BigRational::one(),
                     }
                 }
-                inequalities.push((expr, dir));
+                inequalities.push((expr, lia_dir));
             }
         }
     }
 
+    // Branch over the disequalities: every branch must be infeasible for
+    // the (disjunctive) conjunction to be unsatisfiable. Capped at 5
+    // disequalities (32 branches); beyond that the lemma is declined.
+    if disequalities.is_empty() {
+        return lia_conjunction_infeasible(equalities, inequalities);
+    }
+    if disequalities.len() > 5 {
+        return false;
+    }
+    let branches = 1usize << disequalities.len();
+    for branch in 0..branches {
+        let mut ineqs = inequalities.clone();
+        for (i, expr) in disequalities.iter().enumerate() {
+            let mut e = expr.clone();
+            if branch & (1 << i) == 0 {
+                // `t ≠ 0` branch low: `t ≤ -1` ⟺ `(t + 1) ≤ 0`.
+                e.constant += BigRational::one();
+                ineqs.push((e, LiaDir::Le));
+            } else {
+                // branch high: `t ≥ 1` ⟺ `(t - 1) ≥ 0`.
+                e.constant -= BigRational::one();
+                ineqs.push((e, LiaDir::Ge));
+            }
+        }
+        if !lia_conjunction_infeasible(equalities.clone(), ineqs) {
+            return false; // this branch is feasible → conjunction satisfiable
+        }
+    }
+    true
+}
+
+/// Substitutive equality elimination + Fourier–Motzkin over the
+/// inequality set; `true` iff a constant-only contradiction is derivable.
+fn lia_conjunction_infeasible(
+    mut equalities: Vec<LinExpr>,
+    mut inequalities: Vec<(LinExpr, LiaDir)>,
+) -> bool {
     // Equalities: substitute one variable at a time.
     let mut eq_i = 0;
     while eq_i < equalities.len() {
@@ -1651,10 +1706,10 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
                 // The constraint is `E ⋈ 0` with E constant: `E ≤ 0` is
                 // violated iff E > 0, `E ≥ 0` iff E < 0.
                 let violated = match d {
-                    Dir::Le => {
+                    LiaDir::Le => {
                         e.constant.numer().sign() == num_bigint::Sign::Plus && !e.constant.is_zero()
                     }
-                    Dir::Ge => e.constant.numer().sign() == num_bigint::Sign::Minus,
+                    LiaDir::Ge => e.constant.numer().sign() == num_bigint::Sign::Minus,
                 };
                 if violated {
                     return true;
@@ -1677,7 +1732,7 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
         };
         let mut upper: Vec<LinExpr> = Vec::new();
         let mut lower: Vec<LinExpr> = Vec::new();
-        let mut rest: Vec<(LinExpr, Dir)> = Vec::new();
+        let mut rest: Vec<(LinExpr, LiaDir)> = Vec::new();
         for (mut e, d) in inequalities.drain(..) {
             let Some(c) = e.coefs.remove(&var) else {
                 rest.push((e, d));
@@ -1694,13 +1749,13 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
             e.constant /= &abs;
             let positive = c.numer().sign() == num_bigint::Sign::Plus;
             match (d, positive) {
-                (Dir::Le, true) => upper.push(negate(e)),
-                (Dir::Le, false) => lower.push(e),
-                (Dir::Ge, true) => lower.push(negate(e)),
-                (Dir::Ge, false) => upper.push(e),
+                (LiaDir::Le, true) => upper.push(negate(e)),
+                (LiaDir::Le, false) => lower.push(e),
+                (LiaDir::Ge, true) => lower.push(negate(e)),
+                (LiaDir::Ge, false) => upper.push(e),
             }
         }
-        let mut combined: Vec<(LinExpr, Dir)> = rest;
+        let mut combined: Vec<(LinExpr, LiaDir)> = rest;
         for u in &upper {
             for l in &lower {
                 // `v ≤ U` and `v ≥ L` combine to `L - U ≤ 0`. (Sign errors
@@ -1715,7 +1770,7 @@ fn verify_lia_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
                         e.coefs.remove(&v2);
                     }
                 }
-                combined.push((e, Dir::Le));
+                combined.push((e, LiaDir::Le));
             }
         }
         inequalities = combined;
@@ -1956,6 +2011,54 @@ mod euf_lemma_tests {
             &[(ge1, false), (ge2, false), (le, false)],
             &m
         ));
+    }
+
+    /// Disequality literals: the conjunction `x ≠ 5 ∧ x ≤ 4 ∧ x ≥ 6` is
+    /// unsatisfiable on BOTH branches of `x ≠ 5` (low: x ≤ 4 ∧ x ≤ 4;
+    /// high: x ≤ 4 ∧ x ≥ 6 — infeasible), so the clause verifies.
+    #[test]
+    fn lia_disequality_branch_verifies() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let five = m.mk_int(5);
+        let four = m.mk_int(4);
+        let six = m.mk_int(6);
+        let ne = m.mk_eq(x, five); // clause literal POSITIVE → x ≠ 5
+        let le = m.mk_le(x, four); // negative literal → x ≤ 4
+        let ge = m.mk_ge(x, six); // negative literal → x ≥ 6
+        assert!(verify_lia_lemma(
+            &[(ne, true), (le, false), (ge, false)],
+            &m
+        ));
+    }
+
+    /// A disequality that does NOT close both branches: `x ≠ 5 ∧ x ≤ 4`
+    /// is satisfiable (x = 4) — rejected.
+    #[test]
+    fn lia_disequality_open_branch_rejected() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let five = m.mk_int(5);
+        let four = m.mk_int(4);
+        let ne = m.mk_eq(x, five);
+        let le = m.mk_le(x, four);
+        assert!(!verify_lia_lemma(&[(ne, true), (le, false)], &m));
+    }
+
+    /// Disequality over a non-integer-valued expression (x/2 ≠ 0) is
+    /// declined — no exact integer split.
+    #[test]
+    fn lia_disequality_non_integral_declined() {
+        let (mut m, x, _y, _z) = lia_setup();
+        let zero = m.mk_int(0);
+        let two = m.mk_int(2);
+        let half_x = m.mk_div(x, two);
+        let ne = m.mk_eq(half_x, zero);
+        // Force infeasibility on both sides via x = 1 (so x/2 = 0.5,
+        // satisfying ≠ 0): the lemma (¬(x/2≠0) ∨ ¬(x=1)) is NOT valid, and
+        // the conjunction x/2≠0 ∧ x=1 is actually satisfiable — but the
+        // disequality is non-integral so the verifier declines regardless.
+        let one = m.mk_int(1);
+        let e = m.mk_eq(x, one);
+        assert!(!verify_lia_lemma(&[(ne, true), (e, false)], &m));
     }
 
     fn manager_sort_s(manager: &mut TermManager) -> oxiz_core::sort::SortId {
