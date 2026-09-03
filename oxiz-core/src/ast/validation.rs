@@ -102,6 +102,34 @@ fn eval_cached(
                         cache.insert(id, value);
                     }
 
+                    // Uninterpreted function application: its value is
+                    // whatever the model assigns to the application term
+                    // (per-application lookup). As a *certificate* this is
+                    // sound only together with the caller's congruence
+                    // check: the lookups define the function's graph, which
+                    // must be well-defined on equal argument values (see
+                    // the certified-mode gate in oxiz-solver, which runs
+                    // exactly that check before accepting a `Sat`).
+                    TermKind::Apply { .. } => {
+                        let value = model.get_assignment(id).cloned();
+                        cache.insert(id, value);
+                    }
+
+                    // Distinct: evaluate every operand; the pairwise check
+                    // happens in `Combine`. Zero or one operand is trivially
+                    // distinct (SMT-LIB semantics).
+                    TermKind::Distinct(args) => match args.first() {
+                        None => {
+                            cache.insert(id, Some(ModelValue::Bool(true)));
+                        }
+                        Some(_) => {
+                            stack.push(EvalFrame::Combine(id));
+                            for &arg in args.iter() {
+                                stack.push(EvalFrame::Enter(arg));
+                            }
+                        }
+                    },
+
                     // Short-circuiting boolean connectives
                     TermKind::And(args) | TermKind::Or(args) => {
                         let conjunction = matches!(&term.kind, TermKind::And(_));
@@ -171,6 +199,8 @@ fn eval_cached(
                             stack.push(EvalFrame::Enter(arg));
                         }
                     }
+                    // `Distinct` operands are scheduled the same way; its
+                    // `Combine` case performs the pairwise comparison.
 
                     // For other operations, we can't evaluate without more
                     // information: an honest "unknown", never a default value.
@@ -287,6 +317,19 @@ fn eval_cached(
                         (Some(a), Some(b)) => Some(ModelValue::Bool(a == b)),
                         _ => None,
                     },
+                    TermKind::Distinct(args) => {
+                        // Every operand must be fully evaluated — no partial
+                        // judgement on a partial table. The comparison is
+                        // structural over `ModelValue` (derived `Eq`):
+                        // uninterpreted values compare by (sort, id), so two
+                        // witnesses are equal exactly when they denote the
+                        // same domain element.
+                        let values: Option<Vec<ModelValue>> =
+                            args.iter().map(|a| operand(a, cache)).collect();
+                        values.map(|vs| {
+                            ModelValue::Bool((1..vs.len()).all(|i| (0..i).all(|j| vs[i] != vs[j])))
+                        })
+                    }
                     TermKind::Lt(lhs, rhs) => match (operand(lhs, cache), operand(rhs, cache)) {
                         (Some(a), Some(b)) => compare_lt(&a, &b).map(ModelValue::Bool),
                         _ => None,
@@ -1461,6 +1504,108 @@ mod deep_walk_tests {
         assert_eq!(
             handle.join().expect("deep evaluation must not overflow"),
             Some(ModelValue::Bool(true))
+        );
+    }
+}
+
+// ======== UF certificate evaluation (2026-09 extension) ========
+//
+// `Apply` evaluates by per-application model lookup and `Distinct` by exact
+// pairwise comparison — the two arms the certified-mode UF model
+// certificate depends on. These units pin their semantics directly.
+
+#[cfg(test)]
+mod uf_eval_tests {
+    use super::*;
+    use crate::sort::SortId;
+
+    fn uninterpreted_sort(manager: &mut TermManager) -> SortId {
+        let name = manager.intern_str("S");
+        manager
+            .sorts
+            .intern(crate::sort::SortKind::Uninterpreted(name))
+    }
+
+    #[test]
+    fn apply_evaluates_from_model_lookup() {
+        let mut manager = TermManager::new();
+        let sort = uninterpreted_sort(&mut manager);
+        let a = manager.mk_var("a", sort);
+        let f_a = manager.mk_apply("f", [a], sort);
+
+        // Without an assignment the application is unevaluable (fail
+        // closed), never a default.
+        let empty = Model::new();
+        assert_eq!(eval_term(f_a, &manager, &empty), None);
+
+        // With per-application assignments the table evaluates.
+        let mut model = Model::new();
+        model.assign_uninterpreted(a, sort, 0);
+        model.assign_uninterpreted(f_a, sort, 7);
+        assert_eq!(
+            eval_term(f_a, &manager, &model),
+            Some(ModelValue::Uninterpreted { sort, id: 7 })
+        );
+        // The constant itself also looks up.
+        assert_eq!(
+            eval_term(a, &manager, &model),
+            Some(ModelValue::Uninterpreted { sort, id: 0 })
+        );
+    }
+
+    #[test]
+    fn distinct_over_uninterpreted_witnesses() {
+        let mut manager = TermManager::new();
+        let sort = uninterpreted_sort(&mut manager);
+        let a = manager.mk_var("a", sort);
+        let b = manager.mk_var("b", sort);
+        let c = manager.mk_var("c", sort);
+
+        let mut model = Model::new();
+        model.assign_uninterpreted(a, sort, 0);
+        model.assign_uninterpreted(b, sort, 0); // same element as a
+        model.assign_uninterpreted(c, sort, 1);
+
+        let d = manager.mk_distinct([a, b, c]);
+        assert_eq!(
+            eval_term(d, &manager, &model),
+            Some(ModelValue::Bool(false)), // a and b denote one element
+        );
+
+        let d2 = manager.mk_distinct([a, c]);
+        assert_eq!(
+            eval_term(d2, &manager, &model),
+            Some(ModelValue::Bool(true))
+        );
+
+        // Singleton distinct is trivially true; unevaluated operands are
+        // never guessed.
+        let d3 = manager.mk_distinct([a]);
+        assert_eq!(
+            eval_term(d3, &manager, &model),
+            Some(ModelValue::Bool(true))
+        );
+        let orphan = manager.mk_var("orphan", sort);
+        let d4 = manager.mk_distinct([a, orphan]);
+        assert_eq!(eval_term(d4, &manager, &model), None);
+    }
+
+    #[test]
+    fn distinct_mixed_concrete_kinds() {
+        let mut manager = TermManager::new();
+        let one = manager.mk_int(1);
+        let two = manager.mk_int(2);
+        let d = manager.mk_distinct([one, two]);
+        assert_eq!(
+            eval_term(d, &manager, &Model::new()),
+            Some(ModelValue::Bool(true))
+        );
+
+        let one_again = manager.mk_int(1);
+        let d2 = manager.mk_distinct([one, one_again, two]);
+        assert_eq!(
+            eval_term(d2, &manager, &Model::new()),
+            Some(ModelValue::Bool(false))
         );
     }
 }

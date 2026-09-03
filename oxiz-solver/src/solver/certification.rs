@@ -52,15 +52,314 @@ impl Solver {
             .model
             .as_ref()
             .ok_or_else(|| "candidate Sat verdict did not include a model".to_string())?;
-        let certificate = certificate_model(model, manager);
+        let mut certificate = certificate_model(model, manager);
+        self.complete_uninterpreted_witnesses(&mut certificate, manager);
         let mut evaluator = CachedEvaluator::new(manager, &certificate);
-        match evaluator.validate_assertions(&self.certificate_assertions) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err("candidate model falsifies an active assertion".to_string()),
-            Err(error) => Err(format!(
-                "candidate model could not be completely checked: {error}"
-            )),
+        #[cfg(feature = "std")]
+        if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+            for (&term, value) in certificate.assignments() {
+                eprintln!(
+                    "[cert] {:?} -> {value:?}",
+                    manager.get(term).map(|t| &t.kind)
+                );
+            }
         }
+        for (i, &assertion) in self.certificate_assertions.iter().enumerate() {
+            #[cfg(feature = "std")]
+            if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+                eprintln!("[cert] assertion {i} = {:?}", evaluator.eval(assertion));
+            }
+            match evaluator.validate_assertion(assertion) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return Err("candidate model falsifies an active assertion".to_string());
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "candidate model could not be completely checked: {error}"
+                    ));
+                }
+            }
+        }
+        // A per-application lookup table is a genuine first-order structure
+        // only if it is well-defined: equal argument values must map to
+        // equal results. The EUF congruence classes used to *propose* the
+        // witness values satisfy this by construction; the check below
+        // verifies it independently, so the certificate never trusts the
+        // theory solver's class assignment (a broken closure can only make
+        // certification fail, never pass).
+        self.check_application_congruence(&mut evaluator, manager)
+    }
+
+    /// Complete the certificate with abstract witnesses for reachable
+    /// terms of uninterpreted sorts.
+    ///
+    /// The candidate is built by a small, independent **congruence closure**
+    /// over the reachable ground terms:
+    ///
+    /// * seed unions from the EUF congruence classes (pure candidate — a
+    ///   wrong class can only fail certification, never pass it),
+    /// * union both sides of equalities the assertions guarantee true
+    ///   (top level and through `and` conjuncts — an equality under `or`,
+    ///   `not` or `ite` is not known true and is deliberately skipped),
+    /// * close under congruence: applications of one function whose
+    ///   arguments are class-equal are unioned, to fixpoint.
+    ///
+    /// One witness index is then allocated per class root. This repairs the
+    /// coverage hole where the solver satisfied an application equality at
+    /// the SAT level without an EUF merge (e.g. `f` applied to an
+    /// `ite`-over-uninterpreted-sort term the E-graph never interned): the
+    /// asserted-equality seed unions it directly.
+    ///
+    /// The closure is *candidate construction only* — the assertion
+    /// evaluation and [`Self::check_application_congruence`] verify the
+    /// result; an unsound closure can only make certification fail.
+    fn complete_uninterpreted_witnesses(
+        &self,
+        certificate: &mut CertificateModel,
+        manager: &TermManager,
+    ) {
+        use oxiz_core::ast::traversal::get_children;
+        use oxiz_core::sort::SortKind;
+
+        // ---- 1. collect reachable terms (deterministic walk order) ----
+        let mut terms: Vec<TermId> = Vec::new();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.certificate_assertions.clone();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(term) = manager.get(id) else {
+                continue;
+            };
+            terms.push(id);
+            for child in get_children(&term.kind) {
+                stack.push(child);
+            }
+        }
+
+        let is_uninterpreted = |id: TermId| -> bool {
+            manager
+                .get(id)
+                .and_then(|t| manager.sorts.get(t.sort))
+                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+        };
+
+        // ---- 2. union-find over the uninterpreted-sorted terms ----
+        // Parent map; a term absent from the map is its own root.
+        let mut parent: FxHashMap<TermId, TermId> = FxHashMap::default();
+        fn find(parent: &mut FxHashMap<TermId, TermId>, x: TermId) -> TermId {
+            let mut root = x;
+            while let Some(&p) = parent.get(&root)
+                && p != root
+            {
+                root = p;
+            }
+            // Path compression.
+            let mut cur = x;
+            while let Some(&p) = parent.get(&cur)
+                && p != root
+            {
+                parent.insert(cur, root);
+                cur = p;
+            }
+            root
+        }
+        let union = |parent: &mut FxHashMap<TermId, TermId>, a: TermId, b: TermId| {
+            let (ra, rb) = (find(parent, a), find(parent, b));
+            if ra != rb {
+                // Deterministic root choice: the larger TermId wins.
+                let (keep, redirect) = if ra > rb { (ra, rb) } else { (rb, ra) };
+                parent.insert(redirect, keep);
+                parent.entry(keep).or_insert(keep);
+            }
+        };
+
+        // Register every uninterpreted-sorted constant and application so
+        // later lookups find them.
+        for &id in &terms {
+            if let Some(term) = manager.get(id)
+                && matches!(term.kind, TermKind::Var(_) | TermKind::Apply { .. })
+                && is_uninterpreted(id)
+            {
+                parent.entry(id).or_insert(id);
+            }
+        }
+
+        // Seed 1: EUF congruence classes (rep -> first member seen).
+        let mut euf_reps: FxHashMap<u32, TermId> = FxHashMap::default();
+        for &id in &terms {
+            if parent.contains_key(&id)
+                && let Some(rep) = self.euf_class_representative(id)
+                && let Some(&first) = euf_reps.get(&rep)
+            {
+                union(&mut parent, id, first);
+            } else if parent.contains_key(&id) {
+                if let Some(rep) = self.euf_class_representative(id) {
+                    euf_reps.insert(rep, id);
+                }
+            }
+        }
+
+        // Seed 2: equalities the assertions guarantee true — the roots
+        // themselves and, recursively, the conjuncts of top-level `and`s.
+        // An equality anywhere else (`or`, `not`, `ite`, …) is not known
+        // true; skipping it can only lose coverage, never soundness.
+        let mut guarantee_stack: Vec<TermId> = self.certificate_assertions.clone();
+        while let Some(id) = guarantee_stack.pop() {
+            let Some(term) = manager.get(id) else {
+                continue;
+            };
+            match &term.kind {
+                TermKind::And(args) => {
+                    for &arg in args.iter() {
+                        guarantee_stack.push(arg);
+                    }
+                }
+                TermKind::Eq(lhs, rhs)
+                    if is_uninterpreted(*lhs)
+                        && is_uninterpreted(*rhs)
+                        && parent.contains_key(lhs)
+                        && parent.contains_key(rhs) =>
+                {
+                    union(&mut parent, *lhs, *rhs);
+                }
+                _ => {}
+            }
+        }
+
+        // Seed 3 / fixpoint: congruence — applications of one function
+        // with class-equal argument tuples are unioned. Iterate until no
+        // union fires (each pass is O(applies); the fixpoint is bounded by
+        // the class count).
+        let mut applications: Vec<TermId> = Vec::new();
+        for &id in &terms {
+            if let Some(term) = manager.get(id)
+                && matches!(term.kind, TermKind::Apply { .. })
+                && parent.contains_key(&id)
+            {
+                applications.push(id);
+            }
+        }
+        loop {
+            let mut changed = false;
+            // signature -> one member seen with it
+            let mut sigs: FxHashMap<
+                (oxiz_core::interner::Spur, smallvec::SmallVec<[TermId; 4]>),
+                TermId,
+            > = FxHashMap::default();
+            for &app in &applications {
+                let Some(TermKind::Apply { func, args }) = manager.get(app).map(|t| &t.kind) else {
+                    continue;
+                };
+                let mut key: smallvec::SmallVec<[TermId; 4]> = smallvec::SmallVec::new();
+                for &arg in args.iter() {
+                    key.push(find(&mut parent, arg));
+                }
+                match sigs.entry((*func, key)) {
+                    std::collections::hash_map::Entry::Occupied(first) => {
+                        let first = *first.get();
+                        let before_a = find(&mut parent, app);
+                        let before_b = find(&mut parent, first);
+                        if before_a != before_b {
+                            union(&mut parent, app, first);
+                            changed = true;
+                        }
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        slot.insert(app);
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // ---- 3. allocate one witness per class root ----
+        let mut witness_index: FxHashMap<TermId, u64> = FxHashMap::default();
+        for &id in &terms {
+            if let Some(term) = manager.get(id)
+                && matches!(term.kind, TermKind::Var(_) | TermKind::Apply { .. })
+                && is_uninterpreted(id)
+            {
+                let root = find(&mut parent, id);
+                let next = witness_index.len() as u64;
+                let index = *witness_index.entry(root).or_insert(next);
+                let sort = manager.get(id).map_or(term.sort, |t| t.sort);
+                certificate.assign_uninterpreted(id, sort, index);
+            }
+        }
+    }
+
+    /// Independent well-definedness check for the certificate's function
+    /// table: over every `Apply` term reachable from the assertions that
+    /// fully evaluates, group by (function, argument values) and require a
+    /// single result value. An application that does not evaluate played
+    /// no role in the checked verdict (the Boolean fold short-circuits
+    /// past unevaluated subterms), so skipping it is sound.
+    ///
+    /// Values are keyed by their exact `Debug` form — for the `ModelValue`
+    /// variants this is injective (each variant is prefixed distinctly and
+    /// the payloads print exactly), so equal keys mean equal values and the
+    /// grouping is exact.
+    fn check_application_congruence(
+        &self,
+        evaluator: &mut CachedEvaluator<'_>,
+        manager: &TermManager,
+    ) -> Result<(), String> {
+        use oxiz_core::ast::traversal::get_children;
+        use oxiz_core::interner::Spur;
+
+        let mut table: FxHashMap<(Spur, String), String> = FxHashMap::default();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.certificate_assertions.clone();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(term) = manager.get(id) else {
+                continue;
+            };
+            if let TermKind::Apply { func, args } = &term.kind {
+                let mut arg_key = String::new();
+                let mut complete = true;
+                for &arg in args.iter() {
+                    match evaluator.eval(arg) {
+                        Some(value) => {
+                            arg_key.push_str(&format!("{value:?};"));
+                        }
+                        None => {
+                            complete = false;
+                            break;
+                        }
+                    }
+                }
+                // The application's own value is part of the same
+                // completeness requirement: without it the term could not
+                // have contributed to any checked assertion.
+                if complete && let Some(result) = evaluator.eval(id) {
+                    let result_key = format!("{result:?}");
+                    match table.entry((*func, arg_key)) {
+                        std::collections::hash_map::Entry::Occupied(existing) => {
+                            if *existing.get() != result_key {
+                                return Err(
+                                    "candidate function interpretation is not well-defined: congruent arguments map to different values".to_string(),
+                                );
+                            }
+                        }
+                        std::collections::hash_map::Entry::Vacant(slot) => {
+                            slot.insert(result_key);
+                        }
+                    }
+                }
+            }
+            for child in get_children(&term.kind) {
+                stack.push(child);
+            }
+        }
+        Ok(())
     }
 
     /// Check an LRAT-backed canonical refutation of the original assertions.
