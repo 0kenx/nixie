@@ -370,3 +370,39 @@ paths.
 Ranked-list status after this study: items 1–5 all landed; the certified
 path's remaining gap is coverage (UF model evaluation, theory-lemma
 certificates), not throughput.
+
+## Addendum 7 (2026-09-03): UF model certificates — QF_UF coverage 9% → 46%
+
+Addendum 6 named coverage as the certified path's binding constraint and
+QF_UF `sat` as the largest single hole (28/76 sampled files → `unknown`:
+the certificate model carried no uninterpreted-sort values, so any
+assertion containing `(f x)` was unevaluable). Closed:
+
+* **Evaluator** (`oxiz-core` validation): `Apply` evaluates by
+  per-application model lookup; `Distinct` by exact pairwise comparison
+  over `ModelValue`s (witnesses compare by `(sort, id)`).
+* **Candidate**: a small independent congruence closure over the reachable
+  ground terms — unions seeded from EUF classes and from equalities the
+  assertions guarantee true (top level and through `and` conjuncts only;
+  an equality under `or`/`not`/`ite` is not known true and is skipped),
+  closed under application congruence to fixpoint; one witness per root.
+  The closure exists purely to raise coverage: the first cut (EUF classes
+  only) failed `f` applied to an `ite`-over-uninterpreted-sort term — the
+  solver satisfied the application equality at the SAT level with no EUF
+  merge, the singleton witness falsified a satisfiable assertion.
+* **Gate**: assertion evaluation plus an independent well-definedness
+  check on the function table (congruent argument-value tuples must map to
+  equal results). A broken EUF class or an unsound closure can only fail
+  certification, never pass it.
+
+Measured on the same stratified sample (20 s cap): QF_UF certified
+coverage **7/76 → 35/76 (9% → 46%)** — every plain-sat QF_UF file now
+certifies; QF_LIA unchanged (46 sat + 6 unsat). Congruence-dependent
+`unsat` still fails closed (regression-pinned in
+`certified_uf_sat.rs`). Full battery 10 442, clippy/fmt/doc, parity 0
+mismatches; certified-arm cells recorded at the landed sha in the result
+store (suite `smtlib-2020-qf{uf,lia}-certifiedpath`, config
+`ufcert-cert`).
+
+Remaining certified-UNSAT frontier, unchanged: theory-lemma certificates
+(the skeleton gate can only certify propositional refutations).

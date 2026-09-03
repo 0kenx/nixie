@@ -5,6 +5,36 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [UF model certificates: certified-mode Sat over uninterpreted functions] - 2026-09-03
+
+The certified-path re-measure (below) showed coverage — not cost — is the
+binding constraint, and the largest single hole was QF_UF `sat`: every
+plain-sat file failed closed to `unknown` because the certificate model
+carried no values for uninterpreted-sort terms, so the evaluator could not
+evaluate an assertion containing `(f x)`.
+
+- **Evaluator** (`oxiz-core` validation): `Apply` evaluates by
+  per-application model lookup; `Distinct` evaluates by exact pairwise
+  comparison over `ModelValue`s (uninterpreted witnesses compare by
+  `(sort, id)`; an unevaluated operand is never guessed).
+- **Candidate construction**: a small independent congruence closure over
+  the reachable ground terms — union-find seeded from EUF classes and from
+  equalities the assertions guarantee true (top level and through
+  `and`-conjuncts only), closed under application congruence to fixpoint;
+  one witness index per class root. This repairs the coverage hole where
+  the solver satisfied an application equality at the SAT level without an
+  EUF merge (`f` applied to an `ite`-over-uninterpreted-sort term).
+- **The gate**: full assertion evaluation plus an independent
+  well-definedness check on the resulting function table (congruent
+  argument-value tuples must map to equal results). An unsound closure or
+  a broken EUF class can only make certification *fail*, never pass.
+
+Measured (stratified SMT-LIB sample, 20 s cap): **QF_UF certified coverage
+7/76 → 35/76 (9 % → 46 %)** — all 28 plain-sat files now certify; QF_LIA
+unchanged (no regression); congruence-dependent `unsat` still fails closed
+to `unknown` by design. Gates: 6 end-to-end + 3 evaluator regressions,
+full battery (10 442), clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [Shrink-with-chains + unit-resolvent provenance: the LRAT search-shape convergence] - 2026-09-03
 
 The two remaining LRAT-program items (see
