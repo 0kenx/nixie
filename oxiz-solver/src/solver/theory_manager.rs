@@ -3668,6 +3668,36 @@ impl TheoryCallback for TheoryManager<'_> {
         true
     }
 
+    /// Record a candidate theory lemma. Only clauses whose every literal is
+    /// an `Eq` atom over non-Bool operands are recordable — that is the
+    /// fragment certified mode's congruence-closure verifier can check
+    /// independently. Anything else (arithmetic comparisons, Boolean iff,
+    /// unknown atoms) poisons the log: the gate then declines to use it
+    /// (fail closed to the skeleton-only path).
+    fn record_lemma(&mut self, clause: &[Lit]) {
+        if clause.is_empty() {
+            return;
+        }
+        let mut entry: Vec<(TermId, bool)> = Vec::with_capacity(clause.len());
+        for &lit in clause {
+            let Some(&term) = self.var_to_term.get(lit.var().index()) else {
+                self.derived_reasons.lemma_log_poisoned = true;
+                return;
+            };
+            let atom_ok = self.manager.get(term).is_some_and(|t| {
+                matches!(&t.kind, TermKind::Eq(lhs, rhs)
+                    if self.manager.get(*lhs).is_some_and(|l| l.sort != self.manager.sorts.bool_sort)
+                        && self.manager.get(*rhs).is_some_and(|r| r.sort != self.manager.sorts.bool_sort))
+            });
+            if !atom_ok {
+                self.derived_reasons.lemma_log_poisoned = true;
+                return;
+            }
+            entry.push((term, !lit.is_neg()));
+        }
+        self.derived_reasons.push_theory_lemma(entry);
+    }
+
     fn on_assignment(&mut self, lit: Lit) -> TheoryCheckResult {
         let var = lit.var();
         let is_positive = !lit.is_neg();

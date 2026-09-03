@@ -71,9 +71,51 @@ pub(crate) struct DerivedReasons {
     /// from their base scope.  Absolute: maintained across every
     /// `TheoryManager` that drives those solvers (see the module docs).
     depth: usize,
+    /// Candidate theory lemmas recorded during the current search — each a
+    /// clause body over `Eq` atoms as `(atom term, literal polarity)` pairs
+    /// (see `TheoryCallback::record_lemma` in oxiz-sat).  Solver-owned
+    /// because the `TheoryManager` is a per-search local; never cleared on
+    /// theory reset (a recorded lemma stays a valid clause).  Consumed by
+    /// certified mode's independently verified EUF lemma pass
+    /// (`solver/certification.rs`), which re-verifies every entry before
+    /// trusting it.
+    pub theory_lemmas: Vec<Vec<(TermId, bool)>>,
+    /// Set when a lemma was observed whose literals are not all `Eq` atoms
+    /// over non-Bool operands (non-QF_UF content): the certified gate then
+    /// declines to use the log rather than guess at a semantics it cannot
+    /// check.
+    pub lemma_log_poisoned: bool,
+    /// Dedup keys for [`Self::theory_lemmas`] (sorted atom/polarity pairs,
+    /// hashed).
+    lemma_keys: std::collections::HashSet<u64>,
 }
 
 impl DerivedReasons {
+    /// Record a deduplicated theory lemma (atom/polarity pairs, order
+    /// normalized). Returns `true` when the lemma is new.
+    pub(crate) fn push_theory_lemma(&mut self, lemma: Vec<(TermId, bool)>) -> bool {
+        let mut key_terms = lemma.clone();
+        key_terms.sort_unstable_by_key(|(t, _)| t.0);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for (term, pol) in &key_terms {
+            hash ^= u64::from(term.0) << 1 ^ u64::from(*pol);
+            hash = hash.wrapping_mul(0x1000_0000_01b3);
+        }
+        if !self.lemma_keys.insert(hash) {
+            return false;
+        }
+        self.theory_lemmas.push(lemma);
+        true
+    }
+
+    /// Drop every recorded theory lemma (called at `check_core` entry so a
+    /// goal's certification sees that goal's lemmas).
+    pub(crate) fn clear_theory_lemmas(&mut self) {
+        self.theory_lemmas.clear();
+        self.lemma_keys.clear();
+        self.lemma_log_poisoned = false;
+    }
+
     /// Note that the theory solvers have opened one more scope.
     pub(crate) fn push_scope(&mut self) {
         self.depth += 1;

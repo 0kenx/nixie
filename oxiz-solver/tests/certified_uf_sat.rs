@@ -89,12 +89,13 @@ fn certified_qfuf_binary_ops_sat() {
 }
 
 /// Congruence-dependent contradiction: `a = b` forces `(f a) = (f b)`, so
-/// the formula is UNSAT — but only through congruence semantics, which the
-/// Boolean-skeleton UNSAT gate deliberately does not trust. Certified mode
-/// must fail closed to `unknown` (an `unsat` here would mean the gate
-/// accepted theory reasoning it cannot check).
+/// the formula is UNSAT through congruence semantics. Since the EUF
+/// theory-lemma certificates landed (2026-09), certified mode ACCEPTS this:
+/// the search's congruence lemma `¬(a=b) ∨ f(a)=f(b)` is recorded, verified
+/// by the gate's independent congruence closure, and the skeleton+lemma
+/// set is refuted by LRAT. (Before: failed closed to `unknown`.)
 #[test]
-fn certified_qfuf_congruence_unsat_stays_unknown() {
+fn certified_qfuf_congruence_unsat_certifies() {
     let r = check_certified(
         "(set-logic QF_UF)
          (set-option :certified-mode true)
@@ -104,6 +105,44 @@ fn certified_qfuf_congruence_unsat_stays_unknown() {
          (declare-const b S)
          (assert (= a b))
          (assert (not (= (f a) (f b))))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}
+
+/// A congruence contradiction that runs through `distinct` and a
+/// transitivity chain: the gate's structural `distinct ⇒ pairwise ¬Eq`
+/// encoding must link the disequality facts to the lemma literals.
+#[test]
+fn certified_qfuf_distinct_transitivity_unsat_certifies() {
+    let r = check_certified(
+        "(set-logic QF_UF)
+         (set-option :certified-mode true)
+         (declare-sort S 0)
+         (declare-fun f (S) S)
+         (declare-const a S)
+         (declare-const b S)
+         (declare-const c S)
+         (assert (distinct a b c))
+         (assert (= a b))
+         (assert (not (= (f c) (f a))))
+         (check-sat)",
+    );
+    assert_eq!(r, "unsat");
+}
+
+/// Arithmetic equalities are recordable atoms but NOT congruence-closure
+/// verifiable: `(= x 1) ∧ (= x 2)` is contradictory only through integer
+/// semantics, so the lemma fails the independent CC check and certified
+/// mode fails closed to `unknown` (never a wrong `unsat`).
+#[test]
+fn certified_arith_eq_unsat_stays_unknown() {
+    let r = check_certified(
+        "(set-logic QF_LIA)
+         (set-option :certified-mode true)
+         (declare-const x Int)
+         (assert (= x 1))
+         (assert (= x 2))
          (check-sat)",
     );
     assert_eq!(r, "unknown");

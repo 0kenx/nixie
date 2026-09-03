@@ -209,6 +209,15 @@ pub trait TheoryCallback {
     fn is_real_theory(&self) -> bool {
         false
     }
+
+    /// Record a **theory lemma**: the disjunction of exactly these literals
+    /// is valid in the theory. Called from the CDCL(T) loop for every
+    /// theory conflict clause and every propagation explanation
+    /// (materialized or lazy). Downstream consumers — certified mode's
+    /// independently verified EUF lemma pass — treat the recording as a
+    /// *candidate*: nothing is trusted until the consumer re-verifies it.
+    /// Default: not recorded.
+    fn record_lemma(&mut self, _clause: &[Lit]) {}
 }
 
 /// Result of SAT solving

@@ -1161,6 +1161,9 @@ impl Solver {
 
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
         self.array_axioms_saturated = false;
+        // Per-goal theory-lemma log (certified mode reads it after the
+        // search; see `solver/certification.rs`).
+        self.derived_reasons.clear_theory_lemmas();
         // Per-search case-split bookkeeping: each CDCL search starts with a
         // fresh dedup set and round counter.  The case-split lemmas are added
         // at the current SAT assertion scope, so they are retracted by `pop`;

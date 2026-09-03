@@ -191,6 +191,9 @@ impl Solver {
                 // Handle theory conflict
                 if let Some(conflict_lits) = theory_conflict {
                     self.stats.conflicts += 1;
+                    // Candidate theory lemma for downstream proof
+                    // consumers (certified mode re-verifies before use).
+                    theory.record_lemma(&conflict_lits);
 
                     if self.trail.decision_level() == 0 {
                         self.drat_emit_empty(None);
@@ -266,6 +269,20 @@ impl Solver {
 
                 let mut made_propagation = false;
                 for (lit, reason_lits) in theory_propagations {
+                    // The explanation clause `lit ∨ ¬r₁ ∨ … ∨ ¬rₖ` is a
+                    // theory lemma whether or not it is materialized below
+                    // (the lazy path keeps it immaterialized, but conflict
+                    // analysis still resolves through it, so the final
+                    // refutation depends on it either way).
+                    if !reason_lits.is_empty() {
+                        let mut lemma_clause: SmallVec<[Lit; 8]> =
+                            SmallVec::with_capacity(reason_lits.len() + 1);
+                        lemma_clause.push(lit);
+                        for &r in &reason_lits {
+                            lemma_clause.push(r.negate());
+                        }
+                        theory.record_lemma(&lemma_clause);
+                    }
                     if !self.trail.is_assigned(lit.var()) {
                         if self.theory_lazy_reasons_enabled() && !reason_lits.is_empty() {
                             // Lazy explanation: no clause is materialized; the
@@ -403,6 +420,9 @@ impl Solver {
                     }
                     TheoryCheckResult::Conflict(conflict_lits) => {
                         self.stats.conflicts += 1;
+                        // Candidate theory lemma for downstream proof
+                        // consumers (certified mode re-verifies before use).
+                        theory.record_lemma(&conflict_lits);
 
                         if self.trail.decision_level() == 0 {
                             self.drat_emit_empty(None);

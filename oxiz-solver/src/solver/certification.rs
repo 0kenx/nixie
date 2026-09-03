@@ -364,14 +364,22 @@ impl Solver {
 
     /// Check an LRAT-backed canonical refutation of the original assertions.
     #[cfg(feature = "std")]
-    fn certify_unsat(&self, manager: &TermManager) -> Result<(), String> {
+    fn certify_unsat(&self, manager: &mut TermManager) -> Result<(), String> {
         let mut checker = BooleanLratChecker::new();
         checker.assert_all(&self.certificate_assertions, manager)?;
+        // Independently verified EUF theory lemmas recorded during the
+        // search (proof-carrying: nothing is trusted until each lemma
+        // passes the congruence-closure check inside `assert_euf_lemmas`).
+        if !self.derived_reasons.lemma_log_poisoned
+            && !self.derived_reasons.theory_lemmas.is_empty()
+        {
+            checker.assert_euf_lemmas(&self.derived_reasons.theory_lemmas, manager)?;
+        }
         checker.verify_unsat()
     }
 
     #[cfg(not(feature = "std"))]
-    fn certify_unsat(&self, _manager: &TermManager) -> Result<(), String> {
+    fn certify_unsat(&self, _manager: &mut TermManager) -> Result<(), String> {
         Err("certified Unsat checking requires the std feature".to_string())
     }
 }
@@ -463,7 +471,11 @@ impl BooleanLratChecker {
         }
     }
 
-    fn assert_all(&mut self, assertions: &[TermId], manager: &TermManager) -> Result<(), String> {
+    fn assert_all(
+        &mut self,
+        assertions: &[TermId],
+        manager: &mut TermManager,
+    ) -> Result<(), String> {
         for &assertion in assertions {
             let lit = self.encode(assertion, manager)?;
             self.buffer_clause([lit]);
@@ -473,7 +485,7 @@ impl BooleanLratChecker {
 
     /// Full, polarity-independent Tseitin encoding driven by an explicit heap
     /// stack. Each node is emitted only after all children have their literals.
-    fn encode(&mut self, root: TermId, manager: &TermManager) -> Result<Lit, String> {
+    fn encode(&mut self, root: TermId, manager: &mut TermManager) -> Result<Lit, String> {
         let mut stack = vec![(root, false)];
         while let Some((term_id, combine)) = stack.pop() {
             if self.encoded.contains_key(&term_id) {
@@ -518,6 +530,29 @@ impl BooleanLratChecker {
                     TermKind::True | TermKind::False | TermKind::Var(_) | TermKind::Eq(_, _) => {}
                     _ => {}
                 }
+                continue;
+            }
+
+            // `Distinct` is structural, not an opaque atom: the EUF lemmas'
+            // `¬Eq` literals need the link `distinct ⇒ pairwise ¬Eq`, and the
+            // pair atoms are the hash-consed `Eq` terms the lemma literals
+            // use, so both sides unify on one Tseitin variable.  Forward
+            // direction only — sound for UNSAT certification, and exactly
+            // what a refutation consumes.  Handled before the general
+            // combine match because building the pair atoms interns new
+            // terms (needs `&mut manager`, incompatible with the `&Term`
+            // borrow inside the match).
+            if combine && let TermKind::Distinct(distinct_args) = &term.kind {
+                let args: Vec<TermId> = distinct_args.iter().copied().collect();
+                let result = Lit::pos(self.solver.new_var());
+                for i in 0..args.len() {
+                    for j in (i + 1)..args.len() {
+                        let eq = manager.mk_eq(args[i], args[j]);
+                        let eq_lit = self.encode(eq, manager)?;
+                        self.buffer_clause([result.negate(), eq_lit.negate()]);
+                    }
+                }
+                self.encoded.insert(term_id, result);
                 continue;
             }
 
@@ -639,6 +674,49 @@ impl BooleanLratChecker {
         manager
             .get(term)
             .is_some_and(|term| term.sort == manager.sorts.bool_sort)
+    }
+
+    /// Verify each recorded theory lemma independently (congruence closure,
+    /// [`verify_euf_lemma`]) and add it as a clause over the lemma atoms'
+    /// Tseitin literals. Any lemma that fails verification rejects the
+    /// whole certification — a wrong lemma means the recording side lied,
+    /// and the certified verdict fails closed rather than continue with a
+    /// subset.
+    fn assert_euf_lemmas(
+        &mut self,
+        lemmas: &[Vec<(TermId, bool)>],
+        manager: &mut TermManager,
+    ) -> Result<(), String> {
+        for lemma in lemmas {
+            if !verify_euf_lemma(lemma, manager) {
+                #[cfg(feature = "std")]
+                if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+                    for &(atom, pol) in lemma {
+                        let detail = manager.get(atom).and_then(|t| match &t.kind {
+                            TermKind::Eq(l, r) => Some(format!(
+                                "lhs={:?} rhs={:?}",
+                                manager.get(*l).map(|x| &x.kind),
+                                manager.get(*r).map(|x| &x.kind)
+                            )),
+                            _ => None,
+                        });
+                        eprintln!("[cert-lemma] atom={atom:?} pol={pol} {detail:?}");
+                    }
+                }
+                return Err(format!(
+                    "recorded theory lemma failed independent congruence-closure verification ({} literals)",
+                    lemma.len()
+                ));
+            }
+            let mut clause: smallvec::SmallVec<[Lit; 8]> =
+                smallvec::SmallVec::with_capacity(lemma.len());
+            for &(atom, polarity) in lemma {
+                let lit = self.encode(atom, manager)?;
+                clause.push(if polarity { lit } else { lit.negate() });
+            }
+            self.buffer_clause(clause);
+        }
+        Ok(())
     }
 
     fn verify_unsat(mut self) -> Result<(), String> {
@@ -1003,5 +1081,261 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+// ======== Independent congruence-closure verification of EUF lemmas ========
+
+/// Check that a recorded lemma — a clause whose literals are `(Eq atom,
+/// literal polarity)` pairs — is a **valid** EUF consequence, by a fresh,
+/// self-contained congruence closure over the lemma's ground subterm
+/// closure. The clause is valid iff its negation (the conjunction of the
+/// negated literals: a positive clause literal `Eq` becomes a *disequality*,
+/// a negative one an *equality*) is EUF-unsatisfiable:
+///
+/// * equality literals (negated negative clause literals) merge their
+///   operands,
+/// * disequality literals (negated positive clause literals) become
+///   pending,
+/// * the closure runs to fixpoint (applications of one function whose
+///   arguments are class-equal merge — the congruence axiom schema),
+/// * the lemma verifies iff some pending pair ended up merged.
+///
+/// Congruence closure is complete for ground EUF, so `false` is exactly
+/// "this clause is NOT a valid EUF lemma". The verifier shares no state
+/// with the solver's own EUF: a bug there can only make a lemma fail
+/// here, never pass.
+fn verify_euf_lemma(lemma: &[(TermId, bool)], manager: &TermManager) -> bool {
+    use oxiz_core::ast::traversal::get_children;
+
+    if lemma.is_empty() {
+        return false;
+    }
+
+    // Ground subterm closure of every Eq operand. `ite`-over-uninterpreted
+    // operands and nested applications are walked generically — no
+    // assumption that the E-graph ever interned them (the addendum-7
+    // candidate-bug class).
+    let mut terms: Vec<TermId> = Vec::new();
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    let mut stack: Vec<TermId> = Vec::new();
+    for &(atom, _polarity) in lemma {
+        match manager.get(atom).map(|t| &t.kind) {
+            Some(TermKind::Eq(lhs, rhs)) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            _ => return false,
+        }
+    }
+    while let Some(id) = stack.pop() {
+        if !visited.insert(id) {
+            continue;
+        }
+        let Some(term) = manager.get(id) else {
+            return false;
+        };
+        terms.push(id);
+        for child in get_children(&term.kind) {
+            stack.push(child);
+        }
+    }
+
+    // Union-find over the closure (a term absent from the map is its own
+    // root).
+    let mut parent: FxHashMap<TermId, TermId> = FxHashMap::default();
+    fn find(parent: &mut FxHashMap<TermId, TermId>, x: TermId) -> TermId {
+        let mut root = x;
+        while let Some(&p) = parent.get(&root)
+            && p != root
+        {
+            root = p;
+        }
+        let mut cur = x;
+        while let Some(&p) = parent.get(&cur)
+            && p != root
+        {
+            parent.insert(cur, root);
+            cur = p;
+        }
+        root
+    }
+    fn union(parent: &mut FxHashMap<TermId, TermId>, a: TermId, b: TermId) {
+        let (ra, rb) = (find(parent, a), find(parent, b));
+        if ra != rb {
+            let (keep, redirect) = if ra > rb { (ra, rb) } else { (rb, ra) };
+            parent.insert(redirect, keep);
+            parent.entry(keep).or_insert(keep);
+        }
+    }
+
+    let mut pending: Vec<(TermId, TermId)> = Vec::new();
+    for &(atom, polarity) in lemma {
+        match manager.get(atom).map(|t| &t.kind) {
+            Some(TermKind::Eq(lhs, rhs)) => {
+                parent.entry(*lhs).or_insert(*lhs);
+                parent.entry(*rhs).or_insert(*rhs);
+                if polarity {
+                    // Positive clause literal: the negated conjunction
+                    // asserts the *disequality*.
+                    pending.push((*lhs, *rhs));
+                } else {
+                    // Negative clause literal: the negated conjunction
+                    // asserts the *equality*.
+                    union(&mut parent, *lhs, *rhs);
+                }
+            }
+            _ => return false,
+        }
+    }
+
+    // Congruence to fixpoint over the closure's applications.
+    let applications: Vec<TermId> = terms
+        .iter()
+        .copied()
+        .filter(|&id| {
+            manager
+                .get(id)
+                .is_some_and(|t| matches!(t.kind, TermKind::Apply { .. }))
+        })
+        .collect();
+    loop {
+        let mut changed = false;
+        let mut sigs: FxHashMap<
+            (oxiz_core::interner::Spur, smallvec::SmallVec<[TermId; 4]>),
+            TermId,
+        > = FxHashMap::default();
+        for &app in &applications {
+            let Some(TermKind::Apply { func, args }) = manager.get(app).map(|t| &t.kind) else {
+                continue;
+            };
+            let mut key: smallvec::SmallVec<[TermId; 4]> = smallvec::SmallVec::new();
+            for &arg in args.iter() {
+                key.push(find(&mut parent, arg));
+            }
+            match sigs.entry((*func, key)) {
+                std::collections::hash_map::Entry::Occupied(first) => {
+                    let first = *first.get();
+                    if find(&mut parent, app) != find(&mut parent, first) {
+                        union(&mut parent, app, first);
+                        changed = true;
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(app);
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    pending
+        .iter()
+        .any(|&(a, b)| find(&mut parent, a) == find(&mut parent, b))
+}
+
+#[cfg(test)]
+mod euf_lemma_tests {
+    use super::*;
+    use oxiz_core::ast::TermManager;
+
+    fn setup() -> (TermManager, TermId, TermId, TermId, TermId, TermId) {
+        // Sort S; constants a, b, c; f : S -> S.
+        let mut manager = TermManager::new();
+        let s_name = manager.intern_str("S");
+        let s = manager
+            .sorts
+            .intern(oxiz_core::sort::SortKind::Uninterpreted(s_name));
+        let a = manager.mk_var("a", s);
+        let b = manager.mk_var("b", s);
+        let c = manager.mk_var("c", s);
+        let f = |m: &mut TermManager, t: TermId| m.mk_apply("f", [t], s);
+        let fa = f(&mut manager, a);
+        let fb = f(&mut manager, b);
+        (manager, a, b, c, fa, fb)
+    }
+
+    /// Congruence axiom instance `a ≠ b ∨ f(a) = f(b)` is valid.
+    #[test]
+    fn congruence_instance_verifies() {
+        let (mut manager, a, b, _c, fa, fb) = setup();
+        let eq_ab = manager.mk_eq(a, b);
+        let eq_fafb = manager.mk_eq(fa, fb);
+        // Clause ¬(a=b) ∨ f(a)=f(b): negated conjunction a=b ∧ f(a)≠f(b)
+        // — the merge a=b congruence-merges f(a),f(b), violating the
+        // pending disequality.
+        let lemma = vec![(eq_ab, false), (eq_fafb, true)];
+        assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// The converse orientation is the same lemma.
+    #[test]
+    fn congruence_instance_verifies_flipped() {
+        let (mut manager, a, b, _c, fa, fb) = setup();
+        let eq_ab = manager.mk_eq(a, b);
+        let eq_fafb = manager.mk_eq(fa, fb);
+        let lemma = vec![(eq_fafb, true), (eq_ab, false)];
+        assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// A NON-valid lemma must be rejected: `a ≠ b ∨ f(a) = f(b)` is not an
+    /// EUF consequence (f may collapse).
+    #[test]
+    fn non_valid_lemma_rejected() {
+        let (mut manager, a, b, _c, fa, fb) = setup();
+        let eq_ab = manager.mk_eq(a, b);
+        let eq_fafb = manager.mk_eq(fa, fb);
+        // Clause: ¬(a=b) ∨ f(a)=f(b) — NOT valid (f may collapse a≠b).
+        // Negated conjunction a=b ∧ f(a)≠f(b) IS contradictory... via
+        // congruence, so the flipped clause IS valid — the NON-valid one
+        // is (a=b) ∨ ¬(f(a)=f(b)) without the a=b side... use a genuinely
+        // invalid shape: f(a)=f(b) ∨ f(a)≠f(b) is a tautology; instead
+        // take (f(a)≠f(b)) alone as a unit — not a consequence.
+        let lemma = vec![(eq_fafb, false)];
+        assert!(!verify_euf_lemma(&lemma, &manager));
+        let _ = eq_ab;
+    }
+
+    /// Transitivity + distinct chain: `(a=b) ∨ (b=c) ∨ (a≠c)` is valid.
+    #[test]
+    fn transitivity_distinct_verifies() {
+        let (mut manager, a, b, c, _fa, _fb) = setup();
+        let eq_ab = manager.mk_eq(a, b);
+        let eq_bc = manager.mk_eq(b, c);
+        let eq_ac = manager.mk_eq(a, c);
+        let lemma = vec![(eq_ab, false), (eq_bc, false), (eq_ac, true)];
+        assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    /// Deep congruence through an ite-over-uninterpreted-sort operand (the
+    /// not-EUF-interned class): `ite(p,a,b) = a ∧ a = b ∨ f(ite) ≠ f(b)` —
+    /// building the chain via the ite term.
+    #[test]
+    fn ite_operand_walks_generically() {
+        let (mut manager, a, b, _c, _fa, _fb) = setup();
+        let p = manager.mk_var("p", manager.sorts.bool_sort);
+        let ite = manager.mk_ite(p, a, b);
+        let s = manager_sort_s(&mut manager);
+        let f_ite = manager.mk_apply("f", [ite], s);
+        let f_b = manager.mk_apply("f", [b], s);
+        // Clause ¬(ite=a) ∨ ¬(a=b) ∨ f(ite)≠f(b): the negated
+        // conjunction ite=a ∧ a=b ∧ f(ite)≠f(b) is unsat by congruence
+        // through the never-interned ite term (ite = a = b, so
+        // f(ite) = f(b)).
+        let lemma = vec![
+            (manager.mk_eq(ite, a), false),
+            (manager.mk_eq(a, b), false),
+            (manager.mk_eq(f_ite, f_b), true),
+        ];
+        assert!(verify_euf_lemma(&lemma, &manager));
+    }
+
+    fn manager_sort_s(manager: &mut TermManager) -> oxiz_core::sort::SortId {
+        let s_name = manager.intern_str("S");
+        manager
+            .sorts
+            .intern(oxiz_core::sort::SortKind::Uninterpreted(s_name))
     }
 }
