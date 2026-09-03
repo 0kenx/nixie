@@ -140,3 +140,12 @@ irrelevant, 18 insufficient-lemma "satisfiable".
 Updated next movers: (a) disequality literals in the LP verifier (the
 largest remaining in-fragment gap), (b) the 18 insufficient-lemma cells
 (recording coverage), (c) CG integer certificates, (d) mixed lemmas.
+
+## Addendum 3 (2026-09-03): disequality literals — landed, neutral on the sample
+
+Exact integer branch split (`t ≠ k ⟺ t ≤ k-1 ∨ t ≥ k+1`), capped at 5
+disequalities; the FM core extracted to `lia_conjunction_infeasible`.
+Sample-neutral (57/174): the remaining unsat cells need **lemma
+recording coverage** (the 18 "insufficient" declines), not verifier
+width — the next mover is diagnosing which theory facts flow through
+unrecorded paths, then CG integer certificates.
