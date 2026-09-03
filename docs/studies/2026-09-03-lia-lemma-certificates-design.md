@@ -122,3 +122,21 @@ Next movers on this frontier, in order: (a) the 17 CC-decline cells'
 atom shapes, (b) disequality literals (currently declined), (c) integer
 certificates (CG cuts) for the parity boundary, (d) mixed EUF+LIA
 lemmas (Nelson–Oppen interface verification).
+
+## Addendum 2 (2026-09-03): skip-don't-reject — QF_LIA 54 → 57
+
+The 17 "congruence-closure verification" declines were partly a
+misattribution (the rejection string named one verifier regardless of
+routing) and partly the real design flaw they exposed: a *single* lemma
+outside the verifiers' fragments rejected the whole certification.
+Landed the skip policy (`21a4f6d`): unverifiable lemmas are skipped and
+the refutation runs over the verified subset — strictly sound (a
+refutation over a subset of valid clauses is valid; a skipped-and-needed
+lemma just yields an honest "satisfiable" decline). QF_LIA unsat cells
+8 → 11; QF_UF unchanged at 70/76. The remaining unknown breakdown:
+55 search-incomplete, 44 no-reason (caps), 46 sat-side certified-but-
+irrelevant, 18 insufficient-lemma "satisfiable".
+
+Updated next movers: (a) disequality literals in the LP verifier (the
+largest remaining in-fragment gap), (b) the 18 insufficient-lemma cells
+(recording coverage), (c) CG integer certificates, (d) mixed lemmas.
