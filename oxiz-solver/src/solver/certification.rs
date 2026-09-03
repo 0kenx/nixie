@@ -384,7 +384,7 @@ impl Solver {
                 );
             }
         }
-        checker.verify_unsat()
+        checker.verify_unsat(&self.certificate_assertions, manager)
     }
 
     #[cfg(not(feature = "std"))]
@@ -800,21 +800,85 @@ impl BooleanLratChecker {
         skipped
     }
 
-    fn verify_unsat(mut self) -> Result<(), String> {
-        let transcript = self.solver.enable_lrat_transcript();
+    fn verify_unsat(
+        mut self,
+        assertions: &[TermId],
+        manager: &mut TermManager,
+    ) -> Result<(), String> {
+        // Phase 1 — verified model blocking. Solve the Boolean
+        // abstraction; for each candidate model, hand the model's *true*
+        // theory atoms to the independent verifiers (congruence closure
+        // / exact LP). An infeasible atom conjunction yields a blocking
+        // clause that is valid by exactly that verified infeasibility —
+        // the gate never adds a clause it has not itself verified. A
+        // theory-consistent model (or the iteration cap) fails closed.
+        // Recorded lemmas (all independently verified as well) tighten
+        // the loop.
+        let mut search_solver = oxiz_sat::Solver::with_config(oxiz_sat::SolverConfig {
+            enable_inprocessing: false,
+            ..oxiz_sat::SolverConfig::default()
+        });
+        let mut all_clauses: Vec<Vec<Lit>> = Vec::with_capacity(self.clauses.len());
         for clause in core::mem::take(&mut self.clauses) {
-            if !self.solver.add_clause(clause) {
+            search_solver.add_clause(clause.iter().copied());
+            all_clauses.push(clause);
+        }
+        let mut iterations = 0u32;
+        loop {
+            match search_solver.solve() {
+                SatResult::Unsat => break,
+                SatResult::Sat => {
+                    let blocked = match self.block_theory_inconsistent_model(
+                        &search_solver,
+                        assertions,
+                        manager,
+                    ) {
+                        Some(block) => block,
+                        None => {
+                            return Err(
+                                    "independent checker found a theory-consistent model of the asserted formula"
+                                        .to_string(),
+                                );
+                        }
+                    };
+                    search_solver.backtrack_to_root();
+                    search_solver.add_clause(blocked.iter().copied());
+                    all_clauses.push(blocked);
+                    iterations += 1;
+                    if iterations > 10_000 {
+                        return Err("model-blocking iteration cap exceeded; refusing to certify"
+                            .to_string());
+                    }
+                }
+                SatResult::Unknown => {
+                    return Err("independent propositional checker returned Unknown".to_string());
+                }
+            }
+        }
+
+        // Phase 2 — transcript replay. Every clause (skeleton, verified
+        // recorded lemmas, verified blocking clauses) enters a fresh
+        // solver as an *original* in order — the LRAT original prefix is
+        // sequential, which mid-stream additions after derived clauses
+        // cannot be — and the refutation is checked as usual.
+        let mut proof_solver = oxiz_sat::Solver::with_config(oxiz_sat::SolverConfig {
+            enable_inprocessing: false,
+            ..oxiz_sat::SolverConfig::default()
+        });
+        let transcript = proof_solver.enable_lrat_transcript();
+        for clause in &all_clauses {
+            if !proof_solver.add_clause(clause.iter().copied()) {
                 return Err(
                     "canonical CNF became inconsistent while registering original clauses"
                         .to_string(),
                 );
             }
         }
-        match self.solver.solve() {
+        match proof_solver.solve() {
             SatResult::Unsat => {}
             SatResult::Sat => {
                 return Err(
-                    "independent propositional checker found the asserted formula satisfiable"
+                    "transcript replay disagreed with the blocking search (nondeterminism)"
                         .to_string(),
                 );
             }
@@ -822,13 +886,13 @@ impl BooleanLratChecker {
                 return Err("independent propositional checker returned Unknown".to_string());
             }
         }
-        self.solver.flush_proof();
+        proof_solver.flush_proof();
         let transcript = transcript
             .snapshot()
             .map_err(|error| format!("could not read complete LRAT transcript: {error}"))?;
         // Reproduction aid (env-gated): dump the gate's CNF + proof so the
         // standalone checker and the lrat_file tool can replay exactly what
-        // the in-process checker rejected.
+        // the in-process checker saw.
         #[cfg(feature = "std")]
         if let Ok(dir) = std::env::var("OXIZ_CERT_DUMP")
             && let Err(error) = dump_gate_transcript(&dir, &transcript)
@@ -849,6 +913,141 @@ impl BooleanLratChecker {
                     .unwrap_or_else(|| "no rejection reason was provided".to_string())
             ))
         }
+    }
+
+    /// Try to refute a candidate model of the Boolean abstraction with
+    /// the independent theory verifiers: collect the model's *true*
+    /// theory atoms over the assertion DAG, hand the EUF atoms to
+    /// congruence closure and the arithmetic atoms to the exact LP
+    /// checker. An infeasible conjunction yields the blocking clause
+    /// (negations of exactly the witnessed atoms — valid by the verified
+    /// infeasibility, and it falsifies the model). `None` when neither
+    /// verifier refutes the model (fail closed).
+    fn block_theory_inconsistent_model(
+        &self,
+        solver: &oxiz_sat::Solver,
+        assertions: &[TermId],
+        manager: &TermManager,
+    ) -> Option<Vec<Lit>> {
+        use oxiz_core::ast::traversal::get_children;
+
+        let int_sort = manager.sorts.int_sort;
+        let real_sort = manager.sorts.real_sort;
+        let bool_sort = manager.sorts.bool_sort;
+
+        // Collect the assertion DAG's theory-atom leaves.
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = assertions.to_vec();
+        let mut euf_true: Vec<(TermId, bool)> = Vec::new();
+        let mut arith_true: Vec<(TermId, bool)> = Vec::new();
+        let mut euf_lits: Vec<Lit> = Vec::new();
+        let mut arith_lits: Vec<Lit> = Vec::new();
+        while let Some(id) = stack.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let Some(term) = manager.get(id) else {
+                continue;
+            };
+            let atom_kind = match &term.kind {
+                TermKind::Eq(lhs, rhs) => {
+                    let l_arith = manager
+                        .get(*lhs)
+                        .is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
+                    let r_arith = manager
+                        .get(*rhs)
+                        .is_some_and(|t| t.sort == int_sort || t.sort == real_sort);
+                    let l_bool = manager.get(*lhs).is_some_and(|t| t.sort == bool_sort);
+                    if l_bool {
+                        None // Boolean iff: structural, not a theory atom
+                    } else if l_arith || r_arith {
+                        Some(true) // arithmetic
+                    } else {
+                        Some(false) // EUF
+                    }
+                }
+                TermKind::Lt(_, _)
+                | TermKind::Le(_, _)
+                | TermKind::Gt(_, _)
+                | TermKind::Ge(_, _) => Some(true),
+                TermKind::Apply { .. } if term.sort == bool_sort => Some(false),
+                _ => None,
+            };
+            if let Some(is_arith) = atom_kind
+                && let Some(&lit) = self.encoded.get(&id)
+            {
+                // The model IS the full atom assignment — both polarities
+                // join the check. A TRUE atom is asserted in the
+                // conjunction (clause-literal polarity `false` = negative
+                // literal, and the blocking clause negates it); a FALSE
+                // atom contributes its negation (clause-literal polarity
+                // `true` = positive literal, and the blocking clause
+                // asserts it). Validity of the blocking clause is exactly
+                // the verified infeasibility of this full assignment —
+                // including the case where congruence derives an equality
+                // the model denies.
+                match solver.model_value(lit.var()) {
+                    value if value.is_true() => {
+                        if is_arith {
+                            arith_true.push((id, false));
+                            arith_lits.push(lit.negate());
+                        } else {
+                            euf_true.push((id, false));
+                            euf_lits.push(lit.negate());
+                        }
+                    }
+                    value if value.is_false() => {
+                        if is_arith {
+                            arith_true.push((id, true));
+                            arith_lits.push(lit);
+                        } else {
+                            euf_true.push((id, true));
+                            euf_lits.push(lit);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for child in get_children(&term.kind) {
+                stack.push(child);
+            }
+        }
+
+        #[cfg(feature = "std")]
+        if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+            eprintln!(
+                "[block] euf atoms: {} (cc: {}), arith atoms: {} (lp: {})",
+                euf_true.len(),
+                if euf_true.is_empty() {
+                    false
+                } else {
+                    verify_euf_lemma(&euf_true, manager)
+                },
+                arith_true.len(),
+                if arith_true.is_empty() {
+                    false
+                } else {
+                    verify_lia_lemma(&arith_true, manager)
+                },
+            );
+        }
+        if !euf_true.is_empty() && verify_euf_lemma(&euf_true, manager) {
+            return Some(minimize_verified_block(
+                euf_true,
+                euf_lits,
+                manager,
+                verify_euf_lemma,
+            ));
+        }
+        if !arith_true.is_empty() && verify_lia_lemma(&arith_true, manager) {
+            return Some(minimize_verified_block(
+                arith_true,
+                arith_lits,
+                manager,
+                verify_lia_lemma,
+            ));
+        }
+        None
     }
 }
 
@@ -1069,7 +1268,7 @@ mod tests {
         assert!(
             solver
                 .certification_failure()
-                .is_some_and(|reason| reason.contains("satisfiable"))
+                .is_some_and(|reason| reason.contains("consistent"))
         );
     }
 
@@ -1093,7 +1292,7 @@ mod tests {
         assert!(
             solver
                 .certification_failure()
-                .is_some_and(|reason| reason.contains("satisfiable"))
+                .is_some_and(|reason| reason.contains("consistent"))
         );
     }
 
@@ -1122,7 +1321,7 @@ mod tests {
             .assert_all(&contradictory, manager)
             .expect("truth-table case should be in the Boolean fragment");
         checker
-            .verify_unsat()
+            .verify_unsat(&contradictory, manager)
             .expect("opposite of the truth-table value must have an LRAT refutation");
 
         let mut consistent = Vec::with_capacity(variables.len() + 1);
@@ -1144,9 +1343,9 @@ mod tests {
             .expect("truth-table case should be in the Boolean fragment");
         assert!(
             checker
-                .verify_unsat()
-                .is_err_and(|reason| reason.contains("satisfiable")),
-            "the consistent truth-table row must remain satisfiable"
+                .verify_unsat(&consistent, manager)
+                .is_err_and(|reason| reason.contains("consistent")),
+            "the consistent truth-table row must remain unrefuted"
         );
     }
 
@@ -1530,6 +1729,40 @@ impl LinExpr {
 enum LiaDir {
     Le,
     Ge,
+}
+
+/// Greedy deletion minimization of a verified blocking clause: drop each
+/// atom in turn, keeping the drop when the remaining conjunction is still
+/// verifier-infeasible. Every intermediate is re-verified, so the final
+/// clause is valid by the same evidence; a small core (the transitivity
+/// chain, the bound collision) blocks the whole class of models sharing
+/// it instead of exactly one assignment. Probe-capped so a pathological
+/// model cannot dominate.
+fn minimize_verified_block(
+    mut atoms: Vec<(TermId, bool)>,
+    mut lits: Vec<Lit>,
+    manager: &TermManager,
+    verify: fn(&[(TermId, bool)], &TermManager) -> bool,
+) -> Vec<Lit> {
+    const PROBE_CAP: usize = 256;
+    let mut probes = 0usize;
+    if atoms.len() <= 4 {
+        return lits;
+    }
+    let mut i = 0;
+    while i < atoms.len() && probes < PROBE_CAP {
+        let removed_atom = atoms.remove(i);
+        let removed_lit = lits.remove(i);
+        probes += 1;
+        if !verify(&atoms, manager) {
+            // The atom is load-bearing: restore it.
+            atoms.insert(i, removed_atom);
+            lits.insert(i, removed_lit);
+            i += 1;
+        }
+        // Dropped: stay at index i (the next candidate shifted in).
+    }
+    lits
 }
 
 /// Verify an arithmetic lemma: the negated conjunction is LP-infeasible.
