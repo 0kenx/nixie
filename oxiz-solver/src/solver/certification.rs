@@ -374,7 +374,15 @@ impl Solver {
         if !self.derived_reasons.lemma_log_poisoned
             && !self.derived_reasons.theory_lemmas.is_empty()
         {
-            checker.assert_euf_lemmas(&self.derived_reasons.theory_lemmas, manager)?;
+            let skipped = checker.assert_euf_lemmas(&self.derived_reasons.theory_lemmas, manager);
+            #[cfg(feature = "std")]
+            if skipped > 0 && std::env::var("OXIZ_CERT_DEBUG").is_ok() {
+                eprintln!(
+                    "[cert] {} of {} recorded lemmas skipped (outside verifier fragments)",
+                    skipped,
+                    self.derived_reasons.theory_lemmas.len()
+                );
+            }
         }
         checker.verify_unsat()
     }
@@ -691,17 +699,25 @@ impl BooleanLratChecker {
             .is_some_and(|term| term.sort == manager.sorts.bool_sort)
     }
 
-    /// Verify each recorded theory lemma independently (congruence closure,
-    /// [`verify_euf_lemma`]) and add it as a clause over the lemma atoms'
-    /// Tseitin literals. Any lemma that fails verification rejects the
-    /// whole certification — a wrong lemma means the recording side lied,
-    /// and the certified verdict fails closed rather than continue with a
-    /// subset.
+    /// Verify each recorded theory lemma independently (congruence closure
+    /// or exact LP, by atom kind) and add the verified ones as clauses
+    /// over the lemma atoms' Tseitin literals. Returns the number of
+    /// *skipped* lemmas.
+    ///
+    /// A lemma that fails its verifier is **skipped, not fatal**: the
+    /// verified clauses form a subset of the true constraint set, so a
+    /// refutation over them is sound regardless — and a refutation the
+    /// skipped lemma was needed for simply does not happen (the SAT solve
+    /// finds the subset satisfiable and the certification fails closed to
+    /// `unknown`). This keeps fragment gaps (disequality literals,
+    /// div/mod atoms, mixed lemmas) from rejecting whole certifications
+    /// whose other lemmas suffice.
     fn assert_euf_lemmas(
         &mut self,
         lemmas: &[Vec<(TermId, bool)>],
         manager: &mut TermManager,
-    ) -> Result<(), String> {
+    ) -> usize {
+        let mut skipped = 0usize;
         for lemma in lemmas {
             // Route by atom kind: all-EUF atoms (equalities over
             // non-arith non-Bool operands, Bool-sorted applications) go to
@@ -713,6 +729,7 @@ impl BooleanLratChecker {
             let real_sort = manager.sorts.real_sort;
             let mut euf = false;
             let mut arith = false;
+            let mut unclassifiable = false;
             for &(atom, _) in lemma {
                 match manager.get(atom).map(|t| &t.kind) {
                     Some(TermKind::Lt(_, _))
@@ -732,49 +749,55 @@ impl BooleanLratChecker {
                         }
                     }
                     Some(TermKind::Apply { .. }) => euf = true,
-                    _ => return Err("recorded lemma contains an unclassifiable atom".to_string()),
+                    _ => unclassifiable = true,
                 }
             }
-            if euf && arith {
-                return Err(
-                    "mixed EUF+arithmetic lemma: interface verification not implemented"
-                        .to_string(),
-                );
-            }
-            let verified = if arith {
+            let verified = if unclassifiable || (euf && arith) {
+                // Mixed lemmas need interface reasoning (Nelson–Oppen) —
+                // future work; unclassifiable atoms cannot be decoded —
+                // skip either way.
+                false
+            } else if arith {
                 verify_lia_lemma(lemma, manager)
             } else {
                 verify_euf_lemma(lemma, manager)
             };
             if !verified {
+                skipped += 1;
                 #[cfg(feature = "std")]
                 if std::env::var("OXIZ_CERT_DEBUG").is_ok() {
                     for &(atom, pol) in lemma {
-                        let detail = manager.get(atom).and_then(|t| match &t.kind {
-                            TermKind::Eq(l, r) => Some(format!(
-                                "lhs={:?} rhs={:?}",
-                                manager.get(*l).map(|x| &x.kind),
-                                manager.get(*r).map(|x| &x.kind)
-                            )),
-                            _ => None,
-                        });
-                        eprintln!("[cert-lemma] atom={atom:?} pol={pol} {detail:?}");
+                        let detail = manager
+                            .get(atom)
+                            .map(|t| format!("{:?}", &t.kind))
+                            .unwrap_or_else(|| "<missing>".to_string());
+                        eprintln!("[lemma-skip] atom={atom:?} pol={pol} kind={detail}");
                     }
                 }
-                return Err(format!(
-                    "recorded theory lemma failed independent congruence-closure verification ({} literals)",
-                    lemma.len()
-                ));
+                continue;
             }
             let mut clause: smallvec::SmallVec<[Lit; 8]> =
                 smallvec::SmallVec::with_capacity(lemma.len());
             for &(atom, polarity) in lemma {
-                let lit = self.encode(atom, manager)?;
+                let lit = match self.encode(atom, manager) {
+                    Ok(lit) => lit,
+                    // A lemma atom the encoder rejects (should not happen:
+                    // the recorder only accepts Eq/Apply/comparison atoms)
+                    // skips the lemma — same fail-closed semantics as a
+                    // failed verification.
+                    Err(_) => {
+                        skipped += 1;
+                        clause.clear();
+                        break;
+                    }
+                };
                 clause.push(if polarity { lit } else { lit.negate() });
             }
-            self.buffer_clause(clause);
+            if !clause.is_empty() {
+                self.buffer_clause(clause);
+            }
         }
-        Ok(())
+        skipped
     }
 
     fn verify_unsat(mut self) -> Result<(), String> {
