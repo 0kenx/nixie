@@ -35,6 +35,25 @@ unchanged (no regression); congruence-dependent `unsat` still fails closed
 to `unknown` by design. Gates: 6 end-to-end + 3 evaluator regressions,
 full battery (10 442), clippy/fmt/doc, Z3 parity 0 mismatches.
 
+## [LIA theory-lemma certificates: certified unsat over linear arithmetic] - 2026-09-03
+
+The QF_LIA counterpart of the EUF lemma gate: recorded arithmetic lemmas
+are verified by an independent exact-`BigRational` LP check in the gate —
+atoms decode to linear constraints over the lemma's own variables, strict
+bounds tighten over integer-valued expressions, equalities substitute,
+and Fourier–Motzkin elimination derives (or fails to derive) a
+constant-only contradiction. Lemmas route by atom kind (EUF → congruence
+closure, arithmetic → LP, mixed → declined); a failed verification
+rejects the certification.
+
+`x=1 ∧ x=2` and linear bound conflicts now certify `unsat`; the parity
+boundary (`x = 2y+1 ∧ x = 2z`, rational-feasible) fails closed to
+`unknown` — regression-pinned on both sides. QF_LIA sample: unsat cells
+6 → 8 (the sample's remaining bottleneck is search completeness, not
+certification). Gates: 6 LP units (including the two FM sign-bug
+regressions found mid-landing), 3 e2e, full battery (10 463),
+clippy/fmt/doc, Z3 parity 0 mismatches.
+
 ## [Duplicate-literal LRAT clauses + Bool-apply lemma atoms] - 2026-09-03
 
 Both residual hunts from the EUF-lemma work:
