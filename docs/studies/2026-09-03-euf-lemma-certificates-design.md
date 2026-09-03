@@ -149,3 +149,40 @@ Residual declines (all fail-closed, never a wrong verdict):
 
 Both residuals are honest `unknown`s; closing them is follow-up work on
 this same study.
+
+## Addendum 2 (2026-09-03): both residual hunts closed — 79% → 92%
+
+**Hunt A (13 files, LRAT hint-chain rejection).** Reproduced standalone
+via `OXIZ_CERT_DUMP` (the gate now dumps its CNF + proof for offline
+replay): the failure was not in the search's chain at all — the gate's
+canonical CNF contained **duplicate-literal clauses** (30/4154 on the
+reproducer). The Tseitin walk emits one entry per *occurrence*, and
+`or`-terms with repeated argument terms (QG-class inputs are full of
+them) landed clauses like `(-270, -39, -39)`; the checker counted the two
+copies as two undetermined literals and refused a hint clause that is
+semantically unit. Fixed on both sides of the contract: the gate's
+`buffer_clause` dedups literals and drops tautologies, and `lrat_check`
+counts **distinct** unassigned literals (a clause is a set). All 13 files
+certify.
+
+**Hunt B (7 files, skeleton+lemmas SAT for the gate).** Three more
+recording surfaces: the final-check propagation loop (parallel to the
+assignment-sweep site), `install_theory_units`' unconditional
+tautologies, and — the load-bearing one — **Bool-sorted applications as
+lemma atoms**: an `(S…)->Bool` function atom *is* the equality
+`f(x…) = true/false`, so `record_lemma` accepts `Apply` atoms and the CC
+verifier merges positive literals against the false constant (negatives
+against true), with constants-merged as an additional contradiction
+condition. The eq_diamond/NEQ family is built on exactly this shape; 4
+more files certify.
+
+**Measured**: 42/46 plain-unsat QF_UF cells certify (from 25 at landing);
+certified QF_UF coverage **70/76 (92%)** — 28 sat + 42 unsat, zero wrong
+verdicts. Residual: 3 eq_diamond files whose logs are clean but whose
+refutations need a fact that never surfaces as a recordable
+Conflict/Propagated (the next recording-coverage dig), 1 no-reason cell.
+
+The duplicate-literal checker fix is standing-wide: any LRAT proof with
+dup-literal clauses (ours never emit them anymore, but external ones may
+legitimately contain them) now verifies correctly instead of being
+rejected.
