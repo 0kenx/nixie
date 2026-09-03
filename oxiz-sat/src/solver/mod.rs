@@ -1960,6 +1960,48 @@ impl Solver {
         self.proof_set_clause_id(cid, new_id);
     }
 
+    /// Emit a **self-subsuming-resolution** strengthen (`subsume_round`'s
+    /// arm): the strengthened clause `kept = c \ {lits[idx]}` is the
+    /// resolvent of `c` with `subsumer` on the dropped literal's variable.
+    /// RUP chain: `[c id, subsumer id]` — under `¬kept` every `subsumer`
+    /// literal except the flipped one is false (the subsumer's other
+    /// literals all occur in `kept`), so the subsumer is unit on it,
+    /// propagation falsifies the dropped literal, and `c` conflicts.
+    /// Returns `false` (emitting nothing) when a parent's LRAT id is
+    /// unbound — the caller then skips the strengthen entirely (weaker
+    /// elimination, never an unverifiable chain).
+    fn proof_strengthen_clause_res(
+        &mut self,
+        cid: ClauseId,
+        subsumer: ClauseId,
+        lits: &[Lit],
+        idx: usize,
+    ) -> bool {
+        if self.proof.is_none() {
+            return true;
+        }
+        let old_id = self.proof_clause_id(cid);
+        let sub_id = self.proof_clause_id(subsumer);
+        if old_id == 0 || sub_id == 0 {
+            return false;
+        }
+        let kept_dimacs: SmallVec<[i32; 8]> = lits
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != idx)
+            .map(|(_, &l)| l.to_dimacs())
+            .collect();
+        let old_dimacs: SmallVec<[i32; 8]> = lits.iter().map(|l| l.to_dimacs()).collect();
+        let new_id = self.proof_next_id();
+        let chain: SmallVec<[i64; 4]> = SmallVec::from_slice(&[old_id, sub_id]);
+        if let Some(proof) = &mut self.proof {
+            proof.strengthen_clause(new_id, false, &kept_dimacs, &chain);
+            proof.delete_clause(old_id, false, &old_dimacs);
+        }
+        self.proof_set_clause_id(cid, new_id);
+        true
+    }
+
     /// Emit a clause deletion by stored-clause id, reading its literals before
     /// the clause is detached (no-op when proof logging is off or the clause is
     /// already gone). For LRAT the deletion is keyed by the clause's LRAT id;

@@ -1806,6 +1806,19 @@ impl Solver {
     /// positions 0 and 1), removes the literal, re-selects the two best watch
     /// literals (mirroring [`Solver::add_clause`]), and re-attaches them.
     pub(super) fn remove_literal_and_rewatch(&mut self, clause_id: ClauseId, idx: usize) {
+        self.remove_literal_opts(clause_id, idx, true);
+    }
+
+    /// The physical shrink without the default strengthen emission — for
+    /// callers that emit their own (resolution-justified) proof event for
+    /// the same shrink first (`subsume_round`'s strengthen arm). A double
+    /// emission would append two additions and two deletions for one
+    /// shrink and desynchronize every later id.
+    pub(super) fn remove_literal_and_rewatch_silent(&mut self, clause_id: ClauseId, idx: usize) {
+        self.remove_literal_opts(clause_id, idx, false);
+    }
+
+    fn remove_literal_opts(&mut self, clause_id: ClauseId, idx: usize, emit_proof: bool) {
         let mut lits: Vec<Lit> = match self.clauses.get(clause_id) {
             Some(c) if !c.deleted && c.lits.len() > 2 && idx < c.lits.len() => c.lits.to_vec(),
             _ => return,
@@ -1858,7 +1871,7 @@ impl Solver {
         // Record the in-place strengthening in the proof: add the shorter
         // clause (RUP-derivable – vivification proved it entailed) then delete the
         // original, keeping the proof's clause set consistent with the database.
-        if self.proof.is_some() {
+        if emit_proof && self.proof.is_some() {
             let new_lits: SmallVec<[Lit; 8]> = lits.iter().copied().collect();
             self.proof_strengthen_clause(clause_id, &new_lits);
         }

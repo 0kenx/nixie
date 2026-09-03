@@ -364,6 +364,10 @@ fn lrat_bve_unit_resolvent_provenance() {
 
     let config = oxiz_sat::SolverConfig {
         enable_bve: true,
+        // Force the pre-search elimination fixpoint (the default routes
+        // elimination through the conflict schedule, which this tiny
+        // formula refutes before ever reaching).
+        presearch_collapse: true,
         ..oxiz_sat::SolverConfig::default()
     };
     let mut solver = Solver::with_config(config);
@@ -386,6 +390,101 @@ fn lrat_bve_unit_resolvent_provenance() {
         assert!(
             stdout.contains("VERIFIED") && out.status.success(),
             "lrat-check rejected the unit-resolvent proof:\n{stdout}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// 2026-09 subsume-under-proof regression: `subsume_round` now runs with an
+/// attached LRAT tracer (deletions by clause id; each self-subsuming
+/// strengthen emits the resolution pair `[c, subsumer]` as the RUP chain).
+/// `(1 2 3)` self-subsumes against `(-3 1 2)` — the round must drop the
+/// `3`/`-3` side and emit a derived clause `{1, 2}` whose chain references
+/// both parents; the checker must accept the whole proof. Before the fix
+/// the entire round was skipped under proofs (the strengthen had no
+/// threaded subsumer id), one of the residuals keeping `--bve` trajectories
+/// 0.7–14× apart in conflicts (mrpp: 19.8M → 874k addition lines).
+#[test]
+fn lrat_subsume_round_strengthen_under_proof() {
+    let (nvars, clauses) = (
+        3,
+        vec![
+            vec![1, 2, 3],
+            vec![-3, 1, 2],
+            vec![-1, 2],
+            vec![1, -2],
+            vec![-1, -2],
+        ],
+    );
+
+    let dir = std::env::temp_dir().join(format!("oxiz_lrat_subsume_{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    let cnf = dir.join("in.cnf");
+    let lrat = dir.join("out.lrat");
+    let mut f = fs::File::create(&cnf).unwrap();
+    use std::io::Write;
+    writeln!(f, "p cnf {nvars} {}", clauses.len()).unwrap();
+    for c in &clauses {
+        for &l in c {
+            write!(f, "{l} ").unwrap();
+        }
+        writeln!(f, "0").unwrap();
+    }
+    drop(f);
+
+    let config = oxiz_sat::SolverConfig {
+        enable_bve: true,
+        // Force the pre-search elimination fixpoint (the default routes
+        // elimination through the conflict schedule, which this tiny
+        // formula refutes before ever reaching).
+        presearch_collapse: true,
+        ..oxiz_sat::SolverConfig::default()
+    };
+    let mut solver = Solver::with_config(config);
+    solver.ensure_vars(nvars);
+    solver.enable_lrat_proof(&lrat).unwrap();
+    for c in &clauses {
+        solver.add_clause(c.iter().map(|&l| Lit::from_dimacs(l)));
+    }
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    solver.disable_proof();
+    drop(solver);
+
+    // The strengthen must have fired with the resolution pair as its RUP
+    // chain: the binary fast path resolves `(1 2 3)` and `(-3 1 2)` against
+    // `(1 -2)`, producing derived `{1,3}` with hints [1, 4] and `{1,-3}`
+    // with hints [2, 4] (parent ids), then deleting the retired originals.
+    let text = fs::read_to_string(&lrat).unwrap();
+    fn tokens_of(l: &str) -> Vec<&str> {
+        l.split_whitespace().collect()
+    }
+    let has = |lits_and_hints: &[&str]| {
+        text.lines().any(|l| {
+            let t = tokens_of(l);
+            t.len() == 1 + lits_and_hints.len()
+                && t.first().is_some_and(|s| s.parse::<i64>().is_ok())
+                && t[1..] == *lits_and_hints
+        })
+    };
+    assert!(
+        has(&["1", "3", "0", "1", "4", "0"]),
+        "no resolution-derived {{1,3}} strengthen in proof:\n{text}"
+    );
+    assert!(
+        has(&["1", "-3", "0", "2", "4", "0"]),
+        "no resolution-derived {{1,-3}} strengthen in proof:\n{text}"
+    );
+
+    if let Some(checker) = lrat_check_bin() {
+        let out = Command::new(&checker)
+            .arg(&cnf)
+            .arg(&lrat)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("VERIFIED") && out.status.success(),
+            "lrat-check rejected the subsume-strengthen proof:\n{stdout}"
         );
     }
     let _ = fs::remove_dir_all(&dir);

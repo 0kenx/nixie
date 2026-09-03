@@ -34,7 +34,10 @@ enum SubCheck {
     Subsumed { subsumer: ClauseId },
     /// All but one literal of `d` occur in `c`, and that one occurs
     /// complemented: remove `remove` from `c` (self-subsuming resolution).
-    Strengthen { remove: Lit },
+    /// `subsumer` carries the resolving clause's id — under an attached
+    /// proof the strengthened clause's RUP chain is the resolution pair
+    /// `[c, subsumer]` (see the strengthen arm below).
+    Strengthen { remove: Lit, subsumer: ClauseId },
 }
 
 impl Solver {
@@ -43,11 +46,13 @@ impl Solver {
     /// Returns `(subsumed, strengthened)` counts.  Sound at any assertion
     /// scope (a subsumed clause is entailed by its subsumer; a strengthened
     /// clause is entailed by resolution), but only runs at decision level 0.
-    /// Skipped entirely while an LRAT tracer is attached, like the rest of
-    /// `inprocess` (strengthening's hypothetical-probe derivation is not
-    /// threaded through the tracer).
+    /// Proof-complete since 2026-09: deletions carry the subsumed clause's
+    /// LRAT id, and each self-subsuming strengthen emits the resolution
+    /// pair `[c, subsumer]` as the new clause's RUP chain (under `¬kept`
+    /// every `subsumer` literal except the flipped one is false, so the
+    /// subsumer is unit on it, propagating it and falsifying `c`).
     pub(super) fn subsume_round(&mut self) -> (usize, usize) {
-        if self.trail.decision_level() != 0 || self.lrat || self.trivially_unsat {
+        if self.trail.decision_level() != 0 || self.trivially_unsat {
             return (0, 0);
         }
 
@@ -149,6 +154,7 @@ impl Solver {
                         // `¬other ∈ c`: remove it.
                         outcome = Some(SubCheck::Strengthen {
                             remove: other.negate(),
+                            subsumer: bin_id,
                         });
                         break 'candidate;
                     }
@@ -194,6 +200,7 @@ impl Solver {
                         Some(dl) => {
                             outcome = Some(SubCheck::Strengthen {
                                 remove: dl.negate(),
+                                subsumer: did,
                             });
                             break 'candidate;
                         }
@@ -234,36 +241,43 @@ impl Solver {
                         let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
                         self.mark_elim_vars(lits.iter().copied());
                     }
+                    // Deletion by the stored LRAT id (id 0 under proofs would
+                    // be an invalid line): emit while the clause is still
+                    // live so `drat_delete` reads its literals.
+                    self.drat_delete(cid);
                     self.retire_clause(cid);
                     self.stats.deleted_clauses += 1;
                     self.stats.subsumed_removed += 1;
-                    // DRAT deletion (no-op unless enabled); read the literals
-                    // before the clause is retired.
-                    if self.proof.is_some()
-                        && let Some(c) = self.clauses.get(cid)
-                    {
-                        let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
-                        self.drat_delete_lits(&lits);
-                    }
                     subsumed += 1;
                     continue;
                 }
-                Some(SubCheck::Strengthen { remove }) => {
-                    // Under an attached proof, self-subsumption
-                    // strengthening has no emitted justification here (the
-                    // RUP chain needs the subsumer's LRAT id, which this
-                    // path does not thread): skip the strengthen, keep the
-                    // clause as-is, and fall through to the connect.
-                    // Pure subsumption (deletion) above is
-                    // justification-free and stays active.
-                    if self.proof.is_none()
-                        && let Some(idx) = lits.iter().position(|&l| l == remove)
-                    {
-                        // Re-arm elimination for the shrunken clause's
-                        // variables (cadical marks on `shrink_clause`).
-                        self.mark_elim_vars(lits.iter().copied());
-                        self.strengthen_clause_in_subsume(cid, idx);
-                        strengthened += 1;
+                Some(SubCheck::Strengthen { remove, subsumer }) => {
+                    if let Some(idx) = lits.iter().position(|&l| l == remove) {
+                        // Proof emission comes FIRST (it reads the full
+                        // pre-shrink clause): the strengthened clause
+                        // `kept = c \ {remove}` is the resolvent of `c` with
+                        // `subsumer` on `remove`'s variable — under `¬kept`
+                        // every `subsumer` literal except the flipped one is
+                        // false, the subsumer is unit on it, propagation
+                        // makes `remove` false, and `c` conflicts. The
+                        // schedule's no-assigned-literal filter guarantees
+                        // neither parent carries a level-0 literal, so the
+                        // pair needs no unit hints. A parent without a
+                        // bound LRAT id skips the strengthen (weaker,
+                        // sound); the physical shrink below is then
+                        // proof-silent for this path.
+                        let emitted = if self.proof.is_some() {
+                            self.proof_strengthen_clause_res(cid, subsumer, &lits, idx)
+                        } else {
+                            true
+                        };
+                        if emitted {
+                            // Re-arm elimination for the shrunken clause's
+                            // variables (cadical marks on `shrink_clause`).
+                            self.mark_elim_vars(lits.iter().copied());
+                            self.strengthen_clause_in_subsume(cid, idx);
+                            strengthened += 1;
+                        }
                     }
                     // Fall through: also connect the (possibly strengthened) clause.
                 }
@@ -303,7 +317,9 @@ impl Solver {
     /// it.
     fn strengthen_clause_in_subsume(&mut self, clause_id: ClauseId, idx: usize) {
         let learned = self.clauses.get(clause_id).is_some_and(|c| c.learned);
-        self.remove_literal_and_rewatch(clause_id, idx);
+        // Proof-silent: the caller emitted the resolution-justified event
+        // (`proof_strengthen_clause_res`) before the physical shrink.
+        self.remove_literal_and_rewatch_silent(clause_id, idx);
         if learned
             && let Some(c) = self.clauses.get(clause_id)
             && !c.deleted
