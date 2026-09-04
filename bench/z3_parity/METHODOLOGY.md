@@ -94,7 +94,7 @@ Two files, two different jobs:
 | File | Tracked? | Role |
 |------|----------|------|
 | `results.json` | **No** – git-ignored | Scratch output of the most recent local run *on this machine*. Every run overwrites it. Never cite it as evidence. |
-| `results.<os>-<arch>.json` | **Yes** – committed | The recorded parity result **for one environment** (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`). This is what `README.md` and `docs/smtcomp2026_participation.md` point at when they say "authoritative". |
+| `results.<os>-<arch>.json` | **Yes** – committed | The recorded parity result **for one environment** (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`). This is what `README.md` points at when it says "authoritative". |
 
 A run writes both files itself, so publishing a result is just a matter of committing the right
 one: stage `results.<os>-<arch>.json` for the environment you actually ran on, never `results.json`
