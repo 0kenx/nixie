@@ -5,6 +5,26 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Pre-search ELS fixpoint: measured no-go, landed as A/B infrastructure] - 2026-09-05 (ii)
+
+- **Added (SAT): `els_presearch` (`SolverConfig`, default off; `ELS_PRE=1`
+  in `stats_solve`)** — the 2026-09-05 study's open item, tested the same
+  day and dropped per its pre-registered gates.  With
+  `enable_equiv_substitution` also set, the ELS round (BIG refresh + AND/XOR
+  gate-congruence augmentation + SCC fold + rewrite) runs to a bounded
+  fixpoint (≤4 rounds) *before* search, kissat `probe_initially`-style, and
+  consumes the mid-search one-shot latch.  Measured on the 54-file corpus
+  (CRN vs stored seed-0 baselines, 0 verdict mismatches): the fixpoint
+  extracts 2.8× more equivalences than the mid-search one-shot (571 vs 203
+  on 6s167-opt) but converts none of it — geomean 1.0352 vs 1.0000, with
+  the damage travelling with the ELS content per file in both directions
+  (rbsat TO under pre-search yet identical under mid; x9-09054 0.26× under
+  pre yet unchanged under mid).  ELS *placement* is exhausted as a lever on
+  this corpus; the anchor win (0.35× on 6s167-opt, seed-robust) is
+  available behind `enable_equiv_substitution`.  Pinned by
+  `els_presearch_folds_before_search`.  Verified: 10 468 tests,
+  clippy/fmt/doc, Z3 parity 170/0, default-trajectory identity spot-check.
+
 ## [Scheduled ELS silent no-op fixed; inprocess gating closed as unimplementable] - 2026-09-05
 
 Two landed items (study `docs/studies/2026-09-05-inproc-gating-no-gate.md`):

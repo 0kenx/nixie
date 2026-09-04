@@ -9,6 +9,11 @@
 //!                       2026-09-04 standing-corpus inprocessing study)
 //!   INPROC_INTERVAL=N   override `inprocessing_interval` (0 = u64::MAX,
 //!                       i.e. mid-search rounds off; decomposition arm)
+//!   ELS=0|1             flip `enable_equiv_substitution` (2026-09-05
+//!                       study: the scheduled one-shot, measured 0.349x on
+//!                       6s167-opt but -9 files at cap)
+//!   ELS_PRE=0|1         pre-search ELS at full fixpoint effort (implies
+//!                       ELS=1; consumes the mid-search one-shot)
 //!   OXIZ_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NO_STAB=1           disable stable/focused alternation
@@ -32,6 +37,17 @@ fn main() {
         && let Ok(n) = v.parse::<u64>()
     {
         cfg.inprocessing_interval = if n == 0 { u64::MAX } else { n };
+    }
+    if let Ok(v) = std::env::var("ELS") {
+        // ELS arm knobs for the 2026-09-05 study follow-up: ELS=1 enables
+        // the pass (preset keeps it off); ELS_PRE=1 additionally moves the
+        // extraction pre-search at full fixpoint effort (consumes the
+        // mid-search one-shot).
+        cfg.enable_equiv_substitution = v != "0";
+    }
+    if let Ok(v) = std::env::var("ELS_PRE") {
+        cfg.enable_equiv_substitution = v != "0";
+        cfg.els_presearch = v != "0";
     }
     if std::env::var("NO_REDUCE").is_ok() {
         cfg.clause_deletion_threshold = usize::MAX;

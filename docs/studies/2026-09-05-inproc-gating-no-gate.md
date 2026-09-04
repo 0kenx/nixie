@@ -182,3 +182,45 @@ Telemetry/seed/screen scripts + raw logs: `precompile/corpus-sc24f/`
 `kissat --statistics [--probe=0 …] <corpus>/…-6s167-opt.cnf`.  The ELS-on
 arm: set `enable_equiv_substitution: true` (CaDiCaL preset) on the landed
 tree.
+
+## 7. Follow-up (same day): pre-search ELS at full effort — no-go
+
+The §6 open item was tested immediately: `els_presearch` (landed as A/B
+infrastructure, default off; `ELS_PRE=1` in `stats_solve`) runs the ELS
+round — BIG refresh, AND/XOR gate-congruence augmentation, SCC fold,
+rewrite — to a bounded fixpoint (≤4 rounds) *before* search and consumes
+the mid-search one-shot latch (kissat `probe_initially` shape).
+
+**Pre-registered gates** (before the run): advance iff solved-at-60 s ≥
+baseline AND conflicts geomean ≤ 0.95 over both-decisive AND the 6s167
+anchor gain survives; drop otherwise; any verdict mismatch stops
+everything.
+
+**Result (54-file 3-arm screen, CRN vs stored seed-0 baselines,
+0 verdict mismatches):**
+
+| arm | geomean vs base | 6s167-opt | notes |
+|---|---|---|---|
+| off (landed default) | 1.0000 | 118 191 | identity re-verified |
+| `ELS=1` (mid-search one-shot) | 1.0339 | 41 280 (0.349×) | 203 folds |
+| `ELS_PRE=1` (pre-search fixpoint) | 1.0352 | 43 365 (0.367×) | **571 folds** |
+
+The fixpoint extracts **2.8× more equivalences** (571 vs 203 on the
+anchor) yet converts none of it into corpus conflicts-to-verdict.  The
+per-file effects of pre vs mid move in *both* directions (x9-09054 0.26×
+under pre but unchanged under mid; mrpp 1.66× under pre vs 0.89× under
+mid; rbsat TO under pre at 90 s on an otherwise-quiet core but identical
+under mid) — the damage is not a placement artifact; it travels with the
+ELS content per file, in the now-familiar sat-side-destruction signature
+(rbsat/af-synthesis/Timetable TO; mp1 2.6×; summle_X11112 11×).  Per the
+pre-registered rule: **drop**; `els_presearch` stays default-off A/B
+infrastructure (`els_presearch_folds_before_search` pins the wiring).
+
+**What this closes:** ELS *placement* is exhausted as a lever on this
+corpus (mid-search one-shot and pre-search fixpoint both measured,
+both fail).  The 6s167-class anchor win (0.35×) is real, seed-robust
+(§4), and available behind `enable_equiv_substitution`, but its corpus
+price is the sat-side losses.  The remaining evidence-backed gap is the
+kissat simplification fixpoint's *content* we still lack — kitten sweep
+(`--sweep=0` ⇒ 2.66× on 6s167) and its interaction with eliminate —
+a separate campaign per §3.

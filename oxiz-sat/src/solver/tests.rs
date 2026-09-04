@@ -1487,3 +1487,44 @@ fn big_authoritative_phantom_tick_parity_counters() {
     assert_eq!(solver.watches.phantom_len(neg2), 2);
     assert_eq!(solver.watches.phantom_len(neg1), 1);
 }
+
+/// Pins the `els_presearch` wiring: with the flag (plus
+/// `enable_equiv_substitution`) the ELS round folds equivalences *before*
+/// search starts.  php(7,6) + an explicit x≡y pair with `elim_interval`
+/// far above php(7,6)'s conflict count: the conflict-scheduled one-shot
+/// can never fire, so any recorded substitutions must come from the
+/// pre-search fixpoint (which also consumes `did_equiv_subst`).
+#[test]
+fn els_presearch_folds_before_search() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_equiv_substitution: true,
+        els_presearch: true,
+        elim_interval: 50_000,
+        ..SolverConfig::default()
+    });
+    let (pigeons, holes) = (7usize, 6usize);
+    let mut p = Vec::new();
+    for _ in 0..pigeons * holes {
+        p.push(solver.new_var());
+    }
+    let at = |i: usize, j: usize| Lit::pos(p[i * holes + j]);
+    for i in 0..pigeons {
+        solver.add_clause((0..holes).map(|j| at(i, j)));
+    }
+    for j in 0..holes {
+        for i1 in 0..pigeons {
+            for i2 in i1 + 1..pigeons {
+                solver.add_clause([at(i1, j).negate(), at(i2, j).negate()]);
+            }
+        }
+    }
+    let x = solver.new_var();
+    let y = solver.new_var();
+    solver.add_clause([Lit::neg(x), Lit::pos(y)]);
+    solver.add_clause([Lit::pos(x), Lit::neg(y)]);
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    assert!(
+        solver.stats().substitutions > 0,
+        "no equivalences folded before search — els_presearch wiring is broken"
+    );
+}

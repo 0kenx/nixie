@@ -87,6 +87,14 @@ fn path_to_str(path: &std::path::Path) -> std::io::Result<&str> {
 /// after `init_rephase_limits` has sized the schedule to the input.
 const INPROBE_INIT_LIMIT: u64 = u64::MAX;
 
+/// Bound on the pre-search ELS fixpoint (`els_presearch`): each round
+/// composes the substitution map and re-detects gates over the rewritten
+/// clauses, so rounds after the first only pay off while new equivalences
+/// keep surfacing.  4 covers gate-chains of nested congruences without
+/// unbounded re-scanning (kissat `proberounds` defaults to 2 full probe
+/// rounds, each of which re-runs its sub-passes to their own fixpoints).
+const ELS_PRESEARCH_MAX_ROUNDS: u32 = 4;
+
 #[derive(Debug, Clone)]
 pub(super) struct BinaryImplicationGraph {
     /// implications[lit] = list of (implied_lit, clause_id) pairs
@@ -358,6 +366,14 @@ pub struct SolverConfig {
     /// files faster, geomean 6.3×, sign p<1e-4 over 10 seeds — see
     /// docs/studies/2026-08-inprocessing-schedule.md).
     pub presearch_collapse: bool,
+
+    /// Pre-search equivalent-literal extraction at full effort (kissat
+    /// `probe_initially` shape; follow-up to the 2026-09-05 gating study):
+    /// with `enable_equiv_substitution` also set, iterate the ELS round
+    /// (SCC fold + AND/XOR gate-congruence augmentation) to a bounded
+    /// fixpoint *before* search and consume the mid-search one-shot latch.
+    /// Default off pending its corpus A/B.
+    pub els_presearch: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
     /// Cap on the Luby restart multiplier. The Luby sequence grows as 2^k, so
@@ -571,6 +587,7 @@ impl Default for SolverConfig {
             enable_stabilize: true,
             enable_shrink: true,
             presearch_collapse: false,
+            els_presearch: false,
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
@@ -2965,6 +2982,47 @@ impl Solver {
         // is crossed, and `try_scheduled_elimination` runs the one-shot ELS
         // alongside the first phase).
         let sched_parity = !self.config.presearch_collapse;
+
+        // Pre-search equivalent-literal extraction at full effort (kissat
+        // `probe_initially` shape; follow-up to the 2026-09-05 study):
+        // iterate the ELS round — BIG refresh, AND/XOR gate-congruence
+        // augmentation, SCC fold, clause rewrite — to a fixpoint (bounded)
+        // *before* search, instead of the single mid-search one-shot at
+        // `lim_elim`.  Equivalences extracted here shrink the formula the
+        // search actually sees (kissat merges ~27 % of 6s167-opt's variables
+        // this way pre-search; our mid-search one-shot measured 0.349× on
+        // that file but −9 files at cap corpus-wide).  Consumes the
+        // one-shot latch so the mid-search slot does not fire a second ELS
+        // on top (the arm under test is "pre-search extraction", not
+        // "pre-search + mid-search").  Soundness gates identical to the
+        // round's own (level 0 by construction here, base scope, no proof,
+        // theory-safe under freeze-set collapse).
+        if self.config.els_presearch
+            && self.config.enable_equiv_substitution
+            && self.destructive_preprocessing_safe()
+        {
+            self.did_equiv_subst = true;
+            for _ in 0..ELS_PRESEARCH_MAX_ROUNDS {
+                let subst_before = self.stats.substitutions;
+                let orig_before = self.clauses.num_original();
+                if self.substitute_equivalent_literals_round() == equiv::SubstOutcome::Unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                if self.trivially_unsat {
+                    self.drat_emit_empty(None);
+                    return SolverResult::Unsat;
+                }
+                // Fixpoint: a round that folded no equivalences and retired
+                // no original clause has nothing new to feed the next
+                // round's congruence detection.
+                if self.stats.substitutions == subst_before
+                    && self.clauses.num_original() == orig_before
+                {
+                    break;
+                }
+            }
+        }
 
         if self.config.enable_bve && !sched_parity {
             // Iterate elimination phases to a fixpoint before search
