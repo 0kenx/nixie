@@ -11,7 +11,7 @@
 //!
 //! ```text
 //! ┌──────────────────── FILE HEADER (32 bytes) ─────────────────────┐
-//! │ magic: [u8; 8]  = b"NIXPROOF"                                   │
+//! │ magic: [u8; 8]  = b"NIXIEPRF"                                   │
 //! │ version: u32    = FORMAT_VERSION                                 │
 //! │ flags: u32      = 0 (reserved)                                   │
 //! │ reserved: [u8; 16]                                               │
@@ -42,7 +42,7 @@ use thiserror::Error;
 use crate::proof::{ProofNodeId, ProofStep};
 
 /// Magic bytes at the start of every Nixie proof log.
-const MAGIC: &[u8; 8] = b"NIXPROOF";
+const MAGIC: &[u8; 8] = b"NIXIEPRF";
 
 /// Current binary format version.
 const FORMAT_VERSION: u32 = 1;

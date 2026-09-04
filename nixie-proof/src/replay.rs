@@ -22,7 +22,7 @@ use thiserror::Error;
 use crate::proof::{Proof, ProofNodeId, ProofStep};
 
 // Re-use the same constants as logging.rs without a public dependency:
-const MAGIC: &[u8; 8] = b"NIXPROOF";
+const MAGIC: &[u8; 8] = b"NIXIEPRF";
 const FORMAT_VERSION: u32 = 1;
 const KIND_AXIOM: u8 = 0;
 const KIND_INFERENCE: u8 = 1;
@@ -35,7 +35,7 @@ pub enum ProofError {
     Io(#[from] io::Error),
 
     /// File did not begin with the expected magic bytes.
-    #[error("invalid file magic; expected NIXPROOF, got {found:?}")]
+    #[error("invalid file magic; expected NIXIEPRF, got {found:?}")]
     InvalidMagic {
         /// Bytes that were actually read.
         found: [u8; 8],
