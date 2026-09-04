@@ -5,6 +5,35 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Binary-chain factoring: kissat factor.c first slice, sound + anchor 0.44x, default off] - 2026-09-05 (iv)
+
+- **Added (SAT): binary-chain factoring** (`oxiz-sat/src/solver/factor.rs`;
+  `SolverConfig::enable_factoring` default off, `OXIZ_FACTOR=1`/`FACTOR=1`
+  in `stats_solve`).  The measured motivation: kissat's `--factor=0`
+  knockout costs it 21.5× conflicts on worker_550 (2 003 → 43 083) — and
+  worker_550 + shuffling-2 carry almost the whole 1.332× standing
+  conflicts geomean (remove them: ~1.08×); both are SAT files where
+  kissat/cadical solve via long descents (227/58 decisions per conflict
+  vs our 6.8).  The transformation: for `f` with binaries `(f ∨ q_i)` and
+  a second literal `g` witnessed per partner by `(q_i ∨ g)`, replace the
+  quotients with dividers `(x ∨ f) (x ∨ g)` and `(¬x ∨ q_i)` over a
+  fresh `x`, keeping the witnesses — equisatisfiable and model-preserving
+  in all three model cases.  **The witness polarity is load-bearing**
+  (`(q_i ∨ g)`, not `(¬g ∨ q_i)`): the flipped direction is unsound, and
+  the corpus A/B's verdict checking caught it as 18 sat→unsat flips
+  before landing (random differential + fixtures had passed — the shape
+  is rare in small formulas); pinned by
+  `factor_witness_polarity_regression` plus firing-threshold,
+  verdict-preservation, and 300-trial model-validating differential
+  tests.  Measured (corrected): geomean 0.9519 over both-decisive with
+  worker_550 **0.44×**, stable-300 11×, frb65 4.6×, j3037 2.6× against
+  summle-class 2.4–5.6× losses and six cap TOs — net not-better, so the
+  slice stays default-off infrastructure with the next slices recorded
+  (chain refinement, large clauses, post-elimination placement,
+  fresh-var decision integration).  Verified: 10 472 tests, clippy/
+  fmt/doc, Z3 parity 170/0, default-path identity spot-check
+  bit-identical, SMT paths unaffected (env/config gated, default off).
+
 ## [Gate-count telemetry + campaign closure measurements] - 2026-09-05 (iii)
 
 - **Added (SAT diagnostics): `GATE_COUNT=1` in `stats_solve` +

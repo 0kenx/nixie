@@ -14,6 +14,8 @@
 //!                       6s167-opt but -9 files at cap)
 //!   ELS_PRE=0|1         pre-search ELS at full fixpoint effort (implies
 //!                       ELS=1; consumes the mid-search one-shot)
+//!   FACTOR=0|1          binary-chain factoring (kissat factor.c first
+//!                       slice; the worker_550 lever)
 //!   OXIZ_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NO_STAB=1           disable stable/focused alternation
@@ -44,6 +46,10 @@ fn main() {
         // extraction pre-search at full fixpoint effort (consumes the
         // mid-search one-shot).
         cfg.enable_equiv_substitution = v != "0";
+    }
+    if let Ok(v) = std::env::var("FACTOR") {
+        // Binary-chain factoring arm (2026-09-05 factor port A/B).
+        cfg.enable_factoring = v != "0";
     }
     if let Ok(v) = std::env::var("ELS_PRE") {
         cfg.enable_equiv_substitution = v != "0";
@@ -125,6 +131,23 @@ fn main() {
         }
     }
     let r = solver.solve();
+    if r == oxiz_sat::SolverResult::Sat && std::env::var("PRINT_MODEL").is_ok() {
+        // `v <lit> ...` lines (DIMACS order), for external model
+        // validation in the A/B harnesses.
+        let m = solver.model();
+        let lits: Vec<String> = (1..m.len() + 1)
+            .filter_map(|i| {
+                let vi = i - 1;
+                m.get(vi).map(|v| match v {
+                    oxiz_sat::LBool::True => format!("{i}"),
+                    oxiz_sat::LBool::False => format!("-{i}"),
+                    _ => String::new(),
+                })
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        println!("v {}", lits.join(" "));
+    }
     let s = solver.stats();
     {
         let w = solver.walk_counters();

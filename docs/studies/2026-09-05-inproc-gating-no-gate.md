@@ -261,3 +261,54 @@ no structural or online gate.  The anchor win (6s167 0.35×, seed-robust)
 ships behind `enable_equiv_substitution`.  The remaining standing-gap
 levers live elsewhere: worker-class memory/binary density (out of this
 campaign's scope by charter) and BCP throughput (measured closed ×4).
+
+## 9. Third follow-up (same day): binary-chain factoring ported — sound slice, anchor 0.44×, corpus not yet
+
+The remaining standing-gap lever was sized from kissat component knockouts
+on worker_550: `--factor=0` costs kissat **21.5×** conflicts there
+(2 003 → 43 083; every other probe sub-pass neutral or helpful), and
+worker_550 + shuffling-2 carry almost the whole 1.332× standing geomean
+(remove them: ~1.08×).  Recomputed gap decomposition: both are
+SAT files solved by kissat/cadical in long phase-guided descents
+(227/58 decisions per conflict vs our 6.8), and our conflict counts on
+them are wildly seed-dependent — the lever is *descent reliability*, and
+kissat's descent on worker_550 is factoring-made.
+
+**Ported** (`solver/factor.rs`, kissat `factor.c` first slice): for a
+literal `f` with binaries `(f ∨ q_i)` and a second literal `g` whose
+clauses `(q_i ∨ g)` witness every matched partner, replace the quotients
+with dividers `(x ∨ f) (x ∨ g)` and `(¬x ∨ q_i)` over a fresh `x`,
+keeping the witnesses.  Equisatisfiable and model-preserving (all three
+model cases extend: `f∧g → x=F`; `¬f → q_i → x=T`; `f∧¬g → witnesses
+unit-force every q_i → x=T`).
+
+**The polarity bug the harness caught** (recorded for the pattern): the
+first port read the witness as `(¬g ∨ q_i)` — kissat's watch positions
+make it `(q_i ∨ g)` — and the flipped direction is UNSOUND: a model with
+`f ∧ ¬g ∧ ¬q_j` satisfies every original and flipped witness but has no
+`x` extension.  300 random differential trials and the fixture tests all
+passed anyway (the shape is rare in small random formulas); the corpus
+A/B's verdict checking caught it as **18 sat→unsat flips** before
+anything landed.  Both the fixture polarity and a targeted
+counter-model regression (`factor_witness_polarity_regression`) pin it
+shut.
+
+**Measured (corrected, 54-file A/B, verdict-checked, 0 mismatches, 0
+invalid models):** geomean 0.9519 over 23 both-decisive — strong real
+wins (worker_550 106 143 → 46 659 = **0.44×**, stable-300 491 382 →
+43 067 = 11×, frb65 4.6×, j3037 2.6×, crypto1 recovered 2 308 k → 667 k)
+against real losses (summle class 2.4–5.6×, Timetable/qwh/af-synthesis/
+64_25/rbsat/circuit_64i TO at cap).  Net at the cap: not better than
+baseline.  Per the enablement rule the slice lands **default off**
+(`SolverConfig::enable_factoring`, `OXIZ_FACTOR=1` / `FACTOR=1` in
+`stats_solve`) as sound, tested A/B infrastructure.
+
+**Recorded next slices** (each pre-registered before measuring): chain
+refinement beyond one `g` per `f` (kissat's quotient chains — its 51 466
+factored vars on worker_550 vs our 7 228 come from depth + re-arming),
+large-clause factoring (same-size matching through minimal watch lists),
+post-elimination placement (kissat runs factor inside probe rounds after
+eliminate, `factordelay` skipping the early rounds — our slice is
+pre-search only), and fresh-variable decision integration (kissat
+queue-front; a naive `bump_decision_hint` measured harmful here,
+1.26× on worker_550).

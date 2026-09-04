@@ -7,6 +7,7 @@ mod congruence;
 mod decide;
 mod eliminate;
 mod equiv;
+mod factor;
 pub mod heuristic;
 mod incremental;
 mod learn;
@@ -374,6 +375,15 @@ pub struct SolverConfig {
     /// fixpoint *before* search and consume the mid-search one-shot latch.
     /// Default off pending its corpus A/B.
     pub els_presearch: bool,
+
+    /// Binary-chain factoring (kissat `factor.c` first slice;
+    /// `solver/factor.rs`): replaces `(f v q_i)` groups whose partners
+    /// share `g`-implications with dividers + quotients over a fresh
+    /// variable.  Equisatisfiable, model-preserving, deterministic
+    /// budgets.  Default off pending the corpus A/B (measured motivation:
+    /// kissat's `--factor=0` knockout costs it 21.5x conflicts on
+    /// worker_550).
+    pub enable_factoring: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
     /// Cap on the Luby restart multiplier. The Luby sequence grows as 2^k, so
@@ -588,6 +598,7 @@ impl Default for SolverConfig {
             enable_shrink: true,
             presearch_collapse: false,
             els_presearch: false,
+            enable_factoring: false,
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
@@ -3059,6 +3070,29 @@ impl Solver {
             if added > 0 {
                 #[cfg(feature = "std")]
                 eprintln!("c [bva] introduced={} literals_saved={}", added, saved);
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
+        }
+        // Binary-chain factoring (kissat `factor.c` first slice;
+        // `solver/factor.rs`): for a literal with many binaries whose
+        // partners share a second literal's implications, replace
+        // `(f v q_i)` by dividers `(x v f) (x v g)` and quotients
+        // `(not-x v q_i)`, keeping the `(not-g v q_i)` witnesses.
+        // Equisatisfiable and model-preserving (see the module doc's
+        // argument); the measured motivation is worker_550-class instances
+        // (kissat `--factor=0` knockout: 21.5x conflicts there).  Default
+        // off pending the corpus A/B.
+        if self.config.enable_factoring || std::env::var("OXIZ_FACTOR").as_deref() == Ok("1") {
+            let (added, reduction) = self.factor_binaries();
+            if added > 0 {
+                #[cfg(feature = "std")]
+                eprintln!(
+                    "c [factor] introduced={} occurrence_reduction={}",
+                    added, reduction
+                );
             }
             if self.trivially_unsat {
                 self.drat_emit_empty(None);

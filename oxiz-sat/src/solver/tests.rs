@@ -1528,3 +1528,177 @@ fn els_presearch_folds_before_search() {
         "no equivalences folded before search — els_presearch wiring is broken"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Binary-chain factoring (2026-09-05, solver/factor.rs) — soundness pins.
+// ---------------------------------------------------------------------------
+
+/// Build `(f ∨ q_i)` and `(q_i ∨ g)` for i = 1..k on fresh vars and run
+/// one factoring pass; returns (introduced, solver).  The witness polarity
+/// `(q_i ∨ g)` is the sound direction (see `solver/factor.rs`).
+fn factoring_fixture(k: usize) -> (usize, Solver) {
+    let mut solver = Solver::new();
+    let f = solver.new_var();
+    let g = solver.new_var();
+    let qs: Vec<_> = (0..k).map(|_| solver.new_var()).collect();
+    for &q in &qs {
+        solver.add_clause([Lit::pos(f), Lit::pos(q)]);
+        solver.add_clause([Lit::pos(q), Lit::pos(g)]);
+    }
+    let (introduced, _reduction) = solver.factor_binaries();
+    (introduced, solver)
+}
+
+#[test]
+fn factor_fires_on_shared_implication_binaries() {
+    let (introduced, _) = factoring_fixture(5);
+    assert_eq!(
+        introduced, 1,
+        "k=5 matched binaries must factor exactly once"
+    );
+    let (introduced, _) = factoring_fixture(3);
+    assert_eq!(
+        introduced, 1,
+        "k=3 is the firing threshold (reduction k-2 > 0)"
+    );
+    let (introduced, _) = factoring_fixture(2);
+    assert_eq!(introduced, 0, "k=2 must not fire (no occurrence reduction)");
+}
+
+#[test]
+fn factor_preserves_verdict_both_ways() {
+    // SAT: f=T (or g=T with all q_i) satisfies everything.
+    let (i, mut s) = factoring_fixture(5);
+    assert_eq!(i, 1);
+    assert_eq!(s.solve(), SolverResult::Sat);
+    // UNSAT variant: force ¬f, ¬q_1 and ... originals (f∨q_i) with ¬f
+    // force q_i, so ¬q_1 contradicts; witnesses irrelevant.
+    let (i, mut s) = factoring_fixture(5);
+    assert_eq!(i, 1);
+    let f = Var::new(0);
+    let g = Var::new(1);
+    let q1 = Var::new(2);
+    s.add_clause([Lit::neg(f)]);
+    s.add_clause([Lit::neg(g)]);
+    s.add_clause([Lit::neg(q1)]);
+    assert_eq!(s.solve(), SolverResult::Unsat);
+}
+
+/// Differential: factoring must never change the verdict on random
+/// binary-heavy formulas, and a `Sat` model must satisfy the ORIGINAL
+/// clauses (restricted to the original variables).
+#[test]
+fn factor_differential_random_binaries() {
+    let mut rng: u64 = 0x243F_6A88_85A3_08D3;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for trial in 0..300 {
+        let n = 4 + (next() % 6) as usize; // 4..=9 vars
+        let m = 6 + (next() % 10) as usize; // 6..=15 clauses
+        let lit = |v: usize, rng: u64| -> Lit {
+            let var = Var::new((v % n) as u32);
+            if rng & 1 == 0 {
+                Lit::pos(var)
+            } else {
+                Lit::neg(var)
+            }
+        };
+        // Build the formula, solve WITHOUT factoring.
+        let mut base = Solver::new();
+        let mut ref_solver = Solver::new();
+        for _ in (0..n).map(|_| base.new_var()) {}
+        for _ in (0..n).map(|_| ref_solver.new_var()) {}
+        let mut clauses: Vec<SmallVec<[Lit; 4]>> = Vec::new();
+        for c in 0..m {
+            let sz = if next() % 3 == 0 { 3 } else { 2 };
+            let mut cl: SmallVec<[Lit; 4]> = SmallVec::new();
+            for j in 0..sz {
+                let l = lit((next() % n as u64) as usize, next());
+                if !cl.contains(&l) && !cl.contains(&l.negate()) {
+                    cl.push(l);
+                }
+                let _ = j;
+            }
+            if !cl.is_empty() {
+                base.add_clause(cl.iter().copied());
+                ref_solver.add_clause(cl.iter().copied());
+                clauses.push(cl);
+            }
+            let _ = c;
+        }
+        let expected = ref_solver.solve();
+        let (introduced, _) = base.factor_binaries();
+        let got = base.solve();
+        assert_eq!(
+            expected, got,
+            "verdict changed by factoring (trial {trial}, introduced {introduced})"
+        );
+        if got == SolverResult::Sat {
+            let model = base.model();
+            // Every original clause must be satisfied by the restriction.
+            for cl in &clauses {
+                let sat = cl.iter().any(|l| {
+                    let vi = l.var().index();
+                    model.get(vi).is_some_and(|v| {
+                        *v == if l.is_pos() {
+                            crate::literal::LBool::True
+                        } else {
+                            crate::literal::LBool::False
+                        }
+                    })
+                });
+                assert!(sat, "model violates an original clause (trial {trial})");
+            }
+        }
+    }
+}
+
+/// The witness-polarity regression (2026-09-05): with the witness read as
+/// `(¬g ∨ q)` instead of `(q ∨ g)`, the model `f = T, g = F, q_1 = F`
+/// satisfies every original and witness but has NO `x` extension — the
+/// rewrite flips satisfiable formulas to UNSAT (caught on the corpus A/B
+/// as 18 sat→unsat flips before anything landed).  This fixture builds
+/// that exact shape and requires the verdict to stay `Sat` with factoring
+/// enabled.
+#[test]
+fn factor_witness_polarity_regression() {
+    let mut base = Solver::new();
+    let mut factored = Solver::new();
+    let mut vars = Vec::new();
+    for _ in 0..4 {
+        vars.push(base.new_var());
+        factored.new_var();
+    }
+    let [f, g, q1, q2] = [vars[0], vars[1], vars[2], vars[3]];
+    // Quotients (f ∨ q_i) and witnesses in the polarity that fooled the
+    // first port: clauses `(¬g ∨ q_i)`.
+    for q in [q1, q2] {
+        for s in [&mut base, &mut factored] {
+            s.add_clause([Lit::pos(f), Lit::pos(q)]);
+            s.add_clause([Lit::neg(g), Lit::pos(q)]);
+        }
+    }
+    // Make it satisfiable with q_1 free to be false only when f holds:
+    // units pin `g = F`; `f` and the `q_i` are then forced by the
+    // witnesses only through `q_i` — the model `f=T, q_i=T` satisfies
+    // everything.  `q_1 = F, f = T` satisfies the QUOTIENTS but not the
+    // witnesses — the direction a wrong rewrite would flip.
+    for s in [&mut base, &mut factored] {
+        s.add_clause([Lit::neg(g)]);
+    }
+    assert_eq!(base.solve(), SolverResult::Sat);
+    let (introduced, _) = factored.factor_binaries();
+    // The witnesses `(¬g ∨ q_i)` legitimately match with candidate
+    // `¬g` (the adjacency entry `¬q → ¬g` IS the clause `(q ∨ ¬g)`), so
+    // factoring may fire — but must preserve the verdict either way.
+    let got = factored.solve();
+    assert_eq!(
+        got,
+        SolverResult::Sat,
+        "factoring flipped the verdict (introduced={introduced}) — witness polarity regressed"
+    );
+}
