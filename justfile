@@ -130,9 +130,6 @@ parity:
 wasm profile="minimal":
     ./scripts/wasm_build.sh {{profile}}
 
-py *args="--release":
-    ./scripts/build_python.sh {{args}}
-
 cli *args="":
     cargo run --release -p nixie-cli -- {{args}}
 
