@@ -34,7 +34,7 @@ fn test_history_snapshot_roundtrip() {
     let dir = tempfile::TempDir::new().unwrap();
     let snapshot = serde_json::json!({
         "schema_version": 1,
-        "oxiz_version": "0.2.1",
+        "nixie_version": "0.2.1",
         "git_sha": "abc1234",
         "utc_date": "2026-04-19",
         "host_z3_version": null,
@@ -42,7 +42,7 @@ fn test_history_snapshot_roundtrip() {
             {
                 "benchmark": "test.smt2",
                 "logic": "QF_LIA",
-                "oxiz_ms": 1.5,
+                "nixie_ms": 1.5,
                 "z3_ms": 1.0,
                 "ratio": 1.5
             }
@@ -68,7 +68,7 @@ fn test_history_snapshot_roundtrip() {
     let read_back: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
     assert_eq!(read_back["schema_version"], 1);
-    assert_eq!(read_back["oxiz_version"], "0.2.1");
+    assert_eq!(read_back["nixie_version"], "0.2.1");
     assert_eq!(read_back["entries"][0]["logic"], "QF_LIA");
     assert_eq!(read_back["entries"][0]["ratio"], 1.5_f64);
     assert_eq!(
@@ -95,7 +95,7 @@ fn test_history_entry_z3_ms_none_when_zero() {
     let entry = serde_json::json!({
         "benchmark": "trivial.smt2",
         "logic": "QF_BV",
-        "oxiz_ms": 0.5,
+        "nixie_ms": 0.5,
         "z3_ms": null,
         "ratio": null
     });
@@ -122,7 +122,7 @@ fn test_schema_version_is_one() {
     // schema_version must always be 1 in the current protocol.
     let snapshot = serde_json::json!({
         "schema_version": 1,
-        "oxiz_version": "0.2.1",
+        "nixie_version": "0.2.1",
         "git_sha": "unknown",
         "utc_date": "2026-04-20",
         "host_z3_version": null,

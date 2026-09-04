@@ -16,7 +16,7 @@ iterates the reason in place — the collect is our divergence.
 
 ## Results
 
-* Trajectory identity: holds (path-preserving; `oxiz-sat` suite 867/867).
+* Trajectory identity: holds (path-preserving; `nixie-sat` suite 867/867).
 * worker_550 at MAXC=20000: 228.78G -> 226.41G instructions (**1.0%**).
 * Corpus both-solve cells (72): geomean(base/new) = **0.9994**, new faster
   on 23/72 — neutral.

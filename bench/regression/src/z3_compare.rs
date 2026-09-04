@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Z3ComparisonEntry {
     pub benchmark: String,
-    pub oxiz_ms: f64,
+    pub nixie_ms: f64,
     pub z3_ms: Option<f64>,
     pub ratio: Option<f64>,
 }
@@ -59,9 +59,9 @@ pub fn run_z3_on_smt2(path: &Path, timeout_secs: u64) -> Option<Duration> {
     }
 }
 
-pub fn compute_ratio(oxiz_ms: f64, z3_ms: f64) -> Option<f64> {
+pub fn compute_ratio(nixie_ms: f64, z3_ms: f64) -> Option<f64> {
     if z3_ms > 0.0 {
-        Some(oxiz_ms / z3_ms)
+        Some(nixie_ms / z3_ms)
     } else {
         None
     }
@@ -88,15 +88,15 @@ pub fn summarize_ratios(entries: &[Z3ComparisonEntry]) -> RatioSummary {
 }
 
 pub fn compare_with_z3(
-    oxiz_timings: &[(String, f64)],
+    nixie_timings: &[(String, f64)],
     smt2_paths: &HashMap<String, PathBuf>,
 ) -> Z3ComparisonReport {
     let z3_version = detect_z3();
     let z3_available = z3_version.is_some();
 
-    let entries = oxiz_timings
+    let entries = nixie_timings
         .iter()
-        .map(|(benchmark, oxiz_ms)| {
+        .map(|(benchmark, nixie_ms)| {
             let z3_ms = if z3_available {
                 smt2_paths
                     .get(benchmark)
@@ -106,11 +106,11 @@ pub fn compare_with_z3(
                 None
             };
 
-            let ratio = z3_ms.and_then(|ms| compute_ratio(*oxiz_ms, ms));
+            let ratio = z3_ms.and_then(|ms| compute_ratio(*nixie_ms, ms));
 
             Z3ComparisonEntry {
                 benchmark: benchmark.clone(),
-                oxiz_ms: *oxiz_ms,
+                nixie_ms: *nixie_ms,
                 z3_ms,
                 ratio,
             }
@@ -139,7 +139,7 @@ mod tests {
     fn make_entry(benchmark: &str, ratio: Option<f64>) -> Z3ComparisonEntry {
         Z3ComparisonEntry {
             benchmark: benchmark.to_string(),
-            oxiz_ms: 1.0,
+            nixie_ms: 1.0,
             z3_ms: ratio.map(|r| 1.0 / r),
             ratio,
         }

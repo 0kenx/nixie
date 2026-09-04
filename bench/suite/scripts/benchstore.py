@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Canonical per-machine benchmark result store for OxiZ.
+"""Canonical per-machine benchmark result store for Nixie.
 
 Results live under ./precompile/<sha>/benchmark/runs/<suite>/ (gitignored,
 per machine). A measurement is identified by its join key:
@@ -49,7 +49,7 @@ import re
 import sys
 from pathlib import Path
 
-SCHEMA = "oxiz-bench-record/1"
+SCHEMA = "nixie-bench-record/1"
 ARM_ROLES = {"treatment", "null", "baseline", "reference"}
 VERDICTS = {"sat", "unsat", "unknown"}
 

@@ -11,8 +11,8 @@ quantifier-free `bvmul`, width ≥ 32, non-constant operands only.
 ## Baseline (the gap the slice targets)
 
 168-file mul-heavy sample (Sydr/uclid/calypto/wienand/brummayerbiere2/
-Goel/log-slicing/float; seed 42, 20 s, 8-way): **oxiz 53 solved vs z3
-101**; all 40 one-sided oxiz TOs were width-32+ `bvmul` shapes (Sydr
+Goel/log-slicing/float; seed 42, 20 s, 8-way): **nixie 53 solved vs z3
+101**; all 40 one-sided nixie TOs were width-32+ `bvmul` shapes (Sydr
 width-64 predicates, `smulov*`).
 
 ## Implementation
@@ -38,7 +38,7 @@ width-64 predicates, `smulov*`).
 - Scope: dispatch-only (`set_mul_abstraction_width` toggled around the
   blast); general CDCL(T) default is 0 = always exact, clause stream
   unchanged.  Preprocessing folds constant operands before the switch,
-  so only genuinely symbolic wide muls abstract.  `OXIZ_BV_CEGAR=0`
+  so only genuinely symbolic wide muls abstract.  `NIXIE_BV_CEGAR=0`
   disables for A/B.
 
 ## A/B (release, sequential, 15 s cap, 168 mul-heavy files)
@@ -92,7 +92,7 @@ width-64 predicates, `smulov*`).
    both the 32 and 64 thresholds.  Performance: geomean 1.079× (width 32)
    and 1.057× (width 64) vs exact — solved identical both times.  The
    value lemmas rarely converge on this corpus and the round tax is real,
-   so the division half ships behind `OXIZ_BV_CEGAR_DIV=<width>`
+   so the division half ships behind `NIXIE_BV_CEGAR_DIV=<width>`
    (default 0 = exact); the mul half keeps its measured win.  A
    division-dominated corpus that flips this verdict would justify
    revisiting the default.

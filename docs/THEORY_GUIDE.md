@@ -1,6 +1,6 @@
-# OxiZ Theory-Specific Guide
+# Nixie Theory-Specific Guide
 
-Detailed guide covering each theory solver in OxiZ: capabilities, performance
+Detailed guide covering each theory solver in Nixie: capabilities, performance
 characteristics, formulation tips, and common pitfalls.
 
 ---
@@ -88,7 +88,7 @@ with shared term detection for overlapping signatures.
 
 ### Common Pitfalls
 
-- Forgetting to declare `QF_LIA` causes OxiZ to use LRA (reals), which
+- Forgetting to declare `QF_LIA` causes Nixie to use LRA (reals), which
   may return rational solutions that do not satisfy integer constraints
 - Large coefficients (> 10^9) can cause numerical precision issues in the
   Simplex tableau; consider normalizing constraints
@@ -128,7 +128,7 @@ with shared term detection for overlapping signatures.
 - Simplex performance depends on constraint matrix density, not variable count
 - Avoid `distinct` on reals: expands to O(n^2) disequalities
 - For optimization over reals, the Simplex method naturally produces optimal
-  vertices; combine with OxiZ's optimizer
+  vertices; combine with Nixie's optimizer
 
 ### Performance Characteristics
 
@@ -405,7 +405,7 @@ with shared term detection for overlapping signatures.
 ### Strengths and Limitations
 
 Nonlinear arithmetic is decidable for reals (Tarski) but undecidable for
-integers (Hilbert's 10th problem). OxiZ uses NLSAT for both, which is
+integers (Hilbert's 10th problem). Nixie uses NLSAT for both, which is
 complete for QF_NRA but incomplete for QF_NIA.
 
 ### Formulation Tips
@@ -468,6 +468,6 @@ with union-find. O(n log n) for ground terms. Key axiom: `f(a) = f(b)` when
 
 ## Theory Combination
 
-OxiZ uses Nelson-Oppen to combine disjoint theories via equality propagation.
+Nixie uses Nelson-Oppen to combine disjoint theories via equality propagation.
 For best performance: minimize shared variables between theories, declare the
 most specific logic, and use `balanced()` or `thorough()` configuration.

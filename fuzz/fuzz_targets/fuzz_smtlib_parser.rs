@@ -6,8 +6,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxiz_core::ast::TermManager;
-use oxiz_core::smtlib::parse_script;
+use nixie_core::ast::TermManager;
+use nixie_core::smtlib::parse_script;
 
 fuzz_target!(|data: &[u8]| {
     // Convert bytes to string, allowing invalid UTF-8 to be filtered

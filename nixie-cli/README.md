@@ -1,0 +1,142 @@
+# nixie-cli
+
+Command-line interface for Nixie SMT solver.
+
+## Installation
+
+From crates.io:
+
+```bash
+cargo install nixie-cli
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/cool-japan/nixie
+cd nixie/nixie-cli
+cargo build --release
+# Binary will be at: target/release/nixie
+```
+
+## Usage
+
+### Solve SMT-LIB2 Files
+
+```bash
+# Solve a single file
+nixie input.smt2
+
+# Solve multiple files
+nixie file1.smt2 file2.smt2 file3.smt2
+
+# Read from stdin
+cat input.smt2 | nixie -
+```
+
+### Interactive Mode
+
+```bash
+nixie --interactive
+
+# Or use short flag
+nixie -i
+```
+
+In interactive mode, enter SMT-LIB2 commands directly:
+
+```
+nixie> (set-logic QF_LIA)
+nixie> (declare-const x Int)
+nixie> (assert (> x 0))
+nixie> (check-sat)
+sat
+nixie> (exit)
+```
+
+### Options
+
+```
+USAGE:
+    nixie [OPTIONS] [FILES]...
+
+ARGS:
+    <FILES>...    Input SMT-LIB2 files (use - for stdin)
+
+OPTIONS:
+    -i, --interactive    Run in interactive mode
+    -v, --verbose        Enable verbose output
+    -t, --timeout <MS>   Set timeout in milliseconds
+        --certified-mode Require an independently checked result certificate
+    -h, --help           Print help information
+    -V, --version        Print version information
+```
+
+### Certified mode
+
+`nixie --certified-mode input.smt2` applies a fail-closed exit gate. A `sat`
+candidate is returned only after the original assertion DAG evaluates to true
+under the concrete model, using cached exact integer, rational, and bit-vector
+operations. An `unsat` candidate is currently returned only when the
+propositional skeleton is contradictory without theory semantics: Nixie
+independently builds a complete Tseitin encoding, generates an LRAT refutation,
+and checks that refutation in process. A result whose certificate cannot be
+constructed or completely checked is reported as `unknown`.
+
+The checker design and current trusted boundary are documented in
+[`docs/CERTIFIED_MODE.md`](../docs/CERTIFIED_MODE.md).
+
+The command-line policy cannot be disabled by commands in the input script.
+Library users can select the same reversible SMT option with
+`(set-option :certified-mode true)`, or call `Context::require_certified_mode()`
+for the non-downgradable embedding policy.
+
+## Examples
+
+### Basic Satisfiability
+
+```bash
+echo '
+(set-logic QF_LIA)
+(declare-const x Int)
+(assert (> x 0))
+(assert (< x 10))
+(check-sat)
+' | nixie -
+```
+
+Output:
+```
+sat
+```
+
+### Unsatisfiable Problem
+
+```bash
+echo '
+(set-logic QF_LIA)
+(declare-const x Int)
+(assert (> x 10))
+(assert (< x 5))
+(check-sat)
+' | nixie -
+```
+
+Output:
+```
+unsat
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0    | Success (satisfiable or completed) |
+| 1    | Unsatisfiable |
+| 2    | Unknown/Timeout |
+| 3    | Parse error |
+| 4    | Other error |
+
+## License
+
+Apache-2.0

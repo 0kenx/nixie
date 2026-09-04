@@ -7,7 +7,7 @@ is close" did not trigger (A was not close).
 
 ## What was built (and reverted)
 
-`ClauseHeader` (`oxiz-sat/src/memory.rs`) lost `activity: f32`:
+`ClauseHeader` (`nixie-sat/src/memory.rs`) lost `activity: f32`:
 12 bytes → **8 bytes** (`len: u32, lbd: u16, flags_tier: u8, usage: u8`).
 Activity moved to a dense side table `Vec<f32>` keyed by `ClauseId` on
 `ClauseDatabase`; the arena lost `set/add/scale_activity`; `ClauseView`
@@ -30,7 +30,7 @@ Pre-registered gates (written before any measurement, per
    `noL-11-14` as control; (b) symmetric both-solve selection at a 12 s
    wall cap, geomean(base/new) ≥ **1.02×**; 1.00–1.05 = neutral, below
    the bar → revert and record. No wall-clock claims.
-3. **Soundness**: `oxiz-sat` suite (876 passed on the experimental tree),
+3. **Soundness**: `nixie-sat` suite (876 passed on the experimental tree),
    clippy/fmt clean, workspace battery on landing.
 
 Arms: old = `precompile/5f3ae49/cnf_solve`/`stats_solve`

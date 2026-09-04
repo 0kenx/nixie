@@ -1,4 +1,4 @@
-# Genuinely Novel Research Agenda for OxiZ
+# Genuinely Novel Research Agenda for Nixie
 
 Date: 2026-08-22
 Status: novelty hypotheses after a targeted collision screen, not publication claims
@@ -14,7 +14,7 @@ Established algorithms that should be implemented first are in
 
 ## Ranking
 
-| Rank | Hypothesis | Novel delta | OxiZ fit | Risk |
+| Rank | Hypothesis | Novel delta | Nixie fit | Risk |
 |---:|---|---|---|---|
 | 1 | Conflict-slice selective lowering for BV/FP | Materialize only the exact bit dependency cone implicated by a spurious model/conflict | High | High |
 | 2 | Pivot-delta care frontier | Drive equality-candidate refresh from exact simplex row/column mutations, with mandatory full final reconciliation | High | Medium |
@@ -25,8 +25,8 @@ Established algorithms that should be implemented first are in
 | 7 | Propagation-debt maintenance | Schedule SAT maintenance by sampled deterministic future-BCP debt rather than a fixed conflict cadence | Medium | Medium |
 | 8 | Reversible representation morphing | Promote/demote bounded regions among CNF, gates, and XOR with proof-carrying equivalence | Medium | Very high |
 
-The first five are plausible OxiZ research projects after their established prerequisites
-land. N6 begins with an oracle study because OxiZ has not yet demonstrated useful cut
+The first five are plausible Nixie research projects after their established prerequisites
+land. N6 begins with an oracle study because Nixie has not yet demonstrated useful cut
 aggregation headroom. The last two are measurement-first projects: do not build their
 full systems until an oracle/probe study demonstrates headroom beyond a matched null.
 
@@ -91,7 +91,7 @@ from UF+arithmetic combination.
 
 ### Mechanism
 
-OxiZ already has model-based reconciliation, care-atom encoding, sparse simplex
+Nixie already has model-based reconciliation, care-atom encoding, sparse simplex
 columns, and bidirectional equality propagation. Extend the production path with:
 
 - a monotonically deduplicated set of interface terms touched by bound updates,
@@ -111,7 +111,7 @@ check.
 ### Prior art and delta
 
 [Model-based theory combination](https://doi.org/10.1016/j.entcs.2008.04.079)
-reconciles theory models, and care graphs restrict equality pairs. OxiZ already
+reconciles theory models, and care graphs restrict equality pairs. Nixie already
 implements both ideas. The proposed delta—derived from opus P1—is to key incremental
 candidate invalidation to the exact simplex pivot/update trace rather than rescanning
 the whole care population after each repair.
@@ -183,7 +183,7 @@ cannot support a treatment-versus-null claim and must be reported separately.
 
 Reject if certified shortening is rare, theory re-checking dominates the saved work,
 proof obligations cannot be emitted, or no defensible matched-control population exists.
-The one-instance observation that learned clauses account for 31.6% of OxiZ reasons is
+The one-instance observation that learned clauses account for 31.6% of Nixie reasons is
 motivation for measurement, not evidence that theory vivification will help.
 
 ## N4. Downstream-aware theory explanations and lemma economics
@@ -367,7 +367,7 @@ sizes, and trigger points.
 
 Reject if prediction does not transfer to fresh seeds, if instrumentation costs more
 than one percent of deterministic work, or if treatment/null is not better than one.
-This bar is intentionally severe because recent OxiZ inprocessing policies have repeatedly
+This bar is intentionally severe because recent Nixie inprocessing policies have repeatedly
 failed matched-null evaluation.
 
 ## N8. Reversible representation morphing
@@ -426,10 +426,10 @@ preprocessing captures nearly all oracle value.
 | BV local-search/disagreement refinement order | A competing selector after the established BV CEGAR baseline, not an independent flagship. It must beat N1 and a random/permuted priority control under the same refinement budget |
 | Sequential heterogeneous-slice portfolio with lemma carryover | Configuration switching and portfolio state migration have substantial prior art; retaining sound same-instance theory lemmas is ordinary lemma persistence, while transporting theory hints is underspecified. Treat as engineering until a narrower delta is established |
 | Proof-graph distillation | Interesting supervision source, but collision risk with proof-based clause utility and learned deletion is high; needs a dedicated review |
-| GPU shadow-database inprocessing | The concurrency arrangement may be new, but GPU inprocessing exists and OxiZ has not shown a GPU-sized kernel bottleneck |
-| Hazard-rate portfolios, receiver-specific routing, proof-overlap partitioning | Plausible distributed research; OxiZ has no distributed substrate, so they are not current OxiZ projects |
+| GPU shadow-database inprocessing | The concurrency arrangement may be new, but GPU inprocessing exists and Nixie has not shown a GPU-sized kernel bottleneck |
+| Hazard-rate portfolios, receiver-specific routing, proof-overlap partitioning | Plausible distributed research; Nixie has no distributed substrate, so they are not current Nixie projects |
 | Online code evolution/hot-swapping | Rejected: nondeterministic, operationally unsafe, difficult to certify, and incompatible with reproducible solver behavior |
-| Online differentiable CDCL/theory embeddings | Rejected for now: hot-loop overhead, stale asynchronous state, weak UNSAT value, and no OxiZ soundness story |
+| Online differentiable CDCL/theory embeddings | Rejected for now: hot-loop overhead, stale asynchronous state, weak UNSAT value, and no Nixie soundness story |
 | “Causal” implication-graph rewiring | Rejected: the reports provide no identifiable causal estimand, valid intervention design, or proof-system semantics |
 | Float simplex with conflict-only exact checking | Known mixed-precision idea, not clearly novel; correctness cost is too high before SOI is measured |
 
@@ -449,7 +449,7 @@ the reports' generic competition protocols:
 - Validate all SAT models, check every available proof, and run the Z3 parity suite for
   theory/BV work.
 - Require a complete fallback. If a novel optimization cannot justify a consequence or
-  complete a model, OxiZ returns `Unknown` or continues through the trusted baseline.
+  complete a model, Nixie returns `Unknown` or continues through the trusted baseline.
 
 ## Recommended sequence
 
@@ -511,8 +511,8 @@ where entrants lose points to output correctness rather than to search power:
 | track | why we are positioned | what is missing |
 |---|---|---|
 | Model Validation | model construction is already verify-or-`Unknown` by policy | per-division MV dry runs; the QF_* model printer under adversarial inputs |
-| Unsat Core | `oxiz-sat/src/unsat_core.rs` + scope-consistent invalidation | core minimisation quality measurement; no study exists |
-| Proof Exhibition | Alethe/LFSC/DRAT already emitted (`oxiz-proof`) | end-to-end external checking of emitted proofs at competition scale |
+| Unsat Core | `nixie-sat/src/unsat_core.rs` + scope-consistent invalidation | core minimisation quality measurement; no study exists |
+| Proof Exhibition | Alethe/LFSC/DRAT already emitted (`nixie-proof`) | end-to-end external checking of emitted proofs at competition scale |
 | Incremental | push/pop discipline is an enforced project rule | incremental-track benchmark runs; none recorded |
 
 None of that is research — it is verification work on machinery that exists, aimed at the
@@ -656,10 +656,10 @@ which is precisely the situation in which a fixed schedule is the wrong control 
 ### The unfollowed measurement
 
 From the established-candidates document, recorded and never chased: on `6s167-opt`,
-learned clauses supplied **31.6%** of OxiZ's propagation reasons versus **7.6%** in the
+learned clauses supplied **31.6%** of Nixie's propagation reasons versus **7.6%** in the
 instrumented CaDiCaL reference. Downstream, all measured in the standing-gap study:
 
-| observable | oxiz | cadical |
+| observable | nixie | cadical |
 |---|---|---|
 | propagation reasons from learned clauses | 31.6% | 7.6% |
 | reduction deletions / conflict | 96.2% | 76.3% |
@@ -795,7 +795,7 @@ remains the right gate for the *online* version; N13 does not depend on it.
 Treat CNF as an object file and run decompile → optimise → recompile:
 
 1. **Lift.** Recover cardinality, at-most-one, PB, XOR and gate structure. Substantial
-   machinery exists: `oxiz-sat/src/cardinality.rs`, `xor.rs`, `gate.rs`,
+   machinery exists: `nixie-sat/src/cardinality.rs`, `xor.rs`, `gate.rs`,
    `solver/bva.rs`, `solver/congruence.rs`.
 2. **Optimise at the recovered level**, where the constraint is a first-class object rather
    than a clause set.

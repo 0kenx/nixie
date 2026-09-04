@@ -1,0 +1,91 @@
+[package]
+name = "nixie-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core AST, Sorts, and Traits for Nixie SMT Solver"
+keywords = ["smt", "ast", "logic"]
+categories = ["algorithms", "data-structures"]
+
+[dependencies]
+# Always available (no_std compatible)
+indexmap = { workspace = true, default-features = false }
+thiserror = { workspace = true, default-features = false }
+tracing = { workspace = true, default-features = false, optional = true }
+smallvec = { workspace = true }
+rustc-hash = { workspace = true }
+num-rational = { workspace = true, default-features = false, features = ["num-bigint"] }
+num-bigint = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }
+num-integer = { workspace = true, default-features = false }
+hashbrown.workspace = true
+portable-atomic = { workspace = true }
+portable-atomic-util = { workspace = true }
+nixie-math = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see nixie-time).
+nixie-time = { workspace = true }
+
+# Optional (std-only)
+# All of these are defined under [workspace.dependencies] (root Cargo.toml)
+# and inherited here per the workspace-inheritance policy.
+lasso = { workspace = true, optional = true, features = ["multi-threaded"] }
+bumpalo = { workspace = true, features = ["collections"], optional = true }
+winnow = { workspace = true, optional = true }
+# Behind the `scripting` feature (see [features]); named with `dep:` there, so
+# this line does not also create an implicit `rhai` feature. An implicit one
+# would be a trap rather than a courtesy: `features = ["rhai"]` would pull the
+# crate -- and the MPL-2.0 `smartstring` it depends on -- into the licence
+# graph while `ScriptableTactic` stayed compiled out, which is the exact
+# combination this feature exists to make impossible. (Ported from upstream
+# v0.3.3.)
+rhai = { workspace = true, features = ["sync"], optional = true }
+wide = { workspace = true, optional = true }
+rayon = { workspace = true, optional = true }
+parking_lot = { workspace = true, optional = true }
+
+[features]
+# `property-tests` joins the default set (matching `nixie-solver` and upstream
+# v0.3.3): the proptest suites run on a plain `cargo test -p nixie-core`
+# instead of only when someone remembers the flag.
+# `scripting` is on by default, so a consumer that says nothing keeps exactly
+# the API surface it had before this feature existed. It is separated out of
+# `std` rather than folded into it because the two answer different questions:
+# `std` is "does this target have an allocator and an OS", `scripting` is "does
+# this build let users write tactics in Rhai". A consumer that only encodes
+# goals and calls `check-sat` wants the first without the second, and writes
+# `default-features = false, features = ["std"]` -- which keeps the licence
+# graph free of rhai's MPL-2.0 `smartstring` dependency.
+default = ["std", "scripting", "property-tests"]
+std = [
+    "nixie-time/std",
+    "lasso",
+    "bumpalo",
+    "winnow",
+    "wide",
+    "rayon",
+    "parking_lot",
+    "tracing",
+    "tracing/std",
+    "thiserror/std",
+    "indexmap/std",
+    "num-rational/std",
+    "num-bigint/std",
+    "num-traits/std",
+    "num-integer/std",
+    "rustc-hash/std",
+    "nixie-math/std",
+]
+# Rhai tactic scripting; implies `std` (the engine needs an OS), never the
+# reverse.
+scripting = ["dep:rhai", "std"]
+arena = ["bumpalo"]
+profiling = ["std"]
+property-tests = []
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints.clippy]
+unwrap_used = "deny"

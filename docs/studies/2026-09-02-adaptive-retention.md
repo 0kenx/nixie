@@ -20,7 +20,7 @@ is ranking by noise (or anti-signal), and usage should rank instead.
 
 ## Treatment
 
-`OXIZ_REDUCE_ADAPT=1` (implies the cadical-reduce schedule): at each
+`NIXIE_REDUCE_ADAPT=1` (implies the cadical-reduce schedule): at each
 reduction, after tier protection, compute one signal over the candidate
 set —
 
@@ -35,7 +35,7 @@ deletion counts, target %) is identical to both prior arms.
 
 ## Matched null
 
-`OXIZ_REDUCE_ADAPT_NULL=1`: the *same* signal computation, same threshold,
+`NIXIE_REDUCE_ADAPT_NULL=1`: the *same* signal computation, same threshold,
 same code path and same two rankings — but the choice is **inverted**
 (`glue_informative → rank by usage`). Identical physical operations and
 per-instance decision counts, opposite semantic correlation. If the
@@ -67,8 +67,8 @@ regimes online, the adaptive arm should capture most of the 6s167 win at
 clean negative on "cheap online signal detection" and the lead passes to
 per-instance portfolio policies.
 
-## Sound re-measurement (post `3993905`; treat = `OXIZ_REDUCE_ADAPT`,
-null = `OXIZ_REDUCE_ADAPT_NULL`, 12 × 10 seeds, verdict-checked)
+## Sound re-measurement (post `3993905`; treat = `NIXIE_REDUCE_ADAPT`,
+null = `NIXIE_REDUCE_ADAPT_NULL`, 12 × 10 seeds, verdict-checked)
 
 | instance | treat med | null med | T/N | | instance | treat med | null med | T/N |
 |---|---|---|---|---|---|---|---|---|

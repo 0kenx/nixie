@@ -37,7 +37,7 @@ realloc + memmove; the annotate view shows the allocator family
 top of the eliminate self-cost. cadical keeps its occurrence structure
 across the whole `elim` phase.
 
-Round structure measured on g2-slp (`OXIZ_LOG_ELIM`): phase 1 round 1
+Round structure measured on g2-slp (`NIXIE_LOG_ELIM`): phase 1 round 1
 eliminates 59 678 vars via 6.2 M resolutions; **round 2 then pays 861 k
 resolutions plus a full 323 k-clause reconnect for 281 vars**, and
 phases 2–3 reconnect 789 k clauses per round for triple-digit yields.
@@ -110,7 +110,7 @@ measurement lesson: allocator counts must be priced (cycles/alloc
    the inclusive tree puts ~10 % in the `ps×ns` pair-loop plumbing and
    6.6 % in backward subsumption; the round structure pays a full
    789 k-clause reconnect + watch rebuild per round for
-   triple-digit yields in rounds 2+ (`OXIZ_LOG_ELIM` transcript
+   triple-digit yields in rounds 2+ (`NIXIE_LOG_ELIM` transcript
    recorded). The next eliminate lever, if anyone takes it, is the
    **round-2+ economics** (schedule/schedule-gating — heuristic class,
    matched-null required), not data-structure capacity.

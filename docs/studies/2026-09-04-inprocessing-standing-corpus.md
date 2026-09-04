@@ -1,6 +1,6 @@
 # Inprocessing A/B on the standing corpus: pre-registration (2026-09-04)
 
-The module doc at `oxiz-sat/src/config_presets.rs` says the presets'
+The module doc at `nixie-sat/src/config_presets.rs` says the presets'
 `enable_inprocessing: false` verdict ("measured net-negative") predates the
 landed cadical amortizers (trie-shared vivification, budgeted transred
 rounds, on-the-fly vivify subsumption) and should be revisited.  The
@@ -103,17 +103,17 @@ mechanism with the measurement that proves it.
 `precompile/dcfc089/stats_solve` (env-unset) vs the 2026-09-01 standing
 binary `7e644a7`: **54/54 files verdict- AND conflicts-bit-identical** —
 the SAT core has not drifted since the standing study.  Fresh 3-arm
-standing pass (54 files × {oxiz, cadical 3.0.1, kissat 4.0.4}, 60 s cap,
+standing pass (54 files × {nixie, cadical 3.0.1, kissat 4.0.4}, 60 s cap,
 pinned cores 3/4/5):
 
 | arm | solved / 54 | conflicts geomean vs kissat (34 both-solved) |
 |---|---|---|
-| oxiz `off` | 50 | **1.332×** (reproduces the 1.33× factor) |
+| nixie `off` | 50 | **1.332×** (reproduces the 1.33× factor) |
 | cadical 3.0.1 | 51 | — |
 | kissat 4.0.4 | 50 | 1.00× |
 
 0 verdict mismatches across all arms on all 54 files.  (Wall geomeans
-this pass — oxiz/cadical 0.80×, oxiz/kissat 1.00× over 47 three-solved —
+this pass — nixie/cadical 0.80×, nixie/kissat 1.00× over 47 three-solved —
 are NOT comparable to the 2026-09-01 numbers (1.27×/1.50×): the machine
 carried unrelated load during this pass; wall is sanity-only, and the
 conflict counters are load-invariant.)
@@ -135,7 +135,7 @@ The effect is strongly bimodal, and the two halves are both real:
   0.27×, worker_550 0.36×, qwh.50 0.37×, summle_X4044 0.38×.
 * **9 files sat→TO** (Timetable, noL-11-14, af-synthesis, g2-slp,
   crypto1, x9-08075, mp1-Nb7T42, 64_25, rbsat) and 1 TO→sat
-  (circuit_64i).  mp1-Nb7T42 and rbsat are files *only* oxiz-`off`
+  (circuit_64i).  mp1-Nb7T42 and rbsat are files *only* nixie-`off`
   solves (kissat TOs on both) — the bundle destroys two unique wins.
 
 **Verdict: presets stay off, now on the strength of a deterministic-
@@ -222,7 +222,7 @@ bundle we have already recovers only the schedule component.
   growth, learned/original ratio, recent walk/lucky success).  Any such
   policy climbs the §10 ladder with a matched null: identical round
   schedule and budgets, pass content scrambled (subsume/vivify candidate
-  order by hash instead of occurrence/size rank — the `OXIZ_SBVA_NULL`
+  order by hash instead of occurrence/size rank — the `NIXIE_SBVA_NULL`
   precedent), reported as treatment/null over ≥10 seeds.
 
 ### Store
@@ -272,7 +272,7 @@ was byte-identical after the fix):
    default suite completes well inside the cap — **re-verified after the
    change: the default pass is 10 466/10 466 in 65 s (12 skipped, incl.
    the canary), and the canary run explicitly via
-   `cargo nextest run -p oxiz-solver --run-ignored only -E
+   `cargo nextest run -p nixie-solver --run-ignored only -E
    'test(pete_cxs_bp_is_unsat_on_every_trajectory)'` PASSES in 313.5 s**.
    It stays runnable and must stay on the pre-landing checklist for any
    change touching arrangement / congruence / model checking.

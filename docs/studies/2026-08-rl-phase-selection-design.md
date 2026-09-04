@@ -1,4 +1,4 @@
-# RL Phase Selection for OxiZ's CDCL Core — Design
+# RL Phase Selection for Nixie's CDCL Core — Design
 
 > **Status: architecture A1 was cancelled.** The experiment this design proposed was run, and
 > the rephase action-selection decision point it targets carries no learnable signal. See
@@ -7,7 +7,7 @@
 > Retained because the knob inventory in §1 and the reference-solver survey are still accurate
 > and useful.
 
-Grounded in the actual code: `oxiz-sat/src/`, `../temp/cadical/src/`, `../temp/z3/src/sat/`,
+Grounded in the actual code: `nixie-sat/src/`, `../temp/cadical/src/`, `../temp/z3/src/sat/`,
 `../temp/cvc5/src/`. Every claim below cites a file:line that was read. **All paths are
 relative to the repository root**, not to this file's location.
 
@@ -42,7 +42,7 @@ is already known to work and asks only "reorder it adaptively".
 
 **Recommendation: replace the round-robin, not phase saving.**
 
-### 0.2 OxiZ already contains most of the action space — as dead code
+### 0.2 Nixie already contains most of the action space — as dead code
 
 | Module | Contents | Wired into `solver/`? |
 |---|---|---|
@@ -61,9 +61,9 @@ Consequence: a large fraction of "build the action space" is really "wire up and
 existing modules", and those modules have never been exercised by the search, so they are
 presumed-broken until tested.
 
-### 0.3 OxiZ is missing the target-phase array — the biggest SAT-side phase mechanism
+### 0.3 Nixie is missing the target-phase array — the biggest SAT-side phase mechanism
 
-| Phase array | CaDiCaL (`phases.hpp`) | OxiZ |
+| Phase array | CaDiCaL (`phases.hpp`) | Nixie |
 |---|---|---|
 | `saved` | ✅ | ✅ `phase: Vec<bool>` (`mod.rs:624`) |
 | `best` | ✅ | ✅ `best_phase` (`mod.rs:641`) — but see below |
@@ -74,16 +74,16 @@ presumed-broken until tested.
 Two fidelity gaps beyond the missing array:
 
 1. **Update frequency.** CaDiCaL calls `update_target_and_best()` from *every* `backtrack()`
-   (`backtrack.cpp:84`), keyed on `no_conflict_until`. OxiZ updates `best_phase` only inside
+   (`backtrack.cpp:84`), keyed on `no_conflict_until`. Nixie updates `best_phase` only inside
    `restart()` (`decide.rs:422-429`) and only by scanning the whole trail. Between restarts,
    the best trail is invisible.
 2. **Reset semantics.** CaDiCaL resets `target_assigned = 0` on every rephase, and
    `best_assigned = 0` only when the rephase was `'B'` (`backtrack.cpp:51-57`). Target is
-   short-horizon, best is long-horizon. OxiZ collapses both into one array with one horizon.
+   short-horizon, best is long-horizon. Nixie collapses both into one array with one horizon.
 
 `decide_phase()` (`decide.cpp:120`) consults, in order:
 `force_saved_phase → forced → initial(if forcephase) → target(if stable) → saved → initial`.
-OxiZ's `decision_polarity()` (`mod.rs:1491`) consults:
+Nixie's `decision_polarity()` (`mod.rs:1491`) consults:
 `deterministic → random(2%) → saved ^ inverted`.
 
 **This must be closed before any RL experiment.** Otherwise the policy learns to compensate for
@@ -91,9 +91,9 @@ a missing baseline mechanism, and the result won't transfer or replicate.
 
 ### 0.4 Crate dependency direction blocks the obvious architecture
 
-`oxiz-ml` depends on `oxiz-sat` (`oxiz-ml/Cargo.toml:14`), not the reverse. A policy living in
-`oxiz-ml` cannot be called from the search loop except through a trait object owned by
-`oxiz-sat`.
+`nixie-ml` depends on `nixie-sat` (`nixie-ml/Cargo.toml:14`), not the reverse. A policy living in
+`nixie-ml` cannot be called from the search loop except through a trait object owned by
+`nixie-sat`.
 
 There is a precedent — `external_branching: Option<BoxedBranchingHeuristic>`
 (`solver/mod.rs:290`) — but **do not copy its shape**. `pick_branch_var` builds a fresh
@@ -101,8 +101,8 @@ There is a precedent — `external_branching: Option<BoxedBranchingHeuristic>`
 decision** (`decide.rs:41-45`). That is O(n) allocation per decision. It is unusable for
 anything on the hot path and is itself worth flagging as a performance bug.
 
-Also relevant: `oxiz-sat` is `no_std`-capable (`oxiz-core` with `default-features = false`,
-`libm` dependency). Any policy that ships inside `oxiz-sat` must be `no_std` + `libm`, no `std::`
+Also relevant: `nixie-sat` is `no_std`-capable (`nixie-core` with `default-features = false`,
+`libm` dependency). Any policy that ships inside `nixie-sat` must be `no_std` + `libm`, no `std::`
 float intrinsics.
 
 ### 0.5 `Solver` is not `Clone`
@@ -123,7 +123,7 @@ time-dependent policy makes the solver nondeterministic, which breaks:
 - the differential fuzzing that this codebase relies on.
 
 Time may appear in the *offline* reward. The *online* state must be built from tick counters.
-OxiZ already tracks per-mode ticks (`ticks_focused`, `ticks_stable`, `mod.rs:669-670`), which is
+Nixie already tracks per-mode ticks (`ticks_focused`, `ticks_stable`, `mod.rs:669-670`), which is
 CaDiCaL's `stats.ticks.search` — a deterministic proxy for time. Use those.
 
 ### 0.7 Soundness posture (state this explicitly, it is a real advantage here)
@@ -154,13 +154,13 @@ No harder / later set is present. §5.1 addresses the split.
 
 ## 1. Knob inventory
 
-### 1A. Live in OxiZ today
+### 1A. Live in Nixie today
 
 Phase-proper:
 
 | Knob | Location | Default | Note |
 |---|---|---|---|
-| `random_polarity_prob` | `mod.rs:193,348` | `0.02` | Random phase on 2% of *every* decision. CaDiCaL has no such knob (its `randec` randomizes the *variable*, not the phase). Z3 has `PS_RANDOM` as a global mode. This is an OxiZ invention — **ablate it**, it may be pure noise injection. |
+| `random_polarity_prob` | `mod.rs:193,348` | `0.02` | Random phase on 2% of *every* decision. CaDiCaL has no such knob (its `randec` randomizes the *variable*, not the phase). Z3 has `PS_RANDOM` as a global mode. This is an Nixie invention — **ablate it**, it may be pure noise injection. |
 | `rephase_interval` | `mod.rs:268,374` | `0` (**off**) | Restarts between phase inversions |
 | `phase_inverted` | `mod.rs:636` | — | Global XOR on saved phase |
 | `phase[]` | `mod.rs:624` | — | Saved phase; written in `backtrack_with_phase_saving` (`decide.rs:233`) |
@@ -183,7 +183,7 @@ Adjacent knobs that co-determine phase effectiveness (must be frozen across arms
 | `enable_equiv_substitution`, `enable_bve` | `false`, `false` |
 
 `enable_chronological_backtrack` deserves special note: Shaw & Meel's LSIDS result is
-specifically about the phase-saving/chrono-backtracking interaction, and OxiZ has chrono
+specifically about the phase-saving/chrono-backtracking interaction, and Nixie has chrono
 **on by default**. It also already tracks `chrono_backtracks` / `non_chrono_backtracks`
 (`mod.rs:418-419`) — a ready-made feature.
 
@@ -193,13 +193,13 @@ specifically about the phase-saving/chrono-backtracking interaction, and OxiZ ha
 `on_learned_clause`), `AgilityTracker` (phase-flip rate), `local_search` (walk),
 `MLBranching`. Each needs validation before use — none has ever run inside the search.
 
-### 1C. In CaDiCaL, absent from OxiZ
+### 1C. In CaDiCaL, absent from Nixie
 
 **Phase arrays / selection**
 - `phases.target` + `opts.target` (0/1/2, 2 = stable-only)
 - `phases.forced` + `opts.forcephase` — force initial phase globally
 - `phases.prev` — pre-walk snapshot
-- `opts.phase` — initial phase polarity (OxiZ hardcodes `false` via `unwrap_or(false)`)
+- `opts.phase` — initial phase polarity (Nixie hardcodes `false` via `unwrap_or(false)`)
 - `force_saved_phase` flag (`decide.cpp:126`)
 - `opts.stubbornIOfocused` — periodic I/O phase forcing in focused mode
 
@@ -207,10 +207,10 @@ specifically about the phase-saving/chrono-backtracking interaction, and OxiZ ha
 - `opts.rephase` 0/1/2 (2 = stable-only, and then measured in `stats.stabconflicts` not
   `stats.conflicts` — `rephase.cpp:29-31`)
 - `opts.rephaseint` with **arithmetic** growth `delta = rephaseint * (total + 1)`
-  (OxiZ's dead `RephasingManager` uses *geometric* `×1.1` — divergence from reference)
+  (Nixie's dead `RephasingManager` uses *geometric* `×1.1` — divergence from reference)
 - `lim.rephased[stable]` — **separate action counters per mode**
 - `shuffle_scores()` / `shuffle_queue()` fired at the *end* of every rephase
-  (`rephase.cpp` tail) — coupling between rephase and branching order that OxiZ lacks entirely
+  (`rephase.cpp` tail) — coupling between rephase and branching order that Nixie lacks entirely
 - `opts.shuffle`, `shufflequeue`, `shufflescores`, `shufflerandom`
 
 **Walk / local search**
@@ -226,7 +226,7 @@ specifically about the phase-saving/chrono-backtracking interaction, and OxiZ ha
 - `luckyearly`, `luckylate`, `luckyassumptions`
 - `reducetarget`, tier-based clause management (`tier.cpp`)
 
-### 1D. In Z3, absent from OxiZ
+### 1D. In Z3, absent from Nixie
 
 - **`phase_selection` enum as first-class config** (`sat_config.h:26`): `PS_ALWAYS_TRUE`,
   `PS_ALWAYS_FALSE`, `PS_BASIC_CACHING`, `PS_SAT_CACHING`, `PS_LOCAL_SEARCH`, `PS_FROZEN`,
@@ -242,30 +242,30 @@ specifically about the phase-saving/chrono-backtracking interaction, and OxiZ ha
   ```
   A learned replacement for *this predicate* is one of the highest-value, lowest-risk targets
   in the whole design (see architecture A3).
-- On toggle: `std::swap(m_fast_glue_backup, m_fast_glue_avg)` + slow (`2994-2995`) — OxiZ has
+- On toggle: `std::swap(m_fast_glue_backup, m_fast_glue_avg)` + slow (`2994-2995`) — Nixie has
   the analogue (`glue_current`/`glue_saved` swap, `decide.rs:390`) but keyed to stable/focused,
   not to a SAT/UNSAT posture.
 - `m_phase_sticky`, `m_rephase_base` (`sat_config.h:92-93`)
 - `m_ext->get_phase(next)` — theory phase override, checked *before* the mode switch
 
-### 1E. In CVC5, absent from OxiZ
+### 1E. In CVC5, absent from Nixie
 
 CVC5 is thin on phase *heuristics* but rich on **theory-driven phase**, which matters because
-OxiZ is a CDCL(T) solver:
+Nixie is a CDCL(T) solver:
 
 - `PropEngine::preferPhase(TNode, bool)` (`prop/prop_engine.cpp:375`) — soft hint
 - `requirePhase` (`prop/theory_proxy.cpp:380-398`) — **hard** requirement returned alongside the
-  decision literal; `cdclt_propagator.cpp:340` honours it. OxiZ's `deterministic_phase` is the
+  decision literal; `cdclt_propagator.cpp:340` honours it. Nixie's `deterministic_phase` is the
   soft version; there is no hard version.
 - MiniSat `polarity` vector with a **sticky bit**: `polarity[v] = int(b) | 0x2`
   (`prop/minisat/core/Solver.h:793`) — one array encodes both "preferred" and "must always".
-  Cheaper than OxiZ's `Vec<Option<bool>>`.
+  Cheaper than Nixie's `Vec<Option<bool>>`.
 - `phase_saving` level 0/1/2 (`Solver.h:345`) — limited vs full phase saving
 - Justification heuristic (`decision/justification_strategy.cpp`) — derives *both* variable and
   polarity from formula structure. A structural phase prior, and a strong non-learned baseline
   that the report does not consider.
 - `decisionMode` option; `--random-freq` (`prop_options.toml:26`, default 0.0 — note CVC5
-  defaults random decisions **off**, unlike OxiZ's 0.02)
+  defaults random decisions **off**, unlike Nixie's 0.02)
 
 ---
 
@@ -309,7 +309,7 @@ the counterfactual dataset from E1 as a warm start.
 
 ### A3 — Learned search-posture classifier ⭐ highest value/risk ratio
 
-Replace Z3's `m_trail.size() > 0.50 * m_trail_avg` and/or OxiZ's tick-threshold
+Replace Z3's `m_trail.size() > 0.50 * m_trail_avg` and/or Nixie's tick-threshold
 `check_stabilize` (`decide.rs:370`) with a small learned binary classifier over the same
 feature vector. Outputs SAT-posture vs UNSAT-posture, which then selects the phase *source*
 (`best`/`target` vs `saved`) exactly as Z3's `PS_SAT_CACHING` does.
@@ -328,7 +328,7 @@ occurrence ratio. Output: follow-saved vs flip (so the network defaults to phase
 zero output).
 
 Note: this is where the report's LSIDS action belongs — as a *feature* (signed literal
-activity margin), not an action. OxiZ has no signed literal activity; adding it is a
+activity margin), not an action. Nixie has no signed literal activity; adding it is a
 prerequisite and a standalone hand-engineered baseline worth measuring on its own (H0b).
 
 ### A5 — Per-decision GNN — rejected
@@ -341,12 +341,12 @@ with variable selection. Agrees with the report.
 
 Two paths, both needed:
 
-- **Training/research path**: a new `PhasePolicy` trait in `oxiz-sat/src/solver/heuristic.rs`,
-  `Option<Box<dyn PhasePolicy>>` in `SolverConfig`, implemented in `oxiz-ml`. Respects the
+- **Training/research path**: a new `PhasePolicy` trait in `nixie-sat/src/solver/heuristic.rs`,
+  `Option<Box<dyn PhasePolicy>>` in `SolverConfig`, implemented in `nixie-ml`. Respects the
   dependency direction. **Design the callback to take a `&PhaseFeatures` struct of scalars and
   return an enum** — never a `Vec` of candidates. Do not repeat `BranchingHeuristic::select`'s
   O(n)-alloc-per-call mistake.
-- **Shipping path**: weights baked into `oxiz-sat` as a `const [[f32; N]; M]`, behind a cargo
+- **Shipping path**: weights baked into `nixie-sat` as a `const [[f32; N]; M]`, behind a cargo
   feature, `no_std` + `libm`. No file I/O, no allocation, no `std` floats.
 
 ---
@@ -379,7 +379,7 @@ Wiring it is cheap and is independently useful.
 Ordered so that each cheap experiment can kill the expensive ones downstream.
 
 ### H0 — Baseline gap (must run first)
-*Claim*: OxiZ's phase machinery is materially behind CaDiCaL's; closing it (A0) produces a gain
+*Claim*: Nixie's phase machinery is materially behind CaDiCaL's; closing it (A0) produces a gain
 independent of any learning.
 *Predicts*: target phases + real rephase schedule improves PAR-2 on `satcomp2025/main_easy_mid`.
 *Kill*: none — this runs regardless. It defines the control arm.
@@ -490,7 +490,7 @@ Steps 1–3 involve no machine learning and are worth doing on their own merits.
 
 ## 6. Deliverables that hold value even if the RL result is negative
 
-- CaDiCaL-fidelity phase machinery in `oxiz-sat` (target phases, faithful rephase schedule)
+- CaDiCaL-fidelity phase machinery in `nixie-sat` (target phases, faithful rephase schedule)
 - Deterministic replay / counterfactual-rollout harness
 - Five orphan modules either wired-and-tested or deleted
 - Wall-clock-free feature instrumentation

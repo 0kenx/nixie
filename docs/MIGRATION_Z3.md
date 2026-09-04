@@ -1,6 +1,6 @@
-# Z3 to OxiZ Migration Guide
+# Z3 to Nixie Migration Guide
 
-Complete guide for migrating from Z3 to OxiZ, covering API mappings,
+Complete guide for migrating from Z3 to Nixie, covering API mappings,
 feature comparisons, and common migration patterns.
 
 ---
@@ -8,8 +8,8 @@ feature comparisons, and common migration patterns.
 ## Table of Contents
 
 1. [Architecture Differences](#architecture-differences)
-2. [API Mapping: Z3 Python to OxiZ Rust](#api-mapping-z3-python-to-oxiz-rust)
-3. [API Mapping: Z3 Python to OxiZ Python](#api-mapping-z3-python-to-oxiz-python)
+2. [API Mapping: Z3 Python to Nixie Rust](#api-mapping-z3-python-to-nixie-rust)
+3. [API Mapping: Z3 Python to Nixie Python](#api-mapping-z3-python-to-nixie-python)
 4. [SMT-LIB2 Compatibility](#smt-lib2-compatibility)
 5. [Feature Comparison](#feature-comparison)
 6. [Common Migration Patterns](#common-migration-patterns)
@@ -20,7 +20,7 @@ feature comparisons, and common migration patterns.
 
 ## Architecture Differences
 
-| Aspect | Z3 | OxiZ |
+| Aspect | Z3 | Nixie |
 |--------|-----|------|
 | Language | C++ with Python/C#/Java bindings | Pure Rust with Python (PyO3) binding |
 | Term management | GC-based Context | Explicit `TermManager` (arena-based) |
@@ -29,12 +29,12 @@ feature comparisons, and common migration patterns.
 | no_std support | No | Yes (core solver works without std) |
 
 Key philosophical difference: Z3's Python API uses operator overloading
-(`x + y`, `x == y`) for term construction. OxiZ uses explicit builder methods
+(`x + y`, `x == y`) for term construction. Nixie uses explicit builder methods
 (`tm.mk_add`, `tm.mk_eq`) or SMT-LIB2 string parsing.
 
 ---
 
-## API Mapping: Z3 Python to OxiZ Rust
+## API Mapping: Z3 Python to Nixie Rust
 
 ### Solver Creation
 
@@ -45,9 +45,9 @@ s = z3.Solver()
 s.set("timeout", 5000)
 ```
 
-**OxiZ (Rust):**
+**Nixie (Rust):**
 ```rust
-use oxiz_solver::{Solver, SolverConfig};
+use nixie_solver::{Solver, SolverConfig};
 
 let mut config = SolverConfig::balanced();
 config.timeout_ms = 5000;
@@ -64,9 +64,9 @@ p = z3.Bool('p')
 bv = z3.BitVec('bv', 32)
 ```
 
-**OxiZ (Rust):**
+**Nixie (Rust):**
 ```rust
-use oxiz_core::ast::TermManager;
+use nixie_core::ast::TermManager;
 
 let mut tm = TermManager::new();
 let x = tm.mk_var("x", tm.sorts.int_sort);
@@ -83,7 +83,7 @@ constraint = z3.And(x + y == 10, x > 0, y > 0)
 s.add(constraint)
 ```
 
-**OxiZ (Rust):**
+**Nixie (Rust):**
 ```rust
 use num_bigint::BigInt;
 
@@ -105,9 +105,9 @@ if s.check() == z3.sat:
     print(m[x], m[y])
 ```
 
-**OxiZ (Rust):**
+**Nixie (Rust):**
 ```rust
-use oxiz_solver::SolverResult;
+use nixie_solver::SolverResult;
 
 match solver.check(&mut tm) {
     SolverResult::Sat => {
@@ -122,10 +122,10 @@ match solver.check(&mut tm) {
 
 ### Z3 Compatibility Layer
 
-OxiZ provides a Z3-style API wrapper for faster migration:
+Nixie provides a Z3-style API wrapper for faster migration:
 
 ```rust
-use oxiz_solver::z3_compat::{Z3Config, Z3Context, Z3Solver, Bool, Int, SatResult};
+use nixie_solver::z3_compat::{Z3Config, Z3Context, Z3Solver, Bool, Int, SatResult};
 
 let cfg = Z3Config::new();
 let ctx = Z3Context::new(&cfg);
@@ -144,12 +144,12 @@ match solver.check() {
 
 ---
 
-## API Mapping: Z3 Python to OxiZ Python
+## API Mapping: Z3 Python to Nixie Python
 
-| Z3 Python | OxiZ Python | Notes |
+| Z3 Python | Nixie Python | Notes |
 |-----------|-------------|-------|
-| `z3.Solver()` | `oxiz.Solver()` | Direct equivalent |
-| `z3.Context()` | `oxiz.TermManager()` | Separate term construction from solving |
+| `z3.Solver()` | `nixie.Solver()` | Direct equivalent |
+| `z3.Context()` | `nixie.TermManager()` | Separate term construction from solving |
 | `z3.Bool('p')` | `tm.mk_var('p', 'Bool')` | Sort as string |
 | `z3.Int('x')` | `tm.mk_var('x', 'Int')` | |
 | `z3.Real('r')` | `tm.mk_var('r', 'Real')` | |
@@ -175,10 +175,10 @@ match solver.check() {
 
 ## SMT-LIB2 Compatibility
 
-OxiZ supports standard SMT-LIB2 input files:
+Nixie supports standard SMT-LIB2 input files:
 
 ```bash
-oxiz solve problem.smt2
+nixie solve problem.smt2
 ```
 
 ### Supported Commands
@@ -206,7 +206,7 @@ oxiz solve problem.smt2
 
 ### SMT-LIB2 Differences
 
-- OxiZ accepts `(set-option :timeout N)` in milliseconds
+- Nixie accepts `(set-option :timeout N)` in milliseconds
 - MBQI options use `(set-option :mbqi.max_instantiations N)`
 - Proof format uses a simplified format (not full SMT-LIB2 proof format)
 
@@ -214,7 +214,7 @@ oxiz solve problem.smt2
 
 ## Feature Comparison
 
-| Feature | Z3 | OxiZ | Notes |
+| Feature | Z3 | Nixie | Notes |
 |---------|-----|------|-------|
 | QF_LIA | Full | Full | Omega test + cutting planes |
 | QF_LRA | Full | Full | Dual Simplex |
@@ -240,7 +240,7 @@ oxiz solve problem.smt2
 | Recursive functions | Full | Partial | |
 | Parallel tactics (ParOr) | Full | Portfolio | CLI `--parallel` |
 | no_std / embedded | No | Yes | Core solver is no_std |
-| WASM target | No | Yes | Via oxiz-wasm |
+| WASM target | No | Yes | Via nixie-wasm |
 | Pure Rust / no C deps | No (C++) | Yes | Zero C/Fortran dependencies |
 
 ---
@@ -258,11 +258,11 @@ s.add(x + y == 10, x > 0, y > 0)
 print(s.check())
 ```
 
-**OxiZ (SMT-LIB2 string API, easiest migration path):**
+**Nixie (SMT-LIB2 string API, easiest migration path):**
 ```python
-import oxiz
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+import nixie
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_LIA')
 s.assert_formula('(declare-const x Int)', tm)
 s.assert_formula('(declare-const y Int)', tm)
@@ -284,12 +284,12 @@ if s.check() == unsat:
     # try different refinement
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-s = oxiz.Solver()
+s = nixie.Solver()
 s.push()
 s.assert_term(candidate_lemma, tm)
-if s.check_sat(tm) == oxiz.SolverResult.Unsat:
+if s.check_sat(tm) == nixie.SolverResult.Unsat:
     s.pop()
     # try different refinement
 ```
@@ -305,9 +305,9 @@ opt.minimize(x)
 opt.check()
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-opt = oxiz.Optimizer()
+opt = nixie.Optimizer()
 opt.set_logic('QF_LIA')
 x = tm.mk_var('x', 'Int')
 opt.assert_term(tm.mk_ge(x, tm.mk_int(0)))
@@ -320,7 +320,7 @@ result = opt.optimize(tm)
 
 ## Performance Differences
 
-| Scenario | Z3 | OxiZ | Reason |
+| Scenario | Z3 | Nixie | Reason |
 |----------|-----|------|--------|
 | Startup time | ~50ms | ~5ms | No GC, no C++ runtime init |
 | QF_LIA (small) | Fast | Fast | Similar Simplex implementations |
@@ -331,16 +331,16 @@ result = opt.optimize(tm)
 | Incremental (push/pop) | Very optimized | Good | Z3 has more incremental theory solvers |
 | WASM deployment | Not possible | Supported | Pure Rust compiles to WASM |
 
-General guidance: For most QF logics, OxiZ performs comparably to Z3. For
+General guidance: For most QF logics, Nixie performs comparably to Z3. For
 heavily quantified problems, Z3's mature heuristics may still have an edge.
-OxiZ's advantage is in deployment flexibility (no_std, WASM, embedded) and
+Nixie's advantage is in deployment flexibility (no_std, WASM, embedded) and
 lower memory footprint.
 
 ---
 
 ## Unsupported Features
 
-Features present in Z3 that are not yet available in OxiZ:
+Features present in Z3 that are not yet available in Nixie:
 
 | Feature | Z3 API | Workaround |
 |---------|--------|------------|

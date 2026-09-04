@@ -1,14 +1,14 @@
-# OxiZ at SMT-COMP 2026: Participation Invitation
+# Nixie at SMT-COMP 2026: Participation Invitation
 
-This document invites researchers, developers, and the broader formal methods community to collaborate on submitting **OxiZ** to the [SMT Competition 2026 (SMT-COMP 2026)](https://smt-comp.github.io/).
+This document invites researchers, developers, and the broader formal methods community to collaborate on submitting **Nixie** to the [SMT Competition 2026 (SMT-COMP 2026)](https://smt-comp.github.io/).
 
 ---
 
-## What is OxiZ?
+## What is Nixie?
 
-OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match – and ultimately surpass – the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
+Nixie is a high-performance, pure Rust implementation of a full-featured SMT (Satisfiability Modulo Theories) solver. It is developed as part of the COOLJAPAN open-source ecosystem and is designed to match – and ultimately surpass – the capabilities of state-of-the-art solvers such as Z3, while offering the safety, reproducibility, and ergonomics that Rust uniquely provides.
 
-**Key facts about OxiZ (v0.3.1):**
+**Key facts about Nixie (v0.3.1):**
 
 - Honest, non-fabricated parity against a real `z3` 4.15.4 binary across **19 SMT-LIB logic families** (168 benchmark instances, `bench/z3_parity`): **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite under the honest comparator (`Unknown` never counts as a match). All 19 logic families are at 100% of this differential parity suite – a claim scoped to the suite, not a blanket "100% Z3 compatibility"; see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) for the full per-logic breakdown and known gaps
 - **9,668 unit tests** passing, 8 skipped (`cargo nextest run --workspace --all-features`) across all crates, plus 110 doc-tests
@@ -17,15 +17,15 @@ OxiZ is a high-performance, pure Rust implementation of a full-featured SMT (Sat
 - Supports Craig interpolation and Spacer/PDR for model checking workloads
 - StarExec-compatible stdin/stdout interface via the `smtcomp2026` binary
 
-OxiZ is actively developed at: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)
+Nixie is actively developed at: [https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie)
 
 ---
 
-## Why OxiZ for SMT-COMP 2026?
+## Why Nixie for SMT-COMP 2026?
 
 ### 1. Broad logic coverage – 19 divisions implemented, honest per-division status
 
-OxiZ has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator – `Unknown` never counts as a match) as of v0.3.1, not an aspirational "all ready" claim:
+Nixie has implementations across the following SMT-LIB logic families. Status reflects real, measured results from `bench/z3_parity` (a real `z3` binary, honest comparator – `Unknown` never counts as a match) as of v0.3.1, not an aspirational "all ready" claim:
 
 | Division | Status |
 |----------|--------|
@@ -49,11 +49,11 @@ OxiZ has implementations across the following SMT-LIB logic families. Status ref
 | QF_IDL   | ⬜ Not yet part of `bench/z3_parity` – no measured data to report |
 | QF_RDL   | ⬜ Not yet part of `bench/z3_parity` – no measured data to report |
 
-Aggregate result across the 168 benchmarks that make up the measured divisions above: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** – all 19 measured divisions are individually at 100% of this suite (which is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; `QF_NRA`, `QF_IDL` and `QF_RDL` are not part of it) – see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) and the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`) for the authoritative, per-benchmark breakdown. "Authoritative" has a precise meaning here: every tracked snapshot must agree on the verdict of every benchmark (`oxiz_result`, `z3_result`, `match_status`) and may differ only in the machine-dependent timings, a rule enforced on every `cargo test` by `bench/z3_parity/tests/cross_env_verdict_agreement.rs`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of one local run and carries no such guarantee. The z3 version is part of the evidence: the recorded baseline is z3 4.15.4, and a snapshot measured against a different z3 cannot be compared verdict-for-verdict with one that was not.
+Aggregate result across the 168 benchmarks that make up the measured divisions above: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** – all 19 measured divisions are individually at 100% of this suite (which is a statement about the differential parity suite, not a blanket "100% Z3 compatibility" claim; `QF_NRA`, `QF_IDL` and `QF_RDL` are not part of it) – see [`README.md`](../README.md#z3-parity-differential-suite-results-honest-comparator-️) and the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently `results.macos-aarch64.json` and `results.linux-x86_64.json`) for the authoritative, per-benchmark breakdown. "Authoritative" has a precise meaning here: every tracked snapshot must agree on the verdict of every benchmark (`nixie_result`, `z3_result`, `match_status`) and may differ only in the machine-dependent timings, a rule enforced on every `cargo test` by `bench/z3_parity/tests/cross_env_verdict_agreement.rs`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of one local run and carries no such guarantee. The z3 version is part of the evidence: the recorded baseline is z3 4.15.4, and a snapshot measured against a different z3 cannot be compared verdict-for-verdict with one that was not.
 
 ### 2. Pure Rust: safety, reproducibility, and auditability
 
-OxiZ contains no C, C++, or Fortran dependencies. This has concrete benefits for competition:
+Nixie contains no C, C++, or Fortran dependencies. This has concrete benefits for competition:
 
 - **Reproducible builds**: `cargo build --release` is fully hermetic and cross-platform.
 - **Memory safety**: The solver cannot exhibit undefined behavior from pointer errors, use-after-free, or buffer overflows.
@@ -62,7 +62,7 @@ OxiZ contains no C, C++, or Fortran dependencies. This has concrete benefits for
 
 ### 3. StarExec-compatible out of the box
 
-OxiZ ships a dedicated `oxiz-smtcomp` crate that produces the `smtcomp2026` binary. This binary:
+Nixie ships a dedicated `nixie-smtcomp` crate that produces the `smtcomp2026` binary. This binary:
 
 - Reads SMT-LIB 2.6 input from `stdin`
 - Writes `sat`, `unsat`, or `unknown` to `stdout`
@@ -73,7 +73,7 @@ No wrapper scripts or environment patching are required.
 
 ### 4. Unique solver capabilities
 
-OxiZ brings several capabilities that are rare or absent among current SMT-COMP entrants:
+Nixie brings several capabilities that are rare or absent among current SMT-COMP entrants:
 
 - **Multi-format proof generation**: DRAT (for SAT-level certificates), Alethe (for theory lemmas), LFSC, and formal proofs exportable to Coq, Lean 4, and Isabelle/HOL.
 - **Craig interpolation**: built into the core solver, useful for software verification and model checking.
@@ -84,19 +84,19 @@ OxiZ brings several capabilities that are rare or absent among current SMT-COMP 
 
 ## How to Participate
 
-If you would like to submit OxiZ to SMT-COMP 2026, here is how to get started.
+If you would like to submit Nixie to SMT-COMP 2026, here is how to get started.
 
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/cool-japan/oxiz.git
-cd oxiz
+git clone https://github.com/cool-japan/nixie.git
+cd nixie
 ```
 
 ### Step 2: Build the competition binary
 
 ```bash
-cargo build --release -p oxiz-smtcomp
+cargo build --release -p nixie-smtcomp
 ```
 
 The resulting binary is located at `./target/release/smtcomp2026`.
@@ -137,10 +137,10 @@ cargo bench -p bench-regression
 
 ### Step 5: Prepare the StarExec package
 
-The `oxiz-smtcomp` crate generates the StarExec submission layout automatically:
+The `nixie-smtcomp` crate generates the StarExec submission layout automatically:
 
 ```bash
-cargo run --release -p oxiz-smtcomp -- --generate-starexec-package ./oxiz-smtcomp-2026.zip
+cargo run --release -p nixie-smtcomp -- --generate-starexec-package ./nixie-smtcomp-2026.zip
 ```
 
 This produces a `.zip` archive containing:
@@ -162,11 +162,11 @@ Check the official site for submission deadlines, required metadata, and divisio
 - System description paper (2–4 pages, LNCS format)
 - StarExec package upload
 
-### Step 7: Coordinate with the OxiZ team
+### Step 7: Coordinate with the Nixie team
 
-If you plan to submit OxiZ, please open a GitHub issue at:
+If you plan to submit Nixie, please open a GitHub issue at:
 
-> [https://github.com/cool-japan/oxiz/issues](https://github.com/cool-japan/oxiz/issues)
+> [https://github.com/cool-japan/nixie/issues](https://github.com/cool-japan/nixie/issues)
 
 Use the title prefix `[SMT-COMP 2026]`. This allows us to coordinate system descriptions, avoid duplicate submissions, and provide support for any build or packaging questions.
 
@@ -174,9 +174,9 @@ Use the title prefix `[SMT-COMP 2026]`. This allows us to coordinate system desc
 
 ## Division Recommendations
 
-The table below summarizes OxiZ's competitive positioning across the 19 ready divisions. "Novel entry" indicates divisions where a pure Rust solver has not previously competed; "Established field" indicates divisions with strong existing entrants (Z3, CVC5, Bitwuzla, etc.).
+The table below summarizes Nixie's competitive positioning across the 19 ready divisions. "Novel entry" indicates divisions where a pure Rust solver has not previously competed; "Established field" indicates divisions with strong existing entrants (Z3, CVC5, Bitwuzla, etc.).
 
-| Division | OxiZ Strength | Competition Context | Notes |
+| Division | Nixie Strength | Competition Context | Notes |
 |----------|---------------|--------------------|-------------------------------------------------|
 | QF_LIA   | Strong        | Established field  | Simplex + Gomory cuts, LIA preprocessing        |
 | QF_LRA   | Strong        | Established field  | Full simplex, delta-arithmetic                  |
@@ -198,25 +198,25 @@ The table below summarizes OxiZ's competitive positioning across the 19 ready di
 | QF_IDL   | Strong        | Moderate field     | Integer difference logic, fast path             |
 | QF_RDL   | Strong        | Moderate field     | Real difference logic, fast path                |
 
-OxiZ is positioned as a competitive entrant in all 19 divisions and a **first-of-kind pure Rust submission** in the competition overall.
+Nixie is positioned as a competitive entrant in all 19 divisions and a **first-of-kind pure Rust submission** in the competition overall.
 
 ---
 
 ## Known Areas for Improvement
 
 Noted here for transparency ahead of the competition submission, not as a formal call for
-external contribution – OxiZ is Apache-2.0 licensed and the source is at
-[https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz):
+external contribution – Nixie is Apache-2.0 licensed and the source is at
+[https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie):
 
-- **SIMD BV propagation** (`oxiz-theories/src/bv/`) – the bit-vector solver currently uses scalar
+- **SIMD BV propagation** (`nixie-theories/src/bv/`) – the bit-vector solver currently uses scalar
   propagation loops in several places; SIMD-accelerated word-level propagation (AVX2/AVX-512 on
   x86-64, NEON on AArch64) could improve throughput on large BV benchmarks.
-- **MBQI instantiation tuning** (`oxiz-solver/src/mbqi/`) – model-based quantifier instantiation
+- **MBQI instantiation tuning** (`nixie-solver/src/mbqi/`) – model-based quantifier instantiation
   is sensitive to the order and selection of terms used for instantiation; heuristics for term
   scoring, ground term selection, and iteration bounds have room for improvement.
-- **String theory performance** (`oxiz-theories/src/strings/`) – handles core SMT-LIB string
+- **String theory performance** (`nixie-theories/src/strings/`) – handles core SMT-LIB string
   constraints but has room for improved automata-based reasoning and length constraint propagation.
-- **Proof export verification** (`oxiz-proof/`) – Alethe and LFSC proof terms are generated but
+- **Proof export verification** (`nixie-proof/`) – Alethe and LFSC proof terms are generated but
   not yet checked against reference proof checkers (`alethe-proof-checker`, LFSC) in CI.
 - **Benchmark-specific preprocessing** – pre-solving heuristics, symmetry breaking, and formula
   simplification tuned to specific SMT-COMP benchmark families.
@@ -227,10 +227,10 @@ external contribution – OxiZ is Apache-2.0 licensed and the source is at
 
 *This section is a placeholder for acknowledgments to be added prior to the competition system description submission.*
 
-The OxiZ project is grateful to the SMT-COMP organizers for maintaining an open and rigorous competition infrastructure, to the authors and maintainers of Z3 whose published algorithms and benchmark suite have informed this work, and to the broader SMT and formal methods research community.
+The Nixie project is grateful to the SMT-COMP organizers for maintaining an open and rigorous competition infrastructure, to the authors and maintainers of Z3 whose published algorithms and benchmark suite have informed this work, and to the broader SMT and formal methods research community.
 
 ---
 
-*OxiZ – COOLJAPAN OU (Team Kitasan)*
-*Repository: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)*
+*Nixie – COOLJAPAN OU (Team Kitasan)*
+*Repository: [https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie)*
 *Competition contact: open an issue with tag `[SMT-COMP 2026]`*

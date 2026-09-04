@@ -25,7 +25,7 @@ skeleton ∪ verified-lemmas:
 1. **Lemma recording** (main run). Theory facts surface at exactly two
    shapes in the CDCL(T) loop:
    * conflicts: `TheoryCheckResult::Conflict(lits)` — the conflict clause
-     is a valid EUF lemma (oxiz-sat `solver/mod.rs:168-175`, consumed at
+     is a valid EUF lemma (nixie-sat `solver/mod.rs:168-175`, consumed at
      `search_ext.rs:201` and `:413`);
    * propagations: `TheoryCheckResult::Propagated((lit, reason_lits))` —
      the explanation clause `lit ∨ ¬r₁ ∨ … ∨ ¬rₖ` is materialized by
@@ -34,7 +34,7 @@ skeleton ∪ verified-lemmas:
      record it anyway (it participates in conflict analysis and hence in
      the final refutation).
    Add `fn record_lemma(&mut self, _clause: &[Lit]) {}` (default no-op) to
-   `TheoryCallback` (`oxiz-sat solver/mod.rs:181`) and call it from those
+   `TheoryCallback` (`nixie-sat solver/mod.rs:181`) and call it from those
    consumption points with the full clause literals.
 
 2. **Solver-owned log.** The `TheoryManager` is a per-search local
@@ -153,7 +153,7 @@ this same study.
 ## Addendum 2 (2026-09-03): both residual hunts closed — 79% → 92%
 
 **Hunt A (13 files, LRAT hint-chain rejection).** Reproduced standalone
-via `OXIZ_CERT_DUMP` (the gate now dumps its CNF + proof for offline
+via `NIXIE_CERT_DUMP` (the gate now dumps its CNF + proof for offline
 replay): the failure was not in the search's chain at all — the gate's
 canonical CNF contained **duplicate-literal clauses** (30/4154 on the
 reproducer). The Tseitin walk emits one entry per *occurrence*, and

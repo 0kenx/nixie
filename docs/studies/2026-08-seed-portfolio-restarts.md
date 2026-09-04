@@ -2,7 +2,7 @@
 
 ## Question
 
-The 94-file CaDiCaL differential's timeout residue (8 files: oxiz TO where
+The 94-file CaDiCaL differential's timeout residue (8 files: nixie TO where
 cadical solves at 4–23 s) is worth more than any constant factor.  Two
 candidate levers (user proposal): (1) an alternate-preset fallback after a
 no-progress budget, (2) kissat-style restart-with-a-different-PRNG-seed

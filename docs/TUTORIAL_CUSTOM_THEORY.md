@@ -1,4 +1,4 @@
-# Tutorial: Extending OxiZ with Custom Theories
+# Tutorial: Extending Nixie with Custom Theories
 
 **Target Audience:** Developers familiar with Rust but new to SMT solvers
 
@@ -44,7 +44,7 @@ Theory solvers detect such semantic inconsistencies and generate **conflict clau
 
 ### Role of Theories in CDCL(T) Architecture
 
-OxiZ implements the CDCL(T) architecture, which stands for **Conflict-Driven Clause Learning modulo Theories**. Here is how theories fit into the solving process:
+Nixie implements the CDCL(T) architecture, which stands for **Conflict-Driven Clause Learning modulo Theories**. Here is how theories fit into the solving process:
 
 ```
                     +------------------+
@@ -78,9 +78,9 @@ OxiZ implements the CDCL(T) architecture, which stands for **Conflict-Driven Cla
 
 Theories also perform **propagation**: when they can derive new facts from partial assignments, they communicate these back to the SAT solver.
 
-### Overview of OxiZ Theory Interface
+### Overview of Nixie Theory Interface
 
-OxiZ provides a clean trait-based interface for theory solvers in the `oxiz-theories` crate:
+Nixie provides a clean trait-based interface for theory solvers in the `nixie-theories` crate:
 
 ```rust
 pub trait Theory: Send + Sync {
@@ -131,7 +131,7 @@ pub trait Theory: Send + Sync {
 Let us examine each method of the `Theory` trait:
 
 ```rust
-/// Location: oxiz-theories/src/theory.rs
+/// Location: nixie-theories/src/theory.rs
 
 /// Unique identifier for a theory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -251,7 +251,7 @@ Theory lemmas are clauses derived from theory reasoning. They have two key prope
 
 ### Push/Pop for Incremental Solving
 
-OxiZ supports incremental solving where constraints can be added/removed:
+Nixie supports incremental solving where constraints can be added/removed:
 
 ```rust
 fn push(&mut self);  // Save current state
@@ -302,13 +302,13 @@ Our set theory will support:
 ### Internal Representation
 
 ```rust
-//! Set Theory Solver for OxiZ
+//! Set Theory Solver for Nixie
 //!
 //! This is a tutorial implementation demonstrating how to create
 //! a custom theory solver.
 
-use oxiz_core::ast::TermId;
-use oxiz_core::error::Result;
+use nixie_core::ast::TermId;
+use nixie_core::error::Result;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -1031,8 +1031,8 @@ mod tests {
 To use your theory with the CDCL(T) solver, you need to register it with the `TheoryCombiner`:
 
 ```rust
-use oxiz_theories::combination::TheoryCombiner;
-use oxiz_theories::TheoryId;
+use nixie_theories::combination::TheoryCombiner;
+use nixie_theories::TheoryId;
 
 // 1. Create theory instances
 let mut combiner = TheoryCombiner::new();
@@ -1051,7 +1051,7 @@ let set_solver = SetTheorySolver::new();
 
 ### Theory Combination (Nelson-Oppen)
 
-When multiple theories share variables, they must cooperate. OxiZ implements **Nelson-Oppen** theory combination:
+When multiple theories share variables, they must cooperate. Nixie implements **Nelson-Oppen** theory combination:
 
 ```
 +----------+       Shared Variables       +----------+
@@ -1327,18 +1327,18 @@ Create `.smt2` files exercising your theory and run them through the full solver
 
 ## 6. Reference
 
-### Existing Theory Implementations in OxiZ
+### Existing Theory Implementations in Nixie
 
 | Theory | Location | Key Algorithms |
 |--------|----------|----------------|
-| EUF | `oxiz-theories/src/euf/` | Congruence closure, union-find, E-matching |
-| LRA/LIA | `oxiz-theories/src/arithmetic/` | Simplex, Farkas lemmas, branch-and-bound |
-| BitVectors | `oxiz-theories/src/bv/` | Bit-blasting, word-level propagation |
-| Arrays | `oxiz-theories/src/array/` | Read-over-write axioms |
-| Strings | `oxiz-theories/src/string/` | Brzozowski derivatives, automata |
-| Datatypes | `oxiz-theories/src/datatype/` | Algebraic datatypes, selectors |
-| Diff Logic | `oxiz-theories/src/diff_logic/` | Bellman-Ford graph algorithm |
-| UTVPI | `oxiz-theories/src/utvpi/` | Doubled graph for +-x +-y <= c |
+| EUF | `nixie-theories/src/euf/` | Congruence closure, union-find, E-matching |
+| LRA/LIA | `nixie-theories/src/arithmetic/` | Simplex, Farkas lemmas, branch-and-bound |
+| BitVectors | `nixie-theories/src/bv/` | Bit-blasting, word-level propagation |
+| Arrays | `nixie-theories/src/array/` | Read-over-write axioms |
+| Strings | `nixie-theories/src/string/` | Brzozowski derivatives, automata |
+| Datatypes | `nixie-theories/src/datatype/` | Algebraic datatypes, selectors |
+| Diff Logic | `nixie-theories/src/diff_logic/` | Bellman-Ford graph algorithm |
+| UTVPI | `nixie-theories/src/utvpi/` | Doubled graph for +-x +-y <= c |
 
 ### Relevant Papers
 
@@ -1358,17 +1358,17 @@ Create `.smt2` files exercising your theory and run them through the full solver
 
 ### API Documentation
 
-- **oxiz-theories crate docs**: `cargo doc -p oxiz-theories --open`
-- **Theory trait**: `oxiz_theories::theory::Theory`
-- **Theory combination**: `oxiz_theories::combination::TheoryCombiner`
-- **User propagator**: `oxiz_theories::user_propagator::UserPropagator`
+- **nixie-theories crate docs**: `cargo doc -p nixie-theories --open`
+- **Theory trait**: `nixie_theories::theory::Theory`
+- **Theory combination**: `nixie_theories::combination::TheoryCombiner`
+- **User propagator**: `nixie_theories::user_propagator::UserPropagator`
 
 ### Getting Help
 
 - Check existing theory implementations for patterns
-- Look at test cases in `oxiz-theories/src/*/tests.rs`
+- Look at test cases in `nixie-theories/src/*/tests.rs`
 - Review the architecture document: `docs/ARCHITECTURE.md`
 
 ---
 
-*This tutorial is part of the OxiZ project documentation.*
+*This tutorial is part of the Nixie project documentation.*

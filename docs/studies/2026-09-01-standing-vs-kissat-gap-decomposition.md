@@ -10,8 +10,8 @@ the memory- footprint quantification (user-observed 2–5× vs cadical,
 
 54-file corpus (`/tmp/sc24f`, the surviving satcomp2024 selection), 60 s
 wall cap, serial per file with the three arms concurrent on dedicated
-pinned P-cores (oxiz=3, cadical=4, kissat=5; machine otherwise idle).
-Arms: `oxiz` = `precompile/7e644a7/stats_solve` (CaDiCaL preset),
+pinned P-cores (nixie=3, cadical=4, kissat=5; machine otherwise idle).
+Arms: `nixie` = `precompile/7e644a7/stats_solve` (CaDiCaL preset),
 cadical 3.0.1, kissat 4.0.4. Score = solved-at-cap; wall-clock is the
 scoring objective (standing-table tradition), with the
 three-arms-on-three-cores layout noted as a caveat (each core private;
@@ -19,11 +19,11 @@ memory-bandwidth shared — ±few % on wall at most, verdicts unaffected).
 
 ## The standing table
 
-| arm | solved / 54 @ 60 s | wall geomean (both-solved vs oxiz) |
+| arm | solved / 54 @ 60 s | wall geomean (both-solved vs nixie) |
 |---|---|---|
-| oxiz (`7e644a7`) | 50 | 1.00× |
-| cadical 3.0.1 | **51** | oxiz/cadical = **1.27×** |
-| kissat 4.0.4 | 50 | oxiz/kissat = **1.50×** |
+| nixie (`7e644a7`) | 50 | 1.00× |
+| cadical 3.0.1 | **51** | nixie/cadical = **1.27×** |
+| kissat 4.0.4 | 50 | nixie/kissat = **1.50×** |
 
 0 verdict mismatches anywhere. **On this corpus there is no
 order-of-magnitude gap — there is solved-parity and a 1.3–1.5× wall
@@ -32,7 +32,7 @@ tail and in memory:
 
 ### Decomposition (34 both-solved files with counters on both sides)
 
-| factor | oxiz vs kissat | meaning |
+| factor | nixie vs kissat | meaning |
 |---|---|---|
 | conflicts-to-verdict | **1.33×** | our search path is 33 % longer |
 | conflicts-per-second | **0.82×** | kissat's per-conflict cost is 1.22× ours |
@@ -40,7 +40,7 @@ tail and in memory:
 
 Neither factor alone is 10×. The tail is where 10× lives:
 
-| file | oxiz wall | kissat wall | conflicts ox→kissat | driver |
+| file | nixie wall | kissat wall | conflicts ox→kissat | driver |
 |---|---|---|---|---|
 | frb65-12-2 | 36.0 s | 3.3 s | 1 062 k → 167 k (6.4×) | search path |
 | 6s167-opt | 3.7 s | 0.5 s | 118 k → 19 k (6.2×) | search path |
@@ -48,14 +48,14 @@ Neither factor alone is 10×. The tail is where 10× lives:
 | FmlaEquivChain | 57.7 s | 11.1 s | 2 148 k → 378 k (5.7×) | search path |
 | mrpp_4x4 | 18.4 s | 3.7 s | 249 k → 179 k (1.4×) | throughput |
 
-And oxiz **wins** the summle class 6.7×, worker_20 4×, af-synthesis
+And nixie **wins** the summle class 6.7×, worker_20 4×, af-synthesis
 2.4× — the tail cuts both ways.
 
 ## Memory: confirmed and root-caused
 
 Peak RSS (full solves, 65 s cap, per-run fresh measurement):
 
-| file | oxiz | cadical | kissat | oxiz/kissat |
+| file | nixie | cadical | kissat | nixie/kissat |
 |---|---|---|---|---|
 | noL-11-14 (1.4 k vars!) | **269 MB** | 15 MB | 20 MB | **13.5×** |
 | frb65-874 | 147 MB | 17 MB | 13 MB | 11.3× |
@@ -77,7 +77,7 @@ noL-11-14 runs ~1.5 M conflicts ≈ 1.5 M × ~120 B ≈ the measured
 hazard under any long cap (SATComp main-track and SMT-COMP memory
 limits included).
 
-The files where oxiz is *under* cadical (worker, si2, shuffling) show
+The files where nixie is *under* cadical (worker, si2, shuffling) show
 the bloat is not uniform per-clause-size — cadical's own footprint
 scales with binary-heavy inputs there while ours does not; kissat stays
 smallest everywhere via its tiered retention.
@@ -141,7 +141,7 @@ itself forced — both improvements:
 
 Trigger: every reduce round (both the legacy tiered path and the
 cadical-reduce port), gated on garbage ≥ 64 KiB and ≥ live/3 — total copy
-work bounded at ~3× the bytes ever collected. `OXIZ_NO_ARENA_COMPACT=1`
+work bounded at ~3× the bytes ever collected. `NIXIE_NO_ARENA_COMPACT=1`
 is the A/B switch.
 
 **The bug the gates caught:** slot physical extents cannot be read off
@@ -229,7 +229,7 @@ trajectory happened to be unlucky. Lessons:
 ## Addendum 3 (2026-09-02): reduce-percentage surface probed and closed
 
 Single-seed screen of the legacy tier percentages
-(`OXIZ_REDUCE_PCT_{LOCAL,MID,CORE}`, defaults 75/30/10), conflicts-to-verdict:
+(`NIXIE_REDUCE_PCT_{LOCAL,MID,CORE}`, defaults 75/30/10), conflicts-to-verdict:
 
 | knobs | mrpp_4x4 | 6s167-opt |
 |---|---|---|
@@ -248,7 +248,7 @@ glue-ranked 2× on stable-300 in the 2026-08-22 study), not the amount.
 
 ## Addendum 4 (2026-09-02): worker-class memory composition, measured
 
-`OXIZ_MEM_STATS=1` (`Solver::memory_composition`) on worker_550
+`NIXIE_MEM_STATS=1` (`Solver::memory_composition`) on worker_550
 (10.3 M originals, avg 2.7 lits — 97 %+ binary), same values at conflict
 1 and 40 000 (standing structures do not grow during search):
 

@@ -1,10 +1,10 @@
-# Theory Combination in OxiZ
+# Theory Combination in Nixie
 
 ## Overview
 
-Theory combination is the mechanism by which OxiZ combines multiple decision procedures to solve formulas involving mixed theories (e.g., arrays + arithmetic, bitvectors + uninterpreted functions).
+Theory combination is the mechanism by which Nixie combines multiple decision procedures to solve formulas involving mixed theories (e.g., arrays + arithmetic, bitvectors + uninterpreted functions).
 
-OxiZ implements the **Nelson-Oppen method** with modern enhancements for efficient theory cooperation.
+Nixie implements the **Nelson-Oppen method** with modern enhancements for efficient theory cooperation.
 
 ## The Nelson-Oppen Method
 
@@ -77,7 +77,7 @@ If `t₁ = t₂`, then `t₁ > 0 ∧ t₁ < 0` → **CONFLICT**
 
 **Result**: **UNSAT**
 
-## Implementation in OxiZ
+## Implementation in Nixie
 
 ### Architecture
 

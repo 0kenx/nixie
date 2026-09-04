@@ -1,6 +1,6 @@
-# Contributing to OxiZ
+# Contributing to Nixie
 
-OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure
+Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure
 Rust. It implements a modular CDCL(T) architecture that closely follows the design of Z3 while
 leveraging Rust's safety guarantees and modern language features.
 
@@ -11,8 +11,8 @@ process document.
 **Quick Links:**
 - [Documentation](docs/)
 - [Architecture Overview](docs/ARCHITECTURE.md)
-- [Issue Tracker](https://github.com/cool-japan/oxiz/issues)
-- [Repository](https://github.com/cool-japan/oxiz)
+- [Issue Tracker](https://github.com/cool-japan/nixie/issues)
+- [Repository](https://github.com/cool-japan/nixie)
 
 ---
 
@@ -34,8 +34,8 @@ Before you begin, ensure you have the following tools installed:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/cool-japan/oxiz.git
-   cd oxiz
+   git clone https://github.com/cool-japan/nixie.git
+   cd nixie
    ```
 
    With Nix + direnv, `direnv allow` loads `flake.nix` (Rust 1.96.0, nextest,
@@ -74,31 +74,31 @@ Before you begin, ensure you have the following tools installed:
 
 7. **Run the CLI:**
    ```bash
-   cargo run --release -p oxiz-cli -- --help
+   cargo run --release -p nixie-cli -- --help
    ```
 
 ### Building Specific Crates
 
 ```bash
 # Build a specific crate
-cargo build -p oxiz-core
+cargo build -p nixie-core
 
 # Build with all features
-cargo build -p oxiz-solver --all-features
+cargo build -p nixie-solver --all-features
 
 # Build WASM bindings
-cd oxiz-wasm && wasm-pack build --target web
+cd nixie-wasm && wasm-pack build --target web
 ```
 
 ---
 
 ## Code Style
 
-OxiZ follows strict code quality standards, enforced in CI on every PR.
+Nixie follows strict code quality standards, enforced in CI on every PR.
 
 ### NO WARNINGS POLICY
 
-**This is critical:** OxiZ enforces a strict NO WARNINGS policy. Code must compile without any
+**This is critical:** Nixie enforces a strict NO WARNINGS policy. Code must compile without any
 warnings from both the compiler and Clippy.
 
 ```bash
@@ -137,7 +137,7 @@ cargo fmt --all -- --check
    /// # Examples
    ///
    /// ```
-   /// use oxiz_solver::Solver;
+   /// use nixie_solver::Solver;
    ///
    /// let mut solver = Solver::new();
    /// solver.assert(formula);
@@ -175,7 +175,7 @@ use std::collections::HashMap;
 use indexmap::IndexMap;
 use rayon::prelude::*;
 
-use oxiz_core::ast::TermId;
+use nixie_core::ast::TermId;
 
 use crate::internal_module;
 
@@ -215,7 +215,7 @@ mod tests {
 - Define error types using `thiserror`
 - Avoid `unwrap()` and `expect()` except in tests or truly impossible cases. `clippy::unwrap_used`
   is set to `deny` in the workspace lint table, and every member crate is covered – 13 declare it
-  directly in their own `[lints.clippy]`, while `oxiz`, `oxiz-smtcomp`, `oxiz-py` and `oxiz-ml`
+  directly in their own `[lints.clippy]`, while `nixie`, `nixie-smtcomp`, `nixie-py` and `nixie-ml`
   inherit it via `[lints] workspace = true`. A stray `unwrap()` in production code therefore fails
   the build rather than merely warning.
   - When converting a native-recursive walk to an explicit heap stack (to
@@ -228,17 +228,17 @@ mod tests {
     peek-then-pop pair is not a "truly impossible case" exemption -- it is
     exactly the shape this rule exists to rule out, because every future
     conversion done the same way reproduces it. See
-    `oxiz-nlsat/src/solver/conflict.rs::is_redundant_literal`,
-    `oxiz-theories/src/checking/proof.rs::validate_step`,
-    `oxiz-theories/src/euf/incremental.rs::node_size`, or
-    `oxiz-core/src/ast/manager/query/substitute.rs` for the pattern to copy.
+    `nixie-nlsat/src/solver/conflict.rs::is_redundant_literal`,
+    `nixie-theories/src/checking/proof.rs::validate_step`,
+    `nixie-theories/src/euf/incremental.rs::node_size`, or
+    `nixie-core/src/ast/manager/query/substitute.rs` for the pattern to copy.
 - Document error conditions in function documentation
 
 ---
 
 ## Testing Requirements
 
-OxiZ maintains high test coverage. New code should include tests appropriate to the change.
+Nixie maintains high test coverage. New code should include tests appropriate to the change.
 
 ### Unit Tests
 
@@ -275,8 +275,8 @@ For features that span multiple modules:
 
 ```rust
 // In tests/integration_test.rs
-use oxiz_solver::Solver;
-use oxiz_core::ast::*;
+use nixie_solver::Solver;
+use nixie_core::ast::*;
 
 #[test]
 fn test_solver_with_lra_theory() {
@@ -295,7 +295,7 @@ All code examples in documentation must be runnable:
 /// # Examples
 ///
 /// ```
-/// use oxiz_solver::Solver;
+/// use nixie_solver::Solver;
 ///
 /// let mut solver = Solver::new();
 /// let x = solver.declare_const("x", Sort::Int);
@@ -325,7 +325,7 @@ fn test_<module>_<function>_<scenario>() {
 cargo nextest run --all-features
 
 # Run tests for a specific crate
-cargo nextest run -p oxiz-sat
+cargo nextest run -p nixie-sat
 
 # Run tests matching a pattern
 cargo nextest run test_cdcl
@@ -361,51 +361,51 @@ PRs are merged via squash-and-merge.
 
 ## Architecture Overview
 
-OxiZ is organized as a Cargo workspace with 17 members: 15 crates plus the two benchmark
-harnesses under `bench/`. Everything except `oxiz-py` (which needs maturin for Python linking)
+Nixie is organized as a Cargo workspace with 17 members: 15 crates plus the two benchmark
+harnesses under `bench/`. Everything except `nixie-py` (which needs maturin for Python linking)
 is in `default-members`, so a plain `cargo build` covers the whole tree.
 
 ### Crate Hierarchy
 
 ```
-oxiz (meta-crate: unified API)
+nixie (meta-crate: unified API)
   |
-  +-- oxiz-cli (Command-line interface)
-  +-- oxiz-wasm (WebAssembly bindings)
-  +-- oxiz-py (Python bindings via PyO3/maturin)
-  +-- oxiz-smtcomp (SMT-COMP entry package and runners)
-  +-- oxiz-ml (ML-guided heuristics)
-  +-- oxiz-opt (MaxSAT/OMT optimization)
+  +-- nixie-cli (Command-line interface)
+  +-- nixie-wasm (WebAssembly bindings)
+  +-- nixie-py (Python bindings via PyO3/maturin)
+  +-- nixie-smtcomp (SMT-COMP entry package and runners)
+  +-- nixie-ml (ML-guided heuristics)
+  +-- nixie-opt (MaxSAT/OMT optimization)
   |
-  +-- oxiz-solver (CDCL(T) orchestration)
+  +-- nixie-solver (CDCL(T) orchestration)
         |
-        +-- oxiz-spacer (PDR/CHC solving)
-        +-- oxiz-theories (Theory solvers: EUF, LRA, BV, etc.)
-        +-- oxiz-proof (Proof generation: DRAT, Alethe, LFSC)
+        +-- nixie-spacer (PDR/CHC solving)
+        +-- nixie-theories (Theory solvers: EUF, LRA, BV, etc.)
+        +-- nixie-proof (Proof generation: DRAT, Alethe, LFSC)
               |
-              +-- oxiz-sat (CDCL SAT solver)
-              +-- oxiz-nlsat (Non-linear arithmetic)
+              +-- nixie-sat (CDCL SAT solver)
+              +-- nixie-nlsat (Non-linear arithmetic)
                     |
-                    +-- oxiz-math (Mathematical foundations)
+                    +-- nixie-math (Mathematical foundations)
                           |
-                          +-- oxiz-core (AST, sorts, parser, tactics)
+                          +-- nixie-core (AST, sorts, parser, tactics)
 ```
 
 ### Key Abstractions
 
 | Abstraction | Location | Purpose |
 |-------------|----------|---------|
-| `TermId` | oxiz-core | Hash-consed term references |
-| `Solver` | oxiz-solver | Main SMT solver interface |
-| `SatSolver` | oxiz-sat | CDCL SAT solving core |
-| `TheorySolver` | oxiz-theories | Theory solver trait |
-| `Proof` | oxiz-proof | Proof DAG representation |
+| `TermId` | nixie-core | Hash-consed term references |
+| `Solver` | nixie-solver | Main SMT solver interface |
+| `SatSolver` | nixie-sat | CDCL SAT solving core |
+| `TheorySolver` | nixie-theories | Theory solver trait |
+| `Proof` | nixie-proof | Proof DAG representation |
 
 ### Adding New Components
 
-- **New Theory:** Implement `TheorySolver` trait in `oxiz-theories`
-- **New Tactic:** Implement `Tactic` trait in `oxiz-core`
-- **New Proof Format:** Implement `ProofFormatter` trait in `oxiz-proof`
+- **New Theory:** Implement `TheorySolver` trait in `nixie-theories`
+- **New Tactic:** Implement `Tactic` trait in `nixie-core`
+- **New Proof Format:** Implement `ProofFormatter` trait in `nixie-proof`
 
 For detailed architecture information, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

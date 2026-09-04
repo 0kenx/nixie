@@ -1,5 +1,5 @@
 #!/bin/bash
-# Compares OxiZ vs Z3 on z3_parity benchmarks
+# Compares Nixie vs Z3 on z3_parity benchmarks
 # Usage: ./scripts/perf_vs_z3.sh [benchmark_dir]
 #   benchmark_dir defaults to bench/z3_parity/benchmarks
 set -e
@@ -9,14 +9,14 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
 
 BENCH_DIR="${1:-bench/z3_parity/benchmarks}"
-RESULTS="/tmp/oxiz_vs_z3_$(date +%Y%m%d_%H%M%S).txt"
+RESULTS="/tmp/nixie_vs_z3_$(date +%Y%m%d_%H%M%S).txt"
 TIMEOUT_SEC=10
 
-# Check if oxiz-cli binary exists; build if needed
-OXIZ_BIN="$REPO_ROOT/target/release/oxiz-cli"
-if [ ! -f "$OXIZ_BIN" ]; then
-    echo "Building oxiz-cli (release)..."
-    cargo build --release -p oxiz-cli 2>/dev/null
+# Check if nixie-cli binary exists; build if needed
+NIXIE_BIN="$REPO_ROOT/target/release/nixie-cli"
+if [ ! -f "$NIXIE_BIN" ]; then
+    echo "Building nixie-cli (release)..."
+    cargo build --release -p nixie-cli 2>/dev/null
 fi
 
 # Check z3 availability
@@ -28,13 +28,13 @@ fi
 
 # Header
 {
-    echo "OxiZ vs Z3 Performance Comparison"
+    echo "Nixie vs Z3 Performance Comparison"
     echo "Date: $(date)"
-    echo "OxiZ binary: $OXIZ_BIN"
+    echo "Nixie binary: $NIXIE_BIN"
     if $HAS_Z3; then
         echo "Z3: $Z3_VERSION"
     else
-        echo "Z3: not installed – OxiZ-only timings"
+        echo "Z3: not installed – Nixie-only timings"
     fi
     echo "Timeout: ${TIMEOUT_SEC}s per benchmark"
     echo "Benchmark dir: $BENCH_DIR"
@@ -45,11 +45,11 @@ fi
 # Column header
 if $HAS_Z3; then
     printf "%-60s %10s %10s %10s %10s %10s\n" \
-        "Benchmark" "OxiZ_ms" "Z3_ms" "Ratio" "OxiZ_res" "Z3_res" >> "$RESULTS"
+        "Benchmark" "Nixie_ms" "Z3_ms" "Ratio" "Nixie_res" "Z3_res" >> "$RESULTS"
     printf "%-60s %10s %10s %10s %10s %10s\n" \
         "----------" "-------" "-----" "-----" "--------" "------" >> "$RESULTS"
 else
-    printf "%-60s %10s %10s\n" "Benchmark" "OxiZ_ms" "OxiZ_res" >> "$RESULTS"
+    printf "%-60s %10s %10s\n" "Benchmark" "Nixie_ms" "Nixie_res" >> "$RESULTS"
     printf "%-60s %10s %10s\n" "----------" "-------" "--------" >> "$RESULTS"
 fi
 
@@ -58,7 +58,7 @@ cat "$RESULTS"
 
 # Counters
 total=0
-oxiz_faster=0
+nixie_faster=0
 z3_faster=0
 both_timeout=0
 
@@ -120,38 +120,38 @@ for smt_file in "${SMT_FILES[@]}"; do
         short_name="...${rel_path: -57}"
     fi
 
-    oxiz_ms=0
-    oxiz_res="skip"
+    nixie_ms=0
+    nixie_res="skip"
     z3_ms=0
     z3_res="n/a"
 
-    run_timed "$TIMEOUT_SEC" oxiz_ms oxiz_res -- "$OXIZ_BIN" "$smt_file"
+    run_timed "$TIMEOUT_SEC" nixie_ms nixie_res -- "$NIXIE_BIN" "$smt_file"
 
     if $HAS_Z3; then
         run_timed "$TIMEOUT_SEC" z3_ms z3_res -- z3 "$smt_file"
 
-        # Compute ratio (oxiz / z3), avoid division by zero
+        # Compute ratio (nixie / z3), avoid division by zero
         if [ "$z3_ms" -gt 0 ]; then
-            ratio=$(awk "BEGIN { printf \"%.2f\", $oxiz_ms / $z3_ms }")
+            ratio=$(awk "BEGIN { printf \"%.2f\", $nixie_ms / $z3_ms }")
         else
             ratio="N/A"
         fi
 
         line=$(printf "%-60s %10d %10d %10s %10s %10s\n" \
-            "$short_name" "$oxiz_ms" "$z3_ms" "$ratio" "$oxiz_res" "$z3_res")
+            "$short_name" "$nixie_ms" "$z3_ms" "$ratio" "$nixie_res" "$z3_res")
 
         # Update counters
-        if [ "$oxiz_res" = "timeout" ] && [ "$z3_res" = "timeout" ]; then
+        if [ "$nixie_res" = "timeout" ] && [ "$z3_res" = "timeout" ]; then
             both_timeout=$(( both_timeout + 1 ))
-        elif [ "$oxiz_res" != "timeout" ] && [ "$z3_res" != "timeout" ] && [ "$z3_ms" -gt 0 ]; then
-            if [ "$oxiz_ms" -lt "$z3_ms" ]; then
-                oxiz_faster=$(( oxiz_faster + 1 ))
+        elif [ "$nixie_res" != "timeout" ] && [ "$z3_res" != "timeout" ] && [ "$z3_ms" -gt 0 ]; then
+            if [ "$nixie_ms" -lt "$z3_ms" ]; then
+                nixie_faster=$(( nixie_faster + 1 ))
             else
                 z3_faster=$(( z3_faster + 1 ))
             fi
         fi
     else
-        line=$(printf "%-60s %10d %10s\n" "$short_name" "$oxiz_ms" "$oxiz_res")
+        line=$(printf "%-60s %10d %10s\n" "$short_name" "$nixie_ms" "$nixie_res")
     fi
 
     echo "$line" | tee -a "$RESULTS"
@@ -164,7 +164,7 @@ done
     echo "================================="
     echo "Summary: $total benchmarks"
     if $HAS_Z3; then
-        echo "  OxiZ faster:    $oxiz_faster"
+        echo "  Nixie faster:    $nixie_faster"
         echo "  Z3 faster:      $z3_faster"
         echo "  Both timed out: $both_timeout"
     fi

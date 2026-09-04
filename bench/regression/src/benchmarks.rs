@@ -1,17 +1,17 @@
-//! Benchmark definitions for OxiZ performance regression testing
+//! Benchmark definitions for Nixie performance regression testing
 //!
-//! This module defines benchmarks for various OxiZ components:
+//! This module defines benchmarks for various Nixie components:
 //! - SAT solving (CDCL core)
 //! - Theory solving (LIA, LRA, BV, Arrays)
 //! - Parser performance
 //! - MaxSAT algorithms
 
+use nixie_core::ast::TermManager;
+use nixie_core::smtlib::parse_script;
+use nixie_opt::{MaxSatSolver, Weight};
+use nixie_sat::{DimacsParser, Lit, Solver as SatSolver, Var};
+use nixie_solver::Solver;
 use num_bigint::BigInt;
-use oxiz_core::ast::TermManager;
-use oxiz_core::smtlib::parse_script;
-use oxiz_opt::{MaxSatSolver, Weight};
-use oxiz_sat::{DimacsParser, Lit, Solver as SatSolver, Var};
-use oxiz_solver::Solver;
 use std::time::Instant;
 
 /// Result of a single benchmark run

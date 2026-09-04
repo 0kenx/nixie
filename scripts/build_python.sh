@@ -1,13 +1,13 @@
 #!/bin/bash
-# Build Python bindings for OxiZ
+# Build Python bindings for Nixie
 # Usage: ./scripts/build_python.sh [--release|--debug|--develop]
 #
 # Requires: maturin (install with: pip install maturin)
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-OXIZ_PY_DIR="${SCRIPT_DIR}/../oxiz-py"
+NIXIE_PY_DIR="${SCRIPT_DIR}/../nixie-py"
 
-cd "$OXIZ_PY_DIR"
+cd "$NIXIE_PY_DIR"
 
 BUILD_MODE="--release"
 DEVELOP_MODE=0
@@ -27,14 +27,14 @@ for arg in "$@"; do
 done
 
 if [ "$DEVELOP_MODE" -eq 1 ]; then
-    echo "Installing OxiZ Python bindings in development mode..."
+    echo "Installing Nixie Python bindings in development mode..."
     maturin develop $BUILD_MODE
-    echo "Development install complete. 'import oxiz' should now work."
+    echo "Development install complete. 'import nixie' should now work."
 else
-    echo "Building OxiZ Python bindings (wheel)..."
+    echo "Building Nixie Python bindings (wheel)..."
     maturin build $BUILD_MODE
 
-    WHEEL_PATH=$(ls "${SCRIPT_DIR}/../target/wheels/oxiz-"*.whl 2>/dev/null | tail -1)
+    WHEEL_PATH=$(ls "${SCRIPT_DIR}/../target/wheels/nixie-"*.whl 2>/dev/null | tail -1)
     if [ -n "$WHEEL_PATH" ]; then
         echo "Python wheel built: $WHEEL_PATH"
         echo "Install with: pip install '$WHEEL_PATH'"

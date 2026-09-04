@@ -1,4 +1,4 @@
-//! Performance regression testing library for the OxiZ SMT solver.
+//! Performance regression testing library for the Nixie SMT solver.
 //!
 //! Provides fixtures and Z3 comparison utilities for benchmarking.
 

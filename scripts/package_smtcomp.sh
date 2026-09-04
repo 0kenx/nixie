@@ -4,13 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="oxiz-smtcomp"))')"
+VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; d=json.load(sys.stdin); print(next(p["version"] for p in d["packages"] if p["name"]=="nixie-smtcomp"))')"
 OUT_DIR="$(mktemp -d)"
-ZIP_NAME="oxiz-smtcomp-2026-${VERSION}.zip"
+ZIP_NAME="nixie-smtcomp-2026-${VERSION}.zip"
 
 echo "[package_smtcomp] Version: ${VERSION}"
 echo "[package_smtcomp] Building release binary..."
-cargo build --release -p oxiz-smtcomp --bin smtcomp2026
+cargo build --release -p nixie-smtcomp --bin smtcomp2026
 
 BINARY="$ROOT/target/release/smtcomp2026"
 echo "[package_smtcomp] Binary: ${BINARY}"
@@ -43,15 +43,15 @@ done
 
 # Generate description and conf
 cat > "${OUT_DIR}/description.txt" <<EOF
-OxiZ ${VERSION} – Pure Rust SMT Solver
+Nixie ${VERSION} – Pure Rust SMT Solver
 Next-generation SMT solving with 100% Z3 parity across 8 core logics.
-https://github.com/cool-japan/oxiz
+https://github.com/cool-japan/nixie
 EOF
 
 cat > "${OUT_DIR}/starexec_conf.xml" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <solverConfig>
-    <solver name="OxiZ" version="${VERSION}"/>
+    <solver name="Nixie" version="${VERSION}"/>
     <tracks>
         <track name="Single Query"/>
         <track name="Incremental"/>

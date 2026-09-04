@@ -1,5 +1,5 @@
 #!/bin/bash
-# wasm_build.sh – Build OxiZ WASM and report bundle size.
+# wasm_build.sh – Build Nixie WASM and report bundle size.
 #
 # Usage:
 #   ./scripts/wasm_build.sh              # minimal (size-optimized, default)
@@ -17,10 +17,10 @@ set -euo pipefail
 PROFILE="${1:-minimal}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WASM_CRATE="${REPO_ROOT}/oxiz-wasm"
+WASM_CRATE="${REPO_ROOT}/nixie-wasm"
 PKG_DIR="${WASM_CRATE}/pkg"
 
-echo "==> Building OxiZ WASM (profile: ${PROFILE})"
+echo "==> Building Nixie WASM (profile: ${PROFILE})"
 echo "    crate: ${WASM_CRATE}"
 
 # Map profile name to Cargo features

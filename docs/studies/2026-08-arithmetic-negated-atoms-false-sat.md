@@ -9,7 +9,7 @@ verified on clean-HEAD worktree binaries (commit `3bfd6bf`).
 Several UNSAT instances answer `sat` because **theory atoms assigned their
 negative polarity are not enforced against the final arithmetic model**:
 
-| instance | logic | z3 | oxiz (main) |
+| instance | logic | z3 | nixie (main) |
 |---|---|---|---|
 | `smt-lib/non-incremental/QF_UFIDL/pete/5s.smt2` (also cxs-bp, cxs-bp-ex, cxs-bp-safety) | QF_UFIDL | unsat (0.03s) | **sat** (0.8s) |
 | `smt-lib/non-incremental/QF_ANIA/20190429-UltimateAutomizerSvcomp2019/avg40…TraceCheck_0.smt2` | QF_ANIA | unsat (3.8s) | **sat** (2.5s) |
@@ -44,18 +44,18 @@ it reports **zero per-atom violations** on 5s's accepted assignment.
 
 What actually characterizes the bug (z3-certified):
 
-* oxiz answered `sat` on 5s with model `pc0 = -1, dmem0 = -1, a1 = -1,
+* nixie answered `sat` on 5s with model `pc0 = -1, dmem0 = -1, a1 = -1,
   ZERO = -2` (and **no UF interpretations** in the printed model);
 * `F ∧ (= pc0 -1)` is **UNSAT** — the pinned constant *alone* refutes the
   formula (verified by minimization over the 4 pins: every proper subset is
   sat);
 * every assigned atom is individually consistent with the theory model
-  under oxiz's opaque values for UF-application variables.
+  under nixie's opaque values for UF-application variables.
 
 So the missing enforcement is **not** at the atom level: the formula entails
 `pc0 ≠ -1` through a chain (pinned constant → ite-condition resolution →
 equal-argument congruence on UF applications → a contradictory
-equality/disequality), and oxiz's final_check accepts an assignment that
+equality/disequality), and nixie's final_check accepts an assignment that
 breaks that chain — the negated-equality/congruence conflict is never
 derived. This is Hole-A-shaped (negated `=` enforcement) but at the level of
 *propagated/congruent* facts rather than asserted atoms: the operands whose
@@ -128,7 +128,7 @@ resumed (or re-derive from this doc — the design above is complete).
 
 ## Diagnostic tooling (committed with this study's follow-up)
 
-* **`OXIZ_SCAN_VIOL=1`** (debug builds): at `check_core`'s `Sat` exit, walk
+* **`NIXIE_SCAN_VIOL=1`** (debug builds): at `check_core`'s `Sat` exit, walk
   every assigned theory atom and print the first one the final theory model
   violates (`theory_manager/debug_scan.rs`; comparison checks only for
   genuine `Lt/Le/Gt/Ge` — see the module doc for the placeholder trap).
@@ -203,7 +203,7 @@ cxs-bp-ex, cxs-bp-safety, cxs-bp-ex-inp-safety — and 6stage-flush, a
 previous timeout).  Differential: **0 new unsound**; the only remaining
 disagreement is the pre-existing QF_ANIA avg40 (different family — the round
 is gated off there).  Regression tests:
-`oxiz-solver/tests/arrangement_round_regressions.rs` (+ fixture).
+`nixie-solver/tests/arrangement_round_regressions.rs` (+ fixture).
 
 **The wisas lesson (verified twice now)**: QF_UFLIA/wisas/xs_8_13 flips
 between correct `unsat` and false `sat` across *search configurations*
@@ -309,7 +309,7 @@ pete only along some trajectories.
      (`(= v i) v (v < i) v (v > i)`, `ensureLiteral` + `preferPhase(true)`,
      via the inference manager) asserted mid-search at a DEDUCTIVE trigger
      (fractional LP value) — violated at the trigger, so no restart.
-   Oxiz now mirrors this split:
+   Nixie now mirrors this split:
    * **Eager half** (`assert_eager_int_case_splits`, called after
      `pre_encode_care_graph_atoms`): enumeration lemmas for int-sorted UF
      arguments whose finite range the level-0 interval fixpoint derives

@@ -70,7 +70,7 @@ the one-shot ELS gets its own trigger on the same clock (independent of
 preserved behind `presearch_collapse: true` (the pr26 mechanism tests opt
 into it).
 
-**Evidence** (study knob `OXIZ_SCHED_PARITY=1` = the landed behavior):
+**Evidence** (study knob `NIXIE_SCHED_PARITY=1` = the landed behavior):
 single-run A/B/C on 8 files — every easy-file regression gone
 (ITC 159G→0.6G, worker_20 8.3G→0.1G, Break 3.1G→0.3G, all == default), win
 files improved beyond the plain stack (6s167 66→46G, mrpp 287→96G,

@@ -1,0 +1,117 @@
+#![allow(clippy::unwrap_used)]
+
+//! Differential correctness fuzz for the opt-in preprocessing stack
+//! (BVE + equivalent-literal substitution + congruence). Generates random
+//! CNFs, solves each via the identical DimacsParser path with the stack off
+//! and on, and requires (a) SAT/UNSAT agreement and (b) any SAT model
+//! satisfies every original clause.
+use nixie_sat::{DimacsParser, LBool, Solver, SolverConfig};
+use std::io::Cursor;
+
+fn rand(seed: &mut u64) -> u64 {
+    *seed ^= *seed << 13;
+    *seed ^= *seed >> 7;
+    *seed ^= *seed << 17;
+    *seed
+}
+fn to_cnf(nvars: usize, clauses: &[Vec<i32>]) -> String {
+    let mut s = format!("p cnf {nvars} {}\n", clauses.len());
+    for c in clauses {
+        for &v in c {
+            s.push_str(&format!("{v} "));
+        }
+        s.push_str("0\n");
+    }
+    s
+}
+fn gen_formula(seed: &mut u64, nvars: usize, nclauses: usize) -> Vec<Vec<i32>> {
+    let mut out = Vec::new();
+    for _ in 0..nclauses {
+        let len = if rand(seed) % 10 < 4 { 2 } else { 3 };
+        let mut c = Vec::new();
+        while c.len() < len {
+            let v = (rand(seed) as usize) % nvars + 1;
+            let lit: i32 = if rand(seed).is_multiple_of(2) {
+                v as i32
+            } else {
+                -(v as i32)
+            };
+            if !c.contains(&lit) && !c.contains(&-lit) {
+                c.push(lit);
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+fn solve(prep: bool, cnf: &str) -> (nixie_sat::SolverResult, Vec<u8>) {
+    let cfg = SolverConfig {
+        enable_equiv_substitution: prep,
+        enable_bve: prep,
+        ..SolverConfig::default()
+    };
+    let mut s = Solver::with_config(cfg);
+    let mut p = DimacsParser::new();
+    p.parse_reader(Cursor::new(cnf.as_bytes()), &mut s).unwrap();
+    let r = s.solve();
+    let model: Vec<u8> = (0..s.num_vars())
+        .map(|i| match s.model().get(i) {
+            Some(LBool::True) => 1u8,
+            Some(LBool::False) => 0u8,
+            _ => 2u8,
+        })
+        .collect();
+    (r, model)
+}
+fn model_ok(model: &[u8], clauses: &[Vec<i32>]) -> bool {
+    clauses.iter().all(|c| {
+        c.iter().any(|&v| {
+            let vi = v.unsigned_abs() as usize - 1;
+            model.get(vi).copied() == Some(if v > 0 { 1 } else { 0 })
+        })
+    })
+}
+fn main() {
+    let iters: u64 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10000);
+    let mut seed: u64 = 0xC0FFEE;
+    let (mut mismatch, mut invalid, mut sat) = (0usize, 0usize, 0usize);
+    for i in 0..iters {
+        let nvars = 5 + (rand(&mut seed) as usize) % 25;
+        let nclauses = 8 + (rand(&mut seed) as usize) % 60;
+        let f = gen_formula(&mut seed, nvars, nclauses);
+        let cnf = to_cnf(nvars, &f);
+        let (r_off, _) = solve(false, &cnf);
+        let (r_on, m_on) = solve(true, &cnf);
+        let agree = matches!(
+            (r_off, r_on),
+            (nixie_sat::SolverResult::Sat, nixie_sat::SolverResult::Sat)
+                | (
+                    nixie_sat::SolverResult::Unsat,
+                    nixie_sat::SolverResult::Unsat
+                )
+        );
+        if !agree {
+            mismatch += 1;
+            if mismatch <= 3 {
+                eprintln!("MISMATCH iter={i} nv={nvars} nc={nclauses}: off={r_off:?} on={r_on:?}");
+            }
+            continue;
+        }
+        if matches!(r_on, nixie_sat::SolverResult::Sat) {
+            sat += 1;
+            if !model_ok(&m_on, &f) {
+                invalid += 1;
+                if invalid <= 3 {
+                    eprintln!("INVALID MODEL iter={i} nv={nvars} nc={nclauses}");
+                }
+            }
+        }
+    }
+    println!("iters={iters} sat={sat} mismatches={mismatch} invalid_models={invalid}");
+    if mismatch > 0 || invalid > 0 {
+        std::process::exit(1);
+    }
+}

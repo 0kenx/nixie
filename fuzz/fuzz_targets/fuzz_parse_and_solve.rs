@@ -25,9 +25,9 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use oxiz::core::smtlib::{Command, parse_script};
-use oxiz::solver::{Model, SolverResult};
-use oxiz::{Solver, TermId, TermManager};
+use nixie::core::smtlib::{Command, parse_script};
+use nixie::solver::{Model, SolverResult};
+use nixie::{Solver, TermId, TermManager};
 
 /// Soundness oracle: every assertion the solver was fed MUST evaluate to
 /// `true` under a model the solver claims is satisfying. If it doesn't, the

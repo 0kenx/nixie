@@ -1,0 +1,12 @@
+/**
+ * @nixie/react - React wrapper for Nixie WASM SMT Solver
+ *
+ * Provides React hooks and components for using Nixie in React applications.
+ */
+
+export { useSolver } from './useSolver';
+export { useSolverWorker } from './useSolverWorker';
+export { SolverProvider, useSolverContext } from './SolverContext';
+export type { SolverContextValue, SolverProviderProps } from './SolverContext';
+export type { SolverHookResult, SolverOptions } from './useSolver';
+export type { SolverWorkerResult } from './useSolverWorker';

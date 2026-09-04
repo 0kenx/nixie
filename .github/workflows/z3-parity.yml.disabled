@@ -39,7 +39,7 @@ jobs:
           brew install z3
           z3 --version
       
-      - name: Build OxiZ
+      - name: Build Nixie
         run: cargo build --release --workspace
       
       - name: Build parity suite

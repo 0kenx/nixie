@@ -3,7 +3,7 @@
 ## Motivation (from the accumulated cost map)
 
 worker550 — the hardest timeout-residue file — is 93,713 vars / 10.3M
-clauses, nearly all **binary**. OxiZ double-bookkeeps every binary clause:
+clauses, nearly all **binary**. Nixie double-bookkeeps every binary clause:
 a BIG edge pair (`binary_graph`) **and** two arena watchers
 (`attach_watchers`), because every attach site adds both. In `propagate`,
 the BIG pass runs first for every dequeued literal and covers *all* binary
@@ -55,7 +55,7 @@ clauses; same schedule inputs). The null is trajectory identity itself.
   legitimately TO both arms at the cap — then rbsat carries the criterion).
 * Metric: PMU `cpu_core/instructions`, serial CPU-pinned, process-group
   kill on timeout.
-* Soundness: full `oxiz-sat` suite + workspace suite; watch-invariant
+* Soundness: full `nixie-sat` suite + workspace suite; watch-invariant
   tests; `diff_equiv` 200k fuzz.
 
 ## Results

@@ -1,4 +1,4 @@
-//! OxiZ vs Z3 parity-testing library.
+//! Nixie vs Z3 parity-testing library.
 //!
 //! Hosts the shared types behind two independent consumers:
 //!
@@ -6,7 +6,7 @@
 //!   `.smt2` corpora under `benchmarks/`, see `METHODOLOGY.md`).
 //! - The deterministic differential-testing harness (`generator` +
 //!   `difftest`), which generates random well-typed SMT-LIB2 scripts per
-//!   logic and checks OxiZ's sat/unsat verdicts against a Z3 binary found
+//!   logic and checks Nixie's sat/unsat verdicts against a Z3 binary found
 //!   on `PATH`. See `METHODOLOGY.md`'s "Differential Testing" section for
 //!   usage.
 //!
@@ -18,7 +18,7 @@ pub mod comparator;
 pub mod difftest;
 pub mod generator;
 pub mod history;
-pub mod oxiz_runner;
+pub mod nixie_runner;
 pub mod z3_runner;
 
 use chrono::{Local, SecondsFormat};
@@ -39,9 +39,9 @@ pub enum SolverResult {
 pub struct ParityResult {
     pub benchmark: String,
     pub logic: String,
-    pub oxiz_result: SolverResult,
+    pub nixie_result: SolverResult,
     pub z3_result: SolverResult,
-    pub oxiz_time: Duration,
+    pub nixie_time: Duration,
     pub z3_time: Duration,
     pub match_status: MatchStatus,
 }
@@ -77,12 +77,12 @@ pub fn env_results_file_name() -> String {
 /// Environment header recorded alongside the results of a run.
 ///
 /// A bare list of results is unattributable: the verdicts depend on which Z3
-/// build produced the `z3_result` values and on the platform OxiZ ran on, and
+/// build produced the `z3_result` values and on the platform Nixie ran on, and
 /// neither was recorded before this header existed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunMetadata {
     /// `CARGO_PKG_VERSION` of this harness, which mirrors the workspace version.
-    pub oxiz_version: String,
+    pub nixie_version: String,
     /// Bare version of the Z3 binary that produced the `z3_result` values
     /// (e.g. `4.15.4`), captured at run time. `None` when no Z3 binary could be
     /// probed - never a guessed or documented value.
@@ -107,7 +107,7 @@ impl RunMetadata {
     /// `benchmark_count` results.
     pub fn capture(benchmark_count: usize) -> Self {
         Self {
-            oxiz_version: env!("CARGO_PKG_VERSION").to_string(),
+            nixie_version: env!("CARGO_PKG_VERSION").to_string(),
             z3_version: z3_runner::z3_version(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),

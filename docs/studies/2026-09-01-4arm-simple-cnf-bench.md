@@ -28,8 +28,8 @@ Per instruction, this run uses **every CNF file currently in the repository**
 
 | arm | binary | sha256[:16] | role |
 |---|---|---|---|
-| `oxiz-main` | `precompile/5665273/cnf_solve` (CaDiCaL preset, default) | `e6d128b1a9fd154f` | treatment |
-| `oxiz-upstream-0.3.3` | `precompile/e7c7bca/cnf_solve_upstream` (CaDiCaL preset; minimal harness added uncommitted in a throwaway worktree of tag `v0.3.3` = `e7c7bca`) | `b63ca04d285caff4` | baseline |
+| `nixie-main` | `precompile/5665273/cnf_solve` (CaDiCaL preset, default) | `e6d128b1a9fd154f` | treatment |
+| `nixie-upstream-0.3.3` | `precompile/e7c7bca/cnf_solve_upstream` (CaDiCaL preset; minimal harness added uncommitted in a throwaway worktree of tag `v0.3.3` = `e7c7bca`) | `b63ca04d285caff4` | baseline |
 | `cadical` 3.0.1 | `../temp/cadical/build/cadical` | `015dafc87f3ecf1e` | reference (parity) |
 | `kissat` 4.0.4 | `../temp/kissat/build/kissat` | `e08eddf914bbd918` | reference (goal) |
 
@@ -40,7 +40,7 @@ external `timeout -k 2` on all arms alike, single deterministic run per cell
 
 ## Result — solved at 60 s (serial)
 
-| instance | oxiz-main | oxiz-upstream-0.3.3 | cadical 3.0.1 | kissat 4.0.4 |
+| instance | nixie-main | nixie-upstream-0.3.3 | cadical 3.0.1 | kissat 4.0.4 |
 |---|---|---|---|---|
 | sat_simple | sat 0.0 s | sat 0.0 s | sat 0.0 s | sat 0.0 s |
 | break_unsat_06_07 | unsat 0.7 s | unsat 2.8 s | unsat 0.5 s | unsat 0.4 s |
@@ -55,7 +55,7 @@ external `timeout -k 2` on all arms alike, single deterministic run per cell
 
 - **Verdict mismatches: 0** across every decided (instance, arm) pair.
 - All cadical/kissat SAT models re-verified against the CNF (0 failures).
-  The oxiz arms print no model (`cnf_solve` prints the `s` line only), so their
+  The nixie arms print no model (`cnf_solve` prints the `s` line only), so their
   SAT verdicts rest on the 4-way agreement — with both references model-checked.
 - Conflict counters were not captured in this run (cadical/kissat emit them in
   solver-specific stat blocks; kept out of scope for a score-only snapshot).

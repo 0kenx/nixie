@@ -45,7 +45,7 @@ stride that determines how many literals share a cache line.
 
 ## Grounded facts about the current layout (verify, don't trust prose)
 
-`oxiz-sat/src/memory.rs`:
+`nixie-sat/src/memory.rs`:
 
 ```rust
 #[repr(C, align(4))]
@@ -154,16 +154,16 @@ touches every literal-array consumer and the shrink-in-slot arithmetic.
 
 | file | what |
 |---|---|
-| `oxiz-sat/src/memory.rs` | `ClauseArena`, `ClauseHeader`, `ClauseRef`, `alloc`, `live_lits_hot`, `shrink` — the whole layout |
-| `oxiz-sat/src/clause.rs` | `ClauseDatabase` over the arena; `bump_activity` / tier sorts (activity's consumers) |
-| `oxiz-sat/src/solver/learn.rs` | `reduce_clause_database` (the activity sort), `sweep_root_fixed_clauses` |
-| `oxiz-sat/src/solver/propagate.rs` | the BCP scan (the customer) |
-| `oxiz-sat/src/invariants.rs` | `check_learned_clause_lbd` (LBD clamping interplay) |
+| `nixie-sat/src/memory.rs` | `ClauseArena`, `ClauseHeader`, `ClauseRef`, `alloc`, `live_lits_hot`, `shrink` — the whole layout |
+| `nixie-sat/src/clause.rs` | `ClauseDatabase` over the arena; `bump_activity` / tier sorts (activity's consumers) |
+| `nixie-sat/src/solver/learn.rs` | `reduce_clause_database` (the activity sort), `sweep_root_fixed_clauses` |
+| `nixie-sat/src/solver/propagate.rs` | the BCP scan (the customer) |
+| `nixie-sat/src/invariants.rs` | `check_learned_clause_lbd` (LBD clamping interplay) |
 
 ## Build & quick measures
 
 ```bash
-cargo build --release --example cnf_solve --example stats_solve -p oxiz-sat
+cargo build --release --example cnf_solve --example stats_solve -p nixie-sat
 # per-visit cost at fixed cap (deterministic, pin one core):
 p=$(ls /tmp/sc24f/6f7a0e1c*.cnf)   # circuit_64in64out
 taskset -c 4 perf stat -e cpu_core/instructions/ -x, \
@@ -179,7 +179,7 @@ never rebuild an old revision by hand on the shared tree.
 ## Constraints
 
 - Pure Rust, no new C/C++ deps (banned in `deny.toml`).
-- `#![deny(unsafe_code)]` stands in `oxiz-sat`; `memory.rs` already carries a
+- `#![deny(unsafe_code)]` stands in `nixie-sat`; `memory.rs` already carries a
   documented module exception — keep any new raw-pointer work inside it and
   argued per-write.
 - No `unwrap()`/`expect()` in production paths (clippy `deny`).

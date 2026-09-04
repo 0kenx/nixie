@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-publish:
+    name: Build and Publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Install wasm-opt
+        run: |
+          wget https://github.com/WebAssembly/binaryen/releases/download/version_116/binaryen-version_116-x86_64-linux.tar.gz
+          tar xzf binaryen-version_116-x86_64-linux.tar.gz
+          sudo mv binaryen-version_116/bin/wasm-opt /usr/local/bin/
+
+      - name: Build for web
+        run: wasm-pack build --target web --release
+        working-directory: ./nixie-wasm
+
+      - name: Optimize WASM
+        run: wasm-opt -Oz -o pkg/nixie_wasm_bg.wasm pkg/nixie_wasm_bg.wasm
+        working-directory: ./nixie-wasm
+
+      - name: Build for Node.js
+        run: wasm-pack build --target nodejs --release --out-dir pkg-nodejs
+        working-directory: ./nixie-wasm
+
+      - name: Optimize Node.js WASM
+        run: wasm-opt -Oz -o pkg-nodejs/nixie_wasm_bg.wasm pkg-nodejs/nixie_wasm_bg.wasm
+        working-directory: ./nixie-wasm
+
+      - name: Build for bundlers
+        run: wasm-pack build --target bundler --release --out-dir pkg-bundler
+        working-directory: ./nixie-wasm
+
+      - name: Optimize bundler WASM
+        run: wasm-opt -Oz -o pkg-bundler/nixie_wasm_bg.wasm pkg-bundler/nixie_wasm_bg.wasm
+        working-directory: ./nixie-wasm
+
+      - name: Create release archive
+        run: |
+          cd nixie-wasm
+          tar -czf ../nixie-wasm-web.tar.gz -C pkg .
+          tar -czf ../nixie-wasm-nodejs.tar.gz -C pkg-nodejs .
+          tar -czf ../nixie-wasm-bundler.tar.gz -C pkg-bundler .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            nixie-wasm-web.tar.gz
+            nixie-wasm-nodejs.tar.gz
+            nixie-wasm-bundler.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to npm (web)
+        run: |
+          cd nixie-wasm/pkg
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          npm publish --access public
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+
+  create-release-notes:
+    name: Create Release Notes
+    runs-on: ubuntu-latest
+    needs: build-and-publish
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        run: |
+          # Extract version from tag
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "# Release $VERSION" > RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+
+          # Get commits since last tag
+          PREVIOUS_TAG=$(git describe --abbrev=0 --tags ${GITHUB_REF}^ 2>/dev/null || echo "")
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "## Changes since $PREVIOUS_TAG" >> RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            git log --pretty=format:"- %s (%h)" $PREVIOUS_TAG..HEAD >> RELEASE_NOTES.md
+          else
+            echo "## Initial Release" >> RELEASE_NOTES.md
+          fi
+
+      - name: Update release with notes
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: RELEASE_NOTES.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

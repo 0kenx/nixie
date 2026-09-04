@@ -14,7 +14,7 @@ shrinking landings, which changed the search core enough to re-check on the
 benchmark class the decision was made for (not CNF).  A 63-file QF_UF sample
 (60 `QG-classification` + `TypeSafe`, seed-7 draw, 60 s cap, paired
 instructions via `perf stat`, arms toggled by the new debug knob
-`OXIZ_SAT_VMTF_FOCUS=1`):
+`NIXIE_SAT_VMTF_FOCUS=1`):
 
 - **0 verdict disagreements** between arms;
 - paired vsids/vmtf instructions geomean **0.768** (VSIDS, the current
@@ -25,7 +25,7 @@ instructions via `perf stat`, arms toggled by the new debug knob
 
 Single seed, screening label — but the direction matches the original
 measurement and the decision stands: **`focused_vmtf = false` stays.**
-`OXIZ_SAT_VMTF_FOCUS=1` is kept as a documented debug knob so the next
+`NIXIE_SAT_VMTF_FOCUS=1` is kept as a documented debug knob so the next
 re-validation needs no rebuild.
 
 ## 2. Inprocessing-gate audit (gate → verdict)
@@ -85,7 +85,7 @@ shrinking by construction.  Shrink *is* active on the CDCL(T) path
 
 **Differential evidence**: 155-file stratified sweep over
 `smt-lib/non-incremental/{QF_LIA,QF_UF,QF_IDL,QF_UFIDL,QF_UFLIA}`
-(seed-11, 60 s OxiZ / 30 s Z3, verdict cross-check; `unknown`/timeout of
+(seed-11, 60 s Nixie / 30 s Z3, verdict cross-check; `unknown`/timeout of
 either side not counted): **88 verdicts, 0 disagreements** with Z3 5.0.0
 (the parity-suite pin is 4.15.4; for ground-logics verdict comparison this
 is immaterial, and any future disagreement gets minimized + certified-mode

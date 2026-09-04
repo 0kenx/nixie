@@ -3,7 +3,7 @@ use std::fs;
 fn write_history_snapshot(dir: &std::path::Path, geomean: f64, count: usize) {
     let snapshot = serde_json::json!({
         "schema_version": 1,
-        "oxiz_version": "0.2.1",
+        "nixie_version": "0.2.1",
         "summary": {
             "geomean_ratio": geomean,
             "p50_ratio": geomean,

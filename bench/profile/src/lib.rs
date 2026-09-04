@@ -1,10 +1,10 @@
 //! Small profiling workloads for hot-path benchmarks.
 
-use oxiz_core::OxizError;
-use oxiz_solver::Context;
+use nixie_core::NixieError;
+use nixie_solver::Context;
 
 /// Run a small SMT-LIB script through the high-level solver context.
-pub fn run_script(script: &str) -> Result<Vec<String>, OxizError> {
+pub fn run_script(script: &str) -> Result<Vec<String>, NixieError> {
     let mut ctx = Context::new();
     ctx.execute_script(script)
 }

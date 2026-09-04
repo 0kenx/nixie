@@ -1,12 +1,12 @@
-# OxiZ Architecture
+# Nixie Architecture
 
 **Last Updated:** 2026-07-31 (v0.3.1)
 
 ## 1. Project Overview
 
-### What is OxiZ?
+### What is Nixie?
 
-OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure Rust. It implements a modular CDCL(T) architecture that closely follows the design of Z3 while leveraging Rust's safety guarantees and modern features.
+Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** written entirely in pure Rust. It implements a modular CDCL(T) architecture that closely follows the design of Z3 while leveraging Rust's safety guarantees and modern features.
 
 **Project Statistics** (measured via `tokei`/`cargo nextest` at the time of this update – see `README.md` for the always-current figures):
 - 438,793 lines of production Rust code (547,739 total including comments/blank lines, 1,236 files)
@@ -16,7 +16,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 
 ### Key Differentiators vs Z3
 
-| Feature | Z3 | OxiZ |
+| Feature | Z3 | Nixie |
 |---------|-----|------|
 | **Language** | C++ | Pure Rust (no FFI, memory-safe) |
 | **WASM Bundle** | ~20MB | Target <2MB |
@@ -32,28 +32,28 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 
 ```
                               +-----------+
-                              |   oxiz    |  (meta-crate: unified API)
+                              |   nixie    |  (meta-crate: unified API)
                               +-----+-----+
                                     |
            +------------------------+-------------------------+
            |                        |                         |
            v                        v                         v
     +------------+           +------------+            +------------+
-    | oxiz-cli   |           | oxiz-wasm  |            | oxiz-opt   |
+    | nixie-cli   |           | nixie-wasm  |            | nixie-opt   |
     | (CLI front)|           | (WASM bind)|            | (MaxSAT/OMT)
     +-----+------+           +-----+------+            +-----+------+
           |                        |                         |
           +------------------------+-------------------------+
                                    |
                             +------+------+
-                            | oxiz-solver |  (CDCL(T) orchestration)
+                            | nixie-solver |  (CDCL(T) orchestration)
                             +------+------+
                                    |
            +-----------------------+-----------------------+
            |                       |                       |
            v                       v                       v
     +-------------+        +---------------+       +--------------+
-    | oxiz-spacer |        | oxiz-theories |       | oxiz-proof   |
+    | nixie-spacer |        | nixie-theories |       | nixie-proof   |
     | (PDR/CHC)   |        | (EUF,LRA,BV..)|       | (DRAT,Alethe)|
     +------+------+        +-------+-------+       +------+-------+
            |                       |                      |
@@ -61,7 +61,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
            |           |                       |          |
            |           v                       v          |
            |     +----------+          +-----------+      |
-           |     | oxiz-sat |          | oxiz-nlsat|      |
+           |     | nixie-sat |          | nixie-nlsat|      |
            |     | (CDCL)   |          | (CAD/NRA) |      |
            |     +-----+----+          +-----+-----+      |
            |           |                     |            |
@@ -70,11 +70,11 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
            +----------------------+-----------------------+
                                   |
                            +------+------+
-                           | oxiz-math   |  (polynomials, simplex, LP)
+                           | nixie-math   |  (polynomials, simplex, LP)
                            +------+------+
                                   |
                            +------+------+
-                           | oxiz-core   |  (AST, sorts, parser, tactics)
+                           | nixie-core   |  (AST, sorts, parser, tactics)
                            +-------------+
 ```
 
@@ -82,23 +82,23 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 
 | Crate | Depends On | Provides |
 |-------|------------|----------|
-| **oxiz-core** | None (foundation) | AST, sorts, SMT-LIB2 parser, tactics, rewriters |
-| **oxiz-math** | num-rational, num-bigint | Polynomials, simplex, intervals, LP, Grobner bases |
-| **oxiz-sat** | oxiz-core | CDCL SAT solver with VSIDS/LRB/VMTF/CHB |
-| **oxiz-theories** | oxiz-core, oxiz-sat | EUF, LRA, LIA, BV, Arrays, Strings, FP, Datatypes |
-| **oxiz-nlsat** | oxiz-core, oxiz-math | Non-linear arithmetic (CAD, NRA/NIA) |
-| **oxiz-proof** | oxiz-core, (oxiz-sat optional) | DRAT, Alethe, LFSC, Coq/Lean/Isabelle exports |
-| **oxiz-solver** | oxiz-core, oxiz-sat, oxiz-theories | CDCL(T) orchestration, SMT-LIB2 execution |
-| **oxiz-spacer** | oxiz-core, oxiz-solver | PDR/IC3, CHC solving, BMC, invariant synthesis |
-| **oxiz-opt** | oxiz-core, oxiz-sat, oxiz-solver | MaxSAT, OMT, Pareto optimization |
-| **oxiz-cli** | oxiz-core, oxiz-solver | Command-line interface, LSP server |
-| **oxiz-wasm** | oxiz-core, oxiz-solver | WebAssembly bindings for browsers |
+| **nixie-core** | None (foundation) | AST, sorts, SMT-LIB2 parser, tactics, rewriters |
+| **nixie-math** | num-rational, num-bigint | Polynomials, simplex, intervals, LP, Grobner bases |
+| **nixie-sat** | nixie-core | CDCL SAT solver with VSIDS/LRB/VMTF/CHB |
+| **nixie-theories** | nixie-core, nixie-sat | EUF, LRA, LIA, BV, Arrays, Strings, FP, Datatypes |
+| **nixie-nlsat** | nixie-core, nixie-math | Non-linear arithmetic (CAD, NRA/NIA) |
+| **nixie-proof** | nixie-core, (nixie-sat optional) | DRAT, Alethe, LFSC, Coq/Lean/Isabelle exports |
+| **nixie-solver** | nixie-core, nixie-sat, nixie-theories | CDCL(T) orchestration, SMT-LIB2 execution |
+| **nixie-spacer** | nixie-core, nixie-solver | PDR/IC3, CHC solving, BMC, invariant synthesis |
+| **nixie-opt** | nixie-core, nixie-sat, nixie-solver | MaxSAT, OMT, Pareto optimization |
+| **nixie-cli** | nixie-core, nixie-solver | Command-line interface, LSP server |
+| **nixie-wasm** | nixie-core, nixie-solver | WebAssembly bindings for browsers |
 
 ---
 
 ## 3. Key Algorithms by Crate
 
-### oxiz-core (Foundation)
+### nixie-core (Foundation)
 
 **Purpose:** Core data structures and utilities used by all other crates.
 
@@ -112,7 +112,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **E-graph** | Incremental merging, cost-based extraction |
 | **Scripting** | Rhai-based custom tactics |
 
-### oxiz-math (Mathematical Foundations)
+### nixie-math (Mathematical Foundations)
 
 **Purpose:** Mathematical algorithms for arithmetic theories.
 
@@ -127,7 +127,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Number Theory** | Miller-Rabin primality, Pollard rho, Chinese Remainder Theorem |
 | **Linear Algebra** | QR/Cholesky decomposition, matrix inverse, gradient/Hessian |
 
-### oxiz-sat (CDCL SAT Solver)
+### nixie-sat (CDCL SAT Solver)
 
 **Purpose:** High-performance propositional SAT solving.
 
@@ -144,7 +144,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **ML Integration** | Online learning for branching/restart decisions |
 | **Proof Generation** | DRAT/LRAT proof logging |
 
-### oxiz-theories (Theory Solvers)
+### nixie-theories (Theory Solvers)
 
 **Purpose:** Modular theory solvers for SMT.
 
@@ -163,7 +163,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Pseudo-Boolean** | Cardinality constraints, PB-specific propagation |
 | **Theory Combination** | Nelson-Oppen, model-based, delayed, polite combination |
 
-### oxiz-nlsat (Non-linear Arithmetic)
+### nixie-nlsat (Non-linear Arithmetic)
 
 **Purpose:** Solving non-linear real/integer arithmetic.
 
@@ -177,7 +177,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Parallel Projection** | Rayon-based parallel CAD projection |
 | **Optimizations** | Polynomial evaluation cache, discriminant analysis, bound propagation |
 
-### oxiz-proof (Proof Generation)
+### nixie-proof (Proof Generation)
 
 **Purpose:** Machine-checkable proof production and verification.
 
@@ -192,7 +192,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Proof Operations** | Trimming, compression, merging, slicing, normalization |
 | **Proof Learning** | Pattern extraction, template identification, fingerprinting |
 
-### oxiz-solver (CDCL(T) Orchestration)
+### nixie-solver (CDCL(T) Orchestration)
 
 **Purpose:** Main SMT solving engine.
 
@@ -207,7 +207,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Optimization** | Lexicographic, Pareto, iterative optimization |
 | **Context Management** | Push/pop, incremental solving |
 
-### oxiz-spacer (PDR/CHC Solving)
+### nixie-spacer (PDR/CHC Solving)
 
 **Purpose:** Property Directed Reachability for software verification.
 
@@ -221,7 +221,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Parallelism** | Portfolio solver, parallel frame solving, distributed PDR |
 | **Theories** | LIA/LRA, Arrays, BitVectors support |
 
-### oxiz-opt (Optimization)
+### nixie-opt (Optimization)
 
 **Purpose:** MaxSAT and Optimization Modulo Theories.
 
@@ -237,7 +237,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Preprocessing** | Soft clause preprocessing, BVE, hardening |
 | **WCNF** | MaxSAT competition format parser |
 
-### oxiz-cli (Command-Line Interface)
+### nixie-cli (Command-Line Interface)
 
 **Purpose:** User-facing command-line solver.
 
@@ -251,7 +251,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 | **Integration** | LSP server, CI/CD helpers, shell completions |
 | **Diagnostics** | Proof checking, dependency analysis, tutorial mode |
 
-### oxiz-wasm (WebAssembly)
+### nixie-wasm (WebAssembly)
 
 **Purpose:** Browser-based SMT solving.
 
@@ -275,7 +275,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
                                 |
                                 v
                     +------------------------+
-                    |      oxiz-core         |
+                    |      nixie-core         |
                     |    (Parser + AST)      |
                     +------------------------+
                                 |
@@ -283,7 +283,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
                                 |
                                 v
                     +------------------------+
-                    |     oxiz-solver        |
+                    |     nixie-solver        |
                     |   (CDCL(T) Engine)     |
                     +------------------------+
                                 |
@@ -291,7 +291,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
             |                   |                   |
             v                   v                   v
     +--------------+    +---------------+    +--------------+
-    |   oxiz-sat   |    | oxiz-theories |    | oxiz-proof   |
+    |   nixie-sat   |    | nixie-theories |    | nixie-proof   |
     | (SAT Core)   |    | (Theory Check)|    | (Proof Log)  |
     +--------------+    +---------------+    +--------------+
             |                   |
@@ -304,22 +304,22 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 
 ### Detailed Solve Flow
 
-1. **Parsing** (oxiz-core)
+1. **Parsing** (nixie-core)
    - SMT-LIB2 script is tokenized and parsed
    - Terms are hash-consed for sharing
    - Sorts are inferred and validated
 
-2. **Preprocessing** (oxiz-solver, oxiz-core)
+2. **Preprocessing** (nixie-solver, nixie-core)
    - Tactics applied (simplify, propagate-values)
    - Formula simplified and normalized
    - CNF-like structure prepared
 
-3. **Encoding** (oxiz-solver)
+3. **Encoding** (nixie-solver)
    - Boolean skeleton created via Tseitin encoding
    - Theory atoms assigned Boolean variables
    - Constraints registered with theories
 
-4. **CDCL(T) Loop** (oxiz-solver, oxiz-sat)
+4. **CDCL(T) Loop** (nixie-solver, nixie-sat)
    ```
    while not done:
        # SAT solver makes decisions
@@ -329,7 +329,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
            analyze_conflict()   # First-UIP, learn clause
            backtrack()
        else:
-           theory_check()       # Check theories (oxiz-theories)
+           theory_check()       # Check theories (nixie-theories)
 
            if theory_conflict:
                add_theory_lemma()
@@ -337,7 +337,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
                return SAT with model
    ```
 
-5. **Theory Checking** (oxiz-theories)
+5. **Theory Checking** (nixie-theories)
    - Each theory checks its constraints
    - EUF: Congruence closure
    - LRA: Simplex feasibility
@@ -357,7 +357,7 @@ OxiZ is a next-generation **Satisfiability Modulo Theories (SMT) solver** writte
 
 To add a new theory solver:
 
-1. **Create Theory Solver** in `oxiz-theories`
+1. **Create Theory Solver** in `nixie-theories`
    ```rust
    pub struct MyTheorySolver {
        // State for your theory
@@ -373,12 +373,12 @@ To add a new theory solver:
    }
    ```
 
-2. **Register with Solver** in `oxiz-solver`
+2. **Register with Solver** in `nixie-solver`
    - Add theory to `TheoryManager`
    - Handle theory-specific term kinds in encoding
    - Implement model extraction for theory sorts
 
-3. **Add Sort/Term Support** in `oxiz-core`
+3. **Add Sort/Term Support** in `nixie-core`
    - Define new `SortKind` variants if needed
    - Define new `TermKind` variants for operations
    - Update SMT-LIB2 parser
@@ -392,7 +392,7 @@ To add a new theory solver:
 
 To add a new preprocessing tactic:
 
-1. **Implement Tactic Trait** in `oxiz-core`
+1. **Implement Tactic Trait** in `nixie-core`
    ```rust
    pub struct MyTactic;
 
@@ -428,7 +428,7 @@ To add a new preprocessing tactic:
 
 To add a new proof export format:
 
-1. **Define Format** in `oxiz-proof`
+1. **Define Format** in `nixie-proof`
    ```rust
    pub struct MyProofFormatter;
 
@@ -507,10 +507,10 @@ cargo build --release
 cargo nextest run --all-features
 
 # Build WASM
-cd oxiz-wasm && wasm-pack build --target web
+cd nixie-wasm && wasm-pack build --target web
 
 # Run CLI
-cargo run --release -p oxiz-cli -- input.smt2
+cargo run --release -p nixie-cli -- input.smt2
 ```
 
 ---
@@ -536,4 +536,4 @@ cargo run --release -p oxiz-cli -- input.smt2
 
 ---
 
-*This document is part of the OxiZ project documentation.*
+*This document is part of the Nixie project documentation.*

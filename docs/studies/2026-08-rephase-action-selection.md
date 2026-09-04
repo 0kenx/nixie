@@ -233,7 +233,7 @@ not supported.
 
 **Does not establish:** that phase handling in general is a dead end. Specifically untested:
 per-*variable* phase policies (the A4/NeuroBack-style intervention), one-shot pre-search phase
-initialisation, and target-phase mechanisms absent from OxiZ entirely. Those are different
+initialisation, and target-phase mechanisms absent from Nixie entirely. Those are different
 decision points with different noise properties. What is ruled out is the specific action space
 the design doc recommended starting from — CaDiCaL's six rephase actions.
 
@@ -260,7 +260,7 @@ could not have detected the difference.
 
 What survives, in priority order:
 
-1. **A0 — baseline completion.** OxiZ still lacks CaDiCaL's `target` phase array, per-backtrack
+1. **A0 — baseline completion.** Nixie still lacks CaDiCaL's `target` phase array, per-backtrack
    `update_target_and_best`, and a real rephase schedule (`rephase_interval: 0` today). This is
    a fidelity gap, justified independently of any learning, and unaffected by these results.
 2. **The measurement infrastructure.** The patched CaDiCaL, the deterministic walk-inclusive
@@ -291,7 +291,7 @@ read `getenv("CADICAL_REPHASE_SCRIPT")`. Index it by `stats.rephased.total - 1`;
 `O/I/F/R/B/W` onto `rephase_original/_inverted/_flipping/_random/_best/_walk`; treat `.` and
 past-end as fall-through. Guard the existing schedule chain behind `if (type) {} else if (…)`.
 
-**Patch 2 — `src/rephase.cpp`, matched null.** Add a file-static `oxiz_rephase_nonce`; in
+**Patch 2 — `src/rephase.cpp`, matched null.** Add a file-static `nixie_rephase_nonce`; in
 `rephase_random()` mix it into the `Random` state (`random += nonce * 7919`). In the script
 dispatch, map characters `'0'..'5'` to `rephase_random()` under nonces 1..6.
 

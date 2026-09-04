@@ -44,7 +44,7 @@ Not taken (measured or closed already):
 
 ## The change
 
-1. New `oxiz-sat/src/reap.rs`: faithful safe-Rust port of CaDiCaL's
+1. New `nixie-sat/src/reap.rs`: faithful safe-Rust port of CaDiCaL's
    `Reap` (monotone radix heap, 33 buckets, `last_deleted` bucket-0
    protocol). `pop() -> Option<u32>`; `None` (precondition violation,
    cannot happen given the invariants) degrades the block walk to

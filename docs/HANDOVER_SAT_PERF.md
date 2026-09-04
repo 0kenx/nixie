@@ -29,14 +29,14 @@ disjuncts, exploring a large space.
 
 ## Root cause (profiled, not guessed)
 
-The array-axiom refinement loop (`check_core`, `oxiz-solver/src/solver/mod.rs:1394`)
+The array-axiom refinement loop (`check_core`, `nixie-solver/src/solver/mod.rs:1394`)
 adds lemmas and re-solves from scratch each round.  Profiling showed:
 - the per-round reset is **~1 µs** (negligible);
 - the restart is **warm** (`phase` persists across `backtrack_to_root`);
 - the **CDCL search itself** is the cost (~1.5 s/round × 2 rounds).
 
 The search is expensive because of the **atoms the lemmas materialise**:
-- the **finite-disjunction clause** (`oxiz-solver/src/solver/array_axioms.rs`,
+- the **finite-disjunction clause** (`nixie-solver/src/solver/array_axioms.rs`,
   `finite_disjunction_extensionality`):
   `a = b ∨ ∨_{k∈K}(val_a(k) ≠ val_b(k))` – for a depth-60 store chain, this
   is a ~60-disjunct clause; the SAT solver branches on each disjunct.
@@ -83,7 +83,7 @@ The SAT solver branches on the finite-disjunction clause's disjuncts.  Each
 disjunct is `val_a(k) ≠ val_b(k)` – an integer disequality between two free
 variables.  For an invalid `storecomm` (chains provably differ), exactly one
 disjunct is satisfiable (pick the vars different); the solver must *find* it
-among ~60 options.  z3 does this in 0.03 s; oxiz takes 3 s.
+among ~60 options.  z3 does this in 0.03 s; nixie takes 3 s.
 
 ### Approach A – SAT-side: branch on the disjunction eagerly
 
@@ -126,42 +126,42 @@ assignment already make some `val_a(k) ≠ val_b(k)` true?  If yes, `sat`.
 
 | file | what |
 |---|---|
-| `oxiz-solver/src/solver/mod.rs` | `check_core` (the CDCL loop + refinement), `rebase_theory_state`, `Solver` struct |
-| `oxiz-solver/src/solver/array_axioms.rs` | `instantiate_array_axioms`, `build_read_over_write`, `build_extensionality_and_congruence`, `finite_disjunction_extensionality`, `direct_store_map` |
-| `oxiz-solver/src/solver/check_array.rs` | `check_array_constraints`, `store_chain_disequality_conflict`, `store_chains_concretely_equal`, `reconstruct_store_chain`, `array_atoms_need_theory` |
-| `oxiz-solver/src/solver/theory_manager.rs` | `TheoryManager`, `final_check`, `propagate_array_read_over_write`, `check_array_extensionality`, `process_constraint` |
-| `oxiz-solver/src/solver/array_theory.rs` | `ArrayTheory` index (maps, parents, row_targets, ext_witnesses) |
-| `oxiz-solver/src/solver/encode.rs` | `encode_depth` (Tseitin encoder), `extract_linear_terms` (Mul linearisation), the array-equality + `has_array_ops` flag |
-| `oxiz-solver/src/solver/model_eval.rs` | `eval_in_model`, `eval_in_model_outcome`, `model_refutes_assertions` |
-| `oxiz-solver/src/solver/trail.rs` | `ContextState`, `TrailOp`, the debug exhaustive-match scope invariant |
-| `oxiz-sat/src/solver/search_ext.rs` | `solve_with_theory` (the SAT↔theory interface; `theory_processed` resets to 0 per call) |
-| `oxiz-theories/src/euf/solver.rs` | `EufSolver` (`intern`, `merge`, `find`, `are_equal_immutable`, `are_proven_disequal`, `check_conflicts`, `explain_eq`) |
-| `oxiz-core/src/ast/manager/builder.rs` | `TermManager` (`mk_select`, `mk_store`, `mk_eq`, `mk_var`, `mk_ite`, …) |
+| `nixie-solver/src/solver/mod.rs` | `check_core` (the CDCL loop + refinement), `rebase_theory_state`, `Solver` struct |
+| `nixie-solver/src/solver/array_axioms.rs` | `instantiate_array_axioms`, `build_read_over_write`, `build_extensionality_and_congruence`, `finite_disjunction_extensionality`, `direct_store_map` |
+| `nixie-solver/src/solver/check_array.rs` | `check_array_constraints`, `store_chain_disequality_conflict`, `store_chains_concretely_equal`, `reconstruct_store_chain`, `array_atoms_need_theory` |
+| `nixie-solver/src/solver/theory_manager.rs` | `TheoryManager`, `final_check`, `propagate_array_read_over_write`, `check_array_extensionality`, `process_constraint` |
+| `nixie-solver/src/solver/array_theory.rs` | `ArrayTheory` index (maps, parents, row_targets, ext_witnesses) |
+| `nixie-solver/src/solver/encode.rs` | `encode_depth` (Tseitin encoder), `extract_linear_terms` (Mul linearisation), the array-equality + `has_array_ops` flag |
+| `nixie-solver/src/solver/model_eval.rs` | `eval_in_model`, `eval_in_model_outcome`, `model_refutes_assertions` |
+| `nixie-solver/src/solver/trail.rs` | `ContextState`, `TrailOp`, the debug exhaustive-match scope invariant |
+| `nixie-sat/src/solver/search_ext.rs` | `solve_with_theory` (the SAT↔theory interface; `theory_processed` resets to 0 per call) |
+| `nixie-theories/src/euf/solver.rs` | `EufSolver` (`intern`, `merge`, `find`, `are_equal_immutable`, `are_proven_disequal`, `check_conflicts`, `explain_eq`) |
+| `nixie-core/src/ast/manager/builder.rs` | `TermManager` (`mk_select`, `mk_store`, `mk_eq`, `mk_var`, `mk_ite`, …) |
 
 ## Build & verify
 
 ```bash
 # Use the nix toolchain
 export PATH=/nix/store/gr0i02za09y1hif1japlzg1qpd5xsg49-rust-default-1.97.1/bin:$PATH
-cargo build --release --bin oxiz     # ~1.5 min
+cargo build --release --bin nixie     # ~1.5 min
 
 # Soundness canary (must stay 163/0/5)
 for f in $(find bench/z3_parity/benchmarks -name "*.smt2"|sort); do
   z=$(timeout 10 z3 "$f" 2>/dev/null|tail -1)
-  m=$(timeout 10 target/release/oxiz "$f" 2>/dev/null|tail -1)
+  m=$(timeout 10 target/release/nixie "$f" 2>/dev/null|tail -1)
   [ "$z" = "$m" ] && echo ok || { [ "$z" = unknown ] || [ "$m" = unknown ] || [ -z "$m" ] && echo inc || echo "MIS $f $z/$m"; }
 done
 
 # The 6 formerly-unsound cvc cases (must match z3)
 for f in read6 read7 fb_var_5_12 fb_var_6_12 fb_var_12_11 fb_var_27_8; do
   p=$(find smt-lib/non-incremental/QF_AUFLIA/cvc -name "$f.smt2"|head -1)
-  echo "$(timeout 12 target/release/oxiz "$p" 2>/dev/null|tail -1) vs $(timeout 12 z3 "$p" 2>/dev/null|tail -1)"
+  echo "$(timeout 12 target/release/nixie "$p" 2>/dev/null|tail -1) vs $(timeout 12 z3 "$p" 2>/dev/null|tail -1)"
 done
 
 # The slow SAT cases (the target)
 for spec in storecomm_invalid_t3_np_nf_ni_00060_006 storecomm_invalid_t3_pp_nf_ai_00030_001 storecomm_invalid_t1_pp_nf_ai_00030_003; do
   p=$(find smt-lib -name "$spec.cvc.smt2"|head -1)
-  time target/release/oxiz "$p" 2>/dev/null|tail -1
+  time target/release/nixie "$p" 2>/dev/null|tail -1
 done
 ```
 

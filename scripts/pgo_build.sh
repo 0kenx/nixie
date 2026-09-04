@@ -1,7 +1,7 @@
 #!/bin/bash
-# Profile-Guided Optimization build script for OxiZ
+# Profile-Guided Optimization build script for Nixie
 #
-# This script builds the oxiz CLI binary with PGO (Profile-Guided Optimization):
+# This script builds the nixie CLI binary with PGO (Profile-Guided Optimization):
 # 1. Builds an instrumented binary that collects runtime profile data
 # 2. Runs representative SMT2 benchmarks to generate profile data
 # 3. Merges the collected profiles
@@ -23,7 +23,7 @@ mkdir -p "$PGO_DIR/profiles"
 
 echo "=== Phase 1: Build with instrumentation ==="
 RUSTFLAGS="-Cprofile-generate=$PGO_DIR/profiles" \
-    cargo build --release --manifest-path "$PROJ_DIR/Cargo.toml" --bin oxiz
+    cargo build --release --manifest-path "$PROJ_DIR/Cargo.toml" --bin nixie
 
 echo "=== Phase 2: Run training workload ==="
 # Run representative benchmarks to generate profile data
@@ -31,7 +31,7 @@ BENCH_DIR="$PROJ_DIR/bench/z3_parity/benchmarks"
 if [ -d "$BENCH_DIR" ]; then
     find "$BENCH_DIR" -name "*.smt2" -type f | while read -r smt2; do
         echo "  Running: $(basename "$smt2")"
-        timeout 30 "$PROJ_DIR/target/release/oxiz" "$smt2" 2>/dev/null || true
+        timeout 30 "$PROJ_DIR/target/release/nixie" "$smt2" 2>/dev/null || true
     done
 else
     echo "WARNING: No benchmark directory found at $BENCH_DIR"
@@ -61,7 +61,7 @@ fi
 
 echo "=== Phase 4: Build with PGO ==="
 RUSTFLAGS="-Cprofile-use=$PGO_DIR/merged.profdata" \
-    cargo build --release --manifest-path "$PROJ_DIR/Cargo.toml" --bin oxiz
+    cargo build --release --manifest-path "$PROJ_DIR/Cargo.toml" --bin nixie
 
 echo "=== PGO build complete ==="
-echo "Binary: $PROJ_DIR/target/release/oxiz"
+echo "Binary: $PROJ_DIR/target/release/nixie"

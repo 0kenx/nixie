@@ -1,14 +1,14 @@
 # SAT-core speed vs CaDiCaL: constant-factor pass, and why the remaining gap is not constant-factor
 
 Date: 2026-08-21. Trigger: the 94-file tracking suite (`/tmp` harness, 25 s cap)
-showed oxiz up to **20.7× slower than CaDiCaL** on `6s167-opt.cnf`, 2–6× on
+showed nixie up to **20.7× slower than CaDiCaL** on `6s167-opt.cnf`, 2–6× on
 several structured instances, with a suite geomean of ~0.91.
 
 ## What was measured first (and what it said)
 
 Instrumented run of `6s167-opt` (UNSAT, both solvers):
 
-| metric | oxiz | cadical | ratio |
+| metric | nixie | cadical | ratio |
 |---|---|---|---|
 | conflicts | 170,039 | 16,654 | **10.2×** |
 | propagations | 19.37 M | 2.31 M | 8.4× |
@@ -76,7 +76,7 @@ The dominant term is the **conflict-count gap**, i.e. CDCL heuristics, not
 constant factors. Candidate deltas vs CaDiCaL (`src/restart.cpp`,
 `reduce.cpp`, `analyze.cpp`, `vivify.cpp`), in the order I would attack:
 
-1. **Reduction schedule**: oxiz reduces every fixed 12 000 conflicts with
+1. **Reduction schedule**: nixie reduces every fixed 12 000 conflicts with
    fixed tier percentages; CaDiCaL schedules by *ticks*, starts far earlier,
    grows geometrically, and protects glue ≤ 2 / recently-used clauses via
    `used` flags rather than activity sorts.
@@ -84,7 +84,7 @@ constant factors. Candidate deltas vs CaDiCaL (`src/restart.cpp`,
    clauses on a tick budget between reductions.
 3. **Tick accounting correction** (above) once its trajectory effect can be
    attributed properly.
-4. VSIDS/VMTF double-maintenance: oxiz bumps *both* structures every
+4. VSIDS/VMTF double-maintenance: nixie bumps *both* structures every
    conflict; CaDiCaL bumps scores only in stable mode and the queue only in
    focused mode (`analyze.cpp: bump_variable`). Removing the dead structure's
    cost is also a trajectory change (stale scores after mode switches) and

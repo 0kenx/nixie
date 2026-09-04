@@ -6,7 +6,7 @@ The quantified-UF pin study recorded a residual: `div`/`mod` constant args
 stay unpinned (opaque terms in the linear extractor).  Probing whether the
 false-`sat` class actually fires there:
 
-| input | oxiz (before) | z3 |
+| input | nixie (before) | z3 |
 |---|---|---|
 | `y = 3 ∧ f(y) ≠ f(div 6 2)` | **sat** | unsat |
 | `y = 3 ∧ f(y) ≠ f(mod 11 4)` | **sat** | unsat |

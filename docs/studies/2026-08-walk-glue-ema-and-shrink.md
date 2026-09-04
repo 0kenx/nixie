@@ -10,9 +10,9 @@ fixed before landing (with two regression tests); it was ours, not pre-existing.
 ## Item-1 background: where the 4.5× decisions/conflict term actually lives
 
 The handover's search-quality term decomposed (stable-300, fixed 100k conflicts,
-traced via `OXIZ_TRACE_DECISIONS` + a temporary bump trace):
+traced via `NIXIE_TRACE_DECISIONS` + a temporary bump trace):
 
-| metric                      | OxiZ (before) | CaDiCaL (log replay) |
+| metric                      | Nixie (before) | CaDiCaL (log replay) |
 |-----------------------------|---------------|----------------------|
 | decisions / conflict        | 4.97          | 1.27                 |
 | propagation-cascade / decision | ~8 (med 12) | ~24 (first-after-restart: ~96) |
@@ -41,8 +41,8 @@ first restart fired at conflict **1132** vs CaDiCaL's **73**. The walk-glue stat
 larger and noisier, which is exactly what makes the Glucose condition cross early.
 
 After the port (single-seed observations, not the study): stable-300 242.9s → 21.1s
-(11.5×), first restarts at ~70–110 conflicts. `OXIZ_GLUE_LEGACY=1` restores the old
-input for A/B; `OXIZ_GLUE_NULL=1` feeds the previous conflict's walk glue (matched null).
+(11.5×), first restarts at ~70–110 conflicts. `NIXIE_GLUE_LEGACY=1` restores the old
+input for A/B; `NIXIE_GLUE_NULL=1` feeds the previous conflict's walk glue (matched null).
 
 ## Change 2: block-UIP clause shrinking (`shrink.cpp`, cadical default `shrink=3`)
 
@@ -51,7 +51,7 @@ clause, run a mini 1-UIP restricted to that level and replace the block by its b
 literal; plain recursive minimization remains the in-block fallback and the LRAT path.
 On stable-300 this takes avg stored-clause LBD from 28.6 to 12.9 and dec/conf from 4.97
 to 1.68 (Cadical 1.27), with 99.5% of restarts now reusing a prefix. `enable_shrink`
-(default true, cadical parity); `OXIZ_SHRINK_NULL=1` runs the full walk and discards the
+(default true, cadical parity); `NIXIE_SHRINK_NULL=1` runs the full walk and discards the
 result (matched null).
 
 ### The bug the port surfaced (fixed before landing)
@@ -61,13 +61,13 @@ result (matched null).
 index 0 leaves the cursor at 0, so `cursor + 1` is the *next* literal above — the block
 was replaced by the wrong literal's negation. End-to-end symptom: 194 incremental
 model-blocking clauses over an 8-Boolean tautology answered `unsat` in the SMT layer
-(oxiz-cli model-counter test; certified-mode independently rejected the verdict, Z3 says
+(nixie-cli model-counter test; certified-mode independently rejected the verdict, Z3 says
 sat). Minimized to a standalone 194-clause CNF reproducing at the SAT core
 (`focused_vmtf=false` + shrink); first unentailed clause `[3,4,5,-7,6,-8]` at conflict
 33 (block `{-8,-1}` at level 1; UIP = the level-1 *decision* `-1`, replaced by `-8`).
 Fix: capture `uip_pos = pos` at pop time. Tests:
-`oxiz-sat/tests/shrink_trail_index_regression.rs` (minimal CNF + brute-force oracle;
-every clause load-bearing) and `oxiz-solver/tests/shrink_tautology_regression.rs`
+`nixie-sat/tests/shrink_trail_index_regression.rs` (minimal CNF + brute-force oracle;
+every clause load-bearing) and `nixie-solver/tests/shrink_tautology_regression.rs`
 (end-to-end 194-block script).
 
 ## Measurements (the honest part)
@@ -75,7 +75,7 @@ every clause load-bearing) and `oxiz-solver/tests/shrink_tautology_regression.rs
 **94-file tracking metric** (instructions-to-verdict, `perf stat -e instructions`,
 verdicts cross-checked vs CaDiCaL; deterministic canonical seed):
 
-| arm | geomean cad/oxiz | files > 1.5× | disagreements |
+| arm | geomean cad/nixie | files > 1.5× | disagreements |
 |-----|------------------|--------------|---------------|
 | legacy (pre-change semantics) | 1.129× | 23 | 0 |
 | walk-glue + shrink (new default) | **0.952×** | **17** | 0 |
@@ -109,11 +109,11 @@ proof of a tuned win.
   (496k → 795k/861k decisions at fixed 100k conflicts). At our (pre-shrink) reuse
   quality, more restarts just multiply the 67-decision re-descent cost. Cadical can
   restart every ~3 conflicts because each is nearly free.
-- **Reuse-keep-top-fraction probe** (`OXIZ_REUSE_KEEP`, non-semantic): keeping ~50% of
+- **Reuse-keep-top-fraction probe** (`NIXIE_REUSE_KEEP`, non-semantic): keeping ~50% of
   levels at restart cut decisions 466k → 298k — confirms restart *cost* is the lever,
   but is not a cadical semantic and was not pursued further once shrink delivered the
   same equilibrium shift semantically.
-- **Propagation completeness**: `OXIZ_CHECK_FIXPOINT` sweep (hanging-unit invariant at
+- **Propagation completeness**: `NIXIE_CHECK_FIXPOINT` sweep (hanging-unit invariant at
   decision points, 8k conflicts) — zero violations. BCP is not missing cascades.
 - **Restart frequency as cause**: cadical restarts *as often as we do* (4996 vs 5313);
   the difference is entirely cost-per-restart.
@@ -123,14 +123,14 @@ proof of a tuned win.
 
 ## Files
 
-- `oxiz-sat/src/solver/conflict.rs` — walk-glue snapshot, `improve_learnt_clause`
+- `nixie-sat/src/solver/conflict.rs` — walk-glue snapshot, `improve_learnt_clause`
   dispatcher, `shrink_and_minimize_clause` / `shrink_block` / `shrink_literal` port,
   bump-block reordering (shrink adds block-UIP vars to the bump set where cadical adds
   them to `analyzed`).
-- `oxiz-sat/src/solver/learn.rs` — `note_learned_lbd` EMA input switch (+ nulls).
-- `oxiz-sat/src/solver/decide.rs` — restart diagnostics (`restarts_stable`,
-  `reused_trails`, `reused_levels`), `oxiz-restart` trace line.
-- `oxiz-sat/src/solver/{mod,search_ext,tests}.rs`, `config_presets.rs`, `lib.rs` —
+- `nixie-sat/src/solver/learn.rs` — `note_learned_lbd` EMA input switch (+ nulls).
+- `nixie-sat/src/solver/decide.rs` — restart diagnostics (`restarts_stable`,
+  `reused_trails`, `reused_levels`), `nixie-restart` trace line.
+- `nixie-sat/src/solver/{mod,search_ext,tests}.rs`, `config_presets.rs`, `lib.rs` —
   config/stats/flag plumbing, fixpoint diagnostic, updated EMA-contract test.
 
 
@@ -199,9 +199,9 @@ mechanistic fix plus the following evidence replaced the refusal gate —
   CaDiCaL;
 - differential fuzzer, 2000 iterations — 0 failures (with the gate gone,
   the full-stack arm carries the combo automatically);
-- regression test `oxiz-sat/tests/shrink_inprocessing_regression.rs`
+- regression test `nixie-sat/tests/shrink_inprocessing_regression.rs`
   (never-UNSAT-under-budget on the seed1 circuit, gated behind
-  `OXIZ_SLOW_REGRESSIONS=1`, ~51 s debug).
+  `NIXIE_SLOW_REGRESSIONS=1`, ~51 s debug).
 
 The exact unentailed-clause chain on the circuit file was never captured
 end-to-end (unlike the `uip_pos` bug, where the offending clause was
@@ -223,7 +223,7 @@ input clauses**.  Pre-existing — the parent commit `3fdcd38` reproduces it —
 and historically invisible because the stack was off in default sweeps and
 this file timed out elsewhere.
 
-**Root cause** (`oxiz-sat/src/preprocessing_core.rs`):
+**Root cause** (`nixie-sat/src/preprocessing_core.rs`):
 `ClauseDatabase::len()` returns the number of *live* clauses
 (`num_original + num_learned`) — it shrinks with every deletion — while
 clause IDs index the full slot space.  All five `for i in 0..clauses.len()`
@@ -240,12 +240,12 @@ the final model into one that violates live input clauses.  Fix: all five
 walks use `num_slots()` (the dense id upper bound), with the mechanism
 documented at `build_occurrences`.
 
-Regression tests (`oxiz-sat/tests/preprocessor_slot_bound_regression.rs`):
+Regression tests (`nixie-sat/tests/preprocessor_slot_bound_regression.rs`):
 - `len_is_not_a_slot_bound_pure_pin_minimal` — unit-level: delete a clause,
   build occurrences, assert the tail clause is visible (verified to FAIL on
   the bug and PASS on the fix).
 - `j3037_stack_is_unsat` — end-to-end verdict pin under the full
-  BVE+ELS+inprocessing combination (`OXIZ_SLOW_REGRESSIONS`, ~57 s release).
+  BVE+ELS+inprocessing combination (`NIXIE_SLOW_REGRESSIONS`, ~57 s release).
 
 Post-fix: the stack sweep over all 92 CaDiCaL-solvable corpus files produced
 77 verdicts with **0 disagreements**; differential fuzz 2000 iterations, 0
@@ -265,8 +265,8 @@ session, with matched nulls per docs/BENCHMARKING.md.
 The headline (23→17 files >1.5×, canonical seed) and the 5-seed screening
 below were the evidence at landing time.  This addendum adds the bounded
 10-seed CRN-paired study the methodology requires: 6 dev files × 10 seeds ×
-3 arms (T = landed default; GN = `OXIZ_GLUE_NULL` lagged-glue null;
-SN = `OXIZ_SHRINK_NULL` shrink-discarding null), 60 s cap, paired
+3 arms (T = landed default; GN = `NIXIE_GLUE_NULL` lagged-glue null;
+SN = `NIXIE_SHRINK_NULL` shrink-discarding null), 60 s cap, paired
 instructions per file×seed, exact two-sided binomial sign test.
 
 | comparison | T-only comp | null-only comp | paired n | T faster | geomean | sign p |

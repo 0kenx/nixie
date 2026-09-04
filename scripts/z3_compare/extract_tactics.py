@@ -3,9 +3,9 @@
 Z3 Tactics Extraction Script
 
 Parses Z3 source code to extract tactic registrations and their descriptions.
-Maps tactics to OxiZ equivalents where available.
+Maps tactics to Nixie equivalents where available.
 
-Output: JSON file with tactic names, descriptions, categories, and OxiZ mappings.
+Output: JSON file with tactic names, descriptions, categories, and Nixie mappings.
 """
 
 from __future__ import annotations
@@ -43,65 +43,65 @@ class TacticCollection:
     z3_source_path: str = ""
 
 
-# Mapping of Z3 tactics to OxiZ equivalents
-OXIZ_TACTIC_MAPPING: dict[str, dict[str, str]] = {
+# Mapping of Z3 tactics to Nixie equivalents
+NIXIE_TACTIC_MAPPING: dict[str, dict[str, str]] = {
     # SAT-related tactics
-    "sat": {"oxiz_module": "oxiz-sat", "oxiz_feature": "Solver"},
-    "sat-preprocess": {"oxiz_module": "oxiz-sat", "oxiz_feature": "Preprocessor"},
-    "card2bv": {"oxiz_module": "oxiz-sat", "oxiz_feature": "CardinalityEncoder"},
-    "bit-blast": {"oxiz_module": "oxiz-theories/bv", "oxiz_feature": "bit-blasting"},
-    "pb2bv": {"oxiz_module": "oxiz-theories/pb", "oxiz_feature": "PbSolver"},
-    "aig": {"oxiz_module": "oxiz-theories/bv", "oxiz_feature": "aig_builder"},
+    "sat": {"nixie_module": "nixie-sat", "nixie_feature": "Solver"},
+    "sat-preprocess": {"nixie_module": "nixie-sat", "nixie_feature": "Preprocessor"},
+    "card2bv": {"nixie_module": "nixie-sat", "nixie_feature": "CardinalityEncoder"},
+    "bit-blast": {"nixie_module": "nixie-theories/bv", "nixie_feature": "bit-blasting"},
+    "pb2bv": {"nixie_module": "nixie-theories/pb", "nixie_feature": "PbSolver"},
+    "aig": {"nixie_module": "nixie-theories/bv", "nixie_feature": "aig_builder"},
 
     # Arithmetic tactics
-    "simplify": {"oxiz_module": "oxiz-core/rewrite", "oxiz_feature": "Rewriter"},
-    "propagate-values": {"oxiz_module": "oxiz-core/rewrite", "oxiz_feature": "Rewriter"},
-    "ctx-simplify": {"oxiz_module": "oxiz-core/rewrite", "oxiz_feature": "RewriteContext"},
-    "normalize-bounds": {"oxiz_module": "oxiz-theories/arithmetic", "oxiz_feature": "normalize"},
-    "lia2card": {"oxiz_module": "oxiz-opt", "oxiz_feature": "cardinality"},
-    "diff-neq": {"oxiz_module": "oxiz-theories/diff_logic", "oxiz_feature": "DiffLogicSolver"},
+    "simplify": {"nixie_module": "nixie-core/rewrite", "nixie_feature": "Rewriter"},
+    "propagate-values": {"nixie_module": "nixie-core/rewrite", "nixie_feature": "Rewriter"},
+    "ctx-simplify": {"nixie_module": "nixie-core/rewrite", "nixie_feature": "RewriteContext"},
+    "normalize-bounds": {"nixie_module": "nixie-theories/arithmetic", "nixie_feature": "normalize"},
+    "lia2card": {"nixie_module": "nixie-opt", "nixie_feature": "cardinality"},
+    "diff-neq": {"nixie_module": "nixie-theories/diff_logic", "nixie_feature": "DiffLogicSolver"},
 
     # SMT tactics
-    "smt": {"oxiz_module": "oxiz-solver", "oxiz_feature": "Solver"},
-    "qfnra-nlsat": {"oxiz_module": "oxiz-nlsat", "oxiz_feature": "NlsatSolver"},
-    "nlsat": {"oxiz_module": "oxiz-nlsat", "oxiz_feature": "NlsatSolver"},
-    "qfnia": {"oxiz_module": "oxiz-nlsat/nia", "oxiz_feature": "NiaSolver"},
+    "smt": {"nixie_module": "nixie-solver", "nixie_feature": "Solver"},
+    "qfnra-nlsat": {"nixie_module": "nixie-nlsat", "nixie_feature": "NlsatSolver"},
+    "nlsat": {"nixie_module": "nixie-nlsat", "nixie_feature": "NlsatSolver"},
+    "qfnia": {"nixie_module": "nixie-nlsat/nia", "nixie_feature": "NiaSolver"},
 
     # Preprocessing tactics
-    "tseitin-cnf": {"oxiz_module": "oxiz-core/ast", "oxiz_feature": "normal_forms::to_cnf"},
-    "nnf": {"oxiz_module": "oxiz-core/ast", "oxiz_feature": "normal_forms::to_nnf"},
-    "elim-and": {"oxiz_module": "oxiz-core/rewrite", "oxiz_feature": "BoolRewriter"},
-    "elim-term-ite": {"oxiz_module": "oxiz-core/rewrite", "oxiz_feature": "ite_elimination"},
-    "flatten-clauses": {"oxiz_module": "oxiz-core/tactic", "oxiz_feature": "FlattenTactic"},
-    "distribute-forall": {"oxiz_module": "oxiz-theories/quantifier", "oxiz_feature": "QuantifierSolver"},
+    "tseitin-cnf": {"nixie_module": "nixie-core/ast", "nixie_feature": "normal_forms::to_cnf"},
+    "nnf": {"nixie_module": "nixie-core/ast", "nixie_feature": "normal_forms::to_nnf"},
+    "elim-and": {"nixie_module": "nixie-core/rewrite", "nixie_feature": "BoolRewriter"},
+    "elim-term-ite": {"nixie_module": "nixie-core/rewrite", "nixie_feature": "ite_elimination"},
+    "flatten-clauses": {"nixie_module": "nixie-core/tactic", "nixie_feature": "FlattenTactic"},
+    "distribute-forall": {"nixie_module": "nixie-theories/quantifier", "nixie_feature": "QuantifierSolver"},
 
     # Optimization tactics
-    "max-bv-sharing": {"oxiz_module": "oxiz-theories/bv", "oxiz_feature": "sharing"},
-    "reduce-bv-size": {"oxiz_module": "oxiz-theories/bv", "oxiz_feature": "reduction"},
+    "max-bv-sharing": {"nixie_module": "nixie-theories/bv", "nixie_feature": "sharing"},
+    "reduce-bv-size": {"nixie_module": "nixie-theories/bv", "nixie_feature": "reduction"},
 
     # QE tactics
-    "qe": {"oxiz_module": "oxiz-core/qe", "oxiz_feature": "QeLiteSolver"},
-    "qe-lite": {"oxiz_module": "oxiz-core/qe", "oxiz_feature": "QeLiteSolver"},
+    "qe": {"nixie_module": "nixie-core/qe", "nixie_feature": "QeLiteSolver"},
+    "qe-lite": {"nixie_module": "nixie-core/qe", "nixie_feature": "QeLiteSolver"},
 
     # Proof tactics
-    "unit-subsume-simplify": {"oxiz_module": "oxiz-sat", "oxiz_feature": "SubsumptionChecker"},
-    "purify-arith": {"oxiz_module": "oxiz-theories/combination", "oxiz_feature": "Purifier"},
+    "unit-subsume-simplify": {"nixie_module": "nixie-sat", "nixie_feature": "SubsumptionChecker"},
+    "purify-arith": {"nixie_module": "nixie-theories/combination", "nixie_feature": "Purifier"},
 
     # Array tactics
-    "solve-eqs": {"oxiz_module": "oxiz-theories/euf", "oxiz_feature": "EufSolver"},
-    "ackermannize_bv": {"oxiz_module": "oxiz-theories/bv", "oxiz_feature": "ackermannization"},
+    "solve-eqs": {"nixie_module": "nixie-theories/euf", "nixie_feature": "EufSolver"},
+    "ackermannize_bv": {"nixie_module": "nixie-theories/bv", "nixie_feature": "ackermannization"},
 
     # Special tactics
-    "skip": {"oxiz_module": "oxiz-core/tactic", "oxiz_feature": "SkipTactic"},
-    "fail": {"oxiz_module": "oxiz-core/tactic", "oxiz_feature": "FailTactic"},
-    "fail-if-undecided": {"oxiz_module": "oxiz-core/tactic", "oxiz_feature": "tactic::Goal"},
+    "skip": {"nixie_module": "nixie-core/tactic", "nixie_feature": "SkipTactic"},
+    "fail": {"nixie_module": "nixie-core/tactic", "nixie_feature": "FailTactic"},
+    "fail-if-undecided": {"nixie_module": "nixie-core/tactic", "nixie_feature": "tactic::Goal"},
 
     # Model tactics
-    "model_validate": {"oxiz_module": "oxiz-core/model", "oxiz_feature": "ModelEvaluator"},
+    "model_validate": {"nixie_module": "nixie-core/model", "nixie_feature": "ModelEvaluator"},
 
     # Spacer/CHC tactics
-    "horn": {"oxiz_module": "oxiz-spacer", "oxiz_feature": "SpacerSolver"},
-    "pdr": {"oxiz_module": "oxiz-spacer", "oxiz_feature": "SpacerSolver"},
+    "horn": {"nixie_module": "nixie-spacer", "nixie_feature": "SpacerSolver"},
+    "pdr": {"nixie_module": "nixie-spacer", "nixie_feature": "SpacerSolver"},
 }
 
 
@@ -349,9 +349,9 @@ class Z3TacticExtractor:
         return "general"
 
 
-def get_oxiz_mapping(tactic_name: str) -> Optional[dict[str, str]]:
-    """Get OxiZ mapping for a Z3 tactic."""
-    return OXIZ_TACTIC_MAPPING.get(tactic_name)
+def get_nixie_mapping(tactic_name: str) -> Optional[dict[str, str]]:
+    """Get Nixie mapping for a Z3 tactic."""
+    return NIXIE_TACTIC_MAPPING.get(tactic_name)
 
 
 def write_json_output(collection: TacticCollection, output_path: str) -> None:
@@ -367,15 +367,15 @@ def write_json_output(collection: TacticCollection, output_path: str) -> None:
         "tactics": [],
         "combinators": [asdict(t) for t in collection.combinators],
         "by_category": {},
-        "oxiz_mappings": {},
+        "nixie_mappings": {},
     }
 
-    # Add tactics with OxiZ mappings
+    # Add tactics with Nixie mappings
     for tactic in collection.tactics:
         tactic_dict = asdict(tactic)
-        mapping = get_oxiz_mapping(tactic.name)
+        mapping = get_nixie_mapping(tactic.name)
         if mapping:
-            tactic_dict["oxiz_mapping"] = mapping
+            tactic_dict["nixie_mapping"] = mapping
         output_data["tactics"].append(tactic_dict)
 
     # Group by category
@@ -385,9 +385,9 @@ def write_json_output(collection: TacticCollection, output_path: str) -> None:
             output_data["by_category"][tactic.category] = []
         output_data["by_category"][tactic.category].append(tactic.name)
 
-    # Build OxiZ mappings summary
-    for name, mapping in OXIZ_TACTIC_MAPPING.items():
-        output_data["oxiz_mappings"][name] = mapping
+    # Build Nixie mappings summary
+    for name, mapping in NIXIE_TACTIC_MAPPING.items():
+        output_data["nixie_mappings"][name] = mapping
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2)

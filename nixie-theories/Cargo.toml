@@ -1,0 +1,73 @@
+[package]
+name = "nixie-theories"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Theory Solvers (EUF, Arithmetic, BitVectors) for Nixie"
+keywords = ["smt", "theories", "euf", "arithmetic"]
+categories = ["algorithms", "mathematics"]
+
+[dependencies]
+nixie-core = { workspace = true, default-features = false }
+nixie-sat = { workspace = true, default-features = false }
+nixie-math = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see nixie-time).
+nixie-time = { workspace = true }
+tracing = { workspace = true, default-features = false, optional = true }
+smallvec = { workspace = true }
+rustc-hash = { workspace = true }
+num-rational = { workspace = true, default-features = false, features = ["num-bigint"] }
+num-bigint = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }
+hashbrown.workspace = true
+portable-atomic-util = { workspace = true }
+
+# Optional (std-only)
+egg = { workspace = true, optional = true }
+nixie-nlsat = { workspace = true, optional = true }
+
+[features]
+# `nlsat` is on by default: an existing consumer that says nothing keeps the
+# nonlinear dispatch it had before the feature existed. It is separated out of
+# `std` because `std` is "does this target have an OS" while `nlsat` is "does
+# this build carry the cell-decomposition nonlinear core" (~5% of a wasm
+# module; the COOLJAPAN Playground consumer that first needed it gone).
+# (Ported from upstream v0.3.3.)
+default = ["std", "nlsat"]
+std = [
+    "nixie-time/std",
+    "nixie-core/std",
+    "nixie-sat/std",
+    "nixie-math/std",
+    "egg",
+    "tracing",
+    "tracing/std",
+    "num-rational/std",
+    "num-bigint/std",
+    "num-traits/std",
+    "rustc-hash/std",
+]
+# Nonlinear real/integer arithmetic (QF_NRA / QF_NIA / QF_NIRA): the
+# `nixie-nlsat` crate and the `theories::nlsat` wrapper. With it OFF the
+# wrapper is compiled out and nixie-solver's honesty gate answers `unknown`
+# for goals left holding a nonlinear arithmetic atom no theory could take.
+# The cost is completeness, never soundness.
+nlsat = ["dep:nixie-nlsat", "std"]
+profiling = ["std", "nixie-core/profiling", "nixie-sat/profiling"]
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "simplex_benchmarks"
+harness = false
+
+[[bench]]
+name = "euf_benchmarks"
+harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

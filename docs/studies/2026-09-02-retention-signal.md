@@ -31,10 +31,10 @@ the same tier protection (glue≤2∧used>0 keep; glue≤6∧used≥30 keep) and
 the same deletion count (75 % of candidates):
 
 * **base** — legacy tiered reduce (the standing-table default arm).
-* **treat** (`OXIZ_CADICAL_REDUCE=1 OXIZ_REDUCE_BY_USED=1`) — candidates
+* **treat** (`NIXIE_CADICAL_REDUCE=1 NIXIE_REDUCE_BY_USED=1`) — candidates
   ranked **least-used-first** (used asc, then glue desc): clauses that
   have not participated in conflicts die first, regardless of glue.
-* **null** (`OXIZ_CADICAL_REDUCE_NULL=1`) — identical trigger points and
+* **null** (`NIXIE_CADICAL_REDUCE_NULL=1`) — identical trigger points and
   counts, uniform-random selection (partial Fisher–Yates; the existing
   matched-null arm).
 

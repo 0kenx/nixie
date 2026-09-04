@@ -1,4 +1,4 @@
-# Measuring Heuristic Changes in OxiZ
+# Measuring Heuristic Changes in Nixie
 
 How to tell whether a search-heuristic change actually helped. This is a **methodology**
 document, not an API guide — for API pitfalls see [`PITFALLS.md`](PITFALLS.md).
@@ -287,7 +287,7 @@ decision point the variance is chaos, not action semantics.
 **Conclusion.** The rephase action-selection decision point carries no learnable signal, and a
 planned restart-level RL selector was cancelled on this evidence. Untouched by the study, and
 still open: per-*variable* phase policies and one-shot pre-search phase initialisation.
-(Corrected 2026-09-02: this list originally included "the `target` phase array that OxiZ
+(Corrected 2026-09-02: this list originally included "the `target` phase array that Nixie
 still lacks entirely" — stale: cadical-faithful target phases landed 2026-08-15 in
 `7cb81f5` and are wired through `decision_polarity` / `update_target_and_best` /
 `copy_phases(PhaseArray::Target)`.)
@@ -310,7 +310,7 @@ Results live in the same per-machine, gitignored tree as the precompiled binarie
 precompile/<sha-short>/benchmark/runs/<suite>/<instance>__<inst8>__c<cfghex16>__s<seed>.json
 ```
 
-- One JSON file per `(instance × config × seed)` run — `oxiz-bench-record/1` schema.
+- One JSON file per `(instance × config × seed)` run — `nixie-bench-record/1` schema.
 - **Config identity is content-addressed.** The `c<cfghex16>` segment is
   `sha256(canonical flags)[:16]`; `config.id` is a human label only. Two arms with different
   labels but identical flags are **the same cell** (recorded once); any behavioural difference
@@ -400,7 +400,7 @@ measure; these rules say how an experiment is allowed to proceed.
    the study doc *before* running. Post-hoc metrics migrate toward whatever moved. Intermediate
    proxies are not success: "a stronger relaxation violation by itself is not success"; "a reduced
    pivot count is insufficient if row work or coefficient growth increases".
-3. **Strongest-baseline rule.** The baseline arm is the strongest relevant existing OxiZ path, and
+3. **Strongest-baseline rule.** The baseline arm is the strongest relevant existing Nixie path, and
    where a reference implementation exists the treatment is also compared against it. Beating a
    weakened arm proves nothing — and beating a *superseded* reference proves less than it looks
    (§12). For SAT-side work the reference arms are **kissat** (the goal) and cadical (the parity
@@ -526,7 +526,7 @@ From 2026-09, SAT-side benchmarking carries **two reference arms**:
 
 | arm | binary | role |
 |---|---|---|
-| **goal** | `../temp/kissat/build/kissat` (4.0.4) | the bar. Every standing table reports oxiz / kissat / cadical. |
+| **goal** | `../temp/kissat/build/kissat` (4.0.4) | the bar. Every standing table reports nixie / kissat / cadical. |
 | **parity** | `../temp/cadical/build/cadical` | port fidelity; differential counters; matched instrumentation |
 
 Both are recorded with `arm.role: reference` in the result store (§9), so a reference cell
@@ -567,7 +567,7 @@ largest exactly on the instances where kissat's inprocessing is doing the winnin
 coverage has been verified on the instance at hand
 (`metrics.counter_coverage_verified` is a required record field for this reason).
 
-Two of those counters name inprocessing components OxiZ does not have — `factor_ticks`
+Two of those counters name inprocessing components Nixie does not have — `factor_ticks`
 (structured factoring/BVA) and `kitten_ticks` (the embedded sub-solver used for sweeping).
 Where a kissat comparison shows a large gap, check first whether the gap lives in a
 component we simply do not run; that is a different (and cheaper) finding than a decision-

@@ -6,7 +6,7 @@
 
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
-use oxiz::{Solver, TermManager};
+use nixie::{Solver, TermManager};
 
 #[derive(Debug, Arbitrary)]
 enum BvOp {

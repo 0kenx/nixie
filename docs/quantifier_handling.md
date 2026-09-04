@@ -1,6 +1,6 @@
-# OxiZ Quantifier Handling Guide
+# Nixie Quantifier Handling Guide
 
-This guide covers how OxiZ handles universally and existentially quantified
+This guide covers how Nixie handles universally and existentially quantified
 formulas, when each instantiation engine fires, and how to write formulas that
 the solver can handle efficiently.
 
@@ -9,8 +9,8 @@ the solver can handle efficiently.
 ## Table of Contents
 
 1. [Overview: Two Instantiation Engines](#overview-two-instantiation-engines)
-2. [How MBQI Works in OxiZ](#how-mbqi-works-in-oxiz)
-3. [How E-matching Works in OxiZ](#how-e-matching-works-in-oxiz)
+2. [How MBQI Works in Nixie](#how-mbqi-works-in-nixie)
+3. [How E-matching Works in Nixie](#how-e-matching-works-in-nixie)
 4. [When MBQI Fires vs E-matching](#when-mbqi-fires-vs-e-matching)
 5. [Writing Quantifier-Friendly Formulas](#writing-quantifier-friendly-formulas)
 6. [Triggers and Patterns (`:pattern`, `:no-pattern`)](#triggers-and-patterns)
@@ -22,7 +22,7 @@ the solver can handle efficiently.
 
 ## Overview: Two Instantiation Engines
 
-OxiZ uses two complementary engines to handle quantified formulas. Both operate
+Nixie uses two complementary engines to handle quantified formulas. Both operate
 inside the DPLL(T) framework and communicate with the SAT solver through a theory
 callback interface.
 
@@ -31,16 +31,16 @@ callback interface.
 | **E-matching** | Always when quantifiers are present | Speed: fires on concrete ground terms |
 | **MBQI** | When E-matching is insufficient or no triggers exist | Completeness: model-driven, can find witnesses without syntactic triggers |
 
-The two engines are not mutually exclusive – OxiZ runs E-matching first on each
+The two engines are not mutually exclusive – Nixie runs E-matching first on each
 check iteration and falls back to MBQI when E-matching produces no new
 instantiations.
 
 ---
 
-## How MBQI Works in OxiZ
+## How MBQI Works in Nixie
 
 MBQI (Model-Based Quantifier Instantiation) is implemented in
-`oxiz-solver/src/mbqi/`. The algorithm follows Ge & de Moura (CAV 2009):
+`nixie-solver/src/mbqi/`. The algorithm follows Ge & de Moura (CAV 2009):
 
 ### Step-by-step algorithm
 
@@ -66,7 +66,7 @@ MBQI (Model-Based Quantifier Instantiation) is implemented in
    the result is `sat`. If a contradiction is derived, the result is `unsat`.
    If the budget is exhausted, the result is `unknown`.
 
-### MBQI sub-modules in OxiZ
+### MBQI sub-modules in Nixie
 
 | Sub-module | Responsibility |
 |------------|---------------|
@@ -88,9 +88,9 @@ infinite loop.
 
 ---
 
-## How E-matching Works in OxiZ
+## How E-matching Works in Nixie
 
-E-matching is implemented in `oxiz-core/src/ematching/`. It is a syntactic
+E-matching is implemented in `nixie-core/src/ematching/`. It is a syntactic
 matching algorithm that fires when ground terms in the current formula match
 the trigger patterns of a universally quantified formula.
 
@@ -118,7 +118,7 @@ E-matching fires when the ground term `(f 5)` appears in the clause database.
 It matches the pattern `(f x)` with substitution `x ↦ 5`, and instantiates
 the quantifier body as the lemma `(>= (f 5) 0)`, which resolves the query.
 
-Without the `:pattern` annotation, OxiZ uses heuristic trigger selection
+Without the `:pattern` annotation, Nixie uses heuristic trigger selection
 (`ematching::trigger`) to infer patterns from the quantifier body.
 
 ---
@@ -235,7 +235,7 @@ search time:
 
 ## Triggers and Patterns
 
-OxiZ's E-matching engine reads `:pattern` and `:no-pattern` annotations from
+Nixie's E-matching engine reads `:pattern` and `:no-pattern` annotations from
 SMT-LIB2 formulas. These are the primary mechanism for guiding instantiation.
 
 ### `:pattern` – positive trigger
@@ -281,18 +281,18 @@ trigger selection picks a term that causes excessive instantiation:
 
 ### Heuristic trigger selection
 
-When no `:pattern` is provided, OxiZ uses the `ematching::trigger` module to
+When no `:pattern` is provided, Nixie uses the `ematching::trigger` module to
 infer triggers. The heuristic prefers:
 
 1. Terms that contain all bound variables
 2. Terms with function symbols that appear in ground assertions
 3. Terms that are maximal (not a strict sub-term of another pattern)
 
-If no good heuristic trigger exists, OxiZ falls back to MBQI for that quantifier.
+If no good heuristic trigger exists, Nixie falls back to MBQI for that quantifier.
 
 ### Trigger priority
 
-When multiple triggers are present, OxiZ fires on the first match and avoids
+When multiple triggers are present, Nixie fires on the first match and avoids
 duplicate instantiations via `ematching::quantifier_inst`'s deduplication table.
 The `mod_time` optimization ensures that only terms modified since the last
 matching round are re-checked, keeping per-iteration cost linear in the number
@@ -320,7 +320,7 @@ Fix: Add a trigger or use MBQI with bounds:
 
 ### 2. Quantifier alternation (∀∃)
 
-OxiZ's MBQI handles `∀x.∃y.φ(x,y)` by Skolemization: the existential is
+Nixie's MBQI handles `∀x.∃y.φ(x,y)` by Skolemization: the existential is
 replaced with a Skolem function `f_y(x)` and the formula becomes
 `∀x.φ(x, f_y(x))`. This introduces an uninterpreted function, shifting the
 problem into `AUFLIA`/`AUFLIRA`. Deep alternation (`∀∃∀∃...`) is in general
@@ -357,13 +357,13 @@ small enough to enumerate explicitly.
     (= (f x) 0))))
 ```
 
-OxiZ follows standard lexical scoping, so the inner `x` shadows the outer one.
+Nixie follows standard lexical scoping, so the inner `x` shadows the outer one.
 Use distinct variable names to avoid confusion.
 
 ### 5. Universally quantified Boolean variables
 
 ```smt2
-; This is valid SMT-LIB2 but OxiZ may return unknown for complex bodies
+; This is valid SMT-LIB2 but Nixie may return unknown for complex bodies
 (assert (forall ((p Bool)) (or p (not p))))  ; tautology, but triggers MBQI
 ```
 
@@ -374,7 +374,7 @@ quantification.
 
 ## Translating Quantified Z3 Python Formulas
 
-Z3's Python API has first-class support for quantifier creation. OxiZ's Python
+Z3's Python API has first-class support for quantifier creation. Nixie's Python
 API does not yet expose quantifier term constructors directly; quantified
 formulas must be expressed as SMT-LIB2 strings via `assert_formula`.
 
@@ -393,12 +393,12 @@ s.add(f(z3.IntVal(5)) == 3)
 print(s.check())   # sat
 ```
 
-**OxiZ Python (via SMT-LIB2 strings):**
+**Nixie Python (via SMT-LIB2 strings):**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('UFLIA')
 
 # Declare uninterpreted function
@@ -426,7 +426,7 @@ s.add(z3.Exists([x], z3.And(x > 0, x < 10)))
 print(s.check())   # sat
 ```
 
-**OxiZ Python:**
+**Nixie Python:**
 ```python
 s.assert_formula('(assert (exists ((x Int)) (and (> x 0) (< x 10))))', tm)
 result = s.check_sat(tm)   # Sat
@@ -443,7 +443,7 @@ pat = z3.PatternRef(z3.MultiPattern(f(x)))
 s.add(z3.ForAll([x], f(x) >= 0, patterns=[f(x)]))
 ```
 
-**OxiZ Python:**
+**Nixie Python:**
 ```python
 s.assert_formula(
     '(assert (forall ((x Int)) (! (>= (f x) 0) :pattern ((f x)))))',
@@ -468,12 +468,12 @@ s.add(z3.ForAll([i],
 print(s.check())   # sat
 ```
 
-**OxiZ Python:**
+**Nixie Python:**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('AUFLIA')
 
 s.assert_formula('(declare-const a (Array Int Int))', tm)
@@ -508,7 +508,7 @@ s.add(f(z3.IntVal(3)) > f(z3.IntVal(5)))   # contradicts monotonicity
 print(s.check())   # unsat
 ```
 
-**OxiZ (SMT-LIB2 file for CLI):**
+**Nixie (SMT-LIB2 file for CLI):**
 ```smt2
 (set-logic UFLIA)
 (declare-fun f (Int) Int)
@@ -547,8 +547,8 @@ quantifier handling scenarios directly:
 Run these benchmarks via the CLI to observe solver behavior:
 
 ```bash
-oxiz solve --verbose bench/z3_parity/benchmarks/AUFLIA/array_forall_init.smt2
-oxiz solve --verbose bench/z3_parity/benchmarks/AUFLIRA/auflira_quantified.smt2
+nixie solve --verbose bench/z3_parity/benchmarks/AUFLIA/array_forall_init.smt2
+nixie solve --verbose bench/z3_parity/benchmarks/AUFLIRA/auflira_quantified.smt2
 ```
 
 The `--verbose` flag reports MBQI instantiation counts and E-matching match

@@ -1,0 +1,29 @@
+[package]
+name = "nixie-spacer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Property Directed Reachability (PDR/IC3) engine for Nixie - Horn clause solving"
+keywords = ["smt", "pdr", "ic3", "horn", "verification"]
+categories = ["algorithms", "development-tools::testing"]
+
+[dependencies]
+nixie-core = { workspace = true, features = ["std"] }
+# The single place this crate reads a clock (wasm-safe; see nixie-time).
+nixie-time = { workspace = true, features = ["std"] }
+nixie-solver = { workspace = true, features = ["std", "nlsat"] }
+smallvec.workspace = true
+rustc-hash = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+indexmap = { workspace = true, features = ["std"] }
+num-bigint = { workspace = true, features = ["std"] }
+num-rational = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"

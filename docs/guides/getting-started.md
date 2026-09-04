@@ -1,22 +1,22 @@
-# Getting Started with OxiZ
+# Getting Started with Nixie
 
 ## Introduction
 
-OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver written in Pure Rust. This guide will help you get started with using OxiZ in your projects.
+Nixie is a next-generation SMT (Satisfiability Modulo Theories) solver written in Pure Rust. This guide will help you get started with using Nixie in your projects.
 
 ## Installation
 
 ### From crates.io
 
 ```bash
-cargo add oxiz
+cargo add nixie
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/cool-japan/oxiz
-cd oxiz
+git clone https://github.com/cool-japan/nixie
+cd nixie
 cargo build --release
 ```
 
@@ -25,8 +25,8 @@ cargo build --release
 ### Example 1: Basic Boolean Satisfiability
 
 ```rust
-use oxiz_solver::{Solver, SolverResult};
-use oxiz_core::ast::TermManager;
+use nixie_solver::{Solver, SolverResult};
+use nixie_core::ast::TermManager;
 
 fn main() {
     // Create solver and term manager
@@ -61,8 +61,8 @@ fn main() {
 ### Example 2: Integer Arithmetic
 
 ```rust
-use oxiz_solver::{Solver, SolverResult};
-use oxiz_core::ast::TermManager;
+use nixie_solver::{Solver, SolverResult};
+use nixie_core::ast::TermManager;
 use num_bigint::BigInt;
 
 fn main() {
@@ -103,9 +103,9 @@ fn main() {
 ### Example 3: SMT-LIB2 Format
 
 ```rust
-use oxiz_core::ast::TermManager;
-use oxiz_core::smtlib::parse_script;
-use oxiz_solver::Solver;
+use nixie_core::ast::TermManager;
+use nixie_core::smtlib::parse_script;
+use nixie_solver::Solver;
 
 fn main() {
     let input = r#"
@@ -192,7 +192,7 @@ if let Some(core) = solver.get_unsat_core() {
 
 ### 3. Incremental Solving
 
-OxiZ supports incremental solving with push/pop:
+Nixie supports incremental solving with push/pop:
 
 ```rust
 let mut solver = Solver::new();
@@ -242,7 +242,7 @@ let result2 = solver.check(&mut tm);
 ### Resource Limits
 
 ```rust
-use oxiz_core::config::{Config, ResourceLimits};
+use nixie_core::config::{Config, ResourceLimits};
 use std::time::Duration;
 
 let config = Config {
@@ -261,7 +261,7 @@ let mut solver = Solver::with_config(config);
 ### Solver Options
 
 ```rust
-use oxiz_core::config::{Config, SatParams};
+use nixie_core::config::{Config, SatParams};
 
 let config = Config {
     sat_params: SatParams {
@@ -279,7 +279,7 @@ let config = Config {
 ### Tactics for Preprocessing
 
 ```rust
-use oxiz_core::tactic::{Goal, StatelessSimplifyTactic, Tactic};
+use nixie_core::tactic::{Goal, StatelessSimplifyTactic, Tactic};
 
 let mut tm = TermManager::new();
 
@@ -303,7 +303,7 @@ for subgoal in result.subgoals {
 ### Quantifier Elimination
 
 ```rust
-use oxiz_core::qe::{QeLiteSolver, QeLiteConfig};
+use nixie_core::qe::{QeLiteSolver, QeLiteConfig};
 
 let mut qe_solver = QeLiteSolver::new(QeLiteConfig::default());
 let mut tm = TermManager::new();
@@ -327,7 +327,7 @@ match result {
 ### Optimization (MaxSMT)
 
 ```rust
-use oxiz_solver::{Optimizer, Objective, ObjectiveKind};
+use nixie_solver::{Optimizer, Objective, ObjectiveKind};
 
 let mut optimizer = Optimizer::new();
 let mut tm = TermManager::new();
@@ -411,7 +411,7 @@ let x2 = tm2.mk_var("x", tm2.sorts.int_sort);
 ## Error Handling
 
 ```rust
-use oxiz_core::error::{Result, OxizError};
+use nixie_core::error::{Result, NixieError};
 
 fn solve_formula(input: &str) -> Result<bool> {
     let mut tm = TermManager::new();
@@ -425,7 +425,7 @@ fn solve_formula(input: &str) -> Result<bool> {
     match solver.check(&mut tm) {
         SolverResult::Sat => Ok(true),
         SolverResult::Unsat => Ok(false),
-        SolverResult::Unknown => Err(OxizError::Unknown),
+        SolverResult::Unknown => Err(NixieError::Unknown),
     }
 }
 
@@ -443,7 +443,7 @@ match solve_formula(input_str) {
 Use arena for bulk term creation:
 
 ```rust
-use oxiz_core::alloc::Arena;
+use nixie_core::alloc::Arena;
 
 let mut arena = Arena::new(Default::default());
 for i in 0..10000 {
@@ -483,17 +483,17 @@ solver.assert_goal(simplified, &mut tm);
 
 See the `examples/` directory for more:
 
-- `oxiz-core/examples/` - Core functionality (10 examples)
-- `oxiz-solver/examples/` - Solver usage (8 examples)
-- `oxiz-math/examples/` - Math algorithms (6 examples)
-- `oxiz-theories/examples/` - Theory solvers (6 examples)
+- `nixie-core/examples/` - Core functionality (10 examples)
+- `nixie-solver/examples/` - Solver usage (8 examples)
+- `nixie-math/examples/` - Math algorithms (6 examples)
+- `nixie-theories/examples/` - Theory solvers (6 examples)
 
 ## Next Steps
 
 - Read the [Architecture Guide](../architecture/solver-architecture.md)
 - Explore [Theory Combination](../architecture/theory-combination.md)
-- Check [API Documentation](https://docs.rs/oxiz)
-- Join the community at [GitHub](https://github.com/cool-japan/oxiz)
+- Check [API Documentation](https://docs.rs/nixie)
+- Join the community at [GitHub](https://github.com/cool-japan/nixie)
 
 ## Troubleshooting
 
@@ -523,6 +523,6 @@ See the `examples/` directory for more:
 
 ## Support
 
-- Documentation: <https://docs.rs/oxiz>
-- Issues: <https://github.com/cool-japan/oxiz/issues>
-- Discussions: <https://github.com/cool-japan/oxiz/discussions>
+- Documentation: <https://docs.rs/nixie>
+- Issues: <https://github.com/cool-japan/nixie/issues>
+- Discussions: <https://github.com/cool-japan/nixie/discussions>

@@ -66,7 +66,7 @@ every surface the gate ever guarded.
 
 ## Verification
 
-| shape | oxiz | z3 |
+| shape | nixie | z3 |
 |---|---|---|
 | UFLIA literal `f(3)` (pr30#3 case) | `unsat` | unsat |
 | negative literal `g(- 4)` | `unsat` | unsat |

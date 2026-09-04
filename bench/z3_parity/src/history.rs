@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 pub struct HistoryEntry {
     pub benchmark: String,
     pub logic: String,
-    pub oxiz_ms: f64,
+    pub nixie_ms: f64,
     pub z3_ms: Option<f64>, // None if z3_time is zero (z3 was unavailable)
-    pub ratio: Option<f64>, // oxiz_ms / z3_ms; None if z3_ms is None or 0
+    pub ratio: Option<f64>, // nixie_ms / z3_ms; None if z3_ms is None or 0
 }
 
 /// Geomean/p50/p95 summary over a set of ratios
@@ -25,7 +25,7 @@ pub struct RatioSummary {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HistorySnapshot {
     pub schema_version: u32,             // always 1
-    pub oxiz_version: String,            // env!("CARGO_PKG_VERSION")
+    pub nixie_version: String,            // env!("CARGO_PKG_VERSION")
     pub git_sha: String,                 // "git rev-parse --short HEAD" or "unknown"
     pub utc_date: String,                // "YYYY-MM-DD" from SystemTime or "unknown"
     pub host_z3_version: Option<String>, // "z3 --version" output or None
@@ -60,18 +60,18 @@ pub fn to_history_entries(results: &[super::ParityResult]) -> Vec<HistoryEntry> 
     results
         .iter()
         .map(|r| {
-            let oxiz_ms = r.oxiz_time.as_secs_f64() * 1000.0;
+            let nixie_ms = r.nixie_time.as_secs_f64() * 1000.0;
             // z3_time == Duration::ZERO means Z3 wasn't run (or had error)
             let z3_ms = if r.z3_time == std::time::Duration::ZERO {
                 None
             } else {
                 Some(r.z3_time.as_secs_f64() * 1000.0)
             };
-            let ratio = z3_ms.filter(|&z| z > 0.0).map(|z| oxiz_ms / z);
+            let ratio = z3_ms.filter(|&z| z > 0.0).map(|z| nixie_ms / z);
             HistoryEntry {
                 benchmark: r.benchmark.clone(),
                 logic: r.logic.clone(),
-                oxiz_ms,
+                nixie_ms,
                 z3_ms,
                 ratio,
             }
@@ -146,7 +146,7 @@ pub fn build_snapshot(results: &[super::ParityResult]) -> HistorySnapshot {
 
     HistorySnapshot {
         schema_version: 1,
-        oxiz_version: env!("CARGO_PKG_VERSION").to_string(),
+        nixie_version: env!("CARGO_PKG_VERSION").to_string(),
         git_sha: git_sha(),
         utc_date: utc_date_string(),
         host_z3_version: z3_version(),

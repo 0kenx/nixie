@@ -1,7 +1,7 @@
 # Differential SMT bench (soundness + perf vs z3)
 
 This is the harness that found the `vhard7` soundness regression that 9,858
-passing unit tests did not (see `../../INTEGRATION_NOTES.md`). It runs an oxiz
+passing unit tests did not (see `../../INTEGRATION_NOTES.md`). It runs an nixie
 binary over a **pinned** SMT-LIB sample and diffs every verdict against z3, so
 two builds / two PRs are compared over exactly the same instances.
 
@@ -13,7 +13,7 @@ fails fast with instructions if it is absent.
 
 `sample/selected.json` – 270 instances, ≤30 per QF_* logic, sampled with
 `SEED=20260807` from the z3-solvable (≤5 s) subset of `smt-lib/`. z3's verdict
-and time are embedded, so a normal run does **not** invoke z3; only the oxiz
+and time are embedded, so a normal run does **not** invoke z3; only the nixie
 binary under test is run. Checked in so every run is reproducible and directly
 comparable.
 
@@ -21,8 +21,8 @@ comparable.
 
 ```bash
 # from the repo root: build the solver under test, then bench it
-cargo build --release -p oxiz-cli
-python3 bench/differential/bench_diff.py --bin target/release/oxiz --label integrate
+cargo build --release -p nixie-cli
+python3 bench/differential/bench_diff.py --bin target/release/nixie --label integrate
 ```
 
 Flags:
@@ -37,25 +37,25 @@ Flags:
 
 Outputs land in `bench/differential/results/<label>/`:
 
-- `results.jsonl` – per instance: path, logic, family, z3 verdict, oxiz verdict, time, and (with `--validate-models`) `model_status`.
-- `unsound.json` – every instance where oxiz disagrees with z3 on a sat/unsat.
+- `results.jsonl` – per instance: path, logic, family, z3 verdict, nixie verdict, time, and (with `--validate-models`) `model_status`.
+- `unsound.json` – every instance where nixie disagrees with z3 on a sat/unsat.
 - `families.json` – per-family rollup (disagreements, sat model-status counts); the family-neighbour view.
 - `summary.json` – solved / agree_z3 / disagree_soundness / timeout / PAR-2, plus (with `--validate-models`) the **trust breakdown** below.
 
-The script exits **non-zero on any soundness disagreement** (oxiz `sat` where z3
+The script exits **non-zero on any soundness disagreement** (nixie `sat` where z3
 `unsat`, or vice-versa). Timeouts / `unknown` are not soundness failures and do
 not fail the gate. With `--baseline`, it also exits `2` on a completeness
 regression.
 
 ## Trust model (what `--validate-models` adds)
 
-z3's embedded verdict is the satisfiability oracle: an oxiz `sat` that agrees
+z3's embedded verdict is the satisfiability oracle: an nixie `sat` that agrees
 with z3 *is* a correct answer (the instance genuinely is satisfiable), so
 `agree_z3` remains the **completeness** count. But "correct" and
 "trustworthy-as-evidence-to-port" differ, so `--validate-models` reports:
 
-- `sat_model_valid` – oxiz `sat`, z3 `sat`, and oziz's model is consistent with the assertions (real solve).
-- `sat_model_invalid` – oxiz `sat` whose model contradicts the assertions (bogus `sat` **or** a broken model emitter – either way not trustworthy).
+- `sat_model_valid` – nixie `sat`, z3 `sat`, and oziz's model is consistent with the assertions (real solve).
+- `sat_model_invalid` – nixie `sat` whose model contradicts the assertions (bogus `sat` **or** a broken model emitter – either way not trustworthy).
 - `sat_family_suspect` – an agreeing `sat` in a family that contains *any*
   disagreement (verdict or invalid-model) for this solver. The QF_ANIA pattern:
   one over-eager-sat mechanism scores on the satisfiable half and errs on the
@@ -76,7 +76,7 @@ function extension rescues the formula.
 **Two oracle limits to read the numbers with** (full detail in
 `VALIDATED_RESCORE.md`): (1) `sat_model_invalid` is a **lower bound** – leniency
 on partial/function models means a wrong model whose only error is in a skipped
-function value passes as `valid`; (2) oxiz's *internal* model-verification gate
+function value passes as `valid`; (2) nixie's *internal* model-verification gate
 (`model_refutes_assertions`) shares `arith.value` with `build_model`, so where
 a wrong model surfaces as a numeric-equality collision the gate returns
 `Undetermined` by construction – **a clean internal gate is not evidence of
@@ -85,17 +85,17 @@ model correctness in the theory-combination case.** Neither limit lets a
 
 ## As a PR gate
 
-For any PR touching the solver core (`oxiz-solver`, `oxiz-theories`,
-`oxiz-sat`, `oxiz-nlsat`), run the gate on the pinned sample:
+For any PR touching the solver core (`nixie-solver`, `nixie-theories`,
+`nixie-sat`, `nixie-nlsat`), run the gate on the pinned sample:
 
 ```bash
-cargo build --release -p oxiz-cli && \
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label pr
+cargo build --release -p nixie-cli && \
+  python3 bench/differential/bench_diff.py --bin target/release/nixie --label pr
 ```
 
 A non-zero exit means the PR introduced or kept a wrong-verdict instance and
 must not merge until that instance is either fixed or added as a documented
-`#[ignore]`d guard in `oxiz-solver/tests/known_unsound_regressions.rs`.
+`#[ignore]`d guard in `nixie-solver/tests/known_unsound_regressions.rs`.
 
 ## Regenerating the sample
 
@@ -129,7 +129,7 @@ oz solves 31 more than main but is **less trusted** (99 < 106): 50 of its 103
 unsounder. Re-scoring also surfaced **main's own model-layer defects** (6
 unjustified sats; 2 are a `build_model` construction bug on correct-verdict
 sats, plus a `Model::eval` false-alarm) – pinned in
-`oxiz-solver/tests/model_soundness_regressions.rs`. Every oz-over-main "win"
+`nixie-solver/tests/model_soundness_regressions.rs`. Every oz-over-main "win"
 beyond 3 confirmed solves + the `bench_679` soundness fix is unsound,
 bogus-model, or family-suspect. Full analysis: `VALIDATED_RESCORE.md`.
 **`trusted_total` is the number the gate defends** (`--baseline` keys on it
@@ -145,7 +145,7 @@ The pre-validation verdict-only table (for continuity with older notes):
 
 The 4 disagreements on main (`storecomm_t3`, `bench_679`, `ext_con_064`,
 `xs_8_13`) are pre-existing on `main`, pinned as `#[ignore]`d guards in
-`oxiz-solver/tests/known_unsound_regressions.rs`, so the gate's non-zero exit
+`nixie-solver/tests/known_unsound_regressions.rs`, so the gate's non-zero exit
 (those 4) is acceptable for merge: every disagreement is a documented guard.
 
 Strategic read: v0.3.2 is **not** the gold standard – it is a net *regression*

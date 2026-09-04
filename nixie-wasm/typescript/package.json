@@ -1,0 +1,19 @@
+{
+  "name": "@cool-japan/nixie",
+  "version": "0.3.2",
+  "description": "Pure Rust SMT solver for the web",
+  "main": "nixie.js",
+  "types": "nixie.d.ts",
+  "license": "Apache-2.0",
+  "keywords": ["smt", "wasm", "webassembly", "solver", "sat"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cool-japan/nixie"
+  },
+  "files": [
+    "nixie.js",
+    "nixie.d.ts",
+    "nixie_bg.wasm"
+  ],
+  "sideEffects": false
+}

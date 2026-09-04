@@ -46,7 +46,7 @@ flag only routes the linear fallback solver.  No existing entry changed.
 
 ## Routing smoke (newly reachable engine combinations)
 
-| logic | input shape | oxiz | z3 |
+| logic | input shape | nixie | z3 |
 |---|---|---|---|
 | UFNIA | quantified f, `(* (f z) (f z))`, congruence refutation | unsat | unsat |
 | UFIDL | quantified diff + congruence | sat | sat |

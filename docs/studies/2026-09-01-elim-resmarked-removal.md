@@ -105,7 +105,7 @@ non-eliminating instances never execute.
 `cargo fmt --check`, `cargo doc -D warnings` clean; `diff_equiv`
 **100 000** iterations (66 993 sat): **0 mismatches, 0 invalid models**;
 corpus verdict sweep 54/54 identical; SMT differential **160 solved /
-160 agree / 0 disagreements** (par2 2311.67 — a fresh `oxiz` CLI build
+160 agree / 0 disagreements** (par2 2311.67 — a fresh `nixie` CLI build
 was required; the shared-target one had gone stale again, scoring 0 —
 see the baseline incident above); z3 parity **169 Correct / 1
 Inconclusive / 0 disagreements**.

@@ -1,20 +1,20 @@
-# OxiZ
+# Nixie
 
 Next-Generation SMT Solver in Pure Rust
 
-[![Crates.io](https://img.shields.io/crates/v/oxiz.svg)](https://crates.io/crates/oxiz)
-[![Documentation](https://docs.rs/oxiz/badge.svg)](https://docs.rs/oxiz)
+[![Crates.io](https://img.shields.io/crates/v/nixie.svg)](https://crates.io/crates/nixie)
+[![Documentation](https://docs.rs/nixie/badge.svg)](https://docs.rs/nixie)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 ## About This Project
 
-OxiZ is a high-performance Satisfiability Modulo Theories (SMT) solver written entirely in Rust. This project reimplements [Z3](https://github.com/Z3Prover/z3) in Pure Rust with a focus on correctness, performance, and safety.
+Nixie is a high-performance Satisfiability Modulo Theories (SMT) solver written entirely in Rust. This project reimplements [Z3](https://github.com/Z3Prover/z3) in Pure Rust with a focus on correctness, performance, and safety.
 
 **Pure Rust is a fundamental requirement** - no C/C++ dependencies, no FFI bindings, just clean, safe Rust code.
 
 ### Implementation Status (v0.3.1)
 
-OxiZ is under active development with core theories at production quality on its tested surface.
+Nixie is under active development with core theories at production quality on its tested surface.
 
 - **Pure Rust Implementation**: 438,793 lines of production Rust code across 1,236 files (547,739 total including comments/blank lines, per `tokei . --exclude target`)
 - **Unit Tests**: 9,668 passing, 8 skipped (`cargo nextest run --workspace --all-features`, confirmed at release time), plus 110 doc-tests (`cargo test --doc --workspace --all-features`)
@@ -29,12 +29,12 @@ A soundness-sweep, hardening and quantifier-completeness release on top of 0.3.0
 `ModelValue::BitVec` now carries a `num_bigint::BigUint` payload instead of a `u64`, so bit-vector model values wider than 64 bits are represented exactly rather than truncated. Code that pattern-matched the old `u64` payload must be updated. New helpers accompany it: `Model::assign_bitvec_big`, `ModelValue::from_bitvec_int`, `ModelValue::from_bitvec_bits`, `ModelValue::as_bitvec`, and `bitvec_mask`.
 
 ### Soundness sweep
-GitHub issues [#12](https://github.com/cool-japan/oxiz/issues/12), [#14](https://github.com/cool-japan/oxiz/issues/14), [#17](https://github.com/cool-japan/oxiz/issues/17), [#18](https://github.com/cool-japan/oxiz/issues/18) and [#23](https://github.com/cool-japan/oxiz/issues/23) are closed, and auditing their common shape – *unhandled input silently dropped or defaulted instead of raising an error* – turned up 40+ further instances of the same bug across the workspace, all fixed. The SMT-LIB parser's recursion was made fully iterative in the process.
+GitHub issues [#12](https://github.com/cool-japan/nixie/issues/12), [#14](https://github.com/cool-japan/nixie/issues/14), [#17](https://github.com/cool-japan/nixie/issues/17), [#18](https://github.com/cool-japan/nixie/issues/18) and [#23](https://github.com/cool-japan/nixie/issues/23) are closed, and auditing their common shape – *unhandled input silently dropped or defaulted instead of raising an error* – turned up 40+ further instances of the same bug across the workspace, all fixed. The SMT-LIB parser's recursion was made fully iterative in the process.
 
 Separately verified and fixed: three >64-bit bit-vector soundness bugs (`assert_const` truncating the low limb, which produced a false `Sat`; a canonical interning key that used only the low 64 bits and therefore merged distinct wide constants, producing a false `Unsat`; and a model builder that zero-filled wide values); e-matching substitution that left quantified variables *free* in generated bit-vector/string lemmas; a theory-solver scope leak across MBQI rounds (a false `Unsat` on satisfiable re-checks) now closed by `rebase_theory_state`; a 4-way exponential expansion in Cooper's `Xor`/`Ite` handling; and the parser now **rejects** mixed-width bit-vector binary operands at parse time, as Z3 does, instead of accepting them.
 
 ### Hardening (~400 sites)
-Every remaining unguarded recursive term walk – parsers, printers, the model evaluator, substitution, and the `Drop`/`Clone`/`PartialEq` impls on deep public enums – was converted to an explicit heap stack, so deeply nested input can no longer overflow the native stack. Tier-1 silent fallthroughs became exhaustive matches or honest errors; encode-depth memoization removed a 2^n DAG re-encoding blowup and `ENCODE_DEPTH_LIMIT` was measured and set to 512; string handling is now non-ASCII-safe; `oxiz-math` gained a real multivariate polynomial GCD (primitive PRS with pseudo-division) in place of stubs; Tarjan's SCC is iterative; and `powi(i32::MIN)` no longer recurses forever.
+Every remaining unguarded recursive term walk – parsers, printers, the model evaluator, substitution, and the `Drop`/`Clone`/`PartialEq` impls on deep public enums – was converted to an explicit heap stack, so deeply nested input can no longer overflow the native stack. Tier-1 silent fallthroughs became exhaustive matches or honest errors; encode-depth memoization removed a 2^n DAG re-encoding blowup and `ENCODE_DEPTH_LIMIT` was measured and set to 512; string handling is now non-ASCII-safe; `nixie-math` gained a real multivariate polynomial GCD (primitive PRS with pseudo-division) in place of stubs; Tarjan's SCC is iterative; and `powi(i32::MIN)` no longer recurses forever.
 
 ### MBQI completeness – the parity push
 Finite-range quantifier expansion (`AUFLIA`), Skolem witness synthesis with CEGAR refinement (`UFLIA`), and symbolic model certification over the reals plus quasi-macro detection (`UFLRA`) close the three quantified logics that were the whole of the remaining parity gap. The three benchmarks that previously hit the 60s timeout now solve in roughly a millisecond, and the suite went **154/168 → 168/168 Correct**, all 19 logic families at 100%, verified over three consecutive full runs on an idle machine plus a fourth after the resource work below.
@@ -46,25 +46,25 @@ Models, unsat cores and proofs are invalidated on `push`/`pop`/`assert`, so a st
 Long incremental sessions no longer accumulate cost. Hyper-binary-resolution clauses are registered in the learned/assertion ledgers, so clause-DB reduction, `forget` and `pop` can actually reclaim them; `Solver::pop` retracts Tseitin memo entries per-entry through the undo journal instead of clearing the memo wholesale (the wholesale clear caused unbounded re-encoding – one goal grew from 25 to 361 original clauses over 30 push/pop-plus-check cycles); MBQI search state is checkpointed and restored around each check, which also fixes MBQI silently ceasing to instantiate after roughly ten checks on the same goal. New: a **verdict cache** makes a repeated `(check-sat)` on an untouched goal an O(1) cache hit, invalidated by `assert`/`push`/`pop`/`reset` and by every settings mutator.
 
 ### Quality gates
-`clippy::unwrap_used` is denied in all 17 member crates, and clippy is clean in both the dev and release profiles; `rustdoc -D warnings` is clean; `cargo deny check bans` is clean; every source file is under the 2,000-line cap. `to_cnf_tseitin` (an equisatisfiable, linear-size CNF encoding) was added to `oxiz-core` and `TseitinCnfTactic` rewired to it.
+`clippy::unwrap_used` is denied in all 17 member crates, and clippy is clean in both the dev and release profiles; `rustdoc -D warnings` is clean; `cargo deny check bans` is clean; every source file is under the 2,000-line cap. `to_cnf_tseitin` (an equisatisfiable, linear-size CNF encoding) was added to `nixie-core` and `TseitinCnfTactic` rewired to it.
 
 ## What's New in 0.3.0 (2026-07-22)
 
 A large hardening-and-capability wave on top of 0.2.4's audit. Full itemized detail is in [`CHANGELOG.md`](CHANGELOG.md#030---2026-07-22); highlights:
 
 ### Soundness fixes
-Exact `BigRational` floor/ceil and real polynomial GCD/resultant in `oxiz-math`; `QF_NIRA` variable-type dispatch and incomplete-atom tracking in `oxiz-nlsat`; real Ferrante-Rackoff and Loos-Weispfenning virtual-substitution quantifier elimination for LRA; a real propositional Craig interpolant for MBI; IEEE-754-correct `fp.rem` and single-rounded fused multiply-add (plus a separate `div128` remainder-overflow bug in the `ieee754_full` engine that returned `0.0` for divisions with a true quotient in `(0.5,1)`); an `ArithSolver::pop()` state-rollback bug where `term_to_var` was not rolled back in lockstep with `var_to_term` (recycled `VarId`s could attach a constraint to the wrong variable) plus a `lia_model` backtrack-clear fix; a simplex `register_var`/`ensure_var` hardening pass that closed both an index-out-of-bounds crash and a silent-drop of out-of-range bound-setting calls; several proof-checker rubber-stamps (resolution, parallel proof checking, per-theory checkers) replaced with real verification.
+Exact `BigRational` floor/ceil and real polynomial GCD/resultant in `nixie-math`; `QF_NIRA` variable-type dispatch and incomplete-atom tracking in `nixie-nlsat`; real Ferrante-Rackoff and Loos-Weispfenning virtual-substitution quantifier elimination for LRA; a real propositional Craig interpolant for MBI; IEEE-754-correct `fp.rem` and single-rounded fused multiply-add (plus a separate `div128` remainder-overflow bug in the `ieee754_full` engine that returned `0.0` for divisions with a true quotient in `(0.5,1)`); an `ArithSolver::pop()` state-rollback bug where `term_to_var` was not rolled back in lockstep with `var_to_term` (recycled `VarId`s could attach a constraint to the wrong variable) plus a `lia_model` backtrack-clear fix; a simplex `register_var`/`ensure_var` hardening pass that closed both an index-out-of-bounds crash and a silent-drop of out-of-range bound-setting calls; several proof-checker rubber-stamps (resolution, parallel proof checking, per-theory checkers) replaced with real verification.
 
 ### New capabilities
-`(get-consequences ...)` and `:named` assertions; a regex sublanguage for the string theory plus a new ground string decision procedure (definitional propagation, concat-splitting by known lengths, and regex-intersection search via the Brzozowski automata engine, gated by full concrete verification before returning `Sat`) that lifts `qf_s` from 3/10 to 10/10 on the parity suite; a sound concrete floating-point model finder that lifts `qf_fp` from 1/10 to 10/10; MBQI SAT certification (lifts `UFLIA`/`UFLRA`/`AUFLIA` from mostly-`Unknown` toward a majority-decisive verdict – see "Z3 Parity" below); real datatype and bitvector quantifier elimination; Spacer MIC generalization plus a genuine multi-threaded parallel PDR portfolio; a McMillan-style Craig interpolation system; `oxiz-ml` is now genuinely wired into `oxiz-cli` via the opt-in `--ml-tactic-selection` flag (off by default – see "Features" below); `oxiz-wasm` gains hard-preemptible solving via a dedicated Web Worker (`PreemptibleSolver`), `SharedArrayBuffer`-backed cooperative cancellation (`CancellationToken`), and a Rust-generated TypeScript `.d.ts` – see "WebAssembly" below.
+`(get-consequences ...)` and `:named` assertions; a regex sublanguage for the string theory plus a new ground string decision procedure (definitional propagation, concat-splitting by known lengths, and regex-intersection search via the Brzozowski automata engine, gated by full concrete verification before returning `Sat`) that lifts `qf_s` from 3/10 to 10/10 on the parity suite; a sound concrete floating-point model finder that lifts `qf_fp` from 1/10 to 10/10; MBQI SAT certification (lifts `UFLIA`/`UFLRA`/`AUFLIA` from mostly-`Unknown` toward a majority-decisive verdict – see "Z3 Parity" below); real datatype and bitvector quantifier elimination; Spacer MIC generalization plus a genuine multi-threaded parallel PDR portfolio; a McMillan-style Craig interpolation system; `nixie-ml` is now genuinely wired into `nixie-cli` via the opt-in `--ml-tactic-selection` flag (off by default – see "Features" below); `nixie-wasm` gains hard-preemptible solving via a dedicated Web Worker (`PreemptibleSolver`), `SharedArrayBuffer`-backed cooperative cancellation (`CancellationToken`), and a Rust-generated TypeScript `.d.ts` – see "WebAssembly" below.
 
 ### Honesty & robustness
-Two process-crash panics fixed (a SAT theory-conflict-with-unassigned-literal panic; a simplex out-of-bounds panic); both SMT-LIB parser regressions surfaced by 0.2.4's stricter undeclared-symbol check (`to_fp` rounding-mode arguments, `re.allchar`) are closed; roughly a dozen previously-dead-but-tested `oxiz-nlsat` modules (subsumption, inprocessing, vivification, structure analysis, …) are now wired into the real solve loop; confirmed-dead GPU-flag scaffolding (zero references anywhere in the workspace) was deleted rather than left as a misleading placeholder.
+Two process-crash panics fixed (a SAT theory-conflict-with-unassigned-literal panic; a simplex out-of-bounds panic); both SMT-LIB parser regressions surfaced by 0.2.4's stricter undeclared-symbol check (`to_fp` rounding-mode arguments, `re.allchar`) are closed; roughly a dozen previously-dead-but-tested `nixie-nlsat` modules (subsumption, inprocessing, vivification, structure analysis, …) are now wired into the real solve loop; confirmed-dead GPU-flag scaffolding (zero references anywhere in the workspace) was deleted rather than left as a misleading placeholder.
 
 ### Z3 Parity gains
 Measured at the 0.3.0 release: **154/168 Correct** (up from 122/168 at the 0.2.4 baseline), **0 Wrong**, **0 process crashes** (down from 3, then reported as `Inconclusive`/`Timeout`), 12 Inconclusive, 2 Timeout. `qf_fp` 1/10→10/10, `qf_s` 3/10→10/10 (both via new decision procedures, see "New capabilities"), `AUFLIA` 2/10→7/10, `UFLIA` 7/20→14/20, `UFLRA` 2/10→5/10 – leaving those three quantified logics as the entire remaining gap, which 0.3.1's MBQI completeness work then closed. See "Z3 Parity" below for the current breakdown.
 
-For the 0.2.4 production-readiness audit and the 0.2.3 feature set (generic `DratWriter`/`LratWriter` proof writers, NLSAT root-isolation completions, the full `oxiz-opt` optimization pipeline, real BMC/k-induction in `oxiz-spacer`), see the [0.2.4](CHANGELOG.md#024---2026-07-19) and [0.2.3](CHANGELOG.md#023---2026-06-09) CHANGELOG entries.
+For the 0.2.4 production-readiness audit and the 0.2.3 feature set (generic `DratWriter`/`LratWriter` proof writers, NLSAT root-isolation completions, the full `nixie-opt` optimization pipeline, real BMC/k-induction in `nixie-spacer`), see the [0.2.4](CHANGELOG.md#024---2026-07-19) and [0.2.3](CHANGELOG.md#023---2026-06-09) CHANGELOG entries.
 
 ## Theory Support Status
 
@@ -143,12 +143,12 @@ The three quantified logics that carried the whole of 0.3.0's remaining gap clos
 - **Optimization** - MaxSAT, OMT with Pareto optimization
 - **Model Checking** - CHC solving with PDR/IC3
 - **Z3 API Compatibility** - `TacticRegistry`, `FuncInterp`, sort/substitution/pattern APIs
-- **ML-Guided Heuristics (opt-in)** - `oxiz-cli --ml-tactic-selection` (off by default) drives a real `oxiz-ml` tactic-recommendation engine (feature extraction, decision-tree training, outcome-based retraining); the SAT core separately exposes a `BranchingHeuristic` trait for custom LBD/conflict-driven heuristics
+- **ML-Guided Heuristics (opt-in)** - `nixie-cli --ml-tactic-selection` (off by default) drives a real `nixie-ml` tactic-recommendation engine (feature extraction, decision-tree training, outcome-based retraining); the SAT core separately exposes a `BranchingHeuristic` trait for custom LBD/conflict-driven heuristics
 - **Recursive BV Encoding** - Full nested bit-vector term encoding with structured conflict diagnostics
 
 ## Z3 Parity: Differential Suite Results (Honest Comparator) ✅
 
-`bench/z3_parity` compares OxiZ against a real `z3` 4.15.4 binary using a comparator that **never** counts an `Unknown` answer (from either solver) as a match (see [`bench/z3_parity/src/comparator.rs`](bench/z3_parity/src/comparator.rs)) – a solver cannot inflate its "parity" score by declining to answer. Results below are the full 19-logic, 168-benchmark suite as recorded in the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently [`results.macos-aarch64.json`](bench/z3_parity/results.macos-aarch64.json) and [`results.linux-x86_64.json`](bench/z3_parity/results.linux-x86_64.json)). Every tracked snapshot must agree on the **verdict** of every benchmark (`oxiz_result`, `z3_result`, `match_status`); timings (`oxiz_time`, `z3_time`) are machine-dependent and are expected to differ. That rule is what makes the table below a property of OxiZ rather than of one laptop, and `bench/z3_parity/tests/cross_env_verdict_agreement.rs` enforces it on every `cargo test`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of the most recent local run – not evidence:
+`bench/z3_parity` compares Nixie against a real `z3` 4.15.4 binary using a comparator that **never** counts an `Unknown` answer (from either solver) as a match (see [`bench/z3_parity/src/comparator.rs`](bench/z3_parity/src/comparator.rs)) – a solver cannot inflate its "parity" score by declining to answer. Results below are the full 19-logic, 168-benchmark suite as recorded in the tracked per-environment snapshots `bench/z3_parity/results.<os>-<arch>.json` (currently [`results.macos-aarch64.json`](bench/z3_parity/results.macos-aarch64.json) and [`results.linux-x86_64.json`](bench/z3_parity/results.linux-x86_64.json)). Every tracked snapshot must agree on the **verdict** of every benchmark (`nixie_result`, `z3_result`, `match_status`); timings (`nixie_time`, `z3_time`) are machine-dependent and are expected to differ. That rule is what makes the table below a property of Nixie rather than of one laptop, and `bench/z3_parity/tests/cross_env_verdict_agreement.rs` enforces it on every `cargo test`. The un-suffixed `bench/z3_parity/results.json` is git-ignored scratch output of the most recent local run – not evidence:
 
 | Logic | Tests | Result | Notes |
 |-------|-------|--------|-----------|
@@ -177,12 +177,12 @@ The original 8-logic, 88-benchmark quickstart core (QF_LIA, QF_LRA, QF_NIA, QF_B
 
 ### What This Means
 
-- ✅ **Every Benchmark Decisive, Every Answer Matching**: all 19 logic families reach 100% Correct, with no `Unknown`, no timeout and no process error anywhere in the run. Because the comparator refuses to score `Unknown` as a match, the score cannot be inflated by declining to answer – 168/168 means OxiZ committed to a verdict on every benchmark and z3 agreed with all of them.
+- ✅ **Every Benchmark Decisive, Every Answer Matching**: all 19 logic families reach 100% Correct, with no `Unknown`, no timeout and no process error anywhere in the run. Because the comparator refuses to score `Unknown` as a match, the score cannot be inflated by declining to answer – 168/168 means Nixie committed to a verdict on every benchmark and z3 agreed with all of them.
 - ⚠️ **100% of the Suite, Not "100% Z3 Compatibility"**: this is a claim about the differential parity suite and nothing wider. The suite is 168 benchmarks across 19 logics; it does not cover `QF_NRA`, `HORN`, or the long tail of SMT-LIB, and a perfect score on it is not evidence that any given formula outside it will be decided. Coverage gaps are tracked in [`TODO.md`](TODO.md).
-- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit, 0.3.0's hardening waves and this release's soundness sweep found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, and proof checking – but items such as NLSAT irrational-root isolation remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on OxiZ outside this suite's scope
+- ⚠️ **Not a General Production-Readiness Claim**: the 2026-07-16 audit, 0.3.0's hardening waves and this release's soundness sweep found and fixed soundness gaps across the parser, quantifier elimination, MBQI, SAT conflict analysis, NLSAT, math, MaxSAT/QE, Spacer, and proof checking – but items such as NLSAT irrational-root isolation remain open; see [`TODO.md`](TODO.md) for the itemized gaps and fix status before relying on Nixie outside this suite's scope
 - ✅ **Pure Rust**: Achieved without any C/C++ dependencies
 
-This snapshot validates OxiZ's arithmetic, BV, datatype, array, string, FP, combined-theory and quantified reasoning against Z3 across the whole differential suite, while being explicit that logics outside the suite remain ongoing work.
+This snapshot validates Nixie's arithmetic, BV, datatype, array, string, FP, combined-theory and quantified reasoning against Z3 across the whole differential suite, while being explicit that logics outside the suite remain ongoing work.
 
 ## Project Statistics (v0.3.1, 2026-07-31)
 
@@ -213,23 +213,23 @@ This snapshot validates OxiZ's arithmetic, BV, datatype, array, string, FP, comb
 ## Workspace Structure
 
 ```
-oxiz/
-├── oxiz/           # Meta-crate (unified API)
-├── oxiz-core/      # Core AST, sorts, SMT-LIB parser, tactics, rewriters
-├── oxiz-math/      # Mathematical algorithms (polynomials, matrices, LP)
-├── oxiz-sat/       # CDCL SAT solver with VSIDS/LRB/VMTF
-├── oxiz-nlsat/     # Nonlinear arithmetic (CAD, algebraic numbers)
-├── oxiz-theories/  # Theory solvers (EUF, Arith, BV, Arrays, Strings, FP, ADT)
-├── oxiz-solver/    # Main CDCL(T) orchestration, MBQI
-├── oxiz-opt/       # Optimization (MaxSAT, OMT)
-├── oxiz-spacer/    # CHC solving, PDR/IC3, BMC
-├── oxiz-proof/     # Proof generation and verification
-├── oxiz-py/        # Python bindings (PyO3/maturin)
-├── oxiz-wasm/      # WebAssembly bindings
-├── oxiz-smtcomp/   # SMT-COMP benchmarking utilities
-├── oxiz-cli/       # Command-line interface
-├── oxiz-ml/        # ML-guided heuristics (neural networks)
-└── oxiz-vscode/    # VS Code extension (TypeScript, SMT-LIB2 language support)
+nixie/
+├── nixie/           # Meta-crate (unified API)
+├── nixie-core/      # Core AST, sorts, SMT-LIB parser, tactics, rewriters
+├── nixie-math/      # Mathematical algorithms (polynomials, matrices, LP)
+├── nixie-sat/       # CDCL SAT solver with VSIDS/LRB/VMTF
+├── nixie-nlsat/     # Nonlinear arithmetic (CAD, algebraic numbers)
+├── nixie-theories/  # Theory solvers (EUF, Arith, BV, Arrays, Strings, FP, ADT)
+├── nixie-solver/    # Main CDCL(T) orchestration, MBQI
+├── nixie-opt/       # Optimization (MaxSAT, OMT)
+├── nixie-spacer/    # CHC solving, PDR/IC3, BMC
+├── nixie-proof/     # Proof generation and verification
+├── nixie-py/        # Python bindings (PyO3/maturin)
+├── nixie-wasm/      # WebAssembly bindings
+├── nixie-smtcomp/   # SMT-COMP benchmarking utilities
+├── nixie-cli/       # Command-line interface
+├── nixie-ml/        # ML-guided heuristics (neural networks)
+└── nixie-vscode/    # VS Code extension (TypeScript, SMT-LIB2 language support)
 ```
 
 ## Requirements
@@ -250,28 +250,28 @@ For optimal performance, we recommend:
 ```toml
 # Add to your Cargo.toml
 [dependencies]
-oxiz = "0.3.2"  # Default includes solver
+nixie = "0.3.2"  # Default includes solver
 ```
 
 Or with specific features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.2", features = ["nlsat", "optimization"] }
+nixie = { version = "0.3.2", features = ["nlsat", "optimization"] }
 ```
 
 For all features:
 
 ```toml
 [dependencies]
-oxiz = { version = "0.3.2", features = ["full"] }
+nixie = { version = "0.3.2", features = ["full"] }
 ```
 
 ### Building from Source
 
 ```bash
-git clone https://github.com/cool-japan/oxiz
-cd oxiz
+git clone https://github.com/cool-japan/nixie
+cd nixie
 cargo build --release
 ```
 
@@ -287,35 +287,35 @@ After installation:
 
 ```bash
 # Install from crates.io
-cargo install oxiz-cli
+cargo install nixie-cli
 
 # Solve an SMT-LIB2 file
-oxiz input.smt2
+nixie input.smt2
 
 # Interactive mode
-oxiz --interactive
+nixie --interactive
 
 # With verbose output
-oxiz -v input.smt2
+nixie -v input.smt2
 ```
 
 Or run directly from source:
 
 ```bash
 # Solve an SMT-LIB2 file
-cargo run --release -p oxiz-cli -- input.smt2
+cargo run --release -p nixie-cli -- input.smt2
 
 # Interactive mode
-cargo run --release -p oxiz-cli -- --interactive
+cargo run --release -p nixie-cli -- --interactive
 
 # With verbose output
-cargo run --release -p oxiz-cli -- -v input.smt2
+cargo run --release -p nixie-cli -- -v input.smt2
 ```
 
 ### Library Usage
 
 ```rust
-use oxiz::solver::Context;
+use nixie::solver::Context;
 
 fn main() {
     let mut ctx = Context::new();
@@ -402,17 +402,17 @@ Status reflects results on the `bench/z3_parity` suite against a real `z3` 4.15.
 
 ## Architecture
 
-OxiZ follows a layered CDCL(T) architecture:
+Nixie follows a layered CDCL(T) architecture:
 
-1. **SAT Core** (`oxiz-sat`) - CDCL solver with modern heuristics
-2. **Theory Solvers** (`oxiz-theories`) - Modular theory implementations
-3. **SMT Orchestration** (`oxiz-solver`) - Theory combination and DPLL(T)
-4. **Tactics** (`oxiz-core`) - Preprocessing and simplification
-5. **Proof Layer** (`oxiz-proof`) - Proof generation and verification
+1. **SAT Core** (`nixie-sat`) - CDCL solver with modern heuristics
+2. **Theory Solvers** (`nixie-theories`) - Modular theory implementations
+3. **SMT Orchestration** (`nixie-solver`) - Theory combination and DPLL(T)
+4. **Tactics** (`nixie-core`) - Preprocessing and simplification
+5. **Proof Layer** (`nixie-proof`) - Proof generation and verification
 
 ## Beyond Z3: Rust-Specific Enhancements
 
-OxiZ goes beyond Z3 with Rust-native features:
+Nixie goes beyond Z3 with Rust-native features:
 
 ### 🦀 Rust Advantages
 
@@ -432,17 +432,17 @@ OxiZ goes beyond Z3 with Rust-native features:
 ### 🎯 Unique Features
 
 1. **Enhanced Proof Systems**
-   - Machine-checkable proofs exportable to Coq, Lean 4, and Isabelle/HOL, in addition to DRAT/Alethe/LFSC (`oxiz-proof`)
+   - Machine-checkable proofs exportable to Coq, Lean 4, and Isabelle/HOL, in addition to DRAT/Alethe/LFSC (`nixie-proof`)
    - Proof compression and optimization
    - Interactive proof exploration
 
 2. **WebAssembly Bindings**
-   - Compact WASM bundle – see [`oxiz-wasm/README.md`](oxiz-wasm/README.md) for current, build-specific size measurements
+   - Compact WASM bundle – see [`nixie-wasm/README.md`](nixie-wasm/README.md) for current, build-specific size measurements
    - Code splitting for lazy theory loading
    - Browser-optimized memory management
 
 3. **ML-Guided Heuristics** (opt-in)
-   - `oxiz-cli --ml-tactic-selection` (off by default) selects a solver posture per formula via a trained decision tree and learns from outcomes
+   - `nixie-cli --ml-tactic-selection` (off by default) selects a solver posture per formula via a trained decision tree and learns from outcomes
    - Adaptive restart policies
    - Clause usefulness prediction
 
@@ -458,46 +458,46 @@ OxiZ goes beyond Z3 with Rust-native features:
 
 ## Python Bindings
 
-OxiZ provides Python bindings via PyO3:
+Nixie provides Python bindings via PyO3:
 
 ```bash
 # Install from PyPI (when published)
-pip install oxiz
+pip install nixie
 
 # Or build from source
-cd oxiz-py
+cd nixie-py
 pip install maturin
 maturin develop --release
 ```
 
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-solver = oxiz.Solver()
+tm = nixie.TermManager()
+solver = nixie.Solver()
 
 x = tm.mk_var("x", "Int")
 y = tm.mk_var("y", "Int")
 solver.assert_term(tm.mk_gt(x, tm.mk_int(0)), tm)
 solver.assert_term(tm.mk_eq(tm.mk_add([x, y]), tm.mk_int(10)), tm)
 
-if solver.check_sat(tm) == oxiz.SolverResult.Sat:
+if solver.check_sat(tm) == nixie.SolverResult.Sat:
     print(solver.get_model(tm))
 ```
 
 ## WebAssembly
 
-OxiZ can be compiled to WebAssembly for browser use:
+Nixie can be compiled to WebAssembly for browser use:
 
 ```bash
-cd oxiz-wasm
+cd nixie-wasm
 wasm-pack build --target web
 ```
 
-Beyond the basic async solver API, `oxiz-wasm` provides:
+Beyond the basic async solver API, `nixie-wasm` provides:
 - **Hard-preemptible solving** (`PreemptibleSolver`): runs a solve inside a dedicated `Worker` and can `terminate()` it from the main thread on timeout – a real interrupt, unlike racing a `setTimeout` against a synchronous, non-yielding solve loop.
 - **Cooperative cancellation** (`CancellationToken`): a `SharedArrayBuffer`/`Atomics`-backed flag a worker polls between operations, plus a plain-`JsValue` message protocol (`WorkerHandler.handleMessage`) for a real `Worker`'s `onmessage` handler.
-- **Generated TypeScript definitions** (`generate_typescript_dts()`): the `oxiz.d.ts` type definitions are generated from the Rust source, so they can't drift from the JS API.
+- **Generated TypeScript definitions** (`generate_typescript_dts()`): the `nixie.d.ts` type definitions are generated from the Rust source, so they can't drift from the JS API.
 
 ## Contributing
 
@@ -505,9 +505,9 @@ Contributions are welcome! Please see our contributing guidelines.
 
 ## Sponsorship
 
-OxiZ is developed and maintained by **COOLJAPAN OU (Team Kitasan)**.
+Nixie is developed and maintained by **COOLJAPAN OU (Team Kitasan)**.
 
-If you find OxiZ useful, please consider sponsoring the project to support continued development of the Pure Rust ecosystem.
+If you find Nixie useful, please consider sponsoring the project to support continued development of the Pure Rust ecosystem.
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red?logo=github)](https://github.com/sponsors/cool-japan)
 
@@ -528,7 +528,7 @@ COOLJAPAN OU (Team KitaSan)
 
 ## Benchmarks
 
-`bench/z3_parity` records real wall-clock time for both solvers, but OxiZ is invoked as an in-process library call while Z3 is invoked as an external subprocess (see [`bench/z3_parity/METHODOLOGY.md`](bench/z3_parity/METHODOLOGY.md)) – the two aren't measured under comparable conditions, so this repo does not publish a solver-vs-solver speed ratio from that data. There is no other in-repo apples-to-apples throughput benchmark against Z3 yet; `bench/regression` and `bench/profile` track OxiZ's own performance over time (see `docs/PROFILING_REPORT.md`) rather than a cross-solver comparison. Treat any "OxiZ is Nx faster/slower than Z3" claim you see elsewhere as unverified until it cites a same-process, same-hardware methodology.
+`bench/z3_parity` records real wall-clock time for both solvers, but Nixie is invoked as an in-process library call while Z3 is invoked as an external subprocess (see [`bench/z3_parity/METHODOLOGY.md`](bench/z3_parity/METHODOLOGY.md)) – the two aren't measured under comparable conditions, so this repo does not publish a solver-vs-solver speed ratio from that data. There is no other in-repo apples-to-apples throughput benchmark against Z3 yet; `bench/regression` and `bench/profile` track Nixie's own performance over time (see `docs/PROFILING_REPORT.md`) rather than a cross-solver comparison. Treat any "Nixie is Nx faster/slower than Z3" claim you see elsewhere as unverified until it cites a same-process, same-hardware methodology.
 
 ## Roadmap
 

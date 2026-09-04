@@ -27,8 +27,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::solver::{Model, SolverResult};
-use oxiz::{Solver, TermId, TermManager};
+use nixie::solver::{Model, SolverResult};
+use nixie::{Solver, TermId, TermManager};
 
 /// Represents a structured SMT command
 #[derive(Debug, Arbitrary)]

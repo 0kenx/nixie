@@ -1,11 +1,11 @@
-# OxiZ – Agent Guide
+# Nixie – Agent Guide
 
 > Instructions for any AI coding agent working in this repository. **Read this before editing.**
 > This file is canonical; `CLAUDE.md` imports it.
 
 ## What this codebase is
 
-OxiZ is a **pure-Rust SMT solver** – a clean-room reimplementation of Z3's CDCL(T)
+Nixie is a **pure-Rust SMT solver** – a clean-room reimplementation of Z3's CDCL(T)
 architecture: SAT core, theory solvers (EUF, LRA, LIA, BV, arrays, strings, floats,
 datatypes), quantifiers (E-matching, MBQI, QE), NLSAT/CAD, Spacer/PDR (CHC), proof
 generation (DRAT, Alethe, LFSC, Coq/Lean/Isabelle exports), and optimization (MaxSAT/OMT).
@@ -16,7 +16,7 @@ virtual substitution, Cooper, simplex, IEEE-754, polynomial GCD/resultant) and d
 nested logic (recursive term/proof/model walks, hash-consed DAGs, CDCL search trees,
 theory-combination glue).
 
-**Correctness is existential, not a nice-to-have.** Downstream users run OxiZ to *prove*
+**Correctness is existential, not a nice-to-have.** Downstream users run Nixie to *prove*
 things – formal verification, security analysis, compiler correctness, SMT-based model
 checking. A single wrong `sat` or `unsat` can ship a bug, bless an unsafe system, or
 "prove" a false theorem. A timeout or `Unknown` is acceptable; a wrong answer is a
@@ -62,7 +62,7 @@ catastrophe. Every rule below follows from that.
    Rust, no FFI, no C/C++). You consult their source as a specification; you never
    link it. `Pure Rust is a fundamental requirement` (`README.md`).
 
-## Soundness rules specific to OxiZ
+## Soundness rules specific to Nixie
 
 These are the recurring bug classes this codebase has actually bled from. Internalize
 them; every one of them has caused a real soundness bug here.
@@ -253,12 +253,12 @@ counts as discipline.
 
 ## Quick map
 
-- Workspace root: `Cargo.toml` (17 member crates). `oxiz-py` is excluded from the default
+- Workspace root: `Cargo.toml` (17 member crates). `nixie-py` is excluded from the default
   build (needs maturin).
-- Crates: `oxiz-core` (AST/sorts/parser/tactics) → `oxiz-math` → `oxiz-sat` /
-  `oxiz-nlsat` → `oxiz-proof` / `oxiz-theories` → `oxiz-solver` (CDCL(T)) →
-  `oxiz-spacer` / `oxiz-opt` → `oxiz-cli` / `oxiz-wasm` / `oxiz-py` / `oxiz-smtcomp` /
-  `oxiz-ml`. Meta-crate: `oxiz`.
+- Crates: `nixie-core` (AST/sorts/parser/tactics) → `nixie-math` → `nixie-sat` /
+  `nixie-nlsat` → `nixie-proof` / `nixie-theories` → `nixie-solver` (CDCL(T)) →
+  `nixie-spacer` / `nixie-opt` → `nixie-cli` / `nixie-wasm` / `nixie-py` / `nixie-smtcomp` /
+  `nixie-ml`. Meta-crate: `nixie`.
 - Rust edition 2024, MSRV 1.88 (pervasive let-chains). Do not lower either casually.
 - Reference solvers (read-only spec): [`../temp/z3`](../temp/z3),
   [`../temp/cvc5`](../temp/cvc5), [`../temp/cadical`](../temp/cadical)

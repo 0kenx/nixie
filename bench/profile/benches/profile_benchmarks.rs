@@ -1,19 +1,21 @@
 use bench_profile::{parser_script, run_script, sat_propagation_script, theory_check_script};
 use criterion::{Criterion, criterion_group, criterion_main};
+use nixie_core::RewriteContext;
+use nixie_core::ast::{TermId, TermManager};
+use nixie_core::profiling::{ProfilingCategory, ProfilingStats};
+use nixie_core::rewrite::{CombinedRewriter, Rewriter};
+use nixie_proof::ProofRecorder;
+use nixie_sat::{Lit, Solver as SatSolver};
+use nixie_solver::combination::coordinator::{
+    SatResult, TheoryCoordinator, TheoryId, TheorySolver,
+};
+use nixie_theories::Theory;
+use nixie_theories::arithmetic::{LinExpr, Simplex, VarId};
+use nixie_theories::array::ArraySolver;
+use nixie_theories::bv::{Constraint as BvConstraint, Interval, WordLevelPropagator};
+use nixie_theories::euf::{EufSolver, FunctionProperties};
+use nixie_theories::string::{ConstraintAutomaton, Dfa};
 use num_rational::Rational64;
-use oxiz_core::RewriteContext;
-use oxiz_core::ast::{TermId, TermManager};
-use oxiz_core::profiling::{ProfilingCategory, ProfilingStats};
-use oxiz_core::rewrite::{CombinedRewriter, Rewriter};
-use oxiz_proof::ProofRecorder;
-use oxiz_sat::{Lit, Solver as SatSolver};
-use oxiz_solver::combination::coordinator::{SatResult, TheoryCoordinator, TheoryId, TheorySolver};
-use oxiz_theories::Theory;
-use oxiz_theories::arithmetic::{LinExpr, Simplex, VarId};
-use oxiz_theories::array::ArraySolver;
-use oxiz_theories::bv::{Constraint as BvConstraint, Interval, WordLevelPropagator};
-use oxiz_theories::euf::{EufSolver, FunctionProperties};
-use oxiz_theories::string::{ConstraintAutomaton, Dfa};
 use std::hint::black_box;
 
 fn print_snapshot(category: ProfilingCategory) {
@@ -62,7 +64,7 @@ fn bench_sat_propagation(c: &mut Criterion) {
 /// but not decidable from any single bound in isolation, so `check_sat`
 /// must actually run the simplex tableau (see `Simplex::check`) to confirm
 /// it -- mirroring how a real theory (e.g. `LinearArithmeticTheory` in
-/// `oxiz-solver`) is driven by the coordinator in production.
+/// `nixie-solver`) is driven by the coordinator in production.
 struct SimplexTheory {
     simplex: Simplex,
     vars: [VarId; 5],

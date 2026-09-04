@@ -1,0 +1,37 @@
+[package]
+name = "nixie-opt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Optimization engine for Nixie (MaxSMT, OMT)"
+keywords = ["smt", "maxsmt", "optimization", "omt", "maxsat"]
+categories = ["algorithms", "mathematics"]
+
+[dependencies]
+nixie-core = { workspace = true, features = ["std"] }
+# The single place this crate reads a clock (wasm-safe; see nixie-time).
+nixie-time = { workspace = true, features = ["std"] }
+nixie-sat = { workspace = true, features = ["std"] }
+nixie-solver = { workspace = true, features = ["std", "nlsat"] }
+num-rational = { workspace = true, features = ["std"] }
+num-bigint = { workspace = true, features = ["std"] }
+num-traits = { workspace = true, features = ["std"] }
+smallvec.workspace = true
+rustc-hash = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+tracing = { workspace = true, features = ["std"] }
+rand.workspace = true
+rayon.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "opt_benchmarks"
+harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

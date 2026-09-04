@@ -30,7 +30,7 @@ check — 4096 — does the real limiting), Int sort ⇒ the body's guard box
 
 ## Results (z3 parity)
 
-| probe | oxiz | z3 |
+| probe | nixie | z3 |
 |---|---|---|
 | array-over-BV sat control (the residual) | **sat** (was `unknown`) | sat |
 | array-over-BV unsat probe (regression guard) | unsat | unsat |

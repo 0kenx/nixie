@@ -8,7 +8,7 @@ absence produced wrong *behavior*, defers the parts that are pure
 architecture:
 
 **Landed**
-1. **`LogicSpec` registry** (`oxiz-solver/src/solver/logic_contract.rs`):
+1. **`LogicSpec` registry** (`nixie-solver/src/solver/logic_contract.rs`):
    ~60 SMT-LIB 2.7 catalog entries as a declarative table (UF, arith
    fragment incl. nonlinear/diff, arrays, BV, FP, strings, datatypes,
    quantifiers; `QF_ANIA` and the AUF-family per entry — semantics never

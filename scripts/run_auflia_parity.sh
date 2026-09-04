@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# QF_AUFLIA differential parity: oxiz vs z3 over the full local SMT-LIB corpus
+# QF_AUFLIA differential parity: nixie vs z3 over the full local SMT-LIB corpus
 # (1303 files: storecomm, swap, storeinv, cvc, check, 20170829-Rodin,
 # array_benchmarks).  Usage:
 #
-#   ./scripts/run_auflia_parity.sh [timeout_sec] [oxiz_binary]
+#   ./scripts/run_auflia_parity.sh [timeout_sec] [nixie_binary]
 #
-# `timeout_sec` applies to EACH solver run per file (default 10).  The oxiz
+# `timeout_sec` applies to EACH solver run per file (default 10).  The nixie
 # binary defaults to the release build; point the second argument at any
-# build (e.g. target/perf/oxiz) to compare profiles.  Writes per-file lines
+# build (e.g. target/perf/nixie) to compare profiles.  Writes per-file lines
 # to /tmp/auflia_parity.txt and a summary to stdout:
-#   "OK <verdict> <file>" / "MISMATCH z3=<v> oxiz=<v> <file>".
+#   "OK <verdict> <file>" / "MISMATCH z3=<v> nixie=<v> <file>".
 # A `timeout/err` value on either side is recorded verbatim; the summary
 # counts both-side timeouts as agreements only when the verdicts agree.
 set -u
 TIMEOUT="${1:-10}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${SCRIPT_DIR}/.."
-BIN="${2:-${ROOT}/target/release/oxiz}"
+BIN="${2:-${ROOT}/target/release/nixie}"
 CORPUS="${ROOT}/smt-lib/non-incremental/QF_AUFLIA"
 OUT="/tmp/auflia_parity.txt"
 
@@ -25,7 +25,7 @@ if ! command -v z3 >/dev/null 2>&1; then
     exit 1
 fi
 if [ ! -x "${BIN}" ]; then
-    echo "error: oxiz binary not found at ${BIN} (build it or pass a path)" >&2
+    echo "error: nixie binary not found at ${BIN} (build it or pass a path)" >&2
     exit 1
 fi
 
@@ -43,8 +43,8 @@ for f in $files; do
     echo "OK    $z $f" >> "$OUT"
   else
     mismatch=$((mismatch+1))
-    echo "MISMATCH z3=$z oxiz=$o $f" >> "$OUT"
+    echo "MISMATCH z3=$z nixie=$o $f" >> "$OUT"
   fi
 done
-echo "total=$total agree=$agree mismatch=$mismatch oxiz_timeout=$to z3_timeout=$z3to"
+echo "total=$total agree=$agree mismatch=$mismatch nixie_timeout=$to z3_timeout=$z3to"
 echo "per-file log: $OUT"

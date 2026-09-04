@@ -14,16 +14,16 @@
 # History: this file previously forced `target-cpu=native` on every build
 # target and `-undefined dynamic_lookup` on every macOS binary. Both were
 # removed in an earlier pass (audit finding, infra-p3), on the belief that
-# `pyo3-build-config` (used by oxiz-py via the `extension-module` feature)
+# `pyo3-build-config` (used by nixie-py via the `extension-module` feature)
 # already emits the macOS link args itself. That belief was wrong -- see
 # below -- and removing the section caused a real regression: `cargo
-# nextest run --workspace --all-features` failed to *link* oxiz-py's lib
+# nextest run --workspace --all-features` failed to *link* nixie-py's lib
 # test binary on macOS (missing `_Py*` symbols). This section restores
 # just the linker flag, without `target-cpu=native`.
 #
 # The actual, current design (as of this restoration):
 #
-# 1. `oxiz-py/Cargo.toml` no longer enables `pyo3/extension-module` in its
+# 1. `nixie-py/Cargo.toml` no longer enables `pyo3/extension-module` in its
 #    own `[dependencies]` -- see the comment on that line. So plain
 #    `cargo build`/`cargo test`/`cargo nextest run`, with or without
 #    `--all-features` (there is nothing left to gate on a feature), link
@@ -42,7 +42,7 @@
 #    the macOS `-undefined dynamic_lookup` link arg automatically as part
 #    of depending on pyo3/pyo3-ffi. It only exposes a helper function,
 #    `pyo3_build_config::add_extension_module_link_args()`, that a
-#    project must call itself from its own `build.rs` -- oxiz-py has no
+#    project must call itself from its own `build.rs` -- nixie-py has no
 #    such `build.rs`. Without that link arg from *somewhere*, the
 #    maturin-driven cdylib build fails outright with `ld: symbol(s) not
 #    found for architecture arm64` for every `_Py*` reference. This
@@ -51,14 +51,14 @@
 #    building-and-distribution.md#macos) for supplying that flag.
 #
 # Because it lives in `[target.*].rustflags`, it necessarily applies to
-# every binary built for these targets, not only oxiz-py's cdylib (cargo
+# every binary built for these targets, not only nixie-py's cdylib (cargo
 # has no way to scope rustflags to one package) -- for non-Python crates
-# (e.g. oxiz-cli) this could turn a genuinely missing symbol into a
+# (e.g. nixie-cli) this could turn a genuinely missing symbol into a
 # runtime crash instead of a link error. That risk is accepted, same as
 # upstream PyO3 projects generally accept it, because the alternative is
-# maturin builds of oxiz-py not linking at all, and in practice no other
+# maturin builds of nixie-py not linking at all, and in practice no other
 # workspace crate has undefined symbols for this to paper over. It does
-# NOT affect `cargo test`/`cargo nextest run`'s oxiz-py lib test binary,
+# NOT affect `cargo test`/`cargo nextest run`'s nixie-py lib test binary,
 # since that build no longer references undefined `_Py*` symbols in the
 # first place (see point 1) -- the flag is inert for it either way.
 #
@@ -73,7 +73,7 @@
 #
 # If you want `target-cpu=native` for local benchmarking on your own
 # machine, opt in explicitly instead of committing it here, e.g.:
-#   RUSTFLAGS="-C target-cpu=native" cargo bench -p oxiz-solver
+#   RUSTFLAGS="-C target-cpu=native" cargo bench -p nixie-solver
 # or add it to your personal (untracked) `~/.cargo/config.toml`.
 [build]
 rustdocflags = ["-D", "warnings"]

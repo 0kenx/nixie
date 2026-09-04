@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Performance regression check for OxiZ
+# Performance regression check for Nixie
 # Usage: ./scripts/perf_check.sh [--threshold N] [--update] [--json] [--github]
 #
 # Options:

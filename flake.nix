@@ -1,5 +1,5 @@
 {
-  description = "OxiZ - Pure-Rust SMT solver";
+  description = "Nixie - Pure-Rust SMT solver";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -88,7 +88,7 @@
 
       rustCommonArgs = {
         inherit src;
-        pname = "oxiz-workspace";
+        pname = "nixie-workspace";
         version = "0.3.2";
         strictDeps = true;
         cargoBuildCommand = "cargo build --release";
@@ -112,46 +112,46 @@
         then craneLib.buildDepsOnly rustCommonArgs
         else null;
 
-      oxiz-cli =
+      nixie-cli =
         if cargoLockExists
         then
           craneLib.buildPackage (rustCommonArgs
             // {
               inherit cargoArtifacts;
-              pname = "oxiz-cli";
-              cargoExtraArgs = "--package oxiz-cli --bin oxiz";
+              pname = "nixie-cli";
+              cargoExtraArgs = "--package nixie-cli --bin nixie";
             })
         else null;
 
       workspaceChecks = lib.optionalAttrs cargoLockExists {
         workspace-fmt = craneLib.cargoFmt {
           inherit src;
-          pname = "oxiz";
+          pname = "nixie";
           version = "0.3.2";
         };
 
         workspace-audit = craneLib.cargoAudit {
           inherit src advisory-db;
-          pname = "oxiz";
+          pname = "nixie";
           version = "0.3.2";
         };
 
         workspace-deny = craneLib.cargoDeny {
           inherit src;
-          pname = "oxiz";
+          pname = "nixie";
           version = "0.3.2";
         };
       };
     in {
       packages = lib.optionalAttrs cargoLockExists {
-        default = oxiz-cli;
-        inherit oxiz-cli;
+        default = nixie-cli;
+        inherit nixie-cli;
       };
 
       apps = lib.optionalAttrs cargoLockExists {
         default = flake-utils.lib.mkApp {
-          drv = oxiz-cli;
-          name = "oxiz";
+          drv = nixie-cli;
+          name = "nixie";
         };
       };
 
@@ -165,12 +165,12 @@
         shellHook = ''
           export PATH="${nightlyRustfmt}/bin:$PATH"
           if git rev-parse --show-toplevel >/dev/null 2>&1; then
-            export OXIZ_REPO_ROOT="$(git rev-parse --show-toplevel)"
+            export NIXIE_REPO_ROOT="$(git rev-parse --show-toplevel)"
           else
-            export OXIZ_REPO_ROOT="$PWD"
+            export NIXIE_REPO_ROOT="$PWD"
           fi
-          export OXIZ_FUZZ_TOOLCHAIN_BIN="${fuzzRustToolchain}/bin"
-          export OXIZ_SCCACHE_CACHE_HOME="''${OXIZ_SCCACHE_CACHE_HOME:-$HOME/.cache/oxiz}"
+          export NIXIE_FUZZ_TOOLCHAIN_BIN="${fuzzRustToolchain}/bin"
+          export NIXIE_SCCACHE_CACHE_HOME="''${NIXIE_SCCACHE_CACHE_HOME:-$HOME/.cache/nixie}"
 
           case "''${TMPDIR:-}" in
             ""|/tmp/nix-shell.*)
@@ -178,10 +178,10 @@
               ;;
           esac
 
-          export SCCACHE_DIR="$OXIZ_SCCACHE_CACHE_HOME/sccache"
-          export SCCACHE_SERVER_UDS="$OXIZ_SCCACHE_CACHE_HOME/oxiz-sccache.sock"
+          export SCCACHE_DIR="$NIXIE_SCCACHE_CACHE_HOME/sccache"
+          export SCCACHE_SERVER_UDS="$NIXIE_SCCACHE_CACHE_HOME/nixie-sccache.sock"
           export SCCACHE_CACHE_SIZE="5G"
-          case "''${OXIZ_USE_SCCACHE:-}" in
+          case "''${NIXIE_USE_SCCACHE:-}" in
             1|true|yes)
               export RUSTC_WRAPPER="${pkgs.sccache}/bin/sccache"
               ;;
@@ -232,21 +232,21 @@
       # run (FFI, threads beyond its model) and native-code inspection.
       # Usage (the Miri nightly is already first on PATH inside the shell):
       #   nix develop .#debug
-      #   cargo miri test -p oxiz-sat --test elimination_soundness_regressions
+      #   cargo miri test -p nixie-sat --test elimination_soundness_regressions
       #   gdb --args ./target/debug/<bin>
       devShells.debug = pkgs.mkShell {
-        name = "oxiz-debug";
+        name = "nixie-debug";
 
         shellHook = ''
           # Put the Miri-capable nightly first so plain `cargo` inside this
           # shell targets it; `cargo miri` requires a nightly driver.
           export PATH="${miriToolchain}/bin:$PATH"
-          export OXIZ_REPO_ROOT="$PWD"
+          export NIXIE_REPO_ROOT="$PWD"
 
           # Deterministic Miri output (diffable between runs).
           export MIRIFLAGS="-Zmiri-seed=42"
 
-          echo "oxiz debug shell: cargo miri / gdb available"
+          echo "nixie debug shell: cargo miri / gdb available"
           echo "  MIRIFLAGS='$MIRIFLAGS'"
         '';
 

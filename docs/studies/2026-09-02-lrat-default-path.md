@@ -5,7 +5,7 @@ and the main optimization target. This study opens that front.
 
 ## What the certified path actually costs (measured)
 
-`oxiz --certified-mode` on propositional SMT-LIB (SAT-corpus files
+`nixie --certified-mode` on propositional SMT-LIB (SAT-corpus files
 re-encoded), pinned core:
 
 | file | uncertified | certified | SAT preset (stats_solve) |
@@ -81,7 +81,7 @@ proofs until root-caused. Reproducer (pre-gate binary):
 ## Measurement knobs added
 
 `lrat_file`: `--bve` (BVE under proof), `--els` (ELS), `--bare`,
-`OXIZ_DIAG=1` (pass counters). These stay for reproducing both findings.
+`NIXIE_DIAG=1` (pass counters). These stay for reproducing both findings.
 
 ## Next (ranked)
 
@@ -329,7 +329,7 @@ Design: stratified per-family sample (seed 20260903; QF_UF 76 files across
 `{plain, certified} × {d51ba3c (pre-LRAT-program), 5635354 (this study)}` —
 plus a z3 reference for verdict verification. All 1 000 cells recorded once
 in the result store (`precompile/<sha>/benchmark/runs/smtlib-2020-qf{uf,lia}-certifiedpath/`,
-schema `oxiz-bench-record/1`; the one plain cell whose 20 s z3 run timed out
+schema `nixie-bench-record/1`; the one plain cell whose 20 s z3 run timed out
 was verified at `-T:100` and is annotated).
 
 **Verdict transitions (plain → certified, new binary):**
@@ -378,7 +378,7 @@ QF_UF `sat` as the largest single hole (28/76 sampled files → `unknown`:
 the certificate model carried no uninterpreted-sort values, so any
 assertion containing `(f x)` was unevaluable). Closed:
 
-* **Evaluator** (`oxiz-core` validation): `Apply` evaluates by
+* **Evaluator** (`nixie-core` validation): `Apply` evaluates by
   per-application model lookup; `Distinct` by exact pairwise comparison
   over `ModelValue`s (witnesses compare by `(sort, id)`).
 * **Candidate**: a small independent congruence closure over the reachable

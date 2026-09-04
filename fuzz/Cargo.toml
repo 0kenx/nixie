@@ -1,5 +1,5 @@
 [package]
-name = "oxiz-fuzz"
+name = "nixie-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2024"
@@ -16,11 +16,11 @@ arbitrary = { version = "1", features = ["derive"] }
 num-bigint = "0.4"
 num-rational = "0.4"
 
-[dependencies.oxiz-core]
-path = "../oxiz-core"
+[dependencies.nixie-core]
+path = "../nixie-core"
 
-[dependencies.oxiz]
-path = "../oxiz"
+[dependencies.nixie]
+path = "../nixie"
 
 # Fuzz targets
 

@@ -1,0 +1,708 @@
+//! Simplified high-level API for common SMT solving use cases.
+
+use core::time::Duration;
+use nixie_core::ast::{TermId, TermKind, TermManager};
+use nixie_core::error::NixieError;
+use nixie_core::sort::SortId;
+use nixie_solver::resource_limits::{ResourceExhausted, ResourceLimits};
+use nixie_solver::{Solver, SolverResult};
+use num_bigint::BigInt;
+
+/// Result of an easy solver check.
+#[derive(Debug, Clone)]
+pub enum EasyResult {
+    /// The formula is satisfiable.
+    Sat,
+    /// The formula is unsatisfiable.
+    Unsat,
+    /// The solver could not determine satisfiability.
+    Unknown,
+    /// A resource limit was hit.
+    ResourceExhausted(ResourceExhausted),
+    /// An error occurred.
+    Error(String),
+}
+
+impl EasyResult {
+    /// Returns `true` if the result is satisfiable.
+    #[must_use]
+    pub fn is_sat(&self) -> bool {
+        matches!(self, EasyResult::Sat)
+    }
+
+    /// Returns `true` if the result is unsatisfiable.
+    #[must_use]
+    pub fn is_unsat(&self) -> bool {
+        matches!(self, EasyResult::Unsat)
+    }
+
+    /// Returns `true` if the result is unknown.
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, EasyResult::Unknown)
+    }
+
+    /// Returns `true` if a resource limit was hit.
+    #[must_use]
+    pub fn is_resource_exhausted(&self) -> bool {
+        matches!(self, EasyResult::ResourceExhausted(_))
+    }
+
+    /// Returns `true` if an error occurred.
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        matches!(self, EasyResult::Error(_))
+    }
+}
+
+/// A simplified SMT solver with a builder-pattern API.
+#[derive(Debug)]
+pub struct EasySolver {
+    tm: TermManager,
+    solver: Solver,
+    vars: std::collections::HashMap<String, (TermId, SortId)>,
+    limits: Option<ResourceLimits>,
+    last_result: Option<SolverResult>,
+    /// First error encountered while building constraints (e.g. an
+    /// `assert_*` call referencing a variable name that was never declared
+    /// via `int_var`/`real_var`/`bool_var`). Builder methods that hit an
+    /// error record it here instead of silently dropping the constraint;
+    /// [`EasySolver::check_sat`] surfaces it as [`EasyResult::Error`]
+    /// instead of proceeding to solve an incomplete formula.
+    pending_error: Option<String>,
+}
+
+impl Default for EasySolver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EasySolver {
+    /// Create a new easy solver.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            tm: TermManager::new(),
+            solver: Solver::new(),
+            vars: std::collections::HashMap::new(),
+            limits: None,
+            last_result: None,
+            pending_error: None,
+        }
+    }
+
+    /// Record that `name` was referenced by an `assert_*` builder call but
+    /// was never declared. The error is sticky: once set, it is not
+    /// overwritten by later errors, and `check_sat` will report it instead
+    /// of solving a formula that is silently missing constraints.
+    fn record_unknown_var(&mut self, name: &str) {
+        if self.pending_error.is_none() {
+            self.pending_error = Some(format!(
+                "unknown variable '{name}': declare it with int_var/real_var/bool_var before asserting on it"
+            ));
+        }
+    }
+
+    /// One-liner: check satisfiability of an SMT-LIB2 script string.
+    pub fn check_sat_str(script: &str) -> Result<String, NixieError> {
+        let mut ctx = nixie_solver::Context::new();
+        let output = ctx.execute_script(script)?;
+        output
+            .last()
+            .cloned()
+            .ok_or_else(|| NixieError::Internal("no output from script".into()))
+    }
+
+    /// Set the logic.
+    pub fn set_logic(&mut self, logic: &str) -> &mut Self {
+        self.solver.set_logic(logic);
+        self
+    }
+
+    /// Declare an integer variable.
+    pub fn int_var(&mut self, name: &str) -> &mut Self {
+        let sort = self.tm.sorts.int_sort;
+        let term = self.tm.mk_var(name, sort);
+        self.vars.insert(name.to_string(), (term, sort));
+        self
+    }
+
+    /// Declare a real variable.
+    pub fn real_var(&mut self, name: &str) -> &mut Self {
+        let sort = self.tm.sorts.real_sort;
+        let term = self.tm.mk_var(name, sort);
+        self.vars.insert(name.to_string(), (term, sort));
+        self
+    }
+
+    /// Declare a boolean variable.
+    pub fn bool_var(&mut self, name: &str) -> &mut Self {
+        let sort = self.tm.sorts.bool_sort;
+        let term = self.tm.mk_var(name, sort);
+        self.vars.insert(name.to_string(), (term, sort));
+        self
+    }
+
+    /// Assert that variable `name` > `value`.
+    pub fn assert_gt(&mut self, name: &str, value: i64) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let val = self.tm.mk_int(BigInt::from(value));
+            let constraint = self.tm.mk_gt(term, val);
+            self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert that variable `name` < `value`.
+    pub fn assert_lt(&mut self, name: &str, value: i64) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let val = self.tm.mk_int(BigInt::from(value));
+            let constraint = self.tm.mk_lt(term, val);
+            self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert that variable `name` >= `value`.
+    pub fn assert_ge(&mut self, name: &str, value: i64) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let val = self.tm.mk_int(BigInt::from(value));
+            let constraint = self.tm.mk_ge(term, val);
+            self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert that variable `name` <= `value`.
+    pub fn assert_le(&mut self, name: &str, value: i64) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let val = self.tm.mk_int(BigInt::from(value));
+            let constraint = self.tm.mk_le(term, val);
+            self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert that variable equals an integer.
+    pub fn assert_eq_int(&mut self, name: &str, value: i64) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let val = self.tm.mk_int(BigInt::from(value));
+            let constraint = self.tm.mk_eq(term, val);
+            self.solver.assert(constraint, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert that two variables are equal.
+    pub fn assert_eq_vars(&mut self, name1: &str, name2: &str) -> &mut Self {
+        match (self.vars.get(name1).copied(), self.vars.get(name2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let constraint = self.tm.mk_eq(t1, t2);
+                self.solver.assert(constraint, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(name1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(name2);
+                }
+            }
+        }
+        self
+    }
+
+    /// Assert that two variables are not equal.
+    pub fn assert_neq_vars(&mut self, name1: &str, name2: &str) -> &mut Self {
+        match (self.vars.get(name1).copied(), self.vars.get(name2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let eq = self.tm.mk_eq(t1, t2);
+                let neq = self.tm.mk_not(eq);
+                self.solver.assert(neq, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(name1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(name2);
+                }
+            }
+        }
+        self
+    }
+
+    /// Assert a boolean variable is true.
+    pub fn assert_true(&mut self, name: &str) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            self.solver.assert(term, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert a boolean variable is false.
+    pub fn assert_false(&mut self, name: &str) -> &mut Self {
+        if let Some(&(term, _)) = self.vars.get(name) {
+            let neg = self.tm.mk_not(term);
+            self.solver.assert(neg, &mut self.tm);
+        } else {
+            self.record_unknown_var(name);
+        }
+        self
+    }
+
+    /// Assert `var1 + var2 = value`.
+    pub fn assert_sum_eq(&mut self, var1: &str, var2: &str, value: i64) -> &mut Self {
+        match (self.vars.get(var1).copied(), self.vars.get(var2).copied()) {
+            (Some((t1, _)), Some((t2, _))) => {
+                let sum = self.tm.mk_add([t1, t2]);
+                let val = self.tm.mk_int(BigInt::from(value));
+                let constraint = self.tm.mk_eq(sum, val);
+                self.solver.assert(constraint, &mut self.tm);
+            }
+            (t1, t2) => {
+                if t1.is_none() {
+                    self.record_unknown_var(var1);
+                }
+                if t2.is_none() {
+                    self.record_unknown_var(var2);
+                }
+            }
+        }
+        self
+    }
+
+    /// Set a wall-clock timeout.
+    pub fn timeout(&mut self, timeout: Duration) -> &mut Self {
+        let limits = self.limits.get_or_insert_with(ResourceLimits::new);
+        limits.timeout = Some(timeout);
+        self
+    }
+
+    /// Set a conflict limit.
+    pub fn conflict_limit(&mut self, max_conflicts: u64) -> &mut Self {
+        let limits = self.limits.get_or_insert_with(ResourceLimits::new);
+        limits.max_conflicts = Some(max_conflicts);
+        self
+    }
+
+    /// Set a decision limit.
+    pub fn decision_limit(&mut self, max_decisions: u64) -> &mut Self {
+        let limits = self.limits.get_or_insert_with(ResourceLimits::new);
+        limits.max_decisions = Some(max_decisions);
+        self
+    }
+
+    /// Check satisfiability.
+    ///
+    /// If a prior `assert_*` call referenced an undeclared variable, that
+    /// error is reported here (as [`EasyResult::Error`]) instead of solving
+    /// a formula that is silently missing a constraint.
+    pub fn check_sat(&mut self) -> EasyResult {
+        if let Some(ref err) = self.pending_error {
+            self.last_result = None;
+            return EasyResult::Error(err.clone());
+        }
+        let result = if let Some(ref limits) = self.limits {
+            match self.solver.check_with_limits(&mut self.tm, limits) {
+                Ok(r) => r,
+                Err(exhausted) => return EasyResult::ResourceExhausted(exhausted),
+            }
+        } else {
+            self.solver.check(&mut self.tm)
+        };
+        self.last_result = Some(result);
+        match result {
+            SolverResult::Sat => EasyResult::Sat,
+            SolverResult::Unsat => EasyResult::Unsat,
+            SolverResult::Unknown => EasyResult::Unknown,
+        }
+    }
+
+    /// Convenience: returns `true` if satisfiable.
+    pub fn is_sat(&mut self) -> bool {
+        self.check_sat().is_sat()
+    }
+
+    /// Convenience: returns `true` if unsatisfiable.
+    pub fn is_unsat(&mut self) -> bool {
+        self.check_sat().is_unsat()
+    }
+
+    /// Get the model value for a variable as a string.
+    #[must_use]
+    pub fn get_model_value(&self, name: &str) -> Option<String> {
+        if self.last_result != Some(SolverResult::Sat) {
+            return None;
+        }
+        let &(term, sort) = self.vars.get(name)?;
+        let model = self.solver.model()?;
+        let val_term = model.get(term)?;
+        let val = self.tm.get(val_term)?;
+        Some(self.format_term_value(&val.kind, sort))
+    }
+
+    /// Get the integer value for a variable.
+    #[must_use]
+    pub fn get_int_value(&self, name: &str) -> Option<i64> {
+        if self.last_result != Some(SolverResult::Sat) {
+            return None;
+        }
+        let &(term, _) = self.vars.get(name)?;
+        let model = self.solver.model()?;
+        let val_term = model.get(term)?;
+        let val = self.tm.get(val_term)?;
+        match &val.kind {
+            TermKind::IntConst(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i64()
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the boolean value for a variable.
+    #[must_use]
+    pub fn get_bool_value(&self, name: &str) -> Option<bool> {
+        if self.last_result != Some(SolverResult::Sat) {
+            return None;
+        }
+        let &(term, _) = self.vars.get(name)?;
+        let model = self.solver.model()?;
+        let val_term = model.get(term)?;
+        let val = self.tm.get(val_term)?;
+        match &val.kind {
+            TermKind::True => Some(true),
+            TermKind::False => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Push a context level.
+    pub fn push(&mut self) -> &mut Self {
+        self.solver.push();
+        self
+    }
+
+    /// Pop a context level.
+    pub fn pop(&mut self) -> &mut Self {
+        self.solver.pop();
+        self
+    }
+
+    /// Reset the solver.
+    pub fn reset(&mut self) {
+        self.solver = Solver::new();
+        self.tm = TermManager::new();
+        self.vars.clear();
+        self.last_result = None;
+        self.pending_error = None;
+    }
+
+    fn format_term_value(&self, kind: &TermKind, _sort: SortId) -> String {
+        match kind {
+            TermKind::True => "true".to_string(),
+            TermKind::False => "false".to_string(),
+            TermKind::IntConst(n) => n.to_string(),
+            TermKind::RealConst(r) => {
+                if *r.denom() == 1 {
+                    format!("{}.0", r.numer())
+                } else {
+                    format!("{}/{}", r.numer(), r.denom())
+                }
+            }
+            TermKind::BitVecConst { value, width } => {
+                format!(
+                    "#b{:0>width$}",
+                    format!("{:b}", value),
+                    width = *width as usize
+                )
+            }
+            // The raw string value, matching every sibling arm above: none
+            // of them render an SMT-LIB literal (an SMT-LIB real literal
+            // cannot even spell the `n/d` rational form `RealConst` uses),
+            // they render the plain value. Quoting/escaping this as an
+            // SMT-LIB string literal would be the odd one out here, and
+            // would surprise a caller of this ergonomic, non-SMT-LIB API
+            // who just wants the string back (e.g. `get_model_value` /
+            // callers comparing it to their original input).
+            TermKind::StringLit(s) => s.clone(),
+            _ => "?".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_sat_str_sat() {
+        let result =
+            EasySolver::check_sat_str("(declare-const x Int) (assert (> x 5)) (check-sat)");
+        assert!(result.is_ok());
+        assert_eq!(result.expect("should succeed"), "sat");
+    }
+
+    #[test]
+    fn test_check_sat_str_unsat() {
+        let result = EasySolver::check_sat_str(
+            "(declare-const x Int) (assert (> x 5)) (assert (< x 3)) (check-sat)",
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.expect("should succeed"), "unsat");
+    }
+
+    #[test]
+    fn test_builder_sat() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 0).assert_lt("x", 10);
+        assert!(solver.check_sat().is_sat());
+    }
+
+    #[test]
+    fn test_builder_unsat() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 10).assert_lt("x", 5);
+        assert!(solver.check_sat().is_unsat());
+    }
+
+    #[test]
+    fn test_is_sat_is_unsat() {
+        let mut solver = EasySolver::new();
+        solver.bool_var("p").assert_true("p");
+        assert!(solver.is_sat());
+
+        let mut solver2 = EasySolver::new();
+        solver2.bool_var("p").assert_true("p").assert_false("p");
+        assert!(solver2.is_unsat());
+    }
+
+    #[test]
+    fn test_get_model_value_int() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_eq_int("x", 42);
+        assert!(solver.check_sat().is_sat());
+        assert_eq!(solver.get_int_value("x"), Some(42));
+        assert_eq!(solver.get_model_value("x").as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn test_get_model_value_bool() {
+        let mut solver = EasySolver::new();
+        solver.bool_var("p").assert_true("p");
+        assert!(solver.check_sat().is_sat());
+        assert_eq!(solver.get_bool_value("p"), Some(true));
+    }
+
+    #[test]
+    fn test_multiple_vars() {
+        let mut solver = EasySolver::new();
+        solver
+            .int_var("x")
+            .int_var("y")
+            .assert_gt("x", 0)
+            .assert_lt("y", 10)
+            .assert_sum_eq("x", "y", 7);
+        assert!(solver.check_sat().is_sat());
+        // The solver should find values that satisfy x > 0, y < 10, x + y = 7
+        // We just verify the sum constraint holds if model values are available
+        if let (Some(x_val), Some(y_val)) = (solver.get_int_value("x"), solver.get_int_value("y")) {
+            assert_eq!(x_val + y_val, 7);
+        }
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 0);
+        solver.push();
+        solver.assert_lt("x", -1);
+        assert!(solver.is_unsat());
+        solver.pop();
+        assert!(solver.is_sat());
+    }
+
+    #[test]
+    fn test_ge_le_constraints() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_ge("x", 5).assert_le("x", 5);
+        assert!(solver.check_sat().is_sat());
+        assert_eq!(solver.get_int_value("x"), Some(5));
+    }
+
+    #[test]
+    fn test_eq_vars_constraint() {
+        let mut solver = EasySolver::new();
+        solver
+            .int_var("x")
+            .int_var("y")
+            .assert_eq_int("x", 10)
+            .assert_eq_vars("x", "y");
+        assert!(solver.check_sat().is_sat());
+        assert_eq!(solver.get_int_value("y"), Some(10));
+    }
+
+    #[test]
+    fn test_neq_vars_constraint() {
+        let mut solver = EasySolver::new();
+        solver
+            .int_var("x")
+            .int_var("y")
+            .assert_eq_int("x", 5)
+            .assert_eq_int("y", 5)
+            .assert_neq_vars("x", "y");
+        assert!(solver.check_sat().is_unsat());
+    }
+
+    #[test]
+    fn test_easy_result_methods() {
+        assert!(EasyResult::Sat.is_sat());
+        assert!(!EasyResult::Sat.is_unsat());
+        assert!(EasyResult::Unsat.is_unsat());
+        assert!(EasyResult::Unknown.is_unknown());
+        assert!(EasyResult::Error("test".into()).is_error());
+        assert!(EasyResult::ResourceExhausted(ResourceExhausted::Timeout).is_resource_exhausted());
+    }
+
+    #[test]
+    fn test_timeout_integration() {
+        let mut solver = EasySolver::new();
+        solver
+            .int_var("x")
+            .assert_gt("x", 0)
+            .timeout(Duration::from_secs(60));
+        assert!(solver.check_sat().is_sat());
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 0);
+        assert!(solver.is_sat());
+        solver.reset();
+        assert!(solver.check_sat().is_sat());
+    }
+
+    #[test]
+    fn test_get_model_value_before_check() {
+        let solver = EasySolver::new();
+        assert!(solver.get_model_value("x").is_none());
+        assert!(solver.get_int_value("x").is_none());
+        assert!(solver.get_bool_value("x").is_none());
+    }
+
+    // Regression tests: `assert_*` on an undeclared variable name must not
+    // silently drop the constraint. Previously the builder methods matched
+    // on `self.vars.get(name)` and did nothing on `None`, so a typo'd
+    // variable name (e.g. asserting on "y" after declaring "Y") produced a
+    // solver result for a strictly weaker (incomplete) formula with no
+    // indication anything was wrong. They must now surface as
+    // `EasyResult::Error` from `check_sat`.
+
+    #[test]
+    fn test_assert_gt_unknown_var_is_reported() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("typo_x", 5);
+        let result = solver.check_sat();
+        assert!(result.is_error(), "expected Error, got {result:?}");
+        if let EasyResult::Error(msg) = result {
+            assert!(msg.contains("typo_x"));
+        }
+    }
+
+    #[test]
+    fn test_assert_unknown_var_does_not_silently_solve_wrong_formula() {
+        // Without the fix, this would silently drop the "x < 3" constraint
+        // (typo: "xx") and incorrectly report Sat for what should be
+        // detected as a builder error, since the real intended formula
+        // (x > 5 AND x < 3) is unsatisfiable.
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_gt("x", 5).assert_lt("xx", 3);
+        let result = solver.check_sat();
+        assert!(result.is_error(), "expected Error, got {result:?}");
+    }
+
+    #[test]
+    fn test_assert_eq_vars_unknown_reports_both_names() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_eq_vars("x", "missing_y");
+        let result = solver.check_sat();
+        assert!(result.is_error());
+        if let EasyResult::Error(msg) = result {
+            assert!(msg.contains("missing_y"));
+        }
+    }
+
+    #[test]
+    fn test_assert_sum_eq_unknown_var_reports_error() {
+        let mut solver = EasySolver::new();
+        solver.int_var("x").assert_sum_eq("x", "missing_y", 7);
+        let result = solver.check_sat();
+        assert!(result.is_error());
+    }
+
+    #[test]
+    fn test_reset_clears_pending_error() {
+        let mut solver = EasySolver::new();
+        solver.assert_gt("missing", 5);
+        assert!(solver.check_sat().is_error());
+        solver.reset();
+        solver.int_var("x").assert_gt("x", 0);
+        assert!(solver.check_sat().is_sat());
+    }
+
+    // `format_term_value` had no `TermKind::StringLit` arm, so any
+    // String-sorted model value fell through to the `_ => "?"` catch-all:
+    // a caller of this ergonomic API could not read a string result back at
+    // all. It now returns the raw string content, matching every sibling
+    // arm (`True`/`False`/`IntConst`/`RealConst`/`BitVecConst`), none of
+    // which render an SMT-LIB literal either – they render the plain value.
+
+    /// Control: plain ASCII passes through unchanged, with no quoting.
+    #[test]
+    fn test_format_term_value_string_lit_plain_ascii() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        let value = solver.format_term_value(&TermKind::StringLit("hello world".to_string()), sort);
+        assert_eq!(value, "hello world");
+    }
+
+    /// A `"`, a `\`, a `\u`-prefixed literal substring, a non-ASCII code
+    /// point, and a control character must all survive verbatim: this is
+    /// the raw value, not an SMT-LIB literal, so none of them are escaped.
+    #[test]
+    fn test_format_term_value_string_lit_special_chars_are_not_smtlib_escaped() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        for raw in ["a\"b", "a\\b", "\\u0041", "caf\u{e9}", "line\u{0}break"] {
+            let value = solver.format_term_value(&TermKind::StringLit(raw.to_string()), sort);
+            assert_eq!(value, raw, "expected the raw string back unchanged");
+        }
+    }
+
+    /// End-to-end regression for the defect as originally reported: before
+    /// the fix this returned `"?"` for *any* string value, regardless of
+    /// content.
+    #[test]
+    fn test_format_term_value_string_lit_is_never_a_bare_question_mark() {
+        let mut solver = EasySolver::new();
+        let sort = solver.tm.sorts.string_sort();
+        let value = solver.format_term_value(&TermKind::StringLit(String::new()), sort);
+        assert_ne!(value, "?");
+        assert_eq!(value, "");
+    }
+}

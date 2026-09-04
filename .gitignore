@@ -5,9 +5,9 @@ target
 
 # --- POLICY CHANGE: Cargo.lock is now ignored (was previously committed) ---
 # Previously this repository intentionally tracked the root Cargo.lock, on the
-# grounds that oxiz-cli ships as a binary crate and reproducible binary builds
+# grounds that nixie-cli ships as a binary crate and reproducible binary builds
 # want a committed lockfile.
-# That policy has been reversed: OxiZ is primarily consumed as a set of library
+# That policy has been reversed: Nixie is primarily consumed as a set of library
 # crates published to crates.io, where the lockfile is ignored by downstream
 # users anyway, and a tracked lockfile produces constant merge conflicts and
 # churn on every dependency bump (Latest crates policy).
@@ -53,7 +53,7 @@ fuzz/artifacts/
 # benchmark suites (SMT-LIB, SATLIB, SAT Competition). Fetch them out of band
 # (see bench/differential/README.md) and keep them as plain working-tree data;
 # do not commit them. Tests that consume specific instances
-# (oxiz-solver/tests/known_unsound_regressions.rs) and the differential harness
+# (nixie-solver/tests/known_unsound_regressions.rs) and the differential harness
 # (bench/differential/) skip cleanly when a file is absent.
 /smt-lib/
 /satlib/

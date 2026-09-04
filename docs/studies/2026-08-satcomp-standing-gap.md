@@ -2,7 +2,7 @@
 
 ## Standing table (261 files: satcomp2024 bench ×2 encodings + satcomp2025 main_easy_mid)
 
-| | oxiz (CaDiCaL preset, `cc78521`) | cadical (reference build) |
+| | nixie (CaDiCaL preset, `cc78521`) | cadical (reference build) |
 |---|---|---|
 | solved (60 s, 6-way) | **128** | **159** |
 | verdict mismatches | — | **0** (522 runs) |
@@ -26,7 +26,7 @@ Soundness is clean across every run; the entire gap is solving power.
 ## noL-11-14 diagnosis (the hard-trio representative)
 
 1419 vars, 7821 ternary clauses + 14 units, SAT.  cadical: 5.2 s (exit 10).
-oxiz: TO under default, `PRESET=default`, `STABLE=1`, `INPROCESS=1`,
+nixie: TO under default, `PRESET=default`, `STABLE=1`, `INPROCESS=1`,
 `REPHASE=0` — every knob.  Capped run: 200 k conflicts in 4.6 s
 (43.6 k conflicts/s — throughput is NOT the problem) at **9.5 decisions
 per conflict** (healthy CDCL runs 1–3): the learned clauses do not drive
@@ -38,7 +38,7 @@ propagate 30 %, conflict analysis ~30 % (`shrink_and_minimize` 15 % +
 
 ### cadical's own numbers on the same file (correction of the first read)
 
-| metric | oxiz | cadical |
+| metric | nixie | cadical |
 |---|---|---|
 | conflicts | 200 k cap hit (TO at 60 s ≈ 2.6 M) | **232 k** (solves) |
 | conflicts/s | 43.6 k | 53.1 k |
@@ -131,7 +131,7 @@ multi-seed with matched nulls per `docs/BENCHMARKING.md`.
 Counters at cadical's solve point on `noL-11-14` (232 k conflicts,
 default config both sides):
 
-| metric | oxiz | cadical |
+| metric | nixie | cadical |
 |---|---|---|
 | learned / conflict | 100 % | 97.1 % |
 | **literals removed / conflict (shrink+minimize)** | **2.36** | **~9.6** (shrunken 5.68 + minishrunken 3.96) |
@@ -175,7 +175,7 @@ reduction-policy targets against cadical's `reduced 76 %`.
 
 ### SOLVED (same day): the fallback direction was inverted — poison cascade
 
-Instrumentation (`OXIZ_SHRINK_TRACE=1`, now a documented diagnostic
+Instrumentation (`NIXIE_SHRINK_TRACE=1`, now a documented diagnostic
 surface) on `noL-11-14` at the 232 k cap isolated it:
 
 | signal | value |
@@ -223,7 +223,7 @@ timeouts) while the RELEASE binary solves the identical fixture in
 13 s (`unsat`, both pre- and post-fix binaries, serial, quiet machine).
 No panic, no OOM line, no verdict change was ever captured — only
 timeouts under contention.  The full workspace suite passed at
-`9749a7d` twice BEFORE the load spikes; oxiz-sat 870/870 and the
+`9749a7d` twice BEFORE the load spikes; nixie-sat 870/870 and the
 pete/arrangement subset 8/8 re-verified under timebox today.
 
 **Open item (owner: next quiet-machine session)**: measure debug-wisas
@@ -253,7 +253,7 @@ each removal individually entailed) shift the SMT trajectory onto a
 catastrophically longer path.
 
 **The landing's "canaries pass in ~10 s" was wrong**: those runs used
-`target/release/oxiz` from the SHARED target dir during another
+`target/release/nixie` from the SHARED target dir during another
 agent's builds — a "32 s incremental" build after a full `cargo clean`
 is impossible, so the binary measured was not the fixed one.  Lesson
 recorded: after any `cargo clean` on this shared tree, binary
@@ -273,7 +273,7 @@ sees).
 
 Post-revert verification (timeboxed, fresh-provenance builds): wisas
 release `unsat` 7 s; debug canary subset (wisas+pete+pr30+cegar)
-28/28; oxiz-sat 870/870; clippy/fmt clean.  **Differential at the
+28/28; nixie-sat 870/870; clippy/fmt clean.  **Differential at the
 revert commit: 162 solved / 0 wrong; parity 167/0/1** — the revert is
 itself a SAT-core change and shipped with the fresh differential the
 corollary requires (both trajectory families verdict-clean either
@@ -298,7 +298,7 @@ An instrumented cadical build (counters patched into `shrink.cpp` in a
 `/tmp` copy, never touching the reference tree) produced the missing
 comparison cell on the same file:
 
-| per analyze | oxiz (232 k cap) | cadical (solve run, 225 k) |
+| per analyze | nixie (232 k cap) | cadical (solve run, 225 k) |
 |---|---|---|
 | learned lits at shrink entry | 34.7 | **43.9** |
 | multi-blocks (avg size) | 4.66 (3.8) | **7.51** (3.6) |
@@ -371,7 +371,7 @@ deletion (10/30/75 % by tier, activity sort) has no such shield — the
 mechanism behind the 96 %-vs-76 % deletion anomaly, hypothesized
 upstream cause of the clause-length gap (43.9 vs 34.7 lits at shrink).
 
-Ported as `OXIZ_REDUCE_USED_SHIELD` (shield any clause with usage > 0;
+Ported as `NIXIE_REDUCE_USED_SHIELD` (shield any clause with usage > 0;
 decay-by-halving per round).  Results:
 
 | | shield ON | OFF |
@@ -385,21 +385,21 @@ difference: our tier *promotions* (Local→Mid at 3 uses, Mid→Core at
 10/lbd≤2) already reward use, so the shield over-retains under the
 tier-percentage policy; cadical needs it because its glue-limit
 keep-tests carry no use-rewarding promotion ladder.  **Shipped
-default-OFF** (`OXIZ_REDUCE_USED_SHIELD=1` for A/B); the parity port,
+default-OFF** (`NIXIE_REDUCE_USED_SHIELD=1` for A/B); the parity port,
 the `usage_of`/`decay_usage`/`set_usage` infrastructure, and this
 negative result are kept for the reduction-policy deep study.
 
 Canaries at default (shield inert): wisas `unsat` ~10 s, cxs-bp
 `unsat`; differential 161/0 both arms (one file of load noise vs the
 standing 162 — the paired inert run and the landed-default run agree
-with each other); parity 167/0/1; oxiz-sat 870/870; clippy/fmt clean.
+with each other); parity 167/0/1; nixie-sat 870/870; clippy/fmt clean.
 
 
 ## THE GAP MOVER (2026-08-21): random polarity OFF in stable mode — +16 standing files, 129→145 of 261
 
 ### The phase-oracle experiment that isolated the root cause
 
-Fresh standing table at `06a86af` (same-day, same box): oxiz **129** vs
+Fresh standing table at `06a86af` (same-day, same box): nixie **129** vs
 cadical **162**, 0 mismatches, 37 one-sided losses — confirming the landed
 slices had not moved the headline and re-prioritizing to the loss residue.
 
@@ -417,7 +417,7 @@ saved/target/best phase arrays with cadical's actual model.
 | no hint, RANDPOL=0 | sat in 60 s (default TOs) |
 
 The machinery is sound — model-guided decisions would walk straight to
-the model.  The **2 % random-polarity perturbation (an OxiZ extension;
+the model.  The **2 % random-polarity perturbation (an Nixie extension;
 cadical's `randec` defaults to 0) single-handedly destroys phase-guided
 descent on model-finding instances**, and rephase-every-1000 wipes
 whatever phase progress accumulates (tested separately: not the breaker;
@@ -438,7 +438,7 @@ diversification in focused mode.  Stable-only gate
 | corpus solved | 51 vs 49 (6 gained / 4 lost, bimodal tail both ways) |
 | verdict disagreements | **0** (both A/Bs) |
 | **37 standing losses re-run** | **17 solved** (noL ×2, circuit_64i ×2, x9-09054 ×2, x9-08075 ×2, frb45 ×2, summle ×2, j3037, jgiraldezlevy, crusti_g2io, WS_500) |
-| fresh standing table | **oxiz 145 / cadical 162**, 0 mismatches (was 129/162 same-day; 128/159 at `cc78521`) |
+| fresh standing table | **nixie 145 / cadical 162**, 0 mismatches (was 129/162 same-day; 128/159 at `cc78521`) |
 
 Landed as the preset default (`Some(0.0)` on all presets except the
 intentionally-random `Random`/`Aggressive`, which keep `None`);
@@ -459,14 +459,14 @@ The reverted direction fix (cadical parity: fallback minimization
 oldest-first; `4c212a8` reverted it when it exploded wisas 50×) was
 retested against the new default, whose phase landing shifted every
 trajectory.  Worktree build, functional provenance via
-`OXIZ_SHRINK_TRACE` (fallback_saved **2.35/analyze** — the fix's
+`NIXIE_SHRINK_TRACE` (fallback_saved **2.35/analyze** — the fix's
 signature, matching the original +2.4):
 
 | gate | result |
 |---|---|
 | wisas canary (the old blocker) | **holds** — `unsat` 10 s vs HEAD 12 s |
 | cxs-bp / sorted / 6s167-opt | all hold |
-| oxiz-sat suite | 870/870 |
+| nixie-sat suite | 870/870 |
 | 60-file corpus screen (45 s, seed 71) | **fixed 23 vs HEAD 26**, ticks geomean **1.126×**, 0 verdict mismatches |
 | flips | 0 gained; **lost mp1-klieber, af-synt, and noL** — the very file the phase landing had just won |
 
@@ -542,7 +542,7 @@ Then the one noted divergence: cadical's **warmup** (`opts.warmup`,
 default ON — decide+propagate to a full assignment IGNORING conflicts
 before each walk, seeding local search with a propagation-consistent
 start that ProbSAT cannot build itself).  Ported (`walk_warmup`,
-`OXIZ_WARMUP=1`, default off):
+`NIXIE_WARMUP=1`, default off):
 
 - **A livelock landed first and is the real finding**: our `propagate`
   conflict paths call `requeue_last_propagated` (the CDCL re-visit
@@ -593,7 +593,7 @@ live learned DB (48 k vs 10 k on noL) and us deleting 96 % of learned
 clauses vs its 76 %.  Two cheap causal hypotheses, both falsified:
 
 **Retention** (tier deletion 10/30/75 % → leaner DB is a *symptom* of
-cadical's advantage, maybe its cause): `OXIZ_REDUCE_PCT_LOCAL`
+cadical's advantage, maybe its cause): `NIXIE_REDUCE_PCT_LOCAL`
 75→50→30 on noL at a fixed 300 k-conflict budget — net_db 5.6 k→11.4
 k→24.5 k, avg LBD 21.86→**21.26→20.93** (clauses get *shorter*, not
 longer), dec/conf 4.96→5.06→4.99 (unchanged), ticks/conflict
@@ -639,11 +639,11 @@ release, defeating itself — fixed in `Cargo.toml`).
 | 5.1 % | `solve_with_theory` loop |
 
 Landed from this slice (trajectory-identical, verified bit-identical on
-the identity file; oxiz-sat 870/870):
+the identity file; nixie-sat 870/870):
 
-1. **Hot-path env knobs cached** — `OXIZ_SHRINK_TRACE` fired once per
-   conflict uncached; `OXIZ_VIVIFY_OTF` per subsumption candidate;
-   `OXIZ_NOPROMOTE`, `OXIZ_VIVIFY_TRACE`, and the reduce-percentage
+1. **Hot-path env knobs cached** — `NIXIE_SHRINK_TRACE` fired once per
+   conflict uncached; `NIXIE_VIVIFY_OTF` per subsumption candidate;
+   `NIXIE_NOPROMOTE`, `NIXIE_VIVIFY_TRACE`, and the reduce-percentage
    knobs likewise.  All `OnceLock` now.  Honest caveat: a tight 1 M-
    conflict A/B showed **no measurable release effect** (21.3 s vs
    21.4 s — glibc's `getenv` over this ~280-entry environ is ~1 %,
@@ -740,7 +740,7 @@ trajectory-identical runs):
 
 Geomean ≈ **1.104** — 5× the bar.  Trajectory identity: 5 files
 bit-identical in counters and verdict.  Wall on noL: 21.1 → 20.6 s.
-Gates: workspace 10 102 green, oxiz-sat 870/870, clippy/fmt/doc clean,
+Gates: workspace 10 102 green, nixie-sat 870/870, clippy/fmt/doc clean,
 differential 0-disagree (par2 2 269), parity 167/0/1, wisas `unsat`
 12 s.
 
@@ -753,7 +753,7 @@ layout itself (12-byte header inline, 12-byte watcher), both measured
 
 ### Standing table after slice 4 (2026-08-21, under load): 142/159, 0 mismatches
 
-Post-`b5a6fc1` full-table run: oxiz 142, cadical 159 (its lowest window
+Post-`b5a6fc1` full-table run: nixie 142, cadical 159 (its lowest window
 yet — box-wide load; the ±3–4 band swallows both sides' movement), 25
 one-sided losses, **0 mismatches**.  The 11 % instruction win is real
 but does not surface as solved-count under 6-way load, exactly as the

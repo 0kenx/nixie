@@ -16,8 +16,8 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 REPO = HERE.parent.parent
 
 BINS = {
-    "main-validated": "target/release/oxiz",
-    "oz-v032": "/media/data/proj/oxiz-v032/target/release/oxiz",
+    "main-validated": "target/release/nixie",
+    "oz-v032": "/media/data/proj/nixie-v032/target/release/nixie",
 }
 
 class A:  # minimal args for _summary

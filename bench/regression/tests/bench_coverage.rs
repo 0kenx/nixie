@@ -6,7 +6,7 @@
 //! ignored because the goal is purely to confirm that the fixture can be
 //! parsed and dispatched without crashing the solver pipeline.
 
-use oxiz_solver::Context;
+use nixie_solver::Context;
 
 /// Feed `script` into a fresh context.  No panic == pass.
 fn run_fixture(script: &str) {

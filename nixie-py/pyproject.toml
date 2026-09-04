@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "nixie"
+description = "Python bindings for Nixie SMT Solver"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "License :: OSI Approved :: Apache Software License",
+]
+keywords = ["smt", "solver", "sat", "verification", "logic", "theorem-prover"]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/cool-japan/nixie"
+Documentation = "https://docs.rs/nixie"
+Repository = "https://github.com/cool-japan/nixie"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "nixie"

@@ -59,7 +59,7 @@ A separate **evaluator defect** (`Model::eval`, behind `Context::eval_in_model`)
 false-alarms on a *correct* model: `iso_brn1083` (z3 accepts the model) but
 `eval_in_model` reports assertions unsatisfied – so `(get-value)`/`(get-model)`
 and the CLI's `--validate-model` are unreliable for UF. Both defects are pinned
-as `#[ignore]`d guards in `oxiz-solver/tests/model_soundness_regressions.rs`,
+as `#[ignore]`d guards in `nixie-solver/tests/model_soundness_regressions.rs`,
 distinct from each other (different components: `build_model` vs `Model::eval`).
 
 ### Correction log: validator quoting bug

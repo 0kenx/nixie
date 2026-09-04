@@ -56,7 +56,7 @@ the SMT embedded core (`balanced()`) and the opt-in bundle:
 ## Disposition
 
 LANDED, default-on in code (reachable only where vivify already runs),
-`OXIZ_VIVIFY_OTF=0` disables.  The bundle A/B is recorded as
+`NIXIE_VIVIFY_OTF=0` disables.  The bundle A/B is recorded as
 inconclusive-mixed; revisit with a matched null and ≥10 seeds per cell
 before making any bundle-default claim.  The self-subsumption guard is
 the load-bearing soundness lesson of this slice.
@@ -67,7 +67,7 @@ the load-bearing soundness lesson of this slice.
 The owed ≥10-seed follow-up to the inconclusive bundle screen.  Design: 21
 satcomp files (1–15 s default), 10 seeds (`SEED=N` — verified to spread
 trajectories, 1.5× conflicts on the mrpp sample), arms ON (default) vs OFF
-(`OXIZ_VIVIFY_OTF=0`), 40 s cap, ticks-to-verdict primary; 420 runs, 16 min
+(`NIXIE_VIVIFY_OTF=0`), 40 s cap, ticks-to-verdict primary; 420 runs, 16 min
 at 6-way.  No matched null: the only semantic-scrambling null (delete a
 *non*-subsuming clause) is unsound and would corrupt the DB — the seed
 band is the comparator instead.  Knob reach verified by construction: 4
@@ -87,5 +87,5 @@ it fires it is mildly positive on balance (3:1 win/loss, ~13 % median
 gain vs one 21 % loss); (3) the original screen's "3 TO losses" does not
 reproduce across seeds (TOs wash) — seed luck, as suspected.  **Default-on
 stands**, now on a seed study rather than an enablement-rule call.  The
-knob itself was proven live (unlike `OXIZ_CHRONO_REUSE`, found dead the
+knob itself was proven live (unlike `NIXIE_CHRONO_REUSE`, found dead the
 same day).

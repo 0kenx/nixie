@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# OxiZ crates.io Publish-Order Script
+# Nixie crates.io Publish-Order Script
 #
 # Publishes the workspace's crates.io-eligible crates in dependency order,
 # so that every crate's path dependencies already have a matching version
@@ -9,7 +9,7 @@
 # The order is *derived at run time* from `cargo metadata` (a topological
 # sort over the intra-workspace dependency DAG), not hand-maintained, so it
 # stays correct as crates are added/removed or dependencies change. Crates
-# marked `publish = false` (currently oxiz-py, oxiz-wasm, and the bench/*
+# marked `publish = false` (currently nixie-py, nixie-wasm, and the bench/*
 # harnesses) are excluded automatically because `cargo metadata` reports an
 # empty `publish` registry list for them.
 #
@@ -26,7 +26,7 @@
 #                             uploads nothing). Still refuses real publishing.
 #
 #   --danger-real-publish     REAL crates.io publish. Requires the env var
-#                             OXIZ_PUBLISH_CONFIRM=yes to be set; refuses
+#                             NIXIE_PUBLISH_CONFIRM=yes to be set; refuses
 #                             otherwise. Waits for each crate's new version
 #                             to become resolvable on the crates.io index
 #                             before moving on to its dependents.
@@ -36,7 +36,7 @@
 #   scripts/publish_order.sh                        # dry-run (default)
 #   scripts/publish_order.sh --dry-run               # same, explicit
 #   scripts/publish_order.sh --cargo-dry-run          # cargo-verified dry run
-#   OXIZ_PUBLISH_CONFIRM=yes scripts/publish_order.sh --danger-real-publish
+#   NIXIE_PUBLISH_CONFIRM=yes scripts/publish_order.sh --danger-real-publish
 #
 set -euo pipefail
 
@@ -115,11 +115,11 @@ for name in publishable:
     edges[name] = deps
 
 # Kahn'"'"'s algorithm, alphabetical tie-break for determinism -- except the
-# facade/meta crate ("oxiz" itself), which nothing else in the workspace
+# facade/meta crate ("nixie" itself), which nothing else in the workspace
 # depends on: it is deferred whenever any other crate is also ready, so it
-# always lands last in the emitted order (oxiz-math/oxiz-core first ... oxiz
+# always lands last in the emitted order (nixie-math/nixie-core first ... nixie
 # meta last), even though it has no direct DAG edge forcing that.
-META_CRATE = "oxiz"
+META_CRATE = "nixie"
 order = []
 remaining = dict(edges)
 while remaining:
@@ -166,7 +166,7 @@ case "$MODE" in
         echo ""
         print_info "Nothing was published. Re-run with --cargo-dry-run for a"
         print_info "cargo-verified (compile + package, no upload) dry run, or"
-        print_info "OXIZ_PUBLISH_CONFIRM=yes ... --danger-real-publish to publish for real."
+        print_info "NIXIE_PUBLISH_CONFIRM=yes ... --danger-real-publish to publish for real."
         exit 0
         ;;
 
@@ -182,10 +182,10 @@ case "$MODE" in
         ;;
 
     danger-real-publish)
-        if [ "${OXIZ_PUBLISH_CONFIRM:-}" != "yes" ]; then
-            print_error "Refusing to publish for real: OXIZ_PUBLISH_CONFIRM=yes is not set."
+        if [ "${NIXIE_PUBLISH_CONFIRM:-}" != "yes" ]; then
+            print_error "Refusing to publish for real: NIXIE_PUBLISH_CONFIRM=yes is not set."
             print_error "This is the DANGER path -- it uploads permanently to crates.io."
-            print_error "Set OXIZ_PUBLISH_CONFIRM=yes explicitly to proceed."
+            print_error "Set NIXIE_PUBLISH_CONFIRM=yes explicitly to proceed."
             exit 1
         fi
 
@@ -200,7 +200,7 @@ case "$MODE" in
         WORKSPACE_VERSION="$(cargo metadata --no-deps --format-version 1 | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
-print(next(p["version"] for p in d["packages"] if p["name"] == "oxiz"))
+print(next(p["version"] for p in d["packages"] if p["name"] == "nixie"))
 ')"
         if [ "$CONFIRM_VERSION" != "$WORKSPACE_VERSION" ]; then
             print_error "Version mismatch (typed '${CONFIRM_VERSION}', expected '${WORKSPACE_VERSION}'). Aborting."

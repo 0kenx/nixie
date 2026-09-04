@@ -1,6 +1,6 @@
-# OxiZ Case Studies and Examples
+# Nixie Case Studies and Examples
 
-Real-world use cases demonstrating OxiZ's capabilities across different
+Real-world use cases demonstrating Nixie's capabilities across different
 application domains.
 
 ---
@@ -20,7 +20,7 @@ application domains.
 
 Verify that a simple counter program never exceeds a bound. The program
 increments a counter `x` from 0, and we want to prove that `x` never
-reaches a value greater than `N` within `k` unrollings. OxiZ's Spacer
+reaches a value greater than `N` within `k` unrollings. Nixie's Spacer
 engine (PDR/IC3) can verify such properties over Constrained Horn Clauses
 (CHCs).
 
@@ -55,11 +55,11 @@ Encoded as CHCs:
 (check-sat)
 ```
 
-### OxiZ Solution (Rust API)
+### Nixie Solution (Rust API)
 
 ```rust
-use oxiz_spacer::SpacerEngine;
-use oxiz_core::ast::TermManager;
+use nixie_spacer::SpacerEngine;
+use nixie_core::ast::TermManager;
 
 fn verify_counter() -> Result<(), Box<dyn std::error::Error>> {
     let mut tm = TermManager::new();
@@ -132,11 +132,11 @@ for any plaintext `p` and key `k`, there exists an alternative plaintext
 (check-sat)
 ```
 
-### OxiZ Solution (Rust API)
+### Nixie Solution (Rust API)
 
 ```rust
-use oxiz_solver::{Solver, SolverConfig, SolverResult};
-use oxiz_core::ast::TermManager;
+use nixie_solver::{Solver, SolverConfig, SolverResult};
+use nixie_core::ast::TermManager;
 
 fn verify_otp_secrecy() -> Result<(), Box<dyn std::error::Error>> {
     let mut solver = Solver::with_config(SolverConfig::balanced());
@@ -224,11 +224,11 @@ This is a forall-exists problem: find `a, b` such that for all `x` in
 (get-model)
 ```
 
-### OxiZ Solution (Rust API)
+### Nixie Solution (Rust API)
 
 ```rust
-use oxiz_solver::{Solver, SolverConfig, SolverResult};
-use oxiz_core::ast::TermManager;
+use nixie_solver::{Solver, SolverConfig, SolverResult};
+use nixie_core::ast::TermManager;
 use num_bigint::BigInt;
 
 fn synthesize_linear_function() -> Result<(), Box<dyn std::error::Error>> {
@@ -357,7 +357,7 @@ The optimizer finds the optimal makespan of 7:
 - Machine 0: T2 (start=0, dur=5) then T3 (start=5, dur=2) -> completion=7
 - Machine 1: T1 (start=0, dur=3) then T4 (start=3, dur=4) -> completion=7
 
-OxiZ's optimization engine uses multiple MaxSAT algorithms:
+Nixie's optimization engine uses multiple MaxSAT algorithms:
 - **RC2**: Core-guided approach, effective for weighted instances
 - **PM-RES**: Partial MaxSAT resolution
 - **MaxHS**: Hitting-set based approach for large instances

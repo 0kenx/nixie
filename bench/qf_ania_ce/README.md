@@ -9,5 +9,5 @@ under `+,-,*,div,mod` and arith comparisons, non-arith numeric subterms
 owns store/select structure.
 
 ```bash
-cargo test -p oxiz-solver --test qf_ania_ce -- --nocapture
+cargo test -p nixie-solver --test qf_ania_ce -- --nocapture
 ```

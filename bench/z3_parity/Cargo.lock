@@ -498,6 +498,174 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
+name = "nixie"
+version = "0.3.2"
+dependencies = [
+ "nixie-core",
+ "nixie-math",
+ "nixie-nlsat",
+ "nixie-sat",
+ "nixie-solver",
+ "nixie-theories",
+ "num-bigint",
+ "num-traits",
+]
+
+[[package]]
+name = "nixie-core"
+version = "0.3.2"
+dependencies = [
+ "bumpalo",
+ "hashbrown 0.17.0",
+ "indexmap",
+ "lasso",
+ "nixie-math",
+ "nixie-time",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rayon",
+ "rhai",
+ "rustc-hash",
+ "smallvec",
+ "thiserror 2.0.18",
+ "tracing",
+ "wide",
+ "winnow",
+]
+
+[[package]]
+name = "nixie-math"
+version = "0.3.2"
+dependencies = [
+ "hashbrown 0.17.0",
+ "nixie-time",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "rand",
+ "rustc-hash",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nixie-nlsat"
+version = "0.3.2"
+dependencies = [
+ "nixie-core",
+ "nixie-math",
+ "nixie-time",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "num_cpus",
+ "rayon",
+ "rustc-hash",
+ "smallvec",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "nixie-proof"
+version = "0.3.2"
+dependencies = [
+ "nixie-core",
+ "nixie-time",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "regex",
+ "rustc-hash",
+ "smallvec",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "nixie-sat"
+version = "0.3.2"
+dependencies = [
+ "hashbrown 0.17.0",
+ "libm",
+ "nixie-core",
+ "nixie-time",
+ "portable-atomic-util",
+ "rayon",
+ "rustc-hash",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "nixie-solver"
+version = "0.3.2"
+dependencies = [
+ "hashbrown 0.17.0",
+ "nixie-core",
+ "nixie-proof",
+ "nixie-sat",
+ "nixie-theories",
+ "nixie-time",
+ "num-bigint",
+ "num-integer",
+ "num-rational",
+ "num-traits",
+ "portable-atomic-util",
+ "rayon",
+ "rustc-hash",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "nixie-theories"
+version = "0.3.2"
+dependencies = [
+ "egg",
+ "hashbrown 0.17.0",
+ "nixie-core",
+ "nixie-math",
+ "nixie-nlsat",
+ "nixie-sat",
+ "nixie-time",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+ "portable-atomic-util",
+ "rustc-hash",
+ "smallvec",
+ "tracing",
+]
+
+[[package]]
+name = "nixie-time"
+version = "0.3.2"
+
+[[package]]
+name = "nixie-z3-parity"
+version = "0.3.2"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "colored",
+ "nixie",
+ "nixie-core",
+ "nixie-solver",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tabled",
+ "tempfile",
+]
+
+[[package]]
 name = "no-std-compat"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -562,174 +730,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 dependencies = [
  "portable-atomic",
-]
-
-[[package]]
-name = "oxiz"
-version = "0.3.2"
-dependencies = [
- "num-bigint",
- "num-traits",
- "oxiz-core",
- "oxiz-math",
- "oxiz-nlsat",
- "oxiz-sat",
- "oxiz-solver",
- "oxiz-theories",
-]
-
-[[package]]
-name = "oxiz-core"
-version = "0.3.2"
-dependencies = [
- "bumpalo",
- "hashbrown 0.17.0",
- "indexmap",
- "lasso",
- "num-bigint",
- "num-integer",
- "num-rational",
- "num-traits",
- "oxiz-math",
- "oxiz-time",
- "parking_lot",
- "portable-atomic",
- "portable-atomic-util",
- "rayon",
- "rhai",
- "rustc-hash",
- "smallvec",
- "thiserror 2.0.18",
- "tracing",
- "wide",
- "winnow",
-]
-
-[[package]]
-name = "oxiz-math"
-version = "0.3.2"
-dependencies = [
- "hashbrown 0.17.0",
- "num-bigint",
- "num-integer",
- "num-rational",
- "num-traits",
- "oxiz-time",
- "rand",
- "rustc-hash",
- "smallvec",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "oxiz-nlsat"
-version = "0.3.2"
-dependencies = [
- "num-bigint",
- "num-rational",
- "num-traits",
- "num_cpus",
- "oxiz-core",
- "oxiz-math",
- "oxiz-time",
- "rayon",
- "rustc-hash",
- "smallvec",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "oxiz-proof"
-version = "0.3.2"
-dependencies = [
- "num-bigint",
- "num-rational",
- "num-traits",
- "oxiz-core",
- "oxiz-time",
- "regex",
- "rustc-hash",
- "smallvec",
- "thiserror 2.0.18",
- "tracing",
-]
-
-[[package]]
-name = "oxiz-sat"
-version = "0.3.2"
-dependencies = [
- "hashbrown 0.17.0",
- "libm",
- "oxiz-core",
- "oxiz-time",
- "portable-atomic-util",
- "rayon",
- "rustc-hash",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "oxiz-solver"
-version = "0.3.2"
-dependencies = [
- "hashbrown 0.17.0",
- "num-bigint",
- "num-integer",
- "num-rational",
- "num-traits",
- "oxiz-core",
- "oxiz-proof",
- "oxiz-sat",
- "oxiz-theories",
- "oxiz-time",
- "portable-atomic-util",
- "rayon",
- "rustc-hash",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "oxiz-theories"
-version = "0.3.2"
-dependencies = [
- "egg",
- "hashbrown 0.17.0",
- "num-bigint",
- "num-rational",
- "num-traits",
- "oxiz-core",
- "oxiz-math",
- "oxiz-nlsat",
- "oxiz-sat",
- "oxiz-time",
- "portable-atomic-util",
- "rustc-hash",
- "smallvec",
- "tracing",
-]
-
-[[package]]
-name = "oxiz-time"
-version = "0.3.2"
-
-[[package]]
-name = "oxiz-z3-parity"
-version = "0.3.2"
-dependencies = [
- "anyhow",
- "chrono",
- "colored",
- "oxiz",
- "oxiz-core",
- "oxiz-solver",
- "rayon",
- "serde",
- "serde_json",
- "tabled",
- "tempfile",
 ]
 
 [[package]]

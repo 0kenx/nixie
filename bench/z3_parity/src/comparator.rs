@@ -18,8 +18,8 @@ impl MatchStatus {
     }
 }
 
-pub fn compare_results(oxiz: &SolverResult, z3: &SolverResult) -> MatchStatus {
-    match (oxiz, z3) {
+pub fn compare_results(nixie: &SolverResult, z3: &SolverResult) -> MatchStatus {
+    match (nixie, z3) {
         // Both agree on SAT
         (SolverResult::Sat, SolverResult::Sat) => MatchStatus::Correct,
 
@@ -111,8 +111,8 @@ mod tests {
             (SolverResult::Unknown, SolverResult::Unsat),
             (SolverResult::Unsat, SolverResult::Unknown),
         ];
-        for (oxiz, z3) in unknown_pairs {
-            let status = compare_results(&oxiz, &z3);
+        for (nixie, z3) in unknown_pairs {
+            let status = compare_results(&nixie, &z3);
             assert_ne!(status, MatchStatus::Correct);
             assert!(!status.is_decisive());
         }

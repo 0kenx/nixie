@@ -7,14 +7,14 @@ and *what gates it*, not a plan.
 ## The procedures already exist, unwired
 
 main ships complete, tested theory procedures that are **not wired into the
-solve path** (zero callers in `oxiz-solver`). Found by sweeping `pub mod`s with
+solve path** (zero callers in `nixie-solver`). Found by sweeping `pub mod`s with
 no external references:
 
 | module | lines | tests | scope | wired? |
 |--------|------:|------:|-------|--------|
-| `oxiz-theories/src/diff_logic` | 2,104 | 25 | pure difference logic (Bellman-Ford negative-cycle) – the literature-exact QF_IDL algorithm | **no** |
-| `oxiz-theories/src/utvpi` | 1,917 | 33 | UTVPI (x±y ≤ c), generalizes difference logic | **no** |
-| `oxiz-theories/src/nia_cdcl` | – | 4 | CDCL NIA search | yes, into `nlsat.rs:961` – yet QF_NIA is still 1/30 |
+| `nixie-theories/src/diff_logic` | 2,104 | 25 | pure difference logic (Bellman-Ford negative-cycle) – the literature-exact QF_IDL algorithm | **no** |
+| `nixie-theories/src/utvpi` | 1,917 | 33 | UTVPI (x±y ≤ c), generalizes difference logic | **no** |
+| `nixie-theories/src/nia_cdcl` | – | 4 | CDCL NIA search | yes, into `nlsat.rs:961` – yet QF_NIA is still 1/30 |
 
 So QF_IDL has **two** unused, complete, tested decision procedures
 (`diff_logic` for pure difference logic; `utvpi` for the broader fragment). QF_NIA
@@ -90,7 +90,7 @@ returned as a valid `TheoryCheckResult::Conflict` clause of 2-3 literals
 (`conflict_from_terms` builds them correctly; nothing is dropped). The
 algorithmic core is sound and reaches CDCL.
 
-**The wall: `oxiz-theories/src/diff_logic/solver.rs:258 propagate()` is a
+**The wall: `nixie-theories/src/diff_logic/solver.rs:258 propagate()` is a
 stub.** It is gated on `config.propagate` and its body says "This is a
 simplified version – full implementation would require tracking unasserted
 constraints"; it does conflict detection only, **no theory propagation**.
@@ -106,7 +106,7 @@ wiring.
 **Red herring, ruled out – do not re-chase:** `encode.rs`'s `TermKind::Let` arm
 is a stub that ignores bindings, but it is **harmless for parsed SMT-LIB**: the
 parser substitutes let-bound names in the body at
-`oxiz-core/src/smtlib/parser/terms.rs:506`/`:1197` (symbol resolution), so by
+`nixie-core/src/smtlib/parser/terms.rs:506`/`:1197` (symbol resolution), so by
 the time `encode` sees the term the body already contains the binding values.
 qlock's atoms ARE real 2-var differences (diff was fed ~17 k of them), not free
 variables. (A synthetic `(let (...) (assert ...))` form – let *wrapping* a
@@ -120,20 +120,20 @@ theory-propagation path. That was wrong. Propagation is delivered by the
 return value, not a separate callback method, and that channel is fully built
 and exercised in production:
 
-- oxiz-sat/src/solver/mod.rs:106 – TheoryCheckResult::Propagated(Vec<(Lit,
+- nixie-sat/src/solver/mod.rs:106 – TheoryCheckResult::Propagated(Vec<(Lit,
   SmallVec<[Lit; 8]>)>), literal plus reason clause.
-- oxiz-sat/src/solver/search_ext.rs:120 and :307 – the mid-search and
+- nixie-sat/src/solver/search_ext.rs:120 and :307 – the mid-search and
   post-final_check paths match Propagated and install them soundly:
   unconditional facts (empty reason) become level-0 units via
   install_theory_units; reasoned ones become two-watched explanation clauses
   via add_theory_reason_clause + trail.assign_propagation (theory_processed
   clamped on backtrack).
-- oxiz-solver/src/solver/theory_manager.rs:751 (derive_arith_propagations) and
+- nixie-solver/src/solver/theory_manager.rs:751 (derive_arith_propagations) and
   :2210 (ite-const axiom propagation) already return Propagated.
 
 So the solver is CDCL(T) with working theory propagation, including
 reason/level bookkeeping for conflict analysis. The only real wall is
-**oxiz-theories/src/diff_logic/solver.rs:258 propagate() – a stub** (validates
+**nixie-theories/src/diff_logic/solver.rs:258 propagate() – a stub** (validates
 distances, clears pending, returns empty). Landing qlock means implementing the
 DL propagation rule there (track unasserted DL atoms; for each, check whether
 the current shortest-path distances already imply its polarity – x - y ≤ c is
@@ -207,7 +207,7 @@ test.
 
 ## LANDED: sound `entailed_reason` / `sssp_from` primitive (diff_logic)
 
-`oxiz-theories/src/diff_logic/solver.rs` now exposes the sound primitive the
+`nixie-theories/src/diff_logic/solver.rs` now exposes the sound primitive the
 chase identified as the single unblocked move:
 
 - `sssp_from(src) -> Option<(dist, pred_edge)>` – real single-source shortest
@@ -347,7 +347,7 @@ runtime stats on qlock-4-10-7:
   64 simplex pivots, 295 row-summations, 5 restarts.**  It is propagation-dominated
   with a tiny search and a nearly-free simplex.
 
-Controlled experiments on oxiz (all reverted; foundation `diff_theory_check` stays):
+Controlled experiments on nixie (all reverted; foundation `diff_theory_check` stays):
 
 | change | qlock (30 s cap) |
 |--------|------------------|
@@ -360,14 +360,14 @@ Controlled experiments on oxiz (all reverted; foundation `diff_theory_check` sta
 The last row is decisive: removing the simplex check entirely does not speed qlock
 up, so `arith.check()` is **not** the bottleneck.  DL wiring, arith propagation,
 and DL-primary all fail to converge in budget.  Combined with z3 converging in
-1265 decisions / 0.04 s, the bottleneck is **oxiz's CDCL search efficiency itself**
+1265 decisions / 0.04 s, the bottleneck is **nixie's CDCL search efficiency itself**
 on qlock's Boolean structure (branching / restarts / clause learning), not a missing
 or slow theory procedure.
 
 **Conclusion / redirect.**  The difference-logic procedure (the chase's focus) is
 sound and correctly wired (it detects the same negative cycles arith does – verified
 `CONFLICT_AGREE`), but it is **not** qlock's lever.  Closing qlock needs CDCL/search-
-efficiency work in oxiz (the ~4800x per-search gap vs z3), which is a different
+efficiency work in nixie (the ~4800x per-search gap vs z3), which is a different
 class of effort than theory wiring.  The sound DL primitive + on-demand check
 (commits ebaf571 / e174b75) remain as a sound, net-neutral foundation usable by
 future pure-DL tactics; they just do not close qlock.
@@ -378,7 +378,7 @@ Instrumented the search loop (decisions/conflicts/propagations/restarts + per-ph
 time).  z3's qlock recipe for reference: **1265 decisions, 601 conflicts, 183 193
 propagations, 5 restarts, 0.04 s** (propagation-dominated, tiny search).
 
-oxiz on qlock (foundation build, 3 s samples):
+nixie on qlock (foundation build, 3 s samples):
 
 | config | decisions/3s | conflicts/3s | propagations/3s | restarts | theory% |
 |--------|-------------:|-------------:|----------------:|---------:|--------:|
@@ -402,8 +402,8 @@ Findings:
 - `arith.check()` is a further ~3.6x per-search cost (necessary – it supplies the
   conflicts; skipping it loses convergence).
 - **The fundamental blocker**: even with theory maximally cheap (DL+arith.check
-  off), oxiz does **46 013 decisions in 9s without converging** vs z3's 1265.
-  oxiz's CDCL needs ~36x more decisions on qlock's Boolean structure (branching /
+  off), nixie does **46 013 decisions in 9s without converging** vs z3's 1265.
+  nixie's CDCL needs ~36x more decisions on qlock's Boolean structure (branching /
   clause-learning quality).
 
 **What closing qlock actually needs** (all three, in priority order):
@@ -446,8 +446,8 @@ gate-verified.
 **qlock-4-10-7 remains open.**  Its convergence is trajectory-fragile (~192 s
 with the old on-demand propagation; timeout with the incremental conflict-only
 build; does not converge in 120 s with the incremental propagation build).  The
-blocker is oxiz's CDCL decision efficiency (z3 needs 1265 decisions on qlock;
-oxiz needs 36x+ more, even with theory maximally cheap).  `theory_aware_branching`
+blocker is nixie's CDCL decision efficiency (z3 needs 1265 decisions on qlock;
+nixie needs 36x+ more, even with theory maximally cheap).  `theory_aware_branching`
 is already on by default.  Closing qlock needs SAT-engine work (branching /
 clause-learning quality / the per-`on_assignment` EUF+arith cost), which is the
 next layer and a different class of effort than theory wiring.
@@ -455,7 +455,7 @@ next layer and a different class of effort than theory wiring.
 ## CDCL decision/branching profiling on qlock – deep conflicts (level ~140 vs z3's 2)
 
 Instrumented conflict backtrack-level + learnt-clause size.  z3's qlock: ~2
-decisions per conflict (shallow conflicts, aggressive learning).  oxiz (current
+decisions per conflict (shallow conflicts, aggressive learning).  nixie (current
 incremental-DL build, 3 s samples):
 
 | t | decisions | conflicts | avg conflict level | avg clause size |
@@ -463,7 +463,7 @@ incremental-DL build, 3 s samples):
 | 3 | 189 | 7  | **91**   | 3.0 |
 | 9 | 502 | 21 | **140**  | 2.8 |
 
-**oxiz's conflicts are at decision level ~140** (z3's are at ~2).  The learnt
+**nixie's conflicts are at decision level ~140** (z3's are at ~2).  The learnt
 clauses are short (good, ~3 lits) but learned at deep levels, so each conflict
 backtracks only slightly and the search stays deep – it churns ~27 decisions
 per conflict vs z3's ~2.  The theory detects the *same* conflicts as arith
@@ -473,14 +473,14 @@ calls), but it is equality-focused and does not steer toward the shallow
 
 **Root cause = search guidance, not theory capability.**  z3's branching +
 bound propagation reach qlock's DL-inconsistent combinations at decision level
-~2; oxiz reaches them at ~140.  Closing qlock therefore needs CDCL-side work –
+~2; nixie reaches them at ~140.  Closing qlock therefore needs CDCL-side work –
 branching that prioritizes conflict-relevant (inequality) atoms, or theory
 propagation that forces those bounds densely – neither of which the current
 VSIDS + equality-DL-propagation provides.  This is the deepest, least-localized
 remaining blocker and a different class of effort than the theory wiring that
 already landed (+1 solve, +1 agree).
 
-## Deepest root cause: oxiz's arith entailment is per-atom simplex probing, not incremental bounds
+## Deepest root cause: nixie's arith entailment is per-atom simplex probing, not incremental bounds
 
 Option (b) – enable `derive_arith_propagations` (the existing arith bound
 propagation) for qlock – produced **zero** propagations: it is called but
@@ -495,7 +495,7 @@ qlock's ~3k atoms is ~3k simplex solves – exactly why the method is capped at
 (and at the sparse points it does fire, no atom is yet forced).  z3/cvc5 close
 qlock via `arith-bound-prop` driven by **incremental bound tracking** (each
 assertion tightens variable bounds in O(1); a cheap sweep infers implied bounds),
-not per-atom re-solving.  oxiz's general simplex has no incremental bound layer,
+not per-atom re-solving.  nixie's general simplex has no incremental bound layer,
 so it cannot do the dense bound propagation that (a) supplies z3's 183k
 propagations and (b) forces the shallow (level ~2) conflicts.
 
@@ -510,7 +510,7 @@ and *does* fire densely on qlock (~14k propagations).  Yet qlock's conflicts sta
 at level ~140.  So cheap DL bound propagation alone does NOT force the shallow
 (level ~2) conflicts z3 gets.  The deepest remaining blocker is therefore the
 **CDCL branching heuristic**: z3's branching reaches qlock's DL-inconsistent
-combinations at decision level ~2; oxiz's reaches them at ~140, regardless of
+combinations at decision level ~2; nixie's reaches them at ~140, regardless of
 how densely the theory propagates.  Closing qlock needs branching that
 prioritizes conflict-relevant (inequality) atoms – a SAT-engine investigation,
 not more theory wiring.
@@ -530,14 +530,14 @@ search (prioritize theory atoms over qlock's 48 Bool vars).  qlock **still times
 out**; the conflict level did not shallow.  So prioritizing theory atoms alone
 does not break the deep-conflict (level ~140) dynamic.  The atoms that form
 qlock's 2-3-literal neg-cycle conflicts get *assigned* at deep levels regardless
-of activity – the deep-conflict behaviour is a property of oxiz's CDCL dynamics
+of activity – the deep-conflict behaviour is a property of nixie's CDCL dynamics
 on qlock's Boolean+DL structure, not a simple branching-order issue.
 
 **Conclusion of the qlock chase.**  Across every layer – DL procedure (sound,
 incremental, +1 solve/+1 agree landed), DL/arith conflict detection (redundant),
 DL propagation (fires 14k, conflicts stay deep), arith bound-propagation (per-
 atom simplex probe, finds nothing), CDCL branching (theory_aware_branching is a
-no-op; theory-atom boost doesn't help) – qlock's closure is blocked by oxiz's
+no-op; theory-atom boost doesn't help) – qlock's closure is blocked by nixie's
 CDCL producing conflicts at decision level ~140 where z3 produces them at ~2.
 This is a deep SAT-engine characteristic (conflict-depth / learning dynamics on
 this formula class), not addressable by theory wiring.  The DL improvements that
@@ -567,7 +567,7 @@ branching can never focus on a small conflict-relevant set the way z3 does
 
 **This is the conflict-depth root cause and it is fundamental**: qlock's
 difference-logic unsat spreads its refutable combinations across many atoms, and
-oxiz's CDCL produces diverse (non-focusing) theory conflicts as a result.  No
+nixie's CDCL produces diverse (non-focusing) theory conflicts as a result.  No
 tweak tested changes it: chronological-backtracking off (assertion level itself
 is deep), theory-atom activity boost, dense DL propagation (14k, equality-
 focused).  Closing qlock needs the CDCL to *focus* – e.g. a learning-rate /
@@ -605,7 +605,7 @@ Shallow conflicts survive **every** disabling.  Conclusions:
 
 This converts the "CDCL characteristic" conclusion from inference to **proof**:
 the gap is on the SAT/encoding side.  The one concrete lead the trace surfaced
-is **encoding size** – z3 internalizes qlock to **2896** bool vars; oxiz to
+is **encoding size** – z3 internalizes qlock to **2896** bool vars; nixie to
 **4450** (+54%), with z3 emitting a binary-clause-heavy core
 (`:mk-clause-binary 12799`) that gives BCP the power to conflict shallowly.
 Combined with the fresh-atom conflict drift above, the actionable directions are
@@ -613,7 +613,7 @@ Combined with the fresh-atom conflict drift above, the actionable directions are
 learning/focus heuristic that resists fresh-atom drift – both SAT-engine work,
 neither theory.
 
-(The `OXIZ_TRACE_DECISIONS` tracer, commit `37cf44d`, produced the oxiz-side
+(The `NIXIE_TRACE_DECISIONS` tracer, commit `37cf44d`, produced the nixie-side
 data – theory-assign 72% (DL, mean level ~147), theory-prop 0%, final-check 0%.
 theory-prop 0% is structurally expected: a sound forward propagator derives only
 entailed literals, which by definition cannot conflict – so it carries no
@@ -621,14 +621,14 @@ actionable signal, consistent with z3's theory being idle.)
 
 ## BCP-power measurement: encoding is not the deep-conflict cause either – it's CDCL dynamics
 
-The encoding lead above (oxiz 4450 vs z3 2896 bool vars) suggested oxiz's
+The encoding lead above (nixie 4450 vs z3 2896 bool vars) suggested nixie's
 encoding might be BCP-poor.  Measured directly via the tracer's new
-propagation count (commit `02490fc`): oxiz does **229 propagations/conflict**
-on qlock vs z3's **305** – comparable (oxiz ~25% lower), not an order of
+propagation count (commit `02490fc`): nixie does **229 propagations/conflict**
+on qlock vs z3's **305** – comparable (nixie ~25% lower), not an order of
 magnitude.  And z3 stays shallow (1.94 dec/conflict) even at 3550 vars with
 elimination disabled.  So neither var count nor BCP power explains the gap.
 
-This narrows the qlock blocker to **CDCL dynamics** alone: oxiz's
+This narrows the qlock blocker to **CDCL dynamics** alone: nixie's
 conflict-learning/branching fails to *focus* on qlock's structure (the
 fresh-atom drift of `bf70532`), producing deep (~147), non-converging
 conflicts where z3's converge shallowly.  The encoding audit is therefore
@@ -642,14 +642,14 @@ Switched the branching heuristic (cadical-style VMTF/VSIDS is the default) to
 LRB (`use_lrb_branching=true`) then CHB (`use_chb_branching=true`) – the two
 cadical heuristics designed to focus on productive variables and resist exactly
 the fresh-atom drift identified above.  **Both still time out on qlock-4-10-7**
-(30 s); the conflicts stay deep.  So no available branching heuristic in oxiz
+(30 s); the conflicts stay deep.  So no available branching heuristic in nixie
 (VMTF/VSIDS/LRB/CHB), nor disabling chronological backtracking, nor theory-atom
 activity boosting, shallows qlock's theory conflicts.
 
 **Final conclusion of the conflict-depth chase.**  qlock's deep (level ~140)
 theory conflicts are robust to every CDCL-side intervention tested.  The
 fresh-atom drift (each conflict introduces a never-bumped atom) is intrinsic to
-how oxiz's CDCL(T) interacts with qlock's spread-out difference-logic unsat.
+how nixie's CDCL(T) interacts with qlock's spread-out difference-logic unsat.
 Closing qlock is not a config/heuristic toggle – it would need a structural
 change (a dedicated QF_IDL decision procedure that doesn't rely on generic
 CDCL(T) conflict-driven search, or a fundamentally different theory-propagation
@@ -662,9 +662,9 @@ stand regardless.
 The "deep SAT-engine characteristic / unfixable CDCL wall" conclusion
 (`a409238`, `bf70532`) is **disproven**: it was the branching heuristic.
 Systematic A/B across branching modes (made trivial by the committed
-`OXIZ_TRACE_DECISIONS` tracer, `37cf44d`/`02490fc`):
+`NIXIE_TRACE_DECISIONS` tracer, `37cf44d`/`02490fc`):
 
-| branching (oxiz config)        | qlock-4-10-7   | mean conflict level | qlock-4-10-10 level |
+| branching (nixie config)        | qlock-4-10-7   | mean conflict level | qlock-4-10-10 level |
 |--------------------------------|----------------|--------------------:|--------------------:|
 | VMTF focused (current default) | timeout        |               ~147  |               ~147   |
 | CHB                            | timeout        |               ~211  |               –      |
@@ -674,14 +674,14 @@ Systematic A/B across branching modes (made trivial by the committed
 It is not a blanket cure (4-10-10/14/17 still time out, though VSIDS improves
 them: 147→107), but the central blocker is broken.
 
-**Root cause:** oxiz defaults to VMTF-focused (`enable_stabilize: true` +
+**Root cause:** nixie defaults to VMTF-focused (`enable_stabilize: true` +
 `use_vmtf: true`), which *should* periodically switch to stable VSIDS
 (cadical-style dual mode), but on qlock the baseline trace was **100% Vmtf** –
 the stabilize switch (gated by `stabilize_base: 5000` ticks) never effectively
 engages within the timeout.  z3/cadical lean on stable VSIDS, which is exactly
 what fixes it.
 
-**Caveats – do NOT blindly flip the default:** oxiz ships VMTF-focused for a
+**Caveats – do NOT blindly flip the default:** nixie ships VMTF-focused for a
 reason (avg/SATcomp performance); a blanket VSIDS flip could regress the
 differential suite, and VSIDS doesn't fully close the gap (4-10-10 still ~107
 vs z3's ~2).  Candidate fixes, in order of cheapness: (1) lower `stabilize_base`
@@ -705,7 +705,7 @@ regression**:
 | PAR-2                |        2969.24 | 2995.10 | +25.9 |
 
 Per-instance trade: VSIDS **gains 2** (QF_AUFLIA/storecomm unsat ✓; QF_UFLIA/
-mathsat xs-08-20-3-2-4-5 – but oxiz=sat vs z3=unsat, the new soundness
+mathsat xs-08-20-3-2-4-5 – but nixie=sat vs z3=unsat, the new soundness
 disagreement) and **loses 5** (QF_IDL/queens_bench, QF_UFIDL/RDS ×2, QF_UFLIA/
 mathsat ×2).  Note qlock-4-10-7 is **not** in the 270-sample, so this is
 VSIDS's effect on the *general* suite – and it **regresses other QF_IDL/UFIDL
@@ -716,7 +716,7 @@ instances** (queens_bench, RDS) even while it helps qlock-4-10-7.
   disagreement, worse PAR-2).
 - VSIDS is **inconsistent within QF_IDL** (helps qlock-4-10-7, hurts
   queens_bench) – so per-logic VSIDS for QF_IDL is *not* obviously safe either.
-- The new soundness disagreement (mathsat xs-08-20-3-2-4-5: oxiz sat, z3 unsat)
+- The new soundness disagreement (mathsat xs-08-20-3-2-4-5: nixie sat, z3 unsat)
   needs model validation – likely a latent issue surfaced by the different
   search path, not a VSIDS-introduced unsoundness, but unconfirmed.
 - The qlock-4-10-7 solve (58 s) is real but isolated and not worth the suite
@@ -728,7 +728,7 @@ instances** (queens_bench, RDS) even while it helps qlock-4-10-7.
 The "+1 soundness disagreement" flagged in the VSIDS A/B above (`159596f`) is
 **not a new or VSIDS-introduced unsoundness.**  Validated:
 
-- `xs-08-20-3-2-4-5` (QF_UFLIA, mathsat/Wisa): oxiz **sat** (1.14 s, **zero
+- `xs-08-20-3-2-4-5` (QF_UFLIA, mathsat/Wisa): nixie **sat** (1.14 s, **zero
   conflicts**, no model, no honesty-gate trigger); z3 **unsat** (with proof);
   `:status unsat`.  Failure mode = QF_UFLIA encoding-completeness gap (immediate
   sat, no search).
@@ -747,16 +747,16 @@ the branching change.
 ## QF_UFLIA false-SAT (xs_8_13 / xs-08-20-3-2-4-5): full root-cause trace – fix needs difference-bound machinery
 
 Traced the `xs_*` QF_UFLIA wrong-sat to a precise mechanism.  **The fix is not a
-patch**: it needs arithmetic machinery oxiz currently lacks (difference-bound
+patch**: it needs arithmetic machinery nixie currently lacks (difference-bound
 propagation or per-term LP optimization).  Trace below.
 
-**Symptom.** oxiz answers `sat` (0 conflicts, no model, honesty-gate blind) on
+**Symptom.** nixie answers `sat` (0 conflicts, no model, honesty-gate blind) on
 `xs-08-20-3-2-4-5` / `xs_8_13` (QF_UFLIA, z3 unsat w/ proof, `:status unsat`).
 A format-string counter: `arg1 = arg0 + 4*s_count(D) + 4*x_count(D)`,
 `D = (fmt1-2)-fmt0`, with `s_count`/`x_count` `ite`-defined over indices `0..5`
 and arithmetic forcing `s_count(D)+x_count(D) >= 5` (infeasible).  Adding an
-**explicit** `(or (= D 0) … (= D 4))` makes oxiz say **unsat** (confirmed on the
-let-expanded form).  So oxiz is complete *given* D's domain – it just never
+**explicit** `(or (= D 0) … (= D 4))` makes nixie say **unsat** (confirmed on the
+let-expanded form).  So nixie is complete *given* D's domain – it just never
 *derives* D's domain.
 
 **Why the existing fix is blind to it.** `refine_int_case_split`
@@ -827,7 +827,7 @@ landed.  Option (B) (difference-bound propagation) was not needed.
 ## Incremental bound propagation for vhard (QF_UFIDL) – built, SOUND on the DL family, gated; vhard7 still open
 
 The handover's central premise was validated and refuted in part by direct
-measurement.  Implementing the z3 `:arith-bound-prop` analogue for oxiz's
+measurement.  Implementing the z3 `:arith-bound-prop` analogue for nixie's
 arithmetic solver.
 
 **Premise validated.**  vhard7 is genuinely bound-prop-dependent (UNLIKE qlock,
@@ -839,15 +839,15 @@ where the prior chase proved bound-prop is not the lever).  z3 A/B on vhard7:
 | `arith.propagation-mode=0` (bound-prop OFF) | 21770 | 2169 | 1788 |
 
 Disabling bound-prop inflates z3's decisions 16× on vhard7 (the *opposite* of
-qlock, where it barely moved).  oxiz's conflicts sit at decision level ~96 (max
+qlock, where it barely moved).  nixie's conflicts sit at decision level ~96 (max
 327) vs z3's ~2; learnt clauses are short (mean 3.1) but learned deep.  So
 forward-propagating forced arith atoms to CDCL at low levels is the right lever
 for vhard7.
 
-**What landed (env-gated `OXIZ_BOUND_PROP`, default off; SOUND).**
+**What landed (env-gated `NIXIE_BOUND_PROP`, default off; SOUND).**
 
 1. **Propagation-only single-variable bound tracker** in `ArithSolver`
-   (`prop_lower`/`prop_upper` + undo trail, push/pop-scoped).  oxiz's simplex
+   (`prop_lower`/`prop_upper` + undo trail, push/pop-scoped).  nixie's simplex
    encodes every constraint as a *slack row* with the bound on the slack, so its
    `lower`/`upper` arrays carry **no** bound on the original variables – which
    defeats cheap bound propagation.  The tracker records the direct
@@ -887,15 +887,15 @@ differential A/B):**
   (`is_dl_family`), where it is sound, and disabled elsewhere.
 
 **Soundness gate (270-instance differential, `--timeout 8`, baseline vs
-`OXIZ_BOUND_PROP=1` vs `=tight`):**
+`NIXIE_BOUND_PROP=1` vs `=tight`):**
 
 | config | solved | agree_z3 | disagree_soundness |
 |--------|-------:|---------:|-------------------:|
 | baseline | 121 | 119 | 2 (pre-existing storecomm/bench_679) |
-| `OXIZ_BOUND_PROP=1` (gated) | 121 | 119 | 2 (same pre-existing) |
-| `OXIZ_BOUND_PROP=tight` (gated) | 115 | 113 | 2 (same; net-negative: O(tableau) cost) |
+| `NIXIE_BOUND_PROP=1` (gated) | 121 | 119 | 2 (same pre-existing) |
+| `NIXIE_BOUND_PROP=tight` (gated) | 115 | 113 | 2 (same; net-negative: O(tableau) cost) |
 
-`OXIZ_BOUND_PROP=1` is **net-neutral on the suite and SOUND** (zero new
+`NIXIE_BOUND_PROP=1` is **net-neutral on the suite and SOUND** (zero new
 disagreements – the DL-family gate confines it to where the derived reason is
 valid).  It closes **vhard4** (+1 vs baseline's vhard2-3); super_queen30-1 and
 LamportBakery8 stay correctly `sat`.
@@ -938,7 +938,7 @@ handover's part-B motivation) is actually the vhard7 bottleneck.  It is not:
 
 - **Theory-reason-clause accumulation is negligible.**  Instrumented
   `add_theory_reason_clause`: only **3** theory-reason clauses are created over
-  6 s on vhard7 (`OXIZ_BOUND_PROP=1`).  The bound-propagated literals mostly
+  6 s on vhard7 (`NIXIE_BOUND_PROP=1`).  The bound-propagated literals mostly
   drive *conflicts* (via the theory check), not permanent clause installs – so
   the eager-clause DB is not cluttered and part (B) lazy propagation would NOT
   speed up vhard7.  (Part B is still the right design for *sound* propagation on
@@ -952,13 +952,13 @@ handover's part-B motivation) is actually the vhard7 bottleneck.  It is not:
 
 | config | conflicts | mean conflict level |
 |--------|----------:|--------------------:|
-| `OXIZ_BOUND_PROP` off (baseline) | 1145 | 96.7 |
-| `OXIZ_BOUND_PROP=1` (gated) | 959 | **81.1** |
+| `NIXIE_BOUND_PROP` off (baseline) | 1145 | 96.7 |
+| `NIXIE_BOUND_PROP=1` (gated) | 959 | **81.1** |
 
 So the propagator **does shallow conflicts (96.7 → 81.1)** – it is helping – but
 vhard7's conflicts remain at level ~81 where z3's sit at ~2.  This is the same
 *deep-conflict CDCL characteristic* the qlock chase hit: even with sound forward
-propagation firing (~750 propagated literals over the search), oxiz's CDCL
+propagation firing (~750 propagated literals over the search), nixie's CDCL
 reaches the DL-inconsistent combinations at decision level ~81, not ~2.
 Closing vhard7 therefore needs the deeper levers the qlock chase identified for
 that class – (a) much denser propagation (the incremental per-assert bound
@@ -980,7 +980,7 @@ atoms cheaply.
 
 **Result on the vhard family (QF_UFIDL, all unsat, 12 s timeout):**
 
-| | baseline (`off`) | `OXIZ_BOUND_PROP=tight` |
+| | baseline (`off`) | `NIXIE_BOUND_PROP=tight` |
 |---|---|---|
 | closes | vhard2,3 | **vhard2,3,4,5,8,10,12** |
 
@@ -1019,7 +1019,7 @@ chase's finding that VSIDS (not the default VMTF-focused) shallows the
 deep-conflict characteristic, but here VSIDS only works *with* the forward
 bound propagation forcing the relevant atoms.
 
-**Full vhard family (`OXIZ_BOUND_PROP=tight`, 25 s):** **18/19 close** (only
+**Full vhard family (`NIXIE_BOUND_PROP=tight`, 25 s):** **18/19 close** (only
 vhard16 times out) – vs baseline's 2/19 (vhard2,3).  vhard7 1.7 s, vhard15
 16.6 s, vhard17 22.7 s.  All `unsat` (correct).  **+16 sound solves.**
 
@@ -1027,7 +1027,7 @@ vhard16 times out) – vs baseline's 2/19 (vhard2,3).  vhard7 1.7 s, vhard15
 - `SatSolver::set_branching_vsids` (pure VSIDS: `use_vmtf`/LRB/CHB off,
   `enable_stabilize` off).
 - `Solver::set_logic` activates VSIDS **for QF_UFIDL only** (NOT QF_IDL) when
-  `OXIZ_BOUND_PROP` is set.  QF_IDL is excluded because VSIDS/bound-prop
+  `NIXIE_BOUND_PROP` is set.  QF_IDL is excluded because VSIDS/bound-prop
   **regress** the queens_bench / DTP QF_IDL families (the same QF_IDL-vs-QF_UFIDL
   split the qlock chase saw) – confirmed in the differential
   (super_queen30-1, DTP_k2 went sat→timeout under the broader QF_IDL+QF_UFIDL
@@ -1041,8 +1041,8 @@ vhard16 times out) – vs baseline's 2/19 (vhard2,3).  vhard7 1.7 s, vhard15
 | config | solved | agree_z3 | disagree_soundness |
 |--------|-------:|---------:|-------------------:|
 | baseline | 120 | 118 | 2 (pre-existing) |
-| `OXIZ_BOUND_PROP=1` | 120 | 118 | 2 |
-| `OXIZ_BOUND_PROP=tight` | **121–122** | 119–120 | 2 |
+| `NIXIE_BOUND_PROP=1` | 120 | 118 | 2 |
+| `NIXIE_BOUND_PROP=tight` | **121–122** | 119–120 | 2 |
 
 `=tight` is **net +1 (vhard7) and SOUND** (only the 2 pre-existing
 disagreements; zero new).  qlock-4-10-7 (also QF_UFIDL) is **not** closed by
@@ -1059,7 +1059,7 @@ made the prior agent's *global* VSIDS experiment net-negative.
 
 Per the handover's process ("land env-gated, validate, default-enable if
 net-positive"), VSIDS+tight bound-prop is now **default-on for QF_UFIDL**
-(`OXIZ_BOUND_PROP` unset → `Tighten`; `=off` is the escape hatch).  vhard7 now
+(`NIXIE_BOUND_PROP` unset → `Tighten`; `=off` is the escape hatch).  vhard7 now
 closes in normal operation (no env flag needed).
 
 Validation (270-instance differential, 8 s, default-on vs `=off`):
@@ -1077,14 +1077,14 @@ Validation (270-instance differential, 8 s, default-on vs `=off`):
 
 So the handover's vhard7 goal is **achieved by default**: QF_UFIDL instances now
 get VSIDS + tight bound propagation automatically, closing the vhard family
-soundly with no suite regression.  `OXIZ_BOUND_PROP=off` restores the prior
+soundly with no suite regression.  `NIXIE_BOUND_PROP=off` restores the prior
 VMTF/no-bound-prop behaviour if needed.
 
-## Why z3 solves vhard7 in ~0.01 s and oxiz in ~1.5 S (37–150× gap)
+## Why z3 solves vhard7 in ~0.01 s and nixie in ~1.5 S (37–150× gap)
 
 Measured head-to-head (vhard7, default QF_UFIDL config = VSIDS + tight bound-prop):
 
-| metric | z3 4.16 | oxiz (default) | oxiz (`=off`) |
+| metric | z3 4.16 | nixie (default) | nixie (`=off`) |
 |---|---:|---:|---:|
 | wall time | 0.01 s | ~1.5 s | timeout |
 | decisions | 1374 | 4090 | – |
@@ -1098,22 +1098,22 @@ Measured head-to-head (vhard7, default QF_UFIDL config = VSIDS + tight bound-pro
 The gap is **two compounding factors, both with one root cause**:
 
 **Factor 1 – per-conflict theory cost (~290–550×).**  Instrumented the CDCL(T)
-loop (`oxiz-prof`): SAT BCP is **1 ms (1%)**, the theory layer is **1543 ms
+loop (`nixie-prof`): SAT BCP is **1 ms (1%)**, the theory layer is **1543 ms
 (99%)**.  Per conflict that is ~10 ms (`=tight`) or ~5.3 ms (`=off`) – vs z3's
 ~0.018 ms/conflict (0.01 s / 556).  The `=off` number isolates the *pre-existing*
 theory cost (EUF + `arith.check()` per assertion) at ~5.3 ms/conflict (~290× z3);
 the bound-prop layer I added roughly doubles it (to ~10 ms).
 
-**Factor 2 – search depth (~18×).**  oxiz's conflicts sit at decision level ~35.7
+**Factor 2 – search depth (~18×).**  nixie's conflicts sit at decision level ~35.7
 (even with VSIDS + bound-prop) vs z3's ~2.  Deeper conflicts ⇒ more decisions per
-conflict (oxiz 4090/148 ≈ 28 decisions/conflict vs z3 1374/556 ≈ 2.5).
+conflict (nixie 4090/148 ≈ 28 decisions/conflict vs z3 1374/556 ≈ 2.5).
 
-**Single root cause: oxiz's arithmetic theory is not incremental.**
+**Single root cause: nixie's arithmetic theory is not incremental.**
 - z3 maintains the simplex incrementally – bounds tighten in O(1)/O(affected)
   per assertion, and it runs the feasibility check **once total** (`:num-checks 1`,
   37 pivots).  Its `arith-bound-prop` (423) is likewise incremental, so it
   forward-forces dependent atoms cheaply and densely → the level-~2 conflicts.
-- oxiz **re-feasibilizes the LP on every arith assertion** (`ArithSolver::check`
+- nixie **re-feasibilizes the LP on every arith assertion** (`ArithSolver::check`
   → `make_feasible` in `process_constraint`) and the bound-prop layer
   **re-runs `Simplex::propagate_bounds` (O(tableau)) per assertion**.  Each
   assertion is therefore ~3 orders of magnitude more expensive than z3's, and
@@ -1134,7 +1134,7 @@ conflict (oxiz 4090/148 ≈ 28 decisions/conflict vs z3 1374/556 ≈ 2.5).
    clause path is *not* the bottleneck (only ~3 theory-reason clauses are created
    on vhard7).
 
-Net: oxiz already does **fewer conflicts than z3 (148 vs 556)** – the search is
+Net: nixie already does **fewer conflicts than z3 (148 vs 556)** – the search is
 small enough; it is purely the **per-assertion, non-incremental theory cost** that
 makes each of those conflicts ~550× more expensive.  The VSIDS + bound-prop
 combination (now default for QF_UFIDL) buys the search-depth win (96.8 → 35.7)

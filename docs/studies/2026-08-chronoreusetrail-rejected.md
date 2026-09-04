@@ -21,7 +21,7 @@ the trail content above it — 3 819 firings on 6s167 (target level median
 A faithful `determine_actual_backtrack_level` (including the off-by-one in
 the level-boundary walk that the first cut had — `level_start(res+2)` vs
 cadical's `control[res+1].trail`), a matched null
-(`OXIZ_CHRONOREUSE_NULL`: xorshift-scrambled bump key, same scan, same
+(`NIXIE_CHRONOREUSE_NULL`: xorshift-scrambled bump key, same scan, same
 work, no selection semantics), and — after the first soundness failure —
 cadical's level-filtered backtrack (`backtrack_level_filter`: unassign by
 recorded level, compact out-of-order kept literals above the boundary,
@@ -90,7 +90,7 @@ through it.  Two supporting fixes landed with it:
   `pmres` stratified test panics on the hanging-unit invariant under the OLD
   trail — out-of-order asserting literals dropped positionally — and passes
   under the new one.  Regression: `chrono_trail_level_filter_regression.rs`
-  (repeated assumption solves under `chrono_always`) plus the oxiz-opt pmres
+  (repeated assumption solves under `chrono_always`) plus the nixie-opt pmres
   test itself.
 - **The scheduled inprocess entry now backtracks to root itself** (mirroring
   `try_scheduled_elimination` and cadical): previously the interval only fired
@@ -108,13 +108,13 @@ The `determine_actual_backtrack_level` port (including the fixed
 canonical-seed headline moved 19→28 (trail-only) / 19→23 (with reuse) files
 above 1.5× of cadical.  Completions did improve (79→83/82 of 94).  Revisit
 with a full ≥10-seed study before flipping the default.  Matched null:
-`OXIZ_CHRONOREUSE_NULL=1` (scrambled bump key).
+`NIXIE_CHRONOREUSE_NULL=1` (scrambled bump key).
 
 ## Open thread (next session): pre-existing false SAT under `chronoalways` + full inprocessing stack
 
 While validating, `dominator_hbr_subsuming_original_promotes_resolvent`
-(**in-repo permanent reproducer**: `OXIZ_CHRONO_ALWAYS=1 cargo nextest run -p
-oxiz-sat dominator_hbr`) answers **sat on UNSAT input** — under BOTH the old
+(**in-repo permanent reproducer**: `NIXIE_CHRONO_ALWAYS=1 cargo nextest run -p
+nixie-sat dominator_hbr`) answers **sat on UNSAT input** — under BOTH the old
 and new trail (A/B-verified), i.e. a pre-existing bug the suffix-pop trail
 masked in the final verdict and the level-filter trail exposes.  Bisected to
 one elimination round: dumping the live DB (with level-0 trail facts) after
@@ -170,8 +170,8 @@ Hypotheses ranked for the next session:
   5623's UNSAT and the flip being benign).  Test: RUP-verify the learned
   population over originals under `chronoalways` at reduction time.
 
-Reproducer (unchanged, in-repo): `OXIZ_CHRONO_ALWAYS=1 cargo nextest run -p
-oxiz-sat dominator_hbr` (false SAT; needs the opt-in stack:
+Reproducer (unchanged, in-repo): `NIXIE_CHRONO_ALWAYS=1 cargo nextest run -p
+nixie-sat dominator_hbr` (false SAT; needs the opt-in stack:
 BVE+INPROCESS+PROBE+HBP — every proper subset answers UNSAT).  Default
 configs remain unaffected.
 
@@ -284,13 +284,13 @@ binary-implication-graph edge bookkeeping across `remove_literal_and_rewatch`
 ## Hunt 3 (2026-08-20, session 3): the "second seed" was an invariant false alarm; causal picture weakened honestly
 
 - **The rephase-arm restart-consistency panic was our own bug**: the check
-  assumes rephase's leading root backtrack ran, but `OXIZ_REPHASE_OFF` (the
+  assumes rephase's leading root backtrack ran, but `NIXIE_REPHASE_OFF` (the
   A/B knob) made rephase a no-op *after* `rephasing()` had already gated the
   check on — so the check fired on the conflict handler's legitimate
   level-14 backtrack.  Fixed (`rephase_skipped` flag; check skipped for the
   no-op round) — a real landed fix, independent of the hunt.
 - **Consequence for the causal claim**: with the false alarm cleared,
-  `OXIZ_REPHASE_OFF=1` now *passes* the reproducer (28.6 s, correct UNSAT).
+  `NIXIE_REPHASE_OFF=1` now *passes* the reproducer (28.6 s, correct UNSAT).
   So THREE unrelated knobs (subsume-strengthen off, vivify off, rephase off)
   each disable the false SAT — the single-pass "causal localization" of hunt
   2c is trajectory-shaped after all, and the earlier "control confirmed
@@ -345,8 +345,8 @@ and the strengthened test.
 
 ## Re-study (2026-08-21): the revisit directive was unexecutable — the env knob was DEAD; fixed, re-measured, default-off CONFIRMED
 
-Preparing the prescribed ≥10-seed re-study found that `OXIZ_CHRONO_REUSE`
-(and `OXIZ_CHRONO_ALWAYS`) could never reach a preset-built solver: every
+Preparing the prescribed ≥10-seed re-study found that `NIXIE_CHRONO_REUSE`
+(and `NIXIE_CHRONO_ALWAYS`) could never reach a preset-built solver: every
 `ConfigPreset` hard-sets `chrono_reuse: false` / `chrono_always: false`,
 stomping the env override read in `SolverConfig::default`.  Any A/B run
 through `ConfigPreset::config()` (stats_solve, cnf_solve, the SMT paths)
@@ -360,7 +360,7 @@ mrpp sample file `chrono_bt` went 42 → 45 908, decisions/conflict
 4.50 → 3.95, ticks −1 %.
 
 **Corpus re-measurement** (45 satcomp files solved by default within 40 s;
-arms OFF / ON / NULL via the env knob + `OXIZ_CHRONOREUSE_NULL`; 120 s cap;
+arms OFF / ON / NULL via the env knob + `NIXIE_CHRONOREUSE_NULL`; 120 s cap;
 deterministic metrics primary):
 
 | | ON/OFF | NULL/OFF | ON vs NULL |
@@ -384,7 +384,7 @@ cadical's search (target phases, stable/focused schedule, glue-limits
 reduction) is tuned around trail reuse; ours is not.  **Default stays
 OFF**, now on a live-knob 3-arm measurement instead of a dead-knob
 accident.  The dead-knob fix lands regardless — it un-deadens the A/B
-infrastructure for every future revisit (and `OXIZ_CHRONO_ALWAYS` too,
+infrastructure for every future revisit (and `NIXIE_CHRONO_ALWAYS` too,
 which the `chrono_trail_level_filter_regression` path relies on being able
 to set).
 
@@ -415,7 +415,7 @@ cannot separate noL from Ptn.
 
 **Verdict**: default stays OFF, third measurement, now against the
 post-landing landscape.  Kept as landed infrastructure:
-`chrono_reuse_after` field + `OXIZ_CHRONO_REUSE_AFTER` env (0 = ungated
+`chrono_reuse_after` field + `NIXIE_CHRONO_REUSE_AFTER` env (0 = ungated
 when on) — for users/benchmarks that want it on endurance instances,
 where it is genuinely decisive.  The residual gap (≈17 files) is not
 reachable by gating this mechanism; it needs the upstream clause-length/
@@ -430,7 +430,7 @@ landed the analyze de-quadratics, the elimination scratch/gate slices
 and the phase landing's aftermath – a substantially different engine
 from the one that measured 0.837×/0.921×.
 
-Multi-seed conflicts-to-verdict (default / `OXIZ_CHRONO_REUSE=1`,
+Multi-seed conflicts-to-verdict (default / `NIXIE_CHRONO_REUSE=1`,
 600 k cap): worker_550 wins big at 3 of 4 seeds (106 k→45 k, 107 k→
 **10 k**, 57 k→15 k; one seed worse); summle53 and Timetable split
 their seeds both ways (17 k-vs-281 k, 22 k-vs-105 k); j3037 wash;

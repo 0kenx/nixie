@@ -44,7 +44,7 @@ is semantically wrong, regardless of speed.
   kills the **whole process group** on timeout (three orphan incidents
   this session; `subprocess.run(timeout=…)` only reaps the direct child
   `perf`, leaving `cnf_solve` grandchildren running).
-* Soundness: full `oxiz-sat` suite + workspace suite; `diff_equiv` 200k
+* Soundness: full `nixie-sat` suite + workspace suite; `diff_equiv` 200k
   iterations (watcher construction is shared with the BVE/ELS stack).
 
 ## Results

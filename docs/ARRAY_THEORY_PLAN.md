@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the **round-based lazy array-axiom instantiation** in `oxiz-solver/.../array_axioms.rs`
+Replace the **round-based lazy array-axiom instantiation** in `nixie-solver/.../array_axioms.rs`
 (collect structure ⇒ emit ground lemmas ⇒ `rebase_theory_state` + rebuild `TheoryManager` ⇒
 `solve_with_theory` again from root, one or more times per `check`) with an **event-driven,
 incremental array theory** integrated into the CDCL(T) loop, in the shape of Z3's
@@ -10,7 +10,7 @@ incremental array theory** integrated into the CDCL(T) loop, in the shape of Z3'
 
 ## Why
 
-Profiling (`oxiz-solver/.../mod.rs`, the array-refinement round) showed the per-round reset is
+Profiling (`nixie-solver/.../mod.rs`, the array-refinement round) showed the per-round reset is
 ~1 µs and the per-round search restart is *warm* (`backtrack_to_root` leaves the SAT solver's
 `phase` array intact). The cost of a deep `storecomm`/`swap` goal is therefore **the CDCL search
 itself** over the atoms the lazy instantiator materialises (a depth-N store chain unfolds into

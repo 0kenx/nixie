@@ -1,0 +1,52 @@
+[package]
+name = "nixie-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI for Nixie SMT Solver (SMT-LIB2 compliant)"
+keywords = ["smt", "cli", "smtlib"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "nixie"
+path = "src/main.rs"
+doc = false
+
+[dependencies]
+mimalloc = { workspace = true }
+nixie-core = { workspace = true, features = ["std"] }
+nixie-sat = { workspace = true, features = ["std"] }
+nixie-solver = { workspace = true, features = ["std", "nlsat"] }
+nixie-proof = { workspace = true }
+nixie-smtcomp = { workspace = true }
+nixie-ml = { workspace = true }
+num-rational = { workspace = true, default-features = false, features = ["std"] }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+tracing = { workspace = true, features = ["std"] }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+rustyline = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+owo-colors = { workspace = true }
+indicatif = { workspace = true }
+walkdir = { workspace = true }
+globset = { workspace = true }
+notify = { workspace = true }
+sysinfo = { workspace = true }
+rayon = { workspace = true }
+dirs = { workspace = true }
+tower-lsp = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+anyhow = { workspace = true }
+chrono = "0.4"
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+rustc-hash = { workspace = true, features = ["std"] }
+
+[lints.clippy]
+unwrap_used = "deny"

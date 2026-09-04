@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Z3 vs OxiZ Feature Comparison Script
+Z3 vs Nixie Feature Comparison Script
 
-Loads extracted Z3 data and compares against OxiZ implemented features.
+Loads extracted Z3 data and compares against Nixie implemented features.
 Generates a comprehensive report showing coverage percentage and missing features.
 """
 
@@ -22,11 +22,11 @@ class FeatureCoverage:
     """Represents coverage of a feature category."""
     category: str
     z3_count: int
-    oxiz_count: int
+    nixie_count: int
     mapped_count: int
     coverage_percent: float
     z3_features: list[str] = field(default_factory=list)
-    oxiz_features: list[str] = field(default_factory=list)
+    nixie_features: list[str] = field(default_factory=list)
     mapped_features: list[dict[str, str]] = field(default_factory=list)
     missing_features: list[str] = field(default_factory=list)
 
@@ -45,8 +45,8 @@ class ComparisonReport:
     warnings: list[str] = field(default_factory=list)
 
 
-# OxiZ implemented features (extracted from source analysis)
-OXIZ_FEATURES: dict[str, list[str]] = {
+# Nixie implemented features (extracted from source analysis)
+NIXIE_FEATURES: dict[str, list[str]] = {
     "sat": [
         "CDCL solver",
         "two-watched literals",
@@ -179,8 +179,8 @@ OXIZ_FEATURES: dict[str, list[str]] = {
     ],
 }
 
-# Parameter categories in OxiZ
-OXIZ_PARAM_CATEGORIES: dict[str, list[str]] = {
+# Parameter categories in Nixie
+NIXIE_PARAM_CATEGORIES: dict[str, list[str]] = {
     "general": [
         "verbosity",
         "random_seed",
@@ -219,7 +219,7 @@ OXIZ_PARAM_CATEGORIES: dict[str, list[str]] = {
 
 
 class FeatureComparator:
-    """Compares Z3 and OxiZ features."""
+    """Compares Z3 and Nixie features."""
 
     def __init__(
         self,
@@ -246,19 +246,19 @@ class FeatureComparator:
         return self.report
 
     def _compare_tactics(self) -> None:
-        """Compare Z3 tactics against OxiZ features."""
+        """Compare Z3 tactics against Nixie features."""
         if not self.z3_tactics:
             self.report.warnings.append("No Z3 tactics data available")
             return
 
         z3_by_category = self.z3_tactics.get("by_category", {})
-        oxiz_mappings = self.z3_tactics.get("oxiz_mappings", {})
+        nixie_mappings = self.z3_tactics.get("nixie_mappings", {})
 
         self.report.total_z3_tactics = self.z3_tactics.get("metadata", {}).get(
             "total_tactics", 0
         ) + self.z3_tactics.get("metadata", {}).get("total_combinators", 0)
 
-        # Map Z3 categories to OxiZ feature categories
+        # Map Z3 categories to Nixie feature categories
         category_mapping = {
             "sat": "sat",
             "smt": "smt",
@@ -276,32 +276,32 @@ class FeatureComparator:
         }
 
         for z3_cat, tactics in z3_by_category.items():
-            oxiz_cat = category_mapping.get(z3_cat, "smt")
-            oxiz_features = OXIZ_FEATURES.get(oxiz_cat, [])
+            nixie_cat = category_mapping.get(z3_cat, "smt")
+            nixie_features = NIXIE_FEATURES.get(nixie_cat, [])
 
             # Count mapped tactics
-            mapped = [t for t in tactics if t in oxiz_mappings]
-            missing = [t for t in tactics if t not in oxiz_mappings]
+            mapped = [t for t in tactics if t in nixie_mappings]
+            missing = [t for t in tactics if t not in nixie_mappings]
 
             self.report.total_mapped_tactics += len(mapped)
 
             coverage = FeatureCoverage(
                 category=z3_cat,
                 z3_count=len(tactics),
-                oxiz_count=len(oxiz_features),
+                nixie_count=len(nixie_features),
                 mapped_count=len(mapped),
                 coverage_percent=(len(mapped) / len(tactics) * 100) if tactics else 0,
                 z3_features=tactics,
-                oxiz_features=oxiz_features,
+                nixie_features=nixie_features,
                 mapped_features=[
-                    {"z3": t, "oxiz": str(oxiz_mappings.get(t, {}))} for t in mapped
+                    {"z3": t, "nixie": str(nixie_mappings.get(t, {}))} for t in mapped
                 ],
                 missing_features=missing,
             )
             self.report.tactic_categories.append(coverage)
 
     def _compare_params(self) -> None:
-        """Compare Z3 parameters against OxiZ parameters."""
+        """Compare Z3 parameters against Nixie parameters."""
         if not self.z3_params:
             self.report.warnings.append("No Z3 params data available")
             return
@@ -311,10 +311,10 @@ class FeatureComparator:
             "total_parameters", 0
         )
 
-        # Map Z3 param categories to OxiZ
+        # Map Z3 param categories to Nixie
         for z3_cat, params in z3_by_category.items():
-            oxiz_cat = z3_cat if z3_cat in OXIZ_PARAM_CATEGORIES else "general"
-            oxiz_params = OXIZ_PARAM_CATEGORIES.get(oxiz_cat, [])
+            nixie_cat = z3_cat if z3_cat in NIXIE_PARAM_CATEGORIES else "general"
+            nixie_params = NIXIE_PARAM_CATEGORIES.get(nixie_cat, [])
 
             # Simple mapping based on name similarity
             mapped = []
@@ -322,10 +322,10 @@ class FeatureComparator:
             for p in params:
                 p_lower = p.lower().replace("-", "_").replace(".", "_")
                 matched = False
-                for op in oxiz_params:
+                for op in nixie_params:
                     op_lower = op.lower().replace(".", "_")
                     if p_lower == op_lower or p_lower in op_lower or op_lower in p_lower:
-                        mapped.append({"z3": p, "oxiz": op})
+                        mapped.append({"z3": p, "nixie": op})
                         matched = True
                         break
                 if not matched:
@@ -336,11 +336,11 @@ class FeatureComparator:
             coverage = FeatureCoverage(
                 category=z3_cat,
                 z3_count=len(params),
-                oxiz_count=len(oxiz_params),
+                nixie_count=len(nixie_params),
                 mapped_count=len(mapped),
                 coverage_percent=(len(mapped) / len(params) * 100) if params else 0,
                 z3_features=params,
-                oxiz_features=oxiz_params,
+                nixie_features=nixie_params,
                 mapped_features=mapped,
                 missing_features=missing,
             )
@@ -363,7 +363,7 @@ def generate_text_report(report: ComparisonReport) -> str:
     lines: list[str] = []
 
     lines.append("=" * 80)
-    lines.append("Z3 vs OxiZ Feature Comparison Report")
+    lines.append("Z3 vs Nixie Feature Comparison Report")
     lines.append("=" * 80)
     lines.append("")
 
@@ -372,11 +372,11 @@ def generate_text_report(report: ComparisonReport) -> str:
     lines.append("-" * 40)
     lines.append(f"Tactic Coverage: {report.overall_tactic_coverage:.1f}%")
     lines.append(f"  - Z3 Tactics: {report.total_z3_tactics}")
-    lines.append(f"  - Mapped to OxiZ: {report.total_mapped_tactics}")
+    lines.append(f"  - Mapped to Nixie: {report.total_mapped_tactics}")
     lines.append("")
     lines.append(f"Parameter Coverage: {report.overall_param_coverage:.1f}%")
     lines.append(f"  - Z3 Parameters: {report.total_z3_params}")
-    lines.append(f"  - Mapped to OxiZ: {report.total_mapped_params}")
+    lines.append(f"  - Mapped to Nixie: {report.total_mapped_params}")
     lines.append("")
 
     # Tactic coverage by category
@@ -399,10 +399,10 @@ def generate_text_report(report: ComparisonReport) -> str:
         )
     lines.append("")
 
-    # OxiZ implemented features summary
-    lines.append("OXIZ IMPLEMENTED FEATURES")
+    # Nixie implemented features summary
+    lines.append("NIXIE IMPLEMENTED FEATURES")
     lines.append("-" * 40)
-    for category, features in OXIZ_FEATURES.items():
+    for category, features in NIXIE_FEATURES.items():
         lines.append(f"  {category}: {len(features)} features")
     lines.append("")
 
@@ -445,7 +445,7 @@ def generate_json_report(report: ComparisonReport) -> dict[str, Any]:
             {
                 "category": c.category,
                 "z3_count": c.z3_count,
-                "oxiz_count": c.oxiz_count,
+                "nixie_count": c.nixie_count,
                 "mapped_count": c.mapped_count,
                 "coverage_percent": round(c.coverage_percent, 2),
                 "mapped_features": c.mapped_features,
@@ -457,7 +457,7 @@ def generate_json_report(report: ComparisonReport) -> dict[str, Any]:
             {
                 "category": c.category,
                 "z3_count": c.z3_count,
-                "oxiz_count": c.oxiz_count,
+                "nixie_count": c.nixie_count,
                 "mapped_count": c.mapped_count,
                 "coverage_percent": round(c.coverage_percent, 2),
                 "mapped_features": c.mapped_features,
@@ -465,8 +465,8 @@ def generate_json_report(report: ComparisonReport) -> dict[str, Any]:
             }
             for c in report.param_categories
         ],
-        "oxiz_features": OXIZ_FEATURES,
-        "oxiz_params": OXIZ_PARAM_CATEGORIES,
+        "nixie_features": NIXIE_FEATURES,
+        "nixie_params": NIXIE_PARAM_CATEGORIES,
         "warnings": report.warnings,
     }
 
@@ -474,7 +474,7 @@ def generate_json_report(report: ComparisonReport) -> dict[str, Any]:
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Compare Z3 features against OxiZ implementation"
+        description="Compare Z3 features against Nixie implementation"
     )
     parser.add_argument(
         "--params",

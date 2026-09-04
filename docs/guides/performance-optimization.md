@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This guide provides strategies for optimizing OxiZ performance in various scenarios.
+This guide provides strategies for optimizing Nixie performance in various scenarios.
 
 ## Profiling
 
@@ -32,8 +32,8 @@ cargo flamegraph --bin your_solver -- input.smt2
 
 **Memory Profiling (heaptrack)**:
 ```bash
-heaptrack ./target/release/oxiz-cli input.smt2
-heaptrack_gui heaptrack.oxiz-cli.*.gz
+heaptrack ./target/release/nixie-cli input.smt2
+heaptrack_gui heaptrack.nixie-cli.*.gz
 ```
 
 ## Optimization Strategies
@@ -60,7 +60,7 @@ solver.set_logic("ALL");
 **Impact**: 10-100x speedup on some instances
 
 ```rust
-use oxiz_core::tactic::{StatelessSimplifyTactic, SolveEqsTactic, Tactic};
+use nixie_core::tactic::{StatelessSimplifyTactic, SolveEqsTactic, Tactic};
 
 let mut goal = Goal::new(vec![formula]);
 
@@ -133,7 +133,7 @@ for formula in formulas {
 **Impact**: 2-5x for term-heavy workloads
 
 ```rust
-use oxiz_core::alloc::Arena;
+use nixie_core::alloc::Arena;
 
 let mut arena = Arena::new(Default::default());
 
@@ -172,7 +172,7 @@ match solver.check(&mut tm) {
 **Impact**: Near-linear speedup on multi-core
 
 ```rust
-use oxiz_solver::ParallelSolver;
+use nixie_solver::ParallelSolver;
 
 let mut parallel = ParallelSolver::new(num_cpus::get());
 
@@ -188,7 +188,7 @@ let result = parallel.solve(formula, &mut tm);
 **Impact**: 20-40% reduction in memory, 10-20% speedup
 
 ```rust
-use oxiz_core::config::{ClauseDeletionStrategy, Config};
+use nixie_core::config::{ClauseDeletionStrategy, Config};
 
 let config = Config {
     sat_params: SatParams {
@@ -212,7 +212,7 @@ let mut solver = Solver::with_config(config);
 **Impact**: 10-50% speedup (instance-dependent)
 
 ```rust
-use oxiz_sat::RestartStrategy;
+use nixie_sat::RestartStrategy;
 
 let config = Config {
     sat_params: SatParams {

@@ -1,7 +1,7 @@
 //! Always-on differential-testing smoke test.
 //!
 //! Fixed seed, ~25 generated cases per logic (QF_LIA / QF_LRA / QF_BV /
-//! QF_UF). Self-skips -- exactly like the plain OxiZ-vs-Z3 tests in
+//! QF_UF). Self-skips -- exactly like the plain Nixie-vs-Z3 tests in
 //! `src/z3_runner.rs` -- when no `z3` binary is reachable on `PATH`, so a
 //! normal `cargo test` never fails in an environment without Z3. Whenever
 //! Z3 *is* present (a dev machine, or a CI image that happens to bundle
@@ -9,11 +9,11 @@
 //! `--ignored` required.
 //!
 //! For a much larger sweep, opt into `tests/difftest_full.rs` via
-//! `OXIZ_DIFFTEST=1`.
+//! `NIXIE_DIFFTEST=1`.
 
-use oxiz_z3_parity::difftest::{format_mismatch_report, run_cases, summarize};
-use oxiz_z3_parity::generator::Logic;
-use oxiz_z3_parity::z3_runner::is_z3_available;
+use nixie_z3_parity::difftest::{format_mismatch_report, run_cases, summarize};
+use nixie_z3_parity::generator::Logic;
+use nixie_z3_parity::z3_runner::is_z3_available;
 
 /// Fixed base seed for the smoke corpus: every case is fully reproducible
 /// from `(logic, this seed's derivation)`, no wall-clock randomness.

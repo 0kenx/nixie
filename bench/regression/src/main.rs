@@ -1,4 +1,4 @@
-//! OxiZ Performance Regression Test Runner
+//! Nixie Performance Regression Test Runner
 //!
 //! This binary runs performance benchmarks and compares against a baseline,
 //! detecting regressions and producing CI-friendly output.
@@ -8,9 +8,9 @@ mod z3_compare;
 
 use anyhow::{Context, Result};
 use benchmarks::{BenchmarkCategory, BenchmarkResult, run_all_benchmarks};
-use oxiz_smtcomp::loader::BenchmarkMeta;
-use oxiz_smtcomp::regression::{RegressionAnalysis, RegressionConfig, RegressionDetector};
-use oxiz_smtcomp::{BenchmarkStatus, SingleResult};
+use nixie_smtcomp::loader::BenchmarkMeta;
+use nixie_smtcomp::regression::{RegressionAnalysis, RegressionConfig, RegressionDetector};
+use nixie_smtcomp::{BenchmarkStatus, SingleResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -42,7 +42,7 @@ pub struct BaselineEntry {
 /// Regression report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegressionReport {
-    /// Shared regression analysis derived from oxiz-smtcomp
+    /// Shared regression analysis derived from nixie-smtcomp
     pub analysis: RegressionAnalysis,
     /// Regression threshold percentage
     pub threshold_percent: f64,
@@ -340,7 +340,7 @@ fn compare_results(
 
 /// Print report in text format
 fn print_text_report(report: &RegressionReport) {
-    println!("=== OxiZ Performance Regression Report ===\n");
+    println!("=== Nixie Performance Regression Report ===\n");
 
     println!("Summary:");
     println!("  Total benchmarks: {}", report.total_benchmarks());
@@ -595,8 +595,8 @@ fn print_z3_report(report: &Z3ComparisonReport) {
             .ratio
             .map_or_else(|| "N/A".to_string(), |value| format!("{value:.3}x"));
         eprintln!(
-            "[z3] {:30} oxiz={:.3} ms z3={} ratio={}",
-            entry.benchmark, entry.oxiz_ms, z3, ratio
+            "[z3] {:30} nixie={:.3} ms z3={} ratio={}",
+            entry.benchmark, entry.nixie_ms, z3, ratio
         );
     }
 
@@ -691,7 +691,7 @@ fn parse_args() -> Result<Config> {
 }
 
 fn print_help() {
-    println!("OxiZ Performance Regression Tester");
+    println!("Nixie Performance Regression Tester");
     println!();
     println!("Usage: regression [OPTIONS]");
     println!();
@@ -887,11 +887,11 @@ fn main() -> Result<()> {
 
     if config.compare_z3 {
         let (_temp_dir, smt2_paths) = prepare_z3_inputs(&results)?;
-        let oxiz_timings = results
+        let nixie_timings = results
             .iter()
             .map(|result| (result.name.clone(), result.avg_time_us / 1000.0))
             .collect::<Vec<_>>();
-        let z3_report = compare_with_z3(&oxiz_timings, &smt2_paths);
+        let z3_report = compare_with_z3(&nixie_timings, &smt2_paths);
         print_z3_report(&z3_report);
     }
 

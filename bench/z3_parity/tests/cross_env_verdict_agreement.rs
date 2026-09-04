@@ -9,8 +9,8 @@
 //! usable as evidence is:
 //!
 //! > Every tracked `results.<os>-<arch>.json` must agree on the VERDICT of
-//! > every benchmark (`oxiz_result`, `z3_result`, `match_status`). Timings
-//! > (`oxiz_time`, `z3_time`) are machine-dependent and are expected to
+//! > every benchmark (`nixie_result`, `z3_result`, `match_status`). Timings
+//! > (`nixie_time`, `z3_time`) are machine-dependent and are expected to
 //! > differ.
 //!
 //! This test is the standing enforcement of that rule.
@@ -34,7 +34,7 @@
 //! no solving, no benchmark execution – it runs anywhere `cargo test`
 //! runs, including machines that have never had Z3 installed.
 
-use oxiz_z3_parity::{ParityReport, ParityResult, SCHEMA_VERSION, SCRATCH_RESULTS_FILE_NAME};
+use nixie_z3_parity::{ParityReport, ParityResult, SCHEMA_VERSION, SCRATCH_RESULTS_FILE_NAME};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,15 +71,15 @@ impl TrackedRecord {
     ///
     /// The z3 version is included deliberately: a verdict disagreement
     /// between records produced by *different* z3 versions is
-    /// unattributable – it says nothing about OxiZ until both sides are
+    /// unattributable – it says nothing about Nixie until both sides are
     /// re-measured against the same z3 binary.
     fn describe(&self) -> String {
         format!(
-            "{} ({}/{}, oxiz {}, z3 {}, {} benchmarks)",
+            "{} ({}/{}, nixie {}, z3 {}, {} benchmarks)",
             self.file_name,
             self.report.metadata.os,
             self.report.metadata.arch,
-            self.report.metadata.oxiz_version,
+            self.report.metadata.nixie_version,
             self.report
                 .metadata
                 .z3_version
@@ -194,7 +194,7 @@ fn push_difference(detail: String, count: &mut usize, sink: &mut Vec<String>) {
 /// The three fields that must agree across every environment, paired with
 /// their names so a failure can say which one moved.
 ///
-/// `oxiz_time` and `z3_time` are deliberately absent and must stay absent:
+/// `nixie_time` and `z3_time` are deliberately absent and must stay absent:
 /// they are wall-clock measurements of the machine that produced the file,
 /// so two records of the *same* verdicts will legitimately differ in every
 /// one of those fields. Comparing them would make this test fail on every
@@ -202,7 +202,7 @@ fn push_difference(detail: String, count: &mut usize, sink: &mut Vec<String>) {
 /// ignore it.
 fn verdict_fields(result: &ParityResult) -> [(&'static str, String); 3] {
     [
-        ("oxiz_result", format!("{:?}", result.oxiz_result)),
+        ("nixie_result", format!("{:?}", result.nixie_result)),
         ("z3_result", format!("{:?}", result.z3_result)),
         ("match_status", format!("{:?}", result.match_status)),
     ]
@@ -375,12 +375,12 @@ fn tracked_parity_records_agree_on_every_verdict() {
     panic!(
         "tracked parity records disagree in {difference_count} place(s).\n\n\
          Every tracked results.<os>-<arch>.json must agree on the VERDICT of every benchmark \
-         (oxiz_result, z3_result, match_status); only oxiz_time/z3_time may differ between \
+         (nixie_result, z3_result, match_status); only nixie_time/z3_time may differ between \
          machines.\n\n\
          Records compared:\n{}\n\n\
          Differences (reference = {}):\n  {shown}{elision_note}\n\n\
          If the records were produced by different z3 versions (see above), re-measure both \
-         against the same z3 before attributing the disagreement to OxiZ.",
+         against the same z3 before attributing the disagreement to Nixie.",
         provenance.join("\n"),
         reference.file_name
     );

@@ -1,8 +1,8 @@
-# OxiZ Solver Architecture
+# Nixie Solver Architecture
 
 ## Overview
 
-OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemented in pure Rust. The architecture follows a modular CDCL(T) design with modern enhancements.
+Nixie is a next-generation SMT (Satisfiability Modulo Theories) solver implemented in pure Rust. The architecture follows a modular CDCL(T) design with modern enhancements.
 
 ## High-Level Architecture
 
@@ -11,7 +11,7 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
 │                      User Interface Layer                    │
 │  ┌────────────┬────────────┬────────────┬────────────────┐  │
 │  │ SMT-LIB2   │ Rust API   │ C API      │ WASM Bindings  │  │
-│  │ Parser     │            │ (oxiz-ffi) │ (oxiz-wasm)    │  │
+│  │ Parser     │            │ (nixie-ffi) │ (nixie-wasm)    │  │
 │  └────────────┴────────────┴────────────┴────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -19,7 +19,7 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
 ┌─────────────────────────────────────────────────────────────┐
 │                     Preprocessing Layer                      │
 │  ┌─────────────────────────────────────────────────────┐    │
-│  │  Tactic Framework (oxiz-core/tactic)                │    │
+│  │  Tactic Framework (nixie-core/tactic)                │    │
 │  │  • Simplification  • Bit-blasting  • Ackermann     │    │
 │  │  • Solve-eqs       • Propagate-ineqs • NLA2BV      │    │
 │  └─────────────────────────────────────────────────────┘    │
@@ -27,9 +27,9 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                    Core Solver (oxiz-solver)                 │
+│                    Core Solver (nixie-solver)                 │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │           CDCL SAT Engine (oxiz-sat)                 │   │
+│  │           CDCL SAT Engine (nixie-sat)                 │   │
 │  │  • Boolean propagation  • Clause learning           │   │
 │  │  • Conflict analysis    • Restart strategies        │   │
 │  │  • VSIDS/CHB heuristics • Phase saving              │   │
@@ -42,7 +42,7 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
 │  └──────────────────────────────────────────────────────┘   │
 │                              ▲ ▼                             │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              Theory Solvers (oxiz-theories)          │   │
+│  │              Theory Solvers (nixie-theories)          │   │
 │  │  ┌───────┬───────┬───────┬─────────┬─────────────┐  │   │
 │  │  │ EUF   │ LIA   │ LRA   │ Arrays  │ Bitvectors  │  │   │
 │  │  │ (UF)  │ (Int) │(Real) │ (Array) │ (BV)        │  │   │
@@ -52,7 +52,7 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                  Mathematics Layer (oxiz-math)               │
+│                  Mathematics Layer (nixie-math)               │
 │  • Linear Programming (Simplex, Dual Simplex)               │
 │  • Polynomial Arithmetic  • GCD and Resultants              │
 │  • Real Algebraic Numbers • CAD (Cylindrical Decomposition) │
@@ -62,7 +62,7 @@ OxiZ is a next-generation SMT (Satisfiability Modulo Theories) solver implemente
 
 ## Core Components
 
-### 1. Term Manager (oxiz-core/ast)
+### 1. Term Manager (nixie-core/ast)
 
 **Purpose**: Centralized term representation with hash consing.
 
@@ -100,7 +100,7 @@ pub enum TermKind {
 - Term comparison: O(1) (pointer equality)
 - Memory overhead: ~24 bytes per unique term
 
-### 2. SAT Solver (oxiz-sat)
+### 2. SAT Solver (nixie-sat)
 
 **Algorithm**: CDCL (Conflict-Driven Clause Learning) with modern enhancements
 
@@ -207,7 +207,7 @@ enum RestartStrategy {
 - Low LBD = more likely to be useful
 - Dynamic restart based on LBD statistics
 
-### 3. Theory Solvers (oxiz-theories)
+### 3. Theory Solvers (nixie-theories)
 
 #### 3.1 Equality Logic with Uninterpreted Functions (EUF)
 

@@ -21,7 +21,7 @@ order), re-arming on the `25·interval·log10(rounds+9)` schedule. The old
 brute-force `failed_literal_probing`/`probe_hyper_binary` remain (pre-search
 path, flag-gated as before).
 
-A matched-null switch ships with it: `OXIZ_PROBE_NULL=1` reverses the rank
+A matched-null switch ships with it: `NIXIE_PROBE_NULL=1` reverses the rank
 order (same roots, same schedule, same budgets — only the semantic content
 under test, best-first ordering, is destroyed).
 

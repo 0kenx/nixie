@@ -1,6 +1,6 @@
-# OxiZ Performance Regression Testing
+# Nixie Performance Regression Testing
 
-This directory contains the performance regression testing infrastructure for OxiZ SMT solver.
+This directory contains the performance regression testing infrastructure for Nixie SMT solver.
 
 ## Overview
 
@@ -133,7 +133,7 @@ results.push(run_benchmark("my_new_benchmark", BenchmarkCategory::Sat, 50, || {
 ### Text Output
 
 ```
-=== OxiZ Performance Regression Report ===
+=== Nixie Performance Regression Report ===
 
 Summary:
   Total benchmarks: 15
@@ -182,4 +182,4 @@ If regressions are detected due to system noise:
 
 ## License
 
-Apache-2.0 (same as OxiZ)
+Apache-2.0 (same as Nixie)

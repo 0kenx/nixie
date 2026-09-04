@@ -5,7 +5,7 @@
 The registry study's `ABV` smoke (quantified BV-indexed arrays →
 `unknown` vs z3 `unsat`) was isolated to a single ingredient:
 
-| probe | oxiz | z3 |
+| probe | nixie | z3 |
 |---|---|---|
 | Int-indexed `∀i. select a i = i` + violation (AUFLIA) | unsat | unsat |
 | BV quantifier, no select (`∀i. bvult i b`) | unsat | unsat |

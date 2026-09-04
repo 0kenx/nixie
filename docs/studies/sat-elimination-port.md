@@ -6,18 +6,18 @@
 ## Motivation
 
 `bench`-suite differential vs CaDiCaL (`/tmp` run, 94 files: 40× SATLIB `uf100`,
-54× satcomp2024) showed OxiZ's SAT core >1.5× slower than CaDiCaL on 22/94
+54× satcomp2024) showed Nixie's SAT core >1.5× slower than CaDiCaL on 22/94
 files, with the worst gaps (66×, 29×, 25×, 18×) all on instances CaDiCaL
 collapses via inprocessing — its log shows clause counts dropping 13.5k → 2.3k
 through interleaved `e` (elim) / `s` (subsume) / `d` (distill) rounds before
-1.2k conflicts refute the residue. OxiZ ran *no* elimination by default: the
+1.2k conflicts refute the residue. Nixie ran *no* elimination by default: the
 one-shot `bve.rs` pass was off in every preset, gated behind a documented
 soundness hazard.
 
 ## What was done
 
 Full port of CaDiCaL's bounded variable elimination to
-`oxiz-sat/src/solver/eliminate.rs` (~1.1k lines): occurrence-list driven,
+`nixie-sat/src/solver/eliminate.rs` (~1.1k lines): occurrence-list driven,
 score-ordered work-list schedule with re-entry on clause removal/shrink,
 on-the-fly self-subsumption, backward subsumption of fresh resolvents,
 eager unit propagation through the occurrence lists, growing elimination
@@ -72,7 +72,7 @@ reproducers above.
 
 ## Performance verdict (94-file suite, CPU-time, 25s cap, vs CaDiCaL 4.x)
 
-| config                       | >1.5× vs cadical | total OxiZ time |
+| config                       | >1.5× vs cadical | total Nixie time |
 |------------------------------|------------------|-----------------|
 | baseline (HEAD)              | 22/94            | 738 s           |
 | elimination, full schedule   | 53/94            | 807 s           |
@@ -220,12 +220,12 @@ Three changes:
 
 1. **Portfolio wiring closed**: `Context::set_solver_config` now propagates
    `restart_strategy` / `enable_inprocessing` / `inprocessing_interval` into
-   the live SAT engine (`oxiz_sat::Solver::update_search_config`); those
+   the live SAT engine (`nixie_sat::Solver::update_search_config`); those
    fields are read live by the restart/inprocessing schedules, so portfolio
    workers' strategy triplets now genuinely diversify search. Construction-
    seeded state (chrono thresholds, stabilize schedule, eliminator limits)
    deliberately remains construction-only. Regression test in
-   `oxiz-solver/src/solver/tests.rs`.
+   `nixie-solver/src/solver/tests.rs`.
 
 2. **Eliminator occurrence pass merged**: `elim_round`'s two full-database
    scans (satisfied-check, then connect) are one; retiring and connecting
@@ -264,7 +264,7 @@ same grounds as the reuse_trail fix.
 ### Trigger
 
 Fresh 94-file CaDiCaL differential (`/tmp/opencode/sat_vs_cadical.json`,
-25 s cap): 15 oxiz-only timeouts where CaDiCaL solves (4-23 s), worst paired
+25 s cap): 15 nixie-only timeouts where CaDiCaL solves (4-23 s), worst paired
 ratios 6s167-opt 52.7x, mrpp 7.3x, crn 3.7x, constraints_17 3.1x. CaDiCaL's
 own log on 6s167-opt shows the win is inprocessing (582 substituted vars,
 1126 vivified, 2974 subsumed clauses, 377 fixed; 0.28 s total).
@@ -345,8 +345,8 @@ doc, Z3 parity 168/168 clean.
 
 | | before (16:36) | after |
 |---|---|---|
-| oxiz solved | 69/94 | **73/94** |
-| paired geomean oxiz/cadical | 0.918 | **0.461** |
+| nixie solved | 69/94 | **73/94** |
+| paired geomean nixie/cadical | 0.918 | **0.461** |
 | files >=1.5x faster than cadical | 22 | **42** |
 | files >=1.5x slower | 9 | 12 (x9-09054 joined) |
 | disagreements | 0 | 0 |

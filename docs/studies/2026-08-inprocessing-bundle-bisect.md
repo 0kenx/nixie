@@ -9,12 +9,12 @@ now rested on load-contaminated wall-clock screens.
 Reference: cadical runs `vivify` **inside the inprobe block**
 (`probe.cpp`: decompose → ternary → probe → gates → backbone → sweep →
 **vivify** → transred → factor), i.e. bundled with probing, not as a
-standalone schedule. OxiZ's `vivify_clauses` + `transred_round` +
+standalone schedule. Nixie's `vivify_clauses` + `transred_round` +
 `subsume_round` + ELS-round + pure-literal live inside `inprocess()`,
 gated on `enable_inprocessing` (off in every preset; fires every 4000
 conflicts when on).
 
-Component-bisect screen: temporary env gates (`OXIZ_IP_NO_{SUBSUME,
+Component-bisect screen: temporary env gates (`NIXIE_IP_NO_{SUBSUME,
 VIVIFY,TRANSRED,ELSROUND,PURELIT}`) in a throwaway worktree.
 Instructions-to-verdict, PMU `cpu_core/instructions`, CPU-pinned,
 process-group-safe harness. Caps are walls; `TO` cells mean ">=".

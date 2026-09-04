@@ -18,8 +18,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-OUTPUT=/tmp/oxiz_profile_flamegraph.svg
-COLLAPSED=/tmp/oxiz_profile_perf.folded
+OUTPUT=/tmp/nixie_profile_flamegraph.svg
+COLLAPSED=/tmp/nixie_profile_perf.folded
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

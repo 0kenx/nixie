@@ -1,0 +1,24 @@
+{
+  "name": "@nixie/wasm-react",
+  "version": "0.3.0",
+  "description": "React hooks and components for Nixie WASM SMT Solver",
+  "main": "react-wrapper.tsx",
+  "types": "react-wrapper.tsx",
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "@nixie/wasm": "^0.3.0"
+  },
+  "keywords": [
+    "smt",
+    "solver",
+    "wasm",
+    "react",
+    "hooks"
+  ],
+  "author": "Nixie Contributors",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cool-japan/nixie"
+  }
+}

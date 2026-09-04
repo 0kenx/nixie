@@ -13,7 +13,7 @@ the completed dig, the fix, and the backstop removal.
 ## The dig (on the false build, 9345d77)
 
 1. **Reproduce**: clean rebuild of the flipping commit answers `sat`.
-2. **Scanners** (`OXIZ_SCAN_VIOL`, debug build): the false model carries
+2. **Scanners** (`NIXIE_SCAN_VIOL`, debug build): the false model carries
    an `[viol]` — an equality atom whose operands the arithmetic model
    maps to equal values, assigned false — and a stack of
    `[cgap] PROPAGATION GAP`s: apps whose args are arith-equal in the
@@ -21,7 +21,7 @@ the completed dig, the fix, and the backstop removal.
    reduced the whole stack to ONE root pair: **`t1031 ≡ t945` (both at
    model value 1, never merged)**; every gap is a congruence cascade
    from it.
-3. **Round instrumentation** (`OXIZ_ARR_TRACE`): the round ran on every
+3. **Round instrumentation** (`NIXIE_ARR_TRACE`): the round ran on every
    candidate — the defect was inside it:
    * 6 value-groups, **~790 candidate pairs**, Phase 1 probes only **64**
      (cap), in `FxHashMap` group iteration order.

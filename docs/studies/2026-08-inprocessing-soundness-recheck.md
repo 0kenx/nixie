@@ -2,7 +2,7 @@
 
 ## Why this recheck
 
-`oxiz-sat/src/config_presets.rs`'s module doc shipped every preset with
+`nixie-sat/src/config_presets.rs`'s module doc shipped every preset with
 `enable_inprocessing: false` on the strength of a **soundness defect
 inherited from v0.3.2**: "hanging unit at a propagation fixpoint" from
 missing watch rebuilds, with a cited repro — `pigeonhole(7,6)` at

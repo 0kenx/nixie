@@ -1,7 +1,7 @@
-# OxiZ Performance Tuning Guide
+# Nixie Performance Tuning Guide
 
-This guide explains how to get the best performance from OxiZ across different
-problem classes. OxiZ is a multi-theory SMT solver implemented in Pure Rust;
+This guide explains how to get the best performance from Nixie across different
+problem classes. Nixie is a multi-theory SMT solver implemented in Pure Rust;
 understanding how it routes logic families to specialized sub-solvers is the
 single most effective tuning lever available.
 
@@ -23,17 +23,17 @@ single most effective tuning lever available.
 ## Setting the Right Logic
 
 The `(set-logic ...)` declaration (or `solver.set_logic(...)` in Python) is
-the highest-impact single optimization. When no logic is declared OxiZ falls
+the highest-impact single optimization. When no logic is declared Nixie falls
 back to an "ALL" mode that enables every theory simultaneously, which prevents
 several important optimizations:
 
-- **Arithmetic dispatch:** Without a logic hint, OxiZ uses the LRA (real
+- **Arithmetic dispatch:** Without a logic hint, Nixie uses the LRA (real
   arithmetic) solver by default, even for integer problems. LIA (integer
   arithmetic) enables the Omega/cutting-planes path, which can be exponentially
   faster on integer-only benchmarks.
 - **NLSAT activation:** `QF_NIA` and `QF_NRA` are the only logics that activate
   the nonlinear arithmetic (NLSAT) solver. If you assert nonlinear terms without
-  declaring the logic, OxiZ attempts to handle them inside the linear solver and
+  declaring the logic, Nixie attempts to handle them inside the linear solver and
   will quickly return `unknown`.
 - **Theory combination overhead:** Declaring a quantifier-free logic (prefix
   `QF_`) disables the MBQI and E-matching engines entirely, reducing per-check
@@ -52,10 +52,10 @@ several important optimizations:
 
 **Python:**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_LIA')   # <-- critical: selects LIA solver path
 ```
 
@@ -105,10 +105,10 @@ on large instances.
   and try a different refinement.
 
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_LIA')
 
 # Shared background
@@ -131,7 +131,7 @@ s.pop()
 
 ### Overhead considerations
 
-Each `push()` snapshots the current solver state. In OxiZ this includes:
+Each `push()` snapshots the current solver state. In Nixie this includes:
 
 - The DPLL(T) trail and assignment stack
 - The arithmetic solver's tableau
@@ -156,10 +156,10 @@ conditional reasoning internally.
 
 ```bash
 # Timeout in seconds
-oxiz solve --timeout 30 problem.smt2
+nixie solve --timeout 30 problem.smt2
 
 # Portfolio mode with per-solver timeout
-oxiz solve --parallel --portfolio-timeout 10 problem.smt2
+nixie solve --parallel --portfolio-timeout 10 problem.smt2
 ```
 
 ### SMT-LIB2
@@ -175,9 +175,9 @@ oxiz solve --parallel --portfolio-timeout 10 problem.smt2
 ### Python
 
 ```python
-import oxiz
+import nixie
 
-s = oxiz.Solver()
+s = nixie.Solver()
 s.set_option('timeout', '30000')   ; milliseconds as string
 ```
 
@@ -197,7 +197,7 @@ want partial results.
 
 ## MBQI Budget Hints for Quantified Formulas
 
-MBQI (Model-Based Quantifier Instantiation) is OxiZ's primary engine for
+MBQI (Model-Based Quantifier Instantiation) is Nixie's primary engine for
 deciding formulas with universal quantifiers. It works by:
 
 1. Constructing a candidate model ignoring quantifiers.
@@ -216,7 +216,7 @@ budget is often insufficient.
 
 ```bash
 # Allow up to 10,000 MBQI instantiation steps
-oxiz solve --set-option mbqi.max_instantiations=10000 quantified.smt2
+nixie solve --set-option mbqi.max_instantiations=10000 quantified.smt2
 ```
 
 ### SMT-LIB2
@@ -256,11 +256,11 @@ When MBQI exceeds its budget and returns `unknown`, inspect whether:
 
 ## Portfolio Mode
 
-OxiZ's CLI supports a portfolio solver that runs multiple solver configurations
+Nixie's CLI supports a portfolio solver that runs multiple solver configurations
 in parallel and returns the first answer:
 
 ```bash
-oxiz solve --parallel --threads 4 problem.smt2
+nixie solve --parallel --threads 4 problem.smt2
 ```
 
 The portfolio spawns independent solver threads with different:
@@ -285,26 +285,26 @@ Portfolio mode is **not recommended** for:
 
 ## Reading SLoC Coverage Metrics
 
-OxiZ coverage of the Z3 feature set can be estimated from the SLoC of each
+Nixie coverage of the Z3 feature set can be estimated from the SLoC of each
 subcrate relative to Z3's C++ implementation. Use `tokei` to inspect the current
 state:
 
 ```bash
-tokei /path/to/oxiz/
+tokei /path/to/nixie/
 ```
 
 Key subcrates and what they cover:
 
 | Crate | Primary coverage area |
 |-------|-----------------------|
-| `oxiz-core` | AST, term management, E-matching, sort system |
-| `oxiz-solver` | DPLL(T) core, theory combination, MBQI, model extraction |
-| `oxiz-theories` | Arithmetic (LIA/LRA/NLSAT), BV, arrays, UF, datatypes, FP, strings |
-| `oxiz-sat` | SAT solver (CDCL, portfolio, parallel) |
-| `oxiz-proof` | Proof logging, unsat core extraction, proof checking |
-| `oxiz-opt` | Optimization (OMT, MaxSAT, Pareto enumeration) |
-| `oxiz-spacer` | PDR/IC3 for CHC solving |
-| `oxiz-nlsat` | Nonlinear arithmetic over reals/integers (cylindrical algebraic) |
+| `nixie-core` | AST, term management, E-matching, sort system |
+| `nixie-solver` | DPLL(T) core, theory combination, MBQI, model extraction |
+| `nixie-theories` | Arithmetic (LIA/LRA/NLSAT), BV, arrays, UF, datatypes, FP, strings |
+| `nixie-sat` | SAT solver (CDCL, portfolio, parallel) |
+| `nixie-proof` | Proof logging, unsat core extraction, proof checking |
+| `nixie-opt` | Optimization (OMT, MaxSAT, Pareto enumeration) |
+| `nixie-spacer` | PDR/IC3 for CHC solving |
+| `nixie-nlsat` | Nonlinear arithmetic over reals/integers (cylindrical algebraic) |
 
 A higher SLoC count in a subcrate relative to Z3's equivalent module generally
 indicates deeper coverage – but review the benchmark parity results in

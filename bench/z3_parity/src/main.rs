@@ -1,7 +1,7 @@
-//! OxiZ vs Z3 differential-testing (parity) harness.
+//! Nixie vs Z3 differential-testing (parity) harness.
 //!
 //! Discovers SMT-LIB2 benchmarks under `benchmarks/<logic>/*.smt2` (relative
-//! to this crate's manifest directory), runs each one through both the OxiZ
+//! to this crate's manifest directory), runs each one through both the Nixie
 //! solver and a real `z3` binary, and compares the results to measure
 //! correctness parity per logic. A summary table is printed to stdout and
 //! full results are written into this crate's directory, twice:
@@ -12,13 +12,13 @@
 //!   machine can never clobber another platform's recorded verdicts.
 //!
 //! Both files carry identical content: a `schema_version`, a `metadata` header
-//! naming the OxiZ version, the Z3 version actually probed, the OS/arch and
+//! naming the Nixie version, the Z3 version actually probed, the OS/arch and
 //! the run timestamp, and the `results` list itself.
 //!
 //! # Usage
 //!
 //! ```text
-//! oxiz-z3-parity [--export-history <DIR>] [--out <FILE>]
+//! nixie-z3-parity [--export-history <DIR>] [--out <FILE>]
 //! ```
 //!
 //! `--export-history <DIR>` additionally exports a history snapshot of the run
@@ -34,11 +34,11 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tabled::{Table, Tabled};
 
-use oxiz_z3_parity::comparator::{MatchStatus, compare_results};
-use oxiz_z3_parity::history;
-use oxiz_z3_parity::oxiz_runner::run_oxiz;
-use oxiz_z3_parity::z3_runner::run_z3;
-use oxiz_z3_parity::{
+use nixie_z3_parity::comparator::{MatchStatus, compare_results};
+use nixie_z3_parity::history;
+use nixie_z3_parity::nixie_runner::run_nixie;
+use nixie_z3_parity::z3_runner::run_z3;
+use nixie_z3_parity::{
     ParityReport, ParityResult, SCRATCH_RESULTS_FILE_NAME, env_results_file_name,
 };
 
@@ -134,10 +134,10 @@ fn discover_benchmarks(base_path: &Path) -> Result<Vec<(String, PathBuf)>> {
 fn run_benchmark(logic: &str, path: &Path) -> Result<ParityResult> {
     println!("  Running: {}", path.display());
 
-    // Run OxiZ
-    let oxiz_start = Instant::now();
-    let oxiz_result = run_oxiz(path)?;
-    let oxiz_time = oxiz_start.elapsed();
+    // Run Nixie
+    let nixie_start = Instant::now();
+    let nixie_result = run_nixie(path)?;
+    let nixie_time = nixie_start.elapsed();
 
     // Run Z3
     let z3_start = Instant::now();
@@ -145,7 +145,7 @@ fn run_benchmark(logic: &str, path: &Path) -> Result<ParityResult> {
     let z3_time = z3_start.elapsed();
 
     // Compare results
-    let match_status = compare_results(&oxiz_result, &z3_result);
+    let match_status = compare_results(&nixie_result, &z3_result);
 
     Ok(ParityResult {
         benchmark: path
@@ -153,9 +153,9 @@ fn run_benchmark(logic: &str, path: &Path) -> Result<ParityResult> {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| String::from("<unknown>")),
         logic: logic.to_string(),
-        oxiz_result,
+        nixie_result,
         z3_result,
-        oxiz_time,
+        nixie_time,
         z3_time,
         match_status,
     })
@@ -307,9 +307,9 @@ fn generate_report(results: &[ParityResult]) {
                 failure.logic
             );
             println!(
-                "    OxiZ:  {:?} ({:.3}s)",
-                failure.oxiz_result,
-                failure.oxiz_time.as_secs_f64()
+                "    Nixie:  {:?} ({:.3}s)",
+                failure.nixie_result,
+                failure.nixie_time.as_secs_f64()
             );
             println!(
                 "    Z3:    {:?} ({:.3}s)",
@@ -343,9 +343,9 @@ fn generate_report(results: &[ParityResult]) {
         for entry in unresolved {
             println!("\n  {} [{}]", entry.benchmark.bright_yellow(), entry.logic);
             println!(
-                "    OxiZ:  {:?} ({:.3}s)",
-                entry.oxiz_result,
-                entry.oxiz_time.as_secs_f64()
+                "    Nixie:  {:?} ({:.3}s)",
+                entry.nixie_result,
+                entry.nixie_time.as_secs_f64()
             );
             println!(
                 "    Z3:    {:?} ({:.3}s)",
@@ -360,7 +360,7 @@ fn generate_report(results: &[ParityResult]) {
 }
 
 fn main() -> Result<()> {
-    println!("{}", "OxiZ vs Z3 Parity Testing Suite".bright_cyan().bold());
+    println!("{}", "Nixie vs Z3 Parity Testing Suite".bright_cyan().bold());
     println!("{}\n", "=".repeat(80).bright_cyan());
 
     let args: Vec<String> = std::env::args().collect();
@@ -416,8 +416,8 @@ fn main() -> Result<()> {
     );
     println!("Per-environment record: {}", env_path.display());
     println!(
-        "  OxiZ {} | Z3 {} | {}-{} | {}",
-        report.metadata.oxiz_version,
+        "  Nixie {} | Z3 {} | {}-{} | {}",
+        report.metadata.nixie_version,
         report
             .metadata
             .z3_version

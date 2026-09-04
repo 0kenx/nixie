@@ -1,7 +1,7 @@
 # Z3 Feature Comparison Scripts
 
 This directory contains Python scripts for extracting Z3 parameters and tactics,
-and comparing them against OxiZ's implemented features.
+and comparing them against Nixie's implemented features.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ Extracts tactic registrations from Z3 source code.
 - Parses `MK_TACTIC` and `MK_SIMPLE_TACTIC` macros
 - Extracts from `add_tactic` and `register_tactic` calls
 - Identifies tactic combinators (and-then, or-else, etc.)
-- Maps tactics to OxiZ equivalents where available
+- Maps tactics to Nixie equivalents where available
 
 **Usage:**
 ```bash
@@ -52,11 +52,11 @@ Extracts tactic registrations from Z3 source code.
 
 ### 3. compare_features.py
 
-Compares extracted Z3 data against OxiZ implemented features.
+Compares extracted Z3 data against Nixie implemented features.
 
 **Features:**
 - Loads extracted Z3 JSON files
-- Compares against OxiZ feature inventory
+- Compares against Nixie feature inventory
 - Calculates coverage percentages by category
 - Identifies missing features
 - Generates text and JSON reports
@@ -93,7 +93,7 @@ which means:
       nlsat/
       tactic/
       ...
-  oxiz/
+  nixie/
     scripts/
       z3_compare/
         extract_params.py
@@ -156,15 +156,15 @@ You can override this with the `--z3-src` option.
       "category": "sat",
       "file_path": "tactic/sat_tactic.cpp",
       "line_number": 100,
-      "oxiz_mapping": {
-        "oxiz_module": "oxiz-sat",
-        "oxiz_feature": "Solver"
+      "nixie_mapping": {
+        "nixie_module": "nixie-sat",
+        "nixie_feature": "Solver"
       }
     }
   ],
   "combinators": [...],
   "by_category": {...},
-  "oxiz_mappings": {...}
+  "nixie_mappings": {...}
 }
 ```
 
@@ -184,7 +184,7 @@ You can override this with the `--z3-src` option.
     {
       "category": "sat",
       "z3_count": 10,
-      "oxiz_count": 35,
+      "nixie_count": 35,
       "mapped_count": 8,
       "coverage_percent": 80.0,
       "mapped_features": [...],
@@ -192,8 +192,8 @@ You can override this with the `--z3-src` option.
     }
   ],
   "param_coverage": [...],
-  "oxiz_features": {...},
-  "oxiz_params": {...},
+  "nixie_features": {...},
+  "nixie_params": {...},
   "warnings": []
 }
 ```
@@ -220,9 +220,9 @@ chmod +x *.py
 cat comparison_report.json | python3 -m json.tool
 ```
 
-## OxiZ Feature Categories
+## Nixie Feature Categories
 
-The comparison tracks these OxiZ feature areas:
+The comparison tracks these Nixie feature areas:
 
 - **sat**: SAT solver features (CDCL, preprocessing, proof generation)
 - **smt**: SMT solver features (theories, combination, quantifiers)
@@ -232,10 +232,10 @@ The comparison tracks these OxiZ feature areas:
 - **proof**: Proof formats and checking
 - **chc**: Constrained Horn Clauses (Spacer/PDR)
 
-## Updating OxiZ Feature Inventory
+## Updating Nixie Feature Inventory
 
-To update the OxiZ feature inventory in `compare_features.py`, edit the
-`OXIZ_FEATURES` and `OXIZ_PARAM_CATEGORIES` dictionaries to reflect newly
+To update the Nixie feature inventory in `compare_features.py`, edit the
+`NIXIE_FEATURES` and `NIXIE_PARAM_CATEGORIES` dictionaries to reflect newly
 implemented features.
 
 ## Troubleshooting
@@ -246,6 +246,6 @@ implemented features.
 - Use `--verbose` flag for detailed output
 
 **Low coverage percentages:**
-- Some Z3 features may not have direct OxiZ equivalents
-- Update `OXIZ_TACTIC_MAPPING` in extract_tactics.py for new mappings
-- Update `OXIZ_FEATURES` in compare_features.py for new OxiZ features
+- Some Z3 features may not have direct Nixie equivalents
+- Update `NIXIE_TACTIC_MAPPING` in extract_tactics.py for new mappings
+- Update `NIXIE_FEATURES` in compare_features.py for new Nixie features

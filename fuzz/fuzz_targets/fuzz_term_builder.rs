@@ -9,8 +9,8 @@ use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
 use num_rational::Rational64;
-use oxiz_core::ast::TermManager;
-use oxiz_core::TermId;
+use nixie_core::ast::TermManager;
+use nixie_core::TermId;
 
 /// Represents a random term operation
 #[derive(Debug, Arbitrary)]

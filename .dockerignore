@@ -1,5 +1,5 @@
 # Root .dockerignore — this is the file Docker actually reads when
-# building from the repo root with `-f oxiz-smtcomp/Dockerfile`.
+# building from the repo root with `-f nixie-smtcomp/Dockerfile`.
 # Keeps target/, git metadata, wasm artefacts, and other bulk out of
 # the build context so the builder stage stays fast.
 target/
@@ -11,8 +11,8 @@ target/
 **/node_modules/
 **/__pycache__/
 **/*.pyc
-oxiz-wasm/pkg/
-oxiz-wasm/target/
+nixie-wasm/pkg/
+nixie-wasm/target/
 bench/logs/
 **/.DS_Store
 # The root Cargo.lock is git-ignored as of 0.3.1 and the builder stage no

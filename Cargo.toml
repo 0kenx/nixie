@@ -1,44 +1,44 @@
 [workspace]
 resolver = "2"
 members = [
-    "oxiz",
-    "oxiz-core",
-    "oxiz-time",
-    "oxiz-math",
-    "oxiz-sat",
-    "oxiz-nlsat",
-    "oxiz-theories",
-    "oxiz-solver",
-    "oxiz-opt",
-    "oxiz-spacer",
-    "oxiz-proof",
-    "oxiz-wasm",
-    "oxiz-cli",
-    "oxiz-smtcomp",
-    "oxiz-py",
-    "oxiz-ml",
+    "nixie",
+    "nixie-core",
+    "nixie-time",
+    "nixie-math",
+    "nixie-sat",
+    "nixie-nlsat",
+    "nixie-theories",
+    "nixie-solver",
+    "nixie-opt",
+    "nixie-spacer",
+    "nixie-proof",
+    "nixie-wasm",
+    "nixie-cli",
+    "nixie-smtcomp",
+    "nixie-py",
+    "nixie-ml",
     "bench/regression",
     "bench/profile",
 ]
 
-# Exclude oxiz-py from default build since it requires maturin for proper Python linking.
-# To build oxiz-py: cd oxiz-py && maturin build
+# Exclude nixie-py from default build since it requires maturin for proper Python linking.
+# To build nixie-py: cd nixie-py && maturin build
 default-members = [
-    "oxiz",
-    "oxiz-core",
-    "oxiz-time",
-    "oxiz-math",
-    "oxiz-sat",
-    "oxiz-nlsat",
-    "oxiz-theories",
-    "oxiz-solver",
-    "oxiz-opt",
-    "oxiz-spacer",
-    "oxiz-proof",
-    "oxiz-wasm",
-    "oxiz-cli",
-    "oxiz-smtcomp",
-    "oxiz-ml",
+    "nixie",
+    "nixie-core",
+    "nixie-time",
+    "nixie-math",
+    "nixie-sat",
+    "nixie-nlsat",
+    "nixie-theories",
+    "nixie-solver",
+    "nixie-opt",
+    "nixie-spacer",
+    "nixie-proof",
+    "nixie-wasm",
+    "nixie-cli",
+    "nixie-smtcomp",
+    "nixie-ml",
     "bench/regression",
     "bench/profile",
 ]
@@ -49,14 +49,14 @@ edition = "2024"
 # Edition 2024 itself only requires rustc 1.85, but the workspace makes
 # pervasive use of let-chains (`if ... && let Some(x) = ... { }`, ~350
 # occurrences across 156 files as of this release) in production code (e.g.
-# `oxiz-sat/src/solver/conflict.rs`, `oxiz-theories/src/euf/solver.rs`), which
+# `nixie-sat/src/solver/conflict.rs`, `nixie-theories/src/euf/solver.rs`), which
 # were only stabilized in 1.88. Set as a conservative, evidence-based floor;
 # lower it only after removing/rewriting every let-chain use, and raise it if
 # a future feature demands a newer compiler.
 rust-version = "1.88"
 authors = ["COOLJAPAN OU (Team KitaSan)"]
 license = "Apache-2.0"
-repository = "https://github.com/cool-japan/oxiz"
+repository = "https://github.com/cool-japan/nixie"
 description = "Next-Generation SMT Solver in Pure Rust"
 keywords = ["smt", "solver", "sat", "verification", "logic"]
 categories = ["algorithms", "science", "mathematics"]
@@ -72,28 +72,28 @@ type_complexity = "allow"
 collapsible_if = "allow"
 
 [workspace.dependencies]
-# Drop-in global allocator – oxiz's CDCL(T) loop is allocation-heavy
+# Drop-in global allocator – nixie's CDCL(T) loop is allocation-heavy
 # (per-check Vec/SmallVec, conflict cores, clause learning, hashmap rehash);
 # mimalloc cuts a large fraction of that overhead vs the system allocator.
 mimalloc = { version = "0.1", default-features = false }
 # Meta crate
-oxiz = { version = "0.3.2", path = "oxiz" }
+nixie = { version = "0.3.2", path = "nixie" }
 
 # Core crates (default-features = false so downstream can control std)
-oxiz-core = { version = "0.3.2", path = "oxiz-core", default-features = false }
-# Wasm-safe std::time drop-ins: the single place any OxiZ crate reads a
-# clock (see oxiz-time/src/lib.rs). Depends on nothing, sits below oxiz-math.
-oxiz-time = { version = "0.3.2", path = "oxiz-time", default-features = false }
-oxiz-math = { version = "0.3.2", path = "oxiz-math", default-features = false }
-oxiz-sat = { version = "0.3.2", path = "oxiz-sat", default-features = false }
-oxiz-nlsat = { version = "0.3.2", path = "oxiz-nlsat" }
-oxiz-theories = { version = "0.3.2", path = "oxiz-theories", default-features = false }
-oxiz-solver = { version = "0.3.2", path = "oxiz-solver", default-features = false }
-oxiz-opt = { version = "0.3.2", path = "oxiz-opt" }
-oxiz-spacer = { version = "0.3.2", path = "oxiz-spacer" }
-oxiz-proof = { version = "0.3.2", path = "oxiz-proof" }
-oxiz-smtcomp = { version = "0.3.2", path = "oxiz-smtcomp" }
-oxiz-ml = { version = "0.3.2", path = "oxiz-ml" }
+nixie-core = { version = "0.3.2", path = "nixie-core", default-features = false }
+# Wasm-safe std::time drop-ins: the single place any Nixie crate reads a
+# clock (see nixie-time/src/lib.rs). Depends on nothing, sits below nixie-math.
+nixie-time = { version = "0.3.2", path = "nixie-time", default-features = false }
+nixie-math = { version = "0.3.2", path = "nixie-math", default-features = false }
+nixie-sat = { version = "0.3.2", path = "nixie-sat", default-features = false }
+nixie-nlsat = { version = "0.3.2", path = "nixie-nlsat" }
+nixie-theories = { version = "0.3.2", path = "nixie-theories", default-features = false }
+nixie-solver = { version = "0.3.2", path = "nixie-solver", default-features = false }
+nixie-opt = { version = "0.3.2", path = "nixie-opt" }
+nixie-spacer = { version = "0.3.2", path = "nixie-spacer" }
+nixie-proof = { version = "0.3.2", path = "nixie-proof" }
+nixie-smtcomp = { version = "0.3.2", path = "nixie-smtcomp" }
+nixie-ml = { version = "0.3.2", path = "nixie-ml" }
 
 # Memory & Interning
 bumpalo = "3.20"

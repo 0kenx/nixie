@@ -5,7 +5,7 @@
 Per `docs/2026-08-established-research-candidates.md` Priority 2: an
 alternate feasibility driver for `Simplex` (King/Barrett/Dutertre,
 FMCAD'13; cvc5 `soi_simplex.cpp`), flag-gated (`SimplexConfig::enable_soi`,
-default off; `OXIZ_ARITH_SOI=1` experiment knob), objective over exact
+default off; `NIXIE_ARITH_SOI=1` experiment knob), objective over exact
 delta-rationals, existing degeneracy discipline, **the current
 one-violation path as fallback, and all conflicts through the existing
 exact explanation path** (no new certificate surface — the doc's own
@@ -16,7 +16,7 @@ pivot count is insufficient if row work increases; Z3 parity required.
 
 ## What was implemented
 
-`make_feasible_soi` in `oxiz-theories/src/arithmetic/simplex/mod.rs`:
+`make_feasible_soi` in `nixie-theories/src/arithmetic/simplex/mod.rs`:
 
 * error collection over basics; the sum-of-infeasibilities linear form
   built exactly over the current nonbasics (all rational steps checked,

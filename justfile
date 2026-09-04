@@ -86,11 +86,11 @@ verify-full:
 fuzz-run target duration="60":
     #!/usr/bin/env bash
     set -euo pipefail
-    if [[ -n "${OXIZ_FUZZ_TOOLCHAIN_BIN:-}" ]]; then
-      export PATH="${OXIZ_FUZZ_TOOLCHAIN_BIN}:$PATH"
+    if [[ -n "${NIXIE_FUZZ_TOOLCHAIN_BIN:-}" ]]; then
+      export PATH="${NIXIE_FUZZ_TOOLCHAIN_BIN}:$PATH"
     fi
     if ! rustc -Z help >/dev/null 2>&1; then
-      echo "cargo-fuzz requires a nightly rustc; enter the Nix dev shell or set OXIZ_FUZZ_TOOLCHAIN_BIN to a nightly toolchain bin directory." >&2
+      echo "cargo-fuzz requires a nightly rustc; enter the Nix dev shell or set NIXIE_FUZZ_TOOLCHAIN_BIN to a nightly toolchain bin directory." >&2
       exit 1
     fi
     corpus_dir="{{_fuzz_dir}}/corpus/{{target}}"
@@ -134,7 +134,7 @@ py *args="--release":
     ./scripts/build_python.sh {{args}}
 
 cli *args="":
-    cargo run --release -p oxiz-cli -- {{args}}
+    cargo run --release -p nixie-cli -- {{args}}
 
 clean:
     cargo clean

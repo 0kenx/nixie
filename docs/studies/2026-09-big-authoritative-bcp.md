@@ -9,7 +9,7 @@ so the binary entries carried in the watch lists are pure redundancy.
 
 ## The measurement that names the target (diag build, worktree scratch)
 
-Visit-mix instrumentation (`OXIZ_VISIT_STATS`, MAXC=40000/20000, cadical
+Visit-mix instrumentation (`NIXIE_VISIT_STATS`, MAXC=40000/20000, cadical
 preset) on the loss files and then the 54-file corpus:
 
 | file | visits | blocker-hit | bin arena-miss | binary share of watch **entries** |
@@ -157,7 +157,7 @@ battery below is run regardless of the perf outcome.
 - **Gate 2b (both-solve corpus, 12 s cap): geomean 1.0219 over 20 cells,
   0 verdict mismatches** — the corpus-level no-regression gate passes
   with a real positive (the binary-heavy cells lift the geomean).
-- **Gate 3 (soundness)**: `oxiz-sat` 879/879 (3 new tests: BIG-only
+- **Gate 3 (soundness)**: `nixie-sat` 879/879 (3 new tests: BIG-only
   registration, the purged-edge tripwire, phantom parity semantics);
   workspace 10 418/10 418; clippy/fmt/doc clean; `diff_equiv` 200 k
   release iterations + 20 k debug iterations (invariant checker active
@@ -173,7 +173,7 @@ registers binaries "only in the watch list" was stale (it registers both
 since the deletable-reasons change) — corrected; `transred` only reads
 the BIG and retires whole clauses through `retire_clause` (edge purge
 included), so it is safe under BIG-authority; the knobbed strip path
-(`OXIZ_ROOT_SWEEP_STRIP=1`) now also gains BIG edges for its
+(`NIXIE_ROOT_SWEEP_STRIP=1`) now also gains BIG edges for its
   shrink-to-binary products (via `attach_watchers`), which can change
   trajectories *under that knob* — the knob's own verdict gates govern
   there, not trajectory identity.

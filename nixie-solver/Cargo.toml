@@ -1,0 +1,72 @@
+[package]
+name = "nixie-solver"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Main CDCL(T) Solver API for Nixie"
+keywords = ["smt", "solver", "cdcl"]
+categories = ["algorithms"]
+
+[dependencies]
+nixie-core = { workspace = true, default-features = false }
+# The single place this crate reads a clock (wasm-safe; see nixie-time).
+nixie-time = { workspace = true }
+nixie-sat = { workspace = true, default-features = false }
+nixie-theories = { workspace = true, default-features = false }
+tracing = { workspace = true, default-features = false, optional = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+num-bigint = { workspace = true, default-features = false }
+num-rational = { workspace = true, default-features = false, features = ["num-bigint"] }
+num-traits = { workspace = true, default-features = false }
+num-integer = { workspace = true, default-features = false }
+hashbrown.workspace = true
+portable-atomic-util = { workspace = true }
+
+# Optional (std-only)
+rayon = { workspace = true, optional = true }
+nixie-proof = { workspace = true, optional = true }
+
+[features]
+default = ["std", "property-tests", "nlsat"]
+std = [
+    "nixie-time/std",
+    "nixie-core/std",
+    "nixie-sat/std",
+    "nixie-theories/std",
+    "rayon",
+    "tracing",
+    "tracing/std",
+    "num-bigint/std",
+    "num-rational/std",
+    "num-traits/std",
+    "rustc-hash/std",
+    "nixie-proof",
+]
+# Nonlinear dispatch: forwards to `nixie-theories/nlsat` (which pulls the
+# `nixie-nlsat` crate). With it OFF the `NlsatTheory` field and the
+# cell-decomposition dispatch compile out and the honesty gate answers
+# `unknown` for nonlinear atoms. (Ported from upstream v0.3.3.)
+nlsat = ["nixie-theories/nlsat", "std"]
+parallel-theories = ["rayon"]
+property-tests = []
+profiling = [
+    "std",
+    "nixie-core/profiling",
+    "nixie-sat/profiling",
+    "nixie-theories/profiling",
+    "nixie-proof/profiling",
+]
+
+[dev-dependencies]
+proptest = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "solver_benchmarks"
+harness = false
+
+[lints.clippy]
+unwrap_used = "deny"

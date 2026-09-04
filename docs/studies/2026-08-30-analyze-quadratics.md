@@ -1,14 +1,14 @@
 # Conflict-analysis quadratics: the worker-class per-conflict cost was a sort, not the search
 
 Date: 2026-08-30. Trigger: fresh standing table (54-file satcomp2024 extract,
-serial-quiet oxiz 43 vs cadical 48, 0 mismatches) decomposed the 9 one-sided
+serial-quiet nixie 43 vs cadical 48, 0 mismatches) decomposed the 9 one-sided
 losses into conflicts-to-model vs per-conflict instruction cost at a fixed
 conflict cap, pinned to the `cpu_core` PMU (this box is hybrid; bare
 `-e instructions` reads the atom PMU first and yields garbage lines).
 
 ## The decomposition (both solvers, cap 40 000 conflicts)
 
-| file | oxiz instr/conflict | cadical instr/conflict | ratio |
+| file | nixie instr/conflict | cadical instr/conflict | ratio |
 |---|---|---|---|
 | worker_550 | **18.2 M** | 1.81 M | **10.1×** |
 | timetable | 3.18 M | 2.38 M | 1.34 |
@@ -223,7 +223,7 @@ the kind of off-by-one the identity gate exists to catch.
 
 ## Session close: standing table after the three landed slices
 
-54-file table (40 s, 6-way, load ~4–6): **oxiz 43 / cadical 48, 0
+54-file table (40 s, 6-way, load ~4–6): **nixie 43 / cadical 48, 0
 mismatches, 5 ox-only wins** — headline unchanged (the losses are
 conflicts-to-model-bound, as the deep study catalogue says), but the
 composition moved exactly where a pure throughput win predicts:
@@ -333,7 +333,7 @@ load-bearing); and the propagate watch layout (the named next
 data-structure slice). None is a missing mechanism; all are constant
 factors on files whose *losses* are conflicts-to-model-bound.
 
-Final 54-file table (40 s, 6-way, load 3–16): oxiz 43 / cadical 49,
+Final 54-file table (40 s, 6-way, load 3–16): nixie 43 / cadical 49,
 0 mismatches, 10 one-sided losses (summle ×2 solved; shuff / FmlaEqu /
 frb45 flap at the cap edge with load as they always have).
 
@@ -448,7 +448,7 @@ g2-slp 1.43×, circuit64 1.19×, summle53 1.16×.
 
 ## Standing table at low load after all six slices
 
-54-file table (40 s, 6-way, load 2.1): **oxiz 45 / cadical 49,
+54-file table (40 s, 6-way, load 2.1): **nixie 45 / cadical 49,
 0 mismatches** – up from 43/48 at the same load at session start
 (cadical's own count stable at 48–49 across the day). Losses reduced to
 8: mdp-28 (45 s serial, cap-edge), j3037 (37 s), worker (43 s),
@@ -577,7 +577,7 @@ regresses to timeout — the fifth instance of the single-policy-port
 failure mode: porting one cadical policy onto this engine's surrounding
 phase/schedule machinery redistributes trajectories both ways.
 
-**Disposition**: landed behind `OXIZ_WALK_STRIP_FIXED=1`, **default
+**Disposition**: landed behind `NIXIE_WALK_STRIP_FIXED=1`, **default
 off** (historical exclusion behavior, trajectory-identical at default —
 verified bit-exact). The knob keeps the study reproducible and the port
 available if the surrounding machinery ever moves closer to cadical's.
@@ -712,7 +712,7 @@ sweep, 1 000 fuzz iterations, differential 160/0, parity 169/0/1):
 
 Same shape as `chrono_reuse`: cadical-faithful mechanism, strong
 mechanistic wins, broad regress. **Knob-gated
-(`OXIZ_ROOT_SWEEP=1`), default off** — the default path is
+(`NIXIE_ROOT_SWEEP=1`), default off** — the default path is
 trajectory-identical to pre-change (verified bit-exact on j3037).
 
 ### The deep study's first hard result
@@ -728,7 +728,7 @@ session; rebuild it the same way – copy `src/` + `configure` +
 glue `UPDATE_AVERAGE`s in `analyze.cpp`, `CXXFLAGS=-DCADICAL_CONF_TRACE
 ./configure && make`. Never patch the reference tree.)
 
-Addendum: with `OXIZ_ROOT_SWEEP=1`, `combined-crypto1` solves `sat` in
+Addendum: with `NIXIE_ROOT_SWEEP=1`, `combined-crypto1` solves `sat` in
 53.5 s (default TO) and `FmlaEquivChain` `unsat` in 60.4 s (default
 TO) – the bloat signature covers at least three of the four
 "conflicts-parity" losses. The sweep knob is the recorded way to reach
@@ -763,7 +763,7 @@ guard à la reduce's `is_reason`; assertion-scope/proof/assumption
 gates; `real_theory_attached` gate — the BV path is near-pure-SAT so
 the last one doesn't even engage). Root cause still open; reproducer:
 the SMT2 above, `precompile/48ae97a` + retire-on default. **Disposition:
-everything back behind `OXIZ_ROOT_SWEEP=1`, default off, hardened**
+everything back behind `NIXIE_ROOT_SWEEP=1`, default off, hardened**
 (the three gates and the reason guard stay — they are correct
 regardless and make the knobbed sweep safer than the first landing).
 The knobbed SAT-only configuration fuzzed clean (1 000 iterations) and
@@ -785,7 +785,7 @@ ON answers `unsat`** — the earlier "guards fixed it" reading was the
 strip-on configurations, and at least one intermediate observation was
 also a stale-shared-target artifact. The guards are defense in depth,
 not the cure. Live reproducer (all instrumentation in this section was
-temporary and reverted): `OXIZ_ROOT_SWEEP=1 OXIZ_ROOT_SWEEP_NOSTRIP=1`
+temporary and reverted): `NIXIE_ROOT_SWEEP=1 NIXIE_ROOT_SWEEP_NOSTRIP=1`
 on `cegar_mul_low_word_identity_refuted`'s input.
 
 ### The causal chain, layer by layer (each instrumented and verified)
@@ -807,7 +807,7 @@ on `cegar_mul_low_word_identity_refuted`'s input.
    empty-`bv_terms` short-circuit at theory_manager.rs:3926 does not
    apply).
 4. **What remains is the embedded SAT solver itself.** `self.bv` owns
-   its own `oxiz_sat::Solver` (the sweep fired *there*, during the
+   its own `nixie_sat::Solver` (the sweep fired *there*, during the
    CEGAR rounds — `self.sat`, the main solver, is a different
    instance). The general path's BV final check re-solves that embedded
    instance and accepts its answer. The embedded instance carries the
@@ -882,13 +882,13 @@ guard) answered a wrong `unsat` on `circuit_48in64out_700g/800g` and
 4 seeds), deterministically `unsat` with the strip on. A different
 mechanism from the level-0 permanence bug (this one over-strengthens);
 root cause open. **The strip now lives behind its own
-`OXIZ_ROOT_SWEEP_STRIP=1` (default off)** — its only measured win
+`NIXIE_ROOT_SWEEP_STRIP=1` (default off)** — its only measured win
 (g2-slp 36 s → 22 s) stays reachable; the wrong-unsat reproducers are
 recorded.
 
 **Default flip**: the permanence-guarded retire (satisfied non-binary
 clauses, original-clause-justified only) is **ON by default**
-(`OXIZ_ROOT_SWEEP=0` opts out). Gates at the new default: cegar repro
+(`NIXIE_ROOT_SWEEP=0` opts out). Gates at the new default: cegar repro
 `unsat`; fragile files `sat`; corpus verdict sweep 34/0; 1 000 fuzz
 iterations 0 mismatches; workspace 10 415/10 415; differential 160/0
 (par2 2 316); z3 parity 169/0/1; wisas canary. Corpus A/B under load
@@ -928,14 +928,14 @@ Chasing the strip's wrong `unsat` (`circuit_48in64out_700g/800g`,
    learned unit, a BVE product, or a propagation chain through an
    earlier in-place rewrite is the open question.
 
-The strip stays behind `OXIZ_ROOT_SWEEP_STRIP=1` (default off) with
+The strip stays behind `NIXIE_ROOT_SWEEP_STRIP=1` (default off) with
 these reproducers and the audit method recorded — the next session can
 binary-search the first unentailed level-0 assignment by logging every
 level-0 propagation's (var, reason) and running the same cadical
 entailment check per fact.
 
 Default (permanence-guarded retire) re-verified after the guard fix:
-cegar repro `unsat`, fragile files `sat`, oxiz-sat+oxiz-solver 2 902
+cegar repro `unsat`, fragile files `sat`, nixie-sat+nixie-solver 2 902
 tests, clippy/fmt clean.
 
 ## Pass 11: the strip's wrong-unsat root-caused (the guard was one level deep) and fixed
@@ -977,7 +977,7 @@ answer `sat`, the cegar repro stays `unsat`, and the fuzz is clean —
 but **g2-slp's strip win (22 s) vanishes** (36.4 s ≈ retire-only):
 that win was harvesting unverifiable chain facts. Recorded honestly:
 the strip's only measured advantage was an artifact of the unsound
-harvest; it stays quarantined (`OXIZ_ROOT_SWEEP_STRIP=1`) and sound.
+harvest; it stays quarantined (`NIXIE_ROOT_SWEEP_STRIP=1`) and sound.
 
 Gates at default: corpus 34/0, 600+400 fuzz iterations 0 mismatches,
 workspace 10 415/10 415, differential 160/0, z3 parity 169/0/1, wisas

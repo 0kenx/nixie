@@ -1,7 +1,7 @@
-diff --git a/oxiz-sat/src/lib.rs b/oxiz-sat/src/lib.rs
+diff --git a/nixie-sat/src/lib.rs b/nixie-sat/src/lib.rs
 index 39d0faa..e29ff04 100644
---- a/oxiz-sat/src/lib.rs
-+++ b/oxiz-sat/src/lib.rs
+--- a/nixie-sat/src/lib.rs
++++ b/nixie-sat/src/lib.rs
 @@ -163,6 +163,7 @@ mod occurrence;
  pub mod preprocessing;
  mod preprocessing_core;
@@ -10,10 +10,10 @@ index 39d0faa..e29ff04 100644
  mod reluctant;
  mod resolution_graph;
  mod restart_model;
-diff --git a/oxiz-sat/src/solver/conflict.rs b/oxiz-sat/src/solver/conflict.rs
+diff --git a/nixie-sat/src/solver/conflict.rs b/nixie-sat/src/solver/conflict.rs
 index 2d15b30..6de6ee5 100644
---- a/oxiz-sat/src/solver/conflict.rs
-+++ b/oxiz-sat/src/solver/conflict.rs
+--- a/nixie-sat/src/solver/conflict.rs
++++ b/nixie-sat/src/solver/conflict.rs
 @@ -1648,25 +1648,67 @@ impl Solver {
          // Mark every block literal shrinkable; `open` counts undischarged
          // shrinkable literals.
@@ -193,10 +193,10 @@ index 2d15b30..6de6ee5 100644
          ShrinkStep::NewlyShrinkable
      }
  
-diff --git a/oxiz-sat/src/solver/mod.rs b/oxiz-sat/src/solver/mod.rs
+diff --git a/nixie-sat/src/solver/mod.rs b/nixie-sat/src/solver/mod.rs
 index 0df4915..71eb7c6 100644
---- a/oxiz-sat/src/solver/mod.rs
-+++ b/oxiz-sat/src/solver/mod.rs
+--- a/nixie-sat/src/solver/mod.rs
++++ b/nixie-sat/src/solver/mod.rs
 @@ -28,6 +28,7 @@ use crate::lrb::LRB;
  use crate::memory_opt::{MemoryAction, MemoryOptimizer};
  #[allow(unused_imports)]
@@ -223,7 +223,7 @@ index 0df4915..71eb7c6 100644
 @@ -1231,6 +1240,11 @@ pub struct Solver {
      ///  multi_block_lits, walk_success, walk_fail, fallback_saved).
      pub(super) shrink_trace: (u64, u64, u64, u64, u64, u64, u64, u64),
-     /// Shrink-study failure-reason counters (OXIZ_SHRINK_TRACE=1).
+     /// Shrink-study failure-reason counters (NIXIE_SHRINK_TRACE=1).
 +    /// Monotone radix heap for the shrink block walk (cadical `reap`,
 +    /// `opts.shrinkreap` default-on): pops the newest shrinkable trail
 +    /// position directly instead of scanning unflagged trail entries.

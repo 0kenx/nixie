@@ -1,6 +1,6 @@
-# OxiZ Common Pitfalls and Solutions
+# Nixie Common Pitfalls and Solutions
 
-Practical guide to avoiding the most common mistakes when using OxiZ,
+Practical guide to avoiding the most common mistakes when using Nixie,
 with concrete solutions for each issue.
 
 ---
@@ -23,8 +23,8 @@ with concrete solutions for each issue.
 
 **Solution:** Always declare the most specific logic:
 ```rust
-use oxiz_solver::Solver;
-use oxiz_core::ast::TermManager;
+use nixie_solver::Solver;
+use nixie_core::ast::TermManager;
 
 let mut solver = Solver::new();
 let mut tm = TermManager::new();
@@ -71,7 +71,7 @@ which is complete for reals but not integers.
 
 Set timeouts via:
 ```rust
-use oxiz_solver::SolverConfig;
+use nixie_solver::SolverConfig;
 
 let mut config = SolverConfig::balanced();
 config.timeout_ms = 30_000; // 30 seconds
@@ -169,7 +169,7 @@ satisfies the constraints as written, but not as intended.
 
 **Cause:** Both solvers are correct; the difference is usually:
 - A timeout in one solver but not the other
-- Different default options (Z3 enables some options OxiZ does not)
+- Different default options (Z3 enables some options Nixie does not)
 - Different model completion behavior for underspecified UF
 
 **Debugging:** Test with the same SMT-LIB2 file on both solvers with

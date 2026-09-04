@@ -28,7 +28,7 @@ passes may collapse.
   desync); pure-literal's `assigned` exclusion treats frozen as
   assigned.  Frozen entries are retained forever (conservative
   direction: the set only ever shrinks what the passes may do).
-- SMT layer: `OXIZ_FREEZE_COLLAPSE=1` enables `enable_bve` +
+- SMT layer: `NIXIE_FREEZE_COLLAPSE=1` enables `enable_bve` +
   `enable_equiv_substitution` in the embedded core and freezes the
   `var_to_constraint` keys at every check entry (idempotent, covers
   atoms asserted since the previous check).
@@ -65,7 +65,7 @@ doesn't have obvious regress, it shall be enabled".  Codified as the
 | Z3 parity | 167/0/1 identical |
 | full bar | 10 102 tests, clippy/fmt/doc |
 
-Default-on strictly dominates on this corpus.  `OXIZ_FREEZE_COLLAPSE=0`
+Default-on strictly dominates on this corpus.  `NIXIE_FREEZE_COLLAPSE=0`
 remains the A/B off-switch.  The strict statistical program still
 applies to any *quantified* claim about the win.
 

@@ -1,8 +1,8 @@
-# Z3 to OxiZ Migration Guide
+# Z3 to Nixie Migration Guide
 
-This guide maps common Z3 Python API patterns to their OxiZ equivalents. OxiZ
-is a Pure Rust SMT solver that exposes a Python interface via the `oxiz` package
-(backed by PyO3). The core difference in philosophy is that OxiZ builds terms
+This guide maps common Z3 Python API patterns to their Nixie equivalents. Nixie
+is a Pure Rust SMT solver that exposes a Python interface via the `nixie` package
+(backed by PyO3). The core difference in philosophy is that Nixie builds terms
 either through explicit `TermManager` API calls or through SMT-LIB2 string
 assertions, whereas Z3's Python API builds terms using operator-overloaded Python
 objects.
@@ -31,19 +31,19 @@ objects.
 import z3
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-import oxiz
+import nixie
 ```
 
 ---
 
 ## Core API Mapping Table
 
-| Z3 Python API | OxiZ Python API | Notes |
+| Z3 Python API | Nixie Python API | Notes |
 |---|---|---|
-| `z3.Solver()` | `oxiz.Solver()` | Direct equivalent |
-| `z3.Context()` | `oxiz.TermManager()` | OxiZ separates term construction (TermManager) from solving (Solver) |
+| `z3.Solver()` | `nixie.Solver()` | Direct equivalent |
+| `z3.Context()` | `nixie.TermManager()` | Nixie separates term construction (TermManager) from solving (Solver) |
 | `z3.Bool('p')` | `tm.mk_var('p', 'Bool')` | Sort is a string: `'Bool'` |
 | `z3.Int('x')` | `tm.mk_var('x', 'Int')` | Sort is a string: `'Int'` |
 | `z3.Real('r')` | `tm.mk_var('r', 'Real')` | Sort is a string: `'Real'` |
@@ -57,7 +57,7 @@ import oxiz
 | `z3.Or(a, b, c)` | `tm.mk_or([a, b, c])` | Takes a list |
 | `z3.Implies(a, b)` | `tm.mk_implies(a, b)` | |
 | `z3.Xor(a, b)` | `tm.mk_xor(a, b)` | |
-| `a == b` | `tm.mk_eq(a, b)` | No operator overloading in OxiZ terms |
+| `a == b` | `tm.mk_eq(a, b)` | No operator overloading in Nixie terms |
 | `a != b` | `tm.mk_not(tm.mk_eq(a, b))` | Use distinct for more than two |
 | `z3.Distinct(a, b, c)` | `tm.mk_distinct([a, b, c])` | |
 | `a + b` | `tm.mk_add([a, b])` | |
@@ -103,11 +103,11 @@ p = z3.Bool('p')
 b = z3.BitVec('b', 32)
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
+tm = nixie.TermManager()
 
 x = tm.mk_var('x', 'Int')
 y = tm.mk_var('y', 'Real')
@@ -138,12 +138,12 @@ s.add(y > 0)
 result = s.check()   # z3.sat / z3.unsat / z3.unknown
 ```
 
-**OxiZ (term API):**
+**Nixie (term API):**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_LIA')
 
 x = tm.mk_var('x', 'Int')
@@ -157,15 +157,15 @@ s.assert_term(tm.mk_gt(x, zero), tm)
 s.assert_term(tm.mk_gt(y, zero), tm)
 
 result = s.check_sat(tm)
-# result == oxiz.SolverResult.Sat
+# result == nixie.SolverResult.Sat
 ```
 
-**OxiZ (SMT-LIB2 string API – simpler for most use cases):**
+**Nixie (SMT-LIB2 string API – simpler for most use cases):**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_LIA')
 
 s.assert_formula('(declare-const x Int)', tm)   # not needed for term API
@@ -192,14 +192,14 @@ if s.check() == z3.sat:
     print(m[x], m[y])
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-if s.check_sat(tm) == oxiz.SolverResult.Sat:
+if s.check_sat(tm) == nixie.SolverResult.Sat:
     model = s.get_model(tm)          # dict[str, str]
     print(model['x'], model['y'])    # e.g. "3", "7"
 ```
 
-Model values in OxiZ are always returned as strings. Parse them as needed:
+Model values in Nixie are always returned as strings. Parse them as needed:
 
 | Sort | Example value string |
 |------|---------------------|
@@ -212,7 +212,7 @@ Model values in OxiZ are always returned as strings. Parse them as needed:
 
 ## Incremental Solving (push/pop)
 
-The `push()` and `pop()` interface is identical between Z3 and OxiZ.
+The `push()` and `pop()` interface is identical between Z3 and Nixie.
 
 **Z3:**
 ```python
@@ -227,11 +227,11 @@ r2 = s.check()
 s.pop()
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-s = oxiz.Solver()
+s = nixie.Solver()
 s.set_logic('QF_LIA')
-tm = oxiz.TermManager()
+tm = nixie.TermManager()
 x = tm.mk_var('x', 'Int')
 
 s.push()
@@ -251,7 +251,7 @@ Current scope depth can be inspected with `solver.context_level`.
 
 ## Optimization
 
-Z3's `Optimize` class maps to OxiZ's `Optimizer`:
+Z3's `Optimize` class maps to Nixie's `Optimizer`:
 
 **Z3:**
 ```python
@@ -264,12 +264,12 @@ opt.check()
 m = opt.model()
 ```
 
-**OxiZ:**
+**Nixie:**
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-opt = oxiz.Optimizer()
+tm = nixie.TermManager()
+opt = nixie.Optimizer()
 opt.set_logic('QF_LIA')
 
 x = tm.mk_var('x', 'Int')
@@ -278,7 +278,7 @@ opt.assert_term(tm.mk_le(x, tm.mk_int(10)))
 opt.minimize(x)
 
 result = opt.optimize(tm)
-if result == oxiz.OptimizationResult.Optimal:
+if result == nixie.OptimizationResult.Optimal:
     model = opt.get_model(tm)
     print(model['x'])    # "0"
 ```
@@ -288,20 +288,20 @@ if result == oxiz.OptimizationResult.Optimal:
 ## SMT-LIB2 String Interface
 
 For users migrating from Z3 `.smt2` files or who prefer working with SMT-LIB2
-syntax directly, OxiZ's CLI accepts `.smt2` files natively:
+syntax directly, Nixie's CLI accepts `.smt2` files natively:
 
 ```bash
-oxiz solve problem.smt2
+nixie solve problem.smt2
 ```
 
 The `assert_formula` method on `Solver` also accepts raw SMT-LIB2 term strings,
 making it easy to embed existing SMT-LIB2 logic into Python scripts:
 
 ```python
-import oxiz
+import nixie
 
-tm = oxiz.TermManager()
-s = oxiz.Solver()
+tm = nixie.TermManager()
+s = nixie.Solver()
 s.set_logic('QF_BV')
 
 # Assert directly using SMT-LIB2 syntax
@@ -309,7 +309,7 @@ s.assert_formula('(= (bvand x #xff) #x0f)', tm)
 result = s.check_sat(tm)
 ```
 
-The OxiZ CLI also supports unsat core extraction, proof generation, and
+The Nixie CLI also supports unsat core extraction, proof generation, and
 interactive REPL mode – features accessible from the terminal that complement
 the Python API.
 
@@ -317,7 +317,7 @@ the Python API.
 
 ## Supported Logics
 
-OxiZ supports the following SMT-LIB2 logic identifiers. Pass them to
+Nixie supports the following SMT-LIB2 logic identifiers. Pass them to
 `solver.set_logic(...)` or include `(set-logic ...)` in `.smt2` files.
 
 ### Quantifier-Free Logics (benchmarks in `bench/z3_parity/benchmarks/`)
@@ -353,14 +353,14 @@ OxiZ supports the following SMT-LIB2 logic identifiers. Pass them to
 
 ## Known Limitations vs Z3
 
-| Feature | Z3 | OxiZ Status |
+| Feature | Z3 | Nixie Status |
 |---------|-----|------------|
 | Python operator overloading (`x + y`, `x == y`) | Full support | Not supported – use `tm.mk_*` methods or `assert_formula` |
 | Tactic framework (`z3.Tactic`, `z3.Then`, `z3.Or`) | Rich tactic combinators | Limited – CLI exposes strategy options; Python API does not yet expose tactics |
 | `z3.Solver.assertions()` | Returns assertion list as Z3 exprs | Not available – assertion introspection is not yet exposed |
 | `z3.ForAll` / `z3.Exists` | Python-level quantifier creation | Not available in Python API – use SMT-LIB2 string assertions with `(forall ...)` |
 | `z3.FP*` floating-point operations | Full IEEE 754 support | Partial – `QF_FP` benchmarks pass; Python term API for FP not yet exposed |
-| Algebraic numbers in models | Z3 returns algebraic number objects | OxiZ returns rational string approximations |
+| Algebraic numbers in models | Z3 returns algebraic number objects | Nixie returns rational string approximations |
 | `z3.Probe` | Formula probing | Not available |
 | `z3.ParOr` / parallel tactics | Native parallel tactics | Portfolio solving available via CLI `--parallel` flag |
 | Lambda / array lambda | `z3.Lambda` | Not yet supported |

@@ -19,7 +19,7 @@ baselines: result store `precompile/dcfc089/benchmark/runs/sc24f/` (seed 0).
 
 ## 1. Per-round telemetry: what an inprocess round actually does
 
-`OXIZ_INPROC_TRACE=1` (landed with this study) prints per scheduled round:
+`NIXIE_INPROC_TRACE=1` (landed with this study) prints per scheduled round:
 cost (`props_in_round`), yield, per-pass deltas (`els units shr sub tred
 tfailed`), plus `gate_congruence`/`els_one_shot` firing lines.  Swept over
 the 19 decisive files (10 winners, 9 losers of the 2026-09-04 A/B):
@@ -81,7 +81,7 @@ Per-component knockout of kissat 4.0.4 on the anchors (conflicts):
 | `{sweep,backbone,vivify,transitive}=0` | 72 667 (3.79×) | — | — |
 
 With its probe subsystem disabled, kissat needs **more** conflicts on
-6s167-opt (545 k) than oxiz with inprocessing off (118 k).  Note what
+6s167-opt (545 k) than nixie with inprocessing off (118 k).  Note what
 kissat 4.0's "probe" is: `src/probe.c` is a 104-line *driver* — the round
 iterates congruence → substitute → backbone → vivify → sweep (kitten) →
 substitute → transred → factor to a fixpoint (`proberounds`); there is no
@@ -100,7 +100,7 @@ closed `2026-09-02` retention studies, T/N ≈ 1.0).
 
 ## 4. The bug the telemetry exposed: the scheduled ELS was a silent no-op
 
-Instrumenting why our structural numbers are so much weaker (oxiz on
+Instrumenting why our structural numbers are so much weaker (nixie on
 6s167: `substitutions=0` vs kissat's ~1 237 merged vars) found it: the
 conflict-scheduled ELS slot (`learn.rs`, introduced by `58df118`,
 2026-08-20) sets the one-shot latch **before** calling
@@ -300,7 +300,7 @@ wins (worker_550 106 143 → 46 659 = **0.44×**, stable-300 491 382 →
 against real losses (summle class 2.4–5.6×, Timetable/qwh/af-synthesis/
 64_25/rbsat/circuit_64i TO at cap).  Net at the cap: not better than
 baseline.  Per the enablement rule the slice lands **default off**
-(`SolverConfig::enable_factoring`, `OXIZ_FACTOR=1` / `FACTOR=1` in
+(`SolverConfig::enable_factoring`, `NIXIE_FACTOR=1` / `FACTOR=1` in
 `stats_solve`) as sound, tested A/B infrastructure.
 
 **Recorded next slices** (each pre-registered before measuring): chain
@@ -360,7 +360,7 @@ factored solve is 26.4 s vs the default's 31.6 s (the pass is included).
 ## 11. Fifth follow-up (same day): the §6 seed gate falsifies the anchor collapses
 
 The §10 collapses were default-trajectory draws.  10-seed CRN
-(`off`/`OXIZ_FACTOR=1`, 120 s cap, then sequential quiet-core 300 s runs
+(`off`/`NIXIE_FACTOR=1`, 120 s cap, then sequential quiet-core 300 s runs
 to strip wall contamination from the pass itself):
 
 | file | off (seeds 1–10) | factored (seeds 1–10) | sequential quiet, factored |
@@ -407,7 +407,7 @@ rewrite):
   decision** — 3 543 fresh vars × 195 k decisions alone exceeds a 180 s
   cap on worker_550 (the run produced no verdict at all).  The mechanism
   is unusable at this scale; recorded as a wall hazard of the knob.
-* Dominant VSIDS activity (`OXIZ_FACTOR_BUMPN=5000`, O(1) per decision):
+* Dominant VSIDS activity (`NIXIE_FACTOR_BUMPN=5000`, O(1) per decision):
   worker_550 factored — default seed 46 863 (7× worse than the unpriorized
   6 679), seed 1 TO (vs 15 745 unpriorized), seed 2 2 796 (vs 22 289).
   Mixed across seeds — no reliable descent.
@@ -437,7 +437,7 @@ visits).
 compact pass-local adjacency (CSR snapshot with tombstoned deletions and
 an append region for new quotients) so the counting scans run at memory
 bandwidth, and (b) the chain refinement for matching quality (§12).
-Both are named, self-contained pieces; the `OXIZ_FACTOR_BUDGET` knob
+Both are named, self-contained pieces; the `NIXIE_FACTOR_BUDGET` knob
 (now actually wired) exists for their A/Bs.  The landed default stays
 400 M / 3 543 introductions / worker default-seed 6 679 conflicts —
 and per §11, volume claims go through the 10-seed P(descent) protocol,
@@ -495,7 +495,7 @@ substantially trajectory re-rolls (§6), not phase information; the
 cleanly phase-bound file in the measured set is x9-09054 (and the
 monotone gradient is the signature to demand of any future claim).
 
-`OXIZ_PREWALK=<flips>` (the §8-open "one-shot pre-search phase
+`NIXIE_PREWALK=<flips>` (the §8-open "one-shot pre-search phase
 initialisation": `warmup()` + bounded `walk_round`, best assignment into
 saved phases) lands as the candidate-source knob.  First datapoint: on
 x9-09054 the walk's local optimum does not reach the oracle basin
@@ -505,7 +505,7 @@ closeness is not automatically phase-transferable, exactly the
 
 ## 16. Tenth follow-up (same day): the phase-source screen closes — walk phases cannot reach XOR-crafted basins
 
-`OXIZ_PREWALK` diagnostics (best broken-count of the walk's final
+`NIXIE_PREWALK` diagnostics (best broken-count of the walk's final
 assignment, x9-09054, 450 vars / 4 052 clauses): 1 k ticks → 326 broken,
 10 k → 133, 100 k → 42, 1 M → 32; mid-search walks plateau at 18–22.
 The walk never approaches a model — x9 is XOR-crafted, and ProbSAT-style
@@ -537,7 +537,7 @@ structure at all (its 720 var-pairs are duplicate clauses), so the
 "parity-blind walk" story of §16 was a misattribution.
 
 **Slice landed** (`solver/xor.rs` + `enable_xor_reasoning` /
-`OXIZ_XOR=1`, default off): detection **delegates to the crate's
+`NIXIE_XOR=1`, default off): detection **delegates to the crate's
 existing `XorDetector`** (discovered dormant in `src/xor.rs` — GF2 rows,
 detector with correct `rhs = (negation-parity == 0)` semantics, and an
 unwired `XorPropagator` with watched literals and CDCL conflict
@@ -574,7 +574,7 @@ now exist and are tested.
 ## 18. Twelfth follow-up (same day): XOR-aware probing — landed with a real perf fix, measured flat-to-negative
 
 The tractable slice toward in-search propagation: `xor_probe`
-(`OXIZ_XORPROBE=1`, default off) — build the GF(2) matrix, force
+(`NIXIE_XORPROBE=1`, default off) — build the GF(2) matrix, force
 add-time-pinned units at level 0 (with CNF-propagation interleaved to a
 fixpoint), then probe both polarities of every matrix variable at a
 decision level with CNF propagate + matrix folding; a failed polarity
@@ -606,11 +606,11 @@ limitation: this probing only *fires* when a row becomes single-var or
 falsified under a level-1 probe; CryptoMiniSat's leverage comes from
 folding every assignment during search with conflict clauses fed back
 into CDCL — the integration that remains the recorded multi-session
-lever.  Default stays off; `OXIZ_XORPROBE` joins the infrastructure.
+lever.  Default stays off; `NIXIE_XORPROBE` joins the infrastructure.
 
 ## 19. Thirteenth follow-up (same day): the full in-search integration lands — CryptoMiniSat shape, honest neutral verdict
 
-`OXIZ_XORSEARCH=1` (default off): the GF(2) matrix lives on the Solver
+`NIXIE_XORSEARCH=1` (default off): the GF(2) matrix lives on the Solver
 through search; every assigned trail literal folds into it (occurrence-
 indexed — the first version scanned all rows per fold and made summle/mp1
 wall-bound with *fewer* conflicts than baseline); a row that becomes

@@ -492,20 +492,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz"
+name = "nixie"
 version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-traits",
- "oxiz-core",
- "oxiz-math",
- "oxiz-sat",
- "oxiz-solver",
- "oxiz-theories",
+ "nixie-core",
+ "nixie-math",
+ "nixie-sat",
+ "nixie-solver",
+ "nixie-theories",
 ]
 
 [[package]]
-name = "oxiz-core"
+name = "nixie-core"
 version = "0.3.0"
 dependencies = [
  "bumpalo",
@@ -516,7 +516,7 @@ dependencies = [
  "num-integer",
  "num-rational",
  "num-traits",
- "oxiz-math",
+ "nixie-math",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -531,19 +531,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-fuzz"
+name = "nixie-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
  "libfuzzer-sys",
  "num-bigint",
  "num-rational",
- "oxiz",
- "oxiz-core",
+ "nixie",
+ "nixie-core",
 ]
 
 [[package]]
-name = "oxiz-math"
+name = "nixie-math"
 version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.1",
@@ -558,15 +558,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-nlsat"
+name = "nixie-nlsat"
 version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-rational",
  "num-traits",
  "num_cpus",
- "oxiz-core",
- "oxiz-math",
+ "nixie-core",
+ "nixie-math",
  "rayon",
  "rustc-hash",
  "smallvec",
@@ -575,13 +575,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-proof"
+name = "nixie-proof"
 version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-rational",
  "num-traits",
- "oxiz-core",
+ "nixie-core",
  "regex",
  "rustc-hash",
  "smallvec",
@@ -590,12 +590,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-sat"
+name = "nixie-sat"
 version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.1",
  "libm",
- "oxiz-core",
+ "nixie-core",
  "portable-atomic-util",
  "rayon",
  "rustc-hash",
@@ -604,17 +604,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-solver"
+name = "nixie-solver"
 version = "0.3.0"
 dependencies = [
  "hashbrown 0.17.1",
  "num-bigint",
  "num-rational",
  "num-traits",
- "oxiz-core",
- "oxiz-proof",
- "oxiz-sat",
- "oxiz-theories",
+ "nixie-core",
+ "nixie-proof",
+ "nixie-sat",
+ "nixie-theories",
  "portable-atomic-util",
  "rayon",
  "rustc-hash",
@@ -623,7 +623,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxiz-theories"
+name = "nixie-theories"
 version = "0.3.0"
 dependencies = [
  "egg",
@@ -631,10 +631,10 @@ dependencies = [
  "num-bigint",
  "num-rational",
  "num-traits",
- "oxiz-core",
- "oxiz-math",
- "oxiz-nlsat",
- "oxiz-sat",
+ "nixie-core",
+ "nixie-math",
+ "nixie-nlsat",
+ "nixie-sat",
  "portable-atomic-util",
  "rustc-hash",
  "smallvec",

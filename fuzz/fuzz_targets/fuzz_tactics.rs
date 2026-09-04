@@ -7,8 +7,8 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::TermManager;
-use oxiz::core::tactic::{
+use nixie::TermManager;
+use nixie::core::tactic::{
     CtxSolverSimplifyTactic, EliminateUnconstrainedTactic, Goal, PropagateValuesTactic,
     SimplifyTactic, SolveEqsTactic, SplitTactic, TacticResult,
 };

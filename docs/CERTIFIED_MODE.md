@@ -6,7 +6,7 @@ observable as `sat` or `unsat` until a smaller checking path accepts it. If a
 certificate is missing, unsupported, malformed, or rejected, the public result
 is `unknown`; cached models and unsat cores are cleared.
 
-Enable it with `oxiz --certified-mode`, with
+Enable it with `nixie --certified-mode`, with
 `SolverConfig::certified()`, or with the SMT-LIB option
 `(set-option :certified-mode true)`. The CLI uses
 `Context::require_certified_mode()`, so input cannot downgrade the policy with

@@ -16,13 +16,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Z3 release the recorded baseline was measured against. Z3 verdicts (and its
-# unknown/timeout behaviour) change between releases, so comparing OxiZ against
+# unknown/timeout behaviour) change between releases, so comparing Nixie against
 # a different Z3 than the baseline makes any disagreement unattributable: it is
-# impossible to tell whether OxiZ moved or Z3 did.
+# impossible to tell whether Nixie moved or Z3 did.
 Z3_BASELINE_VERSION="4.15.4"
 Z3_RELEASE_URL="https://github.com/Z3Prover/z3/releases/tag/z3-${Z3_BASELINE_VERSION}"
 
-echo -e "${GREEN}=== OxiZ Z3 Parity Test Suite ===${NC}\n"
+echo -e "${GREEN}=== Nixie Z3 Parity Test Suite ===${NC}\n"
 
 # Check if Z3 is installed
 if ! command -v z3 &> /dev/null; then
@@ -56,8 +56,8 @@ if [ "$Z3_FOUND_VERSION" != "$Z3_BASELINE_VERSION" ]; then
     echo "  against ${Z3_BASELINE_VERSION}. Pinned release: ${Z3_RELEASE_URL}"
 fi
 
-# Build OxiZ
-echo -e "\n${YELLOW}Building OxiZ...${NC}"
+# Build Nixie
+echo -e "\n${YELLOW}Building Nixie...${NC}"
 cd ../..
 cargo build --release --quiet
 

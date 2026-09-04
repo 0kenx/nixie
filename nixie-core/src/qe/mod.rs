@@ -1,0 +1,49 @@
+//! Quantifier Elimination Enhancements
+//!
+//! Provides advanced quantifier elimination techniques:
+//! - Term Graph: For analyzing term structure in QE
+//! - QE Lite: Fast approximate quantifier elimination
+//! - MBI: Model-Based Interpolation
+//!
+//! # Example
+//!
+//! ```ignore
+//! use nixie_core::qe::{TermGraph, QeLite, Mbi};
+//!
+//! // Build term graph for analysis
+//! let graph = TermGraph::from_formula(formula, manager);
+//! let important_vars = graph.identify_important_variables();
+//!
+//! // Try fast QE first
+//! let lite = QeLite::new();
+//! if let Some(result) = lite.eliminate(formula, vars) {
+//!     return result;
+//! }
+//!
+//! // Fall back to full QE
+//! ```
+
+#[allow(unused_imports)]
+use crate::prelude::*;
+
+mod mbi;
+mod qe_lite;
+mod term_graph;
+pub mod virtual_substitution;
+
+pub use mbi::{MbiConfig, MbiInterpolant, MbiSolver, MbiStats};
+pub use qe_lite::{QeLiteConfig, QeLiteResult, QeLiteSolver, QeLiteStats};
+pub use term_graph::{TermGraph, TermGraphConfig, TermGraphStats, TermNode, TermNodeKind};
+pub use virtual_substitution::{Formula, VariableId, eliminate_quantifier_vs};
+
+// Phase 2 enhancements
+pub mod arith;
+pub mod array;
+pub mod bv;
+pub mod cad;
+pub mod datatype;
+pub mod string;
+
+// NLQSAT for non-linear quantified satisfiability
+mod nlqsat;
+pub use nlqsat::{NlqsatConfig, NlqsatResult, NlqsatSolver, NlqsatStats};

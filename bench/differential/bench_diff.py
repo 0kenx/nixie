@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Differential soundness/perf bench: run an oxiz binary on a pinned SMT-LIB
+"""Differential soundness/perf bench: run an nixie binary on a pinned SMT-LIB
 sample and compare every verdict against z3, with optional **model
 validation** and a **family-neighbour** trust analysis.
 
@@ -10,20 +10,20 @@ not (INTEGRATION_NOTES.md). The sample (`sample/selected.json`, seed 20260807,
 
 Use:
   # build the solver under test, then:
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz
+  python3 bench/differential/bench_diff.py --bin target/release/nixie
   # label it for the report:
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label integrate
+  python3 bench/differential/bench_diff.py --bin target/release/nixie --label integrate
   # PR soundness gate (verdict-only; no z3 needed):
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label pr
+  python3 bench/differential/bench_diff.py --bin target/release/nixie --label pr
   # re-score a build WITH model validation + family check (needs z3 on PATH):
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label oz --validate-models
+  python3 bench/differential/bench_diff.py --bin target/release/nixie --label oz --validate-models
   # regress against a committed baseline summary.json (fails on completeness loss / new unsoundness):
   python3 bench/differential/bench_diff.py --bin ... --label pr --baseline bench/differential/results/main/summary.json
 
 Outputs (under --out, default bench/differential/results/<label>/):
-  results.jsonl   per-instance: path, logic, family, z3 verdict, oxiz verdict,
+  results.jsonl   per-instance: path, logic, family, z3 verdict, nixie verdict,
                   time, and (with --validate-models) model_status.
-  unsound.json    every instance where oxiz disagrees with z3 on a sat/unsat.
+  unsound.json    every instance where nixie disagrees with z3 on a sat/unsat.
   summary.json    solved / agree / disagree / timeouts / PAR-2 + (with
                   --validate-models) model-validity, family-suspect and trusted
                   counts (see TRUST MODEL below).
@@ -31,25 +31,25 @@ Outputs (under --out, default bench/differential/results/<label>/):
                   family-neighbour view.
 
 Exit codes:
-  1  if any *soundness* disagreement (oxiz sat where z3 unsat, or vice-versa)
+  1  if any *soundness* disagreement (nixie sat where z3 unsat, or vice-versa)
      is found – this gates a PR. Timeouts/unknown are not soundness failures.
   2  if --baseline is given and a regression is detected relative to it
      (agree_z3 down, or disagree_soundness up, or a previously-agreeing
      instance now disagrees). Reported in addition to the soundness exit.
   Note: the 4 known-unsound instances pinned in
-  oxiz-solver/tests/known_unsound_regressions.rs will trip exit 1 on every run;
+  nixie-solver/tests/known_unsound_regressions.rs will trip exit 1 on every run;
   that is expected and documented (see README.md). The completeness signal is
   in summary.json, not the exit code.
 
 TRUST MODEL (what "solved" means under model validation)
 --------------------------------------------------------
-z3's embedded verdict is the satisfiability oracle: an oxiz `sat` that agrees
+z3's embedded verdict is the satisfiability oracle: an nixie `sat` that agrees
 with z3 IS a correct answer (the instance genuinely is satisfiable). But
 "correct" and "trustworthy-as-evidence-to-port" differ. We report:
 
-  sat_model_valid    oxiz sat, z3 sat, and oziz's emitted model is *consistent*
+  sat_model_valid    nixie sat, z3 sat, and oziz's emitted model is *consistent*
                      with the assertions (z3: asserts∧model = sat). Real solve.
-  sat_model_invalid  oxiz sat but its model contradicts the assertions (z3:
+  sat_model_invalid  nixie sat but its model contradicts the assertions (z3:
                      asserts∧model = unsat). The sat is bogus OR the model
                      emitter is broken – either way, not trustworthy evidence.
   sat_family_suspect an agreeing sat that lives in a family containing ANY
@@ -75,7 +75,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SAMPLE = HERE / "sample" / "selected.json"
-REPO = HERE.parent.parent  # oxiz/ repo root (bench/differential/ -> repo)
+REPO = HERE.parent.parent  # nixie/ repo root (bench/differential/ -> repo)
 
 VERDICTS = ("sat", "unsat", "unknown")
 
@@ -237,7 +237,7 @@ def z3_eval_model(z3_bin, script, timeout):
     return "ERR:" + (r.stdout or r.stderr or "").strip().replace("\n", " ")[:160]
 
 
-def validate_model(z3_bin, oxiz_bin, oxiz_extra, path, orig_text, timeout):
+def validate_model(z3_bin, nixie_bin, nixie_extra, path, orig_text, timeout):
     """Re-run oziz to emit a model, then ask z3 if asserts∧model is consistent.
     Returns (model_status, detail):
       model_status ∈ {valid, invalid, emit_failed, z3_err}
@@ -246,7 +246,7 @@ def validate_model(z3_bin, oxiz_bin, oxiz_extra, path, orig_text, timeout):
     with tempfile.NamedTemporaryFile("w", suffix=".smt2", delete=False) as tf:
         tf.write(probe)
         tmp = tf.name
-    cmd = [oxiz_bin] + (oxiz_extra.split() if oxiz_extra else [])
+    cmd = [nixie_bin] + (nixie_extra.split() if nixie_extra else [])
     t0 = time.perf_counter()
     try:
         r = subprocess.run(cmd + [tmp], capture_output=True, text=True,
@@ -289,12 +289,12 @@ def validate_model(z3_bin, oxiz_bin, oxiz_extra, path, orig_text, timeout):
 # ────────────────────────────── main ────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bin", required=True, help="oxiz binary to test")
-    ap.add_argument("--label", default="oxiz", help="label for the results dir")
+    ap.add_argument("--bin", required=True, help="nixie binary to test")
+    ap.add_argument("--label", default="nixie", help="label for the results dir")
     ap.add_argument("--timeout", type=float, default=10.0)
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--out", default=None)
-    ap.add_argument("--extra", default="-q", help="extra args to the oxiz binary")
+    ap.add_argument("--extra", default="-q", help="extra args to the nixie binary")
     ap.add_argument("--validate-models", action="store_true",
                     help="z3-based model validation for every sat (needs z3)")
     ap.add_argument("--z3", default="z3", help="z3 binary for --validate-models")
@@ -331,7 +331,7 @@ def main():
     print(f"# label={args.label} bin={args.bin} timeout={args.timeout}s "
           f"n={len(insts)} validate_models={args.validate_models}", flush=True)
     rows = []
-    hdr = f"{'logic':<10} {'file':<40} {'z3':>5} {'oxiz':>6} {'oxiz_s':>8}  model"
+    hdr = f"{'logic':<10} {'file':<40} {'z3':>5} {'nixie':>6} {'nixie_s':>8}  model"
     print(hdr); print("-" * len(hdr))
     for i, it in enumerate(insts, 1):
         path = REPO / it["path"]
@@ -469,9 +469,9 @@ def _print_summary(summary, unsound, fam_counts, outdir):
               f"model_invalid={summary['sat_model_invalid']} emit_failed={summary['sat_model_emit_failed']} "
               f"family_suspect={summary['sat_family_suspect']} sat_trusted={summary['sat_trusted']}")
     if unsound:
-        print(f"# {len(unsound)} UNSOUND (oxiz disagrees with z3 on a sat/unsat):")
+        print(f"# {len(unsound)} UNSOUND (nixie disagrees with z3 on a sat/unsat):")
         for r in unsound:
-            print(f"  [{r['logic']}] {r['family']}: {r['file']}: z3={r['z3_res']} oxiz={r['res']}")
+            print(f"  [{r['logic']}] {r['family']}: {r['file']}: z3={r['z3_res']} nixie={r['res']}")
     suspect = {f: c for f, c in fam_counts.items() if c["disagree"] or c["sat_invalid"]}
     if suspect:
         print(f"# {len(suspect)} family(ies) with a disagreement or invalid-model sat:")

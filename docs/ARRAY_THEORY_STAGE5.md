@@ -22,12 +22,12 @@ Z3's array theory **does** materialise axiom instances (lemmas), but:
    continues (it does **not** backtrack to root and re-solve).  `can_propagate`
    / `propagate` are the theory hooks the context polls.
 
-So the lever for oxiz is **not** "avoid atoms" – it is "materialise only the
+So the lever for nixie is **not** "avoid atoms" – it is "materialise only the
 *relevant* atoms, found by index, added incrementally."  The current
 `array_axioms.rs` rescan + round-based re-solve materialises far more (eager
 full-chain unfold) and re-solves from root each round.  Both inflate the search.
 
-## Target architecture for oxiz
+## Target architecture for nixie
 
 A persistent `ArrayTheory` owned by the `Solver` (not rebuilt per round),
 mirroring `var_data_full`:
@@ -48,29 +48,29 @@ them; this indexes them by array operand).  Scoped by the theory `push`/`pop`.
 
 It reacts through the `TheoryManager`:
 
-- **On EUF merge of two array terms** (`merge_eh`, oxiz hook = after
+- **On EUF merge of two array terms** (`merge_eh`, nixie hook = after
   `euf.merge` of array-sorted nodes): for every select `select(a, k)` with `a`
   in the merged class, assert `select(a, k) = select(b, k)` for the partner `b`,
   and instantiate read-over-write for any store now reachable through the merge.
   This is congruence + read-over-write fired at merge time.
-- **On relevance of a `select`/`store`** (`relevant_eh`, oxiz hook = first time
+- **On relevance of a `select`/`store`** (`relevant_eh`, nixie hook = first time
   the term's SAT var is assigned): instantiate its read-over-write axiom once.
 - Conflicts (a forced `select(store(a,i,v), i)` that the model pins ≠ `v`) are
   returned as theory conflict clauses from propagation / `final_check`.
 
 The axiom instances are added **incrementally** – `solve_with_theory` must
 *resume* the search (it currently resets `theory_processed = 0` each call,
-`oxiz-sat/.../search_ext.rs`, which forces the theory to be re-driven from the
+`nixie-sat/.../search_ext.rs`, which forces the theory to be re-driven from the
 trail and is why the round-based reset exists).
 
 ## Prerequisites (must land first, each independently sound)
 
 ### P1 – close the BV `assert_const` scoping leak
 
-`rebase_theory_state` (`oxiz-solver/.../mod.rs`) resets `bv` wholesale every
+`rebase_theory_state` (`nixie-solver/.../mod.rs`) resets `bv` wholesale every
 check because `BvSolver::assert_const` pins `x = c` as a **unit clause on the
 BV solver's own SAT core** (`pin_bool_var` → `sat.add_clause([lit])`,
-`oxiz-theories/.../bv/solver.rs:523`), and that pinning is **not** wired into
+`nixie-theories/.../bv/solver.rs:523`), and that pinning is **not** wired into
 the `Solver`'s user-level `push`/`pop` – only into `BvSolver`'s internal
 `context_stack`.  So a `x = 5` pinned inside one search branch can outlive a
 user `pop` and refute a later `(= x 6)`.  Until the pinning is tracked on the
@@ -80,7 +80,7 @@ and the round-based reset cannot be removed.
 
 ### P2 – make `solve_with_theory` resumable
 
-`solve_with_theory` (`oxiz-sat/.../search_ext.rs:36`) initialises
+`solve_with_theory` (`nixie-sat/.../search_ext.rs:36`) initialises
 `theory_processed = 0` on every call and re-drives the whole trail through the
 theory.  For incremental lemma addition it must instead **persist** the
 theory cursor across calls (resume from where the last call left off), so a

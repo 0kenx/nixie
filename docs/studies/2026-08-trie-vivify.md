@@ -16,7 +16,7 @@
 
 The landing claimed: *"Default search paths are untouched — vivify runs
 only under the opt-in inprocessing bundle."* That is true for the DIMACS
-`CaDiCaL` preset and **false for the SMT path**: `oxiz-solver`'s
+`CaDiCaL` preset and **false for the SMT path**: `nixie-solver`'s
 `SolverConfig::default()` is `balanced()`, which sets
 `enable_inprocessing: true`, threaded verbatim into the embedded SAT core
 (`solver/mod.rs` `sat_config`).  The CDCL(T) search therefore runs

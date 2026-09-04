@@ -4,20 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Performance regression testing for OxiZ SMT solver"
+description = "Performance regression testing for Nixie SMT solver"
 
 [[bin]]
 name = "regression"
 path = "src/main.rs"
 
 [dependencies]
-# OxiZ crates
-oxiz-core = { workspace = true, features = ["std"] }
-oxiz-sat = { workspace = true, features = ["std"] }
-oxiz-solver = { workspace = true, features = ["std"] }
-oxiz-theories = { workspace = true, features = ["std"] }
-oxiz-opt.workspace = true
-oxiz-smtcomp.workspace = true
+# Nixie crates
+nixie-core = { workspace = true, features = ["std"] }
+nixie-sat = { workspace = true, features = ["std"] }
+nixie-solver = { workspace = true, features = ["std"] }
+nixie-theories = { workspace = true, features = ["std"] }
+nixie-opt.workspace = true
+nixie-smtcomp.workspace = true
 
 # Benchmarking
 criterion.workspace = true
@@ -33,9 +33,9 @@ tempfile.workspace = true
 criterion.workspace = true
 
 [[bench]]
-name = "oxiz_benchmarks"
+name = "nixie_benchmarks"
 harness = false
-path = "benches/oxiz_benchmarks.rs"
+path = "benches/nixie_benchmarks.rs"
 
 [lints.rust]
 unused_variables = "allow"

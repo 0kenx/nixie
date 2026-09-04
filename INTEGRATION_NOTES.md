@@ -9,7 +9,7 @@ ignored` on `ef731000` (branch HEAD after the post-review fixes). The briefed
 baseline was `9746 / 0 / 40`; the deltas are tree drift plus the tests this
 pass moved from `#[ignore]` to passing plus the new soundness guards. `cargo
 test --workspace --all-features` does **not** compile on this tree: the
-`profiling` feature of `oxiz-theories` threads a non-`Sync` `TermManager`
+`profiling` feature of `nixie-theories` threads a non-`Sync` `TermManager`
 through `std::thread::spawn_scoped` (`nl_model_search.rs:301`). That is a
 pre-existing workspace issue unrelated to this integration; the default-feature
 suite is unaffected. Flagged for the maintainer.
@@ -25,7 +25,7 @@ to `0c526e9c` ("gate eliminate_nonbool_ite out of BV/Array/String/Float
 sorts"), whose ported `collect_ground_subterms` treats `let` as opaque – so the
 mux axioms for the `ite`s inside vhard7's wrapping `let` were never emitted.
 **Fixed in `bb73c30c`** (descend into `let`, keep `Forall`/`Exists` opaque);
-pinned by `oxiz-solver/tests/known_unsound_regressions.rs::vhard7_is_not_sat`.
+pinned by `nixie-solver/tests/known_unsound_regressions.rs::vhard7_is_not_sat`.
 
 This is an **imported upstream bug** (oz = v0.3.2 returns the same wrong
 `sat`; main timed out), but it is still a regression by the branch's own
@@ -41,7 +41,7 @@ behavior should be kept.
 
 ### 1. Inprocessing unsoundness – disposition: documented, not fixed (pre-existing in v0.3.2)
 
-`oxiz-sat/tests/pr26_lrat_proof_regressions.rs:290` was `#[ignore]`d with a
+`nixie-sat/tests/pr26_lrat_proof_regressions.rs:290` was `#[ignore]`d with a
 reason blaming "a wrong Sat for pigeonhole(6,5)" on the "Preprocessor
 clause-management interaction." Investigation sharpened this considerably.
 
@@ -102,7 +102,7 @@ measured directly:
 
 **Exposure.** Five of ten public presets set `enable_inprocessing: true`:
 `Industrial`, `Cryptographic`, `Hardware`, `Conservative`, `CaDiCaL` – and
-`oxiz-sat/examples/cnf_solve.rs` advertises `CaDiCaL` as *"the strongest sound
+`nixie-sat/examples/cnf_solve.rs` advertises `CaDiCaL` as *"the strongest sound
 configuration."* Anyone who lowers `inprocessing_interval` (or builds a config
 mirroring the `audit_sat_p3` style `interval: 1`) is directly exposed; the
 shipped preset intervals (2000–10000) are exposed in principle but no wrong
@@ -156,10 +156,10 @@ tests pass; the other 12 were untouched and still pass. Suite: `9858 / 0 / 36`.
 **This is a selective behavior port, not a file-level sync.** main and v0.3.2
 have divergent module structures: 21 v0.3.2 source files in the core crates do
 not exist in main *or* on this branch at all (e.g.
-`oxiz-solver/src/solver/encode/bool_euf_encoding.rs`, `eq_skeleton.rs`,
-`theory_manager/{intern,nelson_oppen}.rs`, `oxiz-theories/src/{nl_eval,
-nl_ground_reduce,nl_repair_search}.rs`, `oxiz-sat/src/solver/{probe,add_clause,
-lrat_trace}.rs`, `oxiz-sat/src/proof.rs`). main has its own equivalents under
+`nixie-solver/src/solver/encode/bool_euf_encoding.rs`, `eq_skeleton.rs`,
+`theory_manager/{intern,nelson_oppen}.rs`, `nixie-theories/src/{nl_eval,
+nl_ground_reduce,nl_repair_search}.rs`, `nixie-sat/src/solver/{probe,add_clause,
+lrat_trace}.rs`, `nixie-sat/src/proof.rs`). main has its own equivalents under
 different paths. So `git diff --stat main v0.3.2` (177 files) overstates the
 integration's surface: most of the delta is structural divergence the
 integration deliberately did **not** reorganize.
@@ -173,7 +173,7 @@ The integration is 24 behavior-port commits. Bucketing by test coverage:
   `pr27_define_fun_params.rs`, `pr27_arith_resample.rs`, `nlsat_mixed_sort.rs`.
 - Nonlinear/array-select search → `pr31_nonlinear_search.rs`, `pr32_pr33_soundness.rs`.
 - Arithmetic `entailed_disequal_reason` → inline module tests in
-  `oxiz-theories/src/arithmetic/solver.rs` (90 lines).
+  `nixie-theories/src/arithmetic/solver.rs` (90 lines).
 - `scope_rebase` convergence → `scope_rebase_tests.rs`.
 
 **B. Behavior ported, no dedicated test – covered indirectly by the existing
@@ -204,7 +204,7 @@ exercised by the 9858-test suite, not unit-isolated):
 - Pure performance tuning, refactors, and internal-invariant changes in v0.3.2
   that carry no observable behavior change are invisible to this audit by
   construction (the audit finds only behavior its tests pin).
-- `bench/`, `oxiz-py`, `oxiz-wasm`, `oxiz-cli`, `docs/`, `TODO.md`,
+- `bench/`, `nixie-py`, `nixie-wasm`, `nixie-cli`, `docs/`, `TODO.md`,
   `CHANGELOG.md` deltas: not audited for behavior.
 
 The honest coverage claim for the PR: **every v0.3.2 behavior its own test
@@ -231,11 +231,11 @@ The pinned-sample differential run that found vhard7 is checked in at
 270 instances). Run it as a PR gate for any change touching the solver core:
 
 ```
-cargo build --release -p oxiz-cli && \
-  python3 bench/differential/bench_diff.py --bin target/release/oxiz --label pr
+cargo build --release -p nixie-cli && \
+  python3 bench/differential/bench_diff.py --bin target/release/nixie --label pr
 ```
 
-It exits non-zero on any soundness disagreement (oxiz `sat`/`unsat` ≠ z3 on a
+It exits non-zero on any soundness disagreement (nixie `sat`/`unsat` ≠ z3 on a
 sat/unsat instance); timeouts/`unknown` do not fail the gate. Baseline numbers
 at the time it was added (z3 4.16.0, τ=10 s):
 

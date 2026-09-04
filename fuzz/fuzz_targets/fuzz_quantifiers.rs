@@ -7,7 +7,7 @@
 use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 use num_bigint::BigInt;
-use oxiz::{Solver, SortId, TermManager};
+use nixie::{Solver, SortId, TermManager};
 
 #[derive(Debug, Arbitrary)]
 enum Quantifier {

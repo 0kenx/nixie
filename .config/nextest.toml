@@ -1,6 +1,6 @@
-# nextest configuration for the oxiz workspace.
+# nextest configuration for the nixie workspace.
 #
-# `oxiz-cli` ships a handful of tests that spawn the real `oxiz` binary as a
+# `nixie-cli` ships a handful of tests that spawn the real `nixie` binary as a
 # subprocess and race it against a wall-clock deadline (the `--timeout`
 # regression tests in `tests/audit_cli_p2.rs` and
 # `tests/audit_sweep_frontends.rs`) or measure its wall-clock duration
@@ -9,7 +9,7 @@
 # CPU-bound child solver; the resulting CPU oversubscription was observed to
 # turn a 2s `--timeout` into tens to hundreds of seconds of real wall time,
 # which starves the very timing margins these tests rely on and makes them
-# flaky. `supervise_timeout` (oxiz-cli/src/main.rs) already mitigates the
+# flaky. `supervise_timeout` (nixie-cli/src/main.rs) already mitigates the
 # *supervisor* side of this (a dedicated, non-solving watchdog process), but
 # it cannot help once the machine itself is oversubscribed by many parallel
 # test processes each spawning their own solver child.
@@ -18,7 +18,7 @@
 # subprocess-racing/timing test runs at a time, regardless of the overall
 # `--test-threads` nextest is running with.
 [test-groups]
-oxiz-cli-subprocess = { max-threads = 1 }
+nixie-cli-subprocess = { max-threads = 1 }
 
 # A runaway allocation previously ran until the kernel OOM killer intervened;
 # nextest's default reports a test as SLOW at 60s but never terminates it.
@@ -43,7 +43,7 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 # though the assertion passes. It remains runnable (and must be run before
 # any landing that touches arrangement/congruence/model checking) via:
 #
-#   cargo nextest run -p oxiz-solver --run-ignored only \
+#   cargo nextest run -p nixie-solver --run-ignored only \
 #     -E 'test(pete_cxs_bp_is_unsat_on_every_trajectory)'
 #
 # This override still applies to that explicit run (profiles are shared),
@@ -53,6 +53,6 @@ filter = 'test(pete_cxs_bp_is_unsat_on_every_trajectory)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
 [[profile.default.overrides]]
-filter = 'package(oxiz-cli) and (test(timeout) or test(bench))'
-test-group = 'oxiz-cli-subprocess'
+filter = 'package(nixie-cli) and (test(timeout) or test(bench))'
+test-group = 'nixie-cli-subprocess'
 threads-required = 1

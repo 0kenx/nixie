@@ -115,7 +115,7 @@ landed** (`49ec6b1` → this commit):
 - **Gate 2b**: both-solve corpus geomean **1.0054**, 0 verdict
   mismatches (the both-solve cells are the easy tail where propagate is
   a small share; the fixed-cap class carries the effect).
-- **Gate 3**: `oxiz-sat` 879/879, workspace 10 418/10 418,
+- **Gate 3**: `nixie-sat` 879/879, workspace 10 418/10 418,
   clippy/fmt/doc clean, `diff_equiv` 200 k iterations 0/0, corpus
   verdict sweep 54/54 **0 mismatches** (one new-only 60 s solve — pure
   speed, identical trajectories), SMT differential **160/0** (par2

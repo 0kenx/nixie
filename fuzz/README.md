@@ -1,6 +1,6 @@
-# OxiZ Fuzzing
+# Nixie Fuzzing
 
-This directory contains fuzz tests for the OxiZ SMT solver using [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) and libFuzzer.
+This directory contains fuzz tests for the Nixie SMT solver using [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html) and libFuzzer.
 
 ## Installation
 
@@ -17,7 +17,7 @@ cargo install cargo-fuzz
 Fuzzes the SMT-LIB2 parser with arbitrary byte sequences (interpreted as UTF-8 text) to find crashes or panics during parsing.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_smtlib_parser
 ```
 
@@ -26,7 +26,7 @@ cargo +nightly fuzz run fuzz_smtlib_parser
 Fuzzes the parser-to-solver end-to-end path: arbitrary bytes are interpreted as an SMT-LIB2 script and fed through `parse_script` and then the solver, applying the same soundness oracles as `fuzz_solver` (every assertion must evaluate to `true` under a `Sat` model; `check()` must be idempotent).
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_parse_and_solve
 ```
 
@@ -35,7 +35,7 @@ cargo +nightly fuzz run fuzz_parse_and_solve
 Fuzzes term construction with random operations (boolean, integer, real, array, string, bitvector) to ensure the TermManager handles all cases correctly.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_term_builder
 ```
 
@@ -44,7 +44,7 @@ cargo +nightly fuzz run fuzz_term_builder
 Fuzzes the solver with structured random SMT commands to test solver behavior under various constraint combinations. Includes soundness oracles: every `Sat` result's model is checked against the assertions that produced it, and `check()` is required to be idempotent.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_solver
 ```
 
@@ -53,7 +53,7 @@ cargo +nightly fuzz run fuzz_solver
 Fuzzes quantifier instantiation (`forall`/`exists` over 1-3 `Int` variables, with a handful of representative bodies) to find crashes or hangs in quantifier handling. Runs with a short internal timeout since quantifier reasoning can be expensive.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_quantifiers
 ```
 
@@ -62,7 +62,7 @@ cargo +nightly fuzz run fuzz_quantifiers
 Fuzzes tactic application (`Simplify`, `Propagate`, `SolveEqs`, `Eliminate`, `Split`, `CtxSimplify`) over small randomly-shaped goals to ensure tactics never crash or panic on arbitrary input.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_tactics
 ```
 
@@ -71,7 +71,7 @@ cargo +nightly fuzz run fuzz_tactics
 Fuzzes the arithmetic theory with random `Int` constraints (add/sub/mul/div/mod/neg combined with each comparison operator) to find crashes in arithmetic constraint handling.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_theory_arithmetic
 ```
 
@@ -80,7 +80,7 @@ cargo +nightly fuzz run fuzz_theory_arithmetic
 Fuzzes the array theory (`select`/`store`/extensionality) over a small set of `Array Int Int` variables.
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_theory_array
 ```
 
@@ -89,7 +89,7 @@ cargo +nightly fuzz run fuzz_theory_array
 Fuzzes the bitvector theory (bitwise, arithmetic, and shift operations) across the four common bitwidths (8/16/32/64).
 
 ```bash
-cd /path/to/oxiz/fuzz
+cd /path/to/nixie/fuzz
 cargo +nightly fuzz run fuzz_theory_bitvector
 ```
 

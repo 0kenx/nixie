@@ -1,0 +1,55 @@
+[package]
+name = "nixie"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Next-Generation SMT Solver in Pure Rust"
+keywords = ["smt", "solver", "sat", "verification", "logic"]
+categories = ["algorithms", "science", "mathematics"]
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+# Core modules - always included (no_std compatible, std propagated via features)
+nixie-core = { workspace = true }
+nixie-math = { workspace = true }
+nixie-sat = { workspace = true }
+nixie-theories = { workspace = true }
+nixie-solver = { workspace = true }
+num-bigint = { workspace = true, default-features = false }
+num-traits = { workspace = true, default-features = false }
+
+# Advanced (optional, require std)
+nixie-nlsat = { workspace = true, optional = true }
+nixie-opt = { workspace = true, optional = true }
+nixie-spacer = { workspace = true, optional = true }
+nixie-proof = { workspace = true, optional = true }
+
+[dev-dependencies]
+num-bigint = { workspace = true, features = ["std"] }
+
+[features]
+# `nlsat` joins the defaults (upstream v0.3.3): a consumer that says nothing
+# keeps the nonlinear dispatch it had; a wasm-size consumer writes
+# default-features = false, features = ["std"] to drop it.
+default = ["std", "nlsat"]
+std = [
+    "nixie-core/std",
+    "nixie-math/std",
+    "nixie-sat/std",
+    "nixie-theories/std",
+    "nixie-solver/std",
+]
+nlsat = ["dep:nixie-nlsat", "nixie-theories/nlsat", "nixie-solver/nlsat", "std"]
+optimization = ["dep:nixie-opt", "std"]
+spacer = ["dep:nixie-spacer", "std"]
+proof = ["dep:nixie-proof", "std"]
+standard = ["nlsat", "optimization", "proof"]
+full = ["standard", "spacer"]

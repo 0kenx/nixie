@@ -16,9 +16,11 @@
 //! actually checks the asserted constraints can tell them apart, which is
 //! exactly the property this guards against regressing.
 
+use nixie_solver::combination::coordinator::{
+    SatResult, TheoryCoordinator, TheoryId, TheorySolver,
+};
+use nixie_theories::arithmetic::{LinExpr, Simplex, VarId};
 use num_rational::Rational64;
-use oxiz_solver::combination::coordinator::{SatResult, TheoryCoordinator, TheoryId, TheorySolver};
-use oxiz_theories::arithmetic::{LinExpr, Simplex, VarId};
 
 /// Minimal `Simplex`-backed `TheorySolver`, mirroring
 /// `SimplexTheory` in `benches/profile_benchmarks.rs`: `assert_formula`'s

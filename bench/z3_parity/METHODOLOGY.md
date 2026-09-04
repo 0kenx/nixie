@@ -2,7 +2,7 @@
 
 ## Overview
 
-This test suite validates OxiZ's correctness by comparing its results against Z3, the de facto standard SMT solver. The goal is to ensure OxiZ produces the same satisfiability decisions as Z3 on a representative set of benchmarks.
+This test suite validates Nixie's correctness by comparing its results against Z3, the de facto standard SMT solver. The goal is to ensure Nixie produces the same satisfiability decisions as Z3 on a representative set of benchmarks.
 
 ## Test Structure
 
@@ -64,7 +64,7 @@ Benchmarks are derived from:
    # Or download from: https://github.com/Z3Prover/z3/releases
    ```
 
-2. **Build OxiZ**:
+2. **Build Nixie**:
    ```bash
    cd "$(git rev-parse --show-toplevel)"
    cargo build --release
@@ -79,7 +79,7 @@ cargo run --release
 
 This will:
 1. Discover all `.smt2` files in `benchmarks/`
-2. Run each benchmark on both Z3 and OxiZ (in parallel)
+2. Run each benchmark on both Z3 and Nixie (in parallel)
 3. Compare results
 4. Generate a summary report
 5. Write the detailed results twice, with identical content: to `results.json` (git-ignored
@@ -106,7 +106,7 @@ and never another environment's snapshot. A machine may only speak for itself.
 {
   "schema_version": 1,
   "metadata": {
-    "oxiz_version": "0.3.1",
+    "nixie_version": "0.3.1",
     "z3_version": "4.15.4",
     "os": "macos",
     "arch": "aarch64",
@@ -118,9 +118,9 @@ and never another environment's snapshot. A machine may only speak for itself.
     {
       "benchmark": "array_extensionality.smt2",
       "logic": "AUFLIA",
-      "oxiz_result": "Sat",
+      "nixie_result": "Sat",
       "z3_result": "Sat",
-      "oxiz_time": { "secs": 0, "nanos": 1340381 },
+      "nixie_time": { "secs": 0, "nanos": 1340381 },
       "z3_time": { "secs": 0, "nanos": 17799137 },
       "match_status": "Correct"
     }
@@ -139,12 +139,12 @@ below.
 #### The agreement rule
 
 > Every tracked `results.<os>-<arch>.json` must agree on the VERDICT of every benchmark
-> (`oxiz_result`, `z3_result`, `match_status`). Timings (`oxiz_time`, `z3_time`) are
+> (`nixie_result`, `z3_result`, `match_status`). Timings (`nixie_time`, `z3_time`) are
 > machine-dependent and are expected to differ.
 
-This is what makes a per-logic table in `README.md` a statement about OxiZ rather than about one
+This is what makes a per-logic table in `README.md` a statement about Nixie rather than about one
 laptop. It was verified by hand when the layout was introduced – 168 benchmarks × 3 verdict fields
-across the macOS record and a fresh Linux run, zero mismatches, with `oxiz_time` and `z3_time` the
+across the macOS record and a fresh Linux run, zero mismatches, with `nixie_time` and `z3_time` the
 only fields that differed anywhere in the file – and it is now a standing check:
 `tests/cross_env_verdict_agreement.rs` discovers every tracked snapshot, validates the envelope,
 and fails with the offending benchmark, field and both values whenever two snapshots disagree. It
@@ -173,7 +173,7 @@ been measured at run time.
 `metadata.z3_version` is not decoration. The recorded baseline is **z3 4.15.4**; Ubuntu's `apt`
 currently ships **4.13.3**, which is a different solver for evidence purposes. If two snapshots
 disagree on a verdict and were produced against different z3 versions, the disagreement is
-*unattributable*: nothing in it can be pinned on OxiZ or on z3 until both sides are re-measured
+*unattributable*: nothing in it can be pinned on Nixie or on z3 until both sides are re-measured
 against the same z3 binary. Prefer an upstream release matching the baseline over the distro
 package, and always record the `z3 --version` you actually ran.
 
@@ -224,7 +224,7 @@ This is a claim about *this suite*, not a blanket "100% Z3 compatibility" statem
 ### What This Does NOT Test
 
 ❌ **Model quality** - We don't validate model values, only SAT/UNSAT
-❌ **Proof generation** - OxiZ's proof output is not cross-checked here (see `oxiz-proof`)
+❌ **Proof generation** - Nixie's proof output is not cross-checked here (see `nixie-proof`)
 ❌ **Incremental solving** - Benchmarks are one-shot
 ❌ **Performance limits** - All benchmarks finish in < 60s
 
@@ -232,7 +232,7 @@ This is a claim about *this suite*, not a blanket "100% Z3 compatibility" statem
 
 In addition to the curated `.smt2` corpus above, this crate ships a
 **generator-based differential-testing harness** that produces small,
-random, well-typed SMT-LIB2 scripts and checks that OxiZ's sat/unsat
+random, well-typed SMT-LIB2 scripts and checks that Nixie's sat/unsat
 verdict agrees with Z3's. Unlike the curated corpus, this harness is not
 limited to a fixed, hand-written set of benchmarks: every run explores a
 fresh (but fully reproducible) slice of each logic's formula space.
@@ -248,7 +248,7 @@ fresh (but fully reproducible) slice of each logic's formula space.
   \* subterm only, never variable \* variable) so `QF_LIA`/`QF_LRA` scripts
   never drift into `QF_NIA`/`QF_NRA`.
 - **Runner** (`src/difftest.rs`): `run_case`/`run_cases` generate a script,
-  write it to a scratch file, execute it through both `oxiz_runner::run_oxiz`
+  write it to a scratch file, execute it through both `nixie_runner::run_nixie`
   (library call, in-process with a timeout) and `z3_runner::run_z3` (the
   `z3` binary discovered on `PATH`), and reuse `comparator::compare_results`
   – the same comparison logic the curated benchmark suite uses – to
@@ -256,7 +256,7 @@ fresh (but fully reproducible) slice of each logic's formula space.
   no parity claim), a definite `Sat`/`Unsat` disagreement is `Wrong` (a real
   bug), and `summarize()` buckets a batch of outcomes accordingly.
 - **Repro capture**: any `Wrong` outcome has its exact reproducing script
-  written under `std::env::temp_dir()/oxiz_difftest_repro/<logic>_<seed>_<ts>.smt2`
+  written under `std::env::temp_dir()/nixie_difftest_repro/<logic>_<seed>_<ts>.smt2`
   via `difftest::save_repro`, and the path is included in the panic
   message.
 
@@ -269,24 +269,24 @@ Two `cargo test` entry points under `tests/`:
    `cargo test` in this crate with **no extra flags**. Like the existing
    `z3_runner` tests, it self-skips (prints a message, does not fail) when
    no `z3` binary is found on `PATH`, so CI without Z3 is never affected.
-   Whenever Z3 *is* present, this is a real regression check: an OxiZ
+   Whenever Z3 *is* present, this is a real regression check: an Nixie
    change that flips a sat/unsat verdict on any of the 100 fixed cases
    fails the test.
 2. **Full sweep, opt-in** (`tests/difftest_full.rs`) – gated behind an
    environment variable so it never runs by accident:
 
    ```bash
-   OXIZ_DIFFTEST=1 cargo test --test difftest_full -- --nocapture
+   NIXIE_DIFFTEST=1 cargo test --test difftest_full -- --nocapture
    ```
 
    Tunable via:
-   - `OXIZ_DIFFTEST_CASES` (default `200`) – cases generated per logic.
-   - `OXIZ_DIFFTEST_SEED` (default `42`) – base PRNG seed (each logic
+   - `NIXIE_DIFFTEST_CASES` (default `200`) – cases generated per logic.
+   - `NIXIE_DIFFTEST_SEED` (default `42`) – base PRNG seed (each logic
      derives its own seed from this so the four sweeps don't replay
      correlated streams).
 
    Also self-skips when no `z3` binary is present, or when
-   `OXIZ_DIFFTEST` is unset/not `1`.
+   `NIXIE_DIFFTEST` is unset/not `1`.
 
 ### Scope and honesty notes
 
@@ -351,17 +351,17 @@ which z3  # Should print /usr/local/bin/z3 or similar
 z3 --version  # Should print version info
 ```
 
-### All OxiZ tests showing "Error"
+### All Nixie tests showing "Error"
 
-Check that OxiZ builds successfully:
+Check that Nixie builds successfully:
 ```bash
-cd ../../oxiz
+cd ../../nixie
 cargo test
 ```
 
 ### Timeout issues
 
-If benchmarks are timing out, increase the timeout in `z3_runner.rs` and `oxiz_runner.rs`:
+If benchmarks are timing out, increase the timeout in `z3_runner.rs` and `nixie_runner.rs`:
 ```rust
 const Z3_TIMEOUT_SECS: u64 = 120;  // Increase from 60
 ```
