@@ -19,12 +19,17 @@
 //! `INPROCESS=1` show **0 verdict mismatches against a real `cadical`**
 //! (see `docs/studies/2026-08-inprocessing-soundness-recheck.md`).
 //!
-//! The presets stay off for the *performance* reason recorded at the
-//! CaDiCaL preset: the periodic inprocess() round costs the BVE+ELS gains
-//! on the 94-file suite (qwh.50 collapsed 55.7G → 1088G instructions).
-//! That measurement predates the cadical amortizers this tree has since
-//! landed (trie-shared vivification, budgeted transred rounds, on-the-fly
-//! vivify subsumption); revisit per that preset's note.
+//! The presets stay off for the *performance* reason, most recently
+//! re-measured on the 54-file standing corpus with deterministic
+//! counters (2026-09-04, `docs/studies/2026-09-04-inprocessing-standing-
+//! corpus.md`): solved-at-cap 50 → 42 under the full bundle, with a
+//! strongly bimodal per-file effect — the periodic mid-search inprocess
+//! rounds win 2–6× conflicts-to-verdict on the clause-DB-heavy tail
+//! (FmlaEquivChain reaches kissat parity) and simultaneously destroy
+//! phase-guided model finding on 9 sat files.  The pre-search one-shot
+//! beyond default ELS+BVE is a measured no-op (bit-identical
+//! trajectories).  What is open is a *gating policy* for the mid-search
+//! rounds, not an unconditional flip.
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -533,11 +538,12 @@ impl ConfigPreset {
             focused_vmtf: true,
             use_chb_branching: false,
             use_lrb_branching: false,   // VMTF in real CaDiCaL
-            enable_inprocessing: false, // measured net-negative as a default on the
-            // 94-file suite (2026-08-21): the periodic inprocess() round costs
-            // the BVE+ELS gains on stable-300/summle and collapses qwh.50
-            // (55.7G -> 1088G instructions). Only 6s167-opt benefits (46.9G ->
-            // 14.0G). Revisit with cadical vivify/transred amortizers.
+            enable_inprocessing: false, // measured net-negative as a default: the
+            // 2026-09-04 standing-corpus A/B (docs/studies/
+            // 2026-09-04-inprocessing-standing-corpus.md) lost 8 solved
+            // files at the 60 s cap (50 -> 42) despite 2-6x conflicts wins
+            // on the clause-DB-heavy tail; the periodic rounds also cause
+            // every loss. A gating policy for the rounds is the open path.
             enable_equiv_substitution: true, // cadical parity: decompose/sweep runs
             // by default in CaDiCaL. Bundled with BVE below this recovers the
             // elimination-heavy families the 2026-08-17 study left off by
