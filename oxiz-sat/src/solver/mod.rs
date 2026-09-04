@@ -3101,6 +3101,25 @@ impl Solver {
                 );
             }
         }
+        // XOR-aware failed-literal probing (`solver/xor.rs::xor_probe`):
+        // build the GF(2) matrix, force pinned units, probe both
+        // polarities of every matrix variable with CNF+XOR propagation.
+        // Sound by construction (probe pattern: only conflict-derived
+        // units survive at level 0); no verdicts beyond the level-0 unit
+        // path every probing pass already uses.  Default off.
+        if std::env::var("OXIZ_XORPROBE").is_ok() {
+            let (constraints, forced, inconsistent) = self.xor_probe();
+            if constraints > 0 {
+                #[cfg(feature = "std")]
+                eprintln!(
+                    "c [xorprobe] constraints={constraints} forced_units={forced} inconsistent={inconsistent}"
+                );
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
+        }
 
         // One-shot pre-search phase initialisation from a bounded ProbSAT
         // walk (the rephase study's recorded-open "one-shot pre-search

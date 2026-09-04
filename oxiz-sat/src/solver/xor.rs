@@ -224,3 +224,226 @@ impl Solver {
         }
     }
 }
+
+impl Solver {
+    /// XOR-aware failed-literal probing (2026-09-05 slice): build the
+    /// GF(2) matrix from the detected constraints, force every unit the
+    /// system pins (add-time reductions, then level-0 folding to a
+    /// fixpoint with CNF propagation), and probe each remaining matrix
+    /// variable's two polarities at a decision level — CNF propagate plus
+    /// matrix folding; a failed polarity forces the opposite literal at
+    /// level 0 (the `probe_round` pattern; probe-level assignments are
+    /// self-contained, so no CDCL reason plumbing is needed).
+    ///
+    /// Fold discipline (soundness-critical, per `GF2Matrix::propagate`'s
+    /// contract): every literal that appears on the trail during a probe —
+    /// decisions, CNF propagations, XOR-derived units — is folded in trail
+    /// order, and undone in exact reverse order before backtracking.  At
+    /// level 0 the folds are permanent.
+    ///
+    /// No verdicts: an inconsistent system (add-time or both-polarity
+    /// probe failure) is reported in the return value, not answered —
+    /// pending a proof story.  Returns `(constraints, forced_units,
+    /// inconsistent)`.
+    pub(super) fn xor_probe(&mut self) -> (usize, usize, bool) {
+        if self.trail.decision_level() != 0
+            || self.proof.is_some()
+            || self.lrat
+            || self.real_theory_attached
+            || self.assertion_levels.len() > 1
+            || self.trivially_unsat
+        {
+            return (0, 0, false);
+        }
+        use crate::literal::Lit;
+        use crate::xor::GF2Matrix;
+        let constraints = self.detect_xor_constraints();
+        if constraints.is_empty() {
+            return (0, 0, false);
+        }
+        let n_constraints = constraints.len();
+
+        // ---- 1. Build the matrix; add-time units are forced at level 0.
+        let mut matrix = GF2Matrix::new();
+        let mut pending: SmallVec<[Lit; 16]> = SmallVec::new();
+        let mut inconsistent = false;
+        for c in &constraints {
+            let vars: Vec<crate::literal::Var> = c
+                .vars
+                .iter()
+                .map(|v| crate::literal::Var::new(*v))
+                .collect();
+            match matrix.add_constraint(&vars, c.rhs, 0) {
+                crate::xor::XorAddResult::Unit(v, val, _) => {
+                    pending.push(if val { Lit::pos(v) } else { Lit::neg(v) });
+                }
+                crate::xor::XorAddResult::Conflict(_) => {
+                    inconsistent = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if inconsistent {
+            return (n_constraints, 0, true);
+        }
+        // ---- 2. Level-0 fixpoint: force units, fold every new trail
+        // literal, collect newly pinned units.
+        let mut forced_units = 0usize;
+        let mut folded_level0 = 0usize;
+        loop {
+            // Fold everything not yet folded.
+            while folded_level0 < self.trail.assignments().len() {
+                let lit = self.trail.assignments()[folded_level0];
+                folded_level0 += 1;
+                for res in matrix.propagate(lit.var(), lit.is_pos()) {
+                    if let crate::xor::XorAddResult::Unit(v, val, _) = res {
+                        pending.push(if val { Lit::pos(v) } else { Lit::neg(v) });
+                    }
+                }
+            }
+            let Some(lit) = pending.pop() else { break };
+            if matches!(self.trail.lit_value(lit), crate::literal::LBool::Undef) {
+                self.force_level0(lit);
+                forced_units += 1;
+                if self.trivially_unsat {
+                    // A forced unit conflicted with the CNF: the formula
+                    // is UNSAT — reported, not answered.
+                    return (n_constraints, forced_units, true);
+                }
+            }
+        }
+
+        // ---- 3. Probe each remaining matrix variable, both polarities.
+        let probe_vars: Vec<crate::literal::Var> = {
+            let mut vs: Vec<_> = (0..self.num_vars)
+                .map(|i| crate::literal::Var::new(i as u32))
+                .filter(|v| !self.trail.is_assigned(*v) && matrix.contains_var(*v))
+                .collect();
+            vs.sort_by_key(|v| v.index());
+            vs
+        };
+        for v in probe_vars {
+            if self.trivially_unsat {
+                break;
+            }
+            if self.trail.is_assigned(v) {
+                continue;
+            }
+            let mut failed = [false, false]; // [v=false failed, v=true failed]
+            for polarity in [false, true] {
+                let mark = self.trail.assignments().len();
+                self.trail.new_decision_level();
+                self.trail
+                    .assign_decision(if polarity { Lit::pos(v) } else { Lit::neg(v) });
+                let mut conflict = false;
+                // CNF propagate + fold loop: XOR units assigned during the
+                // loop extend the trail and are folded in the same pass.
+                let mut folded = mark;
+                loop {
+                    if self.propagate().is_some() {
+                        conflict = true;
+                        break;
+                    }
+                    while folded < self.trail.assignments().len() {
+                        let lit = self.trail.assignments()[folded];
+                        folded += 1;
+                        for res in matrix.propagate(lit.var(), lit.is_pos()) {
+                            match res {
+                                crate::xor::XorAddResult::Unit(uv, uval, _) => {
+                                    let lit2 = if uval { Lit::pos(uv) } else { Lit::neg(uv) };
+                                    match self.trail.lit_value(lit2) {
+                                        crate::literal::LBool::Undef => {
+                                            self.trail.assign_decision(lit2);
+                                        }
+                                        crate::literal::LBool::False => {
+                                            conflict = true;
+                                        }
+                                        crate::literal::LBool::True => {}
+                                    }
+                                }
+                                crate::xor::XorAddResult::Conflict(_) => {
+                                    conflict = true;
+                                }
+                                _ => {}
+                            }
+                            if conflict {
+                                break;
+                            }
+                        }
+                        if conflict {
+                            break;
+                        }
+                    }
+                    if conflict || folded >= self.trail.assignments().len() {
+                        break;
+                    }
+                }
+                failed[polarity as usize] = conflict;
+                // Undo folds in exact reverse trail order, then backtrack.
+                while folded > mark {
+                    folded -= 1;
+                    let lit = self.trail.assignments()[folded];
+                    let _ = matrix.undo_propagate();
+                    let _ = lit;
+                }
+                self.backtrack(0);
+            }
+            match failed {
+                [false, true] => {
+                    self.force_level0(Lit::neg(v));
+                    forced_units += 1;
+                    // Fold the newly forced level-0 literals permanently.
+                    while folded_level0 < self.trail.assignments().len() {
+                        let lit = self.trail.assignments()[folded_level0];
+                        folded_level0 += 1;
+                        for res in matrix.propagate(lit.var(), lit.is_pos()) {
+                            if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                                pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
+                            }
+                        }
+                    }
+                }
+                [true, false] => {
+                    self.force_level0(Lit::pos(v));
+                    forced_units += 1;
+                    while folded_level0 < self.trail.assignments().len() {
+                        let lit = self.trail.assignments()[folded_level0];
+                        folded_level0 += 1;
+                        for res in matrix.propagate(lit.var(), lit.is_pos()) {
+                            if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                                pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
+                            }
+                        }
+                    }
+                }
+                [true, true] => {
+                    // Both polarities fail: formula UNSAT — reported.
+                    return (n_constraints, forced_units, true);
+                }
+                [false, false] => {}
+            }
+            // Drain any pending units (loop back to the fixpoint shape).
+            loop {
+                while folded_level0 < self.trail.assignments().len() {
+                    let lit = self.trail.assignments()[folded_level0];
+                    folded_level0 += 1;
+                    for res in matrix.propagate(lit.var(), lit.is_pos()) {
+                        if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                            pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
+                        }
+                    }
+                }
+                let Some(lit) = pending.pop() else { break };
+                if matches!(self.trail.lit_value(lit), crate::literal::LBool::Undef) {
+                    self.force_level0(lit);
+                    forced_units += 1;
+                    if self.trivially_unsat {
+                        return (n_constraints, forced_units, true);
+                    }
+                }
+            }
+        }
+        (n_constraints, forced_units, false)
+    }
+}

@@ -75,7 +75,19 @@ impl GF2Row {
             *a ^= *b;
         }
         self.rhs ^= other.rhs;
-        self.sources.extend_from_slice(&other.sources);
+        // Source tracking is capped: through Gaussian reduce chains the
+        // accumulated lists grow Fibonacci-exponentially (measured
+        // 2026-09-05: a 373-constraint build spent 7.8 s in these copies —
+        // the row bit-ops themselves are nanoseconds).  Nothing consumes
+        // `sources` today (this module is newly wired); when a reason
+        // consumer lands it must either derive reasons from the row ids
+        // directly or grow this cap deliberately.
+        const SOURCE_CAP: usize = 64;
+        if self.sources.len() < SOURCE_CAP {
+            let room = SOURCE_CAP - self.sources.len();
+            self.sources
+                .extend_from_slice(&other.sources[..room.min(other.sources.len())]);
+        }
     }
 
     /// Check if this row is all zeros (empty constraint)
@@ -160,6 +172,11 @@ impl GF2Matrix {
             pivots: Vec::new(),
             undo_stack: Vec::new(),
         }
+    }
+
+    /// Whether `var` participates in any constraint of the matrix.
+    pub fn contains_var(&self, var: Var) -> bool {
+        self.var_to_col.contains_key(&var)
     }
 
     /// Register a variable and get its column index

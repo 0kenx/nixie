@@ -5,6 +5,29 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [XOR probing slice + Fibonacci-exponential sources fix in the dormant GF(2) module] - 2026-09-05 (vii)
+
+- **Fixed (SAT, dormant module)**: `GF2Row::xor_with` extended its
+  `sources` list per reduce step, and through Gaussian chains the lists
+  grow **Fibonacci-exponentially** — measured on mdp-28-14's 373
+  constraints: 12 ms at constraint 150, **7.8 s at 250** (row bit-ops
+  are nanoseconds).  Any future `add_constraint` consumer would hit it;
+  sources are capped (`SOURCE_CAP = 64`) with the reason-consumer caveat.
+- **Added (SAT)**: XOR-aware failed-literal probing (`xor_probe`,
+  `OXIZ_XORPROBE=1`, default off) — GF(2) matrix build, add-time units
+  forced at level 0 to a CNF-interleaved fixpoint, both-polarity probes
+  of every matrix variable with CNF propagate + matrix folding (strict
+  fold/undo trail discipline per `GF2Matrix::propagate`'s contract; no
+  CDCL reason plumbing — the `probe_round` pattern).  Test:
+  `xor_probe_forces_pinned_units` (row difference pins `c = 1`
+  end-to-end).  Measured: derives units (summle 154, g2-slp 57) but
+  flat-to-negative corpus effect (summle 2×, pb_300 3.2× worse; 0
+  mismatches) — this probing only fires on single-var/falsified rows
+  under level-1 probes; CryptoMiniSat's leverage is in-search folding
+  with CDCL feedback, which remains the recorded multi-session lever.
+  Verified: 10 478 tests, clippy/fmt/doc, Z3 parity 170/0, default-path
+  identity (worker 106 143).
+
 ## [XOR phase seeding: slice landed, measured neutral-to-negative; dormant XorDetector wired] - 2026-09-05 (vi)
 
 - **Added (SAT): pre-search XOR phase seeding** (`oxiz-sat/src/solver/xor.rs`;

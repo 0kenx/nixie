@@ -1834,3 +1834,59 @@ fn xor_phase_seed_gives_model_descent() {
     assert_eq!(s.solve(), SolverResult::Sat);
     assert_eq!(s.stats().conflicts, 0, "model-descent under seeded phases");
 }
+
+#[test]
+fn xor_matrix_build_speed_at_mdp_scale() {
+    use crate::xor::GF2Matrix;
+    let t0 = std::time::Instant::now();
+    let mut m = GF2Matrix::new();
+    let mut rng: u64 = 0xDEAD_BEEF;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for i in 0..373 {
+        let base = (next() % 700) as u32;
+        let vars: Vec<crate::literal::Var> = (0..5)
+            .map(|j| crate::literal::Var::new(base + j * 3 + (next() % 3) as u32))
+            .collect();
+        let _ = m.add_constraint(&vars, next() % 2 == 0, 0);
+        if i % 100 == 0 {
+            eprintln!("build i={i} t={:?}", t0.elapsed());
+        }
+    }
+    let el = t0.elapsed();
+    eprintln!("total build time: {el:?}");
+    assert!(el.as_millis() < 500, "373-constraint build took {el:?}");
+}
+
+/// The probing pass derives forced units from a system that pins
+/// variables: with `a ⊕ b = 1` and `a ⊕ b ⊕ c = 0`, subtracting gives
+/// `c = 1` (an add-time unit); a probe of `d` against
+/// `(¬d ∨ e)(d ∨ ¬e)`-style CNF glue forces nothing unless a polarity
+/// conflicts.  This fixture pins via matrix reduction only.
+#[test]
+fn xor_probe_forces_pinned_units() {
+    let mut s = Solver::new();
+    let a = s.new_var();
+    let b = s.new_var();
+    let c = s.new_var();
+    // a ⊕ b = 1: (a ∨ b) ∧ (¬a ∨ ¬b).
+    s.add_clause([Lit::pos(a), Lit::pos(b)]);
+    s.add_clause([Lit::neg(a), Lit::neg(b)]);
+    // a ⊕ b ⊕ c = 0: the even-negation 3-var class.
+    s.add_clause([Lit::neg(a), Lit::neg(b), Lit::neg(c)]);
+    s.add_clause([Lit::neg(a), Lit::pos(b), Lit::pos(c)]);
+    s.add_clause([Lit::pos(a), Lit::neg(b), Lit::pos(c)]);
+    s.add_clause([Lit::pos(a), Lit::pos(b), Lit::neg(c)]);
+    let (n, forced, inconsistent) = s.xor_probe();
+    assert_eq!(n, 2);
+    assert!(!inconsistent);
+    // c = 1 pinned by the difference of the two rows; a, b stay free
+    // (the system pins only their parity).
+    assert!(forced >= 1, "the row difference must pin c");
+    assert!(s.trail.is_assigned(c));
+    assert_eq!(s.trail.lit_value(Lit::pos(c)), crate::literal::LBool::True);
+}

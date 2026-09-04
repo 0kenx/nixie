@@ -570,3 +570,40 @@ in-search propagation of linear consequences with conflict reasons
 seeding provably cannot (this section).  That integration is a
 campaign of its own; the detector, the GF(2) core, and the wiring point
 now exist and are tested.
+
+## 18. Twelfth follow-up (same day): XOR-aware probing — landed with a real perf fix, measured flat-to-negative
+
+The tractable slice toward in-search propagation: `xor_probe`
+(`OXIZ_XORPROBE=1`, default off) — build the GF(2) matrix, force
+add-time-pinned units at level 0 (with CNF-propagation interleaved to a
+fixpoint), then probe both polarities of every matrix variable at a
+decision level with CNF propagate + matrix folding; a failed polarity
+forces its opposite at level 0 (the `probe_round` pattern — probe-level
+assignments are self-contained, so no CDCL reason plumbing is needed).
+Fold discipline per `GF2Matrix::propagate`'s contract: every trail
+literal during a probe is folded in trail order and undone in exact
+reverse; level-0 folds are permanent.  No verdicts beyond the level-0
+unit path every probing pass already uses.  Test:
+`xor_probe_forces_pinned_units` (the row difference `a⊕b=1`,
+`a⊕b⊕c=0` pins `c=1` end-to-end).
+
+**The bug this found in the dormant module is the landing's real value**:
+`GF2Row::xor_with` extended its `sources` list on every reduce step, and
+through Gaussian chains the accumulated lists grow
+**Fibonacci-exponentially** — measured on mdp-28-14's 373 constraints:
+12 ms at constraint 150, 7.8 s at 250 (the row bit-ops are nanoseconds).
+Any future consumer of `add_constraint` would have hit this; the lists
+are now capped (`SOURCE_CAP = 64`) with the reason-consumer caveat in
+the comment.
+
+**Measured (quiet, deterministic counters)**: the probing derives units
+(summle 154, g2-slp 57, crypto1 14) but the corpus effect is
+flat-to-negative — summle_X4044 62 927 → 124 584 (2×), pb_300
+29 101 → 92 621 (3.2×), mp1 112 030 (1.05×), g2-slp 336 934 (0.98×),
+mdp-28-14 still TO with 0 units (its system is underdetermined and
+single-var probes do not conflict).  0 verdict mismatches.  The honest
+limitation: this probing only *fires* when a row becomes single-var or
+falsified under a level-1 probe; CryptoMiniSat's leverage comes from
+folding every assignment during search with conflict clauses fed back
+into CDCL — the integration that remains the recorded multi-session
+lever.  Default stays off; `OXIZ_XORPROBE` joins the infrastructure.
