@@ -87,13 +87,10 @@ cargo run --release -- --update
 | 0 | All benchmarks passed (no regressions) |
 | 1 | One or more regressions detected |
 
-## CI Integration
+## Running
 
-The regression tests are integrated into GitHub Actions. See `.github/workflows/perf-regression.yml`.
-
-### Manual Trigger
-
-You can manually trigger the performance regression workflow from the GitHub Actions tab.
+This repository ships no GitHub Actions workflows; run the regression
+harness manually as described above.
 
 ### Automated Runs
 

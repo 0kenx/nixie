@@ -297,11 +297,10 @@ Two `cargo test` entry points under `tests/`:
   `Unknown`/`Timeout`/solver `Error` on either side is reported but treated
   as inconclusive, never as a pass *or* a hard failure, so the harness can
   never be gamed by a solver that just gives up.
-- There is intentionally no new CI workflow wired to this harness (Z3 is an
-  external binary dependency this project does not control, and the
-  project's CI-workflow policy restricts which `.github/workflows/*.yml`
-  files may be added). Run it manually, or in any environment that happens
-  to already have `z3` on `PATH`.
+- There is intentionally no CI workflow wired to this harness (Z3 is an
+  external binary dependency this project does not control, and this
+  repository ships no GitHub Actions workflows). Run it manually, or in any
+  environment that happens to already have `z3` on `PATH`.
 
 ## Adding New Benchmarks
 
