@@ -5,6 +5,33 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [In-search XOR propagation with CDCL feedback: the full CryptoMiniSat-shaped integration] - 2026-09-05 (viii)
+
+- **Added (SAT)**: in-search GF(2) propagation (`solver/xor.rs::xor_search_step`,
+  `OXIZ_XORSEARCH=1`, default off).  The matrix lives on the Solver
+  through search; every assigned trail literal folds into it
+  (occurrence-indexed per column — the first version's full row scan made
+  every fold O(rows) and summle/mp1 wall-bound with fewer conflicts than
+  baseline); a single-var row derives its variable as a **propagated
+  literal with a materialized entailed reason clause** (negated folded
+  literals + the implied literal — full CDCL participation, entailed
+  learned clauses); a falsified row surfaces like a CNF conflict through
+  `propagate().or_else(xor_search_step)`.  Backtracks roll folds back
+  through both central backtrack functions (strictly increasing fold
+  indices → exact LIFO restore).  Proof-gated: parity reasoning is not
+  RUP (entailed ≠ UP-derivable), so attached-proof runs skip it.  Tests:
+  mid-search parity cascade with rollback-and-rederive (the first test
+  expectation had the parity backwards — the implementation was right),
+  and a 200-trial random differential (identical verdicts, validating
+  models).  Corpus A/B (0 mismatches, off-arm identity 1.0000): on-arm
+  **1.0169**, neutral band, bimodal per file (mp1 0.20×, pb_300 0.37×
+  quiet vs summle_X11112 7.7×, j3037 TO, real per-fold wall overhead).
+  Default stays off; remaining CryptoMiniSat-class distance (XOR-aware
+  learned-clause treatment, matrix reduction schedules, dedicated
+  conflict analysis) recorded as future work.  Verified: 10 480 tests,
+  clippy/fmt/doc, Z3 parity 170/0, default-path identity (worker
+  106 143).
+
 ## [XOR probing slice + Fibonacci-exponential sources fix in the dormant GF(2) module] - 2026-09-05 (vii)
 
 - **Fixed (SAT, dormant module)**: `GF2Row::xor_with` extended its

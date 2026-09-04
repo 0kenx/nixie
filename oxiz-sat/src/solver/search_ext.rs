@@ -99,8 +99,10 @@ impl Solver {
                 return SolverResult::Unsat;
             }
 
-            // Boolean propagation
-            if let Some(conflict) = self.propagate() {
+            // Boolean propagation, then (when installed) in-search XOR
+            // propagation of the newly assigned literals — a falsified
+            // row surfaces exactly like a CNF conflict.
+            if let Some(conflict) = self.propagate().or_else(|| self.xor_search_step()) {
                 self.stats.conflicts += 1;
 
                 if self.trail.decision_level() == 0 {

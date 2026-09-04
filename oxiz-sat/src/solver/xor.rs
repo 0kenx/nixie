@@ -274,10 +274,10 @@ impl Solver {
                 .map(|v| crate::literal::Var::new(*v))
                 .collect();
             match matrix.add_constraint(&vars, c.rhs, 0) {
-                crate::xor::XorAddResult::Unit(v, val, _) => {
+                crate::xor::XorAddResult::Unit(v, val, _, _) => {
                     pending.push(if val { Lit::pos(v) } else { Lit::neg(v) });
                 }
-                crate::xor::XorAddResult::Conflict(_) => {
+                crate::xor::XorAddResult::Conflict(_, _) => {
                     inconsistent = true;
                     break;
                 }
@@ -297,7 +297,7 @@ impl Solver {
                 let lit = self.trail.assignments()[folded_level0];
                 folded_level0 += 1;
                 for res in matrix.propagate(lit.var(), lit.is_pos()) {
-                    if let crate::xor::XorAddResult::Unit(v, val, _) = res {
+                    if let crate::xor::XorAddResult::Unit(v, val, _, _) = res {
                         pending.push(if val { Lit::pos(v) } else { Lit::neg(v) });
                     }
                 }
@@ -350,7 +350,7 @@ impl Solver {
                         folded += 1;
                         for res in matrix.propagate(lit.var(), lit.is_pos()) {
                             match res {
-                                crate::xor::XorAddResult::Unit(uv, uval, _) => {
+                                crate::xor::XorAddResult::Unit(uv, uval, _, _) => {
                                     let lit2 = if uval { Lit::pos(uv) } else { Lit::neg(uv) };
                                     match self.trail.lit_value(lit2) {
                                         crate::literal::LBool::Undef => {
@@ -362,7 +362,7 @@ impl Solver {
                                         crate::literal::LBool::True => {}
                                     }
                                 }
-                                crate::xor::XorAddResult::Conflict(_) => {
+                                crate::xor::XorAddResult::Conflict(_, _) => {
                                     conflict = true;
                                 }
                                 _ => {}
@@ -398,7 +398,7 @@ impl Solver {
                         let lit = self.trail.assignments()[folded_level0];
                         folded_level0 += 1;
                         for res in matrix.propagate(lit.var(), lit.is_pos()) {
-                            if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                            if let crate::xor::XorAddResult::Unit(uv, uval, _, _) = res {
                                 pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
                             }
                         }
@@ -411,7 +411,7 @@ impl Solver {
                         let lit = self.trail.assignments()[folded_level0];
                         folded_level0 += 1;
                         for res in matrix.propagate(lit.var(), lit.is_pos()) {
-                            if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                            if let crate::xor::XorAddResult::Unit(uv, uval, _, _) = res {
                                 pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
                             }
                         }
@@ -429,7 +429,7 @@ impl Solver {
                     let lit = self.trail.assignments()[folded_level0];
                     folded_level0 += 1;
                     for res in matrix.propagate(lit.var(), lit.is_pos()) {
-                        if let crate::xor::XorAddResult::Unit(uv, uval, _) = res {
+                        if let crate::xor::XorAddResult::Unit(uv, uval, _, _) = res {
                             pending.push(if uval { Lit::pos(uv) } else { Lit::neg(uv) });
                         }
                     }
@@ -445,5 +445,240 @@ impl Solver {
             }
         }
         (n_constraints, forced_units, false)
+    }
+}
+
+/// Cap on materialized XOR reason clauses per solve (memory bound; beyond
+/// it the in-search pass stops deriving — existing reasons stay sound).
+const MAX_XOR_REASONS: usize = 100_000;
+
+/// In-search XOR propagation state (2026-09-05 integration; `OXIZ_XORSEARCH`).
+#[derive(Debug)]
+pub(crate) struct XorSearch {
+    matrix: crate::xor::GF2Matrix,
+    /// Trail index of each folded literal, in fold order (strictly
+    /// increasing) — drives exact rollback on backtrack.
+    fold_idx: Vec<usize>,
+    /// Trail length already folded.
+    watermark: usize,
+    /// Materialized reason clauses so far.
+    reasons: usize,
+    /// Set when the reason cap is hit: stop deriving, keep state.
+    disabled: bool,
+}
+
+impl Solver {
+    /// Whether in-search XOR propagation is live.
+    pub(super) fn xor_search_active(&self) -> bool {
+        self.xor_search.as_ref().is_some_and(|x| !x.disabled)
+    }
+
+    /// Build and install the search matrix (pre-search, gated).  Add-time
+    /// pinned units are forced at level 0 first (the `xor_probe` part-1/2
+    /// logic, minus probing); the search loop then folds the trail from
+    /// scratch on its first iteration.
+    pub(super) fn xor_search_init(&mut self) -> usize {
+        if self.trail.decision_level() != 0
+            || self.proof.is_some()
+            || self.lrat
+            || self.real_theory_attached
+            || self.assertion_levels.len() > 1
+            || self.trivially_unsat
+        {
+            return 0;
+        }
+        let constraints = self.detect_xor_constraints();
+        if constraints.is_empty() {
+            return 0;
+        }
+        use crate::literal::Lit;
+        use crate::xor::{GF2Matrix, XorAddResult};
+        let mut matrix = GF2Matrix::new();
+        let mut pending: SmallVec<[Lit; 16]> = SmallVec::new();
+        for c in &constraints {
+            let vars: Vec<crate::literal::Var> = c
+                .vars
+                .iter()
+                .map(|v| crate::literal::Var::new(*v))
+                .collect();
+            match matrix.add_constraint(&vars, c.rhs, 0) {
+                XorAddResult::Unit(v, val, _, _) => {
+                    pending.push(if val { Lit::pos(v) } else { Lit::neg(v) });
+                }
+                XorAddResult::Conflict(..) => {
+                    // Inconsistent system: the formula is UNSAT, but this
+                    // pass produces no proof — refuse to answer, install
+                    // nothing.
+                    return constraints.len();
+                }
+                _ => {}
+            }
+        }
+        // Level-0 fixpoint for the pinned units (no matrix folds — the
+        // search loop folds the whole level-0 trail from watermark 0).
+        let mut forced = 0usize;
+        while let Some(lit) = pending.pop() {
+            if matches!(self.trail.lit_value(lit), crate::literal::LBool::Undef) {
+                self.force_level0(lit);
+                forced += 1;
+                if self.trivially_unsat {
+                    return constraints.len();
+                }
+            }
+        }
+        self.xor_search = Some(Box::new(XorSearch {
+            matrix,
+            fold_idx: Vec::new(),
+            watermark: 0,
+            reasons: 0,
+            disabled: false,
+        }));
+        forced
+    }
+
+    /// One in-search XOR propagation step: fold newly assigned trail
+    /// literals, derive units with materialized entailed reason clauses,
+    /// surface falsified rows as conflicts.  Returns a conflict clause id
+    /// exactly like `propagate`.  (Borrow structure: the state is touched
+    /// through short-lived `as_mut` scopes only — the trail and clause DB
+    /// are borrowed in between.)
+    pub(super) fn xor_search_step(&mut self) -> Option<crate::clause::ClauseId> {
+        use crate::literal::{LBool, Lit};
+        use crate::xor::XorAddResult;
+        if !self.xor_search_active() {
+            return None;
+        }
+        loop {
+            let trail_len = self.trail.assignments().len();
+            let watermark = self
+                .xor_search
+                .as_ref()
+                .map_or(trail_len, |x| x.watermark.min(trail_len));
+            if watermark == trail_len {
+                return None;
+            }
+            // Fold the delta.
+            let delta: Vec<Lit> = self.trail.assignments()[watermark..trail_len].to_vec();
+            type UnitDerivation = (crate::literal::Var, bool, Vec<(crate::literal::Var, bool)>);
+            let mut new_units: Vec<UnitDerivation> = Vec::new();
+            let mut conflict: Option<crate::clause::ClauseId> = None;
+            for (k, lit) in delta.iter().enumerate() {
+                let results = {
+                    let xs = self.xor_search.as_mut().expect("checked active");
+                    xs.matrix.propagate(lit.var(), lit.is_pos())
+                };
+                if let Some(xs) = self.xor_search.as_mut() {
+                    xs.fold_idx.push(watermark + k);
+                    xs.watermark = watermark + k + 1;
+                }
+                for res in results {
+                    match res {
+                        XorAddResult::Unit(v, val, _, folded) => new_units.push((v, val, folded)),
+                        XorAddResult::Conflict(_, folded) => {
+                            let lits: SmallVec<[Lit; 8]> = folded
+                                .iter()
+                                .map(|&(v, val)| if val { Lit::neg(v) } else { Lit::pos(v) })
+                                .collect();
+                            if !lits.is_empty() {
+                                let cid = self.clauses.add_original(lits.iter().copied());
+                                if let Some(xs) = self.xor_search.as_mut() {
+                                    xs.reasons += 1;
+                                }
+                                conflict = Some(cid);
+                            }
+                        }
+                        _ => {}
+                    }
+                    if conflict.is_some() {
+                        break;
+                    }
+                }
+                if conflict.is_some() {
+                    break;
+                }
+            }
+            if let Some(cid) = conflict {
+                if self.trail.decision_level() == 0 {
+                    self.trivially_unsat = true;
+                }
+                return Some(cid);
+            }
+            // Apply units with materialized entailed reasons.
+            let mut propagated_any = false;
+            for (v, val, folded) in new_units {
+                if !self.xor_search_active() {
+                    break;
+                }
+                let lit = if val { Lit::pos(v) } else { Lit::neg(v) };
+                let reason_lits = |lits: &mut SmallVec<[Lit; 8]>| {
+                    for &(fv, fval) in &folded {
+                        lits.push(if fval { Lit::neg(fv) } else { Lit::pos(fv) });
+                    }
+                };
+                match self.trail.lit_value(lit) {
+                    LBool::True => {}
+                    LBool::False => {
+                        let mut lits: SmallVec<[Lit; 8]> = SmallVec::new();
+                        reason_lits(&mut lits);
+                        lits.push(lit);
+                        let cid = self.clauses.add_original(lits.iter().copied());
+                        if let Some(xs) = self.xor_search.as_mut() {
+                            xs.reasons += 1;
+                        }
+                        if self.trail.decision_level() == 0 {
+                            self.trivially_unsat = true;
+                        }
+                        return Some(cid);
+                    }
+                    LBool::Undef => {
+                        let over = self
+                            .xor_search
+                            .as_ref()
+                            .is_some_and(|x| x.reasons >= MAX_XOR_REASONS);
+                        if over {
+                            if let Some(xs) = self.xor_search.as_mut() {
+                                xs.disabled = true;
+                            }
+                            break;
+                        }
+                        let mut lits: SmallVec<[Lit; 8]> = SmallVec::new();
+                        reason_lits(&mut lits);
+                        lits.push(lit);
+                        let cid = self.clauses.add_original(lits.iter().copied());
+                        if let Some(xs) = self.xor_search.as_mut() {
+                            xs.reasons += 1;
+                        }
+                        self.trail.assign_propagation(lit, cid);
+                        propagated_any = true;
+                    }
+                }
+            }
+            if propagated_any {
+                if let Some(c) = self.propagate() {
+                    if self.trail.decision_level() == 0 {
+                        self.trivially_unsat = true;
+                    }
+                    return Some(c);
+                }
+                continue;
+            }
+            return None;
+        }
+    }
+
+    /// Roll the matrix folds back to trail length `t` (call at the END of
+    /// every backtrack — the fold indices are strictly increasing, so
+    /// popping while the last index is ≥ `t` restores the LIFO contract
+    /// exactly).
+    pub(super) fn xor_search_rollback(&mut self) {
+        let Some(xs) = self.xor_search.as_mut() else {
+            return;
+        };
+        let t = self.trail.assignments().len();
+        while xs.fold_idx.last().is_some_and(|&i| i >= t) {
+            xs.matrix.undo_propagate();
+            xs.fold_idx.pop();
+        }
+        xs.watermark = xs.watermark.min(t);
     }
 }

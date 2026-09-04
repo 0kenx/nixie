@@ -291,6 +291,9 @@ impl Solver {
         // prefix can never point past the surviving trail.
         let kept = self.trail.assignments().len();
         self.no_conflict_until = self.no_conflict_until.min(kept);
+        // In-search XOR propagation: roll the matrix folds back with the
+        // trail (see `backtrack`'s call for the LIFO argument).
+        self.xor_search_rollback();
     }
 
     /// Backtrack to a given level without saving phases.
@@ -323,6 +326,11 @@ impl Solver {
         // from probe/assumption unwinds (cadical reserves that for `backtrack`).
         let kept = self.trail.assignments().len();
         self.no_conflict_until = self.no_conflict_until.min(kept);
+        // In-search XOR propagation: roll the matrix folds back with the
+        // trail (fold indices are strictly increasing, so this restores
+        // the propagate/undo LIFO contract exactly).  No-op unless
+        // `OXIZ_XORSEARCH` installed the state.
+        self.xor_search_rollback();
 
         for var in unassigned_vars {
             if !self.vsids.contains(var) {

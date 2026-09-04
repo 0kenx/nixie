@@ -1133,6 +1133,10 @@ pub struct Solver {
     /// written only when `OXIZ_INPROC_TRACE` is on.  Purely diagnostic —
     /// never read by search logic (2026-09-04 gating follow-up telemetry).
     pub(super) inproc_diag: [u64; 6],
+
+    /// In-search XOR propagation state (`solver/xor.rs`; `OXIZ_XORSEARCH`).
+    /// `None` on the default path — one `is_some` check per hooked call.
+    pub(super) xor_search: Option<Box<self::xor::XorSearch>>,
     /// A real (non no-op) theory callback is attached to the running search.
     /// Set for the duration of [`Solver::solve_with_theory`] when the
     /// callback reports [`TheoryCallback::is_real_theory`]; gates the
@@ -1564,6 +1568,7 @@ impl Solver {
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
             inproc_diag: [0; 6],
+            xor_search: None,
             real_theory_attached: false,
             frozen_vars: rustc_hash::FxHashSet::default(),
             theory_vars_frozen: false,
@@ -3114,6 +3119,24 @@ impl Solver {
                 eprintln!(
                     "c [xorprobe] constraints={constraints} forced_units={forced} inconsistent={inconsistent}"
                 );
+            }
+            if self.trivially_unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
+        }
+        // In-search XOR propagation (`solver/xor.rs::xor_search_step`,
+        // `OXIZ_XORSEARCH=1`): the CryptoMiniSat-shaped integration — the
+        // GF(2) matrix folds every assigned trail literal, derives units
+        // with materialized entailed reason clauses (assign-with-reason,
+        // full CDCL participation), and surfaces falsified rows as
+        // conflicts.  Proof-gated (parity reasoning is not RUP; the
+        // reason clauses are entailed but not UP-derivable in general).
+        if std::env::var("OXIZ_XORSEARCH").is_ok() {
+            let forced = self.xor_search_init();
+            if forced > 0 {
+                #[cfg(feature = "std")]
+                eprintln!("c [xorsearch] presearch_forced_units={forced}");
             }
             if self.trivially_unsat {
                 self.drat_emit_empty(None);

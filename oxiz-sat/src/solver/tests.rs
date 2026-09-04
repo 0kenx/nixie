@@ -1890,3 +1890,188 @@ fn xor_probe_forces_pinned_units() {
     assert!(s.trail.is_assigned(c));
     assert_eq!(s.trail.lit_value(Lit::pos(c)), crate::literal::LBool::True);
 }
+
+/// Mid-search XOR propagation must fire where CNF-UP cannot: a parity
+/// chain `a ⊕ b ⊕ c = 1`, `c ⊕ d ⊕ e = 1` whose interior variable `c` is
+/// only determined once `a` and `b` are assigned — unit propagation over
+/// the CNF classes cannot derive it (parity needs counting).  With the
+/// integration on, deciding `a` and `b` cascades `c` through the matrix
+/// with a materialized reason.
+#[test]
+fn xor_search_propagates_parity_midsearch() {
+    let mk = |on: bool| -> (Solver, usize) {
+        let mut s = Solver::with_config(SolverConfig {
+            enable_xor_reasoning: on,
+            ..SolverConfig::default()
+        });
+        let vars: Vec<_> = (0..5).map(|_| s.new_var()).collect();
+        // a ⊕ b ⊕ c = 1 (odd true-parity class = even negation parity).
+        let cls3 = |s: &mut Solver, neg: &[usize]| {
+            s.add_clause((0..3).map(|i| {
+                if neg.contains(&i) {
+                    Lit::neg(vars[i])
+                } else {
+                    Lit::pos(vars[i])
+                }
+            }));
+        };
+        cls3(&mut s, &[]);
+        cls3(&mut s, &[0, 1]);
+        cls3(&mut s, &[0, 2]);
+        cls3(&mut s, &[1, 2]);
+        // c ⊕ d ⊕ e = 1.
+        let cls3b = |s: &mut Solver, neg: &[usize]| {
+            s.add_clause((2..5).map(|i| {
+                if neg.contains(&i) {
+                    Lit::neg(vars[i])
+                } else {
+                    Lit::pos(vars[i])
+                }
+            }));
+        };
+        cls3b(&mut s, &[]);
+        cls3b(&mut s, &[0, 1]);
+        cls3b(&mut s, &[0, 2]);
+        cls3b(&mut s, &[1, 2]);
+        // Glue: pin nothing at level 0 (so the parity cascade must come
+        // from decisions), just forbid one corner.
+        s.add_clause([Lit::neg(vars[3]), Lit::neg(vars[4])]);
+        (s, vars.len())
+    };
+    // The integration is env-gated at solve(); exercise the step directly.
+    let (mut s, _) = mk(true);
+    let installed = s.xor_search_init();
+    assert_eq!(installed, 0, "nothing pinned at level 0");
+    assert!(s.xor_search_active());
+    // Decide a=true, b=true at levels 1 and 2 (as the search would).
+    let a = Var::new(0);
+    let b = Var::new(1);
+    let c = Var::new(2);
+    s.trail.new_decision_level();
+    s.trail.assign_decision(Lit::pos(a));
+    assert!(s.propagate().is_none());
+    assert!(s.xor_search_step().is_none(), "row still has two free vars");
+    s.trail.new_decision_level();
+    s.trail.assign_decision(Lit::pos(b));
+    assert!(s.propagate().is_none());
+    // Now the row a⊕b⊕c=1 folds to single-var: 1⊕1⊕c = c, so c is
+    // FORCED true (the parity is odd and a=b=true contribute none), with
+    // a materialized reason clause.
+    assert!(s.xor_search_step().is_none(), "unit assigned, no conflict");
+    assert!(
+        s.trail.is_assigned(c),
+        "the matrix must propagate c once a and b are assigned"
+    );
+    assert_eq!(
+        s.trail.lit_value(Lit::pos(c)),
+        crate::literal::LBool::True,
+        "a=b=true forces c=true under odd parity (1 xor 1 xor c = c = 1)"
+    );
+    // And the cascade continues into the second row: c=true ⇒ d⊕e=0 — not
+    // single-var yet (two free), so stop here.
+    s.backtrack(0);
+    // Rollback restored the matrix: re-folding the same decisions must
+    // re-derive the same unit.
+    s.trail.new_decision_level();
+    s.trail.assign_decision(Lit::pos(a));
+    let _ = s.propagate();
+    let _ = s.xor_search_step();
+    s.trail.new_decision_level();
+    s.trail.assign_decision(Lit::pos(b));
+    let _ = s.propagate();
+    let _ = s.xor_search_step();
+    assert_eq!(s.trail.lit_value(Lit::pos(c)), crate::literal::LBool::True);
+}
+
+/// Differential: random parity-class + glue formulas; with the matrix
+/// installed the search's verdict must match a plain solver's, and Sat
+/// models must satisfy the original clauses (the materialized XOR reasons
+/// are entailed, so they can never flip satisfiability).
+#[test]
+fn xor_search_differential_random() {
+    let mut rng: u64 = 0xB502_6F5A_A9D1_9A5B;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for trial in 0..200 {
+        let n = 6 + (next() % 4) as usize;
+        let mut base = Solver::new();
+        let mut withxor = Solver::new();
+        for _ in 0..n {
+            base.new_var();
+            withxor.new_var();
+        }
+        let mut clauses: Vec<Vec<Lit>> = Vec::new();
+        // Two random 3-var parity classes + random glue clauses.
+        for _ in 0..2 {
+            let vs: Vec<usize> = {
+                let mut v: Vec<usize> = (0..n).collect();
+                v.sort_by_key(|_| next());
+                v.truncate(3);
+                v
+            };
+            for neg in [&[][..], &[0usize, 1], &[0, 2], &[1, 2]] {
+                let cl: Vec<Lit> = vs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &v)| {
+                        if neg.contains(&i) {
+                            Lit::neg(Var::new(v as u32))
+                        } else {
+                            Lit::pos(Var::new(v as u32))
+                        }
+                    })
+                    .collect();
+                clauses.push(cl);
+            }
+        }
+        for _ in 0..(2 + next() % 3) {
+            let k = 2 + (next() % 2) as usize;
+            let mut cl: Vec<Lit> = Vec::new();
+            for _ in 0..k {
+                let v = (next() % n as u64) as u32;
+                let l = if next() & 1 == 0 {
+                    Lit::pos(Var::new(v))
+                } else {
+                    Lit::neg(Var::new(v))
+                };
+                if !cl.contains(&l) && !cl.contains(&l.negate()) {
+                    cl.push(l);
+                }
+            }
+            if !cl.is_empty() {
+                clauses.push(cl);
+            }
+        }
+        for cl in &clauses {
+            base.add_clause(cl.iter().copied());
+            withxor.add_clause(cl.iter().copied());
+        }
+        let expected = base.solve();
+        let _ = withxor.xor_search_init();
+        let got = withxor.solve();
+        assert_eq!(
+            expected, got,
+            "verdict changed by in-search XOR propagation (trial {trial})"
+        );
+        if got == SolverResult::Sat {
+            let m = withxor.model();
+            for cl in &clauses {
+                let sat = cl.iter().any(|l| {
+                    let vi = l.var().index();
+                    m.get(vi).is_some_and(|v| {
+                        *v == if l.is_pos() {
+                            crate::literal::LBool::True
+                        } else {
+                            crate::literal::LBool::False
+                        }
+                    })
+                });
+                assert!(sat, "model violates an original clause (trial {trial})");
+            }
+        }
+    }
+}

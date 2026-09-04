@@ -607,3 +607,41 @@ falsified under a level-1 probe; CryptoMiniSat's leverage comes from
 folding every assignment during search with conflict clauses fed back
 into CDCL — the integration that remains the recorded multi-session
 lever.  Default stays off; `OXIZ_XORPROBE` joins the infrastructure.
+
+## 19. Thirteenth follow-up (same day): the full in-search integration lands — CryptoMiniSat shape, honest neutral verdict
+
+`OXIZ_XORSEARCH=1` (default off): the GF(2) matrix lives on the Solver
+through search; every assigned trail literal folds into it (occurrence-
+indexed — the first version scanned all rows per fold and made summle/mp1
+wall-bound with *fewer* conflicts than baseline); a row that becomes
+single-var derives its last variable as a **propagated literal with a
+materialized entailed reason clause** (the negated folded literals plus
+the implied literal — full CDCL participation: analyze resolves against
+it, learned clauses are entailed); a falsified row surfaces exactly like
+a CNF conflict through `propagate().or_else(xor_search_step)`.  Backtracks
+roll the folds back through the central backtrack functions (fold
+indices are strictly increasing → exact LIFO restore).  Proof-gated
+(parity reasoning is not RUP; entailed ≠ UP-derivable).
+
+Mechanism tests: mid-search parity cascade with rollback-and-rederive
+(a=b=true ⇒ c=true — the test's first expectation had the parity
+backwards and the *implementation* was right), and a 200-trial
+random differential (verdicts identical, models validate).
+
+**Corpus A/B (54 files, 0 mismatches, off-arm identity 1.0000)**:
+on-arm **1.0169** — inside the neutrality band, bimodal per file (mp1
+0.20×, summle_X4053 0.83×, pb_300 0.37× quiet, g2-slp 0.94× vs
+summle_X11112 7.7×, j3037 TO, and per-fold wall overhead that turns
+near-cap files into TOs under load).  Two sound orderings of unit
+emission (full row scan vs occurrence order) measured 562 k vs 21.5 k
+conflicts on mp1 — the familiar trajectory lottery between valid
+variants, noted for the record.
+
+**Campaign close**: the XOR lever now exists end-to-end — detection
+(delegated), GF(2) core (perf-fixed), phase seeding, probing, and the
+full in-search propagation with CDCL feedback — every piece sound,
+tested, env-gated, and measured.  The corpus verdict at this fidelity is
+neutral-band; the remaining distance to CryptoMiniSat-class XOR wins
+(adding XOR-aware learned-clause treatment, matrix reduction schedules,
+dedicated XOR conflict analysis) is recorded as future work with the
+P(descent)/verdict-checked protocols attached.

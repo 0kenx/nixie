@@ -23,6 +23,12 @@ pub struct GF2Row {
     rhs: bool,
     /// Original clause/constraint IDs
     sources: Vec<usize>,
+    /// Literals folded into this row so far, as (column, value), in fold
+    /// order — the material for reason clauses (2026-09-05 in-search
+    /// integration: a row that becomes single-var implies its last
+    /// variable; the entailed reason clause is the negated folded
+    /// literals plus the implied literal).
+    folded: Vec<(usize, bool)>,
 }
 
 impl GF2Row {
@@ -34,6 +40,7 @@ impl GF2Row {
             num_vars,
             rhs: false,
             sources: Vec::new(),
+            folded: Vec::new(),
         }
     }
 
@@ -155,6 +162,13 @@ pub struct GF2Matrix {
     col_to_var: Vec<Var>,
     /// Pivot row for each column (-1 if none)
     pivots: Vec<Option<usize>>,
+    /// Row occurrence lists per column: which stored rows contain the
+    /// column (built at row insertion).  `propagate` touches exactly
+    /// these instead of scanning every row — measured 2026-09-05: with a
+    /// 17k-row matrix the full scan made every assigned literal O(rows)
+    /// and the in-search integration wall-bound (summle/mp TO'd at the
+    /// cap with *fewer* conflicts than their baselines).
+    col_rows: Vec<Vec<usize>>,
     /// Undo trail for `propagate`, one entry per call, in call order.
     /// `undo_propagate` pops it LIFO, mirroring how the SAT solver
     /// backtracks its own assignment trail.
@@ -170,6 +184,7 @@ impl GF2Matrix {
             var_to_col: HashMap::new(),
             col_to_var: Vec::new(),
             pivots: Vec::new(),
+            col_rows: Vec::new(),
             undo_stack: Vec::new(),
         }
     }
@@ -188,6 +203,7 @@ impl GF2Matrix {
         self.var_to_col.insert(var, col);
         self.col_to_var.push(var);
         self.pivots.push(None);
+        self.col_rows.push(Vec::new());
         self.num_vars += 1;
         col
     }
@@ -227,7 +243,7 @@ impl GF2Matrix {
                 None => {
                     // Row became zero
                     if row.rhs {
-                        return XorAddResult::Conflict(row.sources.clone());
+                        return XorAddResult::Conflict(row.sources.clone(), Vec::new());
                     }
                     return XorAddResult::Redundant;
                 }
@@ -246,13 +262,16 @@ impl GF2Matrix {
             let var_idx = row.first_set().expect("popcount == 1");
             let var = self.col_to_var[var_idx];
             let value = row.rhs;
-            return XorAddResult::Unit(var, value, row.sources.clone());
+            return XorAddResult::Unit(var, value, row.sources.clone(), Vec::new());
         }
 
         // Add as new row with pivot
         let pivot_col = row.first_set().expect("non-zero row");
         let row_idx = self.rows.len();
         self.pivots[pivot_col] = Some(row_idx);
+        for c in row.get_vars() {
+            self.col_rows[c].push(row_idx);
+        }
         self.rows.push(row.clone());
 
         XorAddResult::Added
@@ -287,28 +306,45 @@ impl GF2Matrix {
 
         let mut touched_rows = Vec::new();
 
-        // Update all rows containing this variable
-        for (row_idx, row) in self.rows.iter_mut().enumerate() {
-            if row.is_set(col) {
+        // Update all rows containing this variable (occurrence-indexed —
+        // stored rows never change after insertion, so `col_rows` stays
+        // exact; folds clear bits transiently, but the undo restores them
+        // before any new insertion could observe a stale list).
+        let row_idxs: Vec<usize> = self.col_rows[col].clone();
+        for row_idx in row_idxs {
+            let row = &mut self.rows[row_idx];
+            {
                 touched_rows.push(row_idx);
                 row.clear(col);
                 if value {
                     row.rhs = !row.rhs;
                 }
+                row.folded.push((col, value));
 
                 // Check for unit or conflict
                 if row.is_zero() {
                     if row.rhs {
-                        results.push(XorAddResult::Conflict(row.sources.clone()));
+                        let folded = row
+                            .folded
+                            .iter()
+                            .map(|&(c, v)| (self.col_to_var[c], v))
+                            .collect();
+                        results.push(XorAddResult::Conflict(row.sources.clone(), folded));
                     }
                 } else if row.popcount() == 1 {
                     let var_idx = row.first_set().expect("popcount == 1");
                     let implied_var = self.col_to_var[var_idx];
                     let implied_value = row.rhs;
+                    let folded = row
+                        .folded
+                        .iter()
+                        .map(|&(c, v)| (self.col_to_var[c], v))
+                        .collect();
                     results.push(XorAddResult::Unit(
                         implied_var,
                         implied_value,
                         row.sources.clone(),
+                        folded,
                     ));
                 }
             }
@@ -341,12 +377,14 @@ impl GF2Matrix {
         let entry = self.undo_stack.pop()?;
 
         if let Some(&col) = self.var_to_col.get(&entry.var) {
-            for &row_idx in &entry.touched_rows {
+            for &row_idx in entry.touched_rows.iter().rev() {
                 let row = &mut self.rows[row_idx];
                 if entry.value {
                     row.rhs = !row.rhs;
                 }
                 row.set(col);
+                // Pop this call's fold record (one push per touched row).
+                row.folded.pop();
             }
         }
 
@@ -383,10 +421,14 @@ pub enum XorAddResult {
     Added,
     /// Constraint was redundant
     Redundant,
-    /// Found a unit implication (variable, value, reason sources)
-    Unit(Var, bool, Vec<usize>),
-    /// Found a conflict (reason sources)
-    Conflict(Vec<usize>),
+    /// Found a unit implication (variable, value, reason sources, and
+    /// the row's folded literals as (variable, assigned-value) — the
+    /// material for the entailed reason clause).
+    Unit(Var, bool, Vec<usize>, Vec<(Var, bool)>),
+    /// Found a conflict (reason sources, and the row's folded literals —
+    /// a falsified row is fully folded, so these are exactly the trail
+    /// literals whose negation forms the entailed conflict clause).
+    Conflict(Vec<usize>, Vec<(Var, bool)>),
 }
 
 /// Represents an XOR constraint: x1 ⊕ x2 ⊕ ... ⊕ xn = rhs
@@ -1003,7 +1045,7 @@ impl XorPropagator {
 
         // Also add to GF(2) matrix for Gaussian reasoning
         match self.matrix.add_constraint(&vars, rhs, clause_id.0) {
-            XorAddResult::Conflict(srcs) => {
+            XorAddResult::Conflict(srcs, _) => {
                 let conflict_sources: Vec<ClauseId> = srcs
                     .iter()
                     .filter_map(|&idx| self.clauses.get(idx).map(|c| c.sources.clone()))
@@ -1011,7 +1053,7 @@ impl XorPropagator {
                     .collect();
                 self.conflict = Some(conflict_sources);
             }
-            XorAddResult::Unit(var, value, srcs) => {
+            XorAddResult::Unit(var, value, srcs, _folds) => {
                 let reason_sources: Vec<ClauseId> = srcs
                     .iter()
                     .filter_map(|&idx| self.clauses.get(idx).map(|c| c.sources.clone()))
@@ -1041,7 +1083,7 @@ impl XorPropagator {
         let matrix_results = self.matrix.propagate(var, value);
         for result in matrix_results {
             match result {
-                XorAddResult::Conflict(srcs) => {
+                XorAddResult::Conflict(srcs, _) => {
                     let conflict_sources: Vec<ClauseId> = srcs
                         .iter()
                         .filter_map(|&idx| self.clauses.get(idx).map(|c| c.sources.clone()))
@@ -1051,7 +1093,7 @@ impl XorPropagator {
                     self.stats.conflicts += 1;
                     return PropagateResult::Conflict(conflict_sources);
                 }
-                XorAddResult::Unit(implied_var, implied_value, srcs) => {
+                XorAddResult::Unit(implied_var, implied_value, srcs, _folds) => {
                     if let Some(&existing) = self.assignment.get(&implied_var) {
                         if existing != implied_value {
                             // Conflict!
@@ -1609,7 +1651,7 @@ mod tests {
         // x0 + x2 = 1 (conflict with the above two)
         let result = matrix.add_constraint(&[Var(0), Var(2)], true, 2);
 
-        assert!(matches!(result, XorAddResult::Conflict(_)));
+        assert!(matches!(result, XorAddResult::Conflict(..)));
     }
 
     #[test]
@@ -1626,7 +1668,7 @@ mod tests {
         // Row 1: x0 = 1
         // After eliminating x0 from row 0: x1 = 1 (unit)
         match result {
-            XorAddResult::Unit(var, value, _) => {
+            XorAddResult::Unit(var, value, _, _) => {
                 // The unit could be either x0 or x1 depending on pivot order
                 assert!(var == Var(0) || var == Var(1));
                 assert!(value);
@@ -1789,7 +1831,7 @@ mod tests {
             "expected exactly one result, got {results:?}"
         );
         match &results[0] {
-            XorAddResult::Unit(v, val, _) => {
+            XorAddResult::Unit(v, val, _, _) => {
                 assert_eq!(*v, expected_var);
                 assert_eq!(*val, expected_value);
             }
