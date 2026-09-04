@@ -18,6 +18,7 @@ mod search_ext;
 mod subsume;
 mod transred;
 mod walk;
+mod xor;
 
 pub use heuristic::{BoxedBranchingHeuristic, BranchingHeuristic};
 
@@ -384,6 +385,12 @@ pub struct SolverConfig {
     /// kissat's `--factor=0` knockout costs it 21.5x conflicts on
     /// worker_550).
     pub enable_factoring: bool,
+
+    /// Pre-search XOR (parity) reasoning, phase-seeding slice
+    /// (`solver/xor.rs`): strict parity-class detection + GF(2) Gaussian
+    /// elimination + phase seeding of the solution.  Default off pending
+    /// the corpus A/B.
+    pub enable_xor_reasoning: bool,
     /// Chronological backtracking threshold (max distance from assertion level)
     pub chrono_backtrack_threshold: u32,
     /// Cap on the Luby restart multiplier. The Luby sequence grows as 2^k, so
@@ -599,6 +606,7 @@ impl Default for SolverConfig {
             presearch_collapse: false,
             els_presearch: false,
             enable_factoring: false,
+            enable_xor_reasoning: false,
             stabilize_base: 5000,
             focused_luby_cap: 16,
             use_vmtf: true,
@@ -3076,6 +3084,24 @@ impl Solver {
                 return SolverResult::Unsat;
             }
         }
+        // Pre-search XOR (parity) reasoning, phase-seeding slice
+        // (`solver/xor.rs`): detect strict parity-class clause groups,
+        // Gaussian-eliminate the GF(2) system, seed phases with the
+        // solution.  Sound by construction (phases are preferences; no
+        // verdicts produced — an inconsistent system is traced, not
+        // answered, pending a proof story).  Telemetry: 22 standing-corpus
+        // files carry strict groups, incl. mdp-28-14 (one of the four
+        // unsolved).  Default off pending the corpus A/B.
+        if self.config.enable_xor_reasoning || std::env::var("OXIZ_XOR").as_deref() == Ok("1") {
+            let (constraints, seeded, inconsistent) = self.xor_phase_seed();
+            if constraints > 0 {
+                #[cfg(feature = "std")]
+                eprintln!(
+                    "c [xor] constraints={constraints} seeded_phases={seeded} inconsistent={inconsistent}"
+                );
+            }
+        }
+
         // One-shot pre-search phase initialisation from a bounded ProbSAT
         // walk (the rephase study's recorded-open "one-shot pre-search
         // phase initialisation"; §11.3 of BENCHMARKING.md): `warmup()` seeds

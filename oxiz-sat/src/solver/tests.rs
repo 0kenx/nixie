@@ -1705,3 +1705,132 @@ fn factor_witness_polarity_regression() {
         "factoring flipped the verdict (introduced={introduced}) — witness polarity regressed"
     );
 }
+
+// ---------------------------------------------------------------------------
+// XOR (parity) extraction + GF(2) solve (2026-09-05, solver/xor.rs).
+// ---------------------------------------------------------------------------
+
+/// Strict detection: a full parity class is an XOR constraint; an
+/// implication pair (mixed parities) and duplicated clauses are not.
+#[test]
+fn xor_detection_is_strict() {
+    let mut s = Solver::new();
+    let a = s.new_var();
+    let b = s.new_var();
+    let c = s.new_var();
+    // XOR(a,b) = 0: (a ∨ b) ∧ (¬a ∨ ¬b).
+    s.add_clause([Lit::pos(a), Lit::pos(b)]);
+    s.add_clause([Lit::neg(a), Lit::neg(b)]);
+    // Mixed pair over (a,c): (a ∨ c) ∧ (¬a ∨ c) — implies c, NOT an XOR.
+    s.add_clause([Lit::pos(a), Lit::pos(c)]);
+    s.add_clause([Lit::neg(a), Lit::pos(c)]);
+    // Duplicate clause over (b,c) — not a complete class.
+    s.add_clause([Lit::pos(b), Lit::pos(c)]);
+    s.add_clause([Lit::pos(b), Lit::pos(c)]);
+    let cs = s.detect_xor_constraints();
+    assert_eq!(cs.len(), 1, "exactly the (a,b) parity class");
+    assert_eq!(cs[0].vars.len(), 2);
+    // (a ∨ b) ∧ (¬a ∨ ¬b) = exactly-one-true = ⊕(a,b) = 1.
+    assert!(cs[0].rhs, "p=0 class encodes odd true-parity");
+}
+
+/// Full 3-var parity class (o ↔ a ⊕ b style) with odd parity.
+#[test]
+fn xor_detection_three_vars() {
+    let mut s = Solver::new();
+    let vs: Vec<_> = (0..3).map(|_| s.new_var()).collect();
+    // Odd-negation-parity class (p=1): excludes odd-|T| assignments, so
+    // the constraint is ⊕(v1,v2,v3) = 0 (even true-parity).
+    s.add_clause(vs.iter().map(|&v| Lit::neg(v)));
+    for i in 0..3 {
+        s.add_clause((0..3).map(|j| {
+            if j == i {
+                Lit::neg(vs[j])
+            } else {
+                Lit::pos(vs[j])
+            }
+        }));
+    }
+    let cs = s.detect_xor_constraints();
+    assert_eq!(cs.len(), 1);
+    assert!(!cs[0].rhs, "p=1 class encodes even true-parity");
+}
+
+/// GE: a small consistent system solves; every returned assignment
+/// satisfies every constraint; an inconsistent one is rejected.
+#[test]
+fn xor_gaussian_solve_and_consistency() {
+    let mut s = Solver::new();
+    let vs: Vec<_> = (0..6).map(|_| s.new_var()).collect();
+    let idx = |v: usize| vs[v].index() as u32;
+    let cons = vec![
+        super::xor::XorConstraint {
+            vars: smallvec::smallvec![idx(0), idx(1), idx(2)],
+            rhs: false,
+        },
+        super::xor::XorConstraint {
+            vars: smallvec::smallvec![idx(2), idx(3)],
+            rhs: true,
+        },
+        super::xor::XorConstraint {
+            vars: smallvec::smallvec![idx(4), idx(5)],
+            rhs: true,
+        },
+    ];
+    let assign = s.solve_xor_system(&cons).expect("consistent system");
+    for c in &cons {
+        let parity = c.vars.iter().filter(|v| assign[v]).count() % 2 == 1;
+        assert_eq!(parity, c.rhs, "constraint over {:?} violated", c.vars);
+    }
+    // Inconsistent: x ⊕ y = 0 and x ⊕ y = 1.
+    let bad = vec![
+        super::xor::XorConstraint {
+            vars: smallvec::smallvec![idx(0), idx(1)],
+            rhs: false,
+        },
+        super::xor::XorConstraint {
+            vars: smallvec::smallvec![idx(0), idx(1)],
+            rhs: true,
+        },
+    ];
+    assert!(s.solve_xor_system(&bad).is_err());
+}
+
+/// End-to-end: a formula whose clauses are exactly parity classes is
+/// solved with zero conflicts under the seeded phases (the model-descent
+/// theorem: UP never conflicts under model-consistent decisions).
+#[test]
+fn xor_phase_seed_gives_model_descent() {
+    let mut s = Solver::with_config(SolverConfig {
+        enable_xor_reasoning: true,
+        random_polarity_prob: 0.0, // keep the descent pure for the test
+        ..SolverConfig::default()
+    });
+    let vs: Vec<_> = (0..8).map(|_| s.new_var()).collect();
+    // Three complete parity classes: a 3-var odd-negation class (⊕=0),
+    // a 2-var even-negation class (⊕=1), a 2-var odd-negation class
+    // (⊕=0) — the system pins x0..=x4.
+    let mut cls3 = |neg: &[usize]| {
+        s.add_clause((0..3).map(|i| {
+            if neg.contains(&i) {
+                Lit::neg(vs[i])
+            } else {
+                Lit::pos(vs[i])
+            }
+        }));
+    };
+    cls3(&[]);
+    cls3(&[0, 1]);
+    cls3(&[0, 2]);
+    cls3(&[1, 2]);
+    s.add_clause([Lit::pos(vs[3]), Lit::pos(vs[4])]);
+    s.add_clause([Lit::neg(vs[3]), Lit::neg(vs[4])]);
+    s.add_clause([Lit::neg(vs[5]), Lit::pos(vs[6])]);
+    s.add_clause([Lit::pos(vs[5]), Lit::neg(vs[6])]);
+    let (n, seeded, inconsistent) = s.xor_phase_seed();
+    assert_eq!(n, 3);
+    assert!(seeded >= 5, "the system pins at least the 5 XOR vars");
+    assert!(!inconsistent);
+    assert_eq!(s.solve(), SolverResult::Sat);
+    assert_eq!(s.stats().conflicts, 0, "model-descent under seeded phases");
+}

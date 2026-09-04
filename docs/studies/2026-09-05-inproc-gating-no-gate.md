@@ -520,3 +520,53 @@ matter.**  Reaching the x9-class basins requires parity structure
 (XOR/Gauss reasoning) — a different solver component, priced far above
 this campaign.  The knob stays as infrastructure with its diagnostic
 (`prewalk: best_broken=…`).
+
+## 17. Eleventh follow-up (same day): XOR phase seeding — measured neutral-to-negative; the real lever is the dormant propagator
+
+Corpus telemetry (strict parity-class scan): **22 files carry XOR
+structure** — simon ×13 (2–3k groups each), g2-ak128booth (99k groups /
+181k vars), summle ×3, mp1-Nb7T42 (25k groups / 52k vars), g2-slp,
+pb_300, and **mdp-28-14 — one of the four standing unsolved files (373
+groups over 401 of its 792 vars)**.  A theoretical anchor corrected
+along the way: *any* model as phases gives a 0-conflict descent (unit
+propagation never conflicts under model-consistent decisions), so the
+oracle-phase residuals measured earlier (qwh 20k, worker 19k) were
+`random_polarity_prob` noise, and x9-09054's clean 0 was luck (39
+decisions ≈ 45 % chance of zero random flips) — x9 has **no** XOR
+structure at all (its 720 var-pairs are duplicate clauses), so the
+"parity-blind walk" story of §16 was a misattribution.
+
+**Slice landed** (`solver/xor.rs` + `enable_xor_reasoning` /
+`OXIZ_XOR=1`, default off): detection **delegates to the crate's
+existing `XorDetector`** (discovered dormant in `src/xor.rs` — GF2 rows,
+detector with correct `rhs = (negation-parity == 0)` semantics, and an
+unwired `XorPropagator` with watched literals and CDCL conflict
+reasons); on top of it a GF(2) Gaussian elimination and **phase seeding
+only** — no verdicts (an inconsistent system is traced, not answered,
+pending a proof story).  Tests: strict-rejection (implication pairs and
+duplicates are not constraints), both parity classes, GE
+satisfies-every-constraint + inconsistency detection, and an end-to-end
+model-descent (0 conflicts under seeded phases with random polarity
+off).  The author's own first `rhs` derivation was parity-flipped and
+the test anchors caught it — the anchors are the `(¬a∨b)∧(a∨¬b) = a↔b`
+identities.
+
+**Measured (single binary, 54 files, verdict-checked, 0 mismatches)**:
+off-arm identity **1.0000**; on-arm **1.0438** with only two files
+changed — both summle, both *worse* (1.41×, 2.07×).  Two properties
+explain the near-nothing: most detected systems are satisfied by the
+all-`false` default phases (GE returns the default; the trajectory is
+bit-identical — mp1-Nb7T42 with 25 480 constraints is unchanged), and
+where the GE solution does differ it is one arbitrary solution of the
+subsystem, uncorrelated with the non-XOR structure (the summle
+regressions).  An earlier build of the slice measured summle_X4044 at
+0.27× — a detector-variant lottery draw (7 constraints differ →
+different free-variable resolution), falsified by the clean rerun.
+mdp-28-14 still TOs (51 % var coverage; the non-XOR half remains).
+
+**What survives as the real lever**: the dormant `XorPropagator` —
+in-search propagation of linear consequences with conflict reasons
+(CryptoMiniSat's architecture) — is the way XOR structure pays; phase
+seeding provably cannot (this section).  That integration is a
+campaign of its own; the detector, the GF(2) core, and the wiring point
+now exist and are tested.

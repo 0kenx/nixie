@@ -5,6 +5,39 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [XOR phase seeding: slice landed, measured neutral-to-negative; dormant XorDetector wired] - 2026-09-05 (vi)
+
+- **Added (SAT): pre-search XOR phase seeding** (`oxiz-sat/src/solver/xor.rs`;
+  `SolverConfig::enable_xor_reasoning` default off, `OXIZ_XOR=1`).
+  Corpus telemetry: **22 standing files carry strict parity classes** (simon
+  ×13, g2-ak128booth 99k groups/181k vars, summle ×3, mp1-Nb7T42 25k/52k,
+  g2-slp, pb_300, and mdp-28-14 — one of the four unsolved).  The slice
+  delegates detection to the crate's existing (dormant, unwired)
+  [`XorDetector`] — discovered with correct `rhs = (negation-parity == 0)`
+  semantics and a full `XorPropagator` (watched literals, CDCL conflict
+  reasons) that no solver path used — and adds GF(2) Gaussian elimination
+  plus phase seeding of the solution.  **Phase seeding only, no verdicts**
+  (an inconsistent system is traced, not answered, pending a proof story).
+  Tests: strict rejection of implication pairs/duplicates, both parity
+  classes, GE satisfies-every-constraint + inconsistency detection, and an
+  end-to-end model-descent (0 conflicts under seeded phases, random
+  polarity off) — the anchors caught the author's first parity-flipped
+  `rhs` derivation.  Measured (single binary, 54 files, 0 mismatches):
+  off-arm identity **1.0000**; on-arm **1.0438** — only two files change
+  (both summle, both worse) because most detected systems are satisfied by
+  the all-false default phases (bit-identical trajectories; mp1 with 25 480
+  constraints unchanged) and GE's arbitrary solution is uncorrelated with
+  the non-XOR structure.  An earlier build's summle 0.27× was a
+  detector-variant lottery draw, falsified by the clean rerun.  The
+  recorded real lever: in-search XOR propagation via the dormant
+  `XorPropagator` (CryptoMiniSat's architecture) — a campaign of its own,
+  for which the detector, GF(2) core, and wiring now exist and are tested.
+  Also corrected in the study: *any* model as phases gives a 0-conflict
+  descent (the earlier oracle-phase residuals were `random_polarity_prob`
+  noise), and x9-09054 has no XOR structure (its 720 var-pairs are
+  duplicate clauses).  Verified: 10 476 tests, clippy/fmt/doc, Z3 parity
+  170/0, default-path identity.
+
 ## [Factoring compounding: both standing-gap carriers collapse to kissat-class descents] - 2026-09-05 (v)
 
 - **Changed (SAT): binary-chain factoring maintains the BIG incrementally
