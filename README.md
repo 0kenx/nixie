@@ -45,7 +45,6 @@ real Z3 binary: [`bench/z3_parity`](bench/z3_parity).
   from
 - [Z3](https://github.com/Z3Prover/z3) — CDCL(T) architecture, theory
   solvers, quantifiers, NLSAT, Spacer, proofs
-- [cvc5](https://github.com/cvc5/cvc5) — theory decision procedures
 - [CaDiCaL](https://github.com/arminbiere/cadical),
   [Kissat](https://github.com/arminbiere/kissat) — SAT core
 

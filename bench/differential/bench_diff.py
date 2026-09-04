@@ -4,7 +4,7 @@ sample and compare every verdict against z3, with optional **model
 validation** and a **family-neighbour** trust analysis.
 
 This is the harness that found the `vhard7` regression 9,858 passing tests did
-not (INTEGRATION_NOTES.md). The sample (`sample/selected.json`, seed 20260807,
+not. The sample (`sample/selected.json`, seed 20260807,
 270 instances across all QF_* logics) is checked in so every run is over the
 *same* instances and directly comparable across builds/PRs.
 

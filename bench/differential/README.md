@@ -1,7 +1,7 @@
 # Differential SMT bench (soundness + perf vs z3)
 
 This is the harness that found the `vhard7` soundness regression that 9,858
-passing unit tests did not (see `../../INTEGRATION_NOTES.md`). It runs an nixie
+passing unit tests did not. It runs an nixie
 binary over a **pinned** SMT-LIB sample and diffs every verdict against z3, so
 two builds / two PRs are compared over exactly the same instances.
 

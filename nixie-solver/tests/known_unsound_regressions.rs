@@ -8,7 +8,7 @@
 //! an UNSAT instance. It does *not* require the solver to reach `unsat`: oz
 //! times out on some of these (notably `vhard7`), and `unknown`/timeout is a
 //! sound answer. Pinning `!= sat` is the soundness bar; reaching `unsat` is a
-//! separate completeness goal (see INTEGRATION_NOTES.md).
+//! separate completeness goal.
 //!
 //! **Corpus not in git.** The `smt-lib/` instances these read are external
 //! benchmark data and are `.gitignore`d (see `.gitignore`). Fetch the SMT-LIB

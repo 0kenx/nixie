@@ -78,3 +78,6 @@ rustc-ice-*.txt
 /result
 /result-*
 /outputs/
+
+# AGENTS.md is local-only agent guidance, intentionally untracked
+/AGENTS.md

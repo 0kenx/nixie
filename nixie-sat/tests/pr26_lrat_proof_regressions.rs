@@ -307,10 +307,9 @@ fn test_pr26_lrat_equiv_substitution_gate_still_yields_verifiable_proof() {
 // LRAT, the proof stream and the search diverge, and this fails.
 //
 // NOTE (not under test here): inprocessing with LRAT *off* is a separate,
-// pre-existing upstream (v0.3.2) unsoundness – see
-// `INTEGRATION_NOTES.md` §1. Verified by transplant: v0.3.2 fails the
-// identical pigeonhole(6,5) inprocessing-on/no-LRAT case with the same
-// propagation-fixpoint invariant ("hanging unit"). This test does not
+// pre-existing upstream (v0.3.2) unsoundness. Verified by transplant: v0.3.2
+// fails the identical pigeonhole(6,5) inprocessing-on/no-LRAT case with the
+// same propagation-fixpoint invariant ("hanging unit"). This test does not
 // exercise that path (LRAT is on), so it is unaffected by it.
 fn test_pr26_lrat_inprocessing_gate_still_yields_verifiable_proof() {
     let config = SolverConfig {
