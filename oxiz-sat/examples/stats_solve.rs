@@ -7,6 +7,8 @@
 //!   SEED=N              seed the solver PRNG (`Solver::set_random_seed`)
 //!   INPROCESS=0|1       flip `enable_inprocessing` (A/B arm for the
 //!                       2026-09-04 standing-corpus inprocessing study)
+//!   INPROC_INTERVAL=N   override `inprocessing_interval` (0 = u64::MAX,
+//!                       i.e. mid-search rounds off; decomposition arm)
 //!   OXIZ_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NO_STAB=1           disable stable/focused alternation
@@ -25,6 +27,11 @@ fn main() {
     let mut cfg = ConfigPreset::CaDiCaL.config();
     if let Ok(v) = std::env::var("INPROCESS") {
         cfg.enable_inprocessing = v != "0";
+    }
+    if let Ok(v) = std::env::var("INPROC_INTERVAL")
+        && let Ok(n) = v.parse::<u64>()
+    {
+        cfg.inprocessing_interval = if n == 0 { u64::MAX } else { n };
     }
     if std::env::var("NO_REDUCE").is_ok() {
         cfg.clause_deletion_threshold = usize::MAX;
