@@ -312,3 +312,47 @@ eliminate, `factordelay` skipping the early rounds — our slice is
 pre-search only), and fresh-variable decision integration (kissat
 queue-front; a naive `bump_decision_hint` measured harmful here,
 1.26× on worker_550).
+
+## 10. Fourth follow-up (same day): incremental BIG compounding — both gap-carriers collapse
+
+The volume blocker was found by round telemetry: with a single
+end-of-pass BIG rebuild, round 2 saw 86 486 candidates and introduced
+**zero** — the new quotient binaries `(¬x ∨ q_i)` were invisible to the
+adjacency scans, so no candidate could match them as witnesses (kissat
+connects new binaries to its watches immediately inside the pass).
+Maintaining the BIG incrementally per application (`add_bin` + edge purge
+on quotient deletion) lets the fixpoint compound — and it is the
+compounding that carries the anchor wins:
+
+| file | base | §9 slice | + compounding |
+|---|---|---|---|
+| worker_550 | 106 143 | 46 659 (0.44×) | **6 679 (0.063×)** — kissat: 2 003 |
+| shuffling-2 | 23 130 | — | **449 (0.019×)** |
+| stable-300 | 491 382 | 43 067 (11×) | 99 114 (5.0×) |
+| mp1-Nb7T42 | 106 295 | 1.62× worse | 71 299 (0.67× better) |
+
+**Both files that carry the entire standing conflicts geomean collapse to
+kissat-class descents** (worker: 195 k decisions, 4 restarts — the long
+descent; wall 26.4 s vs 31.6 s).  Compounding also *reverses* some §9
+losses (mp1 1.62× → 0.67×).  Soundness unchanged: the compounding applies
+the same verified transformation (fixture now pins 2 introductions:
+round 2 legitimately re-factors the kept witnesses against the round-1
+quotients); 300-trial differential and the corpus A/B stay at 0 verdict
+mismatches / 0 invalid models.
+
+Remaining losses (quiet-core verified): Timetable, af-synthesis, 64_25,
+rbsat, circuit_64i TO; summle class 1.9–6.6×; si2 2.4×; ITC 3.9×;
+worker_20 4.9×; 6s167 1.24×.  Rounds >1 are not the cause (summle/ITC
+regress at rounds=1); **binary density does not gate it** (measured:
+winners worker 100 %/shuffling 83 %, losers rbsat 99.9 %/qwh 98.9 %/
+ITC 95.6 %/af-synthesis 90 % — both classes live at high density), so
+the bimodality is the familiar inprocessing-class per-file chaos plus
+real damage, not a formula-invariant property we can gate on.  kissat
+itself shows the same profile (its `--sweep=0` knockout *improves* j3037
+9×).  Default stays off; the recorded next question is whether any
+loss-side mitigation exists at all (fresh-var phases? placement?), or
+whether factoring joins ELS in the "real anchor win, corpus-negative"
+bin.
+
+Wall cost of the pass on huge DBs measured acceptable: worker_550's full
+factored solve is 26.4 s vs the default's 31.6 s (the pass is included).

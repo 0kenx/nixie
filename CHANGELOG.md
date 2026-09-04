@@ -5,6 +5,32 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Factoring compounding: both standing-gap carriers collapse to kissat-class descents] - 2026-09-05 (v)
+
+- **Changed (SAT): binary-chain factoring maintains the BIG incrementally
+  per application** (`oxiz-sat/src/solver/factor.rs`).  Round telemetry
+  showed the §9 slice's fixpoint stalled: with a single end-of-pass BIG
+  rebuild, round 2 saw 86 486 candidates and introduced zero — the new
+  quotient binaries were invisible to the adjacency scans as witnesses
+  (kissat connects new binaries to its watches immediately).  With
+  incremental edges (`add_bin` + purge on quotient deletion) the pass
+  compounds, and the compounding carries the anchor wins: **worker_550
+  106 143 → 6 679 conflicts (0.063×; kissat: 2 003)** and **shuffling-2
+  23 130 → 449 (0.019×)** — the two files that carry the entire 1.332×
+  standing conflicts geomean both collapse to long descents; stable-300
+  5×, mp1-Nb7T42 flips from 1.62× worse to 0.67× better.  Soundness
+  unchanged: same verified transformation applied by the compounding
+  (fixture pinned at 2 introductions — round 2 re-factors the kept
+  witnesses against the round-1 quotients), 300-trial differential and
+  the corpus A/B at 0 verdict mismatches / 0 invalid models.  Remaining
+  corpus losses are real (five cap TOs, summle/si2/ITC/worker_20
+  1.9–4.9×) and **binary density does not gate them** (measured: both
+  classes live at 83–100 % binaries) — the familiar inprocessing-class
+  bimodality; kissat's own knockouts show the same profile.  Default
+  stays off (`OXIZ_FACTOR=1`); pass wall measured acceptable (worker's
+  factored solve 26.4 s vs 31.6 s default).  Verified: 10 472 tests,
+  clippy/fmt/doc, Z3 parity 170/0, identity spot-check bit-identical.
+
 ## [Binary-chain factoring: kissat factor.c first slice, sound + anchor 0.44x, default off] - 2026-09-05 (iv)
 
 - **Added (SAT): binary-chain factoring** (`oxiz-sat/src/solver/factor.rs`;

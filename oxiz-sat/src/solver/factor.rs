@@ -265,12 +265,27 @@ impl Solver {
                 fresh_vars.push(x.var());
                 self_introduced.insert(x.code());
                 self_introduced.insert(x.negate().code());
-                self.clauses.add_original([x, f]);
-                self.clauses.add_original([x, g]);
+                // Incremental BIG maintenance (kissat connects new binaries
+                // to the watches immediately, which is what lets its pass —
+                // and our fixpoint rounds — match the NEW quotients
+                // `(¬x ∨ q_i)` as witnesses for other candidates; with a
+                // single end-of-pass rebuild they are invisible mid-pass
+                // and the rounds stall after round 1).
+                let add_bin = |s: &mut Solver, a: Lit, b: Lit| {
+                    let cid = s.clauses.add_original([a, b]);
+                    s.binary_graph.add(a.negate(), b, cid);
+                    s.binary_graph.add(b.negate(), a, cid);
+                    cid
+                };
+                add_bin(self, x, f);
+                add_bin(self, x, g);
                 for (q, qcid) in &group {
-                    self.clauses.add_original([x.negate(), *q]);
-                    // Pre-search at level 0, nothing watched yet: raw delete is
-                    // exact (the bva precedent).
+                    add_bin(self, x.negate(), *q);
+                    // Pre-search at level 0, nothing watched yet: raw delete
+                    // is exact for the arena (the bva precedent); the BIG
+                    // edges of the quotient binary are purged by id.
+                    self.binary_graph.remove_clause_edges(f.negate(), *qcid);
+                    self.binary_graph.remove_clause_edges(q.negate(), *qcid);
                     self.clauses.remove(*qcid);
                 }
                 introduced += 1;
@@ -278,6 +293,17 @@ impl Solver {
                 reduction_total += group.len() as i64 - 2;
             }
 
+            #[cfg(feature = "std")]
+            if std::env::var("OXIZ_FACTOR_TRACE").is_ok() {
+                let cand3 = cands.iter().filter(|c| c.0 >= 3).count();
+                eprintln!(
+                    "factor_round: cands={} cand3={} round_introduced={} total={}",
+                    cands.len(),
+                    cand3,
+                    round_introduced,
+                    introduced
+                );
+            }
             if round_introduced == 0 {
                 break;
             }

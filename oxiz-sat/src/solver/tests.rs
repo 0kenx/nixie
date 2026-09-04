@@ -1551,14 +1551,17 @@ fn factoring_fixture(k: usize) -> (usize, Solver) {
 
 #[test]
 fn factor_fires_on_shared_implication_binaries() {
+    // With incremental BIG maintenance the fixpoint compounds: round 1
+    // factors `(f v q_i)` against witnesses `(q_i v g)`; round 2 factors
+    // the kept witnesses themselves (candidate `g`, quotients `(g v q_i)`,
+    // witnesses `(q_i v not-x)` — the round-1 quotients, now visible to
+    // the adjacency scan).  Both applications use the same verified
+    // transformation.
     let (introduced, _) = factoring_fixture(5);
-    assert_eq!(
-        introduced, 1,
-        "k=5 matched binaries must factor exactly once"
-    );
+    assert_eq!(introduced, 2, "k=5: quotient + witness-compounding rounds");
     let (introduced, _) = factoring_fixture(3);
     assert_eq!(
-        introduced, 1,
+        introduced, 2,
         "k=3 is the firing threshold (reduction k-2 > 0)"
     );
     let (introduced, _) = factoring_fixture(2);
@@ -1569,12 +1572,12 @@ fn factor_fires_on_shared_implication_binaries() {
 fn factor_preserves_verdict_both_ways() {
     // SAT: f=T (or g=T with all q_i) satisfies everything.
     let (i, mut s) = factoring_fixture(5);
-    assert_eq!(i, 1);
+    assert!(i >= 1);
     assert_eq!(s.solve(), SolverResult::Sat);
     // UNSAT variant: force ¬f, ¬q_1 and ... originals (f∨q_i) with ¬f
     // force q_i, so ¬q_1 contradicts; witnesses irrelevant.
     let (i, mut s) = factoring_fixture(5);
-    assert_eq!(i, 1);
+    assert!(i >= 1);
     let f = Var::new(0);
     let g = Var::new(1);
     let q1 = Var::new(2);
