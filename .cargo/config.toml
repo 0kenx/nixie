@@ -1,5 +1,16 @@
 # Workspace-wide cargo configuration
 #
+# `rustdocflags` below makes plain `cargo doc --no-deps --all-features`
+# enforce warnings-as-errors. This is a deliberate substitution for the
+# gate command `cargo doc --no-deps --all-features -- -D warnings`:
+# this cargo version REJECTS `--` passthrough args for `cargo doc`
+# ("error: unexpected argument '-D' found"), so the flag cannot be given
+# on the command line; `[build] rustdocflags` is the cargo-sanctioned way
+# to reach the same effect (it applies to every rustdoc invocation in this
+# workspace). Verified: `cargo doc --no-deps --all-features` exits 0 with
+# zero warnings. See docs/studies/2026-09-04-inprocessing-standing-corpus.md
+# ("Verification-gate notes").
+#
 # History: this file previously forced `target-cpu=native` on every build
 # target and `-undefined dynamic_lookup` on every macOS binary. Both were
 # removed in an earlier pass (audit finding, infra-p3), on the belief that
@@ -64,6 +75,9 @@
 # machine, opt in explicitly instead of committing it here, e.g.:
 #   RUSTFLAGS="-C target-cpu=native" cargo bench -p oxiz-solver
 # or add it to your personal (untracked) `~/.cargo/config.toml`.
+[build]
+rustdocflags = ["-D", "warnings"]
+
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "link-args=-undefined dynamic_lookup"]
 

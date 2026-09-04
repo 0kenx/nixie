@@ -1,6 +1,13 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 set -e
+
+# Run from the script's own directory so the `cd ../..` below lands on the
+# workspace root regardless of where the script was invoked from (the
+# verification gate runs `./bench/z3_parity/run_parity.sh` from the repo
+# root; without this it fails with "could not find Cargo.toml").
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # Colors
 RED='\033[0;31m'
