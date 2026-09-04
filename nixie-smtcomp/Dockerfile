@@ -35,8 +35,7 @@ RUN apt-get update && \
 
 # Copy the workspace manifests and sources. Every workspace member's
 # Cargo.toml must be present for cargo to resolve the workspace even
-# when building a single package; `nixie-py` is included for that reason
-# (it is not built by this Dockerfile).
+# when building a single package.
 #
 # Cargo.lock is deliberately NOT copied: it is git-ignored as of 0.3.1,
 # so dependencies are resolved fresh at build time. A caller who wants a
@@ -56,7 +55,6 @@ COPY nixie-proof ./nixie-proof
 COPY nixie-wasm ./nixie-wasm
 COPY nixie-cli ./nixie-cli
 COPY nixie-smtcomp ./nixie-smtcomp
-COPY nixie-py ./nixie-py
 COPY nixie-ml ./nixie-ml
 COPY bench ./bench
 

@@ -9,12 +9,11 @@ feature comparisons, and common migration patterns.
 
 1. [Architecture Differences](#architecture-differences)
 2. [API Mapping: Z3 Python to Nixie Rust](#api-mapping-z3-python-to-nixie-rust)
-3. [API Mapping: Z3 Python to Nixie Python](#api-mapping-z3-python-to-nixie-python)
-4. [SMT-LIB2 Compatibility](#smt-lib2-compatibility)
-5. [Feature Comparison](#feature-comparison)
-6. [Common Migration Patterns](#common-migration-patterns)
-7. [Performance Differences](#performance-differences)
-8. [Unsupported Features](#unsupported-features)
+3. [SMT-LIB2 Compatibility](#smt-lib2-compatibility)
+4. [Feature Comparison](#feature-comparison)
+5. [Common Migration Patterns](#common-migration-patterns)
+6. [Performance Differences](#performance-differences)
+7. [Unsupported Features](#unsupported-features)
 
 ---
 
@@ -141,35 +140,6 @@ match solver.check() {
     SatResult::Unknown => { /* ... */ }
 }
 ```
-
----
-
-## API Mapping: Z3 Python to Nixie Python
-
-| Z3 Python | Nixie Python | Notes |
-|-----------|-------------|-------|
-| `z3.Solver()` | `nixie.Solver()` | Direct equivalent |
-| `z3.Context()` | `nixie.TermManager()` | Separate term construction from solving |
-| `z3.Bool('p')` | `tm.mk_var('p', 'Bool')` | Sort as string |
-| `z3.Int('x')` | `tm.mk_var('x', 'Int')` | |
-| `z3.Real('r')` | `tm.mk_var('r', 'Real')` | |
-| `z3.BitVec('b', 32)` | `tm.mk_var('b', 'BitVec[32]')` | Width in sort string |
-| `z3.IntVal(42)` | `tm.mk_int(42)` | |
-| `z3.And(a, b)` | `tm.mk_and([a, b])` | Takes a list |
-| `z3.Or(a, b)` | `tm.mk_or([a, b])` | Takes a list |
-| `z3.Not(p)` | `tm.mk_not(p)` | |
-| `z3.Implies(a, b)` | `tm.mk_implies(a, b)` | |
-| `a + b` | `tm.mk_add([a, b])` | No operator overloading |
-| `a == b` | `tm.mk_eq(a, b)` | |
-| `a < b` | `tm.mk_lt(a, b)` | |
-| `z3.If(c, t, e)` | `tm.mk_ite(c, t, e)` | |
-| `z3.Select(a, i)` | `tm.mk_select(a, i)` | Array read |
-| `z3.Store(a, i, v)` | `tm.mk_store(a, i, v)` | Array write |
-| `solver.add(f)` | `solver.assert_term(t, tm)` | |
-| `solver.check()` | `solver.check_sat(tm)` | |
-| `solver.model()` | `solver.get_model(tm)` | Returns `dict[str, str]` |
-| `solver.push()` | `solver.push()` | Identical |
-| `solver.pop()` | `solver.pop()` | Identical |
 
 ---
 

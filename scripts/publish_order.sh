@@ -9,7 +9,7 @@
 # The order is *derived at run time* from `cargo metadata` (a topological
 # sort over the intra-workspace dependency DAG), not hand-maintained, so it
 # stays correct as crates are added/removed or dependencies change. Crates
-# marked `publish = false` (currently nixie-py, nixie-wasm, and the bench/*
+# marked `publish = false` (currently nixie-wasm and the bench/*
 # harnesses) are excluded automatically because `cargo metadata` reports an
 # empty `publish` registry list for them.
 #

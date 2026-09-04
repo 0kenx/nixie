@@ -12,8 +12,7 @@ cargo build --release                          # solver binary: target/release/n
 cargo nextest run --workspace --all-features   # test suite
 ```
 
-Rust 1.88+, edition 2024. `nixie-py` (Python bindings) is excluded from the
-default workspace build.
+Rust 1.88+, edition 2024.
 
 ## Crates
 

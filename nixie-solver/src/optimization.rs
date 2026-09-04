@@ -284,7 +284,7 @@ impl Optimizer {
             // this crate refuses to produce elsewhere.
             //
             // `OptimizationResult` is a public enum matched exhaustively by
-            // several downstream crates (`nixie-py`, `nixie-wasm`,
+            // several downstream crates (`nixie-wasm`,
             // `z3_compat_ext`), so adding a dedicated "no objective" variant
             // (or changing `value`'s type) is an API migration out of scope
             // for this fix. Until that broader migration happens, use a

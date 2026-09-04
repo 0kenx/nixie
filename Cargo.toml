@@ -15,14 +15,11 @@ members = [
     "nixie-wasm",
     "nixie-cli",
     "nixie-smtcomp",
-    "nixie-py",
     "nixie-ml",
     "bench/regression",
     "bench/profile",
 ]
 
-# Exclude nixie-py from default build since it requires maturin for proper Python linking.
-# To build nixie-py: cd nixie-py && maturin build
 default-members = [
     "nixie",
     "nixie-core",
