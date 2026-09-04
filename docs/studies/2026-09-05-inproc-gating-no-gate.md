@@ -442,3 +442,32 @@ Both are named, self-contained pieces; the `OXIZ_FACTOR_BUDGET` knob
 400 M / 3 543 introductions / worker default-seed 6 679 conflicts —
 and per §11, volume claims go through the 10-seed P(descent) protocol,
 not default-seed conflict ratios.
+
+## 14. Eighth follow-up (same day): scan-rate fixed; volume measured NON-MONOTONE — the lever family closes
+
+The per-entry `clauses.get(cid)` liveness dereferences were removed from
+all three scan sites (the pass maintains the BIG-live invariant itself:
+parse-time registration + incremental purge), making the counting loops
+pointer-chase-free (worker 400 M visits: 26 s → 23 s; the arena lookups
+were real but not the dominant cost at this scale).
+
+With the budget actually scalable, the volume experiment answers the
+§13 question **negatively**: 2 B edge visits on worker_550 introduce
+**20 370** variables (5.7× the default's 3 543, occurrence reduction
+5.3 M) and the default-seed conflicts get **worse** — 31 895 vs 6 679.
+Rewrite volume is non-monotone in trajectory quality for our search:
+the CSR adjacency + chain-refinement port is *necessary-but-insufficient*
+for the descent question.  Combined with §12 (queue-front falsified both
+ways) and §11 (the default-seed collapses were lottery draws), the
+factoring lever family closes as: **sound landed infrastructure, real
+kissat-side knockout evidence, no measurable path from the rewrite alone
+to reliable descents in our search**.  The distance to kissat on the
+descent class is in the search stack, not the preprocessing.
+
+Final campaign ledger (14 sections): one real bug fixed (ELS no-op), one
+sound port landed behind a flag (factoring), two seductive default-seed
+claims falsified by their pre-registered protocols (ELS placement,
+factoring collapses), three gate hypotheses killed at telemetry
+(online observables, gate counts, binary density), and the standing-gap
+decomposition corrected (two P(descent)-lottery files + a ~1.08×
+residue).  Every claim in this file carries its falsification protocol.

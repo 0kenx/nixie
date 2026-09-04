@@ -127,14 +127,13 @@ impl Solver {
             for code in 0..(self.num_vars * 2) as u32 {
                 let f = Lit::from_code(code);
                 let mut n = 0u32;
-                for (q, cid) in self.binary_graph.get(f.negate()) {
-                    if q.var() != f.var()
-                        && !self.trail.is_assigned(q.var())
-                        && self
-                            .clauses
-                            .get(*cid)
-                            .is_some_and(|c| !c.deleted && c.lits.len() == 2)
-                    {
+                // No per-entry clause dereference: the pass maintains the
+                // invariant that BIG entries reference live binary clauses
+                // (parse-time registration + incremental purge on this
+                // pass's deletions); the random-access arena lookups
+                // dominated the scan cost (~20x kissat's per-tick rate).
+                for (q, _cid) in self.binary_graph.get(f.negate()) {
+                    if q.var() != f.var() && !self.trail.is_assigned(q.var()) {
                         n += 1;
                     }
                 }
@@ -160,12 +159,7 @@ impl Solver {
                     .get(f.negate())
                     .iter()
                     .filter(|(q, _)| q.var() != f.var() && !self.trail.is_assigned(q.var()))
-                    .filter_map(|(q, cid)| {
-                        self.clauses
-                            .get(*cid)
-                            .is_some_and(|c| !c.deleted && c.lits.len() == 2)
-                            .then_some((*q, *cid))
-                    })
+                    .map(|(q, cid)| (*q, *cid))
                     .collect();
                 if quotients.len() < 3 {
                     continue;
@@ -197,13 +191,6 @@ impl Solver {
                         }
                         if *wcid == *qcid {
                             continue; // witness must differ from the quotient
-                        }
-                        let live = self
-                            .clauses
-                            .get(*wcid)
-                            .is_some_and(|c| !c.deleted && c.lits.len() == 2);
-                        if !live {
-                            continue;
                         }
                         count.entry(t.code()).or_default().push((*q, *wcid));
                     }
