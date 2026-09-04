@@ -64,7 +64,7 @@ impl Solver {
     /// phases persist from the search) exactly like cadical's dummy
     /// decisions leave them at their current phase.  The pass ends with the
     /// trail back at root, same state the rephase step guarantees today.
-    fn warmup(&mut self) {
+    pub(super) fn warmup(&mut self) {
         if self.num_vars == 0 {
             return;
         }
@@ -109,7 +109,7 @@ impl Solver {
     }
 
     /// cadical `walk_round (limit, false)` over the original clauses.
-    fn walk_round(&mut self, limit: u64) {
+    pub(super) fn walk_round(&mut self, limit: u64) {
         self.stats.walk.count += 1;
         if self.num_vars == 0 {
             return;

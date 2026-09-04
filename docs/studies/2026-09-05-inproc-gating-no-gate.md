@@ -471,3 +471,34 @@ factoring collapses), three gate hypotheses killed at telemetry
 (online observables, gate counts, binary density), and the standing-gap
 decomposition corrected (two P(descent)-lottery files + a ~1.08×
 residue).  Every claim in this file carries its falsification protocol.
+
+## 15. Ninth follow-up (same day): oracle-phase collapse verified genuine; worker-class improvements are re-rolls
+
+Before building a phase-source campaign on the §11.3 measurements, the
+collapse was audited for oracle leaks (suggested in review):
+
+* **Mechanism**: `set_phase_hint` writes only the saved/target/best phase
+  arrays — no trail assignments, no units, no propagation.  A pure
+  polarity preference.
+* **The 0-conflict x9-09054 run**: 39 decisions, 450 propagations, 0
+  conflicts — a pure descent; the returned model validates externally
+  (4 052 clauses, 0 violated); verdict matches ground truth.
+* **Corrupted-hint gradient (the leak test — a leak collapses
+  regardless of hint content)**: true oracle 0 → 10 % flipped 398 308 →
+  50 % flipped 1 287 746 → scrambled 1 662 168 (base 249 455).
+  Monotone degradation: genuine phase information, no leak.
+
+The same gradient on worker_550 **refines the class claim**: 1 % flipped
+36 634, 10 % flipped **6 004**, 50 % flipped 6 894 — *corrupted hints
+beat the true oracle* (18 985).  Worker-class "oracle improvements" are
+substantially trajectory re-rolls (§6), not phase information; the
+cleanly phase-bound file in the measured set is x9-09054 (and the
+monotone gradient is the signature to demand of any future claim).
+
+`OXIZ_PREWALK=<flips>` (the §8-open "one-shot pre-search phase
+initialisation": `warmup()` + bounded `walk_round`, best assignment into
+saved phases) lands as the candidate-source knob.  First datapoint: on
+x9-09054 the walk's local optimum does not reach the oracle basin
+(10 k flips 240 735 ≈ base; 100 k flips 622 750, worse) — ProbSAT
+closeness is not automatically phase-transferable, exactly the
+§11.3 "screening, not a result" caveat.

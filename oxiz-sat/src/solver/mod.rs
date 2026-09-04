@@ -3076,6 +3076,30 @@ impl Solver {
                 return SolverResult::Unsat;
             }
         }
+        // One-shot pre-search phase initialisation from a bounded ProbSAT
+        // walk (the rephase study's recorded-open "one-shot pre-search
+        // phase initialisation"; §11.3 of BENCHMARKING.md): `warmup()` seeds
+        // a full assignment decide+propagate-style (conflicts ignored),
+        // `walk_round` improves it by bounded flips over the original
+        // clauses, and the round's best assignment is written into the
+        // saved phases — the search then starts from the walk's local
+        // optimum.  Oracle-phase measurements (same day) bound the class:
+        // the descent files (worker/shuffling/qwh/stable/x9-09054) are
+        // 5-20x better under their own models' phases, with x9-09054
+        // collapsing to 0 conflicts.  Default off; `OXIZ_PREWALK=<flips>`
+        // is the A/B knob.
+        if let Ok(v) = std::env::var("OXIZ_PREWALK")
+            && let Ok(flips) = v.parse::<u64>()
+            && flips > 0
+            && self.trail.decision_level() == 0
+            && !self.trivially_unsat
+        {
+            if self.config.walk_warmup {
+                self.warmup();
+            }
+            self.walk_round(flips);
+        }
+
         // Binary-chain factoring (kissat `factor.c` first slice;
         // `solver/factor.rs`): for a literal with many binaries whose
         // partners share a second literal's implications, replace
