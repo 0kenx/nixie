@@ -224,3 +224,40 @@ price is the sat-side losses.  The remaining evidence-backed gap is the
 kissat simplification fixpoint's *content* we still lack — kitten sweep
 (`--sweep=0` ⇒ 2.66× on 6s167) and its interaction with eliminate —
 a separate campaign per §3.
+
+## 8. Second follow-up (same day): structural gate-gating dead at telemetry; kitten sweep sized thin
+
+Two closure measurements for §6/§7's remaining "open" items:
+
+**Gate-count gating (dead at the telemetry rung).**  `GATE_COUNT=1` in
+`stats_solve` (landed; `Solver::detected_gate_count` accessor) prints the
+AND/XOR gate count of the parsed formula — a seed- and
+trajectory-invariant formula property, the one signal family §1 had not
+tested.  Counts across the 54 files: 64_25 4.07 M, g2-ak128booth 571 k,
+g2-slp 85 k, mp1-klieber 30 k, summle 7.8–10.5 k, shuffling-2 7.6 k,
+6s167-opt 4 507, j3037 866, simon 512–800, Timetable 80, and **0 on 30
+files**.  The join against the ELS arms' win/loss list fails: zero-gate
+files appear on *both* sides (winners x9-09054 0.26×, stable-300 0.47×;
+losers rbsat TO, mp1-Nb7T42 2.6×, mrpp 1.7×) — because the ELS round's
+*binary-SCC* content is independent of gate structure.  The signal gates
+only the congruence half of what it would need to gate.  Not retried.
+
+**Kitten sweep (sized, deprioritized).**  kissat `--sweep=0` over the
+whole 54-file corpus: geomean **1.0121** (40 both-decisive), solved
+47 → 45, strongly bimodal (without sweep: 6s167-opt 2.66×, FEC 2.40×,
+mp1-klieber 3.96× worse — but j3037 **0.11×**, summle_X11112 0.30×,
+circuit_48i 0.67× *better*).  Even for kissat, sweep is a ~1 % corpus
+effect with a per-file lottery profile.  A multi-thousand-line embedded
+sub-solver port priced against that reference measurement fails any
+priority bar; the 28.4× probe-knockout on 6s167 was the *interaction*,
+not sweep.  Downgraded from "open campaign" to "not before a component
+that sizes bigger".
+
+**Where this leaves the standing 1.332× gap**: the equivalence/
+inprocessing lever family is measured to exhaustion at every rung short
+of the kitten port (which sizes thin) — mid-search one-shot and
+pre-search fixpoint both no-go, placement-independent sat-side damage,
+no structural or online gate.  The anchor win (6s167 0.35×, seed-robust)
+ships behind `enable_equiv_substitution`.  The remaining standing-gap
+levers live elsewhere: worker-class memory/binary density (out of this
+campaign's scope by charter) and BCP throughput (measured closed ×4).

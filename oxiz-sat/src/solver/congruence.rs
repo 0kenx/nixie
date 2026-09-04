@@ -162,6 +162,11 @@ impl Solver {
     /// Detect AND and XOR gates from the clause set. Sound: a gate is recorded
     /// only when its defining clauses are all present, so the gate equivalence
     /// is entailed regardless of whether it is a "real" gate.
+    /// Gate count for the diagnostic accessor (keeps `Gate` private).
+    pub(super) fn detect_gate_count(&self) -> usize {
+        self.detect_gates().len()
+    }
+
     fn detect_gates(&self) -> Vec<Gate> {
         let mut gates: Vec<Gate> = Vec::new();
 

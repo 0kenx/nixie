@@ -99,6 +99,13 @@ fn main() {
         solver.set_random_seed(sd.parse::<u64>().unwrap_or(0));
     }
     parser.parse_file(&path, &mut solver).expect("parse ok");
+    if std::env::var("GATE_COUNT").is_ok() {
+        // Structural telemetry (2026-09-05 gate-gating study): gates found in
+        // the parsed formula, before any preprocessing.  Print and exit —
+        // the metric is available before any search.
+        println!("gates={}", solver.detected_gate_count());
+        return;
+    }
     if let Ok(path) = std::env::var("PHASE_HINT") {
         // cadical model file: `v 1 -2 3 ...` lines.  Index 0 unused.
         if let Ok(txt) = std::fs::read_to_string(&path) {

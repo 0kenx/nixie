@@ -3436,6 +3436,16 @@ impl Solver {
         &self.stats
     }
 
+    /// Number of AND/XOR gates the congruence detector finds in the current
+    /// clause set (`solver/congruence.rs`).  Diagnostic accessor for the
+    /// structural-gate studies: the count is a formula property (seed- and
+    /// trajectory-invariant), measured after parse with
+    /// `OXIZ_INPROC_TRACE`-style tooling.
+    #[doc(hidden)]
+    pub fn detected_gate_count(&self) -> usize {
+        self.detect_gate_count()
+    }
+
     /// Number of completed stable/focused mode switches (cadical
     /// `stats.stabphases`). Diagnostic accessor for the search-shape studies.
     #[must_use]

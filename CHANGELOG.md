@@ -5,6 +5,26 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Gate-count telemetry + campaign closure measurements] - 2026-09-05 (iii)
+
+- **Added (SAT diagnostics): `GATE_COUNT=1` in `stats_solve` +
+  `Solver::detected_gate_count`** (`oxiz-sat`).  Prints the AND/XOR gate
+  count of the parsed formula (seed- and trajectory-invariant) and exits —
+  the structural signal family the gating studies had not yet measured.
+  Two closure measurements recorded with it
+  (`docs/studies/2026-09-05-inproc-gating-no-gate.md` §8): (a) **gate-count
+  gating is dead at telemetry** — zero-gate files appear on both sides of
+  the ELS win/loss list (x9-09054 0.26×/stable-300 0.47× win, rbsat
+  TO/mp1-Nb7T42 2.6× lose), because ELS's binary-SCC content is
+  independent of gate structure; (b) **kitten sweep sized thin**: kissat
+  `--sweep=0` over the 54-file corpus measures geomean 1.0121, solved
+  47→45, bimodal per file (6s167 2.66× worse without, j3037 9× better
+  without) — a multi-thousand-line port priced against ~1 % corpus effect
+  is deprioritized.  The equivalence/inprocessing lever family is measured
+  to exhaustion short of that port; the anchor win ships behind
+  `enable_equiv_substitution`.  Verified: 10 468 tests, clippy/fmt/doc,
+  identity spot-check bit-identical.
+
 ## [Pre-search ELS fixpoint: measured no-go, landed as A/B infrastructure] - 2026-09-05 (ii)
 
 - **Added (SAT): `els_presearch` (`SolverConfig`, default off; `ELS_PRE=1`
