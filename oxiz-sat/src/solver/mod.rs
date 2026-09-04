@@ -1091,6 +1091,12 @@ pub struct Solver {
     pub(super) conflicts_since_local_restart: u64,
     /// Conflicts since last inprocessing
     pub(super) conflicts_since_inprocessing: u64,
+
+    /// Per-pass deltas of the most recent `inprocess()` round
+    /// (`[els, units, shrunk, subsumed, transred-removed, transred-failed]`),
+    /// written only when `OXIZ_INPROC_TRACE` is on.  Purely diagnostic —
+    /// never read by search logic (2026-09-04 gating follow-up telemetry).
+    pub(super) inproc_diag: [u64; 6],
     /// A real (non no-op) theory callback is attached to the running search.
     /// Set for the duration of [`Solver::solve_with_theory`] when the
     /// callback reports [`TheoryCallback::is_real_theory`]; gates the
@@ -1521,6 +1527,7 @@ impl Solver {
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
+            inproc_diag: [0; 6],
             real_theory_attached: false,
             frozen_vars: rustc_hash::FxHashSet::default(),
             theory_vars_frozen: false,

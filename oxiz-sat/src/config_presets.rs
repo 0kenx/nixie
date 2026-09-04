@@ -544,7 +544,14 @@ impl ConfigPreset {
             // files at the 60 s cap (50 -> 42) despite 2-6x conflicts wins
             // on the clause-DB-heavy tail; the periodic rounds also cause
             // every loss. A gating policy for the rounds is the open path.
-            enable_equiv_substitution: true, // cadical parity: decompose/sweep runs
+            // cadical runs `decompose`/`sweep` by default, but OUR ELS round
+            // measures net-negative at the cap on the standing corpus when
+            // actually executed (2026-09-05 study: solved 50→41, geomean
+            // 1.03 neutral, one 0.36× structural win on 6s167-opt).  Note this
+            // setting was INERT from 58df118 until the latch fix landed: the
+            // scheduled call site set `did_equiv_subst` before calling, so the
+            // pass silently no-op'd (see the fix's comment in `learn.rs`).
+            enable_equiv_substitution: false,
             // by default in CaDiCaL. Bundled with BVE below this recovers the
             // elimination-heavy families the 2026-08-17 study left off by
             // default (measured 2026-08-21, instructions-to-verdict, see

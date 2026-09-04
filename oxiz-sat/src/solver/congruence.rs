@@ -89,6 +89,13 @@ impl Solver {
             return;
         }
         let gates = self.detect_gates();
+        #[cfg(feature = "std")]
+        if super::learn::inproc_round_trace_enabled() {
+            eprintln!(
+                "gate_congruence: ternary_scan_complete gates={}",
+                gates.len()
+            );
+        }
         if gates.len() < 2 {
             return;
         }

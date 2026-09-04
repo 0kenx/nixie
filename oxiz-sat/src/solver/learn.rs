@@ -14,6 +14,26 @@ use smallvec::SmallVec;
 /// that are actually drowning.
 pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 
+/// Whether the per-inprocess-round cost/yield trace is on
+/// (env var `OXIZ_INPROC_TRACE`).
+///
+/// Same `OnceLock` pattern as [`super::decide::trace_decisions_enabled`]: one
+/// cached bool load when off, no search-path effect either way.
+#[cfg(feature = "std")]
+pub(super) fn inproc_round_trace_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("OXIZ_INPROC_TRACE")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
+#[cfg(not(feature = "std"))]
+pub(super) fn inproc_round_trace_enabled() -> bool {
+    false
+}
+
 impl Solver {
     /// Install the consequence of a freshly learned clause on the trail.
     ///
@@ -1408,6 +1428,26 @@ impl Solver {
         if self.config.enable_inprocessing
             && self.conflicts_since_inprocessing >= self.config.inprocessing_interval
         {
+            // 2026-09-04 telemetry (study
+            // `2026-09-04-inprocessing-standing-corpus.md` -> gating follow-up):
+            // env-gated per-round cost/yield trace.  Purely diagnostic — one
+            // `OnceLock` bool load per round, no search-path change (the flag
+            // does not feed any decision), so conflict trajectories stay
+            // bit-identical with the flag off *and* with it on.
+            let trace_pre = inproc_round_trace_enabled().then(|| {
+                (
+                    self.stats.conflicts,
+                    self.stats.propagations,
+                    self.clauses.num_original(),
+                    self.clauses.num_learned(),
+                    self.stats.subsumed_removed
+                        + self.stats.self_subsumed
+                        + self.stats.shrunken
+                        + self.stats.bve_eliminated
+                        + self.stats.substitutions
+                        + self.stats.deleted_clauses,
+                )
+            });
             // The scheduled pass backtracks to the root itself (exactly like
             // `try_scheduled_elimination` and cadical's inprocessing entries,
             // which run at `level 0` by construction).  Without this the
@@ -1419,6 +1459,35 @@ impl Solver {
             }
             self.inprocess();
             self.conflicts_since_inprocessing = 0;
+            if let Some((cf0, props0, orig0, lrnd0, work0)) = trace_pre {
+                let props_in_round = self.stats.propagations - props0;
+                let work_yield = self.stats.subsumed_removed
+                    + self.stats.self_subsumed
+                    + self.stats.shrunken
+                    + self.stats.bve_eliminated
+                    + self.stats.substitutions
+                    + self.stats.deleted_clauses
+                    - work0;
+                eprintln!(
+                    "inproc_round: conflicts={cf0} props_in_round={props_in_round} \
+                     orig={}->{} learned={}->{} yield={work_yield} db={} \
+                     lbd_ema={:.2}/{:.2} \
+                     els={} units={} shr={} sub={} tred={} tfailed={}",
+                    orig0,
+                    self.clauses.num_original(),
+                    lrnd0,
+                    self.clauses.num_learned(),
+                    self.clauses.num_original() + self.clauses.num_learned(),
+                    self.lbd_ema_fast,
+                    self.lbd_ema_slow,
+                    self.inproc_diag[0],
+                    self.inproc_diag[1],
+                    self.inproc_diag[2],
+                    self.inproc_diag[3],
+                    self.inproc_diag[4],
+                    self.inproc_diag[5],
+                );
+            }
         }
 
         // Scheduled probing (cadical `inprobing` → `inprobe ()`): one
@@ -1438,11 +1507,24 @@ impl Solver {
         // pass that the pre-search collapse used to run unconditionally now
         // fires on the elimination clock instead — sharing `lim_elim` with
         // the eliminator (cadical's `decompose` runs in the same schedule
-        // region).  Independent of `enable_bve`, so `enable_equiv_substitution`
-        // alone keeps its meaning; level-0 / base-scope / proof gates are
-        // enforced inside `substitute_equivalent_literals`.
+        // region).
+        //
+        // The schedule slot (root backtrack + one-shot latch) is
+        // UNCONDITIONAL: it has been part of every shipped default
+        // trajectory since the conflict-scheduled port (`58df118`), and the
+        // presets run with the pass itself off (see `config_presets.rs`),
+        // so removing the slot would silently rewrite every default
+        // trajectory.  Only the CALL is gated on `enable_equiv_substitution`.
+        //
+        // This also fixes the silent no-op that slot carried from
+        // `58df118` until 2026-09-05: it used to set `did_equiv_subst`
+        // BEFORE calling `substitute_equivalent_literals`, whose first line
+        // is exactly that one-shot guard — so whenever the pass was enabled
+        // the scheduled ELS (and the gate-congruence augmentation it hosts)
+        // silently did nothing, and the `0ed8543` "BVE + ELS" default-on
+        // measurement had measured BVE alone.  The latch-free `_round`
+        // variant (the one `inprocess()` rounds use) is called here now.
         if !self.config.presearch_collapse
-            && self.config.enable_equiv_substitution
             && !self.did_equiv_subst
             && self.stats.conflicts >= self.lim_elim
         {
@@ -1450,8 +1532,21 @@ impl Solver {
                 self.backtrack_with_phase_saving(0);
             }
             self.did_equiv_subst = true;
-            if self.substitute_equivalent_literals() == super::equiv::SubstOutcome::Unsat {
-                self.trivially_unsat = true;
+            #[cfg(feature = "std")]
+            if super::learn::inproc_round_trace_enabled() {
+                eprintln!("els_one_shot: firing at conflicts={}", self.stats.conflicts);
+            }
+            if self.config.enable_equiv_substitution {
+                // Same theory-safety gate as the `inprocess()` ELS call: with
+                // a real theory attached the round only runs under freeze-set
+                // collapse (frozen theory vars stay unfolded inside the SCC
+                // fold).
+                if self.destructive_preprocessing_safe()
+                    && self.substitute_equivalent_literals_round()
+                        == super::equiv::SubstOutcome::Unsat
+                {
+                    self.trivially_unsat = true;
+                }
             }
         }
 
@@ -2468,6 +2563,16 @@ impl Solver {
             return;
         }
 
+        // Pass-attribution telemetry (2026-09-04 gating follow-up): snapshot
+        // the per-pass cumulative counters around each pass so the round trace
+        // can attribute cost/yield to the component that produced it.  Purely
+        // diagnostic; see `inproc_round_trace_enabled`.
+        let t = inproc_round_trace_enabled();
+        let els0 = t.then_some(self.stats.substitutions);
+        let units0 = t.then_some(self.stats.unit_clauses);
+        let shr0 = t.then_some(self.stats.shrunken);
+        let sub0 = t.then_some(self.stats.subsumed_removed + self.stats.self_subsumed);
+
         // Equivalent-literal substitution round (cadical interleaves its
         // `decompose`/`sweep`-class ELS inside the inprocessing schedule).
         // The round variant skips the pre-search one-shot latch – the
@@ -2630,6 +2735,18 @@ impl Solver {
         // retired via original-only alternative paths; failed literals
         // surface as forced level-0 units.
         let (_tred, _tfailed) = self.transred_round();
+
+        // Stash the per-pass deltas for the round-site trace (telemetry).
+        if let (Some(e0), Some(u0), Some(s0), Some(b0)) = (els0, units0, shr0, sub0) {
+            self.inproc_diag = [
+                self.stats.substitutions - e0,
+                self.stats.unit_clauses - u0,
+                self.stats.shrunken - s0,
+                (self.stats.subsumed_removed + self.stats.self_subsumed) - b0,
+                _tred as u64,
+                _tfailed as u64,
+            ];
+        }
 
         // Re-arm unit propagation over the whole surviving trail.
         //

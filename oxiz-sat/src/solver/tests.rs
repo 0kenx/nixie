@@ -1316,6 +1316,57 @@ fn pigeonhole_inprocessing_interval_1_stays_unsat() {
     assert_eq!(solver.solve(), SolverResult::Unsat);
 }
 
+/// Pins the 2026-09-05 one-shot-latch fix CLOSED: the conflict-scheduled
+/// ELS slot used to set `did_equiv_subst` *before* calling
+/// `substitute_equivalent_literals`, whose first line is exactly that
+/// one-shot guard — so whenever `enable_equiv_substitution` was set the
+/// scheduled pass (and the gate-congruence augmentation it hosts)
+/// silently no-op'd (`58df118`..2026-09-05; the `0ed8543` "BVE + ELS
+/// default-on" measurement had therefore measured BVE alone).  With the
+/// fix the latch-free `_round` variant runs and folds equivalences.
+#[test]
+fn scheduled_els_executes_when_enabled() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_equiv_substitution: true,
+        // Fire the one-shot right after the first conflict (php(3,2) needs
+        // several, so the slot is guaranteed to be reached mid-search).
+        elim_interval: 1,
+        ..SolverConfig::default()
+    });
+    // Pigeonhole(7,6): UNSAT after many conflicts, and (unlike php(3,2))
+    // not binary-refutable at the first conflict, so the round folds the
+    // equivalence below instead of returning Unsat from the SCC
+    // contradiction check outright.
+    let (pigeons, holes) = (7usize, 6usize);
+    let mut p = Vec::new();
+    for _ in 0..pigeons * holes {
+        p.push(solver.new_var());
+    }
+    let at = |i: usize, j: usize| Lit::pos(p[i * holes + j]);
+    for i in 0..pigeons {
+        solver.add_clause((0..holes).map(|j| at(i, j)));
+    }
+    for j in 0..holes {
+        for i1 in 0..pigeons {
+            for i2 in i1 + 1..pigeons {
+                solver.add_clause([at(i1, j).negate(), at(i2, j).negate()]);
+            }
+        }
+    }
+    // An explicit equivalence x ≡ y (both binary implications) on vars the
+    // pigeonhole part never assigns, so a non-trivial SCC exists for the
+    // round to fold when it runs.
+    let x = solver.new_var();
+    let y = solver.new_var();
+    solver.add_clause([Lit::neg(x), Lit::pos(y)]);
+    solver.add_clause([Lit::pos(x), Lit::neg(y)]);
+    assert_eq!(solver.solve(), SolverResult::Unsat);
+    assert!(
+        solver.stats().substitutions > 0,
+        "scheduled ELS folded no equivalences — the one-shot latch regression is back"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // BIG-authoritative BCP (2026-09): binaries live in the binary implication
 // graph only; the watch lists carry length >= 3 clauses and a phantom tick

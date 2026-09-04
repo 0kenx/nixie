@@ -5,6 +5,50 @@ All notable changes to OxiZ will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Scheduled ELS silent no-op fixed; inprocess gating closed as unimplementable] - 2026-09-05
+
+Two landed items (study `docs/studies/2026-09-05-inproc-gating-no-gate.md`):
+
+- **Fixed (SAT): the conflict-scheduled equivalent-literal substitution has
+  been a silent no-op since `58df118`** (`oxiz-sat/src/solver/learn.rs`).
+  The one-shot slot set `did_equiv_subst` *before* calling
+  `substitute_equivalent_literals`, whose first line is exactly that
+  latch's guard — so the scheduled ELS (and the gate-congruence closure it
+  hosts, enabled in every preset) executed nowhere on the default path,
+  and `0ed8543`'s "BVE + ELS default-on" measurement had measured BVE
+  alone.  The SMT freeze-collapse path was equally affected.  The fix
+  keeps the slot's cadical-parity schedule (root backtrack + latch — part
+  of every shipped trajectory since `58df118`) unconditional so the
+  default trajectory is **bit-identical** (54-file identity gate: every
+  decisive file verdict- and conflicts-identical), and calls the
+  latch-free `_round` variant gated on `enable_equiv_substitution` and
+  `destructive_preprocessing_safe()`, exactly like the `inprocess()` ELS
+  call.  Pinned by `scheduled_els_executes_when_enabled` (fails on the
+  buggy form).  Running the pass for real measures **6s167-opt 118 191 →
+  41 280 conflicts (0.349×)** — 4 526 AND gates detected, 203
+  substitutions — but solved-at-cap 50 → 41 on the standing corpus
+  (single-seed screen, 0 verdict mismatches), so the CaDiCaL preset keeps
+  `enable_equiv_substitution: false`, now honestly instead of inertly.
+  Verification: 10 467 tests, clippy/fmt/doc, Z3 parity 170/0 mismatches,
+  SMT differential 0 verdict differences vs the pre-fix build (270-file
+  pinned sample, both arms 160/160 agree with z3), canaries
+  `pete/cxs-bp-ex-safety`/`wisas xs_8_13` `unsat`, trajectory canary
+  PASS.
+- **Closed (negative result): per-instance/per-round gating of the
+  mid-search inprocess rounds is not implementable.**  Telemetry
+  (`OXIZ_INPROC_TRACE`, landed): round cost, yield, per-pass attribution,
+  and static DB shape do not separate the A/B winners from the losers —
+  the biggest zero-yield spenders (qwh.50, worker_550: 10 M-prop rounds,
+  yield ≈ 0) are *winners* while cheap near-zero-yield rounds lose; a
+  10-seed CRN sweep shows the decisive win/loss list itself is
+  trajectory reshuffle (mp1 flips from 15×-worse at seed 0 to
+  better-than-off at seeds 1-10).  Kissat component knockouts re-attribute
+  the 6s167-opt 6.5x residue to the kissat simplification *fixpoint*
+  (`--probe=0` => 28.4x; sweep 2.66x; eliminate 1.97x; interaction carries
+  the rest), refuting the parent study's learned-clause-quality framing.
+  Open and evidence-backed: kissat-shaped pre-search equivalence
+  extraction at full effort (the now-working ELS + congruence pre-search).
+
 ## [UF model certificates: certified-mode Sat over uninterpreted functions] - 2026-09-03
 
 The certified-path re-measure (below) showed coverage — not cost — is the
