@@ -419,3 +419,26 @@ our 3 543** — the honest un-ported piece is chain refinement
 kissat's volume comes from.  Whether our search would descend on a
 fully-factored worker the way kissat's does remains open — the P(descent)
 protocol of §11 applies to that claim whenever it is made.
+
+## 13. Seventh follow-up (same day): the volume ceiling is budget × scan-rate
+
+Why our compounding stops at 3 543 introductions where kissat reaches
+51 466 on the same file: round telemetry showed round 2 exiting at its
+*first* candidate — round 1 exhausts the 400 M edge-visit budget, and
+`budget_hit` persists across rounds (an earlier env-override test of a
+8 B budget was void: the override did not reach one of the two budget
+checks).  With the override actually wired, an 8 B-budget run times out
+at 590 s: the `Vec<Vec<(Lit, ClauseId)>>` BIG adjacency chases pointers
+at roughly 20× kissat's per-tick cost (kissat scans compact watch lists;
+283 M factor ticks on this file are seconds for it, ~20 s for our 400 M
+visits).
+
+**Consequence:** raising the volume to kissat's level needs both (a) a
+compact pass-local adjacency (CSR snapshot with tombstoned deletions and
+an append region for new quotients) so the counting scans run at memory
+bandwidth, and (b) the chain refinement for matching quality (§12).
+Both are named, self-contained pieces; the `OXIZ_FACTOR_BUDGET` knob
+(now actually wired) exists for their A/Bs.  The landed default stays
+400 M / 3 543 introductions / worker default-seed 6 679 conflicts —
+and per §11, volume claims go through the 10-seed P(descent) protocol,
+not default-seed conflict ratios.

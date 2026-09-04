@@ -62,6 +62,15 @@ const MAX_INTRODUCTIONS: usize = 100_000;
 /// Deterministic work budget: total adjacency-list entries visited while
 /// counting next-factor candidates.  Guards pathological dense instances.
 const MAX_EDGE_VISITS: u64 = 400_000_000;
+
+/// Env override for the edge-visit budget (diagnostics: measures whether
+/// the pass volume is budget-limited or structurally limited).
+fn edge_visit_budget() -> u64 {
+    std::env::var("OXIZ_FACTOR_BUDGET")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(MAX_EDGE_VISITS)
+}
 /// Fixpoint rounds per pass (each round re-scans candidates over the
 /// rewritten binary structure; kissat achieves the same by re-arming
 /// candidates inside one pass).
@@ -87,6 +96,7 @@ impl Solver {
 
         let mut introduced = 0usize;
         let mut reduction_total: i64 = 0;
+        let edge_budget = edge_visit_budget();
         let mut edge_visits: u64 = 0;
         let mut budget_hit = false;
         let mut fresh_vars: SmallVec<[crate::literal::Var; 64]> = SmallVec::new();
@@ -178,7 +188,7 @@ impl Solver {
                 'quot: for (q, qcid) in &quotients {
                     for (t, wcid) in self.binary_graph.get(q.negate()) {
                         edge_visits += 1;
-                        if edge_visits > MAX_EDGE_VISITS {
+                        if edge_visits > edge_budget {
                             budget_hit = true;
                             break 'quot;
                         }
