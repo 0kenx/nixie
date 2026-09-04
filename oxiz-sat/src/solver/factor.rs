@@ -319,6 +319,29 @@ impl Solver {
             if do_bump {
                 self.bump_decision_hint(&fresh_vars);
             }
+            // Dominant-activity variant of the queue-front hypothesis: the
+            // fresh variables outrank every conflict-bumped variable for a
+            // long horizon (O(1) per decision, unlike `domain_priority`'s
+            // O(|priority|) scan which alone exceeds the cap on
+            // worker-class DBs).
+            if let Ok(n) = std::env::var("OXIZ_FACTOR_BUMPN")
+                && let Ok(times) = n.parse::<u32>()
+            {
+                for &v in &fresh_vars {
+                    self.bump_var_activity(v, times);
+                }
+            }
+            // kissat's literal queue-front semantics: `adjust_scores_and_
+            // phases_of_fresh_variables` moves fresh variables to the FRONT
+            // of its decision queue.  Our equivalent of "decide these
+            // first, unconditionally" is `domain_priority` (the bump above
+            // only raises VSIDS activity and measured harmful on worker_550;
+            // the queue-front is the hypothesis under test).
+            if std::env::var("OXIZ_FACTOR_PRIORITY").is_ok() {
+                let mut pri = core::mem::take(&mut self.domain_priority);
+                pri.extend(fresh_vars.iter().copied());
+                self.domain_priority = pri;
+            }
         }
         (introduced, reduction_total)
     }

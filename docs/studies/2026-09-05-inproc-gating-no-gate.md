@@ -396,3 +396,26 @@ isolated — not in the transformation.  Recorded as the next hypothesis,
 with the seed protocol attached: any future "descent" claim on this
 class requires the 10-seed P(descent) comparison, not a default-seed
 conflict ratio.
+
+## 12. Sixth follow-up (same day): the queue-front hypothesis falsified; what remains is volume or search
+
+Two cheap tests of "decide the fresh factored variables first" (kissat's
+literal queue-front, the most visible search-side difference after the
+rewrite):
+
+* `domain_priority` (exact decide-first semantics): **O(|priority|) per
+  decision** — 3 543 fresh vars × 195 k decisions alone exceeds a 180 s
+  cap on worker_550 (the run produced no verdict at all).  The mechanism
+  is unusable at this scale; recorded as a wall hazard of the knob.
+* Dominant VSIDS activity (`OXIZ_FACTOR_BUMPN=5000`, O(1) per decision):
+  worker_550 factored — default seed 46 863 (7× worse than the unpriorized
+  6 679), seed 1 TO (vs 15 745 unpriorized), seed 2 2 796 (vs 22 289).
+  Mixed across seeds — no reliable descent.
+
+Even the best factored descent (29 decisions per conflict) is 8× more
+conflicty than kissat's (227), and kissat rewrites **51 466 variables vs
+our 3 543** — the honest un-ported piece is chain refinement
+(multi-factor quotient chains, `factor.c`'s core loop), which is where
+kissat's volume comes from.  Whether our search would descend on a
+fully-factored worker the way kissat's does remains open — the P(descent)
+protocol of §11 applies to that claim whenever it is made.
