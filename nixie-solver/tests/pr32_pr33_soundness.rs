@@ -1,6 +1,6 @@
 //! Regression tests for the independently-reimplemented lookup-table
 //! flattening / domain-first branching fixes (upstream PR #32 against
-//! cool-japan/nixie) and the equality-logic transitivity preprocessor
+//! cool-japan/oxiz) and the equality-logic transitivity preprocessor
 //! (upstream PR #33).
 //!
 //! Lower-level, mechanism-specific tests live next to the code they

@@ -13,7 +13,7 @@ cargo install nixie-cli
 Or build from source:
 
 ```bash
-git clone https://github.com/cool-japan/nixie
+git clone https://github.com/cool-japan/oxiz
 cd nixie/nixie-cli
 cargo build --release
 # Binary will be at: target/release/nixie

@@ -29,9 +29,9 @@ keywords = ["smt", "solver", "sat", "verification", "logic", "theorem-prover"]
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/cool-japan/nixie"
+Homepage = "https://github.com/cool-japan/oxiz"
 Documentation = "https://docs.rs/nixie"
-Repository = "https://github.com/cool-japan/nixie"
+Repository = "https://github.com/cool-japan/oxiz"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

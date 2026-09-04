@@ -1,6 +1,6 @@
 # nixie-math
 
-[![Version](https://img.shields.io/badge/version-0.3.2-blue)](https://github.com/cool-japan/nixie)
+[![Version](https://img.shields.io/badge/version-0.3.2-blue)](https://github.com/cool-japan/oxiz)
 [![Status](https://img.shields.io/badge/status-stable-green)]()
 
 Mathematical foundations for the Nixie SMT solver.

@@ -101,7 +101,7 @@ const DTS_NIXIE_SOLVER: &str = r#"
  *
  * @example
  * ```typescript
- * import init, { NixieSolver } from "@cool-japan/nixie";
+ * import init, { NixieSolver } from "@cool-japan/oxiz";
  *
  * await init();
  * const solver = new NixieSolver({ logic: "QF_LIA", produceModels: true });
@@ -357,7 +357,7 @@ const DTS_SOLVE_FN: &str = r#"
  *
  * @example
  * ```typescript
- * import init, { solve } from "@cool-japan/nixie";
+ * import init, { solve } from "@cool-japan/oxiz";
  * await init();
  *
  * const script = `
@@ -491,7 +491,7 @@ const DTS_VERSION_FN: &str = r#"
  *
  * @example
  * ```typescript
- * import init, { version } from "@cool-japan/nixie";
+ * import init, { version } from "@cool-japan/oxiz";
  * await init();
  * console.log(`Nixie WASM version: ${version()}`);
  * ```

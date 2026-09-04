@@ -1,5 +1,5 @@
 {
-  "name": "@cool-japan/nixie",
+  "name": "@cool-japan/oxiz",
   "version": "0.3.2",
   "description": "Pure Rust SMT solver for the web",
   "main": "nixie.js",
@@ -8,7 +8,7 @@
   "keywords": ["smt", "wasm", "webassembly", "solver", "sat"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/cool-japan/nixie"
+    "url": "https://github.com/cool-japan/oxiz"
   },
   "files": [
     "nixie.js",

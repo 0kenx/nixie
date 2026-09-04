@@ -17,7 +17,7 @@ Nixie is a high-performance, pure Rust implementation of a full-featured SMT (Sa
 - Supports Craig interpolation and Spacer/PDR for model checking workloads
 - StarExec-compatible stdin/stdout interface via the `smtcomp2026` binary
 
-Nixie is actively developed at: [https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie)
+Nixie is actively developed at: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)
 
 ---
 
@@ -36,7 +36,7 @@ Nixie has implementations across the following SMT-LIB logic families. Status re
 | QF_FP    | ✅ Ready (10/10 Correct – concrete FP model finder) |
 | QF_DT    | ✅ Ready (10/10 Correct) |
 | QF_A     | ✅ Ready (10/10 Correct) |
-| QF_NIA   | ✅ Ready (1/1 Correct on the parity suite; broader NIA branch-and-bound has known scoping gaps, see `TODO.md`) |
+| QF_NIA   | ✅ Ready (1/1 Correct on the parity suite; broader NIA branch-and-bound has known scoping gaps) |
 | QF_NRA   | 🔶 Alpha (irrational-root isolation still open; not yet part of the parity suite) |
 | UFLIA    | ✅ Ready (20/20 Correct – Skolem witness synthesis + CEGAR on top of the MBQI SAT certifier) |
 | UFLRA    | ✅ Ready (10/10 Correct – symbolic model certification over the Reals + quasi-macro detection) |
@@ -89,7 +89,7 @@ If you would like to submit Nixie to SMT-COMP 2026, here is how to get started.
 ### Step 1: Clone the repository
 
 ```bash
-git clone https://github.com/cool-japan/nixie.git
+git clone https://github.com/cool-japan/oxiz.git
 cd nixie
 ```
 
@@ -166,7 +166,7 @@ Check the official site for submission deadlines, required metadata, and divisio
 
 If you plan to submit Nixie, please open a GitHub issue at:
 
-> [https://github.com/cool-japan/nixie/issues](https://github.com/cool-japan/nixie/issues)
+> [https://github.com/cool-japan/oxiz/issues](https://github.com/cool-japan/oxiz/issues)
 
 Use the title prefix `[SMT-COMP 2026]`. This allows us to coordinate system descriptions, avoid duplicate submissions, and provide support for any build or packaging questions.
 
@@ -206,7 +206,7 @@ Nixie is positioned as a competitive entrant in all 19 divisions and a **first-o
 
 Noted here for transparency ahead of the competition submission, not as a formal call for
 external contribution – Nixie is Apache-2.0 licensed and the source is at
-[https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie):
+[https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz):
 
 - **SIMD BV propagation** (`nixie-theories/src/bv/`) – the bit-vector solver currently uses scalar
   propagation loops in several places; SIMD-accelerated word-level propagation (AVX2/AVX-512 on
@@ -232,5 +232,5 @@ The Nixie project is grateful to the SMT-COMP organizers for maintaining an open
 ---
 
 *Nixie – COOLJAPAN OU (Team Kitasan)*
-*Repository: [https://github.com/cool-japan/nixie](https://github.com/cool-japan/nixie)*
+*Repository: [https://github.com/cool-japan/oxiz](https://github.com/cool-japan/oxiz)*
 *Competition contact: open an issue with tag `[SMT-COMP 2026]`*

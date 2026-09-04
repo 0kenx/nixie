@@ -578,4 +578,4 @@ If you encounter performance issues:
 5. Run with debug tracing enabled: `solver.setTracing(true)`
 6. Capture statistics with `solver.getStatistics()`
 
-Report issues at: https://github.com/cool-japan/nixie/issues
+Report issues at: https://github.com/cool-japan/oxiz/issues

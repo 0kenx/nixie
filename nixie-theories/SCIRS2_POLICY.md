@@ -172,7 +172,7 @@ The implementations in nixie-theories are **heavily based on** the Z3 SMT solver
 
 ## TODO Items
 
-From TODO.md, pending enhancements:
+Pending enhancements:
 - [ ] Dynamic arity functions (EUF)
 - [ ] Preprocessing - Gaussian elimination (LRA)
 - [ ] Lazy encoding strategies (BitVectors)

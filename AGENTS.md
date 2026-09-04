@@ -9,7 +9,7 @@ Nixie is a **pure-Rust SMT solver** – a clean-room reimplementation of Z3's CD
 architecture: SAT core, theory solvers (EUF, LRA, LIA, BV, arrays, strings, floats,
 datatypes), quantifiers (E-matching, MBQI, QE), NLSAT/CAD, Spacer/PDR (CHC), proof
 generation (DRAT, Alethe, LFSC, Coq/Lean/Isabelle exports), and optimization (MaxSAT/OMT).
-See `README.md`, `docs/ARCHITECTURE.md`, and `CONTRIBUTING.md`.
+See `README.md` and `docs/ARCHITECTURE.md`.
 
 It is ~440k lines across 17 crates, with advanced mathematics (CAD, resultants,
 virtual substitution, Cooper, simplex, IEEE-754, polynomial GCD/resultant) and deeply
@@ -83,7 +83,7 @@ them; every one of them has caused a real soundness bug here.
   proof / model / substitution walk into an **explicit heap stack**
   (`while let Some(frame) = stack.pop()` with resume state carried inside the frame enum,
   e.g. `Expand(T)` / `Combine(T, n)`). Do not write new unbounded native recursion over
-  user-controlled DAGs. See the pattern note in `CONTRIBUTING.md` → *Error Handling*.
+  user-controlled DAGs.
 
 - **No `unwrap()`/`expect()` in production code.** `clippy::unwrap_used` is `deny` in
   every member crate. A peek-then-pop `expect("just matched above")` is **not** an exempt
@@ -247,9 +247,7 @@ counts as discipline.
 2. Read `docs/ARCHITECTURE.md`, `docs/PITFALLS.md`, `docs/THEORY_GUIDE.md`, and the
    relevant crate's `README.md` / `TODO.md`. For measuring a heuristic change, read
    `docs/BENCHMARKING.md`; for past experiments and their verdicts, `docs/studies/`.
-3. Check `CHANGELOG.md` – many "new" bugs are recurrences of fixed ones; the changelog
-   names the recurring patterns by name.
-4. If a fix feels too easy, it is. Go back to principle 2 and keep digging.
+3. If a fix feels too easy, it is. Go back to principle 2 and keep digging.
 
 ## Quick map
 

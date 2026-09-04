@@ -337,7 +337,7 @@ fn test_arithmetic_model_generation() {
 
 #[test]
 fn test_lra_issue_6_negative_coefficient_mul() {
-    // Regression for https://github.com/cool-japan/nixie/issues/6
+    // Regression for https://github.com/cool-japan/oxiz/issues/6
     // Assertions:
     //   (>= (* -3.0 x1) 3.0)   =>  x1 <= -1
     //   (=  (* 4.0 x1)  -1.0)  =>  x1 = -1/4

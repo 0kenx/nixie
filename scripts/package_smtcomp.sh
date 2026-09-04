@@ -45,7 +45,7 @@ done
 cat > "${OUT_DIR}/description.txt" <<EOF
 Nixie ${VERSION} – Pure Rust SMT Solver
 Next-generation SMT solving with 100% Z3 parity across 8 core logics.
-https://github.com/cool-japan/nixie
+https://github.com/cool-japan/oxiz
 EOF
 
 cat > "${OUT_DIR}/starexec_conf.xml" <<EOF

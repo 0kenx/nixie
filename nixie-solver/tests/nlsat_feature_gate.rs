@@ -44,8 +44,8 @@
 //! the ones a reader is most likely to guess wrong:
 //!
 //! * `(= (* x x) 2.0)` answers `unknown` in **both** builds. The irrational
-//!   root is not isolated even with the feature on (`TODO.md`, the
-//!   `nixie-nlsat/src/solver/decide.rs` entry), so it is useless as a probe of
+//!   root is not isolated even with the feature on
+//!   (`nixie-nlsat/src/solver/decide.rs`), so it is useless as a probe of
 //!   this feature and is deliberately not used as one.
 //! * `(get-value ...)` renders one binding per line, so a two-variable answer
 //!   contains a newline. The expectations below spell that out.

@@ -15,7 +15,6 @@ This document provides a step-by-step checklist for releasing @cooljapan/nixie t
 ### Version Management
 - [ ] Update version in `Cargo.toml`
 - [ ] Update version in `package.json`
-- [ ] Update `CHANGELOG.md` (if exists)
 - [ ] Update `Last Updated` date in `TODO.md`
 
 Use the automated script:

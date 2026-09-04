@@ -1259,7 +1259,7 @@ mod tests {
         const DEPTH: usize = 2000;
         // STACK-1MIB: deliberately 1 MiB, not swept to 128 KiB — depth is
         // 2000 (sub-10,000), well under the scaling threshold and nothing
-        // here is quadratic in stack. See TODO.md "v0.3.2 backlog".
+        // here is quadratic in stack.
         let handle = std::thread::Builder::new()
             .stack_size(1 << 20)
             .spawn(|| {

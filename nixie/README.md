@@ -4,7 +4,7 @@ Next-Generation SMT Solver in Pure Rust
 
 [![Crates.io](https://img.shields.io/crates/v/nixie.svg)](https://crates.io/crates/nixie)
 [![Documentation](https://docs.rs/nixie/badge.svg)](https://docs.rs/nixie)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/cool-japan/nixie/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/cool-japan/oxiz/blob/main/LICENSE)
 
 > **Version**: 0.3.1 | **Status**: Meta-crate | **Tests**: 25
 
@@ -14,7 +14,7 @@ Next-Generation SMT Solver in Pure Rust
 designed to achieve feature parity with [Z3](https://github.com/Z3Prover/z3) while leveraging Rust's safety,
 performance, and concurrency features.
 
-Nixie tracks honest, non-fabricated parity against a real Z3 binary via `bench/z3_parity`: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite against a real z3 4.15.4 binary under the honest comparator (Unknown never counts as a match). All 19 logic families are at 100% of the differential parity suite. See the [README](../README.md#z3-parity-differential-suite-results-honest-comparator-Ô∏è) and [CHANGELOG](../CHANGELOG.md) for current status and known limitations before relying on it for production workloads.
+Nixie tracks honest, non-fabricated parity against a real Z3 binary via `bench/z3_parity`: **168/168 Correct, 0 Wrong, 0 Inconclusive, 0 Timeout, 0 Error** on the extended 19-logic / 168-benchmark differential suite against a real z3 4.15.4 binary under the honest comparator (Unknown never counts as a match). All 19 logic families are at 100% of the differential parity suite. See the [README](../README.md) and [bench/z3_parity](../bench/z3_parity) for current status and known limitations before relying on it for production workloads.
 
 ## Features
 
@@ -112,9 +112,9 @@ Note: the core SAT/theory solver (`Solver`, `TermManager`) is always available ‚
 ## Documentation
 
 - [API Documentation](https://docs.rs/nixie)
-- [GitHub Repository](https://github.com/cool-japan/nixie)
-- [Examples](https://github.com/cool-japan/nixie/tree/main/examples)
+- [GitHub Repository](https://github.com/cool-japan/oxiz)
+- [Examples](https://github.com/cool-japan/oxiz/tree/main/examples)
 
 ## License
 
-Licensed under Apache License 2.0 ([LICENSE](https://github.com/cool-japan/nixie/blob/main/LICENSE)).
+Licensed under Apache License 2.0 ([LICENSE](https://github.com/cool-japan/oxiz/blob/main/LICENSE)).

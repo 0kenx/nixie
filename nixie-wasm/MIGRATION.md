@@ -421,7 +421,7 @@ Nixie is under active development. If you need these features:
 
 ### Getting Help
 
-- **GitHub Issues**: https://github.com/cool-japan/nixie/issues
+- **GitHub Issues**: https://github.com/cool-japan/oxiz/issues
 - **Documentation**: See README.md and examples/
 - **Z3 Documentation**: https://z3prover.github.io/api/html/namespacez3py.html
 

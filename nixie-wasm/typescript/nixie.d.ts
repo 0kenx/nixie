@@ -65,7 +65,7 @@ export interface SolverConfig {
  *
  * @example
  * ```typescript
- * import init, { NixieSolver } from "@cool-japan/nixie";
+ * import init, { NixieSolver } from "@cool-japan/oxiz";
  *
  * await init();
  * const solver = new NixieSolver({ logic: "QF_LIA", produceModels: true });
@@ -318,7 +318,7 @@ export class NixieSolver {
  *
  * @example
  * ```typescript
- * import init, { solve } from "@cool-japan/nixie";
+ * import init, { solve } from "@cool-japan/oxiz";
  * await init();
  *
  * const script = `
@@ -341,7 +341,7 @@ export function solve(smtlib2Script: string): SolverResult;
  *
  * @example
  * ```typescript
- * import init, { version } from "@cool-japan/nixie";
+ * import init, { version } from "@cool-japan/oxiz";
  * await init();
  * console.log(`Nixie WASM version: ${version()}`);
  * ```

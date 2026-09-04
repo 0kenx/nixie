@@ -1,6 +1,6 @@
 # Nixie SMT Solver - VS Code Extension
 
-VS Code extension for [Nixie](https://github.com/cool-japan/nixie), a high-performance SMT solver written in pure Rust.
+VS Code extension for [Nixie](https://github.com/cool-japan/oxiz), a high-performance SMT solver written in pure Rust.
 
 ## Features
 
@@ -33,7 +33,7 @@ Execute the solver directly from VS Code:
 
 ## Requirements
 
-- [Nixie SMT Solver](https://github.com/cool-japan/nixie) installed and available in PATH
+- [Nixie SMT Solver](https://github.com/cool-japan/oxiz) installed and available in PATH
 - VS Code 1.85.0 or later
 
 ### Installing Nixie
@@ -43,7 +43,7 @@ Execute the solver directly from VS Code:
 cargo install nixie-cli
 
 # From source
-git clone https://github.com/cool-japan/nixie
+git clone https://github.com/cool-japan/oxiz
 cd nixie
 cargo install --path nixie-cli
 ```
@@ -137,4 +137,4 @@ Apache License 2.0 - see [LICENSE](../LICENSE) for details.
 
 ## Contributing
 
-Contributions are welcome! Please see the [main repository](https://github.com/cool-japan/nixie) for contribution guidelines.
+Contributions are welcome! Please see the [main repository](https://github.com/cool-japan/oxiz) for contribution guidelines.

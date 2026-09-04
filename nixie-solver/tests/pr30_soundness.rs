@@ -1,5 +1,5 @@
 //! Regression tests for the independently-reimplemented arith<->EUF
-//! combination fixes (upstream PR #30 against cool-japan/nixie): numeric
+//! combination fixes (upstream PR #30 against cool-japan/oxiz): numeric
 //! uninterpreted-function-argument purification, non-convex LIA integer
 //! case-splitting, and bidirectional Nelson-Oppen equality/disequality
 //! exchange.

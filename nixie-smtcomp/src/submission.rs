@@ -299,7 +299,7 @@ impl SubmissionConfig {
             "contact@cooljapan.io",
             "COOLJAPAN OU",
         )
-        .with_url("https://github.com/cool-japan/nixie");
+        .with_url("https://github.com/cool-japan/oxiz");
 
         Self::new("Nixie", env!("CARGO_PKG_VERSION"), contact)
             .with_description(

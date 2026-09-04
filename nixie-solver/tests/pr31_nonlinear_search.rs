@@ -1,5 +1,5 @@
 //! End-to-end regression tests for the independently-reimplemented nonlinear
-//! search work (upstream PR #31 against cool-japan/nixie).
+//! search work (upstream PR #31 against cool-japan/oxiz).
 //!
 //! The mechanisms these exercise live in `nixie-theories` (`nl_eval`,
 //! `nl_repair_search`, `nl_ground_reduce`) and `nixie-solver`

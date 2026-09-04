@@ -15,7 +15,7 @@ cargo add nixie
 ### From source
 
 ```bash
-git clone https://github.com/cool-japan/nixie
+git clone https://github.com/cool-japan/oxiz
 cd nixie
 cargo build --release
 ```
@@ -493,7 +493,7 @@ See the `examples/` directory for more:
 - Read the [Architecture Guide](../architecture/solver-architecture.md)
 - Explore [Theory Combination](../architecture/theory-combination.md)
 - Check [API Documentation](https://docs.rs/nixie)
-- Join the community at [GitHub](https://github.com/cool-japan/nixie)
+- Join the community at [GitHub](https://github.com/cool-japan/oxiz)
 
 ## Troubleshooting
 
@@ -524,5 +524,5 @@ See the `examples/` directory for more:
 ## Support
 
 - Documentation: <https://docs.rs/nixie>
-- Issues: <https://github.com/cool-japan/nixie/issues>
-- Discussions: <https://github.com/cool-japan/nixie/discussions>
+- Issues: <https://github.com/cool-japan/oxiz/issues>
+- Discussions: <https://github.com/cool-japan/oxiz/discussions>

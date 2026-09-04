@@ -403,12 +403,12 @@ Nixie WASM requires:
 ## Additional Resources
 
 - **NPM Package**: https://www.npmjs.com/package/@cooljapan/nixie
-- **GitHub Repository**: https://github.com/cool-japan/nixie
+- **GitHub Repository**: https://github.com/cool-japan/oxiz
 - **Documentation**: https://docs.rs/nixie
-- **Examples**: https://github.com/cool-japan/nixie/tree/main/nixie-wasm/examples
+- **Examples**: https://github.com/cool-japan/oxiz/tree/main/nixie-wasm/examples
 
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/cool-japan/nixie/issues
-- Discussions: https://github.com/cool-japan/nixie/discussions
+- GitHub Issues: https://github.com/cool-japan/oxiz/issues
+- Discussions: https://github.com/cool-japan/oxiz/discussions

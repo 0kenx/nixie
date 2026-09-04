@@ -80,4 +80,4 @@ Apache-2.0
 
 ---
 
-Part of [Nixie](https://github.com/cool-japan/nixie), a Pure Rust SMT solver.
+Part of [Nixie](https://github.com/cool-japan/oxiz), a Pure Rust SMT solver.

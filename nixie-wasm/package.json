@@ -28,7 +28,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/cool-japan/nixie.git",
+    "url": "https://github.com/cool-japan/oxiz.git",
     "directory": "nixie-wasm"
   },
   "keywords": [
@@ -46,9 +46,9 @@
   "author": "Nixie Contributors",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/cool-japan/nixie/issues"
+    "url": "https://github.com/cool-japan/oxiz/issues"
   },
-  "homepage": "https://github.com/cool-japan/nixie/tree/main/nixie-wasm#readme",
+  "homepage": "https://github.com/cool-japan/oxiz/tree/main/nixie-wasm#readme",
   "devDependencies": {},
   "dependencies": {},
   "engines": {

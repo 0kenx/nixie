@@ -204,8 +204,8 @@ exercised by the 9858-test suite, not unit-isolated):
 - Pure performance tuning, refactors, and internal-invariant changes in v0.3.2
   that carry no observable behavior change are invisible to this audit by
   construction (the audit finds only behavior its tests pin).
-- `bench/`, `nixie-py`, `nixie-wasm`, `nixie-cli`, `docs/`, `TODO.md`,
-  `CHANGELOG.md` deltas: not audited for behavior.
+- `bench/`, `nixie-py`, `nixie-wasm`, `nixie-cli`, `docs/` deltas: not audited
+  for behavior.
 
 The honest coverage claim for the PR: **every v0.3.2 behavior its own test
 suite pins is now on main, or is documented as a known gap with a root cause.**

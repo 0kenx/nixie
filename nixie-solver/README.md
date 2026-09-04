@@ -123,7 +123,7 @@ Status below is what the `bench/z3_parity` differential suite measures against a
 real `z3` 4.15.4 binary under the honest comparator (an `Unknown` from either
 solver never counts as a match). All 19 logic families in the suite are at 100%
 Correct in 0.3.1; per-logic counts and the suite's coverage limits are in the
-root [`README.md`](../README.md) and [`TODO.md`](../TODO.md).
+root [`README.md`](../README.md).
 
 - `QF_UF`, `QF_UFLIA`, `QF_UFLRA` - Uninterpreted functions, alone and with arithmetic
 - `QF_LRA` (16/16), `QF_LIA` (16/16) - Linear real and integer arithmetic
@@ -132,7 +132,7 @@ root [`README.md`](../README.md) and [`TODO.md`](../TODO.md).
 - `QF_DT` (10/10), `QF_S` (10/10), `QF_FP` (10/10) - Datatypes, strings, floating point
 - `QF_NIA` (1/1), `QF_NIRA` (5/5) - Nonlinear integer and mixed integer/real
   arithmetic; the suite's `QF_NIA` coverage is a single benchmark, and broader
-  NIA branch-and-bound has known gaps (see the root `TODO.md`)
+  NIA branch-and-bound has known gaps
 - `AUFLIA`, `AUFLIRA`, `UFLIA`, `UFLRA` - Quantified logics, via MBQI with
   finite-range expansion, Skolem-witness CEGAR and symbolic model certification
 

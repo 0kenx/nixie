@@ -1,6 +1,6 @@
 //! Regression tests for the independently-reimplemented EUF congruence-closure
 //! soundness fixes (upstream PR #28) and Bool/EUF encoding fixes (upstream PR
-//! #29) against cool-japan/nixie.
+//! #29) against cool-japan/oxiz.
 //!
 //! Lower-level, mechanism-specific tests for the same fixes live next to the
 //! code they exercise:
