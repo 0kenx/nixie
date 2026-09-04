@@ -462,6 +462,13 @@ impl Solver {
         if minimum < self.stats.walk.minimum {
             self.stats.walk.minimum = minimum;
         }
+        // OXIZ_PREWALK diagnostics: the pre-search phase-initialisation
+        // knob needs its transfer signal visible (broken-count of the best
+        // assignment; 0 = the walk found a model).
+        #[cfg(feature = "std")]
+        if std::env::var("OXIZ_PREWALK").is_ok() {
+            eprintln!("prewalk: best_broken={minimum} vars={}", self.num_vars);
+        }
         self.stats.walk.ticks += ticks;
 
         // cadical `save_final_minimum`: write the best assignment into the

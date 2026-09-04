@@ -502,3 +502,21 @@ x9-09054 the walk's local optimum does not reach the oracle basin
 (10 k flips 240 735 ≈ base; 100 k flips 622 750, worse) — ProbSAT
 closeness is not automatically phase-transferable, exactly the
 §11.3 "screening, not a result" caveat.
+
+## 16. Tenth follow-up (same day): the phase-source screen closes — walk phases cannot reach XOR-crafted basins
+
+`OXIZ_PREWALK` diagnostics (best broken-count of the walk's final
+assignment, x9-09054, 450 vars / 4 052 clauses): 1 k ticks → 326 broken,
+10 k → 133, 100 k → 42, 1 M → 32; mid-search walks plateau at 18–22.
+The walk never approaches a model — x9 is XOR-crafted, and ProbSAT-style
+local search is structurally blind to parity (no gradient toward
+satisfying a parity constraint).  This closes the loop opened in §15:
+the files whose oracle-phase gains are *genuine* (x9-class) are exactly
+the files where cheap phase sources cannot operate, and the files where
+a walk could in principle operate (worker-class) are re-roll-dominated.
+The §8-open "one-shot pre-search phase initialisation" is now measured
+from both ends: **no cheap phase source reaches the oracle basins that
+matter.**  Reaching the x9-class basins requires parity structure
+(XOR/Gauss reasoning) — a different solver component, priced far above
+this campaign.  The knob stays as infrastructure with its diagnostic
+(`prewalk: best_broken=…`).
