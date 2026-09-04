@@ -356,3 +356,43 @@ bin.
 
 Wall cost of the pass on huge DBs measured acceptable: worker_550's full
 factored solve is 26.4 s vs the default's 31.6 s (the pass is included).
+
+## 11. Fifth follow-up (same day): the §6 seed gate falsifies the anchor collapses
+
+The §10 collapses were default-trajectory draws.  10-seed CRN
+(`off`/`OXIZ_FACTOR=1`, 120 s cap, then sequential quiet-core 300 s runs
+to strip wall contamination from the pass itself):
+
+| file | off (seeds 1–10) | factored (seeds 1–10) | sequential quiet, factored |
+|---|---|---|---|
+| shuffling-2 | **10/10** solved, cf 185–4 818 | 0/10 (all TO) | seed 1: 3 872 (6.7× worse); seed 2: 1 936 (1.34× worse); seed 3: 1 084 (2× better) |
+| worker_550 | 4/10, cf 2 463–28 015 (median 15 009) | 1/10 under load | seed 1: 15 745; seed 2: 22 289 — inside the off-arm's own band |
+| stable-300 | 7/10, cf 9 302–1 325 495 | 4/10 | paired 0.196× over 2 both-decisive seeds (n too small) |
+
+Two findings:
+
+1. **The collapses are trajectory reshuffle, not effect** (§6 criteria
+   (a)+(b): high-seed-variance files, no survival at fresh seeds).  The
+   deeper re-attribution: *worker_550's off-arm conflict distribution is
+   itself a P(descent) lottery spanning 2.5 k–106 k+* — the file's share
+   of the "standing gap" was a bad default draw, and the factored 6 679
+   was a good draw from the same class of distributions.  Neither number
+   is a file property.  (Consistent with §2's mp1 lesson and the
+   qwh/worker_zero-yield wins of the inprocessing study.)
+2. **The pass has a wall-cost hazard the deterministic budget does not
+   see**: ~20 s on worker_550's 10.3 M clauses and ~60 s on shuffling-2's
+   4.7 M — under a 60 s cap that is an automatic TO regardless of search
+   path.  The edge-visit budget must be scale-aware before any default
+   consideration (kissat's is tick-based, i.e. work-proportional).
+
+**Campaign verdict (factoring)**: the port is sound and landed as opt-in
+infrastructure; the rewrite does not by itself make our search descend
+the way kissat's does after the same rewrite (kissat's 21.5× knockout on
+worker_550 is real, but our factored trajectories at fresh seeds sit in
+the unfactored distribution).  The remaining distance lives in the
+search×factored-structure interaction — kissat's fresh-variable queue
+placement, its branching on the factored hubs, or components we have not
+isolated — not in the transformation.  Recorded as the next hypothesis,
+with the seed protocol attached: any future "descent" claim on this
+class requires the 10-seed P(descent) comparison, not a default-seed
+conflict ratio.
