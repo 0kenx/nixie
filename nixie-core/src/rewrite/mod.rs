@@ -30,6 +30,8 @@ pub mod bv;
 pub mod combined;
 pub mod datatype;
 pub mod fp;
+/// Iterative ground-constant folding (encode-depth rescue path).
+pub mod ground_fold;
 pub mod nla;
 pub mod poly;
 pub mod quantifier;

@@ -616,7 +616,7 @@ impl Solver {
         // opaque free variable, so a `let`-bound bit-vector (e.g. `?v_0`
         // bound to `(extract 255 64 a)`) loses its link to its definition and
         // an unsatisfiable formula reads as satisfiable.  See `expand_lets`.
-        let term = self.expand_lets(term, manager);
+        let mut term = self.expand_lets(term, manager);
         // Depth guard, on the *expanded* term: the recursive pre-processing
         // passes below (`fold_unit_eq_reps` / `flatten_eq_ite_tables` /
         // `purify_arith` / …) walk the assertion term and would overflow the
@@ -627,16 +627,32 @@ impl Solver {
         // incomplete encoding, record the assertion, and return without
         // recursing, so `check` answers `Unknown` instead of crashing the
         // process.
+        //
+        // Foldable-deep rescue: before refusing, run the iterative,
+        // memoized ground-constant fold (`fold_ground`: explicit stack,
+        // linear in unique DAG nodes, one capture-avoiding `substitute`
+        // rebuild) and re-measure.  A trivially-foldable term — e.g. a
+        // 600-deep right-nested constant `+` chain, or deep exact
+        // div/mod compositions — collapses to a constant and proceeds
+        // through the normal pipeline instead of being measured (and
+        // refused) at its unfolded structural depth.  Only genuinely deep
+        // *after* folding still routes to `Unknown`.
+
         if self.term_exceeds_encode_depth(term, manager) {
-            self.encode_depth_exceeded = true;
-            let index = self.assertions.len();
-            self.assertions.push(term);
-            self.certificate_assertions.push(certificate_term);
-            self.trail.push(TrailOp::AssertionAdded { index });
-            self.invalidate_fp_cache();
-            self.invalidate_results();
-            self.record_assertion_identity(term, None, index);
-            return;
+            let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
+            if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
+                term = folded;
+            } else {
+                self.encode_depth_exceeded = true;
+                let index = self.assertions.len();
+                self.assertions.push(term);
+                self.certificate_assertions.push(certificate_term);
+                self.trail.push(TrailOp::AssertionAdded { index });
+                self.invalidate_fp_cache();
+                self.invalidate_results();
+                self.record_assertion_identity(term, None, index);
+                return;
+            }
         }
         // Replace inlined nullary define-fun bodies with their named consts
         // (parser expands bindings at parse time).  Prevents re-flattening
@@ -1393,14 +1409,22 @@ impl Solver {
         // intact, and the Tseitin encoder's `Let` arm encodes the body while
         // discarding the bindings – the exact `?v_0 = (extract ...)` false-SAT
         // shape `expand_lets` exists to prevent (see its doc comment).
-        let term = self.expand_lets(term, manager);
+        let mut term = self.expand_lets(term, manager);
         // Overflow guard (soundness): see `assert`.  Skip all deep recursive
         // passes for a pathologically deep term and flag the incomplete
         // encoding so `check` answers `Unknown` instead of overflowing.
+        // Foldable-deep rescue, identical to `assert`: an iterative
+        // ground-constant fold runs first so trivially-foldable named
+        // assertions proceed instead of being refused at unfolded depth.
         if self.term_exceeds_encode_depth(term, manager) {
-            self.encode_depth_exceeded = true;
-            self.record_assertion_identity(term, Some(name.to_string()), index);
-            return;
+            let folded = nixie_core::rewrite::ground_fold::fold_ground(term, manager);
+            if folded != term && !self.term_exceeds_encode_depth(folded, manager) {
+                term = folded;
+            } else {
+                self.encode_depth_exceeded = true;
+                self.record_assertion_identity(term, Some(name.to_string()), index);
+                return;
+            }
         }
 
         // Replace bounded-integer quantifiers by their exactly equivalent

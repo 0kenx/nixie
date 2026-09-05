@@ -450,6 +450,90 @@ fn build_implies_chain(manager: &mut TermManager, depth: usize) -> TermId {
     term
 }
 
+/// Build `(+ 1 (+ 1 … base))` right-nested to `depth` levels.
+fn build_add_chain(manager: &mut TermManager, depth: usize, base: TermId) -> TermId {
+    let one = manager.mk_int(1);
+    let mut term = base;
+    for _ in 0..depth {
+        term = manager.mk_add([one, term]);
+    }
+    term
+}
+
+/// Foldable-deep rescue (end-to-end, small stack): a 12 500-deep
+/// right-nested *constant* `+` chain is a constant in disguise — the
+/// iterative ground-constant fold (`nixie_core::rewrite::ground_fold`)
+/// must collapse it before the encode-depth pre-check measures it, so the
+/// assertion encodes and the query is *decided*.  Found by the
+/// obligation-grammar fuzzer (`bench/obligation`, finding 3): before the
+/// rescue this answered `unknown` at any depth past
+/// [`super::super::ENCODE_DEPTH_LIMIT`] while wide n-ary sums of the same
+/// size were decided.
+#[test]
+fn deep_foldable_constant_assertion_is_decided_not_unknown() {
+    const STACK_SIZE: usize = 1 << 17; // 128 KiB — same budget as the unknown pin
+    const DEPTH: usize = 12_500;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut solver = Solver::new();
+            let mut manager = TermManager::new();
+            let zero = manager.mk_int(0);
+            let chain = build_add_chain(&mut manager, DEPTH, zero);
+            let sdi = manager.mk_var("sdi", manager.sorts.int_sort);
+            let sum = manager.mk_int(DEPTH as i64);
+            let eq1 = manager.mk_eq(sdi, chain);
+            let eq2 = manager.mk_eq(sdi, sum);
+            solver.assert(eq1, &mut manager);
+            solver.assert(eq2, &mut manager);
+            assert!(
+                !solver.encode_depth_exceeded,
+                "a foldable-deep assertion must be rescued, not refused"
+            );
+            assert_eq!(
+                solver.check(&mut manager),
+                SolverResult::Sat,
+                "sdi = 12500 satisfies both equations; the chain folds to exactly that"
+            );
+        })
+        .expect("spawning a 128 KiB-stack thread should succeed");
+
+    handle
+        .join()
+        .expect("foldable-deep assert+check must return");
+}
+
+/// The honest path is intact: a 12 500-deep chain over a *variable* does
+/// not fold, still trips the guard, and still answers `unknown` (never a
+/// guess) — the rescue must not weaken the stack-safety contract.
+#[test]
+fn deep_unfoldable_assertion_still_answers_unknown() {
+    const STACK_SIZE: usize = 1 << 17;
+    const DEPTH: usize = 12_500;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut solver = Solver::new();
+            let mut manager = TermManager::new();
+            let x = manager.mk_var("x", manager.sorts.int_sort);
+            let chain = build_add_chain(&mut manager, DEPTH, x);
+            let eq = manager.mk_eq(chain, x);
+            solver.assert(eq, &mut manager);
+            assert!(
+                solver.encode_depth_exceeded,
+                "a genuinely deep non-ground assertion must still trip the guard"
+            );
+            assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
+        })
+        .expect("spawning a 128 KiB-stack thread should succeed");
+
+    handle
+        .join()
+        .expect("unfoldable-deep assert+check must return");
+}
+
 /// Doubling DAG: level `i+1` references level `i` **twice**, alternating
 /// `And`/`Or` so the flattening `mk_and`/`mk_or` builders never merge a level
 /// into its parent (they flatten only same-kind children; neither dedupes a
