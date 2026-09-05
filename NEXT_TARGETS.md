@@ -322,3 +322,191 @@ Follow [AGENTS.md](AGENTS.md) and [BENCHMARKING.md](docs/BENCHMARKING.md).
 - Commit finished code/tests or a documented negative result to `main`, stage
   only owned files, and remove only the worktrees/artifacts created for that
   completed step.
+
+## Research addendum: candidates for surpassing Kissat
+
+Literature and source review dated 2026-09-05. The target here is single-threaded
+SAT on the same CNF input, including all analysis and preprocessing costs.
+These are proposed experiments, **not established novel algorithms or demonstrated
+Kissat wins**. A literature search can identify collisions; it cannot establish
+that nobody has tried the remaining mechanism.
+
+The [existing research agenda](docs/2026-08-novel-research-agenda.md) already covers
+representation morphing, clause-retention control, phase sources, portfolios,
+and CNF recovery/re-encoding. Repeating those proposals with new names would not
+answer the request. Two narrower candidates survive this review; only the first
+has a plausible route to a substantial algorithmic advantage.
+
+### A. Synthesize a relation from recurring conflict regions
+
+**Bet:** repeated conflicts sometimes expose a small interface between a difficult
+local subproblem and the remaining formula. Learn a compact, proved relation on
+that interface, so later search can reason about the whole relation without
+rediscovering its consequences separately.
+
+The proposed novelty is the specific feedback loop: recurring conflict support
+selects an interface; counterexamples refine a bounded circuit describing a
+derived relation; an exact proof admits it; subsequent propagation work determines
+whether that representation earns its cost. Merely learning multiple clauses,
+recovering an XOR, introducing extension variables, or building a BDD is not new.
+
+**Concrete first design:**
+
+1. Sample bounded conflict-analysis slices and record recurring clause support.
+   Select a small region of justified clauses `F_R(B, I)`, where `B` is an
+   interface of initially at most 8–12 Boolean variables and `I` contains the
+   remaining local variables. Do not require the whole formula to decompose.
+2. Use exact local models and certified infeasible interface assignments to fit
+   a small relation `R(B)`. Begin with a strictly bounded Boolean circuit grammar;
+   include non-affine relations so the experiment does not reduce to XOR recovery.
+   Limit circuit nodes, local search work, and retained regions deterministically.
+3. Independently establish `F_R(B, I) => R(B)` by checking
+   `F_R AND NOT R` is UNSAT with a checkable derivation. A local countermodel
+   refines the candidate; a budget exhaustion rejects it. A failed global branch
+   is not evidence that its projection onto `B` is locally impossible.
+4. Keep the original CNF. Add definitions for the circuit and the proved assertion
+   of its output through a supported proof format. Fresh definitions alone do
+   not justify asserting the output. If a relation depends on assumptions `g`,
+   prove and retain `g => R`, with correct scope support.
+5. First use ordinary CNF propagation of the added circuit. Native propagation
+   with clausal explanations is a separate experiment, after proof admission and
+   incremental state handling work. Measure whether definitions actually compress
+   repeated reasoning after accounting for their own watch traffic.
+
+For example, a relation involving several boundary bits might summarize the
+combined effect of many overlapping constraints, even when no corresponding gate
+occurs syntactically in the input or learned clauses. A parity example would
+illustrate the mechanism but would not establish novelty.
+
+**Why it could surpass Kissat:** a compact derived circuit can expose consequences
+that would otherwise require many separate conflicts. The upside is a reduction
+in search and proof work, potentially much larger than a faster watcher loop.
+That is a hypothesis about structured instance families, not an asymptotic result
+for this design or a prediction of a competition win. Certification might consume
+all the work it was intended to save.
+
+**Nearest prior art and the remaining uncertainty:**
+
+- [Learning from BDDs in SAT-based bounded model checking](https://bpb-us-w1.wpmucdn.com/sites.usc.edu/dist/c/321/files/2019/03/Gupta03BddLearn-2ap2wmd.pdf)
+  already learns multiple consequences of local Boolean relations.
+- [BDD-guided clause generation](https://www.andrew.cmu.edu/user/vanhoeve/papers/cpaior15-bddclausegen.pdf)
+  already generates consequences using exact or approximate BDDs, including
+  clauses stronger than one application of ordinary conflict analysis.
+- [Extended resolution using BDDs and quantification](https://fmv.jku.at/papers/JussilaSinzBiere-SAT06.pdf)
+  already supplies a proof framework for symbolic reasoning. BDD projection plus
+  proof logging is therefore not the novelty claim.
+- [Dual implication points](https://lmcs.episciences.org/18269) already select
+  extension definitions from conflict graphs.
+- [Factoring Learned Clauses, SAT 2026](https://program.floc26.org/SAT-2026-07-20)
+  already includes global XOR/ITE factoring of learned clauses; its
+  [artifact](https://zenodo.org/records/20154935) is a required comparator.
+
+The remaining contribution would have to be demonstrated in the **selection and
+synthesis of useful derived relations across recurring conflict slices**, beyond
+these methods. Originality confidence is provisional, and prior-art overlap is
+substantial. If implementation collapses to BDD clause learning or gate factoring,
+describe it as an application of that existing method.
+
+**Nixie starting points:** [conflict analysis](nixie-sat/src/solver/learn.rs),
+[binary factoring](nixie-sat/src/solver/factor.rs), and
+[extension definitions](nixie-sat/src/extended_resolution.rs). The last provides
+representations, not evidence that this search/proof integration already exists.
+Kissat's [sweeping](../temp/kissat/src/sweep.c) is a local semantic-reasoning
+baseline; the proposal needs to add value beyond backbone/equivalence discovery.
+
+**First experiment and rejection conditions:**
+
+- Start with observation only: measure repeated support, interface sizes, and
+  whether independently certified relations remain compact. Use untouched
+  families for evaluation; selecting only appealing traces would bias the study.
+- Compare conflict-selected regions against permuted region scores with the same
+  extraction, synthesis, and certification budgets. Report acceptance-rate and
+  candidate-size differences instead of pretending this fully matches injection.
+- Separately isolate selection value using a shared pool of verified candidates:
+  treatment and null inject the same number and size distribution of definitions
+  at the same events, with utility scores permuted for the null. Random invalid
+  formulas that are all rejected are not a matched null.
+- Compare with BDD-derived clauses and XOR/ITE factoring, as well as ordinary
+  Nixie and a pinned Kissat. Include all synthesis, proof, and propagation work.
+- Reject if local proof cost dominates, useful interfaces are too large, circuit
+  size explodes, or advantages disappear against the valid-candidate null or
+  established methods. An offline oracle win only justifies trying an online
+  selector; it does not count as solver performance.
+
+### B. Share an exact blocker check across a contiguous watch span
+
+**Bet:** some watch spans repeatedly contain many entries whose blockers belong
+to the same very small set. One exact guard can certify that the entire span will
+take the ordinary blocker-hit path.
+
+In [the current propagation loop](nixie-sat/src/solver/propagate.rs), every entry
+loads and checks its blocker separately. Build bounded metadata for an unchanged
+contiguous span of, for example, 32 entries with at most four distinct blockers.
+If all four literals are currently true, every original blocker test would pass.
+With valid metadata and `write == read`, advance both cursors across the span.
+Otherwise execute the existing loop. Do not reorder watches to manufacture runs
+in the first experiment; that changes the search and its causal question.
+
+**Correctness contract:** metadata identifies the exact span and blocker set,
+not a probabilistic signature. Any change to membership, order, blockers, or span
+storage invalidates its generation. A fresh guard checks current literal values,
+so a previously true guard cannot survive backtracking unchecked. Restrict the
+first slice to `write == read`; otherwise compaction copies remain necessary.
+Preserve counter updates, budgets, and ordered search events. Clause deletion,
+watch movement, arena maintenance, and scope changes must respect invalidation.
+
+This reuses a proof of *no effects from this group of checks*. It does not reuse
+assignments from an earlier trail, as in
+[Trail Saving on Backtrack](https://pmc.ncbi.nlm.nih.gov/articles/PMC7326469/).
+The narrow candidate contribution is cross-entry guard sharing with unchanged
+watch order and search behavior. No exact match was found in the reviewed sources;
+that is weaker than establishing originality.
+
+**Headroom is limited.** The
+[mrpp propagation profile](docs/studies/2026-09-02-propagate-profile-closure.md)
+reports 66% blocker hits, about 50 instructions per watch visit on average, and
+roughly 6–10 instructions per blocker-hit visit. On those approximate figures,
+even removing every blocker-hit instruction would save only about 8–13% of
+watch-processing instructions. Combining this loosely with the 74.8% propagation
+cycle share suggests roughly 6–10% overall headroom, before guards and maintenance.
+The instruction/cycle mixture makes this an order-of-magnitude estimate, not a
+measured bound. Real eligible spans cover less. This is a supporting optimization,
+not a credible standalone route across the historical 1.411x corpus gap.
+
+**First experiment:** collect blocker-diversity histograms for unchanged spans,
+guard-hit frequency, metadata lifetime, and eligibility under `write == read`.
+Count construction, guard misses, invalidations, fallback, and skipped scalar
+operations. Reject before implementing acceleration if an optimistic savings
+estimate cannot clear a pre-registered worthwhile threshold after those costs.
+Do not infer guard coverage from the scalar blocker-hit percentage.
+
+For a prototype, compare baseline, metadata/guard execution with scalar replay,
+and actual span skipping. Require identical ordered search traces and legacy
+scheduling ticks. Use a separate deterministic work account covering the new
+operations; unchanged scheduling ticks cannot measure the optimization. Hardware
+instruction counts can corroborate that the work reduction survives compilation.
+If watch reordering is later introduced, it becomes a separate heuristic requiring
+its own matched null and seed distribution.
+
+### Ideas screened out and research order
+
+Do not claim the following as new: extension learning from conflict dominators;
+XOR/ITE factoring of learned clauses; clause transfer between similar subgraphs
+([FMCAD 2021](https://ofers.dds.technion.ac.il/publications/fmcad21.pdf)); or keeping
+more assignments by changing backtracking
+([Graph Backtracking, SAT 2026](https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.SAT.2026.14)).
+Applying inprocessing above the root also has direct prior art in Backtrackable
+Inprocessing in the [SAT 2026 program](https://program.floc26.org/SAT-2026-07-20).
+Transporting search state through formula rewrites might leave a narrower open
+question, but this review did not establish a sufficiently distinct mechanism to
+recommend it as a third novel approach.
+
+Run B's inexpensive observation screen first. Allocate the larger research effort
+to A only if its observation screen finds compact, reusable, cheaply certified
+relations. Follow the execution protocol above: at least ten seeds per heuristic
+cell, matched nulls, fresh-seed replay, complete deterministic work accounting,
+and held-out families. Cross-solver tick definitions are not interchangeable;
+report their work counters explicitly instead of dividing unlike tick totals.
+Pin reference revisions and preserve a broad corpus containing SAT and UNSAT
+instances. A family-specific win should be called that. Neither proposal has been
+implemented or benchmarked for this addendum.
