@@ -460,3 +460,14 @@ worker-class captures (worker_550 solves serially in 38.2 s, j3037
 costs noL its default solve. Wash-to-negative at 40 s, as the earlier
 study found at 60 s; the portfolio remains worth it only at ≥ 90 s
 budgets.
+
+## Closure note (2026-09-07): the "top of the queue" false-SAT is fixed
+
+`NIXIE_CHRONO_ALWAYS=1 cargo nextest run -p nixie-sat dominator_hbr` now
+passes (Unsat on the UNSAT input, verified 2026-09-07 at `af8b597`).  The
+hunting log's surviving suspect — an in-place strengthen of a load-bearing
+resolvent — is exactly the hole `docs/studies/2026-09-02-lrat-default-path.md`
+closed: `elim_shrink_clause` refusing a shrink silently dropped the ordinary
+resolvent, poking a hole in the resolution closure that `save_model`'s BVE
+reconstruction then extended into a model violating retired originals.  The
+`chronoalways` stack merely exposed the trajectory.  No action remains.
