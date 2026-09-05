@@ -34,6 +34,173 @@ pub(super) fn inproc_round_trace_enabled() -> bool {
     false
 }
 
+/// Whether the effort-relative inprocessing-round schedule is on (env
+/// `NIXIE_INPROC_SCHED=1`; study `2026-09-07-inproc-effort-schedule.md`).
+/// cadical `SET_EFFORT_LIMIT` shape: each mid-search round's pass budgets are
+/// a fixed per-mille of the search work since the last round, and the round
+/// interval grows `interval × log10(rounds + 9)` (cadical `inprobe`).
+/// Default off: the legacy flat interval and absolute budgets run, keeping
+/// the binary trajectory-identical to the pre-change build.
+#[cfg(feature = "std")]
+pub(super) fn inproc_sched_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_INPROC_SCHED")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
+#[cfg(not(feature = "std"))]
+pub(super) fn inproc_sched_enabled() -> bool {
+    false
+}
+
+/// The matched-null arm of the effort schedule (env
+/// `NIXIE_INPROC_SCHED_NULL=1`; implies the schedule).  Budgets use the
+/// search-work window observed **two rounds earlier** instead of the current
+/// one: identical budget magnitudes and timing, the correlation between
+/// "work since the last round" and "this round's budget" severed (the
+/// lag-2 scramble; windows on the corpus vary 2–3× across adjacent rounds,
+/// so the null genuinely perturbs).  Rounds without two predecessors use
+/// their true window (nothing to lag from).
+#[cfg(feature = "std")]
+pub(super) fn inproc_sched_null() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_INPROC_SCHED_NULL")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
+#[cfg(not(feature = "std"))]
+pub(super) fn inproc_sched_null() -> bool {
+    false
+}
+
+/// `NIXIE_INPROC_VIVON=1`: disable the cadical `vivifythresh` skip in the
+/// effort schedule (study arm; see `inproc_round_budgets`).
+#[cfg(feature = "std")]
+pub(super) fn vivify_thresh_disabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_INPROC_VIVON")
+            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+    })
+}
+
+#[cfg(not(feature = "std"))]
+pub(super) fn vivify_thresh_disabled() -> bool {
+    false
+}
+
+/// One round's effort-relative budgets (cadical per-mille efforts; see
+/// `Solver::inproc_budgets`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InprocBudgets {
+    /// Search-propagation window this round scales against.  `0` marks a
+    /// non-scheduled invocation (pre-search one-shot): passes fall back to
+    /// their legacy absolute budgets.
+    pub window: u64,
+    /// Vivify propagation budget (cadical `vivifyeffort` = 50‰ of window;
+    /// skipped entirely below `vivifythresh × clauses` — cadical skips the
+    /// pass, it does not run it at a floor).
+    pub vivify_props: u64,
+    /// Whether the vivify pass may run at all this round.
+    pub vivify_allowed: bool,
+    /// Subsumption-check budget (cadical `subsumeeffort` = 1000‰ of
+    /// cumulative *search* propagation, clamped
+    /// `[subsumemineff, subsumemaxeff]`).
+    pub subsume_checks: u64,
+    /// Transitive-reduction step budget (cadical `transredeffort` = 100‰
+    /// of the window; our steps are a close analogue of its tick budget).
+    pub transred_steps: u64,
+}
+
+impl InprocBudgets {
+    /// Legacy (non-scheduled) budgets: passes use their own absolute caps.
+    pub(super) fn legacy() -> Self {
+        Self {
+            window: 0,
+            vivify_props: 0,
+            vivify_allowed: true,
+            subsume_checks: 0,
+            transred_steps: 0,
+        }
+    }
+}
+
+impl Solver {
+    /// The mid-search inprocessing interval currently in force.  Under the
+    /// effort schedule (`NIXIE_INPROC_SCHED`) this grows with completed
+    /// rounds — cadical `inprobe`: `delta = interval × log10(rounds + 9)` —
+    /// so late rounds fire increasingly rarely on long-running instances.
+    /// Without the flag this is exactly `config.inprocessing_interval`
+    /// (legacy flat schedule, bit-identical trajectories).
+    pub(super) fn inproc_interval_now(&self) -> u64 {
+        if !inproc_sched_enabled() {
+            return self.config.inprocessing_interval;
+        }
+        let growth = ((self.inproc_rounds_done + 9) as f64).log10().max(1.0);
+        ((self.config.inprocessing_interval as f64) * growth).ceil() as u64
+    }
+
+    /// Compute the effort-relative budgets for the mid-search round about
+    /// to run, from `window` (search propagation since the last round) and
+    /// `null_window` (the lag-2 null's substitute; equal to `window` in the
+    /// treatment arm).  cadical reference values: `vivifyeffort` 50,
+    /// `vivifythresh` 20, `subsumeeffort` 1000 with min/max efforts 1e6/1e9,
+    /// `transredeffort` 100.
+    pub(super) fn inproc_round_budgets(&self, window: u64, null_window: u64) -> InprocBudgets {
+        let w = if inproc_sched_null() {
+            null_window
+        } else {
+            window
+        };
+        // cadical `vivifythresh`: skip vivify when the effort allowance is
+        // below `thresh × live clauses` (20‰×clauses… exactly: thresh(20) ×
+        // clauses.size(), against the tick-scaled delta; ticks ≈ props at
+        // this granularity — deviation noted in the study).
+        let live = (self.clauses.num_original() + self.clauses.num_learned()) as u64;
+        let vivify_sized = w.saturating_mul(VIVIFY_EFFORT_PERMILLE) / 1000;
+        // `NIXIE_INPROC_VIVON=1` disables the cadical skip (τ=0): vivify
+        // still runs under its effort budget, just never skipped by the
+        // threshold — the arm for instances whose measured win tracks
+        // vivify's semantic effect rather than its volume.
+        let vivify_allowed = vivify_sized
+            > if vivify_thresh_disabled() {
+                0
+            } else {
+                VIVIFY_THRESH.saturating_mul(live)
+            };
+        // cadical subsume: cumulative-search-props × 1000‰, clamped.
+        let cum_search = self
+            .stats
+            .propagations
+            .saturating_sub(self.inproc_round_props_total);
+        let subsume_checks = cum_search.clamp(SUBSUME_MIN_CHECKS, SUBSUME_MAX_CHECKS);
+        InprocBudgets {
+            window: w,
+            vivify_props: vivify_sized,
+            vivify_allowed,
+            subsume_checks,
+            transred_steps: (w.saturating_mul(TRANSRED_EFFORT_PERMILLE) / 1000)
+                .max(TRANSRED_MIN_STEPS),
+        }
+    }
+}
+
+/// cadical effort constants for the inprocessing schedule (see
+/// `inproc_round_budgets`).
+const VIVIFY_EFFORT_PERMILLE: u64 = 50;
+const VIVIFY_THRESH: u64 = 20;
+const SUBSUME_MIN_CHECKS: u64 = 1_000_000;
+const SUBSUME_MAX_CHECKS: u64 = 1_000_000_000;
+const TRANSRED_EFFORT_PERMILLE: u64 = 100;
+const TRANSRED_MIN_STEPS: u64 = 10_000;
+
 impl Solver {
     /// Install the consequence of a freshly learned clause on the trail.
     ///
@@ -1426,7 +1593,7 @@ impl Solver {
         // level 0 or while an LRAT tracer is attached, which keeps these
         // passes exactly as safe mid-search as they were pre-search.
         if self.config.enable_inprocessing
-            && self.conflicts_since_inprocessing >= self.config.inprocessing_interval
+            && self.conflicts_since_inprocessing >= self.inproc_interval_now()
         {
             // 2026-09-04 telemetry (study
             // `2026-09-04-inprocessing-standing-corpus.md` -> gating follow-up):
@@ -1457,8 +1624,36 @@ impl Solver {
             if self.trail.decision_level() > 0 {
                 self.backtrack_with_phase_saving(0);
             }
+            // Effort-schedule study (2026-09-07): budget this round's passes
+            // from the search work since the last round, then mark the
+            // round.  `inproc_search_props_mark` is only ever written at
+            // round end / reset, so the window is pure search-side (and
+            // walk-side) propagation.
+            let true_window = self
+                .stats
+                .propagations
+                .saturating_sub(self.inproc_search_props_mark);
+            let null_window = if self.inproc_window_ring[0] > 0 {
+                self.inproc_window_ring[0]
+            } else {
+                true_window
+            };
+            self.inproc_budgets = if inproc_sched_enabled() {
+                self.inproc_round_budgets(true_window, null_window)
+            } else {
+                InprocBudgets::legacy()
+            };
+            let budgets_used = self.inproc_budgets;
+            let round_entry_props = self.stats.propagations;
             self.inprocess();
+            self.inproc_budgets = InprocBudgets::legacy();
             self.conflicts_since_inprocessing = 0;
+            self.inproc_rounds_done += 1;
+            self.inproc_round_props_total = self
+                .inproc_round_props_total
+                .saturating_add(self.stats.propagations.saturating_sub(round_entry_props));
+            self.inproc_search_props_mark = self.stats.propagations;
+            self.inproc_window_ring = [self.inproc_window_ring[1], true_window];
             if let Some((cf0, props0, orig0, lrnd0, work0)) = trace_pre {
                 let props_in_round = self.stats.propagations - props0;
                 let work_yield = self.stats.subsumed_removed
@@ -1470,9 +1665,16 @@ impl Solver {
                     - work0;
                 eprintln!(
                     "inproc_round: conflicts={cf0} props_in_round={props_in_round} \
+                     window={true_window} budget_w={} viv={}/{} sub_ck={} tr={} \
                      orig={}->{} learned={}->{} yield={work_yield} db={} \
                      lbd_ema={:.2}/{:.2} \
-                     els={} units={} shr={} sub={} tred={} tfailed={}",
+                     els={} units={} shr={} sub={} tred={} tfailed={} \
+                     pass_props els={} pure_sub={} vivify={} tred={}",
+                    budgets_used.window,
+                    budgets_used.vivify_props,
+                    budgets_used.vivify_allowed,
+                    budgets_used.subsume_checks,
+                    budgets_used.transred_steps,
                     orig0,
                     self.clauses.num_original(),
                     lrnd0,
@@ -1486,6 +1688,10 @@ impl Solver {
                     self.inproc_diag[3],
                     self.inproc_diag[4],
                     self.inproc_diag[5],
+                    self.inproc_diag_props[0],
+                    self.inproc_diag_props[1],
+                    self.inproc_diag_props[2],
+                    self.inproc_diag_props[3],
                 );
             }
         }
@@ -2005,6 +2211,20 @@ impl Solver {
         }
         const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
+        // Effort-scheduled rounds (2026-09-07 study): cadical `SET_EFFORT_LIMIT
+        // // (vivify)` — 50‰ of the search window, and the pass is SKIPPED
+        // (not floored) when that allowance is below `vivifythresh × live
+        // clauses` (cadical vivifythresh = 20).  Legacy rounds keep the
+        // absolute 10M budget.
+        let scheduled = self.inproc_budgets.window > 0;
+        if scheduled && !self.inproc_budgets.vivify_allowed {
+            return;
+        }
+        let prop_budget = if scheduled {
+            self.inproc_budgets.vivify_props.max(1)
+        } else {
+            MAX_VIVIFY_PROPS
+        };
         let start_props = self.stats.propagations;
         let done = 0usize;
 
@@ -2051,7 +2271,7 @@ impl Solver {
         let mut snapshot: Vec<Cand> = Vec::new();
         for cid in candidates {
             if done >= MAX_CLAUSES
-                || self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS
+                || self.stats.propagations.saturating_sub(start_props) > prop_budget
             {
                 break;
             }
@@ -2073,7 +2293,7 @@ impl Solver {
         let mut prev_depths: SmallVec<[u32; 8]> = SmallVec::new();
         let start_subsumed = self.stats.subsumed_removed;
         for (_, cid, lits) in &snapshot {
-            if self.stats.propagations.saturating_sub(start_props) > MAX_VIVIFY_PROPS {
+            if self.stats.propagations.saturating_sub(start_props) > prop_budget {
                 break;
             }
             let _ = self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
@@ -2576,6 +2796,11 @@ impl Solver {
         let units0 = t.then_some(self.stats.unit_clauses);
         let shr0 = t.then_some(self.stats.shrunken);
         let sub0 = t.then_some(self.stats.subsumed_removed + self.stats.self_subsumed);
+        // Per-pass COST attribution (2026-09-07): propagation spent inside
+        // each pass, so the round trace can separate vivify's cost from
+        // subsumption's.  Propagation is the dominant round cost on the
+        // corpus (occurrence scans barely propagate); diagnostic only.
+        let els_p0 = t.then_some(self.stats.propagations);
 
         // Equivalent-literal substitution round (cadical interleaves its
         // `decompose`/`sweep`-class ELS inside the inprocessing schedule).
@@ -2599,6 +2824,13 @@ impl Solver {
         // Create preprocessor with current number of variables
         let mut preprocessor = Preprocessor::new(self.num_vars);
 
+        // Per-pass cost attribution: pure-literal + subsume pass marker.
+        // (also closes the ELS slot: its delta is the props spent above)
+        let mut diag_props = [0u64; 4];
+        if let Some(p) = els_p0 {
+            diag_props[0] = self.stats.propagations.saturating_sub(p);
+        }
+        let puresub_p0 = t.then_some(self.stats.propagations);
         // Snapshot every live clause's literals before the elimination passes
         // below run. `Preprocessor::pure_literal_elimination` and
         // `subsumption_elimination` retire clauses by setting `Clause::deleted`
@@ -2727,11 +2959,23 @@ impl Solver {
         // strengthening half of this round (and was capped at 50 clauses).
         let (_subsumed, _strengthened) = self.subsume_round();
 
+        // Per-pass cost attribution: vivify pass marker (closes pure+sub).
+        if let Some(p) = puresub_p0 {
+            diag_props[1] = self.stats.propagations.saturating_sub(p);
+        }
+        let viv_p0 = t.then_some(self.stats.propagations);
+
         // Vivification round (cadical schedules `vivify` inside its
         // inprocessing rounds): shortens both learned and – when no proof is
         // attached – original clauses. The shortened clauses re-arm
         // elimination (their variables are marked in `vivify_clause`).
         self.vivify_clauses();
+
+        // Per-pass cost attribution: transred pass marker (closes vivify).
+        if let Some(p) = viv_p0 {
+            diag_props[2] = self.stats.propagations.saturating_sub(p);
+        }
+        let tred_p0 = t.then_some(self.stats.propagations);
 
         // Transitive reduction of the binary implication graph (cadical
         // schedules `transred` inside `inprobe`; the documented amortizer
@@ -2739,6 +2983,9 @@ impl Solver {
         // retired via original-only alternative paths; failed literals
         // surface as forced level-0 units.
         let (_tred, _tfailed) = self.transred_round();
+        if let Some(p) = tred_p0 {
+            diag_props[3] = self.stats.propagations.saturating_sub(p);
+        }
 
         // Stash the per-pass deltas for the round-site trace (telemetry).
         if let (Some(e0), Some(u0), Some(s0), Some(b0)) = (els0, units0, shr0, sub0) {
@@ -2750,6 +2997,7 @@ impl Solver {
                 _tred as u64,
                 _tfailed as u64,
             ];
+            self.inproc_diag_props = diag_props;
         }
 
         // Re-arm unit propagation over the whole surviving trail.

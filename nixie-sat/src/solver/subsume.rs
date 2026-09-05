@@ -58,10 +58,17 @@ impl Solver {
 
         // Budget (cadical `subsumelimited`): delta = search propagations ×
         // subsumeeffort/1000 (= ×1), clamped to [2·active vars, 1e8] checks.
-        let budget: u64 = self
-            .stats
-            .propagations
-            .clamp((2 * self.num_vars.max(1)) as u64, 100_000_000);
+        // Effort-scheduled rounds (2026-09-07) use the cadical reference
+        // exactly: cumulative SEARCH propagation (round-internal propagation
+        // excluded via `inproc_round_props_total`), clamped
+        // [subsumemineff=1e6, subsumemaxeff=1e9].
+        let budget: u64 = if self.inproc_budgets.window > 0 {
+            self.inproc_budgets.subsume_checks
+        } else {
+            self.stats
+                .propagations
+                .clamp((2 * self.num_vars.max(1)) as u64, 100_000_000)
+        };
         let mut subchecks: u64 = 0;
 
         // Snapshot the schedule: live clauses within the size limit and with

@@ -55,8 +55,15 @@ impl Solver {
         }
 
         let ticks = self.ticks_focused + self.ticks_stable;
-        let budget = (ticks.saturating_mul(TRANSRED_EFFORT_PERMILLE) / 1000)
-            .clamp(TRANSRED_MIN_EFFORT, TRANSRED_MAX_EFFORT);
+        // Effort-scheduled rounds (2026-09-07): cadical's window form —
+        // `transredeffort` (100‰) of the search work since the last round,
+        // in this round's step budget, instead of the cumulative-tick form.
+        let budget = if self.inproc_budgets.window > 0 {
+            self.inproc_budgets.transred_steps
+        } else {
+            (ticks.saturating_mul(TRANSRED_EFFORT_PERMILLE) / 1000)
+                .clamp(TRANSRED_MIN_EFFORT, TRANSRED_MAX_EFFORT)
+        };
         let mut steps: u64 = 0;
 
         // Candidate list: live, non-hyper, unchecked binaries whose literals

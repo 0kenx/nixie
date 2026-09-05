@@ -11,6 +11,7 @@ mod factor;
 pub mod heuristic;
 mod incremental;
 mod learn;
+use learn::InprocBudgets;
 mod lucky;
 mod probe;
 mod propagate;
@@ -1342,6 +1343,38 @@ pub struct Solver {
     /// never read by search logic (2026-09-04 gating follow-up telemetry).
     pub(super) inproc_diag: [u64; 6],
 
+    /// Per-pass cost attribution of the most recent `inprocess()` round
+    /// (`[els_props, purelit_subsume_props, vivify_props, transred_props]`),
+    /// written only when `NIXIE_INPROC_TRACE` is on.  Diagnostic only.
+    pub(super) inproc_diag_props: [u64; 4],
+
+    /// Completed mid-search `inprocess()` rounds (the effort-schedule
+    /// study's round counter; drives the cadical `log10(rounds + 9)` interval
+    /// growth under `NIXIE_INPROC_SCHED`).
+    pub(super) inproc_rounds_done: u64,
+
+    /// `stats.propagations` at the end of the last mid-search round.  The
+    /// search-work window for the next round's effort-relative budgets is
+    /// `stats.propagations - this mark`; round-internal propagation sits
+    /// between a round's entry and its end-mark, so windows contain only
+    /// search-side (and walk-side) propagation.
+    pub(super) inproc_search_props_mark: u64,
+
+    /// Ring of the two most recent true search-work windows
+    /// (`[w(r-2), w(r-1)]` before round `r`).  The lag-2 matched null
+    /// (`NIXIE_INPROC_SCHED_NULL`) budgets round `r` from `ring[0]`: the
+    /// same window multiset, severed from the round it reacts to.
+    pub(super) inproc_window_ring: [u64; 2],
+
+    /// Total propagation spent inside mid-search rounds.  Keeps the
+    /// subsume budget's reference (`cumulative search propagations`)
+    /// uncontaminated by round-internal propagation.
+    pub(super) inproc_round_props_total: u64,
+
+    /// This round's effort-relative budgets (0-window = legacy absolute
+    /// budgets; set by the round site under `NIXIE_INPROC_SCHED`).
+    pub(super) inproc_budgets: InprocBudgets,
+
     /// In-search XOR propagation state (`solver/xor.rs`; `NIXIE_XORSEARCH`).
     /// `None` on the default path — one `is_some` check per hooked call.
     pub(super) xor_search: Option<Box<self::xor::XorSearch>>,
@@ -1783,6 +1816,12 @@ impl Solver {
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
+            inproc_diag_props: [0; 4],
+            inproc_rounds_done: 0,
+            inproc_search_props_mark: 0,
+            inproc_window_ring: [0, 0],
+            inproc_round_props_total: 0,
+            inproc_budgets: InprocBudgets::legacy(),
             inproc_diag: [0; 6],
             xor_search: None,
             real_theory_attached: false,
@@ -4210,6 +4249,13 @@ impl Solver {
         self.global_lbd_sum = 0;
         self.global_lbd_count = 0;
         self.conflicts_since_local_restart = 0;
+        self.conflicts_since_inprocessing = 0;
+        self.inproc_diag_props = [0; 4];
+        self.inproc_rounds_done = 0;
+        self.inproc_search_props_mark = 0;
+        self.inproc_window_ring = [0, 0];
+        self.inproc_round_props_total = 0;
+        self.inproc_budgets = InprocBudgets::legacy();
         self.pure_literal_reconstruction.clear();
         // Drop any proof logger: its clause ids refer to the now-cleared database,
         // so continuing to emit against it would produce a meaningless proof.
