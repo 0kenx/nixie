@@ -172,39 +172,67 @@ impl Solver {
         // preserves contents and per-literal order exactly — the flip loop
         // reads identical data in identical order, so the trajectory is
         // untouched (54-file identity gate applies verbatim).
+        // Walk-objective representation. Two shapes, chosen by the
+        // `NIXIE_WALK_STRIP_FIXED` knob:
+        //
+        // * **Default (arena-referencing)**: a slot IS the clause id. The
+        //   round's objective reads each participating clause's literals
+        //   straight from the clause arena (nothing is deleted or permuted
+        //   during a round, so the bytes the flip loop sees are exactly the
+        //   bytes a packed copy would hold), and the only packed structure
+        //   built is the CSR occurrence list (`occ_buf` + ends). On
+        //   clause-dense instances (worker-class, 10M originals, 97%
+        //   binaries) the previous packed-copy shape paid ~120 MB of
+        //   per-round transient (`slot_buf` of every literal + per-slot end
+        //   offsets) purely to duplicate arena bytes; this shape removes it.
+        //   Slot values are clause ids instead of dense indices — every
+        //   consumer below is position- or content-driven (broken-list
+        //   membership via `in_broken`, occurrence order via `occ_buf`,
+        //   literals via the arena), so the RNG stream and every decision
+        //   are identical; the 54-file identity gate applies verbatim.
+        // * **Strip-fixed knob on**: the slot's literals are the clause's
+        //   *flippable* literals (fixed literals stripped), which do NOT
+        //   match the arena bytes — the packed-copy CSR is retained for
+        //   that path (correctness over footprint; the knob is off by
+        //   default and exists to keep the fixed-literal study
+        //   reproducible).
+        //
+        // Participation filter (identical in both shapes): original,
+        // non-deleted, >= 2 literals, not permanently satisfied by a fixed
+        // true literal, and — on the default path — containing no fixed
+        // literal at all (flipping can never repair a fixed-false literal).
         let mut occ_end: Vec<u32> = vec![0; self.num_vars * 2];
-        let mut slot_buf: Vec<Lit> = Vec::new();
-        let mut slot_end: Vec<u32> = Vec::new();
-        let mut true_count: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
+        let mut slot_count = 0u64;
+        let mut broken: Vec<u32> = Vec::new();
+        let mut true_count: Vec<u32>;
+        let mut in_broken: BrokenBits;
+        // Only populated on the strip-fixed path (packed slot literals).
+        let mut packed: Option<(Vec<Lit>, Vec<u32>)> = None;
+        let occ_buf: Vec<u32>;
         let mut stripped: SmallVec<[Lit; 8]> = SmallVec::new();
-        for id in self.clauses.iter_ids() {
-            let Some(clause) = self.clauses.get(id) else {
-                continue;
-            };
-            if clause.learned || clause.lits.len() < 2 {
-                continue;
-            }
-            // Permanently satisfied by a fixed true literal: out of the
-            // objective entirely.
-            if clause.lits.iter().any(|&l| {
-                let vi = l.var().index();
-                vi < self.num_vars && fixed[vi] && values[vi] == l.is_pos()
-            }) {
-                continue;
-            }
-            // Fixed-literal clauses: with `NIXIE_WALK_STRIP_FIXED`, their
-            // fixed-false literals are constant and the clause's
-            // satisfiability rides on the remaining (flippable) literals
-            // alone; by default the whole clause stays out of the objective
-            // (flipping can never repair its fixed-false literals).
-            // (The explicit borrow sidesteps SmallVec's `Deref` coercion –
-            // every alternate spelling trips a different clippy lint here.)
-            #[allow(clippy::needless_borrow)]
-            let full: &[Lit] = &clause.lits;
-            stripped.clear();
-            let mut has_fixed = false;
-            if strip_fixed {
+        if strip_fixed {
+            let mut slot_buf: Vec<Lit> = Vec::new();
+            let mut slot_end: Vec<u32> = Vec::new();
+            let mut dense_true: Vec<u32> = Vec::new();
+            for id in self.clauses.iter_ids() {
+                let Some(clause) = self.clauses.get(id) else {
+                    continue;
+                };
+                if clause.learned || clause.lits.len() < 2 {
+                    continue;
+                }
+                if clause.lits.iter().any(|&l| {
+                    let vi = l.var().index();
+                    vi < self.num_vars && fixed[vi] && values[vi] == l.is_pos()
+                }) {
+                    continue;
+                }
+                // Strip the clause's fixed literals; the residual (flippable)
+                // literals are the slot contents.
+                let full: &[Lit] = clause.lits;
+                stripped.clear();
+                let mut has_fixed = false;
                 for &l in full.iter() {
                     if fixed[l.var().index()] {
                         has_fixed = true;
@@ -212,52 +240,40 @@ impl Solver {
                         stripped.push(l);
                     }
                 }
-            } else if full.iter().any(|&l| fixed[l.var().index()]) {
-                continue;
-            }
-            let lits: &[Lit] = if has_fixed {
-                if stripped.is_empty() {
-                    // Every literal fixed-false: falsified at level 0 – the
-                    // solver is UNSAT and will say so on the next propagate;
-                    // a permanently-broken slot would wedge the picker.
-                    continue;
+                let lits: &[Lit] = if has_fixed {
+                    if stripped.is_empty() {
+                        // Every literal fixed-false: falsified at level 0 –
+                        // the solver is UNSAT and will say so on the next
+                        // propagate; a permanently-broken slot would wedge
+                        // the picker.
+                        continue;
+                    }
+                    &stripped
+                } else {
+                    full
+                };
+                let n_true = lits
+                    .iter()
+                    .filter(|&&l| values[l.var().index()] == l.is_pos())
+                    .count() as u32;
+                for &l in lits {
+                    occ_end[l.code() as usize] += 1;
                 }
-                &stripped
-            } else {
-                full
-            };
-            let n_true = lits
-                .iter()
-                .filter(|&&l| values[l.var().index()] == l.is_pos())
-                .count() as u32;
-            slot_buf.extend_from_slice(lits);
-            slot_end.push(slot_buf.len() as u32);
-            true_count.push(n_true);
-            lit_sum = lit_sum.saturating_add(lits.len() as u64);
-        }
-        let slot_count = slot_end.len();
-        if slot_count == 0 {
-            return;
-        }
-        // CSR occurrence build: count per literal (the slot scan above is a
-        // single pass; counts come from the packed slots), prefix into ends,
-        // then fill one flat buffer preserving clause-visit order per
-        // literal exactly as the per-literal `push`es did.
-        for i in 0..slot_count {
-            let start = if i == 0 { 0 } else { slot_end[i - 1] as usize };
-            for &l in &slot_buf[start..slot_end[i] as usize] {
-                occ_end[l.code() as usize] += 1;
+                slot_buf.extend_from_slice(lits);
+                slot_end.push(slot_buf.len() as u32);
+                dense_true.push(n_true);
+                lit_sum = lit_sum.saturating_add(lits.len() as u64);
+                slot_count += 1;
             }
-        }
-        let mut occ_buf: Vec<u32> = {
+            let dense = slot_end.len();
+            true_count = dense_true;
+            in_broken = BrokenBits::new(dense);
             let mut acc = 0u32;
             for e in occ_end.iter_mut() {
                 acc += *e;
                 *e = acc;
             }
-            vec![0; acc as usize]
-        };
-        {
+            let mut fill = vec![0u32; acc as usize];
             let mut cursor: Vec<u32> = {
                 let mut c = Vec::with_capacity(occ_end.len());
                 let mut prev = 0u32;
@@ -267,7 +283,8 @@ impl Solver {
                 }
                 c
             };
-            for slot in 0..slot_count {
+            // Fill from the packed slots, preserving per-literal order.
+            for slot in 0..dense {
                 let start = if slot == 0 {
                     0
                 } else {
@@ -275,10 +292,94 @@ impl Solver {
                 };
                 for &l in &slot_buf[start..slot_end[slot] as usize] {
                     let code = l.code() as usize;
-                    occ_buf[cursor[code] as usize] = slot as u32;
+                    fill[cursor[code] as usize] = slot as u32;
                     cursor[code] += 1;
                 }
             }
+            for (slot, &n) in true_count.iter().enumerate() {
+                if n == 0 {
+                    broken.push(slot as u32);
+                    in_broken.set(slot, true);
+                }
+            }
+            packed = Some((slot_buf, slot_end));
+            occ_buf = fill;
+        } else {
+            let n_ids = self.clauses.num_slots();
+            true_count = vec![0; n_ids];
+            in_broken = BrokenBits::new(n_ids);
+            let excluded = |l: Lit| -> bool {
+                let vi = l.var().index();
+                vi < self.num_vars && fixed[vi]
+            };
+            for id in self.clauses.iter_ids() {
+                let Some(clause) = self.clauses.get(id) else {
+                    continue;
+                };
+                if clause.learned || clause.lits.len() < 2 {
+                    continue;
+                }
+                // Default arm of the packed path: out of the objective if
+                // satisfied by a fixed true literal OR carrying any fixed
+                // literal (fixed true => permanently satisfied; fixed false
+                // => unrepairable by flipping).
+                if clause.lits.iter().any(|&l| excluded(l)) {
+                    continue;
+                }
+                let lits: &[Lit] = clause.lits;
+                let n_true = lits
+                    .iter()
+                    .filter(|&&l| values[l.var().index()] == l.is_pos())
+                    .count() as u32;
+                for &l in lits {
+                    occ_end[l.code() as usize] += 1;
+                }
+                true_count[id.0 as usize] = n_true;
+                if n_true == 0 {
+                    broken.push(id.0);
+                    in_broken.set(id.0 as usize, true);
+                }
+                lit_sum = lit_sum.saturating_add(lits.len() as u64);
+                slot_count += 1;
+            }
+            let mut acc = 0u32;
+            for e in occ_end.iter_mut() {
+                acc += *e;
+                *e = acc;
+            }
+            let mut fill = vec![0u32; acc as usize];
+            let mut cursor: Vec<u32> = {
+                let mut c = Vec::with_capacity(occ_end.len());
+                let mut prev = 0u32;
+                for &e in occ_end.iter() {
+                    c.push(prev);
+                    prev = e;
+                }
+                c
+            };
+            // Fill by re-scanning the participants in the same id order
+            // (nothing mutates between the passes), preserving per-literal
+            // order exactly as the packed pushes did.
+            for id in self.clauses.iter_ids() {
+                let Some(clause) = self.clauses.get(id) else {
+                    continue;
+                };
+                if clause.learned
+                    || clause.lits.len() < 2
+                    || clause.lits.iter().any(|&l| excluded(l))
+                {
+                    continue;
+                }
+                for &l in clause.lits {
+                    let code = l.code() as usize;
+                    fill[cursor[code] as usize] = id.0;
+                    cursor[code] += 1;
+                }
+            }
+            occ_buf = fill;
+        }
+        if slot_count == 0 {
+            return;
         }
         // Occurrence slice of `lit` (identical contents and order to the
         // previous per-literal Vec).
@@ -291,25 +392,11 @@ impl Solver {
             };
             &occ_buf[start..occ_end[code] as usize]
         };
-        // Slot literal slice.
-        let slot_of = |slot: u32| -> &[Lit] {
-            let i = slot as usize;
-            let start = if i == 0 { 0 } else { slot_end[i - 1] as usize };
-            &slot_buf[start..slot_end[i] as usize]
-        };
 
-        // Broken clauses (true_count == 0), in_broken for O(1) lazy removal.
-        let mut broken: Vec<u32> = Vec::new();
-        let mut in_broken = vec![false; slot_count];
-        let mut broken_count: u64 = 0;
-        for (slot, &n) in true_count.iter().enumerate() {
-            if n == 0 {
-                broken.push(slot as u32);
-                in_broken[slot] = true;
-                broken_count += 1;
-            }
-        }
-        let mut minimum = broken.len() as u64;
+        // Broken clauses were seeded during the build above (true_count == 0
+        // participants, in visit order) — `in_broken` gives O(1) lazy removal.
+        let mut broken_count: u64 = broken.len() as u64;
+        let mut minimum = broken_count;
         // cadical records the starting assignment as the first best
         // (`walk_save_minimum` before the loop), so the phase write-back at
         // the end always happens – even a zero-improvement walk imports the
@@ -364,7 +451,7 @@ impl Solver {
                 }
                 let pos = (self.rand_u64() % broken.len() as u64) as usize;
                 let slot = broken[pos];
-                if !in_broken[slot as usize] {
+                if !in_broken.get(slot as usize) {
                     broken.swap_remove(pos);
                     continue;
                 }
@@ -373,7 +460,32 @@ impl Solver {
             if picked == u32::MAX {
                 break;
             }
-            let clause_lits: &[Lit] = slot_of(picked);
+            // The picked slot's literals: read straight from the clause
+            // arena on the default path (slot == clause id; the bytes are
+            // stable for the whole round), or from the packed copy on the
+            // strip-fixed path. Copied into a scratch SmallVec so the borrow
+            // ends before the RNG call below (the arena path borrows
+            // `self.clauses`; `rand_f64` needs `&mut self`).
+            let mut clause_scratch: SmallVec<[Lit; 8]> = SmallVec::new();
+            match packed.as_ref() {
+                None => {
+                    let Some(clause) = self.clauses.get(ClauseId(picked)) else {
+                        // A broken-list entry whose clause vanished: nothing
+                        // is deleted during a round, so this is unreachable
+                        // by construction — bail out of the round rather
+                        // than fabricate literals (the phase write-back
+                        // below still runs on the best assignment so far).
+                        break;
+                    };
+                    clause_scratch.extend_from_slice(clause.lits);
+                }
+                Some((buf, ends)) => {
+                    let i = picked as usize;
+                    let start = if i == 0 { 0 } else { ends[i - 1] as usize };
+                    clause_scratch.extend_from_slice(&buf[start..ends[i] as usize]);
+                }
+            }
+            let clause_lits: &[Lit] = &clause_scratch;
 
             // Score every candidate literal by its break count: the number of
             // occurrence clauses of the negated literal that are satisfied
@@ -422,8 +534,8 @@ impl Solver {
             for &slot in occ_of(t) {
                 let n = &mut true_count[slot as usize];
                 *n = n.saturating_sub(1);
-                if *n == 0 && !in_broken[slot as usize] {
-                    in_broken[slot as usize] = true;
+                if *n == 0 && !in_broken.get(slot as usize) {
+                    in_broken.set(slot as usize, true);
                     broken.push(slot);
                     broken_count += 1;
                 }
@@ -431,8 +543,8 @@ impl Solver {
             for &slot in occ_of(t.negate()) {
                 let n = &mut true_count[slot as usize];
                 *n += 1;
-                if *n == 1 && in_broken[slot as usize] {
-                    in_broken[slot as usize] = false; // satisfied now
+                if *n == 1 && in_broken.get(slot as usize) {
+                    in_broken.set(slot as usize, false); // satisfied now
                     broken_count -= 1;
                 }
             }
@@ -449,7 +561,7 @@ impl Solver {
             // Compaction keeps the lazily-deleted tail from growing without
             // bound (each satisfied entry stays until its slot is picked).
             if broken.len() > 4 * (broken_count as usize).max(8) {
-                broken.retain(|&s| in_broken[s as usize]);
+                broken.retain(|&s| in_broken.get(s as usize));
             }
         }
 
@@ -476,6 +588,42 @@ impl Solver {
         for i in 0..self.num_vars {
             if !fixed[i] {
                 self.phase[i] = best_values[i];
+            }
+        }
+    }
+}
+
+/// Bitset membership for the walk's broken-slot set (`in_broken`). A
+/// `Vec<bool>` costs a byte per *allocated clause id* (10+ MB on
+/// clause-dense instances) every walk round, most of which the allocator
+/// retains after the round; a packed bitset is 1/8th of that transient.
+/// Purely a representation change — the flip loop consults exactly the
+/// same membership relation.
+struct BrokenBits {
+    words: Vec<u64>,
+}
+
+impl BrokenBits {
+    fn new(n: usize) -> Self {
+        Self {
+            words: vec![0u64; n.div_ceil(64)],
+        }
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> bool {
+        self.words
+            .get(i / 64)
+            .is_some_and(|&w| w & (1u64 << (i % 64)) != 0)
+    }
+
+    #[inline]
+    fn set(&mut self, i: usize, v: bool) {
+        if let Some(w) = self.words.get_mut(i / 64) {
+            if v {
+                *w |= 1u64 << (i % 64);
+            } else {
+                *w &= !(1u64 << (i % 64));
             }
         }
     }

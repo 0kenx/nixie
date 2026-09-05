@@ -389,6 +389,11 @@ impl Solver {
             self.binary_graph.add(a.negate(), b, cid);
             self.binary_graph.add(b.negate(), a, cid);
         }
+        // Drop the doubling/elimination-churn capacity slack the refill just
+        // re-created (see `BinaryImplicationGraph::shrink`); on binary-dense
+        // instances this is the difference between ~250 MB and ~165 MB of
+        // standing BIG allocation. Trajectory-neutral by construction.
+        self.binary_graph.shrink();
     }
 
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
@@ -448,5 +453,9 @@ impl Solver {
             watches.add(b.negate(), Watcher::new(cid, r, a));
         }
         learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
+        // Drop the doubling slack the refill just re-created (see
+        // `BinaryImplicationGraph::shrink`). The watch lists above were
+        // rebuilt into fresh `Vec`s, so their slack is already minimal.
+        binary_graph.shrink();
     }
 }

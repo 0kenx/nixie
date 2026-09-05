@@ -121,11 +121,22 @@ impl DimacsParser {
         let mut current_clause = Vec::new();
         let mut _clauses_read = 0;
 
-        let mut buf = Vec::new();
-        reader.read_to_end(&mut buf)?;
-        let text = core::str::from_utf8(&buf)
-            .map_err(|e| DimacsError::Io(io::Error::new(io::ErrorKind::InvalidData, e)))?;
-        let bytes = text.as_bytes();
+        // Chunked window (1 MiB reads + partial-line carry). Reading the
+        // whole file into one buffer first (the previous shape) is faster
+        // by a hair, but freeing that whole-file mmap raises glibc's
+        // dynamic mmap threshold to the file size — every later
+        // sub-file-size transient (walk rounds, occurrence lists, lucky
+        // snapshots) then allocates from the main heap and stays resident
+        // after free, which measured as a ~170 MB permanent RSS floor on
+        // clause-dense instances. Scanning line-complete chunks keeps the
+        // threshold at its 128 KiB default so those transients stay
+        // mmap-backed and return on drop. Tokens never span lines, so
+        // carrying the partial tail line to the next window preserves the
+        // token stream exactly.
+        const CHUNK: usize = 1 << 20;
+        let mut window: Vec<u8> = Vec::with_capacity(2 * CHUNK);
+        let mut chunk = vec![0u8; CHUNK];
+        let mut eof = false;
 
         // Token scan state: `tok_start..i` is the pending token when
         // `in_token` is set. Tokens never span lines, so the line-oriented
@@ -160,8 +171,56 @@ impl DimacsParser {
         }
 
         let mut i = 0usize;
-        while i <= bytes.len() {
-            let at_end = i == bytes.len();
+        // Prime the first window (short reads are fine — only line-complete
+        // prefixes are scanned).
+        {
+            let n = reader.read(&mut chunk)?;
+            if n == 0 {
+                eof = true;
+            } else {
+                window.extend_from_slice(&chunk[..n]);
+            }
+        }
+        let mut text: &str = core::str::from_utf8(&window)
+            .map_err(|e| DimacsError::Io(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+        let mut bytes: &[u8] = text.as_bytes();
+        let mut limit: usize = if eof {
+            bytes.len()
+        } else {
+            bytes.iter().rposition(|&b| b == b'\n').map_or(0, |p| p + 1)
+        };
+        'chunks: while i <= limit {
+            // End of the line-complete prefix (or an initially line-less
+            // window): carry the partial tail forward and refill. At EOF
+            // the whole window is scannable, with a synthetic final
+            // newline for a trailing partial line — exactly the
+            // whole-buffer version's end-of-input behaviour.
+            if i == limit && !eof {
+                window.copy_within(limit.., 0);
+                window.truncate(window.len() - limit);
+                let n = reader.read(&mut chunk)?;
+                if n == 0 {
+                    eof = true;
+                } else {
+                    window.extend_from_slice(&chunk[..n]);
+                }
+                text = core::str::from_utf8(&window)
+                    .map_err(|e| DimacsError::Io(io::Error::new(io::ErrorKind::InvalidData, e)))?;
+                bytes = text.as_bytes();
+                limit = if eof {
+                    bytes.len()
+                } else {
+                    match bytes.iter().rposition(|&b| b == b'\n') {
+                        Some(p) => p + 1,
+                        // No complete line in the window yet (>1 MiB line):
+                        // keep reading.
+                        None => 0,
+                    }
+                };
+                i = 0;
+                continue 'chunks;
+            }
+            let at_end = eof && i == limit;
             let b = if at_end { b'\n' } else { bytes[i] };
 
             if at_end || b == b'\n' {
@@ -185,7 +244,7 @@ impl DimacsParser {
                     in_token = false;
                 }
                 if at_end {
-                    break;
+                    break 'chunks;
                 }
                 // Line-level classification happens on the FIRST content byte
                 // of a line; a directive byte consumed it already.
@@ -229,18 +288,18 @@ impl DimacsParser {
                 match b {
                     b'c' => {
                         // Skip the remainder of this line entirely.
-                        while i < bytes.len() && bytes[i] != b'\n' {
+                        while i < limit && bytes[i] != b'\n' {
                             i += 1;
                         }
                         line_has_content = false;
                         continue;
                     }
-                    b'%' => break,
+                    b'%' => break 'chunks,
                     b'p' => {
                         // Collect the rest of the line and hand it to the
                         // problem-line parser.
                         let start = i;
-                        while i < bytes.len() && bytes[i] != b'\n' {
+                        while i < limit && bytes[i] != b'\n' {
                             i += 1;
                         }
                         let line = &text[start..i];

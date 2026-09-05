@@ -179,9 +179,18 @@ const ALIGN: usize = 8;
 /// gate – sub-64-KiB waste is irrelevant to RSS and not worth a copy).
 const COMPACT_MIN_WASTED: usize = 64 * 1024;
 /// Compaction gate divisor: garbage must reach `live / COMPACT_WASTE_DIV`
-/// (a third) before firing. Bounds total copy work at ~3× the bytes ever
-/// garbage-collected (see [`ClauseArena::should_compact`]).
-const COMPACT_WASTE_DIV: usize = 3;
+/// before firing. Bounds total copy work at ~`COMPACT_WASTE_DIV`× the bytes
+/// ever garbage-collected (see [`ClauseArena::should_compact`]).
+///
+/// 8 (2026-09-05, was 3): every compaction ends in `shrink_to_fit`, so a
+/// tighter gate keeps the arena's *capacity* (Vec doubling overshoot, which
+/// RSS pays for) close to live data between reduce rounds — on
+/// worker-class instances the measured end-of-run slack was ~220 MB
+/// (537 MB cap vs 317 MB live) with waste crossing live/3 only twice in a
+/// 30 s solve. Compaction remains trajectory-neutral by construction
+/// (ids, bytes and visit orders preserved) at a bounded copy cost of
+/// ≤ 8× the collected bytes.
+const COMPACT_WASTE_DIV: usize = 8;
 
 #[inline]
 fn slot_size(len: usize) -> usize {

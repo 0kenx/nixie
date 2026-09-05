@@ -162,6 +162,24 @@ impl BinaryImplicationGraph {
         }
     }
 
+    /// Release every per-literal list's capacity slack (`shrink_to_fit`).
+    ///
+    /// The BIG has no compaction: its allocation is live edges plus each
+    /// list's doubling overshoot, and the elimination/probe churn (edges
+    /// added under a trigger, later `retain`ed away) ratchets capacity up
+    /// to the historical high-water mark -- on worker-class instances the
+    /// measured slack is ~85 MB against ~165 MB live. Shrinking after a
+    /// full rebuild (where the clause set only ever shinks downstream)
+    /// returns that slack to the allocator. Contents and per-literal order
+    /// are untouched, so the propagation trajectory is bit-identical; a
+    /// later `add` beyond the new capacity simply regrows, exactly as a
+    /// fresh build would.
+    fn shrink(&mut self) {
+        for implications in &mut self.implications {
+            implications.shrink_to_fit();
+        }
+    }
+
     /// Remove every edge belonging to `clause_id` that is keyed under `trigger`.
     /// Used to purge binary implications when a clause is retracted so the graph
     /// does not accumulate stale (and, after slot reuse, misleading) edges.
@@ -2977,6 +2995,14 @@ impl Solver {
         // CaDiCaL – each strategy is soundness-preserving (a pure scan or a
         // single-literal-at-a-time probe that bails to the root on failure, so
         // a doomed guess never perturbs the watched-literal state).
+        // Release the parse-time BIG capacity slack (per-literal doubling
+        // overshoot from `attach_watchers`) before the lucky window and the
+        // pre-search passes allocate their transients on top of the standing
+        // footprint — the first full watch/BIG rebuild only happens later,
+        // inside elimination. Trajectory-neutral (contents and order
+        // untouched); measured ~85 MB off the pre-search peak on
+        // worker-class instances.
+        self.binary_graph.shrink();
         if self.config.enable_lucky {
             match self.lucky_phases() {
                 Some(SolverResult::Sat) => {

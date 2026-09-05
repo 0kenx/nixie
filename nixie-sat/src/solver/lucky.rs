@@ -113,12 +113,26 @@ impl Solver {
         // originals) a ~900 MB transient that dominated peak RSS. The packed
         // forms restore the identical state (same ids, same literal order,
         // same watcher contents per list) at a fraction of the footprint.
+        // Only clauses with **>= 3 literals** can be permuted by lucky's
+        // propagation: binaries are BIG-authoritative (no watch entries --
+        // `attach_watchers`/`rebuild_watches_and_binary_graph` register them
+        // in the binary graph only), and the BIG scan in `propagate` reads
+        // edges without ever touching clause bytes; units/empties are never
+        // watched. Rewriting a binary's literals with their own bytes (what
+        // the restore below did for them historically) is a no-op, so
+        // skipping them here is trajectory-identical and cuts the snapshot
+        // to the small large-clause minority on binary-dense instances
+        // (worker-class: 97% binaries -- the ~190 MB transient was almost
+        // entirely no-op restore data).
         let snap_watches = self.watches.packed_snapshot();
         let mut snap_ids: Vec<ClauseId> = Vec::new();
         let mut snap_ends: Vec<u32> = Vec::new();
         let mut snap_buf: Vec<Lit> = Vec::new();
         for id in self.clauses.iter_ids() {
             if let Some(v) = self.clauses.get(id) {
+                if v.lits.len() < 3 {
+                    continue;
+                }
                 snap_ids.push(id);
                 snap_buf.extend_from_slice(v.lits);
                 snap_ends.push(snap_buf.len() as u32);

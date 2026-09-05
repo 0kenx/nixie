@@ -100,6 +100,180 @@ impl ElimRank {
     }
 }
 
+/// Occurrence lists for one elimination round: a CSR primary plus a
+/// per-literal overflow.
+///
+/// The historical `Vec<Vec<ClauseId>>` shape paid its capacity in glibc heap
+/// bins: ~28 M occurrences on worker-class instances is ~111 MB of ~600 B
+/// chunks, and every byte freed at round end stays resident in bin memory
+/// forever (measured: the ~180 MB gap between live search structures and
+/// the actual RSS floor). The CSR primary is one exact-size `Vec` — an
+/// mmap-scale allocation the allocator returns on drop — while mid-round
+/// additions (resolvents connecting as they are learned) go to lazily
+/// allocated per-literal overflow `Vec`s, which stay tiny relative to the
+/// primary. The combined view (primary span, then overflow) has exactly the
+/// contents and order of the historical single `Vec`, so every consumer
+/// below is trajectory-neutral by construction.
+struct RoundOccs {
+    /// CSR data: literal `code`'s primary span is
+    /// `primary[span_end[code-1]..span_end[code]]` (`[..0]` for `code == 0`).
+    primary: Vec<u32>,
+    /// Exclusive end offset of each literal's primary span.
+    span_end: Vec<u32>,
+    /// Live length of each literal's primary span (`<=` the span extent;
+    /// shrunk by flushes/clears, never regrows — additions go to `extra`).
+    prim_len: Vec<u32>,
+    /// Per-literal overflow for mid-round additions, in arrival order.
+    extra: Vec<Vec<u32>>,
+}
+
+impl RoundOccs {
+    /// Empty lists for `n` literal codes.
+    fn new(n: usize) -> Self {
+        Self {
+            primary: Vec::new(),
+            span_end: vec![0; n],
+            prim_len: vec![0; n],
+            extra: vec![Vec::new(); n],
+        }
+    }
+
+    /// Seed the CSR layout from per-literal occurrence counts (the counting
+    /// pass of `elim_round`): fixes every span's extent so the connect pass
+    /// can fill `primary` exactly, with no per-literal doubling growth.
+    fn layout(&mut self, counts: &[u32]) {
+        let mut acc = 0u32;
+        for (end, &n) in self.span_end.iter_mut().zip(counts.iter()) {
+            acc = acc.saturating_add(n);
+            *end = acc;
+        }
+        self.primary = vec![0; acc as usize];
+        // `prim_len` stays 0 here and doubles as the fill cursor: `connect`
+        // writes at `span_start + prim_len` and advances it, so it reaches
+        // the span's extent exactly when the connect pass completes (any
+        // reader between layout and connect sees empty lists, matching a
+        // fresh `Vec::new()` per literal).
+    }
+
+    /// Append `cid` to literal `code`'s primary span (connect pass only,
+    /// while spans still have room — mid-round additions use `push`).
+    #[inline]
+    fn connect(&mut self, code: usize, cid: ClauseId) {
+        let at = code_span_start(&self.span_end, code) + self.prim_len[code] as usize;
+        self.primary[at] = cid.0;
+        self.prim_len[code] += 1;
+    }
+
+    /// Combined-view length of literal `code`'s list.
+    #[inline]
+    fn len(&self, code: usize) -> usize {
+        self.prim_len[code] as usize + self.extra[code].len()
+    }
+
+    /// Append `cid` to literal `code`'s overflow (mid-round additions).
+    #[inline]
+    fn push(&mut self, code: usize, cid: ClauseId) {
+        self.extra[code].push(cid.0);
+    }
+
+    /// Literal `code`'s list as one owned `Vec`, primary-then-overflow —
+    /// exactly the historical `Vec<ClauseId>` contents and order.
+    fn combined(&self, code: usize) -> Vec<ClauseId> {
+        let start = code_span_start(&self.span_end, code);
+        let pl = self.prim_len[code] as usize;
+        let mut v = Vec::with_capacity(pl + self.extra[code].len());
+        v.extend(self.primary[start..start + pl].iter().map(|&r| ClauseId(r)));
+        v.extend(self.extra[code].iter().map(|&r| ClauseId(r)));
+        v
+    }
+
+    /// Position of `cid` in literal `code`'s combined view, if present.
+    fn position(&self, code: usize, cid: ClauseId) -> Option<usize> {
+        let start = code_span_start(&self.span_end, code);
+        let pl = self.prim_len[code] as usize;
+        self.primary[start..start + pl]
+            .iter()
+            .position(|&r| r == cid.0)
+            .or_else(|| {
+                self.extra[code]
+                    .iter()
+                    .position(|&r| r == cid.0)
+                    .map(|p| p + pl)
+            })
+    }
+
+    /// `Vec::swap_remove` semantics over the combined view: move the last
+    /// combined element into `pos`, dropping the previous occupant.
+    fn swap_remove(&mut self, code: usize, pos: usize) {
+        let pl = self.prim_len[code] as usize;
+        if let Some(last) = self.extra[code].pop() {
+            // The combined tail lives in the overflow: it fills the hole,
+            // wherever the hole sits.
+            if pos < pl {
+                let start = code_span_start(&self.span_end, code);
+                self.primary[start + pos] = last;
+            } else {
+                let epos = pos - pl;
+                if epos < self.extra[code].len() {
+                    self.extra[code][epos] = last;
+                }
+                // else `pos` addressed the popped slot itself — nothing to
+                // fill.
+            }
+        } else {
+            // Overflow empty: the combined tail closes the primary span.
+            let start = code_span_start(&self.span_end, code);
+            self.prim_len[code] -= 1;
+            if pos + 1 < pl {
+                self.primary[start + pos] = self.primary[start + pl - 1];
+            }
+        }
+    }
+
+    /// Empty literal `code`'s list (the span's bytes stay but are unread).
+    #[inline]
+    fn clear(&mut self, code: usize) {
+        self.prim_len[code] = 0;
+        self.extra[code].clear();
+    }
+
+    /// Rewrite literal `code`'s list from `lits` (the flush-sort result:
+    /// filtered and ordered). Splits back into primary span then overflow,
+    /// preserving the combined order; `lits.len()` never exceeds the
+    /// combined length a flush started from.
+    fn rewrite(&mut self, code: usize, lits: &[ClauseId]) {
+        let start = code_span_start(&self.span_end, code);
+        let extent = self.span_end[code] as usize - start;
+        let head = lits.len().min(extent);
+        for (i, &cid) in lits.iter().take(head).enumerate() {
+            self.primary[start + i] = cid.0;
+        }
+        self.prim_len[code] = head as u32;
+        self.extra[code].clear();
+        self.extra[code].extend(lits[head..].iter().map(|&c| c.0));
+    }
+
+    /// Iterate literal `code`'s combined view, primary then overflow.
+    fn iter(&self, code: usize) -> impl Iterator<Item = ClauseId> + '_ {
+        let start = code_span_start(&self.span_end, code);
+        let pl = self.prim_len[code] as usize;
+        self.primary[start..start + pl]
+            .iter()
+            .chain(self.extra[code].iter())
+            .map(|&r| ClauseId(r))
+    }
+}
+
+/// Start offset of literal `code`'s primary span.
+#[inline]
+fn code_span_start(span_end: &[u32], code: usize) -> usize {
+    if code == 0 {
+        0
+    } else {
+        span_end[code - 1] as usize
+    }
+}
+
 /// Per-phase scratch state for the eliminator. Only alive during an
 /// elimination phase; `occs`/`noccs`/`val`/`mark` are indexed by literal code.
 struct Eliminator {
@@ -107,7 +281,7 @@ struct Eliminator {
     /// (level-0-falsified entries included; the `val` checks filter them, as
     /// in cadical). Deletion is lazy – dead ids are skipped on access and
     /// compacted by [`Solver::elim_flush_sort_occs`].
-    occs: Vec<Vec<ClauseId>>,
+    occs: RoundOccs,
     /// Occurrence counts (cadical `noccs`) for unassigned literals.
     noccs: Vec<u32>,
     /// Literal values during the round: seeded from the level-0 trail and
@@ -174,7 +348,7 @@ impl Eliminator {
             val[lit.negate().code() as usize] = -1;
         }
         Self {
-            occs: vec![Vec::new(); n],
+            occs: RoundOccs::new(n),
             noccs: vec![0; n],
             val,
             mark: vec![0; n],
@@ -554,6 +728,40 @@ impl Solver {
         // schedule is seeded below, in the same clause-id order.
         let mut to_retire: SmallVec<[ClauseId; 64]> = SmallVec::new();
         let mut to_mark: SmallVec<[Var; 64]> = SmallVec::new();
+        // Exact-capacity presize for the occurrence lists (2026-09-05):
+        // the connect pass below pushes into per-literal `Vec`s whose
+        // doubling growth leaves up to 2x the live occurrence volume in
+        // capacity — on clause-dense instances (worker-class: ~28 M
+        // occurrences, ~111 MB live) that was ~100+ MB of pure transient
+        // overshoot per elimination round, half of which the allocator
+        // retains after the round. This counting pass applies the *same*
+        // filters the connect pass applies (same `ctx.lit_val` snapshot —
+        // nothing derives new units between here and there) and presizes
+        // each list to its exact final entry count, so the connect pushes
+        // land at capacity and never double. Contents and per-literal
+        // order are unchanged — trajectory-neutral by construction.
+        {
+            for cid in self.clauses.iter_ids() {
+                let Some(c) = self.clauses.get(cid) else {
+                    continue;
+                };
+                if c.deleted || c.learned || c.lits.len() < 2 {
+                    continue;
+                }
+                if c.lits.iter().any(|&lit| ctx.lit_val(lit) == 1) {
+                    continue;
+                }
+                for &lit in c.lits.iter() {
+                    if ctx.lit_val(lit) == 0 {
+                        ctx.noccs[lit.code() as usize] += 1;
+                    }
+                }
+            }
+            ctx.occs.layout(&ctx.noccs);
+            for c in ctx.noccs.iter_mut() {
+                *c = 0;
+            }
+        }
         for cid in self.clauses.iter_ids() {
             let Some(c) = self.clauses.get(cid) else {
                 continue;
@@ -584,7 +792,7 @@ impl Solver {
             for &lit in c.lits.iter() {
                 if ctx.lit_val(lit) == 0 {
                     let code = lit.code() as usize;
-                    ctx.occs[code].push(cid);
+                    ctx.occs.connect(code, cid);
                     ctx.noccs[code] += 1;
                 }
             }
@@ -679,8 +887,8 @@ impl Solver {
         // count would have squeaked under the limit – a heuristic-order
         // divergence from the previous behavior, verified by verdicts
         // (corpus sweep + differential fuzz), not by trajectory identity.
-        let raw_pos = ctx.occs[pivot.code() as usize].len();
-        let raw_neg = ctx.occs[pivot.negate().code() as usize].len();
+        let raw_pos = ctx.occs.len(pivot.code() as usize);
+        let raw_neg = ctx.occs.len(pivot.negate().code() as usize);
         if raw_pos == 0 || raw_neg == 0 {
             // Pure/one-sided variable: leave it to the pure-literal pass
             // (our model reconstruction only covers resolution
@@ -736,14 +944,14 @@ impl Solver {
     /// sort algorithm's internals, so this changes which equal-size clause
     /// resolves first – an arbitrary-tie reordering, not a heuristic signal.
     fn elim_flush_sort_occs(&mut self, ctx: &mut Eliminator, lit: Lit) {
-        let list = &mut ctx.occs[lit.code() as usize];
-        if list.is_empty() {
+        let code = lit.code() as usize;
+        if ctx.occs.len(code) == 0 {
             return;
         }
         let clauses = &self.clauses;
         let scratch = &mut ctx.occ_scratch;
         scratch.clear();
-        scratch.extend(list.iter().filter_map(|&cid| {
+        scratch.extend(ctx.occs.iter(code).filter_map(|cid| {
             if let Some(c) = clauses.get(cid)
                 && !c.deleted
             {
@@ -752,9 +960,9 @@ impl Solver {
             None
         }));
         scratch.sort_by_key(|&(len, _)| len);
-        list.clear();
-        list.extend(scratch.iter().copied().map(|(_, cid)| cid));
-        ctx.noccs[lit.code() as usize] = list.len() as u32;
+        let kept: Vec<ClauseId> = scratch.iter().copied().map(|(_, cid)| cid).collect();
+        ctx.occs.rewrite(code, &kept);
+        ctx.noccs[code] = ctx.occs.len(code) as u32;
     }
 
     /// cadical `elim_resolvents_are_bounded`: try all resolutions between the
@@ -782,8 +990,8 @@ impl Solver {
         // `circuit_48in64…dist128_seed1` before being caught by the
         // identity gate and reverted). Do not replace the clones without
         // threading the drop-removals through the taken window.
-        let ps: Vec<ClauseId> = ctx.occs[pivot.code() as usize].clone();
-        let ns: Vec<ClauseId> = ctx.occs[pivot.negate().code() as usize].clone();
+        let ps: Vec<ClauseId> = ctx.occs.combined(pivot.code() as usize);
+        let ns: Vec<ClauseId> = ctx.occs.combined(pivot.negate().code() as usize);
         let mut resolvents: i64 = 0;
 
         for &cid in &ps {
@@ -1159,7 +1367,7 @@ impl Solver {
                     for &lit in r {
                         if ctx.lit_val(lit) == 0 {
                             let code = lit.code() as usize;
-                            ctx.occs[code].push(rid);
+                            ctx.occs.push(code, rid);
                             ctx.noccs[code] += 1;
                         }
                     }
@@ -1171,7 +1379,7 @@ impl Solver {
                 for &lit in r {
                     if ctx.lit_val(lit) == 0 {
                         let code = lit.code() as usize;
-                        ctx.occs[code].push(rid);
+                        ctx.occs.push(code, rid);
                         ctx.noccs[code] += 1;
                     }
                 }
@@ -1192,7 +1400,7 @@ impl Solver {
         // (the reconstruction in `save_model` is stated in those terms).
         let pos_lit = Lit::pos(pivot.var());
         for side in [pivot, pivot.negate()] {
-            let ids: Vec<ClauseId> = ctx.occs[side.code() as usize].clone();
+            let ids: Vec<ClauseId> = ctx.occs.combined(side.code() as usize);
             for cid in ids {
                 let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
                     Some(c) if !c.deleted => c.lits.iter().copied().collect(),
@@ -1208,7 +1416,7 @@ impl Solver {
                 }
                 self.elim_retire_clause_lits(ctx, cid, &lits);
             }
-            ctx.occs[side.code() as usize].clear();
+            ctx.occs.clear(side.code() as usize);
             ctx.noccs[side.code() as usize] = 0;
         }
         self.bve_order.push(pivot.var());
@@ -1328,8 +1536,8 @@ impl Solver {
             // (9 ∨ ¬10 ∨ 5) shrank). Lazy deletion is only sound for
             // *retired* clauses, which the `!c.deleted` access filter
             // skips; a shrunken clause stays alive.
-            if let Some(pos) = ctx.occs[code].iter().position(|&c| c == cid) {
-                ctx.occs[code].swap_remove(pos);
+            if let Some(pos) = ctx.occs.position(code, cid) {
+                ctx.occs.swap_remove(code, pos);
             }
             if ctx.noccs[code] > 0 {
                 ctx.noccs[code] -= 1;
@@ -1383,13 +1591,13 @@ impl Solver {
         ctx.units.push(lit);
 
         // Retire satisfied clauses.
-        let ids: Vec<ClauseId> = ctx.occs[lit.code() as usize].clone();
+        let ids: Vec<ClauseId> = ctx.occs.combined(lit.code() as usize);
         for cid in ids {
             self.elim_retire_clause(ctx, cid);
         }
         // Shorten clauses containing the complement.
         let neg = lit.negate();
-        let ids: Vec<ClauseId> = ctx.occs[neg.code() as usize].clone();
+        let ids: Vec<ClauseId> = ctx.occs.combined(neg.code() as usize);
         for cid in ids {
             let contains = self
                 .clauses
@@ -1474,7 +1682,7 @@ impl Solver {
                 }
                 -1 => continue,
                 _ => {
-                    let len = ctx.occs[lit.code() as usize].len();
+                    let len = ctx.occs.len(lit.code() as usize);
                     if len < best_len {
                         best_len = len;
                         best = Some(lit);
@@ -1495,9 +1703,7 @@ impl Solver {
             return;
         }
 
-        scratch
-            .cands
-            .extend(ctx.occs[best.code() as usize].iter().copied());
+        scratch.cands.extend(ctx.occs.iter(best.code() as usize));
         let cand_count = scratch.cands.len();
         for di in 0..cand_count {
             let did = scratch.cands[di];
@@ -1629,7 +1835,7 @@ impl Solver {
                         if self.trivially_unsat {
                             break;
                         }
-                    } else if ctx.occs[neg.code() as usize].len() <= ELIM_OCC_LIMIT {
+                    } else if ctx.occs.len(neg.code() as usize) <= ELIM_OCC_LIMIT {
                         // `elim_shrink_clause` enqueues the strengthened
                         // clause on the shared backward queue itself (single
                         // enqueue site, so a clause is never queued twice for
@@ -1647,6 +1853,105 @@ impl Solver {
         for &lit in marked {
             ctx.mark[lit.code() as usize] = 0;
             ctx.mark[lit.negate().code() as usize] = 0;
+        }
+    }
+}
+
+#[cfg(test)]
+mod round_occs_tests {
+    use super::*;
+
+    /// Reference differential: every RoundOccs operation must leave the
+    /// combined view identical to the plain `Vec<Vec<ClauseId>>` it
+    /// replaced, under the eliminator's operation mix (bulk connect with
+    /// exact counts, mid-round pushes, flush rewrites, swap_removes,
+    /// clears). On failure the op log pinpoints the first divergent op.
+    #[test]
+    fn round_occs_matches_vec_semantics() {
+        let mut rng: u64 = 0x9E3779B97F4A7C15;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for round in 0..40u64 {
+            let n = 8 + (next() % 24) as usize;
+            let counts: Vec<u32> = (0..n).map(|_| (next() % 6) as u32).collect();
+            // Generate the connect stream, then apply it to both shapes.
+            // Clause ids are unique per list in the eliminator (a clause
+            // holds distinct literals, so it connects at most once per
+            // literal); duplicates would make `position` ambiguous.
+            let mut ids = Vec::new();
+            for (code, &c) in counts.iter().enumerate() {
+                for _ in 0..c {
+                    ids.push((code, ClauseId(next() as u32)));
+                }
+            }
+            let stream = ids;
+            let mut ref_occs: Vec<Vec<ClauseId>> = vec![Vec::new(); n];
+            let mut occs = RoundOccs::new(n);
+            occs.layout(&counts);
+            let mut log: Vec<String> = Vec::new();
+            let mut fresh = 1_000_000u32 + round as u32 * 10_000;
+            for &(code, cid) in &stream {
+                ref_occs[code].push(cid);
+                occs.connect(code, cid);
+                log.push(format!("connect({code}, {cid:?})"));
+            }
+            for _ in 0..300 {
+                let code = (next() as usize) % n;
+                match next() % 5 {
+                    0 => {
+                        // Pushed ids are fresh clause ids (resolvents):
+                        // globally unique, like `add_original` returns.
+                        fresh += 1;
+                        let cid = ClauseId(fresh);
+                        ref_occs[code].push(cid);
+                        occs.push(code, cid);
+                        log.push(format!("push({code}, {cid:?})"));
+                    }
+                    1 => {
+                        if !ref_occs[code].is_empty() {
+                            let pos = (next() as usize) % ref_occs[code].len();
+                            let cid = ref_occs[code][pos];
+                            assert_eq!(
+                                occs.position(code, cid),
+                                Some(pos),
+                                "position mismatch round {round} after ops: {log:?}"
+                            );
+                            ref_occs[code].swap_remove(pos);
+                            occs.swap_remove(code, pos);
+                            log.push(format!("swap_remove({code}, {pos})"));
+                        }
+                    }
+                    2 => {
+                        // Flush rewrite: keep a prefix, stably sorted.
+                        let keep = (next() as usize) % (ref_occs[code].len() + 1);
+                        let mut kept: Vec<ClauseId> = ref_occs[code][..keep].to_vec();
+                        kept.sort_by_key(|&c| c.0);
+                        ref_occs[code] = kept.clone();
+                        occs.rewrite(code, &kept);
+                        log.push(format!("rewrite({code}, keep={keep})"));
+                    }
+                    3 => {
+                        ref_occs[code].clear();
+                        occs.clear(code);
+                        log.push(format!("clear({code})"));
+                    }
+                    _ => {}
+                }
+                assert_eq!(
+                    occs.len(code),
+                    ref_occs[code].len(),
+                    "len mismatch round {round} code {code} after ops: {log:?}"
+                );
+                assert_eq!(
+                    occs.combined(code),
+                    ref_occs[code],
+                    "combined mismatch round {round} code {code} after ops: {log:?}"
+                );
+            }
         }
     }
 }
