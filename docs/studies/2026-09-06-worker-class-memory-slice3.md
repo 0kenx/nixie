@@ -109,17 +109,36 @@ restarts 208, walk ticks 9172946 — all bit-identical.
 ## Wall neutrality
 
 Identity is the proof (bit-identical trajectories cannot cost search
-work); the paired wall confirms the direction: worker_550 end-to-end
-33.3 s → 30.8 s on the same machine layout (the exact-size CSR rebuild
-replaces ~190 k per-literal Vec doublings and the take/put-back dance in
-the hot propagation loop), and the fixed-work spot checks on si2-b03m /
-circuit_64in64out read ±5 % around parity under concurrent load (not a
-claimed effect — no wall claim is made beyond neutrality).
+work); two confirmations:
+
+- worker_550 end-to-end 33.3 s → 30.8 s on the same machine layout (the
+  exact-size CSR rebuild replaces ~190 k per-literal Vec doublings and the
+  take/put-back dance in the hot propagation loop);
+- a clean paired A/B (11 corpus files, 2 rounds, alternating arms, pinned
+  cores, fixed `MAXC=60000` budget — equal work by identity): per-file
+  new/old 0.979–1.041, **geomean 1.0063×** — inside the ±5 % neutrality
+  band, i.e. the CSR propagate loop is constant-factor neutral.
+
+The standing table recorded at `8cb75c0` therefore transfers to this
+commit by construction: identical verdicts, conflict budgets and
+trajectories (54/54 gate), wall within noise.
+
+### A measurement-environment note for the next agent
+
+One full identity-gate run reported a single mismatch
+(`Timetable_C_392…`: old=Unknown/60000 vs new=Sat/32841) that vanished on
+re-run and never reproduced standalone (6/6 reps, both arms identical).
+The corpus file was canonical before and after; the only consistent
+explanation is `/tmp/sc24f` being rewritten *while the old arm read it*
+(shared scratch — the same signature as slice 2's worker_550 drift). The
+protocol used for the recorded 54/54 runs: sha-verify all 54 files against
+`precompile/corpus-sc24f/` immediately before AND after the gate.
 
 ## Gates
 
 - `cargo build --all-features` clean; release builds warning-free.
-- `cargo nextest run --workspace --all-features`: **10471/10471** + doc tests.
+- `cargo nextest run --workspace --all-features`: **10473/10473** + doc tests
+  (10471 pre-existing + the two new BIG tests).
 - `cargo clippy --all-features --all-targets -- -D warnings`: zero warnings.
 - `cargo fmt --all -- --check`: clean.
 - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`: clean
