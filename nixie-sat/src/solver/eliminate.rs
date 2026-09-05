@@ -319,6 +319,10 @@ struct Eliminator {
     /// elimination-heavy circuit instances – one malloc + copy per
     /// scheduled variable, twice).
     occ_scratch: Vec<(usize, ClauseId)>,
+    /// Scratch for the flush's sorted keep-list, reused across every flush
+    /// (the per-flush `Vec<ClauseId>` collect was pure allocation churn on
+    /// elimination-heavy instances).
+    keep_scratch: Vec<ClauseId>,
     /// Scratch for [`Solver::elim_resolve_clauses`]'s marking phase, reused
     /// across every resolution of the round (cadical reuses its member
     /// `clause`/`marked` vectors the same way). The previous per-call
@@ -364,6 +368,7 @@ impl Eliminator {
             bw_dlits: Vec::new(),
             bw_cands: Vec::new(),
             occ_scratch: Vec::new(),
+            keep_scratch: Vec::new(),
 
             res_resolvent: Vec::new(),
         }
@@ -960,8 +965,10 @@ impl Solver {
             None
         }));
         scratch.sort_by_key(|&(len, _)| len);
-        let kept: Vec<ClauseId> = scratch.iter().copied().map(|(_, cid)| cid).collect();
-        ctx.occs.rewrite(code, &kept);
+        let kept = &mut ctx.keep_scratch;
+        kept.clear();
+        kept.extend(scratch.iter().copied().map(|(_, cid)| cid));
+        ctx.occs.rewrite(code, kept);
         ctx.noccs[code] = ctx.occs.len(code) as u32;
     }
 

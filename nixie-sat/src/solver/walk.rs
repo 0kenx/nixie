@@ -427,6 +427,10 @@ impl Solver {
 
         let mut ticks: u64 = 0;
         let mut flip: u64 = 0;
+        // Reused across flips (cleared per pick): allocating the scratch
+        // inside the loop put one SmallVec init per flip on walk-dominated
+        // instances (summle measured 1.47x wall vs the packed-CSR walk).
+        let mut clause_scratch: SmallVec<[Lit; 8]> = SmallVec::new();
         while broken_count > 0 && ticks < limit {
             // cadical's walk loop checks `terminated_asynchronously` every
             // flip; checking the flag's atomic load every flip is wasteful,
@@ -466,7 +470,7 @@ impl Solver {
             // strip-fixed path. Copied into a scratch SmallVec so the borrow
             // ends before the RNG call below (the arena path borrows
             // `self.clauses`; `rand_f64` needs `&mut self`).
-            let mut clause_scratch: SmallVec<[Lit; 8]> = SmallVec::new();
+            clause_scratch.clear();
             match packed.as_ref() {
                 None => {
                     let Some(clause) = self.clauses.get(ClauseId(picked)) else {

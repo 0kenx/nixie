@@ -62,6 +62,38 @@ correctness or search-path risk. The measured blockers for the remaining ~85 MB:
   structure), eliminating both — a bigger port, to be pre-registered
   separately.
 
+## Wall neutrality: the paired 4-arm table (and a measurement lesson)
+
+A first 3-arm re-run of the standing table with the new binary read as 48/54 solved
+and +9.4% paired wall — which the identity gate (bit-identical conflict counts on
+all 54 files) ruled out as a code effect: identical trajectories cannot cost search
+work. Serial re-timing of the "regressed" files matched the old binary exactly, and
+the machine's load average had sat at 4-10 during the contaminated run. The honest
+instrument is a **paired 4-arm layout** — old, new, cadical, kissat on four pinned
+cores in one pass, so both nixie arms see identical machine state:
+
+| arm | solved / 54 @ 60 s | paired wall vs old |
+|---|---|---|
+| old (`cb9f05c`) | 50 | 1.000x |
+| **new (`a820a31` + churn fixes)** | **50** | **0.991x** |
+| cadical 3.0.1 | 51 | — |
+| kissat 4.0.4 | 50 | — |
+
+0 verdict mismatches; nixie/kissat 1.436x → 1.411x, nixie/cadical 1.245x → 1.239x
+(both within the both-solved set churn). Conclusion: **wall-neutral (0.991x,
+inside the ±5% band), no solved-at-cap movement** — the memory is free.
+
+Three micro-fixes landed after the first measurement to keep it that way (all
+trajectory-neutral, re-verified 54/54 identity + full battery):
+
+- BIG `shrink` gated on slack ≥ 25% of capacity and ≥ 4 Mi — rebuilding lists
+  that are already tight paid a full reallocation per elimination round on
+  BVE-heavy instances for no memory gain;
+- the walk's per-flip literal scratch hoisted out of the flip loop (one
+  SmallVec init per flip on walk-dominated instances);
+- the eliminator's flush keep-list reuses a round-scratch `Vec` instead of a
+  per-flush allocation.
+
 ## What remains (next iteration)
 
 - The post-parse floor still carries ~170 MB above the live composition (arena 235 + BIG 157 +
