@@ -407,6 +407,25 @@ pub fn bump_mode_gate_null_enabled() -> bool {
     })
 }
 
+/// Treatment switch for the kissat-shaped retention arm
+/// (`NIXIE_KISSAT_REDUCE`, follow-up #3 of
+/// `docs/studies/2026-09-07-inproc-effort-schedule.md`): rides the cadical
+/// reduce port's schedule/candidate machinery with kissat's two structural
+/// deltas — dynamic usage-quantile tier bounds (`tier1`/`tier2` at the 50 %/
+/// 90 % points of the per-mode used-by-glue histogram, kissat `tiers.c`) and
+/// a deletion fraction growing 50 %→90 % with the reduction count (kissat
+/// `reducelow`/`reducehigh`). Fixed 2/6 glue bounds and the flat 75 % target
+/// otherwise. Not a retention-*signal* change (those were measured null in
+/// the 2026-09-02 studies): a retention-*shape* change.
+#[doc(hidden)]
+pub fn kissat_reduce_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_KISSAT_REDUCE").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Treatment switch for the cadical `reduce.cpp` port (see
 /// `docs/studies/2026-08-sat-cadical-reduce.md`): schedule-driven clause-database
 /// reduction (first at conflict 300, then `reduceint * sqrt(conflicts)`

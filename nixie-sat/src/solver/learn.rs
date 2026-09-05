@@ -832,6 +832,7 @@ impl Solver {
             || crate::reduce_by_used_enabled()
             || crate::reduce_adapt_enabled()
             || crate::reduce_adapt_null_enabled()
+            || crate::kissat_reduce_enabled()
         {
             // First use sizes the used-stamp table (dense over clause ids;
             // ids are dense and append-only).
@@ -841,6 +842,40 @@ impl Solver {
             return true;
         }
         false
+    }
+
+    /// kissat `tiers.c compute_tier_limits` for the current mode: the glue
+    /// values at which the cumulative used-by-glue histogram reaches 50 %
+    /// (`tier1relative` 500‰) and 90 % (`tier2relative` 900‰) of total
+    /// clause usage. Fallbacks (2, 6) when nothing has been used yet;
+    /// `tier2 = tier1` if usage never reaches the second quantile (kissat's
+    /// own edge case). `NIXIE_KISSAT_REDUCE` study arm.
+    pub(super) fn kissat_tier_limits(&self) -> (u32, u32) {
+        const FALLBACK: (u32, u32) = (2, 6);
+        let mode = usize::from(self.stable);
+        let hist = &self.kissat_used_hist[mode];
+        let total: u64 = hist.iter().sum();
+        if total == 0 {
+            return FALLBACK;
+        }
+        let t1_limit = total.saturating_mul(500) / 1000;
+        let t2_limit = total.saturating_mul(900) / 1000;
+        let mut acc: u64 = 0;
+        let mut tier1: Option<u32> = None;
+        let mut tier2: Option<u32> = None;
+        for (glue, &used) in hist.iter().enumerate() {
+            acc += used;
+            if tier1.is_none() && acc >= t1_limit {
+                tier1 = Some(glue as u32);
+            }
+            if acc >= t2_limit {
+                tier2 = Some(glue as u32);
+                break;
+            }
+        }
+        let t1 = tier1.unwrap_or(FALLBACK.0);
+        let t2 = tier2.unwrap_or(t1);
+        (t1, t2.max(t1))
     }
 
     /// Whether `cid` is the recorded propagation reason of any of `lits`'s
@@ -897,6 +932,27 @@ impl Solver {
             return;
         }
 
+        // kissat retention shape (`NIXIE_KISSAT_REDUCE`): tier bounds from
+        // the per-mode used-by-glue histogram at the 50 %/90 % usage
+        // quantiles (kissat `tiers.c compute_tier_limits`, fallbacks 2/6),
+        // and a deletion fraction growing from reducelow (50 %) toward
+        // reducehigh (90 %) as `high - (high-low)/log10(reductions+9)`
+        // (kissat `reduce.c mark_less_useful_clauses_as_garbage`).
+        let kissat = crate::kissat_reduce_enabled();
+        let (tier1_glue, tier2_glue) = if kissat {
+            self.kissat_tier_limits()
+        } else {
+            (TIER1_GLUE, TIER2_GLUE)
+        };
+        let target_pct = if kissat {
+            let n = self.cadical_reductions + 9; // this round's count + offset
+            let high = 900.0_f64;
+            let low = 500.0_f64;
+            (high - (high - low) / (n as f64).log10()).clamp(0.0, 100.0) as usize
+        } else {
+            REDUCE_TARGET_PCT
+        };
+
         let null_arm = crate::cadical_reduce_null_enabled();
         let mut candidates: Vec<(
             u32, /*glue*/
@@ -930,10 +986,10 @@ impl Solver {
 
             // Tier protection (cadical's two keep rules).
             let used_now = if used > 0 { used - 1 } else { 0 };
-            if glue <= TIER1_GLUE && used_now > 0 {
+            if glue <= tier1_glue && used_now > 0 {
                 continue;
             }
-            if glue <= TIER2_GLUE && used_now >= MAX_USED - 1 {
+            if glue <= tier2_glue && used_now >= MAX_USED - 1 {
                 continue;
             }
             candidates.push((glue, size, u32::from(used_now), cid));
@@ -977,7 +1033,7 @@ impl Solver {
             };
             if !null_arm && rank_by_used {
                 candidates.sort_by(|a, b| a.2.cmp(&b.2).then(b.0.cmp(&a.0)));
-                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                let target = candidates.len() * target_pct / 100;
                 for c in candidates.iter().take(target) {
                     to_delete.push(c.3);
                 }
@@ -988,7 +1044,7 @@ impl Solver {
                 // perturbation without the retention semantics. Partial
                 // Fisher-Yates over the tail: uniform over distinct clauses,
                 // no replacement.
-                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                let target = candidates.len() * target_pct / 100;
                 for i in 0..target {
                     let remaining = candidates.len() - i;
                     let r = (self.rand_u64() as usize) % remaining + i;
@@ -1000,7 +1056,7 @@ impl Solver {
                 // size. Stable sort keeps allocation (= learn) order for ties,
                 // matching cadical's stable_sort rationale.
                 candidates.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
-                let target = candidates.len() * REDUCE_TARGET_PCT / 100;
+                let target = candidates.len() * target_pct / 100;
                 for c in candidates.iter().take(target) {
                     to_delete.push(c.3);
                 }

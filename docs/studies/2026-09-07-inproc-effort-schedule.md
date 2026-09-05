@@ -245,3 +245,22 @@ walk/descent trajectories, not inprocessing per se.
    tier-structured retention (core/tier1/tier2 by glue with `used`
    promotion) is the untested shape; the 2026-09-02 signal studies tested
    ranking-within-cadical-reduce, not kissat's tier structure.
+
+   **Follow-up #3 screen (same day — closed at the telemetry rung):** the
+   `NIXIE_KISSAT_REDUCE` arm implements exactly that shape on top of the
+   cadical-reduce port — per-mode used-by-glue histogram (kissat
+   `statistics.used[mode].glue[glue]`, bumped at the analysis-use site),
+   dynamic tier bounds at the 50 %/90 % usage quantiles (kissat `tiers.c`,
+   fallbacks 2/6), deletion fraction growing 50 %→90 % with the reduction
+   count (kissat `reducelow`/`reducehigh`), rank unchanged
+   (glue desc, size desc). Identity-verified (env-unset bit-identical),
+   landed as opt-in infrastructure.  Screen (default seed + seeds 1–3,
+   attribution evidence, not store-recorded effect claims): 6s167 ~1.0×,
+   FmlaEquivChain **1.3× worse at every seed** (the default-seed 0.55× was
+   luck), mrpp wash-to-worse, worker 0.27–0.49× at two of three seeds (the
+   third compared against a 2.4 k-conflict off-fluke).  No file class
+   benefits consistently → the retention-*shape* lever joins the
+   retention-*signal* nulls: the usage residue is not closed by keep-rule
+   geometry. What remains untried for it: candidate-selection differences
+   in what gets *learned* (kissat's focused-mode watcher/burning policy) —
+   search-side, not retention-side.

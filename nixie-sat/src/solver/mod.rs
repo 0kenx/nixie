@@ -1375,6 +1375,11 @@ pub struct Solver {
     /// budgets; set by the round site under `NIXIE_INPROC_SCHED`).
     pub(super) inproc_budgets: InprocBudgets,
 
+    /// kissat `statistics.used[mode].glue[glue]` — per-mode used-by-glue
+    /// histogram feeding the dynamic tier bounds of `kissat_tier_limits`
+    /// (`NIXIE_KISSAT_REDUCE`; glue clamped to 31).
+    pub(super) kissat_used_hist: [[u64; 32]; 2],
+
     /// In-search XOR propagation state (`solver/xor.rs`; `NIXIE_XORSEARCH`).
     /// `None` on the default path — one `is_some` check per hooked call.
     pub(super) xor_search: Option<Box<self::xor::XorSearch>>,
@@ -1822,6 +1827,7 @@ impl Solver {
             inproc_window_ring: [0, 0],
             inproc_round_props_total: 0,
             inproc_budgets: InprocBudgets::legacy(),
+            kissat_used_hist: [[0; 32]; 2],
             inproc_diag: [0; 6],
             xor_search: None,
             real_theory_attached: false,
@@ -4256,6 +4262,7 @@ impl Solver {
         self.inproc_window_ring = [0, 0];
         self.inproc_round_props_total = 0;
         self.inproc_budgets = InprocBudgets::legacy();
+        self.kissat_used_hist = [[0; 32]; 2];
         self.pure_literal_reconstruction.clear();
         // Drop any proof logger: its clause ids refer to the now-cleared database,
         // so continuing to emit against it would produce a meaningless proof.

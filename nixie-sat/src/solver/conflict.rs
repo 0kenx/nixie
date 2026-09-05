@@ -445,12 +445,24 @@ impl Solver {
                 self.clauses.record_usage(reason_clause);
                 // cadical `bump_clause`: restamp the used counter to max_used
                 // on every analysis use (the reduce port's recency signal).
-                if crate::cadical_reduce_enabled() || crate::cadical_reduce_null_enabled() {
+                if crate::cadical_reduce_enabled()
+                    || crate::cadical_reduce_null_enabled()
+                    || crate::kissat_reduce_enabled()
+                {
                     let slot = reason_clause.index();
                     if slot >= self.cadical_used.len() {
                         self.cadical_used.resize(slot + 1, 0);
                     }
                     self.cadical_used[slot] = 31;
+                    // kissat `statistics.used[mode].glue[glue]++` — feeds the
+                    // dynamic tier bounds (NIXIE_KISSAT_REDUCE arm).
+                    if crate::kissat_reduce_enabled()
+                        && let Some(c) = self.clauses.get(reason_clause)
+                    {
+                        let g = (c.lbd.max(1) as usize).min(31);
+                        self.kissat_used_hist[usize::from(self.stable)][g] =
+                            self.kissat_used_hist[usize::from(self.stable)][g].saturating_add(1);
+                    }
                 }
                 // Promote to Core if LBD ≤ 2 (GLUE clause)
                 if self.clauses.get(reason_clause).is_some_and(|c| c.lbd <= 2) {
