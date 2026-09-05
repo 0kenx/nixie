@@ -297,3 +297,26 @@ Worker peak: **1387 → 956 MB** (search-time climb now 814→956 MB, i.e.
 transients (lucky snapshot ~190 MB packed, pre-search elim/probe
 occurrences) — the binary-representation lever of Addendum 4 is what is
 left.
+
+
+## Addendum 6 (2026-09-05): lever-2 first slice landed; re-baseline at `cb9f05c`/`a29927c`
+
+Standing table re-measured at the campaign's start commit `cb9f05c` (54-file corpus,
+60 s cap, 3-arm pinned layout, benchstore suite `satcomp24-standing54-cap60`, 162
+records): nixie **50/54**, cadical 51, kissat 50; 0 mismatches; wall geomeans
+nixie/kissat **1.421x**, nixie/cadical **1.250x**; decomposition conflicts-to-verdict
+1.332x x per-conflict-wall 1.093x.
+
+Then the first trajectory-neutral memory slice of lever 2 landed
+(`2026-09-05-worker-class-memory-landing.md`: lucky >=3-only snapshot, BIG
+shrink-to-fit, walk arena-referencing + bitset, compaction gate live/8, eliminator
+CSR occurrences, streamed DIMACS parse): worker_550 peak **965 -> 810 MB**
+(-16%), shuffling-2 665 -> 498 MB, worst nixie/kissat ratio 3.42x -> **2.87x** —
+with 54/54 bit-identical trajectories (verdicts + conflict counts) and a paired
+4-arm wall of **0.991x** (50/54 solved on both arms, 0 mismatches; suite
+`satcomp24-standing54-4arm`, 216 records). The KR2 targets (-25% worker peak,
+<=2.5x worst ratio) are NOT yet met: the remaining blockers are the ~170 MB
+post-parse floor above live composition (unattributed heap) and the walk round's
+per-round occurrence CSR + true-count arrays (~120 MB on worker) — the structural
+fix is a walk over the BIG itself. mimalloc in the harness measured WORSE
+(1453 MB) and is recorded as a negative.
