@@ -61,6 +61,7 @@ profiling = [
 ]
 
 [dev-dependencies]
+nixie-testcorpus = { path = "../nixie-testcorpus" }
 proptest = { workspace = true }
 criterion = { workspace = true }
 

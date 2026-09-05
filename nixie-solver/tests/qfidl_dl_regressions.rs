@@ -36,14 +36,12 @@
 use nixie_solver::{Context, SolverResult};
 use std::time::Instant;
 
-fn solve_file(rel: &str, timeout_ms: u64) -> (SolverResult, std::time::Duration) {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../");
-    let full = format!("{path}{rel}");
+/// `None` only under `NIXIE_CORPUS_MISSING=skip` (a visible `[corpus-skip]`
+/// note is printed); a missing corpus otherwise fails loudly with the
+/// worktree-aware `[corpus-missing]` diagnosis.
+fn solve_file(rel: &str, timeout_ms: u64) -> Option<(SolverResult, std::time::Duration)> {
     let start = Instant::now();
-    let Ok(script) = std::fs::read_to_string(&full) else {
-        eprintln!("skipping {rel}: file not present (smt-lib not checked out?)");
-        return (SolverResult::Unknown, start.elapsed());
-    };
+    let script = nixie_testcorpus::read_opt(rel)?;
     let mut ctx = Context::new();
     ctx.set_timeout_ms(timeout_ms);
     let outputs = ctx.execute_script(&script).unwrap_or_default();
@@ -57,7 +55,7 @@ fn solve_file(rel: &str, timeout_ms: u64) -> (SolverResult, std::time::Duration)
             _ => None,
         })
         .unwrap_or(SolverResult::Unknown);
-    (verdict, start.elapsed())
+    Some((verdict, start.elapsed()))
 }
 
 /// DTP family: 35 constants / 210 clauses — the dense-core route's home turf.
@@ -65,10 +63,12 @@ fn solve_file(rel: &str, timeout_ms: u64) -> (SolverResult, std::time::Duration)
 /// Budget: 5s (≈100× headroom over the fixed ~30ms).
 #[test]
 fn qfidl_dtp_s1_dense_route_is_fast_and_correct() {
-    let (res, elapsed) = solve_file(
+    let Some((res, elapsed)) = solve_file(
         "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s1.smt2",
         5_000,
-    );
+    ) else {
+        return;
+    };
     assert_eq!(res, SolverResult::Sat, "z3 says sat");
     assert!(
         elapsed.as_secs() < 5,
@@ -79,10 +79,12 @@ fn qfidl_dtp_s1_dense_route_is_fast_and_correct() {
 /// Same family, UNSAT member (Z3: unsat in 49ms).
 #[test]
 fn qfidl_dtp_s14_unsat_is_fast_and_correct() {
-    let (res, elapsed) = solve_file(
+    let Some((res, elapsed)) = solve_file(
         "smt-lib/non-incremental/QF_IDL/DTP/DTP_k2_n35_c210_s14.smt2",
         5_000,
-    );
+    ) else {
+        return;
+    };
     assert_eq!(res, SolverResult::Unsat, "z3 says unsat");
     assert!(
         elapsed.as_secs() < 5,
@@ -95,10 +97,12 @@ fn qfidl_dtp_s14_unsat_is_fast_and_correct() {
 /// internalized closure needs 66).  Z3: 78ms sat.
 #[test]
 fn qfidl_super_queen38_is_fast_and_correct() {
-    let (res, elapsed) = solve_file(
+    let Some((res, elapsed)) = solve_file(
         "smt-lib/non-incremental/QF_IDL/queens_bench/super_queen/super_queen38-1.smt2",
         10_000,
-    );
+    ) else {
+        return;
+    };
     assert_eq!(res, SolverResult::Sat, "z3 says sat");
     assert!(
         elapsed.as_secs() < 10,
@@ -111,10 +115,12 @@ fn qfidl_super_queen38_is_fast_and_correct() {
 /// Verdict-only (no time pin): the interest here is the UNSAT, not speed.
 #[test]
 fn qfidl_qlock_11_base_is_unsat() {
-    let (res, _) = solve_file(
+    let Some((res, _)) = solve_file(
         "smt-lib/non-incremental/QF_IDL/qlock/qlock-4-10-11.base.cvc.smt2",
         20_000,
-    );
+    ) else {
+        return;
+    };
     assert_ne!(
         res,
         SolverResult::Sat,
@@ -131,9 +137,11 @@ fn qfidl_qlock_11_base_is_unsat() {
 /// family — pins that the fixes did not overcorrect into a wrong `unsat`.
 #[test]
 fn qfidl_qlock_11_induction_is_sat() {
-    let (res, _) = solve_file(
+    let Some((res, _)) = solve_file(
         "smt-lib/non-incremental/QF_IDL/qlock/qlock-4-10-11.induction.cvc.smt2",
         20_000,
-    );
+    ) else {
+        return;
+    };
     assert_eq!(res, SolverResult::Sat, "z3 says sat");
 }

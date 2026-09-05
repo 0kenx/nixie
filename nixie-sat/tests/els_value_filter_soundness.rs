@@ -109,11 +109,12 @@ fn els_constraints_17_mid_search_rewrite_answers_sat_not_unknown() {
         ..SolverConfig::default()
     });
     let mut parser = DimacsParser::new();
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../satcomp2024/bench/8e720686372c5037f30b4fc7b1c71d48-constraints_17_0.4_1.sanitized.cnf"
+    let text = nixie_testcorpus::read_or_skip!(
+        "satcomp2024/bench/8e720686372c5037f30b4fc7b1c71d48-constraints_17_0.4_1.sanitized.cnf"
     );
-    parser.parse_file(path, &mut solver).expect("parse");
+    parser
+        .parse_reader(text.as_bytes(), &mut solver)
+        .expect("parse");
     let result = solver.solve();
     assert_eq!(
         result,

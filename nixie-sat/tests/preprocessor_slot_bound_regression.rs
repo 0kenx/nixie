@@ -63,14 +63,9 @@ fn j3037_stack_is_unsat() {
         eprintln!("skipping (set NIXIE_SLOW_REGRESSIONS=1 to run)");
         return;
     }
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../satcomp2024/bench/07e6413459f92b613498a719125b6239-j3037_10_mdd_bm1.cnf"
+    let text = nixie_testcorpus::read_or_skip!(
+        "satcomp2024/bench/07e6413459f92b613498a719125b6239-j3037_10_mdd_bm1.cnf"
     );
-    let Ok(text) = std::fs::read_to_string(path) else {
-        eprintln!("skipping (corpus file {path} not present)");
-        return;
-    };
     let mut solver = Solver::with_config(SolverConfig {
         enable_bve: true,
         enable_equiv_substitution: true,

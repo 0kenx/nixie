@@ -1,0 +1,13 @@
+[package]
+name = "nixie-testcorpus"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Shared, loud-by-default loader for the gitignored external test corpora (worktree-safe)"
+
+[lints.clippy]
+unwrap_used = "deny"
+
+# std only: path/env helpers must behave identically everywhere and never
+# add dependency churn to the test graph.
+[dependencies]

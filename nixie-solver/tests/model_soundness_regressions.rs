@@ -46,10 +46,11 @@ fn z3_available() -> bool {
         .is_ok()
 }
 
-/// Read a corpus file relative to the workspace root, or `None` if absent.
+/// Read a corpus file relative to the workspace root, or `None` if absent
+/// (only under `NIXIE_CORPUS_MISSING=skip`; absent files otherwise fail
+/// loudly with the worktree-aware `[corpus-missing]` diagnosis).
 fn read_corpus(rel: &str) -> Option<String> {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../");
-    std::fs::read_to_string(format!("{root}{rel}")).ok()
+    nixie_testcorpus::read_opt(rel)
 }
 
 /// Strip a trailing `(check-sat)`/`(exit)` so an appended `(check-sat)`

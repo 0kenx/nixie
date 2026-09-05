@@ -15,6 +15,7 @@ members = [
     "nixie-wasm",
     "nixie-cli",
     "nixie-smtcomp",
+    "nixie-testcorpus",
     "nixie-ml",
     "bench/regression",
     "bench/profile",

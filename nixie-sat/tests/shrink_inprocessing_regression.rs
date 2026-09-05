@@ -66,15 +66,9 @@ fn shrink_with_inprocessing_is_not_unsat_on_satisfiable_circuit() {
         eprintln!("skipping (set NIXIE_SLOW_REGRESSIONS=1 to run)");
         return;
     }
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-\
-         circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf"
+    let text = nixie_testcorpus::read_or_skip!(
+        "satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf"
     );
-    let Ok(text) = std::fs::read_to_string(path) else {
-        eprintln!("skipping (corpus file {path} not present)");
-        return;
-    };
     let config = SolverConfig {
         enable_inprocessing: true,
         ..SolverConfig::default()

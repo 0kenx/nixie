@@ -89,18 +89,14 @@ fn load_dimacs(text: &str) -> Solver {
     solver
 }
 
-fn corpus(rel: &str) -> String {
-    let path = format!("{}/../satcomp2024/bench/{rel}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(path).unwrap_or_else(|e| panic!("corpus file {rel}: {e}"))
-}
-
 #[test]
 fn si2_b03m_is_not_unsat() {
     // Pre-fix false UNSAT fired at 13,937 conflicts (first fabricated
     // propagation at 92); 30k covers it with margin.
-    let mut solver = load_dimacs(&corpus(
-        "af750c18578d52e60472315692ad83c0-si2-b03m-m800-03.cnf",
-    ));
+    let text = nixie_testcorpus::read_or_skip!(
+        "satcomp2024/bench/af750c18578d52e60472315692ad83c0-si2-b03m-m800-03.cnf"
+    );
+    let mut solver = load_dimacs(&text);
     solver.set_max_conflicts(Some(30_000));
     let result = solver.solve();
     assert_ne!(
@@ -120,10 +116,10 @@ fn circuit_48in64out_is_not_unsat() {
         return;
     }
     // Pre-fix false UNSAT fired at 1,419,946 conflicts; 1.5M covers it.
-    let mut solver = load_dimacs(&corpus(
-        "303480ca7e8322d771c94caf4ebd4e95-\
-         circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf",
-    ));
+    let text = nixie_testcorpus::read_or_skip!(
+        "satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf"
+    );
+    let mut solver = load_dimacs(&text);
     solver.set_max_conflicts(Some(1_500_000));
     let result = solver.solve();
     assert_ne!(

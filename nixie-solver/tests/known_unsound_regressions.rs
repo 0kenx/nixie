@@ -11,10 +11,13 @@
 //! separate completeness goal.
 //!
 //! **Corpus not in git.** The `smt-lib/` instances these read are external
-//! benchmark data and are `.gitignore`d (see `.gitignore`). Fetch the SMT-LIB
-//! corpus out of band before running; if an instance is absent the test logs
-//! `skipping …` and passes (it cannot guard without the data, so CI that cares
-//! about these guards must provision the corpus).
+//! benchmark data and are `.gitignore`d (see `.gitignore`) and are therefore
+//! absent from git worktrees. A missing instance now fails **loudly** with a
+//! `[corpus-missing]` diagnosis (worktree detection + the exact symlink
+//! command); set `NIXIE_CORPUS_MISSING=skip` to run corpus-less instead —
+//! each guard then prints a visible `[corpus-skip]` note and passes on the
+//! sound `Unknown` (it cannot guard without the data, so CI that cares about
+//! these guards must provision the corpus).
 //!
 //! The instances and their status (differential run vs z3, sample seed
 //! 20260807, release builds) at the time these were added:
@@ -38,10 +41,10 @@ use nixie_solver::{Context, SolverResult};
 /// wall-clock budget, returning the solver's verdict (or `Unknown` on timeout
 /// / parse error). `rel` is relative to the workspace root (`smt-lib/...`).
 fn solve_file(rel: &str, timeout_ms: u64) -> SolverResult {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../");
-    let full = format!("{path}{rel}");
-    let Ok(script) = std::fs::read_to_string(&full) else {
-        eprintln!("skipping {rel}: file not present (smt-lib not checked out?)");
+    // Missing corpus: loud `[corpus-missing]` diagnosis by default; under
+    // NIXIE_CORPUS_MISSING=skip a visible `[corpus-skip]` note and `Unknown`
+    // (a sound non-answer) — see the module docs above.
+    let Some(script) = nixie_testcorpus::read_opt(rel) else {
         return SolverResult::Unknown;
     };
     let mut ctx = Context::new();
