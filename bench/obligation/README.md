@@ -115,11 +115,12 @@ with the certificate:
    `not` chains are fine, so the gap is specific to right-nested binary
    arithmetic (also reproduces with deep `bvxor` chains). z3: `sat`.
    Minimal repro: `/tmp`-style two-liner — see `stress::apply_smt2`.
-4. **Parser leniency** (spec compliance, observed while developing):
-   nixie accepts `(_ extract i i x)` application syntax and top-level
-   `(let ...)` commands; both are rejected by z3 (SMT-LIB defines `let`
-   as a term construct and indexed operators must be applied as
-   `((_ extract i i) x)`).
+4. **Parser leniency** (observation, not an issue): nixie accepts `(_ extract
+   i i x)` application syntax and top-level `(let ...)` commands; both are
+   rejected by z3. Direction of divergence is safe — accepting a superset
+   with correct semantics cannot wrong-answer — and the real defect was
+   this generator emitting non-standard syntax (fixed; the z3 cross-check
+   caught it in one run). No action intended on the parser.
 5. **Scaling boundary** (`large`): 50-write offset-implied array
    histories and 60-vertex parity graphs exceed a 30s budget (timeouts,
    not wrong answers); an 11-variable `gap` system scaled by 10^9
