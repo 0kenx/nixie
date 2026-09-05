@@ -271,6 +271,20 @@ pub fn walk_strip_fixed_enabled() -> bool {
     })
 }
 
+/// Matched-null switch for the walk-warmup study
+/// (`docs/studies/2026-09-06-walk-warmup-study.md`): when set, the warmup
+/// pass runs identically but inverts every phase bit it writes — the same
+/// full-array rewrite at the same schedule with no propagation-derived
+/// information. Consumes no RNG draws, so the treatment/null arms keep
+/// identical random streams.
+#[doc(hidden)]
+pub fn warmup_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG
+        .get_or_init(|| std::env::var("NIXIE_WARMUP_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// Matched-null switch for the analysis-walk-glue restart-EMA experiment
 /// (see `docs/studies/`): when set, the restart EMAs receive the *previous*
 /// conflict's walk glue instead of the current one – same distribution,

@@ -31,8 +31,17 @@ impl Solver {
         }
         // Ensure every live clause is sorted + deduped (resolvents from BVE are
         // not), and drop any tautology that slipped through.
-        let norm_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in norm_ids {
+        // Snapshot-free bounded index loop: ids are append-only, so
+        // `0..num_slots()` at entry IS the collected snapshot's id set
+        // (clauses added mid-loop get ids >= the bound and are skipped
+        // exactly like a pre-collected Vec would skip them; start-deleted
+        // ids are filtered by the same `!c.deleted` check below). The
+        // collected `Vec<ClauseId>` cost one ~4 B/clause allocation on
+        // clause-dense instances (~41 MB live + growth slack on
+        // worker-class) whose freed pages stay resident — pure RSS floor.
+        let norm_end = self.clauses.num_slots() as u32;
+        for i in 0..norm_end {
+            let cid = ClauseId::new(i);
             let needs = self
                 .clauses
                 .get(cid)
@@ -63,8 +72,11 @@ impl Solver {
 
         const OCC_CAP: usize = 512;
         let mut removed = 0usize;
-        let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in ids {
+        // Snapshot-free loop over the ids that existed when the pass began
+        // (see the `norm_end` note above — same semantics, no 41 MB Vec).
+        let sub_end = self.clauses.num_slots() as u32;
+        for i in 0..sub_end {
+            let cid = ClauseId::new(i);
             let target_lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
                 Some(c) if !c.deleted && c.lits.len() >= 2 => c.lits.iter().copied().collect(),
                 _ => continue,
@@ -162,8 +174,10 @@ impl Solver {
         const MAX_LEN: usize = 16;
         let mut removed_lits = 0usize;
         let mut units: SmallVec<[Lit; 32]> = SmallVec::new();
-        let ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in ids {
+        // Snapshot-free bounded loop (see `forward_subsumption`'s note).
+        let elim_end = self.clauses.num_slots() as u32;
+        for i in 0..elim_end {
+            let cid = ClauseId::new(i);
             let mut lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
                 Some(c) if !c.deleted && (3..=MAX_LEN).contains(&c.lits.len()) => {
                     c.lits.iter().copied().collect()

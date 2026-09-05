@@ -48,6 +48,13 @@ impl Solver {
         if self.config.walk_warmup {
             self.warmup();
         }
+        // cadical runs `garbage_collection()` before its walk rounds; this
+        // port's equivalent for the transient the round is about to
+        // allocate is a capacity-only arena trim — the doubling overshoot
+        // otherwise stacks under the round's occurrence structures exactly
+        // when the RSS high-water mark is set. Trajectory-neutral (ids,
+        // bytes, orders untouched).
+        self.clauses.trim_arena_slack();
         self.walk_round(limit.min(10_000_000_000));
     }
 
@@ -99,10 +106,18 @@ impl Solver {
                 let _ = self.trail.next_to_propagate();
             }
         }
+        // Study-B matched null (`NIXIE_WARMUP_NULL=1`, see
+        // docs/studies/2026-09-06-walk-warmup-study.md): the identical pass
+        // — same decisions, same propagation work, same schedule — but every
+        // phase bit it writes is inverted. The physical perturbation (a
+        // full phase-array rewrite before the walk round) is unchanged and
+        // consumes no RNG draws; only the propagation-derived information is
+        // destroyed.
+        let null_scramble = crate::warmup_null_enabled();
         for &lit in self.trail.assignments() {
             let vi = lit.var().index();
             if vi < self.phase.len() {
-                self.phase[vi] = lit.is_pos();
+                self.phase[vi] = lit.is_pos() != null_scramble;
             }
         }
         self.backtrack_to_root();
@@ -201,7 +216,7 @@ impl Solver {
         // non-deleted, >= 2 literals, not permanently satisfied by a fixed
         // true literal, and — on the default path — containing no fixed
         // literal at all (flipping can never repair a fixed-false literal).
-        let mut occ_end: Vec<u32> = vec![0; self.num_vars * 2];
+        let mut occ_end: Vec<u32> = Vec::new();
         let mut lit_sum = 0u64;
         let mut slot_count = 0u64;
         let mut broken: Vec<u32> = Vec::new();
@@ -211,7 +226,17 @@ impl Solver {
         let mut packed: Option<(Vec<Lit>, Vec<u32>)> = None;
         let occ_buf: Vec<u32>;
         let mut stripped: SmallVec<[Lit; 8]> = SmallVec::new();
+        // Default (BIG-merged) path state: the participation bitset over
+        // clause ids, plus a small CSR over ONLY the non-binary
+        // participants (binaries are indexed by the BIG itself; their
+        // true-counts are derived from `values` at flip time).
+        let mut participate = BrokenBits::new(0);
+        let mut nbin_end: Vec<u32> = Vec::new();
+        let mut nbin_cid: Vec<u32> = Vec::new();
+        let mut nbin_idx: Vec<u32> = Vec::new();
+        let mut true_nbin: Vec<u32> = Vec::new();
         if strip_fixed {
+            occ_end = vec![0; self.num_vars * 2];
             let mut slot_buf: Vec<Lit> = Vec::new();
             let mut slot_end: Vec<u32> = Vec::new();
             let mut dense_true: Vec<u32> = Vec::new();
@@ -305,13 +330,48 @@ impl Solver {
             packed = Some((slot_buf, slot_end));
             occ_buf = fill;
         } else {
+            // Default (BIG-merged) path. The occurrence structure for
+            // binary participants is the BIG itself — every binary clause
+            // (a ∨ b) already holds exactly one edge per literal under the
+            // trigger of that literal's negation (edge ¬a → b keyed at
+            // code(¬a) IS occ_of(a)'s entry for the clause), so rebuilding
+            // a per-round CSR over them duplicates an index the solver
+            // already maintains. Per-literal BIG lists are clause-id
+            // ascending at all times (rebuilds iterate ids ascending,
+            // incremental edges append strictly larger ids, removals
+            // `retain`), so a by-id merge with the non-binary CSR below
+            // reproduces the packed CSR's per-literal order EXACTLY — the
+            // RNG stream and every flip decision are unchanged; the
+            // 54-file identity gate applies verbatim. What disappears is
+            // the per-round transient: on worker_550 the packed path
+            // allocated ~82 MB of occurrence slots plus ~42 MB of per-id
+            // true-counts per walk round; this shape allocates a 1-bit-per-
+            // id participation filter (learned/deleted/fixed-literal edges
+            // are skipped lazily) and a CSR over only the non-binary
+            // participants (~3% of clauses there).
+            //
+            // Binary true-counts are never stored: for a live binary
+            // (x ∨ y), true_count == 1 ⟺ exactly one of x,y true, which
+            // the flip conditions read straight off `values` — the derived
+            // predicate equals the stored value by definition, so scoring
+            // and broken-list updates behave identically.
             let n_ids = self.clauses.num_slots();
-            true_count = vec![0; n_ids];
             in_broken = BrokenBits::new(n_ids);
+            participate = BrokenBits::new(n_ids);
+            nbin_end = vec![0; self.num_vars * 2];
+            true_count = Vec::new();
+            occ_buf = Vec::new();
             let excluded = |l: Lit| -> bool {
                 let vi = l.var().index();
                 vi < self.num_vars && fixed[vi]
             };
+            // Debug-only parity check: per literal, the participating BIG
+            // edges must equal the participating binary occurrences counted
+            // during the scan below (catches duplicate/stale/mis-keyed
+            // edges — states propagation tolerates but the walk's identity
+            // contract does not).
+            #[cfg(debug_assertions)]
+            let mut bin_expect: Vec<u32> = vec![0; self.num_vars * 2];
             for id in self.clauses.iter_ids() {
                 let Some(clause) = self.clauses.get(id) else {
                     continue;
@@ -331,35 +391,66 @@ impl Solver {
                     .iter()
                     .filter(|&&l| values[l.var().index()] == l.is_pos())
                     .count() as u32;
-                for &l in lits {
-                    occ_end[l.code() as usize] += 1;
-                }
-                true_count[id.0 as usize] = n_true;
-                if n_true == 0 {
-                    broken.push(id.0);
-                    in_broken.set(id.0 as usize, true);
+                participate.set(id.0 as usize, true);
+                if lits.len() == 2 {
+                    if n_true == 0 {
+                        broken.push(id.0);
+                        in_broken.set(id.0 as usize, true);
+                    }
+                    #[cfg(debug_assertions)]
+                    for &l in lits {
+                        bin_expect[l.code() as usize] += 1;
+                    }
+                } else {
+                    true_nbin.push(n_true);
+                    if n_true == 0 {
+                        broken.push(id.0);
+                        in_broken.set(id.0 as usize, true);
+                    }
+                    for &l in lits {
+                        nbin_end[l.code() as usize] += 1;
+                    }
                 }
                 lit_sum = lit_sum.saturating_add(lits.len() as u64);
                 slot_count += 1;
             }
+            #[cfg(debug_assertions)]
+            for code in 0..self.num_vars * 2 {
+                // occ_of(L) reads the BIG list keyed at ¬L.
+                let occ_lit = Lit::from_code(code as u32);
+                let got = self
+                    .binary_graph
+                    .get(occ_lit.negate())
+                    .iter()
+                    .filter(|&&(_, cid)| participate.get(cid.0 as usize))
+                    .count() as u32;
+                debug_assert_eq!(
+                    got,
+                    bin_expect[occ_lit.code() as usize],
+                    "walk/BIG occurrence parity broken at literal {occ_lit:?}                      (duplicate, stale or mis-keyed implication edges)"
+                );
+            }
+            // CSR fill over the non-binary participants: prefix-sum the
+            // per-literal counts, then re-scan in the same id order (the
+            // dense idx is recomputed by the same enumeration, so no
+            // id→idx map is materialized).
             let mut acc = 0u32;
-            for e in occ_end.iter_mut() {
+            for e in nbin_end.iter_mut() {
                 acc += *e;
                 *e = acc;
             }
-            let mut fill = vec![0u32; acc as usize];
+            nbin_cid = vec![0u32; acc as usize];
+            nbin_idx = vec![0u32; acc as usize];
             let mut cursor: Vec<u32> = {
-                let mut c = Vec::with_capacity(occ_end.len());
+                let mut c = Vec::with_capacity(nbin_end.len());
                 let mut prev = 0u32;
-                for &e in occ_end.iter() {
+                for &e in nbin_end.iter() {
                     c.push(prev);
                     prev = e;
                 }
                 c
             };
-            // Fill by re-scanning the participants in the same id order
-            // (nothing mutates between the passes), preserving per-literal
-            // order exactly as the packed pushes did.
+            let mut next_idx = 0u32;
             for id in self.clauses.iter_ids() {
                 let Some(clause) = self.clauses.get(id) else {
                     continue;
@@ -370,13 +461,18 @@ impl Solver {
                 {
                     continue;
                 }
+                if clause.lits.len() == 2 {
+                    continue; // indexed by the BIG, not the CSR
+                }
+                let idx = next_idx;
+                next_idx += 1;
                 for &l in clause.lits {
                     let code = l.code() as usize;
-                    fill[cursor[code] as usize] = id.0;
+                    nbin_cid[cursor[code] as usize] = id.0;
+                    nbin_idx[cursor[code] as usize] = idx;
                     cursor[code] += 1;
                 }
             }
-            occ_buf = fill;
         }
         if slot_count == 0 {
             return;
@@ -425,6 +521,23 @@ impl Solver {
             next = scaled;
         }
 
+        // Split-borrow the fields the flip loop touches simultaneously:
+        // occurrence reads go through `binary_graph` while RNG draws mutate
+        // `rng_state` and counters mutate `stats` — one `&mut self` method
+        // call would serialise those borrows for no benefit.
+        let num_vars = self.num_vars;
+        let Solver {
+            ref clauses,
+            ref binary_graph,
+            ref mut stats,
+            ref mut rng_state,
+            ref interrupt,
+            ref mut phase,
+            ..
+        } = *self;
+        // The flip loop's RNG: the same xorshift64 the Solver methods run,
+        // inlined over the destructured state field so the stream is
+        // bit-identical to the method-call form.
         let mut ticks: u64 = 0;
         let mut flip: u64 = 0;
         // Reused across flips (cleared per pick): allocating the scratch
@@ -439,13 +552,13 @@ impl Solver {
             // immediately after and returns Unknown).
             flip += 1;
             if flip.is_multiple_of(1024)
-                && let Some(flag) = &self.interrupt
+                && let Some(flag) = &interrupt
                 && flag.load(core::sync::atomic::Ordering::Relaxed)
             {
                 break;
             }
-            self.stats.walk.flips += 1;
-            self.stats.walk.broken += broken_count;
+            stats.walk.flips += 1;
+            stats.walk.broken += broken_count;
 
             // Pick a random broken clause (cadical `walk_pick_clause`).
             // Entries fixed by an earlier flip are lazily removed here.
@@ -453,7 +566,7 @@ impl Solver {
                 if broken.is_empty() {
                     break u32::MAX;
                 }
-                let pos = (self.rand_u64() % broken.len() as u64) as usize;
+                let pos = (next_rand(rng_state) % broken.len() as u64) as usize;
                 let slot = broken[pos];
                 if !in_broken.get(slot as usize) {
                     broken.swap_remove(pos);
@@ -473,7 +586,7 @@ impl Solver {
             clause_scratch.clear();
             match packed.as_ref() {
                 None => {
-                    let Some(clause) = self.clauses.get(ClauseId(picked)) else {
+                    let Some(clause) = clauses.get(ClauseId(picked)) else {
                         // A broken-list entry whose clause vanished: nothing
                         // is deleted during a round, so this is unreachable
                         // by construction — bail out of the round rather
@@ -501,12 +614,44 @@ impl Solver {
             let mut sum = 0.0f64;
             for &lit in clause_lits {
                 let mut brk = 0u32;
-                for &slot in occ_of(lit.negate()) {
-                    if true_count[slot as usize] == 1 {
-                        brk += 1;
+                let mut occ_len = 0u64;
+                if packed.is_some() {
+                    for &slot in occ_of(lit.negate()) {
+                        occ_len += 1;
+                        if true_count[slot as usize] == 1 {
+                            brk += 1;
+                        }
                     }
+                } else {
+                    // occ_of(¬lit): BIG edges keyed at lit (each edge is a
+                    // clause (¬lit ∨ y); true_count == 1 ⟺ y false) merged
+                    // with the non-binary CSR slice for ¬lit.
+                    merged_big_occ(
+                        binary_graph,
+                        &participate,
+                        &nbin_end,
+                        &nbin_cid,
+                        &nbin_idx,
+                        lit.negate(),
+                        |cid, ent| {
+                            occ_len += 1;
+                            match ent {
+                                OccEnt::Bin { target } => {
+                                    if values[target.var().index()] != target.is_pos() {
+                                        brk += 1;
+                                    }
+                                }
+                                OccEnt::Nbin { idx } => {
+                                    if true_nbin[idx as usize] == 1 {
+                                        brk += 1;
+                                    }
+                                }
+                            }
+                            let _ = cid;
+                        },
+                    );
                 }
-                ticks = ticks.saturating_add(occ_of(lit.negate()).len() as u64);
+                ticks = ticks.saturating_add(occ_len);
                 let score = table.get(brk as usize).copied().unwrap_or(0.0);
                 scores.push(score);
                 sum += score;
@@ -516,7 +661,7 @@ impl Solver {
             // the first literal whose cumulative score passes a uniform
             // point under `sum` (the first literal in the degenerate all-zero
             // case, matching cadical's roulette scan).
-            let lim = sum * self.rand_f64();
+            let lim = sum * rand_f64(rng_state);
             let mut acc = 0.0;
             let mut chosen = clause_lits[0];
             for (&lit, &score) in clause_lits.iter().zip(scores.iter()) {
@@ -535,25 +680,98 @@ impl Solver {
                 Lit::neg(Var::new(var_idx as u32))
             };
             values[var_idx] = !values[var_idx];
-            for &slot in occ_of(t) {
-                let n = &mut true_count[slot as usize];
-                *n = n.saturating_sub(1);
-                if *n == 0 && !in_broken.get(slot as usize) {
-                    in_broken.set(slot as usize, true);
-                    broken.push(slot);
-                    broken_count += 1;
+            if packed.is_some() {
+                for &slot in occ_of(t) {
+                    let n = &mut true_count[slot as usize];
+                    *n = n.saturating_sub(1);
+                    if *n == 0 && !in_broken.get(slot as usize) {
+                        in_broken.set(slot as usize, true);
+                        broken.push(slot);
+                        broken_count += 1;
+                    }
                 }
-            }
-            for &slot in occ_of(t.negate()) {
-                let n = &mut true_count[slot as usize];
-                *n += 1;
-                if *n == 1 && in_broken.get(slot as usize) {
-                    in_broken.set(slot as usize, false); // satisfied now
-                    broken_count -= 1;
+                for &slot in occ_of(t.negate()) {
+                    let n = &mut true_count[slot as usize];
+                    *n += 1;
+                    if *n == 1 && in_broken.get(slot as usize) {
+                        in_broken.set(slot as usize, false); // satisfied now
+                        broken_count -= 1;
+                    }
                 }
+                ticks = ticks.saturating_add(occ_of(t).len() as u64);
+                ticks = ticks.saturating_add(occ_of(t.negate()).len() as u64);
+            } else {
+                // Binary (t ∨ y): t turned false, so the clause's count
+                // reaches 0 exactly when y is false — the stored value the
+                // packed path decremented to. Non-binary: the CSR entry
+                // carries its dense count index.
+                let mut dec_len = 0u64;
+                merged_big_occ(
+                    binary_graph,
+                    &participate,
+                    &nbin_end,
+                    &nbin_cid,
+                    &nbin_idx,
+                    t,
+                    |cid, ent| {
+                        dec_len += 1;
+                        match ent {
+                            OccEnt::Bin { target } => {
+                                if values[target.var().index()] != target.is_pos()
+                                    && !in_broken.get(cid as usize)
+                                {
+                                    in_broken.set(cid as usize, true);
+                                    broken.push(cid);
+                                    broken_count += 1;
+                                }
+                            }
+                            OccEnt::Nbin { idx } => {
+                                let n = &mut true_nbin[idx as usize];
+                                *n = n.saturating_sub(1);
+                                if *n == 0 && !in_broken.get(cid as usize) {
+                                    in_broken.set(cid as usize, true);
+                                    broken.push(cid);
+                                    broken_count += 1;
+                                }
+                            }
+                        }
+                    },
+                );
+                // Binary (¬t ∨ y): ¬t turned true; the count was 0 exactly
+                // when y was false (the "+1 reaching 1" of the packed path).
+                let mut inc_len = 0u64;
+                merged_big_occ(
+                    binary_graph,
+                    &participate,
+                    &nbin_end,
+                    &nbin_cid,
+                    &nbin_idx,
+                    t.negate(),
+                    |cid, ent| {
+                        inc_len += 1;
+                        match ent {
+                            OccEnt::Bin { target } => {
+                                if values[target.var().index()] != target.is_pos()
+                                    && in_broken.get(cid as usize)
+                                {
+                                    in_broken.set(cid as usize, false); // satisfied now
+                                    broken_count -= 1;
+                                }
+                            }
+                            OccEnt::Nbin { idx } => {
+                                let n = &mut true_nbin[idx as usize];
+                                *n += 1;
+                                if *n == 1 && in_broken.get(cid as usize) {
+                                    in_broken.set(cid as usize, false); // satisfied now
+                                    broken_count -= 1;
+                                }
+                            }
+                        }
+                    },
+                );
+                ticks = ticks.saturating_add(dec_len);
+                ticks = ticks.saturating_add(inc_len);
             }
-            ticks = ticks.saturating_add(occ_of(t).len() as u64);
-            ticks = ticks.saturating_add(occ_of(t.negate()).len() as u64);
 
             // New global minimum: snapshot the best assignment
             // (cadical `walk_save_minimum`).
@@ -575,26 +793,112 @@ impl Solver {
         // completions that had actually happened (found while studying the
         // zero-broken shadowing below – see
         // `docs/studies/2026-08-30-analyze-quadratics.md`).
-        if minimum < self.stats.walk.minimum {
-            self.stats.walk.minimum = minimum;
+        if minimum < stats.walk.minimum {
+            stats.walk.minimum = minimum;
         }
         // NIXIE_PREWALK diagnostics: the pre-search phase-initialisation
         // knob needs its transfer signal visible (broken-count of the best
         // assignment; 0 = the walk found a model).
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_PREWALK").is_ok() {
-            eprintln!("prewalk: best_broken={minimum} vars={}", self.num_vars);
+            eprintln!("prewalk: best_broken={minimum} vars={num_vars}");
         }
-        self.stats.walk.ticks += ticks;
+        stats.walk.ticks += ticks;
 
         // cadical `save_final_minimum`: write the best assignment into the
         // saved phases (fixed variables keep their forced value).
-        for i in 0..self.num_vars {
+        for i in 0..num_vars {
             if !fixed[i] {
-                self.phase[i] = best_values[i];
+                phase[i] = best_values[i];
             }
         }
     }
+}
+
+/// One occurrence entry of the merged BIG/CSR walk stream: a participating
+/// binary (the BIG edge's target literal) or a non-binary participant (its
+/// dense true-count index in `true_nbin`).
+enum OccEnt {
+    Bin { target: Lit },
+    Nbin { idx: u32 },
+}
+
+/// Walk the occurrence list of `occ_lit` on the default walk path: the
+/// per-literal BIG edge list (keyed at `occ_lit.negate()`, since an edge
+/// ¬a → b is the clause (a ∨ b) containing a) filtered by the round's
+/// participation bitset, merged by ascending clause id with the non-binary
+/// CSR slice for `occ_lit`. Both streams are id-ascending by construction,
+/// so the merge yields EXACTLY the per-literal order the packed CSR held —
+/// the trajectory contract of the port.
+///
+/// `f(cid, entry)` is called once per occurrence in that order; the
+/// closure owns its locals (`values`, `true_nbin`, ...) so no borrow of
+/// the walk state outlives the call.
+#[inline]
+fn merged_big_occ<F>(
+    big: &BinaryImplicationGraph,
+    participate: &BrokenBits,
+    nbin_end: &[u32],
+    nbin_cid: &[u32],
+    nbin_idx: &[u32],
+    occ_lit: Lit,
+    mut f: F,
+) where
+    F: FnMut(u32, OccEnt),
+{
+    let big_list = big.get(occ_lit.negate());
+    let code = occ_lit.code() as usize;
+    let (cs, ce) = if code == 0 {
+        (0, nbin_end[0])
+    } else {
+        (nbin_end[code - 1], nbin_end[code])
+    };
+    let mut bi = 0usize;
+    let mut ci = cs as usize;
+    let ce = ce as usize;
+    while bi < big_list.len() || ci < ce {
+        // Skip non-participating edges (learned binaries, stale edges,
+        // gate-congruence sentinels) — order-preserving by construction.
+        while bi < big_list.len() && !participate.get(big_list[bi].1.0 as usize) {
+            bi += 1;
+        }
+        if bi == big_list.len() {
+            // CSR tail: no big entries remain.
+            while ci < ce {
+                f(nbin_cid[ci], OccEnt::Nbin { idx: nbin_idx[ci] });
+                ci += 1;
+            }
+            break;
+        }
+        if ci >= ce || big_list[bi].1.0 <= nbin_cid[ci] {
+            let &(target, cid) = &big_list[bi];
+            f(cid.0, OccEnt::Bin { target });
+            bi += 1;
+        } else {
+            f(nbin_cid[ci], OccEnt::Nbin { idx: nbin_idx[ci] });
+            ci += 1;
+        }
+    }
+}
+
+/// The solver's xorshift64 draw, inlined over a destructured state field
+/// (bit-identical to [`Solver::rand_u64`]; the flip loop runs it through a
+/// split borrow).
+#[inline]
+fn next_rand(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    x
+}
+
+/// `rand_f64` over [`next_rand`] (bit-identical to [`Solver::rand_f64`]).
+#[inline]
+fn rand_f64(state: &mut u64) -> f64 {
+    const MAX: f64 = u64::MAX as f64;
+    next_rand(state) as f64 / MAX
 }
 
 /// Bitset membership for the walk's broken-slot set (`in_broken`). A

@@ -1780,6 +1780,10 @@ impl Solver {
     /// Clauses retired by inprocessing are skipped for a similar reason: they are
     /// re-satisfied by model reconstruction rather than by the assignment, and
     /// their literals need not even be in the model's variable range.
+    ///
+    /// Only consumed from `debug_assertions` safety nets; in release builds the
+    /// calls compile away and so does this scan.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(super) fn find_model_violation(&self, include_learned: bool) -> Option<ClauseId> {
         self.clauses.iter_ids().find(|&id| {
             self.clauses.get(id).is_some_and(|clause| {

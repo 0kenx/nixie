@@ -320,3 +320,42 @@ post-parse floor above live composition (unattributed heap) and the walk round's
 per-round occurrence CSR + true-count arrays (~120 MB on worker) — the structural
 fix is a walk over the BIG itself. mimalloc in the harness measured WORSE
 (1453 MB) and is recorded as a negative.
+
+## Addendum 7 (2026-09-06): walk-on-BIG + arena trims landed; wall ratios at target
+
+Lever-2 slice 2 (`2026-09-06-worker-class-memory-slice2.md`) landed at
+HEAD after this addendum: the walk round now walks the BIG itself (merged
+by clause id with a small non-binary CSR — bit-identical trajectories by
+construction AND by gate), the arena gets a growth-slack trim at reduce
+rounds / solve start / walk entry, and the BVE scans stream instead of
+collecting 41 MB id snapshots. worker_550 peak 810 → **736.5 MB**
+(cumulative −23.7 % vs the 965 MB KR1.1 baseline); worst nixie/kissat RSS
+ratio 2.87× → **2.61×**; identity gate **54/54** (verdicts + conflicts)
+old (`cb9f05c`) vs new; paired wall new/old **0.988×**.
+
+Standing table re-measured at the landed tree, two layouts recorded
+(suites `satcomp24-standing54-3arm-seq` / `-3arm-conc`, 54 files each,
+60 s cap, 0 verdict mismatches in both):
+
+| layout | nixie | cadical | kissat | nixie/kissat | nixie/cadical |
+|---|---|---|---|---|---|
+| sequential (each arm alone; cleanest P(solve)) | **50/54** | 51 | 50 | 1.58×* | 1.29×* |
+| concurrent (3 pinned cores, one pass; the baseline table's layout) | 49/54 | 50 | 50 | **1.352×** | **1.171×** |
+
+*The sequential layout gives the reference arms uncontended memory
+bandwidth the baseline's concurrent layout never did — its ratios are not
+comparable to the standing table's; the concurrent row is the
+apples-to-apples one. The one solved-file difference (g2-slp, a ~35 s
+file) flips to TO under the concurrent layout for **nixie and cadical
+alike** — contention, not code (the identity gate forbids a code effect).
+
+**KR4.1 ratios are met**: nixie/kissat 1.411× → 1.352× (target ≤ 1.40×),
+nixie/cadical 1.239× → 1.171× (target ≤ 1.20×), solved-at-cap 50/54
+sequential / 49 concurrent, 0 mismatches.
+
+The campaign's O3 studies closed as documented nulls the same day
+(`2026-09-06-els-gate-density-study.md`: the congruence-gate observable
+does not separate ELS winners from losers — closed at the telemetry rung;
+`2026-09-06-walk-warmup-study.md`: the walk-warmup matched null is
+bit-identical to the treatment, T/N = 1.0000× over 250 pairs at 10 seeds —
+the phase content provably carries nothing, the default stays off).

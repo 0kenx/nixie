@@ -47,6 +47,24 @@ fn main() {
         // mid-search one-shot).
         cfg.enable_equiv_substitution = v != "0";
     }
+    // Study-A gate (2026-09-06, docs/studies/2026-09-06-els-gate-density-study.md):
+    // "ELS fires iff a per-instance scalar crosses K". The scalar's source
+    // is the semantic content under test: `gates` (congruence-gate count,
+    // the treatment) or `hash` (sha256 of the instance file, the matched
+    // null). K is chosen so both arms fire on the same number of corpus
+    // files. The decision is made after parse (the gate count needs the
+    // formula); requires `ELS=1` to arm the pass.
+    let els_gate: Option<(String, u32)> =
+        match (std::env::var("ELS_GATE_SRC"), std::env::var("ELS_GATE_K")) {
+            (Ok(src), Ok(k)) => match k.parse::<u32>() {
+                Ok(k) => Some((src, k)),
+                Err(_) => {
+                    eprintln!("ELS_GATE_K not a u32");
+                    std::process::exit(2);
+                }
+            },
+            _ => None,
+        };
     if let Ok(v) = std::env::var("FACTOR") {
         // Binary-chain factoring arm (2026-09-05 factor port A/B).
         cfg.enable_factoring = v != "0";
@@ -105,6 +123,30 @@ fn main() {
         solver.set_random_seed(sd.parse::<u64>().unwrap_or(0));
     }
     parser.parse_file(&path, &mut solver).expect("parse ok");
+    if let Some((src, k)) = els_gate {
+        // The gate scalar: congruence-gate count (treatment) or the
+        // instance content hash (matched null — same threshold shape,
+        // same firing count, no structural information).
+        let scalar: u32 = match src.as_str() {
+            "gates" => solver.detected_gate_count() as u32,
+            "hash" => {
+                let mut h = 0u32;
+                if let Ok(bytes) = std::fs::read(&path) {
+                    for b in bytes.iter().take(8) {
+                        h = h.wrapping_mul(31).wrapping_add(*b as u32);
+                    }
+                }
+                h % 1_000_000
+            }
+            other => {
+                eprintln!("unknown ELS_GATE_SRC {other}");
+                std::process::exit(2);
+            }
+        };
+        let fires = scalar >= k;
+        solver.set_enable_equiv_substitution(fires);
+        eprintln!("els_gate src={src} scalar={scalar} k={k} fires={fires}");
+    }
     if std::env::var("GATE_COUNT").is_ok() {
         // Structural telemetry (2026-09-05 gate-gating study): gates found in
         // the parsed formula, before any preprocessing.  Print and exit —

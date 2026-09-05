@@ -192,6 +192,20 @@ const COMPACT_MIN_WASTED: usize = 64 * 1024;
 /// ≤ 8× the collected bytes.
 const COMPACT_WASTE_DIV: usize = 8;
 
+/// Growth-slack trim floor: unused capacity below this never pays for the
+/// realloc-copy (RSS cares about MiBs, not KiBs).
+const TRIM_MIN_SLACK: usize = 16 << 20;
+/// Growth-slack trim gate divisor: the Vec-doubling overshoot (capacity −
+/// used) must reach `used / TRIM_SLACK_DIV` before a trim fires. With the
+/// margin below this bounds total trim-copy work at ~`(1 + margin)·div`×
+/// the bytes the database ever retains — see [`ClauseArena::trim_slack`].
+const TRIM_SLACK_DIV: usize = 2;
+/// Headroom kept by [`ClauseArena::trim_slack`]: the trimmed capacity is
+/// `used + used/8`, so ordinary post-trim learning fits without an
+/// immediate re-double (which would restore the overshoot the trim just
+/// reclaimed, in copy-amortized thrash).
+const TRIM_MARGIN_DIV: usize = 8;
+
 #[inline]
 fn slot_size(len: usize) -> usize {
     let raw = HEADER_BYTES + len * core::mem::size_of::<Lit>();
@@ -475,6 +489,42 @@ impl ClauseArena {
     pub fn should_compact(&self) -> bool {
         self.wasted_bytes >= COMPACT_MIN_WASTED
             && self.wasted_bytes >= (self.pos - self.wasted_bytes) / COMPACT_WASTE_DIV
+    }
+
+    /// Gate for [`Self::trim_slack`]: the buffer's unused capacity (the
+    /// `Vec` doubling overshoot that RSS pays for but no clause lives in)
+    /// has reached `TRIM_MIN_SLACK` and `used / TRIM_SLACK_DIV`.
+    ///
+    /// Compaction's `shrink_to_fit` already tightens the buffer whenever
+    /// garbage collection fires, but between compactions the database can
+    /// *shrink* (mass deletion whose waste stays under the compaction gate)
+    /// or a doubling can land just before a stable phase: on worker-class
+    /// instances the measured end-of-run slack was ~220 MB (537 MB
+    /// capacity vs 317 MB live) without ever re-triggering compaction.
+    /// RSS holds the capacity, not the live bytes, so that overshoot is the
+    /// single largest recoverable block on the walk-round peak.
+    #[must_use]
+    pub fn should_trim_slack(&self) -> bool {
+        let cap = self.buffer.capacity() * ALIGN;
+        let slack = cap.saturating_sub(self.pos);
+        slack >= TRIM_MIN_SLACK && slack * TRIM_SLACK_DIV >= cap - slack
+    }
+
+    /// Realloc the buffer down to `used + used/TRIM_MARGIN_DIV` bytes.
+    ///
+    /// Trajectory-neutral by construction: clause bytes, offsets and ids
+    /// are untouched (`ClauseRef`s are byte offsets, not pointers, so the
+    /// realloc invalidates nothing), only the capacity changes. Amortized
+    /// against regrowth: after a trim the next doubling needs
+    /// `used/8` fresh bytes, so the copy-per-growth-byte ratio is bounded
+    /// (see `TRIM_MARGIN_DIV`); the gate in [`Self::should_trim_slack`]
+    /// keeps it from firing on every reduce round.
+    pub fn trim_slack(&mut self) {
+        if !self.should_trim_slack() {
+            return;
+        }
+        let target_words = self.pos.div_ceil(ALIGN) + self.pos / (ALIGN * TRIM_MARGIN_DIV);
+        self.buffer.shrink_to(target_words);
     }
 
     /// Relocate every live clause downward in place (kissat-style) and
@@ -1391,6 +1441,44 @@ mod tests {
         let tomb = ClauseRef::from_byte_offset(s.tombstone_offset as usize).expect("in range");
         assert!(a.get(tomb).expect("tombstone").deleted);
         assert!(a.get(tomb).expect("tombstone").lits.is_empty());
+    }
+
+    #[test]
+    fn trim_slack_gate_and_margin() {
+        let mut a = ClauseArena::new(0);
+        // Small arena: below the absolute floor, never trims even with
+        // gross capacity slack.
+        a.alloc(&[l(0), l(1)], false);
+        a.buffer.reserve(10_000_000 / ALIGN); // ~10 MB slack, used ~16 B
+        assert!(!a.should_trim_slack());
+        a.trim_slack();
+        assert!(a.buffer.capacity() * ALIGN > 10_000_000); // no-op below gate
+
+        // Large arena with ≥ used/2 slack: gate fires, capacity lands at
+        // used + used/8, contents byte-identical. (32 MB live + 100% slack
+        // = 32 MB slack, comfortably past the 16 MiB floor.)
+        let mut b = ClauseArena::new(0);
+        let n = 2_000_000; // 2M × 16-byte slots = 32 MB live
+        for i in 0..n {
+            b.alloc(&[l(i), l(i), l(i)], false);
+        }
+        let used_words = b.buffer.len();
+        let extra = used_words + used_words; // 100% slack ≫ used/2
+        b.buffer.reserve(extra);
+        assert!(b.should_trim_slack(), "slack of one full copy must fire");
+        // But a small arena still must not: the absolute floor exists so
+        // tiny solves never pay realloc churn.
+        assert!(!a.should_trim_slack());
+        b.trim_slack();
+        let target = used_words + b.pos / (ALIGN * TRIM_MARGIN_DIV);
+        assert_eq!(b.buffer.capacity(), target);
+        for i in 0..n {
+            let off: usize = i as usize * slot_size(3);
+            let r = ClauseRef::from_byte_offset(off).expect("in range");
+            assert!(b.get(r).is_some_and(|c| c.lits.len() == 3));
+        }
+        // (A small *slack* never fires — covered by `a` above; the floor
+        // bounds the reclaim, not the arena size.)
     }
 
     #[test]

@@ -146,6 +146,7 @@ impl BinaryImplicationGraph {
     /// Debug-invariant use (BIG-authoritative BCP backing check): the hot
     /// loop trusts edges without a liveness probe, so every non-sentinel
     /// edge must reference a live binary clause.
+    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Lit, Lit, ClauseId)> + '_ {
         self.implications
             .iter()
@@ -3003,6 +3004,12 @@ impl Solver {
         // untouched); measured ~85 MB off the pre-search peak on
         // worker-class instances.
         self.binary_graph.shrink();
+        // Same posture for the clause arena's `Vec`-doubling overshoot: the
+        // parser appends clause by clause, so the last doubling can leave
+        // capacity ≈ 2× live right as the search's first transients (walk
+        // rounds, elimination scratch) stack on top. Capacity-only trim;
+        // ids and bytes untouched.
+        self.clauses.trim_arena_slack();
         if self.config.enable_lucky {
             match self.lucky_phases() {
                 Some(SolverResult::Sat) => {
@@ -3596,6 +3603,16 @@ impl Solver {
     #[doc(hidden)]
     pub fn detected_gate_count(&self) -> usize {
         self.detect_gate_count()
+    }
+
+    /// Study knob (doc-hidden measurement API): arm or disarm the
+    /// equivalence-substitution pass after construction — the ELS-gate
+    /// study decides its per-instance gate after parse
+    /// (`docs/studies/2026-09-06-els-gate-density-study.md`). Not a public
+    /// configuration surface.
+    #[doc(hidden)]
+    pub fn set_enable_equiv_substitution(&mut self, on: bool) {
+        self.config.enable_equiv_substitution = on;
     }
 
     /// Number of completed stable/focused mode switches (cadical

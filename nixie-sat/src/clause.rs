@@ -713,6 +713,11 @@ impl ClauseDatabase {
     /// to be rewritten in the same breath.
     pub fn compact_arena(&mut self, watches: &mut WatchLists) -> bool {
         if !self.arena.should_compact() {
+            // No garbage to collect — but the doubling overshoot may still
+            // dominate RSS (mass deletion under the compaction gate, or a
+            // doubling just before a stable phase). Pure capacity trim,
+            // never a relocation; see `ClauseArena::trim_slack`.
+            self.arena.trim_slack();
             return false;
         }
         self.compact_arena_forced(watches)
@@ -728,6 +733,17 @@ impl ClauseDatabase {
             "watcher refs must agree with the relocated refs table"
         );
         true
+    }
+
+    /// Capacity-only reclaim of the arena's `Vec`-doubling overshoot,
+    /// without collecting garbage and without relocating anything
+    /// (see [`ClauseArena::trim_slack`]). Called from points that are
+    /// about to allocate a large transient — pre-search and before every
+    /// walk round — so the transient does not stack on top of the overshoot
+    /// (the same shape as cadical running `garbage_collection()` before
+    /// its walk). Ids, clause bytes and visit orders are untouched.
+    pub fn trim_arena_slack(&mut self) {
+        self.arena.trim_slack();
     }
 
     /// Get the number of live clauses.
