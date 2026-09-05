@@ -2791,8 +2791,32 @@ impl Solver {
                 }
             }
             TermKind::Distinct(args) => {
-                // Encode distinct as pairwise disequalities
-                // distinct(a,b,c) <=> (a!=b) and (a!=c) and (b!=c)
+                // `distinct` beyond a small arity is *not* one flat constraint but
+                // a family, and the encoding is chosen per shape (Z3's
+                // `euf_internalize.cpp`, `add_distinct_axiom` /
+                // `add_not_distinct_axiom`):
+                //
+                // 1. n ≤ 1: trivially true.
+                // 2. finite argument sort with |S| < n: pigeonhole – the term is
+                //    logically false, so `result` is forced false with one unit
+                //    clause instead of letting SAT rediscover the pigeonhole
+                //    through C(n,2) disequality atoms (Z3 emits the empty clause
+                //    at assertion root; the unit ¬`result` is the Tseitin-honest
+                //    equivalent for a term that may also appear nested).
+                // 3. n ≤ 32: pairwise disequalities – the Tseitin classic.
+                // 4. n > 32 over a sort EUF owns (uninterpreted): the injective
+                //    map encoding – O(n) theory atoms instead of O(n²) – see
+                //    [`Solver::encode_distinct_injective`].
+                // 5. n > 32 over any other sort: pairwise (as before).  Z3 uses
+                //    the injective map here too, but that leans on theory
+                //    combination propagating *every* semantically-derived
+                //    equality between arguments into the e-graph (Z3's th_eq);
+                //    nixie's combination is atom-driven, so an equality that
+                //    holds only through, say, arithmetic bounds would bypass
+                //    congruence and the encoding would be too weak.  Restricting
+                //    case 4 to EUF-owned sorts keeps the O(n) win exactly where
+                //    the blowup actually occurs (QF_UF-style inputs) without
+                //    weakening any non-EUF decision path.
                 if args.len() <= 1 {
                     // trivially true
                     let var = self.get_or_create_var(manager.mk_true());
@@ -2802,6 +2826,35 @@ impl Solver {
                 let result_var = self.get_or_create_var(term);
                 let result = Lit::pos(result_var);
 
+                // (2) Pigeonhole short-circuit on a finite sort too small for
+                // the arity.  Valid for every occurrence position, asserted or
+                // nested, so it needs no polarity information.
+                if let Some(arg_sort) = Self::common_distinct_sort(args, manager)
+                    && let Some(cardinality) = Self::finite_sort_cardinality(arg_sort, manager)
+                    && args.len() as u128 > u128::from(cardinality)
+                {
+                    self.sat.add_clause([result.negate()]);
+                    return result;
+                }
+
+                // (4) Large arity over an EUF-owned sort: injective map.
+                // Falls back to pairwise if the fresh witnesses could not be
+                // minted unambiguously (name collision with a user symbol).
+                if args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
+                    && Self::common_distinct_sort(args, manager).is_some_and(|s| {
+                        matches!(
+                            manager.sorts.get(s).map(|s| &s.kind),
+                            Some(SortKind::Uninterpreted(_))
+                        )
+                    })
+                    && self.encode_distinct_injective(result_var, args, manager, depth)
+                {
+                    return result;
+                }
+
+                // (3)/(5) Pairwise disequalities, for every arity Z3 would also
+                // keep pairwise (and, for now, for large non-EUF-owned sorts).
+                // distinct(a,b,c) <=> (a!=b) and (a!=c) and (b!=c)
                 let mut diseq_lits = Vec::new();
                 for i in 0..args.len() {
                     for j in (i + 1)..args.len() {
@@ -3195,6 +3248,260 @@ impl Solver {
         }
     }
 
+    /// Arity at and below which `distinct` stays pairwise-encoded.  Z3's
+    /// `distinct_max_args` (`euf_internalize.cpp`): 32.
+    const DISTINCT_PAIRWISE_MAX_ARGS: usize = 32;
+
+    /// The common sort of a `distinct` argument list, or `None` when the
+    /// arguments are not all of one sort (ill-typed input; the caller falls
+    /// back to the sort-agnostic pairwise encoding, which is what the encoder
+    /// did for every arity before this helper existed).
+    fn common_distinct_sort(args: &[TermId], manager: &TermManager) -> Option<SortId> {
+        let first = manager.get(args[0]).map(|t| t.sort)?;
+        args.iter()
+            .all(|&a| manager.get(a).is_some_and(|t| t.sort == first))
+            .then_some(first)
+    }
+
+    /// Cardinality of a *known-finite* sort, as `Some(count)`; `None` means
+    /// "not known finite" (uninterpreted, Int/Real, String, Array, FP, and
+    /// datatypes with selectors – recursive or carrying fields, whose exact
+    /// cardinality is not computed here).
+    ///
+    /// Only sorts whose entire element set is enumerated by construction count:
+    /// `Bool` (2), the five IEEE rounding modes, `BitVec(w)` for `w < 64`
+    /// (2^w), and selector-free datatypes (SMT-LIB enumerations, one element
+    /// per constructor; a parametric datatype all of whose constructors are
+    /// nullary still has exactly that many elements, so parameters are
+    /// irrelevant here).  A `None` is always the conservative answer: it merely
+    /// forgoes the pigeonhole short-circuit.
+    fn finite_sort_cardinality(sort: SortId, manager: &TermManager) -> Option<u64> {
+        let s = manager.sorts.get(sort)?;
+        match &s.kind {
+            SortKind::Bool => Some(2),
+            SortKind::RoundingMode => Some(5),
+            SortKind::BitVec(w) => {
+                // 2^w for w < 64; wider sorts always have more elements than
+                // any argument list memory can hold.
+                (*w < 64).then(|| 1u64 << w)
+            }
+            SortKind::Datatype(_) => {
+                let name = manager.sorts.datatype_name(sort)?;
+                let def = manager.sorts.get_datatype(name)?;
+                def.constructors
+                    .iter()
+                    .all(|c| c.selectors.is_empty())
+                    .then_some(def.constructors.len() as u64)
+            }
+            _ => None,
+        }
+    }
+
+    /// The injective-map encoding of a large `distinct` (Z3's
+    /// `add_distinct_axiom` / `add_not_distinct_axiom` large-arity branches,
+    /// unified into one Tseitin-equivalent literal).
+    ///
+    /// For `result ⟺ distinct(t_1..t_n)` over an EUF-owned sort S, mint
+    ///
+    /// - a fresh uninterpreted sort U (Z3: `"distinct-elems"`),
+    /// - fresh unary functions `f : S → U` and `g : U → S`
+    ///   (Z3: `dist-f` / `dist-g`),
+    /// - a fresh constant `a : U`, and
+    /// - constants `m_1..m_n : U` declared pairwise-distinct in the e-graph
+    ///   via [`EufSolver::declare_value_const`] (Z3: `mk_model_value` +
+    ///   `mark_interpreted`),
+    ///
+    /// and emit, with `F_i := f(t_i) = m_i` and `L_i := f(t_i) = a`:
+    ///
+    /// - **A** (units): `g(f(t_i)) = t_i` for every i.
+    /// - **B**: `result → F_i` for every i.
+    /// - **C**: `F_1 ∧ … ∧ F_n → result`.
+    /// - **D**: `¬result → at_least_two(L_1..L_n)` (a sequential counter, see
+    ///   [`Solver::encode_at_least_two`]).
+    ///
+    /// Why this is an exact Tseitin equivalent of `distinct(t_1..t_n)` over
+    /// the shared vocabulary:
+    ///
+    /// *result true ⇒ distinct*. B forces every `f(t_i) = m_i`. If some
+    /// `t_i = t_j` (i≠j), congruence gives `f(t_i) = f(t_j)`, so `m_i = m_j` –
+    /// excluded by the e-graph distinctness marks, so no model of the extended
+    /// vocabulary has both.
+    ///
+    /// *result false ⇒ ¬distinct*. D forces two of the `L_i` true, say
+    /// `f(t_i) = a = f(t_j)`; A then gives `t_i = g(a) = t_j`.
+    ///
+    /// *Completeness of both directions.* A model with `distinct` true
+    /// extends: interpret `f(t_i) = m_i` (the marks keep the `m_i` apart) and
+    /// `g` as f's inverse on their image, `a` anywhere else. A model with some
+    /// `t_i = t_j` and `result` false extends: map that whole class through
+    /// `f` onto `a`, everything else onto distinct unused `m_k`, `g`
+    /// accordingly. Hence the added clauses change no verdict and the SAT value
+    /// of `result` is exactly the truth value of the `distinct` term – which is
+    /// what model extraction and nested occurrences require (Z3 only needs the
+    /// two one-sided assertion-root forms; the Tseitin form subsumes both).
+    ///
+    /// Cost: `3n` theory atoms (`A`, `B`, `L` families), O(n) clauses and aux
+    /// variables – instead of C(n,2) equality atoms, each of which EUF must
+    /// watch, explain and re-derive.
+    ///
+    /// The units in A constrain only the fresh `f`/`g` – never a caller's
+    /// symbol – so they are satisfiability-neutral by the extension argument
+    /// above.
+    fn encode_distinct_injective(
+        &mut self,
+        result_var: Var,
+        args: &[TermId],
+        manager: &mut TermManager,
+        depth: u32,
+    ) -> bool {
+        let n = args.len();
+        let result = Lit::pos(result_var);
+        let Some(s_sort) = Self::common_distinct_sort(args, manager) else {
+            // Defensive: the caller checks this; the pairwise arm is the
+            // correct encoding for mixed-sort garbage either way.
+            return false;
+        };
+
+        let id = self.next_distinct_id;
+        self.next_distinct_id = id
+            .checked_add(1)
+            .expect("distinct-encoding id space exhausted (2^64 encodings)");
+
+        // Fresh sort U and the two fresh function names.  Names carry the
+        // per-encoding counter so two different `Distinct` terms (or two
+        // encoding passes over the same one after a pop) never share symbols.
+        let u_spur = manager.intern_str(&format!("!nixie!dist-sort!{id}"));
+        let u_sort = manager.sorts.intern(SortKind::Uninterpreted(u_spur));
+        let f_name = format!("!nixie!dist-f!{id}");
+        let g_name = format!("!nixie!dist-g!{id}");
+
+        // The pairwise-distinct witnesses m_i.  `mk_var` hash-conses by name,
+        // so a user symbol colliding with one of these names comes back
+        // pre-interned and (having been used in an assertion) carrying a SAT
+        // variable – detected here, and the whole encoding bails to pairwise
+        // rather than impose our distinctness marks on the user's constant.
+        // Nothing has been emitted yet at this point, so the fallback is exact.
+        let mut m_terms: Vec<TermId> = Vec::with_capacity(n);
+        for i in 0..n {
+            let m = manager.mk_var(&format!("!nixie!dist-v!{id}!{i}"), u_sort);
+            if self.term_to_var.contains_key(&m) {
+                debug_assert!(
+                    false,
+                    "fresh distinct-witness name collided with a user symbol"
+                );
+                return false;
+            }
+            self.euf
+                .declare_value_const(m, u32::try_from(i).expect("n fits u32"));
+            m_terms.push(m);
+        }
+        let a_term = manager.mk_var(&format!("!nixie!dist-a!{id}"), u_sort);
+
+        // A, B and the L family.  All three go through `encode_depth` so the
+        // equality atoms get SAT variables, `Constraint::Eq` registration and
+        // EUF tracking exactly like user-written equalities.
+        let mut f_lits: Vec<Lit> = Vec::with_capacity(n);
+        let mut l_lits: Vec<Lit> = Vec::with_capacity(n);
+        for (i, &t) in args.iter().enumerate() {
+            let f_app = manager.mk_apply(&f_name, [t], u_sort);
+
+            // A: g(f(t_i)) = t_i, as a unit.
+            let g_app = manager.mk_apply(&g_name, [f_app], s_sort);
+            let eq_a = manager.mk_eq(g_app, t);
+            let lit_a = self.encode_depth(eq_a, manager, depth + 1);
+            self.sat.add_clause([lit_a]);
+
+            // B: result → f(t_i) = m_i.
+            let eq_f = manager.mk_eq(f_app, m_terms[i]);
+            let lit_f = self.encode_depth(eq_f, manager, depth + 1);
+            f_lits.push(lit_f);
+            self.sat.add_clause([result.negate(), lit_f]);
+
+            // L_i := f(t_i) = a, an input of the at-least-two counter.
+            let eq_l = manager.mk_eq(f_app, a_term);
+            l_lits.push(self.encode_depth(eq_l, manager, depth + 1));
+        }
+
+        // C: F_1 ∧ … ∧ F_n → result.
+        let mut clause: Vec<Lit> = f_lits.iter().map(|l| l.negate()).collect();
+        clause.push(result);
+        self.sat.add_clause(clause);
+
+        // D: ¬result → at_least_two(L_1..L_n).
+        let at_least_two = self.encode_at_least_two(&l_lits, manager, id);
+        self.sat.add_clause([result, at_least_two]);
+        true
+    }
+
+    /// Full Tseitin encoding of *at least two of `lits` are true*, returning
+    /// the equivalent literal (a *sound in both directions* sequential
+    /// counter: the returned literal true really forces two inputs true, not
+    /// just the forward propagation direction – `encode_distinct_injective`'s
+    /// D direction needs exactly that reverse soundness to keep `¬distinct`
+    /// from being satisfiable vacuously).
+    ///
+    /// `ge1_k` ↔ "≥1 of lits[0..=k]", `ge2_k` ↔ "≥2 of lits[0..=k]";
+    /// `ge1_0` reuses `lits[0]`'s own variable, `ge2_0` is false (not minted).
+    /// O(n) auxiliary variables and clauses.  Duplicate input literals are
+    /// counted per occurrence, which is the semantics the caller wants: two
+    /// equal `f(t_i)`/`f(t_j)` atoms are two indices, one witness.
+    fn encode_at_least_two(&mut self, lits: &[Lit], manager: &mut TermManager, id: u64) -> Lit {
+        let Some((&first, rest)) = lits.split_first() else {
+            // At-least-two of nothing is false; the caller always passes n ≥ 2
+            // (DISTINCT_PAIRWISE_MAX_ARGS gate), so this is defensive.  A false
+            // literal keeps clause D vacuous under ¬result rather than
+            // unsatisfiable – the honest encoding of an impossible input.
+            let var = self.get_or_create_var(manager.mk_false());
+            return Lit::neg(var);
+        };
+
+        let bool_sort = manager.sorts.bool_sort;
+        let mut ge1 = first.var();
+        // ge2 of the first k inputs; None while k < 2 ("fewer than two so far"
+        // is false, and needs no variable until a second input exists).
+        let mut ge2: Option<Var> = None;
+
+        for (k, &lit) in rest.iter().enumerate() {
+            let next_ge1 = self.get_or_create_var(
+                manager.mk_var(&format!("!nixie!dist-ge1!{id}!{}", k + 1), bool_sort),
+            );
+            // ge1_{k+1} ↔ ge1_k ∨ lit
+            self.sat
+                .add_clause([Lit::neg(next_ge1), Lit::pos(ge1), lit]);
+            self.sat.add_clause([Lit::pos(next_ge1), Lit::neg(ge1)]);
+            self.sat.add_clause([Lit::pos(next_ge1), lit.negate()]);
+
+            let next_ge2 = self.get_or_create_var(
+                manager.mk_var(&format!("!nixie!dist-ge2!{id}!{}", k + 1), bool_sort),
+            );
+            match ge2 {
+                None => {
+                    // k+1 == 1: ge2_1 ↔ ge1_0 ∧ lit (both of the two inputs
+                    // seen so far).
+                    self.sat.add_clause([Lit::neg(next_ge2), Lit::pos(ge1)]);
+                    self.sat.add_clause([Lit::neg(next_ge2), lit]);
+                    self.sat
+                        .add_clause([Lit::pos(next_ge2), Lit::neg(ge1), lit.negate()]);
+                }
+                Some(prev_ge2) => {
+                    // ge2_{k+1} ↔ ge2_k ∨ (ge1_k ∧ lit)
+                    self.sat
+                        .add_clause([Lit::neg(next_ge2), Lit::pos(prev_ge2), Lit::pos(ge1)]);
+                    self.sat
+                        .add_clause([Lit::neg(next_ge2), Lit::pos(prev_ge2), lit]);
+                    self.sat
+                        .add_clause([Lit::pos(next_ge2), Lit::neg(prev_ge2)]);
+                    self.sat
+                        .add_clause([Lit::pos(next_ge2), Lit::neg(ge1), lit.negate()]);
+                }
+            }
+            ge1 = next_ge1;
+            ge2 = Some(next_ge2);
+        }
+
+        ge2.map_or(Lit::neg(first.var()), Lit::pos)
+    }
+
     /// Scan all Constraint::Eq entries in var_to_constraint that are currently
     /// assigned False by the SAT model and add arithmetic splits `(lhs < rhs)
     /// OR (lhs > rhs)` for each.  This ensures ArithSolver knows about
@@ -3343,9 +3650,13 @@ impl Solver {
                     stack.push(inner_id);
                 }
                 TermKind::Distinct(args) => {
-                    // `distinct` expands to pairwise disequalities in `encode`; the
-                    // theory layer only learns about each pair through the strict
-                    // ordering atoms introduced here.
+                    // For *numeric* arguments the theory layer only learns about
+                    // each pair through the strict ordering atoms introduced
+                    // here (uninterpreted/other sorts no-op below).  Numeric
+                    // `distinct` stays pairwise in `encode` regardless of arity,
+                    // so this enumeration matches the encoding; the large-
+                    // arity injective map is only ever taken for EUF-owned
+                    // sorts, which never reach `add_arith_trichotomy_clause`.
                     let args_clone: Vec<TermId> = args.iter().copied().collect();
                     for i in 0..args_clone.len() {
                         for j in (i + 1)..args_clone.len() {

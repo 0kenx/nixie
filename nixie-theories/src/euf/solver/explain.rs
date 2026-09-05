@@ -40,6 +40,26 @@ impl EufSolver {
         // assert_diseq) that causes them, recorded in `pending_diseq_conflict`.
         // So this is O(1): surface the pending violation, or report none. The
         // old O(diseqs) full scan on every theory check was the dominant EUF cost.
+        if self.pending_diseq_conflict.is_none() {
+            // A merge of two *different* distinguished values was recorded
+            // instead (see `class_value`).  The two recorded witness nodes sat
+            // in different classes before that merge, so explaining their
+            // equality yields exactly the complete core: the literals forcing
+            // the two distinguished constants together, including the merge's
+            // own justification.  The distinctness of the values themselves is
+            // a hard semantic fact that names no literal and contributes
+            // nothing to the clause.  Failure falls back to the conservative
+            // core over all asserted reasons, never a partial explanation
+            // (a partial core here would be an unsound learned clause).
+            if let Some((wa, wb)) = self.pending_value_conflict {
+                return match self.try_explain_equality(wa, wb) {
+                    Some(explanation) if !explanation.is_empty() => Some(explanation),
+                    _ => Some(self.all_asserted_reasons()),
+                };
+            }
+            return None;
+        }
+
         let conflict_idx = self.pending_diseq_conflict?;
 
         let (lhs, rhs, reason) = {

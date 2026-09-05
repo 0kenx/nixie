@@ -113,6 +113,18 @@ pub struct Solver {
     /// popped symbol's name must not come back attached to a different
     /// existential).
     pub(super) next_skolem_id: u64,
+    /// Next unused id pair for the large-`distinct` injective-map encoding
+    /// (`encode_distinct_injective`): the low half feeds fresh symbol names
+    /// (`!nixie!dist-*!N`), the high half feeds e-graph distinctness ids for the
+    /// encoding's `distinct-elems` constants (`EufSolver::declare_value_const`).
+    ///
+    /// Monotone and never reset by `pop`, for the same reason as
+    /// `next_skolem_id`: a popped encoding's constants must not come back
+    /// attached to a different distinctness class, and re-encoding the *same*
+    /// `Distinct` term after a pop must not mint a second, incompatible family
+    /// (the fresh names derive from this counter, so each encoding pass gets
+    /// its own).
+    pub(super) next_distinct_id: u64,
     /// Term to SAT variable mapping
     pub(super) term_to_var: FxHashMap<TermId, Var>,
     /// SAT variable to term mapping
@@ -660,6 +672,7 @@ impl Solver {
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
             has_quantifiers: false,
             next_skolem_id: 0,
+            next_distinct_id: 0,
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
             var_to_constraint: FxHashMap::default(),

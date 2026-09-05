@@ -356,6 +356,48 @@ impl EufSolver {
             // Congruence closure: check for new merges
             let other_root = if new_root == root_a { root_b } else { root_a };
 
+            // ======== Distinct-value merge check (Z3 `are_distinct`) ========
+            //
+            // Both merged classes carry a distinguished-value summary and the
+            // summaries differ -> the merge is impossible in every model.
+            // Recorded AFTER the union and its proof-forest edges so
+            // `check_conflicts` can explain root_a = root_b completely (same
+            // shape as a disequality violation, which is also detected
+            // post-union).  The value distinctness itself is a hard semantic
+            // fact and names no literal, exactly like the tautological
+            // `10 ≠ 20` reasons of intern-time constant disequalities.  First
+            // conflict wins, as for disequalities.
+            //
+            // The surviving root then inherits the merged summary (at most one
+            // id can survive a conflict-free merge), trailed so `pop()` can
+            // restore it when the union rewinds.
+            if self.pending_value_conflict.is_none() {
+                let va = self.class_value[root_a as usize];
+                let vb = self.class_value[root_b as usize];
+                if let (Some((x, wa)), Some((y, wb))) = (va, vb)
+                    && x != y
+                {
+                    // Record the witness nodes, not the roots: the explanation
+                    // of `wa = wb` must cross this merge's own proof edge (the
+                    // witnesses lived in different classes until now), which is
+                    // what keeps the surfaced conflict core complete.
+                    self.pending_value_conflict = Some((wa, wb));
+                }
+            }
+            // The surviving root inherits the merged summary.  After a value
+            // conflict this is arbitrary (both ids "exist" in the corrupted
+            // class until the search unwinds); nothing reads it again before
+            // the rewind because `pending_value_conflict` is already set and
+            // first-wins.  Trailed so `pop()` restores it with the union.
+            let merged = self.class_value[root_a as usize].or(self.class_value[root_b as usize]);
+            if merged != self.class_value[new_root as usize] {
+                if !self.value_summary_trail_limits.is_empty() {
+                    self.value_summary_trail
+                        .push((new_root, self.class_value[new_root as usize]));
+                }
+                self.class_value[new_root as usize] = merged;
+            }
+
             // ======== O(1) proven-disequality index maintenance ========
             //
             // Every live disequality watched on *either* merged class has a

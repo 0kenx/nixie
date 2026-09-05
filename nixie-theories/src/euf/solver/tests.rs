@@ -1052,3 +1052,136 @@ fn eq_atom_watch_fires_on_fresh_disequality() {
     assert_eq!(forced.len(), 1, "the diseq-forced atom wakes");
     assert_eq!(forced[0].var, var);
 }
+
+// ---------------------------------------------------------------------
+// Distinguished values (`declare_value_const` / class-value summaries)
+// ---------------------------------------------------------------------
+// The large-`distinct` injective-map encoding leans on these: n fresh
+// constants are declared pairwise apart with ONE id each, and the merge
+// check reports a conflict instead of C(n,2) disequality edges.  The tests
+// below pin the e-graph half of that contract (conflict detection,
+// re-marking after rebuilds, scope rewind, one-value-per-class).
+
+#[test]
+fn value_consts_conflict_on_merge() {
+    let mut s = EufSolver::new();
+    // Two distinguished values + two ordinary nodes.
+    let m1 = TermId::new(1);
+    let m2 = TermId::new(2);
+    s.declare_value_const(m1, 0);
+    s.declare_value_const(m2, 1);
+    let n1 = s.intern(m1);
+    let n2 = s.intern(m2);
+
+    assert!(s.check_conflicts().is_none());
+    s.merge(n1, n2, TermId::new(9)).unwrap_or(());
+    assert!(
+        s.check_conflicts().is_some(),
+        "merging two distinct distinguished values conflicts"
+    );
+}
+
+#[test]
+fn value_const_merges_freely_with_unmarked_nodes() {
+    let mut s = EufSolver::new();
+    s.declare_value_const(TermId::new(1), 0);
+    s.declare_value_const(TermId::new(2), 1);
+    let n1 = s.intern(TermId::new(1));
+    let x = s.intern(TermId::new(3));
+    let n2 = s.intern(TermId::new(2));
+
+    // A distinguished value merging with an ordinary node is fine; the
+    // summary travels with the class, so the *later* clash with the other
+    // value is still caught even though neither endpoint is a root.
+    s.merge(n1, x, TermId::new(9)).unwrap_or(());
+    assert!(s.check_conflicts().is_none());
+    s.merge(x, n2, TermId::new(10)).unwrap_or(());
+    assert!(
+        s.check_conflicts().is_some(),
+        "value summary survives a merge through an unmarked intermediate"
+    );
+}
+
+#[test]
+fn same_value_id_merges_freely() {
+    let mut s = EufSolver::new();
+    s.declare_value_const(TermId::new(1), 4);
+    s.declare_value_const(TermId::new(2), 4);
+    let n1 = s.intern(TermId::new(1));
+    let n2 = s.intern(TermId::new(2));
+    s.merge(n1, n2, TermId::new(9)).unwrap_or(());
+    assert!(
+        s.check_conflicts().is_none(),
+        "equal ids mean the same element: no conflict"
+    );
+}
+
+#[test]
+fn value_conflict_retracts_with_scope_pop() {
+    let mut s = EufSolver::new();
+    use crate::theory::Theory;
+    s.declare_value_const(TermId::new(1), 0);
+    s.declare_value_const(TermId::new(2), 1);
+    let n1 = s.intern(TermId::new(1));
+    let n2 = s.intern(TermId::new(2));
+
+    s.push();
+    s.merge(n1, n2, TermId::new(9)).unwrap_or(());
+    assert!(s.check_conflicts().is_some());
+    s.pop();
+    assert!(
+        s.check_conflicts().is_none(),
+        "popping the merge's scope retracts the value conflict with it"
+    );
+}
+
+#[test]
+fn value_marks_survive_reset_and_reintern() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    s.declare_value_const(TermId::new(1), 0);
+    s.declare_value_const(TermId::new(2), 1);
+    let n1 = s.intern(TermId::new(1));
+    let n2 = s.intern(TermId::new(2));
+    s.merge(n1, n2, TermId::new(9)).unwrap_or(());
+    assert!(s.check_conflicts().is_some());
+
+    // `reset` wipes all incremental state (the rebase path does this every
+    // search); the registry is symbol-level and must re-mark on re-intern.
+    s.reset();
+    assert!(s.check_conflicts().is_none());
+    let n1 = s.intern(TermId::new(1));
+    let n2 = s.intern(TermId::new(2));
+    s.merge(n1, n2, TermId::new(9)).unwrap_or(());
+    assert!(
+        s.check_conflicts().is_some(),
+        "a rebuilt node for a registered value term reacquires its mark"
+    );
+}
+
+#[test]
+fn value_conflict_explanation_is_complete() {
+    // The conflict surfaced for two distinguished values merged via two
+    // asserted equalities must name both assertions: the clause built from
+    // it then refutes exactly that pair of literals, no more, no less.
+    let mut s = EufSolver::new();
+    s.declare_value_const(TermId::new(1), 0);
+    s.declare_value_const(TermId::new(2), 1);
+    let u = s.intern(TermId::new(3));
+    let n1 = s.intern(TermId::new(1));
+    let n2 = s.intern(TermId::new(2));
+
+    s.merge(u, n1, TermId::new(41)).unwrap_or(());
+    s.merge(u, n2, TermId::new(42)).unwrap_or(());
+    let expl = s
+        .check_conflicts()
+        .expect("u = m1 and u = m2 force m1 = m2 across distinct values");
+    let mut named: Vec<nixie_core::ast::TermId> = expl.clone();
+    named.sort_by_key(|t| t.raw());
+    assert_eq!(
+        named,
+        vec![TermId::new(41), TermId::new(42)],
+        "both merge reasons are named (u = m1, u = m2), and nothing else is: \
+         the core alone must force m1 = m2"
+    );
+}

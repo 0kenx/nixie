@@ -369,6 +369,50 @@ pub struct EufSolver {
     pending_trail: Vec<Option<u32>>,
     /// Scope checkpoints into `pending_trail`.
     pending_trail_limits: Vec<usize>,
+    /// The two *witness nodes* of a merge that united two different
+    /// distinguished values, awaiting `check_conflicts` to surface it.
+    /// Recorded *after* the union and its proof-forest edges are in place:
+    /// the two witnesses sat in different classes before it, so every
+    /// proof-forest path between them crosses the merge's own edge and the
+    /// explanation of `w1 = w2` is exactly the complete core – the literals
+    /// that force the two distinguished constants together.  The value
+    /// distinctness itself is a hard semantic fact that names no literal.
+    /// First conflict wins, mirroring `pending_diseq_conflict`.  None = none.
+    pending_value_conflict: Option<(u32, u32)>,
+    /// Saved `pending_value_conflict` per scope, restored by `pop()` – a value
+    /// conflict found inside a popped scope retracts with the merge that caused
+    /// it (the proof edges and the union both rewind together).
+    value_conflict_trail: Vec<Option<(u32, u32)>>,
+    /// Scope checkpoints into `value_conflict_trail`.
+    value_conflict_trail_limits: Vec<usize>,
+    /// Distinctness summary of each equivalence class, indexed by node id and
+    /// meaningful at roots only: `class_value[r] = Some((id, w))` iff `r` is the
+    /// root of a class containing the distinguished value `id`, `w` being one
+    /// node of that class carrying it (the conflict-explanation witness);
+    /// `None` = the class holds no distinguished value.
+    ///
+    /// Non-root slots are stale by design and never read.  A merge combines the
+    /// two summaries into the surviving root (two *different* ids is itself the
+    /// conflict) and trails the overwritten slot so `pop()` restores it in
+    /// lockstep with the union it belonged to.
+    ///
+    /// Parallel to `nodes`; truncated together on `pop()`.
+    class_value: Vec<Option<(u32, u32)>>,
+    /// Undo trail of `class_value` writes made by merges: `(root, previous)`.
+    /// Rewound LIFO by `pop()`; entries naming nodes truncated away by the same
+    /// pop are skipped (their slots are gone regardless).
+    value_summary_trail: Vec<(u32, Option<(u32, u32)>)>,
+    /// Scope checkpoints into `value_summary_trail`.
+    value_summary_trail_limits: Vec<usize>,
+    /// Terms the caller declared to denote pairwise-distinct distinguished
+    /// values, with their distinctness ids.
+    ///
+    /// Symbol-level fact, *not* incremental state: it survives `reset()` (which
+    /// rebuilds all nodes) and every `pop()`, so a node recreated for the same
+    /// term during a rebase/replay reacquires its mark.  Keyed by `TermId`, and
+    /// `intern` consults it only on a `term_to_node` miss, so the steady-state
+    /// cost is zero.
+    value_consts: FxHashMap<TermId, u32>,
     /// Fingerprint table: maps fingerprint -> list of node indices with that fingerprint.
     /// Used as a fast pre-filter before full signature comparison in congruence checks.
     ///
@@ -499,6 +543,13 @@ impl EufSolver {
             pending_diseq_conflict: None,
             pending_trail: Vec::new(),
             pending_trail_limits: Vec::new(),
+            pending_value_conflict: None,
+            value_conflict_trail: Vec::new(),
+            value_conflict_trail_limits: Vec::new(),
+            class_value: Vec::new(),
+            value_summary_trail: Vec::new(),
+            value_summary_trail_limits: Vec::new(),
+            value_consts: FxHashMap::default(),
             fingerprint_table: FxHashMap::default(),
             context_stack: Vec::new(),
             proof_forest: Vec::new(),
@@ -530,14 +581,54 @@ impl EufSolver {
             return idx;
         }
 
+        // A term the caller declared a distinguished value starts its class
+        // summary at that id (see `class_value`); the node itself is an
+        // ordinary leaf.  Reached only on a memo miss, so this costs nothing
+        // once the term is interned – and, crucially, re-marking on every
+        // rebuild after a `reset()`/backtrack is automatic: the registry is a
+        // property of the *symbol*, not of any one node's lifetime.
+        if let Some(&value) = self.value_consts.get(&term) {
+            let idx = self.nodes.len() as u32;
+            self.nodes.push(ENode::leaf(term));
+            self.uf.add();
+            self.use_list.push(SmallVec::new());
+            self.proof_forest.push(SmallVec::new());
+            self.node_sig_key.push(None);
+            self.class_value.push(Some((value, idx)));
+            self.term_to_node.insert(term, idx);
+            return idx;
+        }
+
         let idx = self.nodes.len() as u32;
         self.nodes.push(ENode::leaf(term));
         self.uf.add();
         self.use_list.push(SmallVec::new());
         self.proof_forest.push(SmallVec::new());
         self.node_sig_key.push(None);
+        self.class_value.push(None);
         self.term_to_node.insert(term, idx);
         idx
+    }
+
+    /// Declare that `term` denotes one element of a family of pairwise-distinct
+    /// distinguished values, identified by `value`.
+    ///
+    /// Two live nodes whose ids differ can never merge: the merge loop in the
+    /// congruence-closure propagator turns the attempt into a conflict whose
+    /// explanation is the (complete) justification of the equality it
+    /// contradicts – the distinctness of the values themselves is a hard
+    /// semantic fact contributing no literal.
+    /// Equal ids mean the same element and merge freely.
+    ///
+    /// The caller owns id assignment (one fresh id per distinct constant).
+    /// Registering the same term twice keeps the first id.  This is the nixie
+    /// analogue of Z3's model values (`mk_model_value` + `mark_interpreted`,
+    /// merged-distinct check in `euf_egraph.cpp`): it exists so the large-
+    /// `distinct` injective-map encoding needs O(n) e-graph state instead of
+    /// O(n²) pairwise disequality edges.  See `Solver::encode_distinct_*` in
+    /// `nixie-solver/src/solver/encode.rs`.
+    pub fn declare_value_const(&mut self, term: TermId, value: u32) {
+        self.value_consts.entry(term).or_insert(value);
     }
 
     /// Intern a function application.
@@ -588,6 +679,10 @@ impl EufSolver {
         self.uf.add();
         self.use_list.push(SmallVec::new());
         self.proof_forest.push(SmallVec::new());
+        // Applications are never distinguished values (only leaf constants are
+        // registered via `declare_value_const`), so the class summary starts
+        // empty; a value enters the class only by merging with a marked leaf.
+        self.class_value.push(None);
         // Record the key under which this node is registered in sig_table (None
         // when it will merge into a congruent existing node and so never publish
         // its own signature), so a later signature change in `propagate` can
@@ -1094,6 +1189,11 @@ impl Theory for EufSolver {
             .push(self.atom_watch_trail.len());
         self.pending_trail_limits.push(self.pending_trail.len());
         self.pending_trail.push(self.pending_diseq_conflict);
+        self.value_conflict_trail_limits
+            .push(self.value_conflict_trail.len());
+        self.value_conflict_trail.push(self.pending_value_conflict);
+        self.value_summary_trail_limits
+            .push(self.value_summary_trail.len());
     }
 
     fn pop(&mut self) {
@@ -1156,6 +1256,7 @@ impl Theory for EufSolver {
             self.node_sig_key.truncate(num_nodes);
             self.diseq_watch.truncate(num_nodes);
             self.atom_watch.truncate(num_nodes);
+            self.class_value.truncate(num_nodes);
 
             // Rewind use_list_trail: for each append recorded during the popped
             // scope, pop exactly one entry off the recorded node's use-list.
@@ -1227,6 +1328,33 @@ impl Theory for EufSolver {
                 self.pending_trail.truncate(pending_limit);
             }
 
+            // Restore pending_value_conflict the same way, then rewind the
+            // class-value summary writes made by this scope's merges.  Each
+            // entry names the surviving root whose slot was overwritten and the
+            // value it held before; LIFO replay undoes them exactly (a slot
+            // rewritten twice in the scope is restored twice, ending at its
+            // scope-entry value).  Entries whose node was truncated away by this
+            // same pop are skipped: their slots no longer exist, and a re-intern
+            // of the term rebuilds the mark from `value_consts`.
+            if let Some(value_limit) = self.value_conflict_trail_limits.pop() {
+                self.pending_value_conflict = self
+                    .value_conflict_trail
+                    .get(value_limit)
+                    .copied()
+                    .unwrap_or(None);
+                self.value_conflict_trail.truncate(value_limit);
+            }
+            if let Some(summary_limit) = self.value_summary_trail_limits.pop() {
+                while self.value_summary_trail.len() > summary_limit {
+                    let Some((root, old)) = self.value_summary_trail.pop() else {
+                        break;
+                    };
+                    if (root as usize) < self.class_value.len() {
+                        self.class_value[root as usize] = old;
+                    }
+                }
+            }
+
             // Remove term_to_node mappings that point to removed nodes.  Every
             // term maps to the node created for it (never to a borrowed congruent
             // one), and nodes are truncated in LIFO order, so this drops exactly
@@ -1277,6 +1405,18 @@ impl Theory for EufSolver {
         self.diseqs.clear();
         self.pending.clear();
         self.use_list.clear();
+        // Distinct-value state: the per-class summaries and any pending value
+        // conflict are incremental (rebuilt by the replay that follows a
+        // reset), but `value_consts` is a symbol-level registry and is
+        // deliberately NOT cleared – a rebuilt node for a registered term must
+        // reacquire its mark or the pairwise distinctness the caller declared
+        // would silently vanish.
+        self.class_value.clear();
+        self.pending_value_conflict = None;
+        self.value_conflict_trail.clear();
+        self.value_conflict_trail_limits.clear();
+        self.value_summary_trail.clear();
+        self.value_summary_trail_limits.clear();
         self.sig_table.clear();
         self.node_sig_key.clear();
         self.diseq_watch.clear();

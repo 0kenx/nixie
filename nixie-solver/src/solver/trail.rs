@@ -266,6 +266,12 @@ impl super::Solver {
             next_skolem_id: _, // INVARIANT: monotone – a popped scope's Skolem
             // names must never be handed out again, so this counter deliberately
             // survives `pop` (re-using an id would alias two distinct witnesses).
+            next_distinct_id: _, // INVARIANT: monotone – same rationale as
+            // `next_skolem_id`: a popped large-`distinct` encoding's fresh sort,
+            // functions and e-graph value ids must never be re-attached to a
+            // different encoding, and re-encoding the same `Distinct` term after
+            // a pop must mint a fresh family rather than collide with the popped
+            // one's (still-interned) terms.
             case_split_terms: _, // PER-SEARCH: cleared at `check_core` entry, so a
             // value left by a popped scope's `check` is overwritten before the
             // next search reads it (the case-split lemmas are SAT-scoped and
