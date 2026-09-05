@@ -378,28 +378,49 @@ impl Solver {
     /// clauses (original + learned). Used before re-running substitution during
     /// inprocessing so the SCC sees equivalences exposed by learned binaries.
     pub(super) fn refresh_binary_graph(&mut self) {
-        self.binary_graph.clear();
-        let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
-        for cid in live_ids {
-            let lits: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-                Some(c) if !c.deleted && c.lits.len() == 2 => c.lits.iter().copied().collect(),
-                _ => continue,
-            };
-            let (a, b) = (lits[0], lits[1]);
-            self.binary_graph.add(a.negate(), b, cid);
-            self.binary_graph.add(b.negate(), a, cid);
+        // Two-phase CSR build: count every edge the refill will add, freeze
+        // the exact-size layout, then fill. This replaces the per-literal
+        // `Vec` refill whose doubling growth transiently doubled the BIG's
+        // footprint on binary-dense instances (~250 MB cap vs ~165 MB
+        // live on worker-class). Content and per-literal order are exactly
+        // the old refill's: ids ascending, two edges per live binary.
+        self.binary_graph.build_reset(self.num_vars);
+        for cid in self.clauses.iter_ids() {
+            if let Some(c) = self.clauses.get(cid)
+                && !c.deleted
+                && c.lits.len() == 2
+            {
+                let (a, b) = (c.lits[0], c.lits[1]);
+                self.binary_graph.build_count(a.negate());
+                self.binary_graph.build_count(b.negate());
+            }
         }
-        // Drop the doubling/elimination-churn capacity slack the refill just
-        // re-created (see `BinaryImplicationGraph::shrink`); on binary-dense
-        // instances this is the difference between ~250 MB and ~165 MB of
-        // standing BIG allocation. Trajectory-neutral by construction.
+        self.binary_graph.build_layout();
+        for cid in self.clauses.iter_ids() {
+            if let Some(c) = self.clauses.get(cid)
+                && !c.deleted
+                && c.lits.len() == 2
+            {
+                let (a, b) = (c.lits[0], c.lits[1]);
+                self.binary_graph.build_edge(a.negate(), b, cid);
+                self.binary_graph.build_edge(b.negate(), a, cid);
+            }
+        }
+        // The CSR layout is exact by construction; this only drops the
+        // flat buffer's `Vec` margin (trajectory-neutral).
         self.binary_graph.shrink();
     }
 
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
         let num_vars = self.num_vars;
         self.watches = WatchLists::new(num_vars);
-        self.binary_graph.clear();
+        // Two-phase CSR build (count → layout → fill): the count pass must
+        // apply exactly the filters the fill pass applies (nothing mutates
+        // the clause database between the two, so the same live set is seen
+        // twice). Replaces the per-literal `Vec` refill whose doubling
+        // growth transiently doubled the BIG's footprint on binary-dense
+        // instances (~250 MB cap vs ~165 MB live on worker-class).
+        self.binary_graph.build_reset(num_vars);
         // Phantom tick-parity reset: the old scheme's rebuild re-created one
         // watch entry per live-binary direction; the refill below bumps one
         // phantom per direction in exactly the same places (see
@@ -414,48 +435,71 @@ impl Solver {
         // copied every clause's literals – on a 10.3 M-clause instance that
         // was a ~40 MB Vec plus 10.3 M copies per rebuild, and the rebuild
         // itself measured ≈ 520 instructions per clause.
-        let Solver {
-            clauses,
-            watches,
-            binary_graph,
-            learned_clause_ids,
-            ..
-        } = self;
-        for cid in clauses.iter_ids() {
-            let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
-                continue;
-            };
-            if c.lits.len() < 2 {
-                // Units are level-0 facts on the trail.
-                continue;
+        {
+            let Solver {
+                clauses,
+                watches,
+                binary_graph,
+                ..
+            } = self;
+            for cid in clauses.iter_ids() {
+                let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                    continue;
+                };
+                if c.lits.len() == 2 {
+                    let (a, b) = (c.lits[0], c.lits[1]);
+                    binary_graph.build_count(a.negate());
+                    binary_graph.build_count(b.negate());
+                    // The phantom count is part of the tick-parity contract:
+                    // one per direction, exactly where the edges land.
+                    watches.phantom_bump(a.negate());
+                    watches.phantom_bump(b.negate());
+                }
             }
-            let Some(r) = clauses.ref_of(cid) else {
-                debug_assert!(
-                    false,
-                    "freshly added/known-live clause id without arena slot"
-                );
-                continue;
-            };
-            let (a, b) = (c.lits[0], c.lits[1]);
-            if c.lits.len() == 2 {
-                // BIG-authoritative BCP (2026-09): a live binary registers
-                // ONLY in the binary implication graph (plus its phantom
-                // tick count) – never in the watch lists. The BIG scan in
-                // `propagate()` runs before the watch scan, so a watch entry
-                // for a binary could never reach its arena load.
-                binary_graph.add(a.negate(), b, cid);
-                binary_graph.add(b.negate(), a, cid);
-                watches.phantom_bump(a.negate());
-                watches.phantom_bump(b.negate());
-                continue;
-            }
-            watches.add(a.negate(), Watcher::new(cid, r, b));
-            watches.add(b.negate(), Watcher::new(cid, r, a));
         }
-        learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
-        // Drop the doubling slack the refill just re-created (see
-        // `BinaryImplicationGraph::shrink`). The watch lists above were
-        // rebuilt into fresh `Vec`s, so their slack is already minimal.
-        binary_graph.shrink();
+        self.binary_graph.build_layout();
+        {
+            let Solver {
+                clauses,
+                watches,
+                binary_graph,
+                learned_clause_ids,
+                ..
+            } = self;
+            for cid in clauses.iter_ids() {
+                let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                    continue;
+                };
+                if c.lits.len() < 2 {
+                    // Units are level-0 facts on the trail.
+                    continue;
+                }
+                let Some(r) = clauses.ref_of(cid) else {
+                    debug_assert!(
+                        false,
+                        "freshly added/known-live clause id without arena slot"
+                    );
+                    continue;
+                };
+                let (a, b) = (c.lits[0], c.lits[1]);
+                if c.lits.len() == 2 {
+                    // BIG-authoritative BCP (2026-09): a live binary registers
+                    // ONLY in the binary implication graph (plus its phantom
+                    // tick count) – never in the watch lists. The BIG scan in
+                    // `propagate()` runs before the watch scan, so a watch entry
+                    // for a binary could never reach its arena load.
+                    binary_graph.build_edge(a.negate(), b, cid);
+                    binary_graph.build_edge(b.negate(), a, cid);
+                    continue;
+                }
+                watches.add(a.negate(), Watcher::new(cid, r, b));
+                watches.add(b.negate(), Watcher::new(cid, r, a));
+            }
+            learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
+        }
+        // The CSR layout is exact by construction; this only drops the flat
+        // buffer's `Vec` margin. The watch lists above were rebuilt into
+        // fresh `Vec`s, so their slack is already minimal.
+        self.binary_graph.shrink();
     }
 }

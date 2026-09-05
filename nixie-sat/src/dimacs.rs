@@ -103,21 +103,42 @@ impl DimacsParser {
 
     /// Parse from a reader
     ///
-    /// Byte-level scanning: the whole input is read once and tokens are
-    /// parsed by hand (`[+-]?digits`) instead of `str::parse::<i32>` per
-    /// whitespace-split token. Semantics are identical to the previous
-    /// line/token version, including its quirks (a line whose first
-    /// non-space character is `c` is skipped *entirely*, `%` ends parsing,
-    /// a token that is not a valid `i32` is an error naming that token).
+    /// Wraps the byte-level parse implementation (the private
+    /// `parse_reader_impl` below) in the bulk-load deferral pair
+    /// (`Solver::begin_deferred_big` / `finish_deferred_big`): binary
+    /// clauses attach without their BIG edges while parsing, and the graph
+    /// is materialized in one exact-size CSR build at the end — same
+    /// edges, same per-literal order, no per-literal doubling churn (the
+    /// parse-time BIG overshoot measured ~85 MB above live on
+    /// worker-class instances, and its freed slack stayed resident in
+    /// allocator bins for the whole run). The wrapper shape guarantees the
+    /// finish runs on the success AND every error path.
     ///
     /// # Errors
     ///
     /// Returns an error if parsing fails
     pub fn parse_reader<R: BufRead>(
         &mut self,
+        reader: R,
+        solver: &mut Solver,
+    ) -> Result<(), DimacsError> {
+        solver.begin_deferred_big();
+        let result = self.parse_reader_impl(reader, solver);
+        solver.finish_deferred_big();
+        result
+    }
+
+    fn parse_reader_impl<R: BufRead>(
+        &mut self,
         mut reader: R,
         solver: &mut Solver,
     ) -> Result<(), DimacsError> {
+        // Byte-level scanning: the whole input is read once and tokens are
+        // parsed by hand (`[+-]?digits`) instead of `str::parse::<i32>` per
+        // whitespace-split token. Semantics are identical to the previous
+        // line/token version, including its quirks (a line whose first
+        // non-space character is `c` is skipped *entirely*, `%` ends parsing,
+        // a token that is not a valid `i32` is an error naming that token).
         let mut current_clause = Vec::new();
         let mut _clauses_read = 0;
 
@@ -305,6 +326,11 @@ impl DimacsParser {
                         let line = &text[start..i];
                         self.parse_problem_line(line.trim_end())?;
                         solver.ensure_vars(self.num_vars);
+                        // Exact-size the id→ref table from the header count
+                        // (bounded; see `reserve_clause_slots`).
+                        if self.num_clauses > 0 {
+                            solver.reserve_clause_slots(self.num_clauses);
+                        }
                         line_has_content = false;
                         continue;
                     }

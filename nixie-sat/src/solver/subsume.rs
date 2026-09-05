@@ -137,7 +137,7 @@ impl Solver {
                 // under `l` itself encode `(¬l ∨ other)`, which cannot be a
                 // subset of `c` at all – reading them was a false-subsumption
                 // bug that deleted live clauses and flipped UNSAT to SAT.
-                for &(other, bin_id) in self.binary_graph.get(l.negate()) {
+                for &(other, bin_id) in self.binary_graph.get(l.negate()).iter() {
                     // A binary-graph edge may outlive its clause (deletion
                     // paths that don't scrub the graph). Subsuming against a
                     // dead edge deletes live clauses on the word of a clause

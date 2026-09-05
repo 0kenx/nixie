@@ -99,47 +99,170 @@ const ELS_PRESEARCH_MAX_ROUNDS: u32 = 4;
 
 #[derive(Debug, Clone)]
 pub(super) struct BinaryImplicationGraph {
-    /// implications[lit] = list of (implied_lit, clause_id) pairs
-    implications: Vec<Vec<(Lit, ClauseId)>>,
+    /// CSR layout over literal codes: `code`'s primary span is
+    /// `edges[span_start(code)..span_start(code)+live[code]]` where
+    /// `span_start(code)` reads `span_end[code-1]` (`0` for `code == 0`).
+    /// Fixed at [`Self::build_layout`]; only [`Self::live`] shrinks
+    /// (deletions compact the span in place, order-preserving).
+    span_end: Vec<u32>,
+    /// Live length of each code's primary span (`<=` the span extent;
+    /// doubles as the counting cursor between `build_reset` and
+    /// `build_layout`, exactly like `RoundOccs::prim_len`).
+    live: Vec<u32>,
+    /// Flat edge storage: `(implied lit, clause id)`, id-ascending within
+    /// each span by construction (rebuilds iterate ids ascending).
+    edges: Vec<(Lit, ClauseId)>,
+    /// Post-build appends per literal (learned binaries, gate-congruence
+    /// sentinels, factoring products): every append's id is strictly
+    /// greater than any id in the primary (ids are append-only and the
+    /// primary froze at layout time), so primary-then-extra is globally
+    /// id-ascending — the chronological order the old single per-literal
+    /// `Vec` held.
+    extra: Vec<Vec<(Lit, ClauseId)>>,
+}
+
+/// Combined read view of one literal's BIG edges: the primary span then
+/// the post-build overflow. Indexing, `len` and iteration cover both in
+/// order, so every consumer sees exactly the old `&[(Lit, ClauseId)]`
+/// sequence.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BigList<'a> {
+    primary: &'a [(Lit, ClauseId)],
+    extra: &'a [(Lit, ClauseId)],
+}
+
+/// Iterator over a [`BigList`]'s combined view (primary span then
+/// overflow).
+pub(crate) type BigListIter<'a> = core::iter::Chain<
+    core::slice::Iter<'a, (Lit, ClauseId)>,
+    core::slice::Iter<'a, (Lit, ClauseId)>,
+>;
+
+impl BigList<'_> {
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.primary.len() + self.extra.len()
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.primary.is_empty() && self.extra.is_empty()
+    }
+
+    pub(crate) fn iter(&self) -> BigListIter<'_> {
+        self.primary.iter().chain(self.extra.iter())
+    }
+}
+
+impl core::ops::Index<usize> for BigList<'_> {
+    type Output = (Lit, ClauseId);
+
+    #[inline]
+    fn index(&self, i: usize) -> &(Lit, ClauseId) {
+        if i < self.primary.len() {
+            &self.primary[i]
+        } else {
+            &self.extra[i - self.primary.len()]
+        }
+    }
+}
+
+/// Start offset of `code`'s primary span (`span_end` stores exclusive ends).
+#[inline]
+fn big_span_start(span_end: &[u32], code: usize) -> usize {
+    if code == 0 {
+        0
+    } else {
+        span_end[code - 1] as usize
+    }
 }
 
 impl BinaryImplicationGraph {
     fn new(num_vars: usize) -> Self {
+        let n = num_vars * 2;
         Self {
-            implications: vec![Vec::new(); num_vars * 2],
+            span_end: vec![0; n],
+            live: vec![0; n],
+            edges: Vec::new(),
+            extra: vec![Vec::new(); n],
         }
     }
 
     /// Total live edges and their allocation slack (diagnostics:
-    /// `NIXIE_MEM_STATS`). The BIG is the propagation backbone for binaries
-    /// and, unlike the clause arena, has no compaction — its footprint is
-    /// live edges plus each per-literal Vec's doubling overshoot.
+    /// `NIXIE_MEM_STATS`). The CSR primary is exact-size by construction;
+    /// the only slack is the flat buffer's own `Vec` margin and the
+    /// lazily-allocated overflow lists.
     pub(crate) fn edge_accounting(&self) -> (usize, usize) {
-        let edges: usize = self.implications.iter().map(Vec::len).sum();
-        let cap: usize = self.implications.iter().map(Vec::capacity).sum();
+        let edges: usize = self.live.iter().map(|&l| l as usize).sum::<usize>()
+            + self.extra.iter().map(Vec::len).sum::<usize>();
+        let cap: usize =
+            self.edges.capacity() + self.extra.iter().map(Vec::capacity).sum::<usize>();
         (edges, cap)
     }
 
     fn resize(&mut self, num_vars: usize) {
-        self.implications.resize(num_vars * 2, Vec::new());
+        self.ensure_codes(num_vars * 2);
+    }
+
+    /// Grow the code-indexed arrays to at least `n` codes, preserving the
+    /// CSR invariant: every new code's span is empty and starts where the
+    /// last existing span ended (`span_end`'s new entries copy the current
+    /// total — filling 0 would alias code 0's span and misread its edges
+    /// as the new code's after a mid-search `new_var` growth).
+    fn ensure_codes(&mut self, n: usize) {
+        if n <= self.span_end.len() {
+            return;
+        }
+        let fill = self.span_end.last().copied().unwrap_or(0);
+        self.span_end.resize(n, fill);
+        self.live.resize(n, 0);
+        self.extra.resize(n, Vec::new());
     }
 
     fn add(&mut self, lit: Lit, implied: Lit, clause_id: ClauseId) {
-        self.implications[lit.code() as usize].push((implied, clause_id));
-    }
-
-    /// Owned edge list of `lit`'s trigger (for the take/put-back pattern in
-    /// propagation).
-    fn get_mut(&mut self, lit: Lit) -> &mut Vec<(Lit, ClauseId)> {
         let idx = lit.code() as usize;
-        if idx >= self.implications.len() {
-            self.implications.resize(idx + 1, Vec::new());
-        }
-        &mut self.implications[idx]
+        self.ensure_codes(idx + 1);
+        self.extra[idx].push((implied, clause_id));
     }
 
-    pub(crate) fn get(&self, lit: Lit) -> &[(Lit, ClauseId)] {
-        &self.implications[lit.code() as usize]
+    /// Read view of `lit`'s edges (primary span then overflow).
+    pub(crate) fn get(&self, lit: Lit) -> BigList<'_> {
+        let code = lit.code() as usize;
+        let start = big_span_start(&self.span_end, code);
+        let plen = self.live[code] as usize;
+        BigList {
+            primary: &self.edges[start..start + plen],
+            extra: &self.extra[code],
+        }
+    }
+
+    /// `(start, live_len)` of `code`'s primary span in the flat buffer —
+    /// the propagation hot loop's snapshot (index-based iteration, no
+    /// borrow held across `&mut self` calls).
+    #[inline]
+    pub(crate) fn span_of(&self, code: usize) -> (usize, usize) {
+        (
+            big_span_start(&self.span_end, code),
+            self.live[code] as usize,
+        )
+    }
+
+    /// Copy the primary edge at flat-buffer index `at`.
+    #[inline]
+    pub(crate) fn edge_at(&self, at: usize) -> (Lit, ClauseId) {
+        self.edges[at]
+    }
+
+    /// Overflow length of `code`'s post-build list.
+    #[inline]
+    pub(crate) fn extra_len(&self, code: usize) -> usize {
+        self.extra[code].len()
+    }
+
+    /// Copy the overflow edge `(code, i)`.
+    #[inline]
+    pub(crate) fn extra_at(&self, code: usize, i: usize) -> (Lit, ClauseId) {
+        self.extra[code][i]
     }
 
     /// Iterate every edge as `(trigger, implied, clause_id)`, in key order.
@@ -148,47 +271,105 @@ impl BinaryImplicationGraph {
     /// edge must reference a live binary clause.
     #[cfg_attr(not(debug_assertions), allow(dead_code))]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (Lit, Lit, ClauseId)> + '_ {
-        self.implications
-            .iter()
-            .enumerate()
-            .flat_map(|(code, list)| {
-                let from = Lit::from_code(code as u32);
-                list.iter().map(move |&(to, cid)| (from, to, cid))
-            })
+        self.span_end.iter().enumerate().flat_map(|(code, _)| {
+            let from = Lit::from_code(code as u32);
+            let start = big_span_start(&self.span_end, code);
+            let plen = self.live[code] as usize;
+            self.edges[start..start + plen]
+                .iter()
+                .chain(self.extra[code].iter())
+                .map(move |&(to, cid)| (from, to, cid))
+        })
     }
 
     fn clear(&mut self) {
-        for implications in &mut self.implications {
-            implications.clear();
-        }
+        self.span_end.iter_mut().for_each(|e| *e = 0);
+        self.live.iter_mut().for_each(|l| *l = 0);
+        self.edges.clear();
+        self.extra.iter_mut().for_each(Vec::clear);
     }
 
-    /// Release every per-literal list's capacity slack (`shrink_to_fit`).
+    /// Release allocation slack (`shrink_to_fit`) after a full rebuild.
     ///
-    /// The BIG has no compaction: its allocation is live edges plus each
-    /// list's doubling overshoot, and the elimination/probe churn (edges
-    /// added under a trigger, later `retain`ed away) ratchets capacity up
-    /// to the historical high-water mark -- on worker-class instances the
-    /// measured slack is ~85 MB against ~165 MB live. Shrinking after a
-    /// full rebuild (where the clause set only ever shinks downstream)
-    /// returns that slack to the allocator. Contents and per-literal order
-    /// are untouched, so the propagation trajectory is bit-identical; a
-    /// later `add` beyond the new capacity simply regrows, exactly as a
-    /// fresh build would.
+    /// The CSR primary is exact-size the moment [`Self::build_layout`]
+    /// sized it, so this only tightens the flat buffer's `Vec` margin and
+    /// the overflow lists. It deliberately does NOT fold non-empty
+    /// overflow into the primary: the fold would have to grow the flat
+    /// buffer (a full realloc — a 2x transient on binary-dense
+    /// instances), and every current caller runs it with empty overflow
+    /// straight after a rebuild.
     fn shrink(&mut self) {
-        for implications in &mut self.implications {
-            implications.shrink_to_fit();
-        }
+        self.edges.shrink_to_fit();
+        self.extra.iter_mut().for_each(Vec::shrink_to_fit);
     }
 
-    /// Remove every edge belonging to `clause_id` that is keyed under `trigger`.
+    /// Remove the edge belonging to `clause_id` keyed under `trigger`.
     /// Used to purge binary implications when a clause is retracted so the graph
     /// does not accumulate stale (and, after slot reuse, misleading) edges.
+    /// The primary span is compacted in place (order-preserving memmove) so
+    /// per-literal id-ascending order — the walk's merge contract — never
+    /// breaks; the overflow is `retain`ed like the old per-literal `Vec`.
     fn remove_clause_edges(&mut self, trigger: Lit, clause_id: ClauseId) {
         let idx = trigger.code() as usize;
-        if idx < self.implications.len() {
-            self.implications[idx].retain(|(_, cid)| *cid != clause_id);
+        if idx >= self.live.len() {
+            return;
         }
+        let start = big_span_start(&self.span_end, idx);
+        let plen = self.live[idx] as usize;
+        if let Some(pos) = self.edges[start..start + plen]
+            .iter()
+            .position(|&(_, cid)| cid == clause_id)
+        {
+            self.edges
+                .copy_within(start + pos + 1..start + plen, start + pos);
+            self.live[idx] -= 1;
+            return;
+        }
+        self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+    }
+
+    // ---- two-phase CSR build (count, layout, fill) --------------------
+
+    /// Reset to an empty graph over `num_vars` variables, keeping the
+    /// flat buffer's allocation for the fill pass to reuse.
+    fn build_reset(&mut self, num_vars: usize) {
+        self.resize(num_vars);
+        self.clear();
+    }
+
+    /// Counting pass: bump once per edge that the fill pass will add
+    /// under `trigger`. `live` accumulates the counts until
+    /// [`Self::build_layout`].
+    #[inline]
+    fn build_count(&mut self, trigger: Lit) {
+        let code = trigger.code() as usize;
+        self.live[code] = self.live[code].saturating_add(1);
+    }
+
+    /// Freeze the layout from the counts: exact span ends, exact-size flat
+    /// buffer. `live` is reset to 0 and doubles as the fill cursor.
+    fn build_layout(&mut self) {
+        let mut acc = 0u32;
+        for (end, &count) in self.span_end.iter_mut().zip(self.live.iter()) {
+            acc = acc.saturating_add(count);
+            *end = acc;
+        }
+        self.edges.clear();
+        self.edges
+            .resize(acc as usize, (Lit::pos(Var::new(0)), ClauseId::new(0)));
+        self.live.iter_mut().for_each(|l| *l = 0);
+    }
+
+    /// Fill pass: write one edge at `trigger`'s cursor and advance it.
+    /// Must interleave exactly like the counting pass did. Indexes the
+    /// flat buffer directly: a count/fill mismatch must panic, not
+    /// silently drop an edge (a missing BIG edge is a lost propagation).
+    #[inline]
+    fn build_edge(&mut self, trigger: Lit, implied: Lit, clause_id: ClauseId) {
+        let code = trigger.code() as usize;
+        let at = big_span_start(&self.span_end, code) + self.live[code] as usize;
+        self.edges[at] = (implied, clause_id);
+        self.live[code] += 1;
     }
 }
 
@@ -1138,6 +1319,14 @@ pub struct Solver {
     pub(super) lbd_ema_slow: f64,
     /// Binary implication graph for fast binary clause propagation
     pub(super) binary_graph: BinaryImplicationGraph,
+    /// Bulk-load deferral latch (see [`Solver::begin_deferred_big`]):
+    /// while set, `attach_watchers` suppresses BIG edge insertion for
+    /// binaries (phantom tick counts still bump — they are re-derived by
+    /// the flush's rebuild anyway) and the caller MUST end the bulk load
+    /// with [`Solver::finish_deferred_big`], which materializes the whole
+    /// graph in one exact-size CSR build. The DIMACS parser wraps its
+    /// clause loop in this pair.
+    pub(super) deferred_big_attach: bool,
     /// Global average LBD for local restarts
     pub(super) global_lbd_sum: u64,
     /// Number of conflicts contributing to global LBD
@@ -1462,8 +1651,15 @@ impl Solver {
     pub(super) fn attach_watchers(&mut self, cid: ClauseId, l0: Lit, l1: Lit) {
         let is_binary = self.clauses.get(cid).is_some_and(|c| c.lits.len() == 2);
         if is_binary {
-            self.binary_graph.add(l0.negate(), l1, cid);
-            self.binary_graph.add(l1.negate(), l0, cid);
+            // Under the bulk-load deferral latch the edges are suppressed;
+            // `finish_deferred_big` materializes them (plus these phantom
+            // counts, re-derived by its `phantom_reset`) in one exact-size
+            // CSR build from the arena — same edges, same order, no
+            // per-literal doubling churn.
+            if !self.deferred_big_attach {
+                self.binary_graph.add(l0.negate(), l1, cid);
+                self.binary_graph.add(l1.negate(), l0, cid);
+            }
             self.watches.phantom_bump(l0.negate());
             self.watches.phantom_bump(l1.negate());
             return;
@@ -1582,6 +1778,7 @@ impl Solver {
             lbd_ema_fast: 0.0,
             lbd_ema_slow: 0.0,
             binary_graph: BinaryImplicationGraph::new(0),
+            deferred_big_attach: false,
             global_lbd_sum: 0,
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
@@ -2480,6 +2677,43 @@ impl Solver {
         }
     }
 
+    /// Pre-reserve clause-id slots from a bulk-load header count (DIMACS
+    /// `p cnf <vars> <clauses>`): allocation-shape only, bounded so an
+    /// inflated header cannot request absurd address space (untouched
+    /// pages cost no RSS).
+    pub fn reserve_clause_slots(&mut self, n: usize) {
+        self.clauses.reserve_slots(n.min(1 << 27));
+    }
+
+    /// Begin a bulk clause load with deferred BIG materialization.
+    ///
+    /// While this latch is set, binary clauses attach WITHOUT their BIG
+    /// edges; the caller must later call [`Solver::finish_deferred_big`]
+    /// before any propagation can run. The point is allocation shape: a
+    /// 10M-binary parse inserts ~20M edges through ~190k per-literal
+    /// `Vec`s whose doubling growth peaks at ~1.5x live bytes, and the
+    /// freed slack then sits dead in allocator bins for the rest of the
+    /// run (measured ~85 MB on worker-class instances). The flush builds
+    /// the CSR directly from the arena in two exact-size passes instead.
+    /// Semantics are identical: the rebuilt graph holds exactly the edges
+    /// the incremental attaches would have, in the same id-ascending
+    /// per-literal order.
+    pub fn begin_deferred_big(&mut self) {
+        self.deferred_big_attach = true;
+    }
+
+    /// End a deferred bulk load: materialize the BIG (and watches) from the
+    /// arena in one exact-size CSR build. Idempotent; also invoked
+    /// defensively at `solve*` entry in case a bulk loader aborted between
+    /// the pair.
+    pub fn finish_deferred_big(&mut self) {
+        if !self.deferred_big_attach {
+            return;
+        }
+        self.deferred_big_attach = false;
+        self.rebuild_watches_and_binary_graph();
+    }
+
     /// Scan `clause_lits` against the *current* trail: is any literal true,
     /// what is the highest level among the false literals (0 if there are
     /// none), and which literals are still undefined.
@@ -2946,6 +3180,11 @@ impl Solver {
 
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
+        // Defensive deferral flush: a bulk loader that aborted between
+        // `begin_deferred_big` and `finish_deferred_big` must not reach
+        // propagation with an unmaterialized graph (a missing BIG edge is
+        // a lost binary implication).
+        self.finish_deferred_big();
         // A prior `add_clause` reintroduced a BVE-eliminated variable with no
         // sound way to honor it: refuse rather than risk a wrong verdict.
         if self.fatal_error.is_some() {
@@ -2996,13 +3235,12 @@ impl Solver {
         // CaDiCaL – each strategy is soundness-preserving (a pure scan or a
         // single-literal-at-a-time probe that bails to the root on failure, so
         // a doomed guess never perturbs the watched-literal state).
-        // Release the parse-time BIG capacity slack (per-literal doubling
-        // overshoot from `attach_watchers`) before the lucky window and the
-        // pre-search passes allocate their transients on top of the standing
-        // footprint — the first full watch/BIG rebuild only happens later,
-        // inside elimination. Trajectory-neutral (contents and order
-        // untouched); measured ~85 MB off the pre-search peak on
-        // worker-class instances.
+        // BIG slack posture at solve entry: after a deferred bulk load the
+        // graph was just CSR-built exact-size by `finish_deferred_big`, so
+        // this is a no-op margin drop; for incremental callers that
+        // attached clauses since the last rebuild it releases the overflow
+        // lists' capacity slack before the search's transients stack on
+        // top. Trajectory-neutral (contents and order untouched).
         self.binary_graph.shrink();
         // Same posture for the clause arena's `Vec`-doubling overshoot: the
         // parser appends clause by clause, so the last doubling can leave
@@ -3324,6 +3562,8 @@ impl Solver {
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
+        // Defensive deferral flush (see `Solver::solve`).
+        self.finish_deferred_big();
         // Gatekeeper (SK-1): refuse to answer once a BVE-eliminated variable
         // was reintroduced (no sound way to honor it).
         if self.fatal_error.is_some() {
@@ -4032,7 +4272,7 @@ impl Solver {
                 } else {
                     format!("~v{}", lit.var().index())
                 };
-                for &(implied, _cid) in implications {
+                for &(implied, _cid) in implications.iter() {
                     let impl_str = if implied.is_pos() {
                         format!("v{}", implied.var().index())
                     } else {

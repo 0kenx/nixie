@@ -2075,3 +2075,169 @@ fn xor_search_differential_random() {
         }
     }
 }
+
+/// Reference model for the CSR binary implication graph's combined-view
+/// semantics (`solver/mod.rs`): a `Vec<Vec<(Lit, ClauseId)>>` shaped exactly
+/// like the historical per-literal lists. Every randomized op sequence below
+/// is applied to both, and the per-literal sequences must match after every
+/// step — this is the BIG-side twin of `round_occs_matches_vec_semantics`
+/// (the eliminator CSR's guard) and pins the same contract the walk's
+/// by-id merge and propagation's scan order depend on.
+#[test]
+fn binary_graph_matches_vec_semantics() {
+    let mut rng: u64 = 0x243F6A8885A308D3;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for round in 0..30u64 {
+        let vars = 6 + (next() % 10) as usize;
+        let mut big = BinaryImplicationGraph::new(vars);
+        let mut model: Vec<Vec<(Lit, ClauseId)>> = vec![Vec::new(); vars * 2];
+
+        // Phase A: full rebuild via the two-phase builder (count, layout,
+        // fill) — must reproduce the same per-literal order as pushing the
+        // same edges into the reference.
+        let mut built: Vec<(Lit, Lit, ClauseId)> = Vec::new();
+        for _ in 0..vars * 2 {
+            if next() % 3 != 0 {
+                let a = Lit::from_code((next() % (vars as u64 * 2)) as u32);
+                let b = Lit::from_code((next() % (vars as u64 * 2)) as u32);
+                built.push((a, b, ClauseId::new((next() % 1000) as u32)));
+            }
+        }
+        big.build_reset(vars);
+        for &(a, b, _) in &built {
+            big.build_count(a);
+            big.build_count(b);
+        }
+        big.build_layout();
+        for &(a, b, cid) in &built {
+            big.build_edge(a, b, cid);
+            big.build_edge(b, a, cid);
+            model[a.code() as usize].push((b, cid));
+            model[b.code() as usize].push((a, cid));
+        }
+        big.shrink();
+
+        // Phase B: interleaved incremental adds, order-preserving
+        // deletions, and mid-content variable growth (the `new_var`
+        // mid-search shape: new codes' spans must stay empty and start
+        // past every existing span — a 0-fill here would alias code 0's
+        // span, misreading its edges as the new code's).
+        // Clause ids are unique per (trigger, clause) in the real solver
+        // (one edge per binary per trigger); the randomized model needs the
+        // same uniqueness or "remove first occurrence" is ambiguous.
+        let mut next_cid = 1000u32;
+        let mut cur_vars = vars;
+        for step in 0..200 {
+            if step % 37 == 5 {
+                cur_vars += 1 + (next() % 3) as usize;
+                big.resize(cur_vars);
+                model.resize(cur_vars * 2, Vec::new());
+            }
+            let code = (next() % (cur_vars as u64 * 2)) as u32;
+            let lit = Lit::from_code(code);
+            match next() % 4 {
+                0 | 1 => {
+                    let to = Lit::from_code((next() % (cur_vars as u64 * 2)) as u32);
+                    let cid = ClauseId::new(next_cid);
+                    next_cid += 1;
+                    big.add(lit, to, cid);
+                    model[code as usize].push((to, cid));
+                }
+                2 => {
+                    let list = model[code as usize].clone();
+                    if let Some(&(_, cid)) = list.get((next() as usize) % list.len().max(1))
+                        && !list.is_empty()
+                    {
+                        big.remove_clause_edges(lit, cid);
+                        let pos = model[code as usize]
+                            .iter()
+                            .position(|&(_, c)| c == cid)
+                            .unwrap_or(0);
+                        if pos < model[code as usize].len() {
+                            model[code as usize].remove(pos);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // The contract: every literal's combined view (primary span then
+        // overflow) equals the reference list in content AND order.
+        for (code, reference) in model.iter().enumerate() {
+            let lit = Lit::from_code(code as u32);
+            let got: Vec<(Lit, ClauseId)> = big.get(lit).iter().copied().collect();
+            assert_eq!(
+                got, *reference,
+                "round {round}: BIG view diverged at code {code}"
+            );
+            assert_eq!(big.get(lit).len(), reference.len());
+        }
+        let (edges, _) = big.edge_accounting();
+        assert_eq!(
+            edges,
+            model.iter().map(Vec::len).sum::<usize>(),
+            "edge accounting must count the combined view"
+        );
+    }
+}
+
+/// The bulk-load deferral pair must materialize a graph identical to the one
+/// incremental `attach_watchers` calls build: the DIMACS parse path's
+/// trajectory-neutrality contract, at unit scale. Both solvers get the same
+/// clause stream; one attaches immediately, the other defers and flushes.
+#[test]
+fn deferred_big_materializes_incremental_attach() {
+    let mut rng: u64 = 0x13198A2E03707344;
+    let mut next = || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    for _ in 0..25 {
+        let vars = 8 + (next() % 12) as usize;
+        let mut a = Solver::new();
+        let mut b = Solver::new();
+        for s in [&mut a, &mut b] {
+            s.ensure_vars(vars);
+        }
+        b.begin_deferred_big();
+        for _ in 0..120 {
+            let len = 2 + (next() % 3) as usize;
+            let lits: Vec<Lit> = (0..len)
+                .map(|_| {
+                    let v = Var::new((next() % vars as u64) as u32);
+                    if next() % 2 == 0 {
+                        Lit::pos(v)
+                    } else {
+                        Lit::neg(v)
+                    }
+                })
+                .collect();
+            let mut dedup = lits.clone();
+            dedup.sort_by_key(|l| l.code());
+            dedup.dedup();
+            if dedup.len() != lits.len() {
+                continue; // duplicate literal: add_clause paths diverge
+            }
+            a.add_clause(lits.iter().copied());
+            b.add_clause(lits.iter().copied());
+        }
+        b.finish_deferred_big();
+        for code in 0..vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let va: Vec<(Lit, ClauseId)> = a.binary_graph.get(lit).iter().copied().collect();
+            let vb: Vec<(Lit, ClauseId)> = b.binary_graph.get(lit).iter().copied().collect();
+            assert_eq!(
+                va, vb,
+                "deferred materialization diverged from incremental attach at code {code}"
+            );
+        }
+    }
+}

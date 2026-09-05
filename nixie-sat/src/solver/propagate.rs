@@ -28,29 +28,30 @@ impl Solver {
 
             // First, propagate binary implications (faster).
             //
-            // Take ownership of the trigger's edge list for the scan (same
-            // take/mutate/put-back pattern as the watch list below): the naive
-            // version re-called `binary_graph.get(lit)` per edge – two
-            // bounds-checked loads per implication – and holding the slice
-            // across the loop body is impossible because the calls below take
-            // `&mut self`.
-            //
-            // Put-back correctness rests on a single-threaded invariant (the
-            // whole solver is thread-local; portfolio workers each own their
-            // solver): no edge keyed under `lit` can be appended while `lit`
-            // propagates. The only mid-propagation append source is hyper-
-            // binary resolution, which keys its new edges under negations of
-            // literals *other than* `lit` (its `other_lit` is false while
-            // `lit` is true, and `implied` lands true, so neither negation can
-            // equal `lit`). Assigning the taken vector back therefore cannot
-            // drop an edge added elsewhere during the loop.
+            // The trigger's edges live in the BIG's CSR primary span plus
+            // its post-build overflow; both are iterated by index (one
+            // copied edge per step) so no borrow is held across the `&mut
+            // self` calls below. Span layout and overflow length are
+            // snapshotted up front — nothing can move or append under
+            // `lit` while it propagates (the single-threaded invariant the
+            // old take/put-back version documented: the only mid-
+            // propagation append source is hyper-binary resolution, which
+            // keys its new edges under negations of literals *other than*
+            // `lit`), and deletions never run inside propagation.
             //
             // Most propagated literals have no binary implications at all –
-            // the `is_empty` probe keeps the common case down to one bounds-
-            // checked length load instead of the take/put-back dance.
+            // the `is_empty` probe keeps the common case down to two
+            // length loads instead of the full loop setup.
             if !self.binary_graph.get(lit).is_empty() {
-                let edges = core::mem::take(self.binary_graph.get_mut(lit));
-                for (implied_lit, clause_id) in edges.iter().copied() {
+                let code = lit.code() as usize;
+                let (span_start, plen) = self.binary_graph.span_of(code);
+                let xlen = self.binary_graph.extra_len(code);
+                for i in 0..plen + xlen {
+                    let (implied_lit, clause_id) = if i < plen {
+                        self.binary_graph.edge_at(span_start + i)
+                    } else {
+                        self.binary_graph.extra_at(code, i - plen)
+                    };
                     // Binary clauses are never deleted during search
                     // (reduce_clause_database skips len<=2 clauses), so edges in
                     // the binary implication graph are always valid. The previous
@@ -63,13 +64,10 @@ impl Solver {
                     if value < 0 {
                         // Conflict in binary clause. `lit`'s remaining implication
                         // edges (and its whole watch list) have not been examined,
-                        // so restore the taken edge list before bailing out –
-                        // dropping it would lose every implication keyed under
-                        // `lit` – and requeue the literal (see
+                        // so requeue the literal (see
                         // `Trail::requeue_last_propagated`; preserves the
                         // propagation-queue contract so a later solve() re-visits
                         // it and rescans those edges).
-                        *self.binary_graph.get_mut(lit) = edges;
                         self.note_conflict_prefix();
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
@@ -97,11 +95,6 @@ impl Solver {
                         }
                     }
                 }
-
-                // Put the edge list back (see the take-site invariant above:
-                // nothing appended under `lit` during the scan, so this cannot
-                // drop an edge).
-                *self.binary_graph.get_mut(lit) = edges;
             }
 
             // Take the current watch list, mutate it in place, then move it

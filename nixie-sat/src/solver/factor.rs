@@ -132,7 +132,7 @@ impl Solver {
                 // (parse-time registration + incremental purge on this
                 // pass's deletions); the random-access arena lookups
                 // dominated the scan cost (~20x kissat's per-tick rate).
-                for (q, _cid) in self.binary_graph.get(f.negate()) {
+                for &(q, _cid) in self.binary_graph.get(f.negate()).iter() {
                     if q.var() != f.var() && !self.trail.is_assigned(q.var()) {
                         n += 1;
                     }
@@ -180,7 +180,7 @@ impl Solver {
                 let mut count: FxHashMap<u32, Vec<(Lit, crate::clause::ClauseId)>> =
                     FxHashMap::default();
                 'quot: for (q, qcid) in &quotients {
-                    for (t, wcid) in self.binary_graph.get(q.negate()) {
+                    for (t, wcid) in self.binary_graph.get(q.negate()).iter() {
                         edge_visits += 1;
                         if edge_visits > edge_budget {
                             budget_hit = true;

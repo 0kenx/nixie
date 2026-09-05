@@ -776,6 +776,18 @@ impl ClauseDatabase {
         self.refs.len()
     }
 
+    /// Pre-reserve `n` id→ref slots for a bulk load whose clause count is
+    /// known up front (the DIMACS `p cnf` line). Purely an allocation-shape
+    /// hint: contents, ids and order are untouched, and the reserve never
+    /// changes what `add_*` does — without it the `refs` table's doubling
+    /// growth peaks at up to 2x live bytes (a ~41 MB table on a 10.3
+    /// M-clause instance transiently holds ~66 MB). The caller-side bound
+    /// (`min(header_count, 2^27)`) keeps an attacker-inflated header from
+    /// requesting absurd address space; untouched pages cost no RSS.
+    pub fn reserve_slots(&mut self, n: usize) {
+        self.refs.reserve(n);
+    }
+
     /// Iterate over all non-deleted clause IDs, in id (allocation) order –
     /// the same order the previous `Vec<Clause>` index walked.
     pub fn iter_ids(&self) -> impl Iterator<Item = ClauseId> + '_ {
