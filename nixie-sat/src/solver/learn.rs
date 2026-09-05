@@ -117,6 +117,12 @@ pub(crate) struct InprocBudgets {
     /// Transitive-reduction step budget (cadical `transredeffort` = 100‰
     /// of the window; our steps are a close analogue of its tick budget).
     pub transred_steps: u64,
+    /// Mid-search BVA pair-index build cap (entries) — a work bound in the
+    /// scan's own unit (kissat budgets `factor` at 50‰ of window ticks;
+    /// entries ≈ clauses × pairs are the scan's dominant cost).
+    pub bva_entries: u64,
+    /// Mid-search BVA introduction cap for this round.
+    pub bva_intros: u64,
 }
 
 impl InprocBudgets {
@@ -128,6 +134,8 @@ impl InprocBudgets {
             vivify_allowed: true,
             subsume_checks: 0,
             transred_steps: 0,
+            bva_entries: 0,
+            bva_intros: 0,
         }
     }
 }
@@ -188,6 +196,8 @@ impl Solver {
             subsume_checks,
             transred_steps: (w.saturating_mul(TRANSRED_EFFORT_PERMILLE) / 1000)
                 .max(TRANSRED_MIN_STEPS),
+            bva_entries: w.clamp(200_000, MAX_PAIR_INDEX_ENTRIES_BUDGET),
+            bva_intros: (w / 1000).clamp(50, 10_000),
         }
     }
 }
@@ -200,6 +210,7 @@ const SUBSUME_MIN_CHECKS: u64 = 1_000_000;
 const SUBSUME_MAX_CHECKS: u64 = 1_000_000_000;
 const TRANSRED_EFFORT_PERMILLE: u64 = 100;
 const TRANSRED_MIN_STEPS: u64 = 10_000;
+const MAX_PAIR_INDEX_ENTRIES_BUDGET: u64 = 8_000_000;
 
 impl Solver {
     /// Install the consequence of a freshly learned clause on the trail.
@@ -1725,7 +1736,7 @@ impl Solver {
                      orig={}->{} learned={}->{} yield={work_yield} db={} \
                      lbd_ema={:.2}/{:.2} \
                      els={} units={} shr={} sub={} tred={} tfailed={} \
-                     pass_props els={} pure_sub={} vivify={} tred={}",
+                     pass_props els={} bva={} pure_sub={} vivify={} tred={} bva_n={}",
                     budgets_used.window,
                     budgets_used.vivify_props,
                     budgets_used.vivify_allowed,
@@ -1748,6 +1759,8 @@ impl Solver {
                     self.inproc_diag_props[1],
                     self.inproc_diag_props[2],
                     self.inproc_diag_props[3],
+                    self.inproc_diag_props[4],
+                    self.stats.bva_introduced,
                 );
             }
         }
@@ -2877,15 +2890,52 @@ impl Solver {
             }
         }
 
-        // Create preprocessor with current number of variables
-        let mut preprocessor = Preprocessor::new(self.num_vars);
-
-        // Per-pass cost attribution: pure-literal + subsume pass marker.
-        // (also closes the ELS slot: its delta is the props spent above)
-        let mut diag_props = [0u64; 4];
+        // Mid-search structured BVA (kissat `factor`-class component; see
+        // `solver/bva.rs`): introduce aux vars merging original-clause
+        // groups under the round's effort budgets.  Runs BEFORE the
+        // pure-literal/subsume passes so they see (and can consume) the
+        // introduced structure — and BEFORE the `Preprocessor` is sized,
+        // since introductions grow the variable space its occurrence
+        // arrays are indexed by.  Introductions leave watches/BIG stale
+        // and can add level-0 units ((G ∨ t) with G fully false forces t,
+        // then each (¬t ∨ U_i) forces U_i) — rebuild and re-propagate
+        // immediately; a conflict there is a genuine Unsat certificate
+        // over live clauses.
+        //
+        // Per-pass cost attribution: BVA pass marker (also closes the ELS
+        // slot: its delta is the props spent above).
+        let mut diag_props = [0u64; 5];
         if let Some(p) = els_p0 {
             diag_props[0] = self.stats.propagations.saturating_sub(p);
         }
+        let bva_p0 = t.then_some(self.stats.propagations);
+        let mut introduced_now = 0usize;
+        if self.config.enable_mid_bva {
+            let (n, _saved) = self.structured_bva_mid();
+            introduced_now += n;
+        }
+        if self.config.enable_mid_andgate {
+            introduced_now += self.and_gate_factoring_mid();
+        }
+        if introduced_now > 0 {
+            self.rebuild_watches_and_binary_graph();
+            if self.propagate().is_some() {
+                // Level-0 conflict from the re-encoded clauses: the
+                // original formula was already falsified by the
+                // level-0 trail (the encodings' old→new directions make
+                // this sound — see `solver/bva.rs`).
+                self.trivially_unsat = true;
+                return;
+            }
+        }
+        if let Some(p) = bva_p0 {
+            diag_props[1] = self.stats.propagations.saturating_sub(p);
+        }
+
+        // Create preprocessor with the CURRENT number of variables —
+        // after BVA, which may have introduced new ones.
+        let mut preprocessor = Preprocessor::new(self.num_vars);
+        // Per-pass cost attribution: pure-literal + subsume pass marker.
         let puresub_p0 = t.then_some(self.stats.propagations);
         // Snapshot every live clause's literals before the elimination passes
         // below run. `Preprocessor::pure_literal_elimination` and
@@ -3017,7 +3067,7 @@ impl Solver {
 
         // Per-pass cost attribution: vivify pass marker (closes pure+sub).
         if let Some(p) = puresub_p0 {
-            diag_props[1] = self.stats.propagations.saturating_sub(p);
+            diag_props[2] = self.stats.propagations.saturating_sub(p);
         }
         let viv_p0 = t.then_some(self.stats.propagations);
 
@@ -3029,7 +3079,7 @@ impl Solver {
 
         // Per-pass cost attribution: transred pass marker (closes vivify).
         if let Some(p) = viv_p0 {
-            diag_props[2] = self.stats.propagations.saturating_sub(p);
+            diag_props[3] = self.stats.propagations.saturating_sub(p);
         }
         let tred_p0 = t.then_some(self.stats.propagations);
 
@@ -3040,7 +3090,7 @@ impl Solver {
         // surface as forced level-0 units.
         let (_tred, _tfailed) = self.transred_round();
         if let Some(p) = tred_p0 {
-            diag_props[3] = self.stats.propagations.saturating_sub(p);
+            diag_props[4] = self.stats.propagations.saturating_sub(p);
         }
 
         // Stash the per-pass deltas for the round-site trace (telemetry).

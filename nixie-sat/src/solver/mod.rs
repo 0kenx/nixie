@@ -522,6 +522,27 @@ pub struct SolverConfig {
     /// `docs/studies/2026-08-sbva.md`.  Experiment knob `NIXIE_SBVA=1`
     /// (and `NIXIE_SBVA_NULL=1` for the matched-null arm).
     pub enable_sbva: bool,
+    /// Mid-search structured BVA (`solver/bva.rs`, the inprocessing-round
+    /// slice): candidate introductions fired inside `inprocess()` rounds
+    /// under effort budgets, with mid-search hygiene (live-reason groups
+    /// skipped, eliminator re-marking, watch/BIG rebuild + re-propagation
+    /// after introductions).  Default off — study arm
+    /// `docs/studies/2026-09-07-inproc-effort-schedule.md` follow-up #0
+    /// (kissat's `factor` owns up to 71 % of its ticks on the worker
+    /// class).  Knobs `NIXIE_BVA_MID=1` / `NIXIE_BVA_MID_NULL=1` in
+    /// `stats_solve`.
+    pub enable_mid_bva: bool,
+    /// Matched null for [`Self::enable_mid_bva`]: identical candidate
+    /// generation, budgets and application, scrambled rank key
+    /// (`mid_bva_null`).
+    pub mid_bva_null: bool,
+    /// Mid-search AND-gate factoring (`solver/bva.rs`, the kissat
+    /// `factor`-class rewrite: shared-tail binary groups collapse onto a
+    /// fresh hub variable).  Rides the same `inprocess()` BVA block;
+    /// default off.  Knobs `NIXIE_ANDGATE=1` / `NIXIE_ANDGATE_NULL=1`.
+    pub enable_mid_andgate: bool,
+    /// Matched null for [`Self::enable_mid_andgate`] (scrambled rank).
+    pub mid_andgate_null: bool,
     /// Inprocessing interval (number of conflicts between inprocessing)
     pub inprocessing_interval: u64,
     /// Conflict interval between elimination phases (cadical `elimint`,
@@ -794,6 +815,10 @@ impl Default for SolverConfig {
             enable_gate_congruence: true,
             enable_bve: false,
             enable_sbva: false,
+            enable_mid_bva: false,
+            mid_bva_null: false,
+            enable_mid_andgate: false,
+            mid_andgate_null: false,
             inprocessing_interval: 5000,
             elim_interval: 2000,
             enable_chronological_backtrack: true,
@@ -866,6 +891,10 @@ pub struct SolverStats {
     pub substitutions: u64,
     /// Number of variables eliminated by bounded variable elimination (BVE).
     pub bve_eliminated: u64,
+    /// Number of auxiliary variables introduced by (mid-search) structured
+    /// BVA — each merges a `k ≥ 2` clause group sharing a common literal
+    /// set (`solver/bva.rs`).
+    pub bva_introduced: u64,
     /// Number of clauses removed by forward subsumption.
     pub subsumed_removed: u64,
     /// Number of literals removed by BIG-based self-subsumption.
@@ -1346,7 +1375,7 @@ pub struct Solver {
     /// Per-pass cost attribution of the most recent `inprocess()` round
     /// (`[els_props, purelit_subsume_props, vivify_props, transred_props]`),
     /// written only when `NIXIE_INPROC_TRACE` is on.  Diagnostic only.
-    pub(super) inproc_diag_props: [u64; 4],
+    pub(super) inproc_diag_props: [u64; 5],
 
     /// Completed mid-search `inprocess()` rounds (the effort-schedule
     /// study's round counter; drives the cadical `log10(rounds + 9)` interval
@@ -1821,7 +1850,7 @@ impl Solver {
             global_lbd_count: 0,
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
-            inproc_diag_props: [0; 4],
+            inproc_diag_props: [0; 5],
             inproc_rounds_done: 0,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
@@ -4256,7 +4285,7 @@ impl Solver {
         self.global_lbd_count = 0;
         self.conflicts_since_local_restart = 0;
         self.conflicts_since_inprocessing = 0;
-        self.inproc_diag_props = [0; 4];
+        self.inproc_diag_props = [0; 5];
         self.inproc_rounds_done = 0;
         self.inproc_search_props_mark = 0;
         self.inproc_window_ring = [0, 0];

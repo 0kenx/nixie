@@ -35,6 +35,24 @@ fn main() {
     if let Ok(v) = std::env::var("INPROCESS") {
         cfg.enable_inprocessing = v != "0";
     }
+    // Mid-search BVA study knobs (2026-09-07 follow-up #0): ride the
+    // inprocessing rounds; NIXIE_BVA_MID_NULL implies the treatment flag
+    // (matched null — same generation/budgets/apply, scrambled rank).
+    if let Ok(v) = std::env::var("NIXIE_BVA_MID") {
+        cfg.enable_mid_bva = v != "0";
+    }
+    if std::env::var("NIXIE_BVA_MID_NULL").is_ok() {
+        cfg.enable_mid_bva = true;
+        cfg.mid_bva_null = true;
+    }
+    // AND-gate factoring knobs (same study; independent arm).
+    if let Ok(v) = std::env::var("NIXIE_ANDGATE") {
+        cfg.enable_mid_andgate = v != "0";
+    }
+    if std::env::var("NIXIE_ANDGATE_NULL").is_ok() {
+        cfg.enable_mid_andgate = true;
+        cfg.mid_andgate_null = true;
+    }
     if let Ok(v) = std::env::var("INPROC_INTERVAL")
         && let Ok(n) = v.parse::<u64>()
     {

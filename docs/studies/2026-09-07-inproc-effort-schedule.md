@@ -275,12 +275,65 @@ is pre-search-only, so the port is mid-search safety + effort budgets;
 (c) deeper probing sweeps, 11–18 %. Per §10 these climb the ladder with
 matched nulls; the sbva fuzz guards are the soundness starting point.
 
+### Mid-search BVA + AND-gate factoring slices (2026-09-07, follow-up #0 first cut)
+
+Two rewrite rules landed as env-gated, default-off infrastructure in
+`solver/bva.rs` (config `enable_mid_bva` / `enable_mid_andgate`, knobs
+`NIXIE_BVA_MID` / `NIXIE_ANDGATE` + `_NULL` variants), riding the
+`inprocess()` BVA block under the round effort budgets:
+
+1. **k-way BVA mid-search** (the pre-search rule, budgeted): candidate
+   groups sharing `|G| ≥ 2` common literals.  Fuzz: 30 k differential +
+   10 k null iterations, 0 mismatches, 0 invalid models, introductions
+   confirmed.  **Corpus screen: ZERO introductions on every standing
+   file** — the corpus's original clause sets carry no beneficial
+   `|G| ≥ 2` structure left after pre-search BVE+ELS (consistent with the
+   2026-08-23 pre-search SBVA null).  Also fixed en route: the candidate
+   collection iterated a `RandomState` `HashMap` (per-process order —
+   nondeterministic rank ties); now sorted-key order.
+2. **AND-gate factoring** (kissat `factor`'s rewrite, single-hop slice):
+   `k ≥ 2` original binaries sharing a tail `q` — `(x_i ∨ q)` — become a
+   fresh hub `t` with `(¬t ∨ q)` and `(t ∨ x_i)`, originals deleted.
+   Deliberately NOT literal-saving (+1 clause, +2 literals per group);
+   the return is search structure: the hub centralizes `k` shared
+   implications and re-arms elimination for the partners.  Retirement via
+   `remove_clause` (counters exact); unit-propagation consequences are
+   preserved through the hub, making reason re-pointing sound.  Fuzz:
+   20 k differential + 8 k null iterations (hub-dense generator), 0
+   mismatches, 0 invalid models, introductions confirmed.
+
+Screen (default seed, sched-vivon baseline → +ANDGATE):
+
+| file | base | +gate | note |
+|---|---|---|---|
+| worker_550 | 28 320 | **11 967 (0.42×)** | 4 199 hub intros round 1, avg k≈79 |
+| frb65-12-2 | 691 785 | **358 952 (0.52×)** | |
+| FmlaEquivChain | 844 540 | **601 666 (0.71×)** | |
+| mp1-klieber | TO | **Sat @ 87 218** | flipped IN |
+| 6s167-opt | 72 288 | 87 790 (1.21×) | |
+| mrpp_4x4 | 167 804 | 217 135 (1.29×) | |
+| summle_X4044 | 11 212 | 19 722 (1.76×) | |
+| x9-09054 | 619 692 | TO | flipped OUT |
+| noL-11-14 | 1 072 731 | identical | no groups |
+| Timetable/crypto1/64_25/170058440 | TO | TO | unchanged |
+
+The wins concentrate exactly where the tick decomposition predicted
+(worker-class factor structure); the losses are the usual walk-luck
+chaos.  **Pre-registered next step (the full study)**: 54-file corpus ×
+{sched-vivon, sched-vivon+ANDGATE} × 5 seeds CRN + the lag-2-window null
++ tails on {worker, frb65, FEC, mp1, x9-09054, 6s167, mrpp, summle}; go
+bar: paired P(solve) ≥ baseline AND conflicts geomean ≤ 0.95 AND T/N ≤
+1.05.  kissat's full `factor` generalizes this rule with quotient CHAINS
+(divider binaries per hop, shared-tail matching across hops, structural
+scoring) — the single-hop slice here is the minimal sound core of it.
+
 ### Open follow-ups (pre-registered next steps, re-ranked 2026-09-07)
 
-0. **Mid-search factor/BVA port** (highest measured share — see the tick
-   decomposition above): make `solver/bva.rs` level-0-mid-search-safe with
-   effort budgets, matched null per §2 (same introductions and budgets,
-   scrambled candidate semantics — the `NIXIE_SBVA_NULL` precedent).
+0. **Mid-search factor/BVA port** — **first cut landed** (see the BVA +
+   AND-gate slices section above): k-way BVA measured corpus-null (no
+   groups anywhere), AND-gate factoring screens 0.42–0.71× on the
+   factor classes with the full study pre-registered.  kissat's full rule
+   adds quotient chains + structural hops on top of the landed core.
 1. **Multi-seed corpus P(solve) run** (54 × {off, sched-vivon} × 5 seeds,
    ≈ 540 cells): the single-seed corpus score bar measured luck on
    seed-unstable files; the tails show the flip set collapsing to
