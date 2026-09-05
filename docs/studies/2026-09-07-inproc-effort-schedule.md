@@ -229,8 +229,58 @@ Context: kissat runs its full inprocessing pipeline on these same files
 solves them — the fragility is our search's dependence on lucky
 walk/descent trajectories, not inprocessing per se.
 
-### Open follow-ups (pre-registered next steps)
+### Where the residual conflicts gap lives: kissat tick decomposition (2026-09-07)
 
+After the effort schedule, the anchor files still short of kissat were
+re-examined against kissat's own deterministic tick counters
+(`kissat --statistics`, full solves, 60 s cap) — §12's rule: check first
+whether a gap lives in a component we do not run.
+
+| file | nixie off | nixie best arm | kissat | kissat inproc tick share | dominant components |
+|---|---|---|---|---|---|
+| worker_550 | 106 143 | 28 320 (vivon) | **2 003** | **72 %** | **factor 71 %** |
+| Timetable_C_392 | 32 841 | TO | **31 966** | 67 % | **factor 37 %**, kitten 11 % |
+| FmlaEquivChain | 2 147 581 | 419 157 | 377 701 | 36 % | probing 17 %, kitten 8 %, factor 7 % |
+| 6s167-opt | 118 191 | 72 288 (vivon) | **19 164** | 30 % | probing 18 %, kitten 7.5 % |
+| mrpp_4x4 | 249 027 | 167 804 | 179 485 | 17 % | probing 11 % |
+
+Readings, ranked by size:
+
+1. **FEC and mrpp are at kissat conflicts-parity** once the rounds run at
+   bounded effort — the schedule work closed those classes.
+2. **worker_550 is a factor/BVA class**: kissat refutes in 2 003 conflicts
+   (ours: 28 320 best) while spending **71 % of its ticks in `factor`**
+   (kissat 4.0's structured factoring/BVA, mid-search, effort-budgeted).
+   The search itself is trivial after the restructuring; no retention or
+   branching policy closes a 14× conflicts gap.
+3. **Timetable is not a conflicts gap at all** (kissat 32 k ≈ our off
+   33 k): kissat pays 67 % of its ticks in inprocessing and still solves —
+   its rounds are self-financing because the components produce structure,
+   while ours (subsume/vivify/transred) perturb walk-luck trajectories
+   without restructuring the formula.
+4. **6s167's 3.8× residue tracks kissat's 30 % inprocessing share**
+   (probing 18 % + kitten 7.5 %) — our rounds closed the subsume/vivify
+   part; the remainder is component depth (kissat's probing sweeps are
+   ~26 % of its search work), not retention or branching.
+
+**Campaign redirection**: the conflicts-to-verdict factor (1.33×) does not
+live in search policy — retention shape (screened null, follow-up #3),
+retention signal (2026-09-02 nulls), reactivity (T/N 1.16 above), and
+branching family (VMTF+LRB ≈ kissat EVMTF) are all measured or read out.
+It lives in **inprocessing components we do not run**, ranked by measured
+share: (a) **mid-search factor/BVA** — dominates the worker class
+(14×), large on Timetable/FEC; the landed `solver/bva.rs` infrastructure
+is pre-search-only, so the port is mid-search safety + effort budgets;
+(b) **kitten-class sweeps** (sub-solver equivalences/backbone), 5–11 %;
+(c) deeper probing sweeps, 11–18 %. Per §10 these climb the ladder with
+matched nulls; the sbva fuzz guards are the soundness starting point.
+
+### Open follow-ups (pre-registered next steps, re-ranked 2026-09-07)
+
+0. **Mid-search factor/BVA port** (highest measured share — see the tick
+   decomposition above): make `solver/bva.rs` level-0-mid-search-safe with
+   effort budgets, matched null per §2 (same introductions and budgets,
+   scrambled candidate semantics — the `NIXIE_SBVA_NULL` precedent).
 1. **Multi-seed corpus P(solve) run** (54 × {off, sched-vivon} × 5 seeds,
    ≈ 540 cells): the single-seed corpus score bar measured luck on
    seed-unstable files; the tails show the flip set collapsing to
@@ -241,8 +291,8 @@ walk/descent trajectories, not inprocessing per se.
    vivify (glue-weighted candidate selection, per-tier budgets) as the
    faithful shape.
 3. **The 3.7× learned-clause-usage residue on 6s167** (kissat reuses each
-   learned clause 5.8×) remains the largest untouched structural gap —
-   tier-structured retention (core/tier1/tier2 by glue with `used`
+   learned clause 5.8×; the tick decomposition above now attributes it to
+   component depth, not retention) — tier-structured retention (core/tier1/tier2 by glue with `used`
    promotion) is the untested shape; the 2026-09-02 signal studies tested
    ranking-within-cadical-reduce, not kissat's tier structure.
 
