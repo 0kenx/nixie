@@ -535,6 +535,12 @@ funnel, a matched null, and 30k fuzz (0 mismatches, 0 invalid models).
 | dirty (recency) | 1.0835× | 1.0195× | 169 |
 | **random slice (null)** | **0.9084×** | **0.9102×** | **179** |
 
+| AND-gate mode 1 (bonus arm) | 0.9893× | — | 170 |
+
+(The runner accidentally retained a fourth arm — mode-1 AND-gate on the
+new default — 270 cells recorded with the rest: 0.99× conflicts,
+P(solve) 170 vs 176 — confirming the AND-gate family stays
+corpus-neutral-to-negative and default-off.)
 **T/N = 1.153 — the recency semantic is negative at our round cadence.**
 The same-size RANDOM literal slice beats both the full scan and the
 recency schedule.  Mechanism: rotating partial hygiene — each round
