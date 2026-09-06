@@ -184,3 +184,69 @@ congruence-pair enumeration — a scoped next rung, in
 | + ungated repair | 15.7 s (T/N 0.63 vs null on the larges) |
 | + gated repair (fresh seeds) | 0.93 aggregate T/N — not certifiable, not landed |
 | z3 | 25 ms |
+
+## Attempt 4 — witness-read routing into the model-filtered path (measured nil vs main, reverted)
+
+Deeper instrumentation of the cascade (`NIXIE_DBG_ARRCAS`, per-family
+candidate counts per refinement round on `memory-alias-sat-s0-large`):
+
+* the select population grows +8 per round (2 extensionality witnesses
+  × 2 reads + base reads minted by else-clauses);
+* each witness read over a store chain re-flattens the whole chain the
+  next round: ~+100 `row` candidates per witness pair, ~200 asserted
+  instances per round, 60+ rounds, ~5 500 instances total;
+* `ext` candidates reach ~120/round (mostly deduped no-ops: the two
+  INPUT select-congruence pairs × the grown read-index population).
+
+**The fix tried**: a read whose index is an extensionality witness (a
+fresh variable no input constraint mentions) is a *synthetic* read — its
+flat-chain implications `(w = k_i) ⇒ select = v_i` are vacuously model-true
+until the model puts `w` on a store index.  Such reads were routed into
+the model-filtered candidate list (the `upward` family's contract: assert
+an instance the round the candidate model actually violates it).  Sound
+by the same saturation argument as upward; rounds got cheaper
+(to_add → 0 earlier per round) but the population still grew:
+
+* the else-clause `select(chain,k) = select(base,k) ∨ ⋁(k = k_i)` is
+  asserted anyway — its atoms are *unassigned* in the model, the filter
+  ("skip iff the model proves the instance true") does not skip it, and
+  each one mints another base read (+1 select per witness per round);
+* net wall vs the same-commit main: 15.8→15.8 / 17.7→17.4 / 15.0→13.6 /
+  timeout→timeout — **nil overall**, reverted.
+
+## The actual structural fix (scoped, needs design against Z3)
+
+The cascade is the flat-encoding artifact meeting lazy instantiation:
+per synthetic read, our encoding must either assert a 51-wide else clause
+that the model cannot yet satisfy or leave the read's theory content
+absent (which the saturation gate correctly refuses).  Z3's
+`theory_array_full` has neither problem because it instantiates
+`select(store(a,i,v), j)` **per store level, model-based**: the axiom for
+level `i` is asserted only when the model's `j` reaches that level's
+neighbourhood, and there is no else clause — the base read is just the
+next level's axiom.  The nixie-native equivalent, for witness-borne reads
+only:
+
+1. per-level lazy RoW: assert level `i`'s `(k = i_w ⇒ …)` / `(k ≠ i_w ⇒ …)`
+   pair only when the model's `k` value makes that level relevant (the
+   model filter above, extended to the negative side);
+2. a refutation-based filter contract for synthetic reads: assert only
+   what the model *refutes*, and let saturation be decided by the
+   honesty gates rather than by open atoms — this is the
+   correctness-sensitive half (an accepted model must still interpret
+   the witness reads through the array semantics, which the
+   whole-assertion evaluation checks);
+3. or, cheapest of all: cap the witness population per pair per check
+   (one witness index per pair is semantically sufficient — re-minting
+   per round is pure waste; the deterministic `extensionality_witness`
+   already keys by pair, so the growth comes from the *pair* population,
+   which is the separation universe — see below).
+
+The separation universe was also probed: restricting the model-false
+cause of `array_pair_separation` to atoms assigned above the root level
+(one-line experiment) measured MIXED (one instance 40 s → 24 s, the other
+three unchanged-to-slightly-worse) — and on reflection the gate is
+inverted from its rationale: a level-0 false atom is *unit-propagated*
+(entailed — a genuinely demanded separation), while a level>0 false can
+be a mere decision.  Reverted with the rest; the pair population is not
+the cascade's main engine — the ~5 500-instance closure itself is.
