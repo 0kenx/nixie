@@ -464,6 +464,14 @@ impl ArithSolver {
             expr.add_term(var, coef);
         }
         expr.add_constant(-rhs);
+        // Canonical integer rescaling, same as the non-strict path: the
+        // factor is strictly positive, so neither the strict direction nor
+        // the δ-encoding's satisfiability-equivalence is affected (a
+        // positive rescaling of a row rescales its δ magnitudes, which the
+        // ℚ[ε] framework admits – see `canonicalize_lin_form`).  Only the
+        // SIGN-FLIP half of `normalize_expr` is forbidden here, and it is
+        // not applied.
+        super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
         let integral = self.is_integer && self.is_integral_form(&expr);
         let cache_key = (self.row_key_strict(lhs, rhs), reason);
         if let Some(&slack) = self.atom_rows.get(&cache_key)
@@ -532,20 +540,13 @@ impl ArithSolver {
             return;
         }
 
-        // For integer arithmetic, reduce by GCD
-        if self.is_integer {
-            // Find GCD of all coefficients
-            let gcd = expr
-                .terms
-                .iter()
-                .map(|(_, c)| c.numer().abs())
-                .fold(0i64, |acc, n| if acc == 0 { n } else { gcd_i64(acc, n) });
-
-            if gcd > 1 {
-                let divisor = Rational64::from_integer(gcd);
-                expr.scale(Rational64::one() / divisor);
-            }
-        }
+        // Canonical integer rescaling (positive factor, both modes): keeps
+        // large-constant assertions (e.g. every coefficient a multiple of
+        // 10⁹) out of exact-rational pivot overflow.  Previously integer-mode
+        // only, which left real-mode rows raw – the scaled `gap` LRA twins
+        // overflowed `i64` pivots and bailed to `Unknown` (obligation fuzzer
+        // finding 5; see `canonicalize_lin_form` for the soundness notes).
+        super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
 
         // Ensure first coefficient is positive
         if let Some((_, c)) = expr.terms.first()
@@ -568,19 +569,9 @@ impl ArithSolver {
             return;
         }
 
-        // For integer arithmetic, reduce by GCD only (preserves sign)
-        if self.is_integer {
-            let gcd = expr
-                .terms
-                .iter()
-                .map(|(_, c)| c.numer().abs())
-                .fold(0i64, |acc, n| if acc == 0 { n } else { gcd_i64(acc, n) });
-
-            if gcd > 1 {
-                let divisor = Rational64::from_integer(gcd);
-                expr.scale(Rational64::one() / divisor);
-            }
-        }
+        // Canonical integer rescaling (positive factor, both modes) – same
+        // rationale as `normalize_expr`, sign-preserving by construction.
+        super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
 
         // Sort terms by variable ID – safe because sorting doesn't change the sign
         // of the overall expression for inequalities (we don't negate afterwards).
@@ -835,21 +826,52 @@ impl ArithSolver {
 
             // Check GCD infeasibility if all coefficients are integers
             if !coeffs.is_empty() && coeffs.len() == expr.terms.len() {
-                // Record the integer equality (sum a_i·x_i = const_term) so the
-                // cross-constraint Diophantine consistency check can see it.
-                let eq_terms: Vec<(VarId, i64)> =
-                    expr.terms.iter().map(|(v, c)| (*v, *c.numer())).collect();
+                // Compute GCD of all coefficients — on the RAW form, so the
+                // divisibility test below sees the original magnitudes.
+                let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
+
+                // Record the integer equality (sum a_i·x_i = const_term),
+                // rescaled by gcd(coefficients ∪ {rhs}) so the Hermite view
+                // gets minimal magnitudes: a scaled `gap` system (all
+                // constants multiples of 10⁹) is recorded as its small-integer
+                // core instead of tripping the 2⁴⁰ `i128` magnitude guard.
+                // The division is exact and the factor is positive, so the
+                // integer solution set — and the infeasibility lineage the
+                // Hermite solve reports — is unchanged.
+                let mut scale_g = g;
+                if scale_g > 1 {
+                    // `checked_abs`: `i64::MIN` has no magnitude; keep the raw
+                    // form for that pathological case (recording is still
+                    // exact, just not minimal).
+                    if let Some(rhs_abs) = const_term.checked_abs() {
+                        scale_g = gcd_i64(scale_g, rhs_abs);
+                    }
+                }
+                let eq_terms: Vec<(VarId, i64)> = expr
+                    .terms
+                    .iter()
+                    .map(|&(v, c)| {
+                        let n = *c.numer();
+                        if scale_g > 1 {
+                            (v, n / scale_g)
+                        } else {
+                            (v, n)
+                        }
+                    })
+                    .collect();
+                let eq_rhs = if scale_g > 1 {
+                    const_term / scale_g
+                } else {
+                    const_term
+                };
                 self.int_equalities.push(IntEquation {
                     terms: eq_terms,
-                    rhs: const_term,
+                    rhs: eq_rhs,
                     reason,
                 });
                 // A new equality changes the Diophantine system → invalidate
                 // the cached feasibility verdict.
                 self.int_eq_verdict_cache = None;
-
-                // Compute GCD of all coefficients
-                let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
 
                 if g > 0 && const_term % g != 0 {
                     // GCD infeasibility detected!

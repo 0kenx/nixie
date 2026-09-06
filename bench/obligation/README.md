@@ -148,6 +148,16 @@ with the certificate:
    not wrong answers); an 11-variable `gap` system scaled by 10^9
    returns `unknown` where z3 decides `unsat`. The pure-equality part of
    the parity timeouts is the same LIA equality gap as finding 1.
+   **Update (2026-09-07): the `gap` scaling half is FIXED** by canonical
+   row rescaling (`canonicalize_lin_form` in the arithmetic simplex):
+   every tableau row is divided by `lcm(denominators)/gcd(|numerators|)`
+   at the single choke point rows pass through, so uniformly-scaled
+   systems (all constants × 10^k) enter as their small-integer core and
+   the exact-rational pivot products that overflowed `i64` (→ honest
+   `Unknown` via `resource_limit`) never form.  Both gap polarities at
+   `large` now decide in ~0.01 s (z3 agreement); the `int_equalities`
+   Hermite view gets the same minimal magnitudes.  Remaining open: the
+   `memory`-large timeouts.
 
 ## What this is not
 

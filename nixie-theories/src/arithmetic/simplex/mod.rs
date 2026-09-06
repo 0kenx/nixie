@@ -577,6 +577,131 @@ impl LinExpr {
         }
     }
 }
+
+/// Canonical positive rescaling of a row's coefficients: multiply the whole
+/// linear form by `lcm(denominators) / gcd(|numerators|)` so that every
+/// coefficient becomes an integer and the coefficient set has GCD 1.
+///
+/// This is the Dutertre–de-Moura / Z3 `lar_solver` row normalization.  It is
+/// the overflow defence for exact-rational pivoting: a row asserted with
+/// large constants (e.g. every coefficient a multiple of 10⁹ – the scaled
+/// `gap` family, `scale_log10`) enters the tableau as single-digit integers
+/// instead, and the pivot products that would overflow `i64` at 10⁹·10¹⁰
+/// magnitudes never form.  Pivots on genuinely coprime huge coefficients can
+/// still overflow; those keep the existing honest-bail contract
+/// ([`Simplex::pivot`] transactional checked arithmetic → `resource_limit` →
+/// `Unknown`).
+///
+/// SOUND for every consumer of a row because the rescaling is by a strictly
+/// POSITIVE rational:
+/// * the constraint a row carries is the bound `slack ◦ 0` (`≤`/`≥`/`=`),
+///   and `slack` is defined BY this row – scaling the row rescales the
+///   slack's unit, which no bound outside the row references (all bounds set
+///   by `add_le`/`add_ge`/`add_eq` are exactly `0`);
+/// * strict (`δ`-encoded) bounds stay sound: values live in `ℚ[ε]` ordered
+///   lexicographically, and a positive per-row rescaling of `δ` magnitudes
+///   preserves satisfiability-equivalence with the strict real system by the
+///   classical Dutertre–de-Moura / Cimatti et al. argument (evaluate a
+///   `ℚ[ε]` model at a positive rational `ε₀` smaller than the reciprocal of
+///   the largest `δ`-coefficient in the system);
+/// * reason ids, conflict explanations (Farkas combinations close exactly
+///   in whatever scale each row carries), propagation algebra, cuts (any
+///   positive multiple of a valid cut is valid) and the model (term
+///   variables are never row-scaled) are all scale-invariant or
+///   per-row-consistent.
+///
+/// Transactional like [`Simplex::pivot`]: on any checked-arithmetic overflow
+/// (an `lcm`/`gcd`/rescale that does not fit `i64`) the form is left
+/// untouched and the caller proceeds with the raw expression.
+///
+/// Returns `true` when the form was already canonical (fast-path check for
+/// callers that key caches on the canonical shape).
+pub(crate) fn canonicalize_lin_form(
+    terms: &mut [(VarId, Rational64)],
+    constant: &mut Rational64,
+) -> bool {
+    if terms.is_empty() {
+        return true;
+    }
+    // Fast path: all coefficients already canonical integers with gcd 1.
+    let mut integral = true;
+    for (_, c) in terms.iter() {
+        if *c.denom() != 1 {
+            integral = false;
+            break;
+        }
+    }
+    if integral {
+        let mut g: i64 = 0;
+        for (_, c) in terms.iter() {
+            let Some(abs_n) = c.numer().checked_abs() else {
+                return false;
+            };
+            g = if g == 0 { abs_n } else { gcd_i64(g, abs_n) };
+        }
+        if g == 1 {
+            return true;
+        }
+    }
+    // L = lcm of the denominators (checked).
+    let mut l: i64 = 1;
+    for (_, c) in terms.iter() {
+        let d = *c.denom();
+        let gd = gcd_i64(l, d);
+        if gd == 0 {
+            return false;
+        }
+        let Some(quot) = d.checked_div(gd) else {
+            return false;
+        };
+        let Some(next) = l.checked_mul(quot) else {
+            return false;
+        };
+        l = next;
+    }
+    // N = gcd of the |numerators| scaled onto the common denominator L.
+    let mut n_gcd: i64 = 0;
+    for (_, c) in terms.iter() {
+        let (n, d) = (*c.numer(), *c.denom());
+        let Some(n_abs) = n.checked_abs() else {
+            return false;
+        };
+        let Some(factor) = l.checked_div(d) else {
+            return false;
+        };
+        let Some(scaled) = n_abs.checked_mul(factor) else {
+            return false;
+        };
+        n_gcd = if n_gcd == 0 {
+            scaled
+        } else {
+            gcd_i64(n_gcd, scaled)
+        };
+    }
+    if n_gcd == 0 {
+        // All coefficients zero (callers drop those, but stay total).
+        return false;
+    }
+    let scale = Rational64::new(l, n_gcd);
+    // Dry-run every rescale (the constant is not exact by construction; the
+    // coefficient products are, but go through the same checked path) and
+    // only then commit – the function is transactional.
+    let mut rescaled: Vec<Rational64> = Vec::with_capacity(terms.len());
+    for (_, c) in terms.iter() {
+        let Some(s) = checked_mul_r64(*c, scale) else {
+            return false;
+        };
+        rescaled.push(s);
+    }
+    let Some(new_constant) = checked_mul_r64(*constant, scale) else {
+        return false;
+    };
+    for (i, (_, c)) in terms.iter_mut().enumerate() {
+        *c = rescaled[i];
+    }
+    *constant = new_constant;
+    true
+}
 /// Bound type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -1207,9 +1332,17 @@ impl Simplex {
             }
         }
         key_terms.retain(|(_, c)| !c.is_zero());
+        let mut constant = expr.constant;
+        // Canonical integer rescaling BEFORE the key, so two atoms that
+        // differ only by a positive rational multiple (`2x+2y ≤ 4` and
+        // `x+y ≤ 2`) content-address the SAME row – and so large-constant
+        // assertions (all coefficients multiples of 10⁹, say) enter the
+        // tableau as small integers instead of overflowing exact-rational
+        // pivots (see `canonicalize_lin_form`).
+        canonicalize_lin_form(&mut key_terms, &mut constant);
         let key = LinKey {
             terms: key_terms,
-            constant: expr.constant,
+            constant,
         };
         if let Some(&slack) = self.row_ids.get(&key)
             && self.tableau.contains_key(&slack)
@@ -1243,7 +1376,11 @@ impl Simplex {
     /// non-basic variables, and the slack's assignment is computed
     /// incrementally from its row (Dutertre–de-Ma) instead of forcing the
     /// next `check()` into a full `crash_basis` re-derivation.
-    pub fn intern_row(&mut self, expr: LinExpr) -> VarId {
+    pub fn intern_row(&mut self, mut expr: LinExpr) -> VarId {
+        // Canonical integer rescaling at the single choke point every row
+        // passes through (content-addressed callers pre-normalize for the
+        // key; direct callers land here) – see `canonicalize_lin_form`.
+        canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
         let mut substituted_expr = LinExpr::constant(expr.constant);
         for (var, coef) in &expr.terms {
             if let Some(basic_expr) = self.tableau.get(var).cloned() {

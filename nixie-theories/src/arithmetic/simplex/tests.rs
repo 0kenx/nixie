@@ -573,8 +573,16 @@ mod tests_2 {
         // own. Substituting `b`'s new (huge) `d`-coefficient into this row
         // multiplies two `i64::MAX`-scale values together -- this is where
         // unchecked `Rational64` multiplication would overflow.
+        //
+        // The `+ d` term keeps the row's coefficient GCD at 1 so row
+        // canonicalization (`canonicalize_lin_form`) cannot shrink it: a
+        // lone `i64::MAX·b` would be rescaled to just `b` and the overflow
+        // scenario would evaporate.  Rows whose coefficients genuinely share
+        // a factor are now canonicalized before they ever reach a pivot --
+        // this test pins the contract for the ones that do not.
         let mut row_c = LinExpr::new();
         row_c.terms.push((b, Rational64::new(i64::MAX, 1)));
+        row_c.terms.push((d, Rational64::one()));
         row_c.constant = Rational64::zero();
         let c = simplex.intern_row(row_c);
 
@@ -603,6 +611,15 @@ mod tests_2 {
                 .map(|(_, coef)| *coef),
             Some(Rational64::new(i64::MAX, 1)),
             "row c's coefficient for b must be unchanged by the aborted pivot"
+        );
+        assert_eq!(
+            still_c
+                .terms
+                .iter()
+                .find(|(v, _)| *v == d)
+                .map(|(_, coef)| *coef),
+            Some(Rational64::one()),
+            "row c's coefficient for d must be unchanged by the aborted pivot"
         );
         assert!(
             simplex.tableau.contains_key(&a),
@@ -1071,5 +1088,124 @@ mod soi_pivot_bench {
                 crate::arithmetic::simplex::diag::print();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod canonical_form {
+    use super::super::canonicalize_lin_form;
+    use super::*;
+
+    fn form(
+        terms: Vec<(VarId, Rational64)>,
+        constant: Rational64,
+    ) -> (Vec<(VarId, Rational64)>, Rational64) {
+        let mut terms = terms;
+        let mut constant = constant;
+        canonicalize_lin_form(&mut terms, &mut constant);
+        (terms, constant)
+    }
+
+    fn r(n: i64, d: i64) -> Rational64 {
+        Rational64::new(n, d)
+    }
+
+    #[test]
+    fn scaled_gap_row_reduces_to_small_integers() {
+        // The fuzzer's scaled `gap` shape: every coefficient a multiple of
+        // 10^9.  gcd = 2·10^9 → the row collapses to single digits.
+        let (terms, constant) = form(
+            vec![
+                (0, r(-6_000_000_000, 1)),
+                (1, r(-12_000_000_000, 1)),
+                (2, r(-8_000_000_000, 1)),
+                (3, r(4_000_000_000, 1)),
+                (4, r(2_000_000_000, 1)),
+            ],
+            r(-31_000_000_000, 1),
+        );
+        let expect = vec![
+            (0, r(-3, 1)),
+            (1, r(-6, 1)),
+            (2, r(-4, 1)),
+            (3, r(2, 1)),
+            (4, r(1, 1)),
+        ];
+        assert_eq!(terms, expect);
+        // -31e9 / 2e9 = -15.5 exactly.
+        assert_eq!(constant, r(-31, 2));
+    }
+
+    #[test]
+    fn fractional_coefficients_scale_by_denominator_lcm() {
+        // x/2 + y/3 → (lcm 6, gcd(3,2)=1) → 3x + 2y.
+        let (terms, _) = form(vec![(0, r(1, 2)), (1, r(1, 3))], Rational64::zero());
+        assert_eq!(terms, vec![(0, r(3, 1)), (1, r(2, 1))]);
+    }
+
+    #[test]
+    fn mixed_fractions_reduce_to_gcd_one() {
+        // (2/3)x + 4y → lcm 3, numerators 2, 12, gcd 2 → scale 3/2 →
+        // x + 6y.
+        let (terms, _) = form(vec![(0, r(2, 3)), (1, r(4, 1))], Rational64::zero());
+        assert_eq!(terms, vec![(0, r(1, 1)), (1, r(6, 1))]);
+    }
+
+    #[test]
+    fn already_canonical_form_is_untouched() {
+        let (terms, constant) = form(vec![(0, r(2, 1)), (1, r(-3, 1))], r(5, 2));
+        assert_eq!(terms, vec![(0, r(2, 1)), (1, r(-3, 1))]);
+        assert_eq!(constant, r(5, 2));
+    }
+
+    #[test]
+    fn negative_scale_is_never_applied() {
+        // All-negative coefficients: the factor is positive (gcd of
+        // absolute values), so signs are preserved — negating would flip
+        // the strict-bound meaning downstream.
+        let (terms, _) = form(vec![(0, r(-4, 1)), (1, r(-6, 1))], Rational64::zero());
+        assert_eq!(terms, vec![(0, r(-2, 1)), (1, r(-3, 1))]);
+    }
+
+    #[test]
+    fn i64_min_numerator_bails_without_mutation() {
+        // |i64::MIN| has no magnitude; the form must be left untouched
+        // rather than wrap.
+        let (terms, constant) = form(vec![(0, r(i64::MIN, 1)), (1, r(1, 1))], r(7, 1));
+        assert_eq!(terms, vec![(0, r(i64::MIN, 1)), (1, r(1, 1))]);
+        assert_eq!(constant, r(7, 1));
+    }
+
+    #[test]
+    fn empty_form_is_canonical() {
+        let (terms, constant) = form(vec![], r(3, 2));
+        assert!(terms.is_empty());
+        assert_eq!(constant, r(3, 2));
+    }
+
+    #[test]
+    fn rows_differing_by_a_positive_multiple_share_one_slack() {
+        // Content addressing through the canonical form: `2x+2y-4` and
+        // `x+y-2` are the same row, so both atoms constrain one slack.
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        let y = simplex.new_var();
+
+        let mut a = LinExpr::new();
+        a.terms.push((x, r(2, 1)));
+        a.terms.push((y, r(2, 1)));
+        a.constant = r(-4, 1);
+        let slack_a = simplex.intern_row_cached(&a);
+
+        let mut b = LinExpr::new();
+        b.terms.push((x, r(1, 1)));
+        b.terms.push((y, r(1, 1)));
+        b.constant = r(-2, 1);
+        let slack_b = simplex.intern_row_cached(&b);
+
+        assert_eq!(
+            slack_a, slack_b,
+            "positively-proportional forms must share a row"
+        );
     }
 }
