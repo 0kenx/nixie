@@ -197,14 +197,21 @@ fn factor_sched_mode() -> FactorSched {
     #[cfg(feature = "std")]
     {
         match std::env::var("NIXIE_FACTOR_SCHED").as_deref() {
-            Ok("front") => FactorSched::Front,
+            Ok("back") => FactorSched::Back,
             Ok("leave") => FactorSched::Leave,
-            _ => FactorSched::Back,
+            // Default `front` (decide hubs first): the MEASURED best arm
+            // for our search — worker_550 complete-pass conflicts
+            // front 10-24k / leave 31k / back 473k (back, kissat's actual
+            // source semantics, is catastrophic under our VMTF/phase
+            // dynamics; kissat's own search is tuned around it).  The
+            // handover doc's "front" reading is thus right for us in
+            // effect, even though it misreads kissat.
+            _ => FactorSched::Front,
         }
     }
     #[cfg(not(feature = "std"))]
     {
-        FactorSched::Back
+        FactorSched::Front
     }
 }
 
@@ -357,6 +364,17 @@ struct FactorState {
     ticks: u64,
     /// Introductions this pass.
     introduced: usize,
+    /// Scan scratch: BIG partner snapshots and occurrence snapshots
+    /// (reused across scans — per-scan allocation churn dominated pass
+    /// wall on worker-class instances).
+    scratch_partners: Vec<(Lit, ClauseId)>,
+    scratch_occs: Vec<ClauseId>,
+    /// Pop-outcome counters (diagnostics): mismatch re-pushes, mismatch
+    /// drops (cur <= 1), inactive skips, undirty skips.
+    mism_repush: usize,
+    mism_drop: usize,
+    inactive: usize,
+    undirty: usize,
     /// Shape counters (diagnostics): schedule pops, dirty-processed pops,
     /// chain-extension links, applied chains, and the summed factors (m) and
     /// patterns (n) over applied chains.
@@ -435,14 +453,17 @@ impl Solver {
         let delta = match factor_budget_override() {
             Some(t) => t,
             None if self.stats.factor_passes == 1 => FACTOR_INIT_TICKS,
-            None => window
-                .max(FACTOR_MIN_REFERENCE)
-                .saturating_mul(FACTOR_EFFORT_PERMILLE)
-                / 1000,
+            None => {
+                window
+                    .max(FACTOR_MIN_REFERENCE)
+                    .saturating_mul(FACTOR_EFFORT_PERMILLE)
+                    / 1000
+            }
         };
         let limit = self.stats.factor_ticks.saturating_add(delta);
 
         let initial = (2 * self.num_vars) as u32;
+        let occ_tmp = self.build_factor_occurrence_index();
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_FACTOR_TRACE").is_ok() {
             let live_bins = self
@@ -455,10 +476,23 @@ impl Solver {
                 })
                 .count();
             let (big_edges, _) = self.binary_graph.edge_accounting();
+            let assigned: usize = (0..self.num_vars)
+                .filter(|&i| self.trail.is_assigned(Var::new(i as u32)))
+                .count();
+            let dirty_bits: usize = self.factor_dirty.iter().filter(|&&b| b).count();
+            let sched_able: usize = (0..initial)
+                .filter(|&code| {
+                    let cu = code as usize;
+                    cu < self.factor_dirty.len()
+                        && self.factor_dirty[cu]
+                        && self.lit_code_active(code)
+                        && self.factor_raw_degree(&occ_tmp, code) > 1
+                })
+                .count();
             eprintln!(
                 "factor_entry: live_binaries={live_bins} big_edges={big_edges} \
-                 vars={} marks={}",
-                self.num_vars, self.factor_marked_total
+                 vars={} marks={} assigned={} dirty_bits={} sched_able={}",
+                self.num_vars, self.factor_marked_total, assigned, dirty_bits, sched_able
             );
         }
         let mut state = FactorState {
@@ -478,6 +512,12 @@ impl Solver {
             limit,
             ticks: 0,
             introduced: 0,
+            scratch_partners: Vec::new(),
+            scratch_occs: Vec::new(),
+            mism_repush: 0,
+            mism_drop: 0,
+            inactive: 0,
+            undirty: 0,
             pops: 0,
             processed: 0,
             links: 0,
@@ -486,8 +526,9 @@ impl Solver {
             sum_n: 0,
         };
         // Occurrence index over candidate large clauses (dense-mode
-        // `connect_clauses_to_factor`).
-        let mut occ = self.build_factor_occurrence_index();
+        // `connect_clauses_to_factor`) — built once above the trace block
+        // so the entry diagnostics can share it.
+        let mut occ = occ_tmp;
 
         // `schedule_factorization`: every dirty active literal with more
         // than one occurrence enters the heap (score = raw watch size —
@@ -506,14 +547,30 @@ impl Solver {
             }
         }
 
-        // `run_factorization` main loop.
+        // `run_factorization` main loop.  The heap is lazy but pops are
+        // EXACT-max: a popped entry whose score no longer matches the
+        // literal's current raw degree is discarded (and re-pushed at the
+        // current degree when still > 1) — kissat's `update_candidate`
+        // re-scores the heap eagerly after every apply; without this the
+        // pass chains stale-ranked pivots whose neighborhoods were already
+        // consumed (measured: 3,130 applies vs kissat's 51,466 on
+        // worker_550 with snapshot scores; the early cascade is
+        // bit-identical, so the divergence is exactly the pop order).
         while !state.schedule.is_empty() {
-            let Some((_, code)) = state.schedule.pop() else {
+            let Some((score, code)) = state.schedule.pop() else {
                 break;
             };
             if !self.lit_code_active(code) {
+                state.inactive += 1;
                 continue;
             }
+            let _ = score; // scores are snapshots; pops are dirty-gated
+            // (Exact-pop validation — recompute-and-repush on mismatch —
+            // measured a path-ological 8.9M-entry re-validation storm on
+            // worker_550: every apply bumps ~350 pending entries and each
+            // validation is O(degree).  kissat's eager heap updates cost
+            // O(log n); our lazy heap + dirty gate costs O(1) per stale
+            // pop, which is the shape we keep.)
             // Cumulative tick check (kissat checks at the loop head).
             if state.ticks >= state.limit {
                 break;
@@ -521,6 +578,7 @@ impl Solver {
             state.pops += 1;
             // Dirty-bit gate (kissat `f->factor & bit` + clear on use).
             if !self.factor_take_dirty(code) {
+                state.undirty += 1;
                 continue;
             }
             state.processed += 1;
@@ -593,6 +651,7 @@ impl Solver {
             eprintln!(
                 "factor_pass: round={round} introduced={} ticks={} completed={completed} \
                  pops={} processed={} links={} applies={} avg_m={:.1} avg_n={:.1} \
+                 mism_repush={} mism_drop={} inactive={} undirty={} \
                  fresh_total={}",
                 state.introduced,
                 state.ticks,
@@ -602,6 +661,10 @@ impl Solver {
                 state.applies,
                 state.sum_m as f64 / state.applies.max(1) as f64,
                 state.sum_n as f64 / state.applies.max(1) as f64,
+                state.mism_repush,
+                state.mism_drop,
+                state.inactive,
+                state.undirty,
                 self.stats.factor_introduced
             );
         }
@@ -702,9 +765,9 @@ impl Solver {
         if slot < state.dead.len() && state.dead[slot] {
             return false;
         }
-        self.clauses.get(cid).is_some_and(|c| {
-            !c.deleted && !c.learned && (3..=FACTOR_SIZE).contains(&c.lits.len())
-        })
+        self.clauses
+            .get(cid)
+            .is_some_and(|c| !c.deleted && !c.learned && (3..=FACTOR_SIZE).contains(&c.lits.len()))
     }
 
     /// Build the large-clause occurrence index (kissat
@@ -733,7 +796,9 @@ impl Solver {
                 *slot = 0;
             }
             for cid in self.clauses.iter_ids() {
-                let Some(c) = self.clauses.get(cid) else { continue };
+                let Some(c) = self.clauses.get(cid) else {
+                    continue;
+                };
                 if c.learned || c.lits.len() < 3 || c.lits.len() > FACTOR_SIZE {
                     continue;
                 }
@@ -790,28 +855,32 @@ impl Solver {
         debug_assert!(state.quotients.is_empty());
         let mut clauses: Vec<FEntry> = Vec::new();
         // Binaries `(factor ∨ q)`: BIG edges from `¬factor`.
-        let edges: Vec<(Lit, ClauseId)> = self
-            .binary_graph
-            .get(factor.negate())
-            .iter()
-            .copied()
-            .collect();
-        for (q, cid) in edges {
+        let edges = core::mem::take(&mut state.scratch_partners);
+        let edges: Vec<(Lit, ClauseId)> = {
+            let mut e = edges;
+            e.clear();
+            e.extend(self.binary_graph.get(factor.negate()).iter().copied());
+            e
+        };
+        for (q, cid) in edges.iter().copied() {
             if q.var() == factor.var() || !Self::factor_edge_live(state, cid) {
                 continue;
             }
             clauses.push(FEntry { q: Some(q), cid });
             state.tick();
         }
+        state.scratch_partners = edges;
         // Large candidates containing `factor`.
-        let mut larges: Vec<ClauseId> = Vec::new();
+        let mut larges = core::mem::take(&mut state.scratch_occs);
+        larges.clear();
         occ.for_each(factor.code(), &mut |cid| larges.push(cid));
-        for cid in larges {
+        for cid in larges.iter().copied() {
             if self.factor_large_live(cid, state) {
                 clauses.push(FEntry { q: None, cid });
             }
             state.tick();
         }
+        state.scratch_occs = larges;
         let n = clauses.len();
         state.quotients.push(Quotient {
             factor: Some(factor),
@@ -840,7 +909,11 @@ impl Solver {
     /// kissat `next_factor`: count next-pivot candidates over the chain
     /// tail's clauses.  Returns `(winner, count)`; the winner is `None`
     /// when no candidate reaches count `≥ 2` (or the budget ran out).
-    fn factor_next(&mut self, state: &mut FactorState, occ: &OccIndex) -> Option<(Option<Lit>, u32)> {
+    fn factor_next(
+        &mut self,
+        state: &mut FactorState,
+        occ: &OccIndex,
+    ) -> Option<(Option<Lit>, u32)> {
         if state.quotients.is_empty() {
             return None;
         }
@@ -865,16 +938,16 @@ impl Solver {
                     // binary partners — BIG edges from `¬q` are exactly the
                     // live binaries `(q ∨ next)` (kissat scans `q`'s binary
                     // watches).
-                    let partners: Vec<(Lit, ClauseId)> = self
-                        .binary_graph
-                        .get(q.negate())
-                        .iter()
-                        .copied()
-                        .collect();
+                    let partners = {
+                        let mut p = core::mem::take(&mut state.scratch_partners);
+                        p.clear();
+                        p.extend(self.binary_graph.get(q.negate()).iter().copied());
+                        p
+                    };
                     if state.tick_list(partners.len()) {
                         over_budget = true;
                     }
-                    for (next, wcid) in partners {
+                    for &(next, wcid) in partners.iter() {
                         if next.var() == q.var() || !Self::factor_edge_live(state, wcid) {
                             continue;
                         }
@@ -923,12 +996,13 @@ impl Solver {
                     if factors == 1
                         && let Some(min_lit) = min_lit
                     {
-                        let mut occs: Vec<ClauseId> = Vec::new();
+                        let mut occs = core::mem::take(&mut state.scratch_occs);
+                        occs.clear();
                         occ.for_each(min_lit.code(), &mut |cid| occs.push(cid));
                         if state.tick_list(occs.len()) {
                             over_budget = true;
                         }
-                        for d_cid in occs {
+                        for d_cid in occs.iter().copied() {
                             if d_cid == entry.cid || state.qmark[d_cid.index()] {
                                 continue;
                             }
@@ -975,6 +1049,7 @@ impl Solver {
                             }
                             state.count[nc] += 1;
                         }
+                        state.scratch_occs = occs;
                     }
                     // Clear this clause's marks (kissat clears NOUNTED per
                     // clause and QUOTIENT at the clause end).
@@ -1066,14 +1141,14 @@ impl Solver {
                 Some(q) => {
                     // Binary tail clause `(x_k ∨ q)`: match witness is the
                     // binary `(q ∨ next)`.
-                    let partners: Vec<(Lit, ClauseId)> = self
-                        .binary_graph
-                        .get(q.negate())
-                        .iter()
-                        .copied()
-                        .collect();
+                    let partners = {
+                        let mut p = core::mem::take(&mut state.scratch_partners);
+                        p.clear();
+                        p.extend(self.binary_graph.get(q.negate()).iter().copied());
+                        p
+                    };
                     state.tick_list(partners.len());
-                    for (pl, wcid) in partners {
+                    for &(pl, wcid) in partners.iter() {
                         if pl == next && Self::factor_edge_live(state, wcid) {
                             // The new link's entry names the witness (it
                             // contains the NEW factor).
@@ -1085,6 +1160,7 @@ impl Solver {
                             break;
                         }
                     }
+                    state.scratch_partners = partners;
                 }
                 None => {
                     let Some(cview) = self.clauses.get(entry.cid) else {
@@ -1108,10 +1184,11 @@ impl Solver {
                         }
                     }
                     if let Some(min_lit) = min_lit {
-                        let mut occs: Vec<ClauseId> = Vec::new();
+                        let mut occs = core::mem::take(&mut state.scratch_occs);
+                        occs.clear();
                         occ.for_each(min_lit.code(), &mut |cid| occs.push(cid));
                         state.tick_list(occs.len());
-                        for d_cid in occs {
+                        for d_cid in occs.iter().copied() {
                             if d_cid == entry.cid || state.qmark[d_cid.index()] {
                                 continue;
                             }
@@ -1145,6 +1222,7 @@ impl Solver {
                                 break;
                             }
                         }
+                        state.scratch_occs = occs;
                     }
                     for l in quotient_marked {
                         state.marks[l.code() as usize] &= !MARK_QUOTIENT;

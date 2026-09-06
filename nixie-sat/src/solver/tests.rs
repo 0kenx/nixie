@@ -2318,3 +2318,64 @@ fn deferred_big_materializes_incremental_attach() {
         }
     }
 }
+
+/// `BinaryImplicationGraph::compact_dead` must drop exactly the dead
+/// edges and keep every live one, preserving per-code order and lengths
+/// (the factor pass's batched analogue of kissat's eager watch removal —
+/// a corrupt compaction silently empties the implication graph and the
+/// BCP itself, see the factor-port debugging notes).
+#[test]
+fn big_compact_dead_drops_exactly_dead_edges() {
+    use super::BinaryImplicationGraph;
+    // Build via the two-phase API: codes 0..6 (3 vars).
+    let mut g = BinaryImplicationGraph::new(3);
+    g.build_reset(3);
+    // Edges: 0→1 (c1), 0→2 (c2), 1→2 (c3), 3→4 (c4), 5→4 (c5) — the
+    // two-phase API: count every edge, lay out, then fill.
+    let c = |i: u32| crate::clause::ClauseId::new(i);
+    g.build_count(Lit::from_code(0));
+    g.build_count(Lit::from_code(0));
+    g.build_count(Lit::from_code(1));
+    g.build_count(Lit::from_code(3));
+    g.build_count(Lit::from_code(5));
+    g.build_layout();
+    g.build_edge(Lit::from_code(0), Lit::from_code(1), c(1));
+    g.build_edge(Lit::from_code(0), Lit::from_code(2), c(2));
+    g.build_edge(Lit::from_code(1), Lit::from_code(2), c(3));
+    g.build_edge(Lit::from_code(3), Lit::from_code(4), c(4));
+    g.build_edge(Lit::from_code(5), Lit::from_code(4), c(5));
+    // Post-build additions (the overflow path): 0→5 (c6), 3→5 (c7).
+    g.add(Lit::from_code(0), Lit::from_code(5), c(6));
+    g.add(Lit::from_code(3), Lit::from_code(5), c(7));
+    let deg = |g: &BinaryImplicationGraph, code: u32| g.get(Lit::from_code(code)).len() as u32;
+    assert_eq!(deg(&g, 0), 3, "0: two primary + one extra");
+    assert_eq!(deg(&g, 1), 1);
+    assert_eq!(deg(&g, 3), 2, "3: one primary + one extra");
+    // Dead: c2 (primary), c4 (primary), c6 (extra).
+    let mut dead = vec![false; 16];
+    dead[2] = true;
+    dead[4] = true;
+    dead[6] = true;
+    g.compact_dead(&dead);
+    assert_eq!(deg(&g, 0), 1, "0: only c1 (primary) survives, c6 dropped");
+    assert_eq!(deg(&g, 1), 1, "1: c3 untouched");
+    assert_eq!(deg(&g, 3), 1, "3: c4 dropped, c7 survives");
+    assert_eq!(deg(&g, 5), 1);
+    // The surviving edges must be the right ones.
+    let l0: Vec<u32> = g
+        .get(Lit::from_code(0))
+        .iter()
+        .map(|&(l, _)| l.code())
+        .collect();
+    assert_eq!(l0, vec![1], "edge 0→1 (c1) survives in order");
+    let l3: Vec<u32> = g
+        .get(Lit::from_code(3))
+        .iter()
+        .map(|&(l, _)| l.code())
+        .collect();
+    assert_eq!(l3, vec![5], "overflow edge 3→5 (c7) survives");
+    // A second compaction with no new dead must be a no-op.
+    g.compact_dead(&[false; 16]);
+    assert_eq!(deg(&g, 0), 1);
+    assert_eq!(deg(&g, 3), 1);
+}

@@ -335,32 +335,37 @@ impl BinaryImplicationGraph {
     /// overflow entry whose clause id is `dead[cid]`, preserving per-code
     /// order.  Only valid between rounds — propagation never runs on a
     /// tombstoned graph (the caller rebuilds before re-propagating).
+    ///
+    /// The read cursor walks the ORIGINAL span offsets (running sum of the
+    /// pre-compaction `live` counts) while the write cursor trails it at
+    /// the compacted prefix — reading at the rewritten `span_end` offsets
+    /// instead (the bug this replaced) made every literal after the first
+    /// dropped edge read the wrong span and silently emptied the graph
+    /// mid-pass.
     pub(crate) fn compact_dead(&mut self, dead: &[bool]) {
         let n = self.live.len();
-        let mut write = 0usize; // compacted prefix length in `edges`
+        let mut write = 0usize;
+        let mut orig_start = 0usize;
+        let mut new_prefix = 0u32;
         for code in 0..n {
-            let start = big_span_start(&self.span_end, code);
             let plen = self.live[code] as usize;
             let mut kept = 0usize;
             for i in 0..plen {
-                let edge = self.edges[start + i];
-                let is_dead = dead.get(edge.1.index()).is_some_and(|&d| d);
-                if !is_dead {
+                let edge = self.edges[orig_start + i];
+                if !dead.get(edge.1.index()).copied().unwrap_or(false) {
                     self.edges[write] = edge;
                     write += 1;
                     kept += 1;
                 }
             }
+            orig_start += plen;
             self.live[code] = kept as u32;
-            self.span_end[code] = if code == 0 {
-                kept as u32
-            } else {
-                self.span_end[code - 1] + kept as u32
-            };
+            new_prefix += kept as u32;
+            self.span_end[code] = new_prefix;
         }
         self.edges.truncate(write);
         for extra in &mut self.extra {
-            extra.retain(|&(_, cid)| !dead.get(cid.index()).is_some_and(|&d| d));
+            extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
         }
     }
 
