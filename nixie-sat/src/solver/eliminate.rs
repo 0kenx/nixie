@@ -1369,6 +1369,7 @@ impl Solver {
                     if let Some(proof) = &mut self.proof {
                         proof.add_derived_clause(pfid, false, &dimacs, &chain);
                     }
+                    self.mark_subsume_lits(r.iter());
                     let rid = self.clauses.add_original(r.iter().copied());
                     self.proof_set_clause_id(rid, pfid);
                     for &lit in r {

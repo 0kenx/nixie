@@ -244,9 +244,12 @@ impl Solver {
                 let l1 = Lit::from_code(x1);
                 let l2 = Lit::from_code(x2);
                 let t = Lit::pos(self.new_var());
+                self.mark_subsume_lits([t, l1].iter());
                 self.clauses.add_original([t, l1]);
+                self.mark_subsume_lits([t, l2].iter());
                 self.clauses.add_original([t, l2]);
                 for &q in &tails {
+                    self.mark_subsume_lits([t.negate(), Lit::from_code(q)].iter());
                     self.clauses.add_original([t.negate(), Lit::from_code(q)]);
                 }
                 let mut touched: SmallVec<[Lit; 32]> = SmallVec::new();
@@ -651,6 +654,7 @@ impl Solver {
             // (G ∨ t)
             let mut base: SmallVec<[Lit; 24]> = cand.g.iter().copied().collect();
             base.push(t);
+            self.mark_subsume_lits(base.iter());
             self.clauses.add_original(base.iter().copied());
             // (¬t ∨ U_i) per clause; retire the originals.
             for (cid, lits) in &group {
@@ -662,6 +666,7 @@ impl Solver {
                 }
                 debug_assert!(!rest.is_empty());
                 rest.push(t.negate());
+                self.mark_subsume_lits(rest.iter());
                 self.clauses.add_original(rest.iter().copied());
                 if opts.mid_search {
                     // Hygiene (b): re-mark the touched variables so the

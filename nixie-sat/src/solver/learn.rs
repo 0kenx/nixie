@@ -393,6 +393,10 @@ impl Solver {
     }
 
     pub(super) fn learn_clause(&mut self, mut learnt_clause: SmallVec<[Lit; 32]>) {
+        // NIXIE_SUBSUME2 dirty marking (cadical marks in the clause
+        // constructor): every learned clause's literals are dirty for the
+        // next subsume round.
+        self.mark_subsume_lits(learnt_clause.iter());
         // Track allocation in memory optimizer for pool accounting
         let _pool_buf = self.memory_optimizer.allocate(learnt_clause.len());
 
@@ -752,6 +756,7 @@ impl Solver {
         }
 
         let lbd = self.compute_lbd(&clause_lits);
+        self.mark_subsume_lits(clause_lits.iter());
         let clause_id = self.clauses.add_learned(clause_lits.iter().copied());
 
         // Track as a deletable Local-tier learned clause. Two invariants make
@@ -2198,6 +2203,12 @@ impl Solver {
     /// positions 0 and 1), removes the literal, re-selects the two best watch
     /// literals (mirroring [`Solver::add_clause`]), and re-attaches them.
     pub(super) fn remove_literal_and_rewatch(&mut self, clause_id: ClauseId, idx: usize) {
+        // A strengthened clause is 'new' for subsume purposes (cadical:
+        // shrunken clauses mark all their variables).
+        if let Some(c) = self.clauses.get(clause_id) {
+            let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
+            self.mark_subsume_lits(lits.iter().filter(|_| true));
+        }
         self.remove_literal_opts(clause_id, idx, true);
     }
 
@@ -2207,6 +2218,10 @@ impl Solver {
     /// emission would append two additions and two deletions for one
     /// shrink and desynchronize every later id.
     pub(super) fn remove_literal_and_rewatch_silent(&mut self, clause_id: ClauseId, idx: usize) {
+        if let Some(c) = self.clauses.get(clause_id) {
+            let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
+            self.mark_subsume_lits(lits.iter().filter(|_| true));
+        }
         self.remove_literal_opts(clause_id, idx, false);
     }
 

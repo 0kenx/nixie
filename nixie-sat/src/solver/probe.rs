@@ -301,6 +301,7 @@ impl Solver {
             if self.has_binary_implication(dom_lit, q) {
                 continue;
             }
+            self.mark_subsume_lits([neg_dom, q].iter());
             let id = self.clauses.add_learned([neg_dom, q]);
             let lbd = self.compute_lbd(&[neg_dom, q]);
             self.clauses.set_lbd(id, lbd);

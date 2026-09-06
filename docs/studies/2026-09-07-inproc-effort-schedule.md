@@ -518,3 +518,46 @@ interleave (factor→BVE→factor iteration across rounds — kissat spends
 incremental watcher maintenance.  Pre-registered as its own study with
 the semantics extracted above; the landed `NIXIE_ANDGATE` modes are the
 sound scaffolding for it.
+
+## Persistent occurrence lists → randomized partial subsumption (2026-09-07, landed as default)
+
+The cadical dirty-literal scheme (flags on literals touched since the
+last round; ≥2-dirty candidates; dirty-only scans; all-dirty connects)
+was implemented rigorously with marking at every addition/strengthen
+funnel, a matched null, and 30k fuzz (0 mismatches, 0 invalid models).
+
+**Corpus** (54 files × {off, dirty, dirty-null} × 5 seeds, 1 060 cells,
+0 verdict mismatches):
+
+| arm | conflicts/off | wall/off | P(solve) |
+|---|---|---|---|
+| full scan (off) | 1.00× | 1.00× | 176/265 |
+| dirty (recency) | 1.0835× | 1.0195× | 169 |
+| **random slice (null)** | **0.9084×** | **0.9102×** | **179** |
+
+**T/N = 1.153 — the recency semantic is negative at our round cadence.**
+The same-size RANDOM literal slice beats both the full scan and the
+recency schedule.  Mechanism: rotating partial hygiene — each round
+subsumes a fresh random slice of the database, so coverage cycles
+through everything over rounds without the full scan's re-checking of
+known-clean pairs and without recency's systematic blind spots.
+(Working through the semantics also corrected an earlier claim: new-
+clause dedup is COMPLETE under the dirty scheme — any subsumer of an
+all-dirty clause is itself all-dirty — so the recency arm's losses are
+lost old-vs-old hygiene, which the random slice restores stochastically.)
+
+The `fullk` (periodic full rounds) and `hotp` (hot-literal probabilistic
+connect — connect on a dirty literal the clause contains, so candidates
+scanning dirty literals can find it) arms were implemented and screened:
+they interpolate (hotp recovers 6s167 to parity; fullk recovers neither
+mrpp nor FEC fully) but no configuration dominated the random slice.
+
+**Landed**: `SubsumeScheduleMode::RandomSlice` is the DEFAULT subsume
+schedule (env `NIXIE_SUBSUME2=0|1|2` selects full/recency/random).
+The default binary reproduces the recorded random-slice corpus cells
+bit-exactly.  This is the fifth matched-null-beats-treatment result in
+this codebase (rephase actions, retention signals, budget reactivity,
+AND-gate rank, dirty scheduling) — and this one is novel against the
+references: cadical's scheme loses at our round frequency, and the
+randomized variant wins.  Gates: nextest 10 571, doc tests, clippy,
+doc, z3 parity 0 mismatches; fuzz 30k clean.

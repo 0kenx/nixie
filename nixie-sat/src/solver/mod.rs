@@ -1382,6 +1382,16 @@ pub struct Solver {
     /// trace-gated.  Diagnostic only.
     pub(super) inproc_diag_wall: [u64; 5],
 
+    /// Completed subsume rounds (the periodic full-scan clock of
+    /// `NIXIE_SUBSUME2_FULLK`).
+    pub(super) subsume_rounds_done: u64,
+    /// cadical `flags(lit).subsume`: literals touched by clause
+    /// additions/strengthenings since the last subsume round (the dirty
+    /// set driving `NIXIE_SUBSUME2` scheduling; see `solver/subsume.rs`).
+    /// Conservative: marking a superset only adds candidates.
+    pub(super) subsume_dirty: Vec<bool>,
+    /// Marked literal codes, for O(marked) clearing at round end.
+    pub(super) subsume_dirty_list: Vec<u32>,
     /// Reused scratch for `subsume_round` (2026-09-07 amortization: the
     /// per-round `vec![SmallVec::new(); 2·num_vars]` occurrence array was a
     /// ~90 MB alloc/free per round on big-DB instances — the dominant round
@@ -1864,6 +1874,9 @@ impl Solver {
             inproc_diag_props: [0; 5],
             inproc_diag_wall: [0; 5],
             subsume_scratch: SubsumeScratch::default(),
+            subsume_dirty: Vec::new(),
+            subsume_rounds_done: 0,
+            subsume_dirty_list: Vec::new(),
             inproc_rounds_done: 0,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
@@ -2925,9 +2938,36 @@ impl Solver {
         }
     }
 
+    /// Mark a literal dirty for the `NIXIE_SUBSUME2` subsume scheduling
+    /// (cadical `mark_subsume`): literals of clauses added/strengthened
+    /// since the last subsume round.  Called from the addition/strengthen
+    /// funnels; conservative in the superset direction (extra dirty
+    /// literals only add candidates, never unsound).  Under-marking loses
+    /// subsumption opportunities only.
+    pub(super) fn mark_subsume_lit(&mut self, l: Lit) {
+        let code = l.code() as usize;
+        if self.subsume_dirty.len() <= code {
+            self.subsume_dirty.resize(code + 1, false);
+        }
+        if !self.subsume_dirty[code] {
+            self.subsume_dirty[code] = true;
+            self.subsume_dirty_list.push(code as u32);
+        }
+    }
+
+    /// Mark every literal of an added/strengthened clause.
+    pub(super) fn mark_subsume_lits<'a>(&mut self, lits: impl IntoIterator<Item = &'a Lit>) {
+        for l in lits {
+            self.mark_subsume_lit(*l);
+        }
+    }
+
     /// Add a clause
     pub fn add_clause(&mut self, lits: impl IntoIterator<Item = Lit>) -> bool {
         let mut clause_lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
+        // Parse/external additions are dirty for the first subsume round
+        // (makes it complete over the initial formula).
+        self.mark_subsume_lits(clause_lits.iter());
 
         // Gatekeeper (SK-1): if equivalent-literal substitution folded a
         // variable away, rewrite any reintroduced mention of it through the
