@@ -721,3 +721,46 @@ measured negative), shuffling 5.81× (probe-sensitive), 6s167 3.25×
 (probing depth — widened single-polarity landed, both-polarity and ELS
 are per-file), and a long tail < 2×.  The remaining gap needs either
 the full kissat factor port or adaptive gating, both pre-registered.
+
+## Per-conflict throughput analysis (2026-09-07)
+
+Direct measurement on 6s167 (E-core 10, sequential, all arms same file):
+
+| | nixie | cadical | kissat |
+|---|---|---|---|
+| wall (ms) | 1 921 | 332 | 659 |
+| conflicts | 62 241 | 16 654 | 19 164 |
+| propagations | 7.4 M | 2.3 M | 7.7 M |
+| **props/sec** | **3.9 M** | **7.0 M** | **11.7 M** |
+| ticks/conflict | 325 | 902 | 1 715* |
+
+*kissat search_ticks only.
+
+**The wall gap decomposes into two independent factors**:
+1. **More conflicts needed** (3.7× vs cadical on this file) — the
+   search-quality gap (the campaign's heuristic work)
+2. **Lower throughput** (1.8× vs cadical, 3× vs kissat) — the
+   implementation gap
+
+Our per-conflict WORK is actually the lowest (325 ticks vs cadical's
+902) — we do less work per conflict but need more conflicts, and each
+unit of work takes longer.  At ~770 cycles per propagation (vs
+cadical's ~430, kissat's ~256), the cost is dominated by cache misses:
+~8 entries per propagation (BIG edges + watchers), each involving
+2-3 cache accesses (entry load, trail value lookup, possible arena
+read), at ~30 cycles per L2/L3 access.
+
+**Pre-registered optimization targets** (multi-session engineering,
+ranked by estimated impact):
+1. **Clause arena locality** — cadical sorts clauses by size in the
+   arena; we allocate in random order.  Watch-scan arena reads would
+   hit adjacent memory for same-sized clauses.
+2. **Watcher compression** — 12 bytes (id + slot + blocker); the id
+   and slot could share a u32 if slots were index-based rather than
+   byte-offset.
+3. **BIG/watch single-pass** — binaries and large clauses use separate
+   iteration passes (BIG CSR + watch list); a merged single pass
+   would halve the loop overhead.
+4. **`propagate_step_limit` hoisting** — the `Option` check runs per
+   propagation step but is always `None` during search; a specialized
+   unbounded loop would remove a branch + register test.
