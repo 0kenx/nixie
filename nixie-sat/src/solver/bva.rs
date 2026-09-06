@@ -239,11 +239,63 @@ impl Solver {
                 if tails.len() < 3 {
                     continue;
                 }
+                // CHAIN DISCIPLINE (kissat's incremental matched-tail
+                // selection, bounded approximation): cap the number of
+                // tails per introduction to limit the blast radius.
+                // The full shared-tail set (up to 344 on worker) replaces
+                // 2|Q| clauses with |Q|+2 in one step — too aggressive
+                // (seeds 2-4 measured 2.8-7.5x worse). kissat grows the
+                // quotient one tail at a time; we approximate by keeping
+                // the K tails with the FEWEST other commitments (lowest
+                // global occurrence count = most specific structure).
+                let max_tails: usize = std::env::var("NIXIE_ANDGATE_MAXT")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|k| *k >= 3)
+                    .unwrap_or(0); // 0 = use all (legacy behavior)
+                let (tails_eff, ids_eff): (Vec<u32>, Vec<u32>) = if max_tails > 0
+                    && tails.len() > max_tails
+                {
+                    // Rank tails by their BIG in-degree (how many literals
+                    // imply this tail — lower = more specific); keep the
+                    // K most specific.
+                    let mut ranked: Vec<(u32, u32, usize)> = tails
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &q)| {
+                            let spec = self
+                                .binary_graph
+                                .get(Lit::from_code(q).negate())
+                                .len() as u32;
+                            (q, spec, i)
+                        })
+                        .collect();
+                    ranked.sort_unstable_by_key(|&(_, spec, _)| spec);
+                    let keep: std::collections::HashSet<usize> =
+                        ranked[..max_tails].iter().map(|&(_, _, i)| i).collect();
+                    let mut t2 = Vec::new();
+                    let mut i2 = Vec::new();
+                    for (i, &q) in tails.iter().enumerate() {
+                        if keep.contains(&i) {
+                            t2.push(q);
+                            i2.push(ids[i * 2]);
+                            i2.push(ids[i * 2 + 1]);
+                        }
+                    }
+                    (t2, i2)
+                } else {
+                    (tails.iter().copied().collect(), ids.iter().copied().collect())
+                };
+                if tails_eff.len() < 3 {
+                    continue;
+                }
+                let tails = &tails_eff;
+                let ids = &ids_eff;
                 // Re-validate every member live (an earlier introduction
                 // may have retired one) and collect ClauseIds.
                 let mut group: SmallVec<[ClauseId; 16]> = SmallVec::new();
                 let mut live = true;
-                for &idx in &ids {
+                for &idx in ids {
                     let cid = ClauseId::new(idx);
                     match self.clauses.get(cid) {
                         Some(c) if !c.deleted && !c.learned && c.lits.len() == 2 => {
@@ -289,7 +341,7 @@ impl Solver {
                 self.clauses.add_original([t, l1]);
                 self.mark_subsume_lits([t, l2].iter());
                 self.clauses.add_original([t, l2]);
-                for &q in &tails {
+                for &q in tails {
                     self.mark_subsume_lits([t.negate(), Lit::from_code(q)].iter());
                     self.clauses.add_original([t.negate(), Lit::from_code(q)]);
                 }
@@ -302,7 +354,8 @@ impl Solver {
                 // `remove_clause`'s per-clause BIG purge was the wall
                 // killer (100+ retirements per introduction × 50k
                 // introductions over 10M-clause graphs).
-                for &cid in &group {
+                let group_ids: Vec<ClauseId> = group.iter().copied().collect();
+                for cid in group_ids {
                     if let Some(c) = self.clauses.get(cid) {
                         touched.extend(c.lits.iter().copied());
                     }
@@ -465,7 +518,8 @@ impl Solver {
             // watcher removal, DRAT deletion line, and the live counters
             // (`remove_clause`, unlike the raw `retire_clause`, keeps
             // `num_original` exact — schedules key on it).
-            for &cid in &group {
+            let gids: Vec<ClauseId> = group.iter().copied().collect();
+            for cid in gids {
                 self.remove_clause(cid);
             }
             // Re-mark the touched variables for the eliminator: the

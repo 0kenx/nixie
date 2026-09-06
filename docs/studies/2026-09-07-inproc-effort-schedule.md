@@ -655,3 +655,40 @@ defaults shows FEC 0.84× (real — the equivalence-chain structure is its
 name), 6s167 1.04×, frb65 mixed.  Not default-on: the ELS round's SCC +
 substitution work needs the same effort-budget treatment the other
 passes got before it can be re-evaluated (pre-registered).
+
+## Three-default compound: standing table + chain-discipline negative (2026-09-07 final)
+
+**Standing re-measure** (162 cells, suite `sc24f-standing-3defaults`,
+E-core layout, sequential per file, 60 s cap, 0 verdict mismatches):
+
+| arm | solved / 54 |
+|---|---|
+| nixie (3 defaults) | 35/54 |
+| cadical 3.0.1 | 44/54 |
+| kissat 4.0.4 | 46/54 |
+
+| metric | nixie/kissat | nixie/cadical |
+|---|---|---|
+| wall geomean | 2.06× | 1.41× |
+| **conflicts geomean** | 1.12× | **0.88×** |
+
+**MILESTONE: nixie/cadical conflicts = 0.88× — the search path now
+BEATS its port source.**  The three compounded defaults (effort
+schedule 0.83×, randomized subsumption 0.91×, probe widening ~0.85×)
+multiply to close and reverse the cadical conflicts gap.  The kissat
+residue dropped from 1.33× (campaign start) to **1.12×**.
+
+Solved counts dropped for ALL arms (39→35 nixie, 48→44 cadical, 48→46
+kissat) — system load, not code (the E-core layout is
+contention-sensitive; per-file verdicts are 0-mismatch).
+
+Wall remains dominated by per-conflict cost (1.41× at 0.88× conflicts).
+
+**Chain-discipline negative result**: the tail-cap knob
+(`NIXIE_ANDGATE_MAXT` = 5/10/20/40) does NOT fix the AND-gate's worker
+regression — even with only 5 tails per introduction, seeds 2-4 are
+1.9-2.7× worse than base.  The over-consolidation is not about the
+NUMBER of tails per step; the hub introduction itself disrupts
+worker's search dynamics.  The full quotient-chain mechanism (kissat's
+incremental chain construction with structural scoring) is the only
+remaining path for the worker-class 12.75× residue, pre-registered.
