@@ -393,6 +393,87 @@ measured source arms (four landed, four reverted) plus PGO bound the
 recoverable instruction share, and the PGO cycle result shows even a full
 instruction-parity rewrite would recover at most the IPC term.
 
+## The lever catalog (what "keep chasing" should buy, ranked)
+
+Seed-matched diagnostic first (6s167, 5 seeds each): nixie conflicts
+{62.2k, 55.3k, 66.3k, 70.4k, 74.9k} vs cadical
+{16.7k, 26.8k, 25.2k, 16.3k, 26.4k} — **median gap 2.6×, and cadical's
+worst seed beats our best by 2×**. The single-seed 3.74× was partly luck;
+the gap itself is config-systematic. That makes the conflicts program the
+top lever by an order of magnitude over anything left in per-conflict
+cost.
+
+### Tier 1 — the conflicts program (search quality; matched-null class)
+
+The corpus aggregate stands at 0.88× conflicts vs cadical, so this is a
+*class/tail* problem, not a uniform one. Order of attack:
+
+1. **Diagnose the class** (cheap, existing infrastructure): per-file
+   conflicts-gap distribution over the standing corpus at ≥5 seeds
+   (`benchstore.py` cells exist); tag the tail files by family. 6s167 is
+   crypto — is the gap concentrated there?
+2. **Search-shape diffs per tail file** vs cadical: the visible one on
+   6s167 is **stable-mode share: ours 56 % vs their 36.5 %** (we
+   stabilize far more); also restarts/conflict (currently ~14 vs ~13.8 —
+   matched), DB size at equal conflicts, learned-LBD distribution,
+   decisions/conflict (3.39 vs 3.95).
+3. **Policy ports, each pre-registered with matched null:**
+   - stabilization/restart schedule (EMA-driven stable switching — the
+     56 %-vs-36.5 % share is the biggest unexplained shape delta);
+   - reduce/retention schedule (the `NIXIE_CADICAL_REDUCE` /
+     `NIXIE_KISSAT_REDUCE` arms already exist behind env gates — evaluate
+     them at seeds on the tail class instead of re-porting);
+   - inprocessing mix on the tail class: cadical *substituted 12.5 % of
+     all variables* on 6s167 (sweep/equiv), vivified 2.84 % of clauses,
+     and ran OTF clause improvement on 5.3 % of conflicts — compare our
+     per-pass yields on the same files;
+   - rephase/walk schedule deltas.
+
+Gates: conflicts and solved-at-cap with matched nulls, never instructions
+(the PGO result shows instructions are uninformative for wall time).
+
+### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
+
+- **Gent saved-position scan** (`clause->pos`, cadical/JAIR'13): starts
+  the replacement scan at the last replacement site. Instruction ceiling
+  small (1.95 → ~1 scan steps ≈ 1.7 %), but it changes *which* literal
+  becomes the new watch → watch distribution → search; pre-register with
+  matched null. Needs a header field: the 12-byte header is pinned by
+  the cache-line tests — steal bits (lbd is u16 but saturates far above
+  every consumer's ≤10 threshold; pos needs ~8 bits for practical
+  clauses) or re-price the header.
+- **Blocker-refresh policy**: miss rate is 30 % (6s167) to 55 %
+  (crypto1) — every 10 pp of hit rate removes ~13 M arena visits on
+  6s167 (~1–2 % instructions plus their stall exposure). E.g. prefer
+  recently-true literals as blockers when parking on satisfied
+  replacements. Changes parking → trajectory → matched null.
+- **Watch-move rate**: 48–72 % of miss visits move the watch; moves drive
+  revisit pressure. `MOVED`/visit from the anatomy counters is the
+  metric; the null must hold visit counts fixed while scrambling the
+  move choice.
+
+### Tier 3 — the structural rewrite (kissat-shape single-pass BCP)
+
+Downgraded by this campaign's anatomy relative to the handover's 15–25 %
+estimate: BIG traffic is 8 % of entry events on 6s167 and 0.4 % on
+crypto1, and merging the passes does not touch the large-clause visit
+cost. The real content is the per-entry *shape*: inline tagged binary
+watchers, 4–8 byte watch granularity, word-indexed arena — attacking the
+measured 21 branches/entry and the IPC term. Cost: tick accounting (=
+restart schedule = trajectory), the 12-byte-header pin, and reworking the
+BIG's non-BCP consumers (transred, ELS, AND-gate factoring). Only as a
+deliberate kissat-convergence program; per-entry instruction gains of
+30–40 % *if* the shape converges, cycle gains uncertain (stall-bound
+evidence).
+
+### Measured dead — do not retry
+
+Arena locality (dead at LLC *and* L2/L1 by PEBS), watcher density (8-byte
++0.7 %, word-split +0.04 %), PGO for wall time (−7 % instructions, 0
+cycles), BIG-pass restructures (slice/index variants ±0.4 %), persistent
+analysis scratch (+0.24 % geomean, worker_550 regression), reverting the
+write-elision branch (it is a measured win).
+
 ## Harness notes (all bitten this session)
 
 * **Pin *outside* perf**: `taskset -c 10 perf stat …`. With `perf stat
