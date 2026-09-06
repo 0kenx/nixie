@@ -195,6 +195,57 @@ impl VMTF {
         }
     }
 
+    /// kissat `adjust_scores_and_phases_of_fresh_variables` (factor.c): move
+    /// each var to the **head** (oldest end — the *last* decided), then
+    /// restamp the whole list in head→tail order and point `search` at the
+    /// tail.  kissat uses this to make freshly introduced factor-hub
+    /// variables the LEAST prominent decisions in both VMTF (oldest end)
+    /// and VSIDS (score 0) — see `solver/factor.rs`'s port notes: the list's
+    /// tail is the *next* decision (`bump` moves conflict vars there), so
+    /// linking the fresh vars at the head schedules them last, not first.
+    pub fn enqueue_oldest_and_restamp(&mut self, vars: &[Var]) {
+        for &var in vars {
+            let v = match u32::try_from(var.index()) {
+                Ok(v) if (v as usize) < self.next.len() => v,
+                _ => continue,
+            };
+            // Already unlinked (never enqueued): nothing to dequeue.
+            if self.prev[v as usize] != NULL || self.next[v as usize] != NULL || self.head == v {
+                self.dequeue(v);
+            }
+        }
+        // Relink at the head in iteration order: the LAST var of `vars`
+        // ends up as the very head (kissat links each at `queue->first`
+        // in the same order).
+        for &var in vars {
+            let v = match u32::try_from(var.index()) {
+                Ok(v) if (v as usize) < self.next.len() => v,
+                _ => continue,
+            };
+            self.prev[v as usize] = NULL;
+            self.next[v as usize] = self.head;
+            if self.head != NULL {
+                self.prev[self.head as usize] = v;
+            } else {
+                self.tail = v;
+            }
+            self.head = v;
+        }
+        // Restamp: btab order = list order (head = 1 … tail = n), search at
+        // the tail — exactly kissat's restamp loop.  This keeps
+        // `notify_unassigned`'s timestamp comparison consistent with the
+        // relinked order.
+        let mut stamp = 0u64;
+        let mut idx = self.head;
+        while idx != NULL {
+            stamp += 1;
+            self.btab[idx as usize] = stamp;
+            idx = self.next[idx as usize];
+        }
+        self.bumped = self.bumped.max(stamp);
+        self.search = self.tail;
+    }
+
     /// Bump timestamp of a variable (no list move) – kept for API compatibility.
     pub fn activity(&self, var: Var) -> u64 {
         self.btab.get(var.index()).copied().unwrap_or(0)
@@ -237,5 +288,49 @@ mod tests {
         // var 2 assigned → pick next most-recent unassigned.
         let d = q.next_decision(|v| v == Var::new(2)).expect("decision");
         assert_eq!(d, Var::new(1));
+    }
+
+    #[test]
+    fn enqueue_oldest_puts_vars_at_head_decided_last() {
+        // kissat `adjust_scores_and_phases_of_fresh_variables`: fresh vars
+        // land at the head (oldest end).  The tail remains the next
+        // decision; the fresh vars are only reached after everything else.
+        let mut q = VMTF::new(4); // list 0→1→2→3, tail = 3
+        q.bump(Var::new(1), |_| false); // 1 → tail; order 0,2,3,1
+        q.enqueue_oldest_and_restamp(&[Var::new(2)]); // 2 → head; order 2,0,3,1
+        assert_eq!(
+            q.next_decision(|_| false),
+            Some(Var::new(1)),
+            "tail still first"
+        );
+        assert_eq!(q.next_decision(|v| v == Var::new(1)), Some(Var::new(3)));
+        assert_eq!(
+            q.next_decision(|v| v.index() >= 3 || v == Var::new(1)),
+            Some(Var::new(0))
+        );
+        assert_eq!(
+            q.next_decision(|v| v != Var::new(2)),
+            Some(Var::new(2)),
+            "the fresh head var is decided last"
+        );
+    }
+
+    #[test]
+    fn enqueue_oldest_restamps_in_list_order() {
+        let mut q = VMTF::new(3);
+        q.bump(Var::new(0), |_| false); // order 1,2,0
+        q.enqueue_oldest_and_restamp(&[Var::new(1), Var::new(2)]);
+        // Links: 2,1(head side… both moved),0 → order 2,1,0? 2 is the very
+        // head (last linked), then 1, then 0 at the tail.
+        let mut order = Vec::new();
+        let mut idx = q.head;
+        while idx != NULL {
+            order.push(idx);
+            idx = q.next[idx as usize];
+        }
+        assert_eq!(order, vec![2, 1, 0]);
+        // btab is strictly increasing along the list (restamp invariant).
+        assert!(q.btab[2] < q.btab[1] && q.btab[1] < q.btab[0]);
+        assert_eq!(q.search, 0, "search points at the tail");
     }
 }

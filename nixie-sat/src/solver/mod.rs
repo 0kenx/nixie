@@ -330,6 +330,40 @@ impl BinaryImplicationGraph {
         self.extra[idx].retain(|&(_, cid)| cid != clause_id);
     }
 
+    /// Bulk dead-edge compaction (the factor pass's analogue of kissat's
+    /// eager O(1) watch removal, amortized): drop every primary edge and
+    /// overflow entry whose clause id is `dead[cid]`, preserving per-code
+    /// order.  Only valid between rounds — propagation never runs on a
+    /// tombstoned graph (the caller rebuilds before re-propagating).
+    pub(crate) fn compact_dead(&mut self, dead: &[bool]) {
+        let n = self.live.len();
+        let mut write = 0usize; // compacted prefix length in `edges`
+        for code in 0..n {
+            let start = big_span_start(&self.span_end, code);
+            let plen = self.live[code] as usize;
+            let mut kept = 0usize;
+            for i in 0..plen {
+                let edge = self.edges[start + i];
+                let is_dead = dead.get(edge.1.index()).is_some_and(|&d| d);
+                if !is_dead {
+                    self.edges[write] = edge;
+                    write += 1;
+                    kept += 1;
+                }
+            }
+            self.live[code] = kept as u32;
+            self.span_end[code] = if code == 0 {
+                kept as u32
+            } else {
+                self.span_end[code - 1] + kept as u32
+            };
+        }
+        self.edges.truncate(write);
+        for extra in &mut self.extra {
+            extra.retain(|&(_, cid)| !dead.get(cid.index()).is_some_and(|&d| d));
+        }
+    }
+
     // ---- two-phase CSR build (count, layout, fill) --------------------
 
     /// Reset to an empty graph over `num_vars` variables, keeping the
@@ -896,6 +930,17 @@ pub struct SolverStats {
     /// BVA — each merges a `k ≥ 2` clause group sharing a common literal
     /// set (`solver/bva.rs`).
     pub bva_introduced: u64,
+    /// Auxiliary hub variables introduced by the kissat `factor.c` port
+    /// (quotient chains; `solver/factor.rs`).
+    pub factor_introduced: u64,
+    /// Clauses rewritten by the factor port (dividers + quotients added;
+    /// the deleted chain clauses are counted separately below).
+    pub factor_clauses_rewritten: u64,
+    /// Cumulative factor scan-work ticks (the pass's budget currency;
+    /// kissat `factor_ticks`).
+    pub factor_ticks: u64,
+    /// Completed factor passes (kissat `factorizations`).
+    pub factor_passes: u64,
     /// Number of clauses removed by forward subsumption.
     pub subsumed_removed: u64,
     /// Number of literals removed by BIG-based self-subsumption.
@@ -1398,6 +1443,18 @@ pub struct Solver {
     /// wall cost).  Contents are cleared per round; capacity persists.
     pub(super) subsume_scratch: SubsumeScratch,
 
+    /// kissat `flags(lit).factor` (set wherever `kissat_mark_added_literal`
+    /// runs — our `mark_subsume_lit` sites): literal codes whose clause set
+    /// changed since they were last factored.  Drives the chain factor's
+    /// candidate gating (`solver/factor.rs`).
+    pub(super) factor_dirty: Vec<bool>,
+    /// Cumulative count of factor-dirty marks ever set (kissat
+    /// `literals_factor`; incremented on each 0→1 bit flip).
+    pub(super) factor_marked_total: u64,
+    /// `factor_marked_total` at the last COMPLETED factor pass (kissat
+    /// `limits.factor.marked`): while equal, the pass is skipped.
+    pub(super) factor_marked_watermark: u64,
+
     /// Completed mid-search `inprocess()` rounds (the effort-schedule
     /// study's round counter; drives the cadical `log10(rounds + 9)` interval
     /// growth under `NIXIE_INPROC_SCHED`).
@@ -1897,6 +1954,9 @@ impl Solver {
             inproc_diag_wall: [0; 5],
             subsume_scratch: SubsumeScratch::default(),
             subsume_dirty: Vec::new(),
+            factor_dirty: Vec::new(),
+            factor_marked_total: 0,
+            factor_marked_watermark: 0,
             subsume_rounds_done: 0,
             subsume_dirty_list: Vec::new(),
             inproc_rounds_done: 0,
@@ -2975,6 +3035,16 @@ impl Solver {
             self.subsume_dirty[code] = true;
             self.subsume_dirty_list.push(code as u32);
         }
+        // kissat `kissat_mark_added_literal` sets the subsume and factor
+        // dirty bits together — mirror it (the chain factor's candidate
+        // gating; see `solver/factor.rs`).
+        if self.factor_dirty.len() <= code {
+            self.factor_dirty.resize(code + 1, false);
+        }
+        if !self.factor_dirty[code] {
+            self.factor_dirty[code] = true;
+            self.factor_marked_total += 1;
+        }
     }
 
     /// Mark every literal of an added/strengthened clause.
@@ -3588,22 +3658,23 @@ impl Solver {
             self.walk_round(flips);
         }
 
-        // Binary-chain factoring (kissat `factor.c` first slice;
-        // `solver/factor.rs`): for a literal with many binaries whose
-        // partners share a second literal's implications, replace
-        // `(f v q_i)` by dividers `(x v f) (x v g)` and quotients
-        // `(not-x v q_i)`, keeping the `(not-g v q_i)` witnesses.
+        // Quotient-chain factoring (the full kissat `factor.c` port;
+        // `solver/factor.rs`): grows pivot chains one link at a time, keeps
+        // only matched clauses, and rewrites the best prefix cut into
+        // dividers `(t ∨ x_i)` + quotients `(¬t ∨ A_j)` over a fresh hub.
         // Equisatisfiable and model-preserving (see the module doc's
         // argument); the measured motivation is worker_550-class instances
         // (kissat `--factor=0` knockout: 21.5x conflicts there).  Default
         // off pending the corpus A/B.
-        if self.config.enable_factoring || std::env::var("NIXIE_FACTOR").as_deref() == Ok("1") {
-            let (added, reduction) = self.factor_binaries();
+        if self.factor_enabled() {
+            let added = self.factor_presearch();
             if added > 0 {
                 #[cfg(feature = "std")]
                 eprintln!(
-                    "c [factor] introduced={} occurrence_reduction={}",
-                    added, reduction
+                    "c [factor] introduced={} clauses_rewritten={} ticks={}",
+                    self.stats.factor_introduced,
+                    self.stats.factor_clauses_rewritten,
+                    self.stats.factor_ticks
                 );
             }
             if self.trivially_unsat {

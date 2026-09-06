@@ -2956,7 +2956,17 @@ impl Solver {
             let (n, _saved) = self.structured_bva_mid();
             introduced_now += n;
         }
-        if self.config.enable_mid_andgate {
+        // Quotient-chain factor (the full kissat `factor.c` port): per the
+        // handover, it REPLACES the AND-gate slice when enabled — the
+        // 2-chain AND-gate is the chain's special case, and the
+        // incremental chain construction is the shape that measured
+        // positive in kissat on the worker class.  Budgeted by the round's
+        // effort window (kissat `factoreffort=50‰`, floored at
+        // `mineffort`); delayed per `factordelay` inside the pass.
+        if self.factor_enabled() {
+            introduced_now +=
+                self.factor_pass(self.inproc_rounds_done + 1, self.inproc_budgets.window);
+        } else if self.config.enable_mid_andgate {
             introduced_now += self.and_gate_factoring_mid();
         }
         if introduced_now > 0 {

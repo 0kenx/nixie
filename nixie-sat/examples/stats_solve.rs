@@ -14,8 +14,10 @@
 //!                       6s167-opt but -9 files at cap)
 //!   ELS_PRE=0|1         pre-search ELS at full fixpoint effort (implies
 //!                       ELS=1; consumes the mid-search one-shot)
-//!   FACTOR=0|1          binary-chain factoring (kissat factor.c first
-//!                       slice; the worker_550 lever)
+//!   FACTOR=0|1          quotient-chain factoring (the full kissat
+//!                       factor.c port; the worker_550 lever).  Sub-knobs
+//!                       read by the solver itself: NIXIE_FACTOR_SCHED
+//!                       (back|front|leave), NIXIE_FACTOR_BUDGET (ticks).
 //!   NIXIE_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NIXIE_BCP_STATS=1   print the BCP anatomy counters (requires a build

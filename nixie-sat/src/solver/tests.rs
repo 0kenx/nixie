@@ -1530,12 +1530,15 @@ fn els_presearch_folds_before_search() {
 }
 
 // ---------------------------------------------------------------------------
-// Binary-chain factoring (2026-09-05, solver/factor.rs) — soundness pins.
+// Quotient-chain factoring (2026-09-05, solver/factor.rs; full chain port
+// 2026-09-07) — soundness pins.
 // ---------------------------------------------------------------------------
 
 /// Build `(f ∨ q_i)` and `(q_i ∨ g)` for i = 1..k on fresh vars and run
-/// one factoring pass; returns (introduced, solver).  The witness polarity
-/// `(q_i ∨ g)` is the sound direction (see `solver/factor.rs`).
+/// one factoring pass; returns (introduced, solver).  With the full chain
+/// port, one introduction covers the pair `(f, g)` — the chain links both
+/// pivots in a single 2-link quotient (the first slice's compounding
+/// rounds are subsumed).
 fn factoring_fixture(k: usize) -> (usize, Solver) {
     let mut solver = Solver::new();
     let f = solver.new_var();
@@ -1545,46 +1548,120 @@ fn factoring_fixture(k: usize) -> (usize, Solver) {
         solver.add_clause([Lit::pos(f), Lit::pos(q)]);
         solver.add_clause([Lit::pos(q), Lit::pos(g)]);
     }
-    let (introduced, _reduction) = solver.factor_binaries();
+    let introduced = solver.factor_presearch();
     (introduced, solver)
 }
 
 #[test]
 fn factor_fires_on_shared_implication_binaries() {
-    // With incremental BIG maintenance the fixpoint compounds: round 1
-    // factors `(f v q_i)` against witnesses `(q_i v g)`; round 2 factors
-    // the kept witnesses themselves (candidate `g`, quotients `(g v q_i)`,
-    // witnesses `(q_i v not-x)` — the round-1 quotients, now visible to
-    // the adjacency scan).  Both applications use the same verified
-    // transformation.
+    // The chain port factors the 2-link quotient `(f, g)` in one
+    // introduction: dividers `(t∨f) (t∨g)`, quotients `(¬t∨q_i)`, all
+    // `2k` originals deleted.
     let (introduced, _) = factoring_fixture(5);
-    assert_eq!(introduced, 2, "k=5: quotient + witness-compounding rounds");
+    assert_eq!(introduced, 1, "k=5: one 2-link chain introduction");
     let (introduced, _) = factoring_fixture(3);
     assert_eq!(
-        introduced, 2,
-        "k=3 is the firing threshold (reduction k-2 > 0)"
+        introduced, 1,
+        "k=3 is the firing threshold (reduction 2k−k−2 = k−2 > 0)"
     );
     let (introduced, _) = factoring_fixture(2);
-    assert_eq!(introduced, 0, "k=2 must not fire (no occurrence reduction)");
+    assert_eq!(
+        introduced, 0,
+        "k=2 must not fire (reduction 0, not > bound 0)"
+    );
 }
 
+/// A 3-pivot chain: `(x_i ∨ q_j)` for i = 1..3, j = 1..3 — nine binaries
+/// factored into 3 dividers + 3 quotients (reduction 9 − 6 = 3 at the
+/// 3-link cut, the best prefix).
 #[test]
-fn factor_preserves_verdict_both_ways() {
-    // SAT: f=T (or g=T with all q_i) satisfies everything.
-    let (i, mut s) = factoring_fixture(5);
-    assert!(i >= 1);
+fn factor_chain_three_pivots() {
+    let mut s = Solver::new();
+    let xs: Vec<_> = (0..3).map(|_| s.new_var()).collect();
+    let qs: Vec<_> = (0..3).map(|_| s.new_var()).collect();
+    for &x in &xs {
+        for &q in &qs {
+            s.add_clause([Lit::pos(x), Lit::pos(q)]);
+        }
+    }
+    let introduced = s.factor_presearch();
+    assert_eq!(introduced, 1, "3-pivot chain applies at the 3-link cut");
+    assert_eq!(s.stats().factor_introduced, 1);
+    // 3 dividers + 3 quotients added, 9 originals deleted = 12 rewrites,
+    // plus the deleted 9 counted in factor_clauses_rewritten.
+    assert!(s.stats().factor_clauses_rewritten >= 12);
     assert_eq!(s.solve(), SolverResult::Sat);
-    // UNSAT variant: force ¬f, ¬q_1 and ... originals (f∨q_i) with ¬f
-    // force q_i, so ¬q_1 contradicts; witnesses irrelevant.
-    let (i, mut s) = factoring_fixture(5);
-    assert!(i >= 1);
-    let f = Var::new(0);
-    let g = Var::new(1);
-    let q1 = Var::new(2);
-    s.add_clause([Lit::neg(f)]);
-    s.add_clause([Lit::neg(g)]);
-    s.add_clause([Lit::neg(q1)]);
-    assert_eq!(s.solve(), SolverResult::Unsat);
+}
+
+/// Large-clause chains: `(x_i ∨ a ∨ b)` and `(x_i ∨ a ∨ c)` for
+/// i = 1..3, plus per-literal helper binaries `(x_i ∨ u_i)`, `(x_i ∨ v_i)`,
+/// `(a ∨ w1..2)`, `(b ∨ w3..4)`, `(c ∨ w5..6)` with unique partners.  The
+/// helpers only satisfy kissat's candidate filter (round 0: every literal
+/// of a large clause needs `≥ 2` **binary** occurrences — the occurrence
+/// index is designed for binary-rich neighborhoods, not pure-large
+/// formulas); their unique partners make no binary chain reachable
+/// (deg ≤ 1 everywhere, or shared-tail pairs of exactly 2 → reduction 0).
+///
+/// The chain pivots on the `x_i` (each has occ 2): `x_1 → x_2 → x_3` with
+/// n = 2 matched tails — dividers `(t ∨ x_i)` ×3, quotients
+/// `(¬t ∨ a ∨ b)`, `(¬t ∨ a ∨ c)`, all six originals deleted
+/// (reduction 2·3 − 2 − 3 = 1 at the 3-link cut).
+#[test]
+fn factor_chain_large_clauses() {
+    let build = |s: &mut Solver| -> Vec<Var> {
+        let xs: Vec<_> = (0..3).map(|_| s.new_var()).collect();
+        let a = s.new_var();
+        let b = s.new_var();
+        let c = s.new_var();
+        for &x in &xs {
+            s.add_clause([Lit::pos(x), Lit::pos(a), Lit::pos(b)]);
+            s.add_clause([Lit::pos(x), Lit::pos(a), Lit::pos(c)]);
+            // Helper binaries (unique partners: no binary chain forms).
+            let u = s.new_var();
+            let v = s.new_var();
+            s.add_clause([Lit::pos(x), Lit::pos(u)]);
+            s.add_clause([Lit::pos(x), Lit::pos(v)]);
+        }
+        for lit in [a, b, c] {
+            let w1 = s.new_var();
+            let w2 = s.new_var();
+            s.add_clause([Lit::pos(lit), Lit::pos(w1)]);
+            s.add_clause([Lit::pos(lit), Lit::pos(w2)]);
+        }
+        xs
+    };
+    let mut s = Solver::new();
+    build(&mut s);
+    let introduced = s.factor_presearch();
+    assert_eq!(introduced, 1, "3-pivot large chain over 2 shared tails");
+    assert_eq!(s.stats().factor_introduced, 1);
+    assert!(
+        s.stats().factor_clauses_rewritten >= 5,
+        "3 dividers + 2 quotients"
+    );
+    assert_eq!(s.solve(), SolverResult::Sat);
+
+    // UNSAT pin: `¬a ∧ ¬b ∧ ¬c` falsifies every tail, forcing all `x_i`
+    // through the six originals; `¬x_1` then contradicts — the quotient
+    // chain must preserve that.
+    let mut s2 = Solver::new();
+    let xs = build(&mut s2);
+    let a = Var::new(3);
+    let b = Var::new(4);
+    let c = Var::new(5);
+    s2.add_clause([Lit::neg(a)]);
+    s2.add_clause([Lit::neg(b)]);
+    s2.add_clause([Lit::neg(c)]);
+    s2.add_clause([Lit::neg(xs[0])]);
+    s2.add_clause([Lit::neg(xs[1])]);
+    s2.add_clause([Lit::neg(xs[2])]);
+    let introduced2 = s2.factor_presearch();
+    let got = s2.solve();
+    assert_eq!(
+        got,
+        SolverResult::Unsat,
+        "verdict flipped by large-chain factoring (introduced={introduced2})"
+    );
 }
 
 /// Differential: factoring must never change the verdict on random
@@ -1634,7 +1711,7 @@ fn factor_differential_random_binaries() {
             let _ = c;
         }
         let expected = ref_solver.solve();
-        let (introduced, _) = base.factor_binaries();
+        let introduced = base.factor_presearch();
         let got = base.solve();
         assert_eq!(
             expected, got,
@@ -1694,7 +1771,7 @@ fn factor_witness_polarity_regression() {
         s.add_clause([Lit::neg(g)]);
     }
     assert_eq!(base.solve(), SolverResult::Sat);
-    let (introduced, _) = factored.factor_binaries();
+    let introduced = factored.factor_presearch();
     // The witnesses `(¬g ∨ q_i)` legitimately match with candidate
     // `¬g` (the adjacency entry `¬q → ¬g` IS the clause `(q ∨ ¬g)`), so
     // factoring may fire — but must preserve the verdict either way.
