@@ -188,11 +188,22 @@ impl Solver {
         }
         // Pair enumeration among top-degree literals (deterministic:
         // degree desc, then code asc).
-        const TOP: usize = 256;
+        // Study knobs for the scale (kissat factors 51k+ hubs on the
+        // worker class - 55% of its variables): `NIXIE_ANDGATE_TOP`
+        // (default 256) caps the degree-ranked hub set;
+        // `NIXIE_ANDGATE_MAXI` overrides the per-round introduction cap.
+        let top: usize = std::env::var("NIXIE_ANDGATE_TOP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(256);
+        let max_intros = std::env::var("NIXIE_ANDGATE_MAXI")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(max_intros);
         let mut hubs: Vec<(u32, usize)> =
             co.iter().map(|(l, cs)| (*l, cs.len())).collect::<Vec<_>>();
         hubs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        hubs.truncate(TOP);
+        hubs.truncate(top);
         let mut introduced = 0usize;
         'pairs: for i in 0..hubs.len() {
             for j in (i + 1)..hubs.len() {

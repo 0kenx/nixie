@@ -73,8 +73,15 @@ impl Solver {
 
         // Budget: fraction of accumulated search ticks (cadical SET_EFFORT_LIMIT).
         let ticks = self.ticks_focused + self.ticks_stable;
-        let budget = (ticks.saturating_mul(PROBE_EFFORT_PERMILLE) / 1000)
-            .clamp(PROBE_MIN_EFFORT, PROBE_MAX_EFFORT);
+        // Study knob: probe effort per-mille of accumulated search ticks
+        // (kissat spends up to ~26% of its ticks on probing on the
+        // 6s167 class; our default is 80 permille = 8%).
+        let permille: u64 = std::env::var("NIXIE_PROBE_PERMILLE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(PROBE_EFFORT_PERMILLE);
+        let budget =
+            (ticks.saturating_mul(permille) / 1000).clamp(PROBE_MIN_EFFORT, PROBE_MAX_EFFORT);
         let start_props = self.stats.propagations;
 
         // Schedule binary roots, ranked by negated-occurrence count.

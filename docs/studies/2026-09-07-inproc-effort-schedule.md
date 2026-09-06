@@ -567,3 +567,37 @@ AND-gate rank, dirty scheduling) — and this one is novel against the
 references: cadical's scheme loses at our round frequency, and the
 randomized variant wins.  Gates: nextest 10 571, doc tests, clippy,
 doc, z3 parity 0 mismatches; fuzz 30k clean.
+
+## The 1.23× kissat residue: calibration of both levers (2026-09-07)
+
+**Worker class (14.14× — the factor lever).**  kissat's own statistics
+on `worker_550` calibrate the target precisely: **factored = 51 466
+introductions (55 % of its 93 713 variables), eliminated = 0, 227
+decisions per conflict, 2 003 conflicts** — the magic is pure factoring
+at scale, NOT factor→BVE interplay (BVE eliminated nothing), producing a
+formula so restructured that refutation is nearly direct.  Our
+experiments at the landed rewrite rules: mode-1 at scale (flat schedule,
+~10 k intros/round) bloats the DB (+8 k/round — the eliminator cannot
+pace per-tail introduction volume) and TOs on wall; pair-mode (the
+economical 2|Q|→|Q|+2 form) with the degree cap raised (TOP=1000/2000,
+MAXI=30 k/60 k) is non-monotone and wall-bound (34 424 / 15 951 vs base
+28 984 vs kissat 2 003) — the per-clause `remove_clause` hygiene over
+10 M-clause rounds costs more than the simplified rewrite returns.
+Study knobs landed: `NIXIE_ANDGATE_TOP`, `NIXIE_ANDGATE_MAXI`.
+**The faithful port spec** (quotient chains with `distinct_paths`
+watch-graph scoring, incremental rounds across the solve rather than
+mega-rounds, eager watch surgery instead of remove+rebuild) stands as
+pre-registered with this calibration.
+
+**6s167 class (3.77× — the probing lever).**  A probe-effort sweep
+(`NIXIE_PROBE_PERMILLE` = 80/200/400/800, knob landed) is flat:
+identical conflicts at every effort — the probe budget is not binding;
+**the depth limit is the candidate schedule** (`generate_probes` queues
+binary-implication roots only, and the queue exhausts).  kissat's
+probing on this class = 18 % of its ticks and includes look-ahead
+failed literals over non-binary structure, congruence closure
+(equivalence classes), and kitten sub-solver sweeps — none of which our
+`probe_round` has.  Pre-registered as the look-ahead/congruence port.
+
+Both levers are therefore **calibrated, specified, and open** — neither
+closes with the landed infrastructure's knobs alone.
