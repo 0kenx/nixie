@@ -430,3 +430,49 @@ AND-gate adds nothing corpus-wide beyond the effort schedule.
    geometry. What remains untried for it: candidate-selection differences
    in what gets *learned* (kissat's focused-mode watcher/burning policy) —
    search-side, not retention-side.
+
+## The landing and the E-core standing table (2026-09-07, final)
+
+**Landed at `e943921`** (user-directed after the 5-seed program): the
+CaDiCaL preset runs inprocessing with the effort schedule + budgeted
+vivify (`sched-vivon`) as the default.  Opt-outs: `NIXIE_INPROC_SCHED=0`
+(legacy flat), `NIXIE_INPROC_VIVSKIP=1` (cadical's vivifythresh).  The
+env-unset binary reproduces the measured `sched-vivon` cells bit-exactly
+(decisive cells; TO cells re-confirmed under a longer cap).  Gates at the
+landing commit: nextest 10 542, doc tests, clippy, doc, fmt (own files),
+z3 parity **0 mismatches at the new default**; binary cached at
+`precompile/e943921/`.
+
+**Standing re-measure at the landed default** (162 cells, suite
+`sc24f-standing-e943921`, E-cores 10–19, sequential per file, 60 s cap —
+a DIFFERENT layout from the stored P-core table; within-layout ratios
+only):
+
+| arm | solved / 54 | wall geomean vs nixie | conflicts geomean vs nixie |
+|---|---|---|---|
+| nixie `e943921` | 39 | 1.00× | 1.00× |
+| cadical 3.0.1 | 48 | nixie/cadical = 1.47× | **nixie/cadical = 1.01×** |
+| kissat 4.0.4 | 48 | nixie/kissat = 1.61× | nixie/kissat = 1.23× |
+
+0 verdict mismatches.  **Conflicts parity with cadical on the standing
+corpus** (1.0097×, n=25 both-decisive) — the search path no longer has a
+conflicts deficit against its port source; the kissat residue (1.23×) is
+the component-depth gap (factor chains, kitten sweeps) quantified in the
+tick decomposition.
+
+**Wall decomposition of the flip** (from the 810-cell ms5b data):
+conflicts 0.8298× × per-conflict-wall 1.1359× = **wall 0.9426×** — the
+rounds cost ~14 % more wall per conflict (the per-round watch/BIG rebuild
+is bandwidth-hungry, and E-cores punish it), but the conflicts saving
+dominates: the flip is a net wall win.  The 39-vs-48 solved gap against
+the references at THIS layout is dominated by the pre-existing
+per-conflict wall disadvantage (≈1.4× vs cadical on E-cores, versus
+≈0.88× on the P-core stored table) — an E-core bandwidth amplification,
+not a flip regression: the ms5b P(solve) comparison on the same layout
+showed the old and new defaults statistically tied.
+
+**Pre-registered follow-ups**: (a) the P-core standing re-measure (the
+official table's layout — outside this session's core allocation);
+(b) amortize the round rebuild (incremental watch attach instead of
+whole-DB rebuild — the per-conflict-wall 1.14× headroom); (c) kissat's
+chain/hop factor for the 1.23× conflicts residue.
