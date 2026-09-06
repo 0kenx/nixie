@@ -490,14 +490,24 @@ restart land on a different productive shallow region, while ours thrash.
 
 **Pre-registered treatments** (all matched-null class):
 
-* **T1 — stall-aware restart**: fire a focused restart when the glue EMA
-  is *flat* (stalled) rather than only when it *degrades* — e.g. an
-  additional trigger on conflicts-since-last-restart exceeding a
-  multiple of the recent restart interval. Not a cadical port (they have
-  no max-gap fallback); a nixie-original policy, so the full null
-  program applies. The geometric test predicts it recovers ~half the gap
-  on qwh/constraints_17 without touching worker_550/6s167 — *if* gated
-  on measured stall rather than blanket cadence.
+* **T1 — stall-aware restart** (`NIXIE_RESTART_STALL=<k>`, landed this
+  session as an env-gated arm, **default off**): fire a focused restart
+  when the gap since the last restart exceeds `k`× the restart-gap EMA
+  (window 8, floor 200 conflicts) — the cadical Glucose condition has no
+  max-gap fallback, so a uniform-huge glue stream silences it. Inert by
+  construction on healthy cadence (verified bit-identical default-off on
+  6s167/crn_11 full solves and 22-file-equivalent behavior; the trigger
+  cannot fire when restarts already outpace 8× their own EMA).
+
+  **5-seed screen** (conflicts-to-verdict, base vs `k=8`): constraints_17
+  geomean **45.4k → 14.7k (3.1× better)**; qwh **91.3k → 52.1k (1.75×
+  better)**; worker_550 **10.5k → 16.4k (1.57× worse)** — the same
+  split the forced-geometric causal test predicted: the unstable tail
+  recovers, the deep-search tail still needs restart *productivity* (T2)
+  before any default flip. Per-seed variance remains huge in both arms
+  (3–60×), so this is a screen, not a landing case: the full study needs
+  the matched null (trigger at the same rate, scrambled stall signal),
+  ≥10 seeds, and the standing corpus before any default change.
 * **T2 — restart productivity** (phase quality): why do cadical's
   restarts help them on worker_550/6s167 and ours hurt? dec/conflict is
   the metric; targets are the rephase/walk cadence and target/best phase

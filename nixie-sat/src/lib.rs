@@ -647,6 +647,24 @@ visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps=
     }
 }
 
+/// T1 stall-restart multiplier (`NIXIE_RESTART_STALL=<k>`): when armed, a
+/// focused-mode restart also fires if the gap since the last restart
+/// exceeds `k`× the recent restart-gap EMA (floor 200 conflicts) — the
+/// cadical Glucose trigger has no max-gap fallback, so a uniform-huge glue
+/// stream silences it (2026-09-07 tier-1 diagnosis). Diagnostic study arm;
+/// unset by default.
+#[doc(hidden)]
+pub fn restart_stall_multiplier() -> Option<f64> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<f64>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_RESTART_STALL")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|k| *k > 0.0)
+    })
+}
+
 /// Gate for [`DIAG_VMTF_SCAN`] accumulation (`NIXIE_VMTF_SCAN=1`).
 #[doc(hidden)]
 pub fn vmtf_scan_enabled() -> bool {

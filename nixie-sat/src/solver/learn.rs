@@ -1621,7 +1621,28 @@ impl Solver {
         // conflicts than Z3 on `gensys_icl_sk004`, with an average learned
         // clause length of 34.
         self.check_stabilize();
-        let do_restart = if self.config.enable_stabilize {
+        // T1 stall trigger (`NIXIE_RESTART_STALL=<k>`, unset = inert): the
+        // Glucose condition above restarts on glue *degradation* only, and
+        // has no max-gap fallback — on the uniform-huge-glue class the fast
+        // EMA never crosses 1.10x slow and focused restarts stop firing
+        // (measured: 19 restarts / 25.5k conflicts on worker_550 vs
+        // cadical's 226; the forced-restart causal test halved qwh and
+        // constraints_17 conflicts — see the 2026-09-07 tier-1 study). Fire
+        // when the current gap exceeds k x the recent gap EMA (floor 200):
+        // a healthy search never sees 8x its own restart cadence, a stalled
+        // one lives above it.
+        let stall_k = (!self.stable)
+            .then(crate::restart_stall_multiplier)
+            .flatten();
+        let stall_restart = stall_k.is_some_and(|k| {
+            self.stats
+                .conflicts
+                .saturating_sub(self.last_restart_conflict)
+                >= (k * self.restart_gap_ema).max(200.0) as u64
+        });
+        let do_restart = if stall_restart {
+            true
+        } else if self.config.enable_stabilize {
             if self.stable {
                 self.reluctant.activated()
             } else {

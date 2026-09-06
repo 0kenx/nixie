@@ -1337,6 +1337,18 @@ pub struct Solver {
     /// Per-mode glue averages (current/saved), swapped on stable/focused
     /// transitions (cadical `swap_averages`).
     pub(super) glue_current: GlueAverages,
+    /// Conflict index at the last restart (any mode) — the denominator of
+    /// the current restart gap (T1 stall trigger; see `learn.rs`).
+    pub(super) last_restart_conflict: u64,
+    /// EMA (window 8) of observed restart gaps in conflicts. cadical's
+    /// focused Glucose trigger restarts on glue *degradation* only; when the
+    /// glue stream is uniform-huge (worker_550/qwh class, avg LBD 241–517)
+    /// the fast EMA never crosses 1.10× slow and focused restarts stop
+    /// firing entirely (measured 19 restarts per 25.5k conflicts vs
+    /// cadical's 226 — the 2026-09-07 tier-1 diagnosis). This EMA feeds the
+    /// opt-in stall trigger (`NIXIE_RESTART_STALL=<multiplier>`), never the
+    /// default path.
+    pub(super) restart_gap_ema: f64,
     pub(super) glue_saved: GlueAverages,
     /// Knuth reluctant-doubling (Luby) restart trigger for stable mode.
     pub(super) reluctant: Reluctant,
@@ -1926,6 +1938,8 @@ impl Solver {
             stabphases: 0,
             next_stabilize: stabilize_base,
             glue_current: GlueAverages::new(),
+            last_restart_conflict: 0,
+            restart_gap_ema: 100.0,
             glue_saved: GlueAverages::new(),
             reluctant: Reluctant::default(),
             ticks_focused: 0,

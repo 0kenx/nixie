@@ -566,6 +566,17 @@ impl Solver {
         if self.stable {
             self.stats.restarts_stable += 1;
         }
+        // T1 bookkeeping (inert unless the stall trigger is armed): the
+        // just-closed gap feeds the gap EMA (window 8).
+        {
+            let gap = self
+                .stats
+                .conflicts
+                .saturating_sub(self.last_restart_conflict);
+            self.last_restart_conflict = self.stats.conflicts;
+            let a = 1.0 / 8.0;
+            self.restart_gap_ema += a * (gap as f64 - self.restart_gap_ema);
+        }
         // Target/best phase bookkeeping no longer lives here: every
         // `backtrack_with_phase_saving` (this one included) routes through
         // `update_target_and_best`, keyed on the conflict-free prefix –
