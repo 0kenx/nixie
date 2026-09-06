@@ -23,7 +23,7 @@ mod types;
 mod utils;
 
 // Re-export public types
-pub use hnf::HermiteNormalForm;
+pub use hnf::{EqSolution, HermiteNormalForm, solve_integer_eq_system};
 pub use pb::PseudoBooleanSolver;
 pub use types::LiaSolver;
 

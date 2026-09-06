@@ -46,18 +46,6 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a
 }
 
-/// Compute GCD of two i128 values (used by the Diophantine consistency check).
-fn gcd_i128(mut a: i128, mut b: i128) -> i128 {
-    a = a.abs();
-    b = b.abs();
-    while b != 0 {
-        let temp = b;
-        b = a % b;
-        a = temp;
-    }
-    a
-}
-
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
 pub struct ArithSolver {
@@ -100,8 +88,10 @@ pub struct ArithSolver {
     /// mathsat `vhard` family, where it alone was ~80% of wall time).  The
     /// equality set changes only when an equality is asserted (`intern`-time)
     /// or retracted by `pop`, so the cache is invalidated at exactly those
-    /// points and recomputed lazily.  `None` ⇒ dirty.
-    int_eq_infeasible_cache: Option<bool>,
+    /// points and recomputed lazily.  `None` ⇒ dirty.  Caches the complete
+    /// [`IntEqVerdict`] (the one-sided infeasibility-only cache it replaces
+    /// was subsumed by the Hermite solve).
+    int_eq_verdict_cache: Option<IntEqCache>,
     /// Propagation-only single-variable constant bounds, maintained in
     /// parallel with the simplex.  The simplex encodes every constraint
     /// (`add_le`/`add_eq`) as a *slack row* with the bound on the slack, so its
@@ -200,6 +190,37 @@ type ExplainedBound = Option<(DeltaRational, Vec<TermId>)>;
 /// mapping safely yields `None` for it.
 const BRANCH_REASON: u32 = u32::MAX;
 
+/// Complete verdict of the recorded integer-equality subsystem
+/// ([`ArithSolver::int_equalities`]), decided by the Hermite
+/// (column-echelon) solve in `lia::hnf::solve_integer_eq_system`.
+///
+/// * `Infeasible` is a proof: the equality subsystem has no integer
+///   solution, so neither does the full problem.
+/// * `Incumbent` is a witness (free variables set to zero). It satisfies
+///   the equalities; whether it satisfies every OTHER active row is
+///   decided by re-pinning it through a scoped LP re-solve
+///   ([`ArithSolver::try_eq_incumbent`]) — never by trusting it.
+/// * `GiveUp` defers to branch-and-bound (magnitude/size guard).
+#[derive(Debug, Clone, PartialEq)]
+enum IntEqVerdict {
+    Infeasible,
+    Incumbent(Vec<(VarId, Rational64)>),
+    GiveUp,
+}
+
+/// Memoized verdict + incumbent-rejection marker.  `rejected` is set when
+/// the rows beyond the recorded equalities refused the witness; the
+/// attempt is then skipped until the equality set changes (which resets
+/// the whole entry) — a rejected pinning is one LP wasted per theory
+/// check otherwise.  This trades a missed rescue in the rare case where
+/// only non-equality rows changed in the witness's favour for not
+/// re-paying the probe at every check.
+#[derive(Debug, Clone)]
+struct IntEqCache {
+    verdict: IntEqVerdict,
+    rejected: bool,
+}
+
 /// Canonical key of a linear form over TermIds: terms sorted by TermId
 /// with coefficients merged and zero coefficients dropped, plus the
 /// constant.  Two assertions of the same (or scaled-identical after
@@ -239,7 +260,7 @@ impl ArithSolver {
             shared_equalities: Vec::new(),
             lia_model: FxHashMap::default(),
             int_equalities: Vec::new(),
-            int_eq_infeasible_cache: None,
+            int_eq_verdict_cache: None,
             prop_lower: Vec::new(),
             prop_upper: Vec::new(),
             prop_undo: Vec::new(),
@@ -819,7 +840,7 @@ impl ArithSolver {
                 });
                 // A new equality changes the Diophantine system → invalidate
                 // the cached feasibility verdict.
-                self.int_eq_infeasible_cache = None;
+                self.int_eq_verdict_cache = None;
 
                 // Compute GCD of all coefficients
                 let g = coeffs.iter().fold(0i64, |acc, &c| gcd_i64(acc, c.abs()));
@@ -1384,28 +1405,28 @@ impl ArithSolver {
         }
     }
 
-    /// Decide whether the accumulated system of integer equalities has NO
-    /// integer solution (a sound, one-sided UNSAT detector).
+    /// Decide the recorded integer-equality subsystem *completely* via the
+    /// Hermite (column-echelon) solve: `Infeasible` is a proof that the
+    /// subsystem (and hence the whole problem) has no integer solution;
+    /// `Incumbent` carries a concrete witness with free variables set to
+    /// zero — lossless, because in column-echelon form the pivot variables
+    /// are uniquely determined by their predecessors, so the witness exists
+    /// iff any integer solution exists.
     ///
-    /// Every equality `sum a_i·x_i = b` is an exact integer row.  We run integer
-    /// (fraction-free) Gaussian elimination: reducing rows with the identity
-    /// `row := (a/g)·row − (b/g)·pivot` (g = gcd of the two pivot-column
-    /// entries) produces rows that are integer linear combinations of the
-    /// originals, hence consequences that every integer solution must satisfy.
-    /// For any resulting row `sum c_j·x_j = d`, an integer solution requires
-    /// `gcd(c_j) | d`; if that fails – or a row reduces to `0 = d` with `d ≠ 0` –
-    /// the whole system is integer-infeasible.
+    /// This subsumes the historical GCD/fraction-free-Gaussian one-sided
+    /// check: it resolves everything that check could (e.g.
+    /// `y = 2x ∧ y = 2z + 1` ⇒ `2x − 2z = 1`) and additionally produces
+    /// satisfying assignments for feasible systems — the class
+    /// branch-and-bound cannot close (unbounded pure-equality systems such
+    /// as the parity obligations; see
+    /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
     ///
-    /// This catches cross-constraint parity infeasibility such as
-    /// `y = 2x ∧ y = 2z + 1` (⇒ `2x − 2z = 1`, and `gcd(2,2) = 2 ∤ 1`), which
-    /// per-equation GCD reasoning and unbounded branch-and-bound cannot.
-    ///
-    /// The check is *sound but incomplete*: it only ever concludes UNSAT.  If an
-    /// intermediate value would overflow `i128`, or the system is too large, it
-    /// conservatively returns `false` (defer to branch-and-bound).
-    fn int_equalities_infeasible(&self) -> bool {
+    /// A pure function of `int_equalities`; callers memoize via
+    /// [`ArithSolver::cached_int_eq_verdict`].  Guards (system size,
+    /// intermediate magnitude) return `GiveUp` — never a wrapped verdict.
+    fn compute_int_eq_verdict(&self) -> IntEqVerdict {
         if self.int_equalities.is_empty() {
-            return false;
+            return IntEqVerdict::GiveUp;
         }
 
         // Assign a dense column index to every variable that appears.
@@ -1418,87 +1439,107 @@ impl ArithSolver {
         }
         let cols = col_of.len();
         let rows = self.int_equalities.len();
-
-        // Bound the work: skip very large systems (defer to branch-and-bound).
         if cols == 0 || rows.saturating_mul(cols) > 200_000 {
-            return false;
+            return IntEqVerdict::GiveUp;
         }
 
-        // Dense augmented matrix: last entry of each row is the RHS.
-        let mut mat: Vec<Vec<i128>> = vec![vec![0i128; cols + 1]; rows];
+        let mut mat: Vec<Vec<i128>> = vec![vec![0i128; cols]; rows];
+        let mut rhs: Vec<i128> = vec![0i128; rows];
         for (r, eq) in self.int_equalities.iter().enumerate() {
             for &(v, c) in &eq.terms {
                 if let Some(&col) = col_of.get(&v) {
-                    mat[r][col] += c as i128;
+                    mat[r][col] += i128::from(c);
                 }
             }
-            mat[r][cols] = eq.rhs as i128;
+            rhs[r] = i128::from(eq.rhs);
         }
 
-        // Fraction-free Gaussian elimination.
-        let mut pivot_row = 0usize;
-        for col in 0..cols {
-            // Find a pivot at or below `pivot_row` with a nonzero entry.
-            let Some(sel) = (pivot_row..rows).find(|&r| mat[r][col] != 0) else {
-                continue;
-            };
-            mat.swap(pivot_row, sel);
-
-            // Snapshot the pivot row to avoid aliasing two rows of `mat`.
-            let pivot = mat[pivot_row].clone();
-            let a = pivot[col];
-
-            // Eliminate this column from every other row.
-            for (r, row) in mat.iter_mut().enumerate() {
-                if r == pivot_row || row[col] == 0 {
-                    continue;
+        match super::lia::solve_integer_eq_system(&mat, &rhs) {
+            super::lia::EqSolution::Infeasible => IntEqVerdict::Infeasible,
+            super::lia::EqSolution::GiveUp => IntEqVerdict::GiveUp,
+            super::lia::EqSolution::Feasible(x) => {
+                let mut witness = Vec::with_capacity(cols);
+                for (var, &col) in &col_of {
+                    let v = x[col];
+                    let Ok(small) = i64::try_from(v) else {
+                        return IntEqVerdict::GiveUp;
+                    };
+                    witness.push((*var, Rational64::from_integer(small)));
                 }
-                let b = row[col];
-                let g = gcd_i128(a, b);
-                let fa = a / g; // scale for row r
-                let fb = b / g; // scale for pivot
-                for (k, &pv) in pivot.iter().enumerate().skip(col) {
-                    let lhs = match row[k].checked_mul(fa) {
-                        Some(v) => v,
-                        None => return false, // overflow → cannot decide
-                    };
-                    let rhs = match pv.checked_mul(fb) {
-                        Some(v) => v,
-                        None => return false,
-                    };
-                    row[k] = match lhs.checked_sub(rhs) {
-                        Some(v) => v,
-                        None => return false,
-                    };
-                }
-            }
-
-            pivot_row += 1;
-            if pivot_row == rows {
-                break;
+                IntEqVerdict::Incumbent(witness)
             }
         }
+    }
 
-        // Consequence check: each row must be integer-satisfiable on its own.
-        for row in &mat {
-            let mut g = 0i128;
-            for &c in &row[..cols] {
-                g = gcd_i128(g, c);
-            }
-            let d = row[cols];
-            if g == 0 {
-                // 0 = d with d ≠ 0 is inconsistent (even over the rationals).
-                if d != 0 {
-                    return true;
-                }
-            } else if d % g != 0 {
-                // gcd of coefficients does not divide the constant ⇒ no integer
-                // solution to this consequence ⇒ system integer-infeasible.
-                return true;
-            }
+    /// Memoized [`ArithSolver::compute_int_eq_verdict`]; invalidated exactly
+    /// when an equality is asserted or retracted by `pop`.
+    fn cached_int_eq_verdict(&mut self) -> IntEqVerdict {
+        self.int_eq_cache().verdict
+    }
+
+    /// Verdict plus the incumbent-rejection marker, memoized together.
+    fn int_eq_cache(&mut self) -> IntEqCache {
+        if self.int_eq_verdict_cache.is_none() {
+            self.int_eq_verdict_cache = Some(IntEqCache {
+                verdict: self.compute_int_eq_verdict(),
+                rejected: false,
+            });
         }
+        self.int_eq_verdict_cache.clone().unwrap_or(IntEqCache {
+            verdict: IntEqVerdict::GiveUp,
+            rejected: false,
+        })
+    }
 
-        false
+    /// Attempt the incumbent once per equality-set state; record rejection.
+    fn try_cached_eq_incumbent(&mut self) -> bool {
+        let (verdict, rejected) = {
+            let c = self.int_eq_cache();
+            (c.verdict, c.rejected)
+        };
+        let IntEqVerdict::Incumbent(w) = verdict else {
+            return false;
+        };
+        if rejected {
+            return false;
+        }
+        let ok = self.try_eq_incumbent(&w);
+        if !ok && let Some(c) = self.int_eq_verdict_cache.as_mut() {
+            c.rejected = true;
+        }
+        ok
+    }
+
+    /// Re-solve under a scoped pinning of an equality witness (`var = x*`
+    /// for every covered variable, inside its own simplex scope, exactly
+    /// like a branch bound).  If the LP accepts the pins and every integer
+    /// variable lands integral, `lia_cuts_then_bnb` snapshots the model and
+    /// reports `Sat` — a genuine model of *all* active rows (the pins
+    /// enforce the witness; the LP enforces everything else).  Any other
+    /// outcome pops the scope and the caller falls back honestly: the
+    /// witness is one lattice point, not a characterization, when rows
+    /// beyond the equalities exist.
+    fn try_eq_incumbent(&mut self, witness: &[(VarId, Rational64)]) -> bool {
+        self.simplex.push();
+        for &(var, value) in witness {
+            self.simplex.set_lower(var, value, BRANCH_REASON);
+            self.simplex.set_upper(var, value, BRANCH_REASON);
+        }
+        // Lean probe — one LP re-solve plus an integrality scan, no cut
+        // rounds: this runs at theory-check frequency during search, and a
+        // doomed pinning (rows beyond the equalities reject the witness)
+        // must cost one simplex pass, not a full cuts+B&B pipeline
+        // (measured: the pipeline turned mixed-parity UNSAT from a fast
+        // honest `unknown` into a timeout).
+        let int_vars = self.interned_int_vars();
+        let accepted = self.simplex.check().is_ok()
+            && !self.simplex.resource_limit_reached()
+            && self.find_fractional_int_var(&int_vars).is_none();
+        if accepted {
+            self.snapshot_lia_model(&int_vars);
+        }
+        self.simplex.pop();
+        accepted
     }
 
     /// Entry point for the LIA integrality search (cuts + branch-and-bound).
@@ -1512,6 +1553,14 @@ impl ArithSolver {
     /// theory check into a different atom assignment (where a cut would be
     /// unsound).
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
+        // Diophantine fast path, fired eagerly when the recorded
+        // equalities cover every integer variable: the Hermite solve then
+        // decides the system outright — `Infeasible` is a proof, and an
+        // accepted incumbent is a model — instead of burning the
+        // branch-and-bound node budget on the unbounded pure-equality
+        // class it cannot close.  When coverage is partial (rows beyond
+        // the equalities exist) the pinned re-solve still vetoes any
+        // witness the other rows reject, so this is sound regardless.
         self.simplex.push();
         let result = self.lia_cuts_then_bnb()?;
         self.simplex.pop();
@@ -1520,26 +1569,24 @@ impl ArithSolver {
             other => return Ok(other),
         }
         // The search gave up (unbounded variables, or its node/depth budget).
-        // Try the sound Diophantine parity check as a fallback: it resolves
-        // the cross-constraint integer-infeasibility that branch-and-bound
-        // over unbounded variables cannot (e.g. `y = 2x ∧ y = 2z + 1`),
-        // converting a would-be `Unknown` into a proven `Unsat`.  It only
-        // ever strengthens (never weakens) the verdict.  The check is a pure
-        // function of `int_equalities`, so its result is memoised in
-        // `int_eq_infeasible_cache` (invalidated only when an equality is
-        // asserted or retracted by `pop`).
-        let infeasible = match self.int_eq_infeasible_cache {
-            Some(v) => v,
-            None => {
-                let v = self.int_equalities_infeasible();
-                self.int_eq_infeasible_cache = Some(v);
-                v
+        // The complete Diophantine verdict upgrades the historical one-sided
+        // check: `Infeasible` is a proof (converting a would-be `Unknown`
+        // into a proven `Unsat` — everything the old GCD-elimination fallback
+        // resolved, e.g. `y = 2x ∧ y = 2z + 1`), and `Incumbent` is re-pinned
+        // through a scoped LP re-solve that respects every other active row;
+        // acceptance yields a genuine integral model where branch-and-bound
+        // could not construct one (the unbounded pure-equality class).
+        match self.cached_int_eq_verdict() {
+            IntEqVerdict::Infeasible => Ok(TheoryResult::Unsat(self.full_unsat_core())),
+            IntEqVerdict::Incumbent(_) => {
+                if self.try_cached_eq_incumbent() {
+                    Ok(TheoryResult::Sat)
+                } else {
+                    Ok(TheoryResult::Unknown)
+                }
             }
-        };
-        if infeasible {
-            return Ok(TheoryResult::Unsat(self.full_unsat_core()));
+            IntEqVerdict::GiveUp => Ok(TheoryResult::Unknown),
         }
-        Ok(TheoryResult::Unknown)
     }
 
     /// Gomory-cut rounds, then branch-and-bound, inside the caller's scope.
@@ -2018,7 +2065,7 @@ impl Theory for ArithSolver {
             // nothing leaves the live equality set identical, so any cached
             // verdict over it is still valid.
             if self.int_equalities.len() > state.num_int_equalities {
-                self.int_eq_infeasible_cache = None;
+                self.int_eq_verdict_cache = None;
             }
             self.int_equalities.truncate(state.num_int_equalities);
             // The LIA branch-and-bound model is a snapshot of the *last* check's
@@ -2061,7 +2108,7 @@ impl Theory for ArithSolver {
         self.shared_equalities.clear();
         self.lia_model.clear();
         self.int_equalities.clear();
-        self.int_eq_infeasible_cache = None;
+        self.int_eq_verdict_cache = None;
         self.prop_lower.clear();
         self.prop_upper.clear();
         self.prop_undo.clear();
@@ -2569,6 +2616,88 @@ impl ArithSolver {
 mod tests {
     use super::*;
     use num_traits::{One, Zero};
+
+    /// The parity-shaped pure-equality class that stall(ed) branch-and-bound:
+    /// unbounded vertex equations with slack, even total charge.  The
+    /// Hermite fast path must decide it (see
+    /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
+    #[test]
+    fn pure_equality_parity_system_even_charge_is_sat() {
+        let mut solver = ArithSolver::lia();
+        let mut reason = 10_000u32;
+        let term_id = |v: u32| TermId::new(v);
+        // 12 vertices, spanning-star + ring edges (deterministic).
+        let verts = 12usize;
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for v in 1..verts {
+            edges.push((0, v));
+        }
+        for v in 0..verts {
+            edges.push((v, (v + 1) % verts));
+        }
+        let charge = [1u8, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // total 2: even
+        // Columns: i_e (edges) then k_v (slack), moved to the left side:
+        // sum_{e incident} i_e - 2*k_v = c_v.
+        for (v, &ch) in charge.iter().enumerate() {
+            let mut terms: Vec<(TermId, Rational64)> = Vec::new();
+            for (e, &(a, b)) in edges.iter().enumerate() {
+                if a == v || b == v {
+                    terms.push((term_id(e as u32), Rational64::from_integer(1)));
+                }
+            }
+            terms.push((
+                term_id((edges.len() + v) as u32),
+                Rational64::from_integer(-2),
+            ));
+            reason += 1;
+            solver.assert_eq(
+                &terms,
+                Rational64::from_integer(i64::from(ch)),
+                TermId::new(reason),
+            );
+        }
+        assert!(
+            matches!(solver.check(), Ok(TheoryResult::Sat)),
+            "even-charge parity system must be decided Sat by the Hermite fast path"
+        );
+    }
+
+    #[test]
+    fn pure_equality_parity_system_odd_charge_is_unsat() {
+        let mut solver = ArithSolver::lia();
+        let mut reason = 20_000u32;
+        let verts = 8usize;
+        let mut edges: Vec<(usize, usize)> = Vec::new();
+        for v in 1..verts {
+            edges.push((0, v));
+        }
+        for v in 0..verts {
+            edges.push((v, (v + 1) % verts));
+        }
+        let charge = [1u8, 0, 0, 0, 0, 0, 0, 0]; // total 1: odd
+        for (v, &ch) in charge.iter().enumerate() {
+            let mut terms: Vec<(TermId, Rational64)> = Vec::new();
+            for (e, &(a, b)) in edges.iter().enumerate() {
+                if a == v || b == v {
+                    terms.push((TermId::new(e as u32), Rational64::from_integer(1)));
+                }
+            }
+            terms.push((
+                TermId::new((edges.len() + v) as u32),
+                Rational64::from_integer(-2),
+            ));
+            reason += 1;
+            solver.assert_eq(
+                &terms,
+                Rational64::from_integer(i64::from(ch)),
+                TermId::new(reason),
+            );
+        }
+        assert!(
+            matches!(solver.check(), Ok(TheoryResult::Unsat(_))),
+            "odd-charge parity system must be refuted"
+        );
+    }
 
     #[test]
     fn test_arith_basic() {
