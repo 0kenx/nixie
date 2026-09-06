@@ -2889,30 +2889,26 @@ impl Solver {
                     return result;
                 }
 
-                // (4) Large arity over a sort EUF owns: injective map.
-                //
-                // Int/Real are deliberately NOT here yet: the encoding is
-                // *sound* over them (the care graph refutes pinned
-                // collisions; dishonest candidate models are caught), but the
-                // satisfiable free-variable case does not converge – closing
-                // it needs the arithmetic model to *separate* arguments the
-                // e-graph holds apart (Z3's `theory_arith` final-check
-                // repair), which nixie's tableau does not do; the care-split
-                // channel that approximates it drowns in lazy `(= x y)`
-                // atoms and degrades to `Unknown` through the model-blocking
-                // gate.  Measured in
-                // `docs/studies/2026-09-distinct-theory-owned-sorts.md`,
-                // which also records what the enabling change is.
+                // (4) Large arity over an EUF-owned or arithmetic sort:
+                // injective map.  Uninterpreted sorts are decided by
+                // congruence alone.  Int/Real lean on the combination layer:
+                // the care graph merges pairs the tableau *pins* to one value
+                // (complete derived reason, congruence conflict), and
+                // [`Solver::refine_colocated_splits`] separates pairs the
+                // tableau merely *co-locates* – the candidate's final checks
+                // propose them, one valid trichotomy clause per pair is
+                // emitted, and CDCL commits the arrangement (see the study
+                // for the full soundness story and the measurements).
                 // Falls back to pairwise if the fresh witnesses could not be
                 // minted unambiguously (name collision with a user symbol).
                 if args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
                     && Self::common_distinct_sort(args, manager).is_some_and(|s| {
                         matches!(
                             manager.sorts.get(s).map(|s| &s.kind),
-                            Some(SortKind::Uninterpreted(_))
+                            Some(SortKind::Uninterpreted(_) | SortKind::Int | SortKind::Real)
                         )
                     })
-                    && self.encode_distinct_injective(result_var, args, manager, depth)
+                    && self.encode_distinct_injective(term, result_var, args, manager, depth)
                 {
                     return result;
                 }
@@ -3414,6 +3410,7 @@ impl Solver {
     /// above.
     fn encode_distinct_injective(
         &mut self,
+        term: TermId,
         result_var: Var,
         args: &[TermId],
         manager: &mut TermManager,
@@ -3533,7 +3530,9 @@ impl Solver {
         // there – but recording the spec unconditionally keeps the gate
         // cheap and uniform.
         self.has_injective_distinct = true;
-        self.injective_distinct_specs.push(args.to_vec());
+        // The spec carries the `Distinct` term itself so the honesty gate
+        // applies only when a model makes it true.
+        self.injective_distinct_specs.push((term, args.to_vec()));
         self.trail.push(TrailOp::DistinctSpecAdded);
         true
     }
@@ -3668,7 +3667,12 @@ impl Solver {
     /// own theory).  The clause is valid for every total order, hence safe to
     /// add unconditionally; the three literals reuse the atoms `encode` already
     /// created, so nothing new is asserted about the problem.
-    fn add_arith_trichotomy_clause(&mut self, lhs: TermId, rhs: TermId, manager: &mut TermManager) {
+    pub(super) fn add_arith_trichotomy_clause(
+        &mut self,
+        lhs: TermId,
+        rhs: TermId,
+        manager: &mut TermManager,
+    ) {
         let is_numeric = manager
             .get(lhs)
             .is_some_and(|t| t.sort == manager.sorts.int_sort || t.sort == manager.sorts.real_sort);
@@ -3775,17 +3779,37 @@ impl Solver {
                     // actually takes: pairwise (n ≤ 32, or any arity over a
                     // sort neither EUF-owned nor arithmetic) creates one
                     // disequality atom per pair, each needing this split.
-                    // The large-arity *uninterpreted* case is the injective-map
-                    // encoding, which never reaches this helper (its
-                    // arguments are not numeric); large numeric distincts stay
-                    // pairwise and keep these splits – see
-                    // `docs/studies/2026-09-distinct-theory-owned-sorts.md`
-                    // for why enabling the injective map there requires the
-                    // arithmetic-side separation first.
-                    let args_clone: Vec<TermId> = args.iter().copied().collect();
-                    for i in 0..args_clone.len() {
-                        for j in (i + 1)..args_clone.len() {
-                            self.add_arith_trichotomy_clause(args_clone[i], args_clone[j], manager);
+                    // This enumeration must mirror the encoding the
+                    // `Distinct` arm actually takes.  Pairwise (n ≤ 32, or a
+                    // sort the injective map does not own) creates one
+                    // disequality atom per pair, each needing this split.
+                    // The large-arity numeric case is now the injective map,
+                    // whose atoms carry **no** pairwise disequalities:
+                    // emitting C(n,2) trichotomies on top of it re-adds the
+                    // quadratic blowup the encoding exists to remove and
+                    // measurably drowns the search in redundant splits (see
+                    // the study).  The injective encoder emits these splits
+                    // itself on its bail-to-pairwise path
+                    // (`emit_distinct_pairwise_trichotomies`), so the
+                    // (astronomically unlikely) name-collision fallback stays
+                    // exactly as strong.
+                    let injective_owned = args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
+                        && Self::common_distinct_sort(args, manager).is_some_and(|s| {
+                            matches!(
+                                manager.sorts.get(s).map(|sk| &sk.kind),
+                                Some(SortKind::Uninterpreted(_) | SortKind::Int | SortKind::Real)
+                            )
+                        });
+                    if !injective_owned {
+                        let args_clone: Vec<TermId> = args.iter().copied().collect();
+                        for i in 0..args_clone.len() {
+                            for j in (i + 1)..args_clone.len() {
+                                self.add_arith_trichotomy_clause(
+                                    args_clone[i],
+                                    args_clone[j],
+                                    manager,
+                                );
+                            }
                         }
                     }
                 }

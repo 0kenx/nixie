@@ -406,8 +406,14 @@ pub(crate) struct TheoryManager<'a> {
     has_injective_distinct: bool,
     /// Pairs already proposed as co-located care splits by this manager
     /// (dedup across the final checks of one search; cross-round dedup is
-    /// `Solver::care_split_pairs`).
+    /// `Solver::colocated_split_done`).
     colocated_split_proposed: FxHashSet<(TermId, TermId)>,
+    /// Co-located but e-graph-apart interface pairs proposed this search,
+    /// drained by `Solver::refine_colocated_splits` (the *soft* refinement:
+    /// trichotomy clauses added in-place, no from-scratch rebuild).  Kept
+    /// separate from `arrangement_splits` so the DL-family tentative-
+    /// arrangement channel is untouched.
+    colocated_split_pairs: Vec<(TermId, TermId)>,
     /// Pairs whose tentative arrangement merge was refuted during the last
     /// [`Self::model_based_combination`] round (`C ⊢ x ≠ y` for then-true
     /// facts C).  Drained by `Solver::refine_arrangement_splits`, which
@@ -632,6 +638,7 @@ impl<'a> TheoryManager<'a> {
         let mut this = Self {
             has_injective_distinct,
             colocated_split_proposed: FxHashSet::default(),
+            colocated_split_pairs: Vec::new(),
             manager,
             euf,
             arith,
@@ -1716,6 +1723,11 @@ impl<'a> TheoryManager<'a> {
     /// Drain the arrangement-split requests collected by the last
     /// [`Self::model_based_combination`] round (see `arrangement_splits`).
     #[must_use]
+    /// Drain the co-located split proposals (see `colocated_split_pairs`).
+    pub fn take_colocated_split_pairs(&mut self) -> Vec<(TermId, TermId)> {
+        core::mem::take(&mut self.colocated_split_pairs)
+    }
+
     pub fn take_arrangement_splits(&mut self) -> Vec<(TermId, TermId)> {
         core::mem::take(&mut self.arrangement_splits)
     }
@@ -1879,6 +1891,13 @@ impl<'a> TheoryManager<'a> {
             // tentative-arrangement round is DL-gated for exactly that
             // reason – see the wisas note in `arrange_model_equal_pairs`).
             if self.has_injective_distinct {
+                // Deliberately SMALL: the search digests a couple hundred new
+                // trichotomy clauses per round comfortably, but a full batch
+                // (780 pairs at n = 40) measurably derails the re-descent –
+                // ~300 full assignments between generalizing conflicts, the
+                // same thrash signature as the pre-separation encoding.
+                // Convergence comes from the round *loop* (each round's
+                // clauses persist), not from batching.
                 const MAX_COLOCATED_SPLIT_PROPOSALS: usize = 256;
                 let mut proposed = 0usize;
                 'groups: for terms in by_val.values() {
@@ -1897,7 +1916,7 @@ impl<'a> TheoryManager<'a> {
                             }
                             let key = if a < b { (a, b) } else { (b, a) };
                             if self.colocated_split_proposed.insert(key) {
-                                self.arrangement_splits.push((a, b));
+                                self.colocated_split_pairs.push((a, b));
                                 proposed += 1;
                             }
                         }

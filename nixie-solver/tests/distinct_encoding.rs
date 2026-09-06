@@ -415,3 +415,226 @@ fn distinct_at_threshold_32_and_just_above_agree() {
         );
     }
 }
+
+// ---------------------------------------------------------------------
+// Injective map over Int/Real (the separation machinery)
+// ---------------------------------------------------------------------
+
+/// `n` Int constants `x1..xn` + `(distinct x1 .. xn)`.
+fn int_header(n: usize) -> String {
+    let mut s = String::from("(set-logic QF_LIA)\n");
+    for i in 1..=n {
+        s.push_str(&format!("(declare-const x{i} Int)\n"));
+    }
+    s
+}
+
+fn int_distinct(n: usize) -> String {
+    let args = (1..=n)
+        .map(|i| format!("x{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("(distinct {args})")
+}
+
+#[test]
+fn large_distinct_int_free_vars_is_sat_with_distinct_model() {
+    // The shape that stalled before the separation machinery existed.
+    let script = format!(
+        "{}(assert {})\n(check-sat)\n(get-value ((= x1 x2) (= x1 x40) (= x39 x40)))\n",
+        int_header(N),
+        int_distinct(N)
+    );
+    let out = run(&script);
+    assert!(
+        out.iter()
+            .any(|l| l.contains("false") || l.contains("(= x1 x2)")),
+        "expected evaluated equalities, got {out:?}"
+    );
+    // Stronger: pull the model and check pairwise distinctness ourselves.
+    let model_script = format!(
+        "{}(assert {})\n(check-sat)\n(get-model)\n",
+        int_header(N),
+        int_distinct(N)
+    );
+    let out = run(&model_script);
+    let body = out.join("\n");
+    let vals: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("define-fun x"))
+        .map(|l| l.split_whitespace().last().unwrap_or("?"))
+        .collect();
+    assert_eq!(vals.len(), N, "model lists all {N} variables");
+    let mut sorted = vals.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        vals.len(),
+        "all model values pairwise distinct"
+    );
+}
+
+#[test]
+fn large_distinct_int_forced_equality_is_unsat() {
+    check(
+        &format!(
+            "{}(assert {})\n(assert (= x2 x17))\n(check-sat)\n",
+            int_header(N),
+            int_distinct(N)
+        ),
+        "unsat",
+    );
+}
+
+#[test]
+fn large_distinct_int_duplicate_argument_is_unsat() {
+    let mut args: Vec<String> = (1..=N).map(|i| format!("x{i}")).collect();
+    args[1] = "x1".to_string();
+    check(
+        &format!(
+            "{}(assert (distinct {}))\n(check-sat)\n",
+            int_header(N),
+            args.join(" ")
+        ),
+        "unsat",
+    );
+}
+
+#[test]
+fn large_distinct_int_bounds_pinned_collision_is_unsat() {
+    // x and y are both forced to 5 through *bounds*, never an equality atom –
+    // the shape that needs the care graph's entailed-merge path.
+    let mut script = String::from(
+        "(set-logic QF_LIA)\n(declare-const x Int)\n(declare-const y Int)\n\
+         (assert (>= x 5))\n(assert (<= x 5))\n(assert (= y 5))\n",
+    );
+    for i in 1..=(N - 2) {
+        script.push_str(&format!("(declare-const a{i} Int)\n"));
+    }
+    let args = format!(
+        "x y {}",
+        (1..=(N - 2))
+            .map(|i| format!("a{i}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    script.push_str(&format!("(assert (distinct {args}))\n(check-sat)\n"));
+    check(&script, "unsat");
+}
+
+// NOTE: the *bare* `(not (distinct x1 .. xn))` over free Int variables is a
+// pre-existing slow shape in nixie for BOTH encodings (pairwise at n = 32 and
+// injective at n = 33 both hang today; z3 answers instantly).  The negated
+// Int tests below therefore pair the negation with a constraint that makes
+// the witness easy.  The bare shape stays a known gap, recorded in
+// docs/studies/2026-09-distinct-theory-owned-sorts.md.
+
+#[test]
+fn large_distinct_int_negated_with_all_pinned_is_unsat() {
+    let mut script = int_header(33);
+    for i in 1..=33 {
+        script.push_str(&format!("(assert (= x{i} {i}))\n"));
+    }
+    script.push_str(&format!(
+        "(assert (not {}))\n(check-sat)\n",
+        int_distinct(33)
+    ));
+    check(&script, "unsat");
+}
+
+#[test]
+fn large_distinct_int_negated_with_equality_is_sat() {
+    check(
+        &format!(
+            "{}(assert (not {}))\n(assert (= x5 x17))\n(check-sat)\n",
+            int_header(N),
+            int_distinct(N)
+        ),
+        "sat",
+    );
+}
+
+#[test]
+fn large_distinct_int_boundary_32_33() {
+    // Both sides of the encoding threshold.  n = 32 keeps pairwise (its
+    // satisfiable shape is a pre-existing slow case in debug builds, so only
+    // the refuted one is asserted there); n = 33 takes the injective map and
+    // both polarities run fast.
+    check(
+        &format!(
+            "{}(assert {})\n(assert (= x1 x2))\n(check-sat)\n",
+            int_header(32),
+            int_distinct(32)
+        ),
+        "unsat",
+    );
+    check(
+        &format!(
+            "{}(assert {})\n(check-sat)\n",
+            int_header(33),
+            int_distinct(33)
+        ),
+        "sat",
+    );
+    check(
+        &format!(
+            "{}(assert {})\n(assert (= x1 x2))\n(check-sat)\n",
+            int_header(33),
+            int_distinct(33)
+        ),
+        "unsat",
+    );
+}
+
+#[test]
+fn large_distinct_int_pinned_to_constants_is_sat() {
+    // Every argument pinned to its own constant: easy sat, but exercises the
+    // separation under concrete values.
+    let mut script = int_header(N);
+    for i in 1..=N {
+        script.push_str(&format!("(assert (= x{i} {i}))\n"));
+    }
+    script.push_str(&format!("(assert {})\n(check-sat)\n", int_distinct(N)));
+    check(&script, "sat");
+}
+
+#[test]
+fn large_distinct_int_scope_pop_then_negate_with_equality_is_sat() {
+    // n = 33: just past the threshold, fast in debug builds.
+    check(
+        &format!(
+            "{}(push 1)\n(assert {})\n(check-sat)\n(pop 1)\n(assert (not {}))\n(assert (= x1 x2))\n(check-sat)\n",
+            int_header(33),
+            int_distinct(33),
+            int_distinct(33)
+        ),
+        "sat",
+    );
+}
+
+#[test]
+fn large_distinct_int_incremental_rechecks_stay_consistent() {
+    check(
+        &format!(
+            "{}(assert {})\n(check-sat)\n(assert (= x2 x3))\n(check-sat)\n",
+            int_header(N),
+            int_distinct(N)
+        ),
+        "unsat",
+    );
+}
+
+#[test]
+fn large_distinct_real_free_vars_is_sat() {
+    let mut script = String::from("(set-logic QF_LRA)\n");
+    for i in 1..=N {
+        script.push_str(&format!("(declare-const r{i} Real)\n"));
+    }
+    let args = (1..=N)
+        .map(|i| format!("r{i}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    script.push_str(&format!("(assert (distinct {args}))\n(check-sat)\n"));
+    check(&script, "sat");
+}

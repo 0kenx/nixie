@@ -136,6 +136,62 @@ gated for it.
   inert today (uninterpreted arguments carry no arithmetic values).
 * The gate comment in the `Distinct` arm pointing here.
 
+## Resolution: Int/Real enabled via separation clauses (2026-09-06, part 2)
+
+The enabling change identified above is now implemented, and the
+`Int | Real` gate is ON.  Three pieces:
+
+1. **Co-located split proposals** (`nelson_oppen_combine`, gated on the
+   encoding's presence): final checks group UF-argument interface terms by
+   their tableau value and propose every e-graph-apart pair of a
+   co-located group.  The root cause of the earlier non-convergence was
+   *not* the rebuild cost alone: the old channel internalized a bare
+   `(= x y)` atom with **no trichotomy**, so deciding it false left
+   arithmetic unaware of the disequality and the tableau re-co-located the
+   pair in every later candidate.
+2. **`refine_colocated_splits`**: one *valid trichotomy clause* per pair
+   (`(= x y) ∨ x < y ∨ x > y`, with the acyclic-orientation phase hint) –
+   a decided-false equality now forces a strict disjunct and the tableau
+   separates, permanently (the clause persists across rounds).  Round
+   shape: reset + rebuild, like the other refinement rounds; 256 pairs
+   per search round, 256-round cap.
+3. **The honesty gate** (`injective_distinct_collisions`): every `Sat`
+   exit checks the registered specs against the model the solver is about
+   to print – a spec whose `distinct` term is **true** in the model must
+   show pairwise-distinct argument values, else the verdict downgrades to
+   `Unknown` (with budget left, the colliding pair is fed back as one more
+   split round).  The result-term conditionality matters: a model that
+   makes the `distinct` *false* colliding is exactly its meaning, and an
+   unconditional gate wrongly degraded legitimate ¬distinct models.
+   Found by measurement: before the gate existed, a cap-exhausted run
+   answered `sat` with a colliding model; after it, the same run answers
+   `unknown` and no test below can reproduce a dishonest print.
+
+**Measured** (release, old = pairwise at n > 32):
+
+| cell | old | new |
+|---|---|---|
+| n=40 free Int vars, sat | 15.0 s | **0.82 s** (model verified 40/40 distinct) |
+| wide-range pair + 42 vars, sat | 60.4 s | **10.7 s** |
+| n=60 free vars, sat | timeout@240 s | **77 s** |
+| n=100 free vars, sat | timeout@240 s | timeout@240 s |
+| bounds-pinned collision, unsat | fast | fast |
+| ¬distinct + all pinned, unsat | fast | fast |
+| bare ¬distinct, n=33 free vars | hang | 11 s (still slow; see below) |
+
+Batching lesson: 256 pairs/round converges; emitting a full group's
+clauses at once (780 at n = 40) measurably derails the re-descent (~300
+full assignments between generalizing conflicts).  The search digests
+small batches; the round *loop* provides the scale.
+
+Remaining gaps, in order: (a) n ≥ ~100 free variables still times out –
+the reset+rebuild per round is O(rounds × problem), and the Z3-style
+in-tableau repair remains the eventual answer; (b) the *bare*
+`(not (distinct …))` over free Int variables is a pre-existing slow shape
+under both encodings (the negated side needs to witness a collision;
+nothing yet guides the search to one) – improved from hang to 11 s by
+this work, still open; (c) BitVec, unchanged (see below).
+
 ## Attack 3: the order encoding over BitVec — correct, measured, no flip
 
 The study's original conclusion predicted BitVec as the order encoding's

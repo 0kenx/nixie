@@ -131,14 +131,27 @@ pub struct Solver {
     /// `TheoryManager::nelson_oppen_combine`) – gated so no other input
     /// family's search trajectory changes.
     pub(super) has_injective_distinct: bool,
-    /// Argument lists of every successful injective-map `distinct` encoding,
-    /// for the post-model honesty gate
-    /// [`Solver::verify_injective_distinct_models`]: a candidate `Sat` model
-    /// must give the Int/Real-sorted arguments pairwise-distinct values, or
-    /// the verdict is downgraded to `Unknown` rather than risk a false `Sat`
-    /// (the certificate gate cannot do this – it deliberately treats
-    /// `Distinct` as undetermined).
-    pub(super) injective_distinct_specs: Vec<Vec<TermId>>,
+    /// `(result term, arguments)` of every successful injective-map
+    /// `distinct` encoding, for the post-model honesty gate
+    /// ([`Self::injective_distinct_collisions`]): a candidate `Sat` model in
+    /// which a `distinct` term is **true** must give its Int/Real-sorted
+    /// arguments pairwise-distinct values, or the verdict is downgraded to
+    /// `Unknown` rather than risk a false `Sat` (the certificate gate cannot
+    /// do this – it deliberately treats `Distinct` as undetermined).  The
+    /// result term is carried precisely so a model that makes the
+    /// `distinct` *false* – a perfectly legitimate collision – is not
+    /// gated (found by the negated-`distinct` regression tests).
+    pub(super) injective_distinct_specs: Vec<(TermId, Vec<TermId>)>,
+    /// Pairs whose co-located trichotomy clause was emitted by
+    /// [`Self::refine_colocated_splits`] (dedup across rounds; retracted by
+    /// `pop` together with its clause via `TrailOp::ColocatedSplitPairAdded`).
+    pub(super) colocated_split_done: FxHashSet<(TermId, TermId)>,
+    /// Soft co-located split rounds used over this solver's lifetime
+    /// (capped; see `refine_colocated_splits`).  Monotone, mirroring
+    /// `arrangement_rounds`: the clauses persist across checks, so the
+    /// *dedup set* is what prevents re-emission, and the cap bounds the
+    /// lifetime total.
+    pub(super) colocated_rounds: u32,
     /// Suppress the numeric-eq trichotomy for equality atoms being encoded
     /// right now (set only around the injective map's A-family units, whose
     /// equalities are level-0 true and whose trichotomy `lt`/`gt` atoms would
@@ -725,6 +738,8 @@ impl Solver {
             next_distinct_id: 0,
             has_injective_distinct: false,
             injective_distinct_specs: Vec::new(),
+            colocated_split_done: FxHashSet::default(),
+            colocated_rounds: 0,
             suppress_numeric_eq_trichotomy: false,
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
@@ -966,6 +981,120 @@ impl Solver {
     /// (`mk_eq` + `encode_depth`, the same internalization
     /// `pre_encode_care_graph_atoms` performs up front).  Returns `true`
     /// when at least one new atom was created and the caller should re-solve.
+    /// Colliding argument pairs of the live injective-map `distinct`
+    /// encodings, read off the candidate model: two arguments of one
+    /// encoding the model assigns the *same* value.
+    ///
+    /// This is the encoding's post-model honesty gate.  The certificate
+    /// gate cannot do this job – it deliberately evaluates `Distinct` as
+    /// undetermined (its arithmetic-model rationale), and the e-graph
+    /// guarantees nothing about *tableau* co-locations – so the spec
+    /// registry (`injective_distinct_specs`) is checked directly against
+    /// the values the model would print.  Value terms are hash-consed
+    /// constants, so `TermId` equality *is* value equality here.
+    ///
+    /// Empty whenever no injective encoding is live (the common case: one
+    /// iteration over an empty registry).
+    fn injective_distinct_collisions(&self, manager: &TermManager) -> Vec<(TermId, TermId)> {
+        let true_id = manager.mk_true();
+        let Some(model) = self.model.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (result_term, args) in &self.injective_distinct_specs {
+            // Only a model in which this `distinct` term is TRUE demands
+            // pairwise-distinct arguments.  A false `distinct` colliding is
+            // exactly its meaning – not a dishonesty.
+            if model.get(*result_term) != Some(true_id) {
+                continue;
+            }
+            let mut seen: FxHashMap<TermId, TermId> = FxHashMap::default();
+            for &arg in args {
+                let Some(&value) = model.assignments().get(&arg) else {
+                    // No printed value: the model builder's distinct-default
+                    // for unconstrained UF arguments covers it.
+                    continue;
+                };
+                if let Some(&prev) = seen.get(&value)
+                    && prev != arg
+                {
+                    out.push((prev, arg));
+                } else {
+                    seen.insert(value, arg);
+                }
+            }
+        }
+        out
+    }
+
+    /// The honesty half of the gate: with the round budget exhausted, a
+    /// colliding candidate is downgraded to `Unknown` – never printed as
+    /// `Sat` (measured: a cap-exhausted n = 60 run answered `sat` with a
+    /// colliding model before this gate existed).
+    fn downgrade_if_injective_model_dishonest(&mut self, manager: &TermManager) -> bool {
+        if self.injective_distinct_collisions(manager).is_empty() {
+            return false;
+        }
+        self.model = None;
+        self.unsat_core = None;
+        self.certification_failure =
+            Some("injective-distinct model collision: separation rounds exhausted".into());
+        true
+    }
+
+    /// The soft co-located split round (see the call site in `check_core`).
+    ///
+    /// For each *new* pair, emit one trichotomy clause
+    /// `(= x y) ∨ x < y ∨ x > y` via [`Self::add_arith_trichotomy_clause`]
+    /// (which also internalizes the equality atom and phases the strict
+    /// literals along the acyclic term-order orientation, so the emerging
+    /// arrangement is a consistent tournament rather than a pile of cycles
+    /// the arithmetic solver must reject one conflict at a time).
+    ///
+    /// Returns `true` when at least one clause was added – the caller then
+    /// resumes the search from the live trail.  `false` (nothing new, or the
+    /// round cap) leaves the candidate to the honesty gates downstream,
+    /// which answer `Unknown` rather than print a dishonest model.
+    fn refine_colocated_splits(
+        &mut self,
+        manager: &mut TermManager,
+        pairs: Vec<(TermId, TermId)>,
+    ) -> bool {
+        let pairs_len = pairs.len();
+        /// Round cap.  Each round adds at least one new clause
+        /// (deduplicated), so the loop is monotone and terminates on the
+        /// clause count alone; this cap bounds the *rebuild + re-descent*
+        /// cost of pathological churn.  At 256 pairs per search (see
+        /// `nelson_oppen_combine`) that covers ~65k pairs – n = 200 free
+        /// arguments converge, far larger arities fall through to the
+        /// honesty gates, which answer `Unknown` rather than print a
+        /// dishonest model.
+        const MAX_COLOCATED_ROUNDS: u32 = 256;
+        if self.colocated_rounds >= MAX_COLOCATED_ROUNDS {
+            return false;
+        }
+        let mut added = false;
+        for (a, b) in pairs {
+            let pair = if a < b { (a, b) } else { (b, a) };
+            if !self.colocated_split_done.insert(pair) {
+                continue;
+            }
+            // The clause is emitted into the *current* SAT scope, so a later
+            // `pop` retracts it; journal the dedup key so the same pop
+            // re-arms the pair (same discipline as
+            // `NumericEqSplitPairAdded`).
+            self.trail
+                .push(crate::solver::trail::TrailOp::ColocatedSplitPairAdded { pair });
+            self.add_arith_trichotomy_clause(pair.0, pair.1, manager);
+            added = true;
+        }
+        if added {
+            self.colocated_rounds += 1;
+        }
+        let _ = pairs_len;
+        added
+    }
+
     fn refine_arrangement_splits(
         &mut self,
         manager: &mut TermManager,
@@ -1435,7 +1564,10 @@ impl Solver {
         // term to a bit-exact IEEE-754 value and only reports success when every
         // assertion evaluates to `true` under it, so the resulting `Sat` is a
         // genuine model witness rather than a guess.
-        if self.fp_atoms_need_theory(manager) && self.try_fp_model_sat(manager) {
+        if self.fp_atoms_need_theory(manager)
+            && self.try_fp_model_sat(manager)
+            && !self.downgrade_if_injective_model_dishonest(manager)
+        {
             return SolverResult::Sat;
         }
 
@@ -1451,7 +1583,9 @@ impl Solver {
             // Before conceding, try to construct and verify a concrete string
             // model. A verified witness is a sound `Sat` certificate; otherwise
             // keep the honest `Unknown`.
-            if self.ground_string_model_sat(manager) {
+            if self.ground_string_model_sat(manager)
+                && !self.downgrade_if_injective_model_dishonest(manager)
+            {
                 return SolverResult::Sat;
             }
             return SolverResult::Unknown;
@@ -1788,6 +1922,7 @@ impl Solver {
                     return SolverResult::Unknown;
                 }
             }
+
             // Freeze-set collapse: freeze every theory-mapped variable
             // before the (possibly first) solve — its pre-search passes and
             // the inprocessing schedule then skip these, transforming only
@@ -1816,6 +1951,7 @@ impl Solver {
             // self`/`&mut manager` use below) so the manager's borrows end at
             // this point, exactly as they do on the paths that rebuild it.
             let arrangement_pairs = theory_manager.take_arrangement_splits();
+            let colocated_split_pairs = theory_manager.take_colocated_split_pairs();
             match sat_result {
                 SatResult::Unsat => {
                     // Soundness gate: a model-blocking clause (see
@@ -1896,6 +2032,69 @@ impl Solver {
                         // first solve being fast: the refinement re-solves the
                         // whole problem from scratch, so on a slow (hard)
                         // instance we skip it rather than blow the time budget.
+                        // Co-located split refinement – the separation
+                        // mechanism for the injective-map `distinct`
+                        // encoding.  The last search round's final checks
+                        // found interface pairs the e-graph holds apart that
+                        // the arithmetic tableau co-locates: the candidate
+                        // model is not yet honest, so before anything is
+                        // declared `Sat`, give CDCL the arrangement lemmas it
+                        // lacks.  One *valid trichotomy clause* per pair
+                        // (`(= x y) ∨ x < y ∨ x > y`) is emitted – crucially
+                        // including the strict disjuncts, which is what the
+                        // bare `(= x y)` internalization of the DL-family
+                        // channel below never added for these pairs: without
+                        // it, a decided-false equality left arithmetic
+                        // unaware of the disequality, the tableau re-co-located
+                        // the pair in every later candidate, and the loop
+                        // stalled into a sound `Unknown` (measured at n = 40
+                        // free variables; the root cause is recorded in
+                        // docs/studies/2026-09-distinct-theory-owned-sorts.md).
+                        // With the clause, CDCL commits each arrangement
+                        // monotonically: `=` true merges into EUF (congruence
+                        // refutes or accepts), `=` false forces a strict
+                        // disjunct and the tableau separates – permanently,
+                        // because the clause persists across rounds.
+                        if !colocated_split_pairs.is_empty()
+                            && self.refine_colocated_splits(manager, colocated_split_pairs)
+                        {
+                            self.sat.backtrack_to_root();
+                            self.euf.reset();
+                            self.arith.reset();
+                            self.bv.reset();
+                            self.diff.reset();
+                            let zero_term = manager.mk_int(0);
+                            theory_manager = TheoryManager::new(
+                                manager,
+                                &mut self.euf,
+                                &mut self.arith,
+                                &mut self.bv,
+                                &mut self.diff,
+                                &mut self.array_theory,
+                                &self.bv_terms,
+                                &self.var_to_constraint,
+                                &self.var_to_parsed_arith,
+                                &self.term_to_var,
+                                &self.var_to_term,
+                                &self.numarg_proxies,
+                                &self.quant_uf_const_pins,
+                                zero_term,
+                                &self.ite_result_terms,
+                                &mut self.derived_reasons,
+                                self.config.theory_mode,
+                                &mut self.statistics,
+                                self.config.max_conflicts,
+                                self.config.max_decisions,
+                                self.has_bv_arith_ops,
+                                self.config.timeout_ms,
+                                self.logic.as_deref(),
+                                pure_dl,
+                                sparse_dl,
+                                self.has_injective_distinct,
+                            );
+                            continue;
+                        }
+
                         // Non-convex arrangement refinement: the tentative
                         // arrangement round in the last `model_based_combination`
                         // refuted pair(s) the search never got to decide (no
@@ -2209,6 +2408,66 @@ impl Solver {
                             continue;
                         }
 
+                        // Injective-distinct honesty driver (QF exit): the
+                        // candidate model's own collisions are proposal
+                        // material too – the final-check path can miss pairs
+                        // whose final checks never re-ran after the last
+                        // clauses landed.  With budget left, split them and
+                        // re-solve; without it, answer `Unknown` – never
+                        // print a colliding model as `Sat`.
+                        // model's own collisions are proposal material too –
+                        // the final-check path can miss pairs whose final checks
+                        // never re-ran after the last clauses landed.  With
+                        // budget left, split them and re-solve; without it, the
+                        // honesty gate below answers `Unknown`.
+                        {
+                            let collisions = self.injective_distinct_collisions(manager);
+                            if !collisions.is_empty() {
+                                self.model = None;
+                                if self.refine_colocated_splits(manager, collisions) {
+                                    self.sat.backtrack_to_root();
+                                    self.euf.reset();
+                                    self.arith.reset();
+                                    self.bv.reset();
+                                    self.diff.reset();
+                                    let zero_term = manager.mk_int(0);
+                                    theory_manager = TheoryManager::new(
+                                        manager,
+                                        &mut self.euf,
+                                        &mut self.arith,
+                                        &mut self.bv,
+                                        &mut self.diff,
+                                        &mut self.array_theory,
+                                        &self.bv_terms,
+                                        &self.var_to_constraint,
+                                        &self.var_to_parsed_arith,
+                                        &self.term_to_var,
+                                        &self.var_to_term,
+                                        &self.numarg_proxies,
+                                        &self.quant_uf_const_pins,
+                                        zero_term,
+                                        &self.ite_result_terms,
+                                        &mut self.derived_reasons,
+                                        self.config.theory_mode,
+                                        &mut self.statistics,
+                                        self.config.max_conflicts,
+                                        self.config.max_decisions,
+                                        self.has_bv_arith_ops,
+                                        self.config.timeout_ms,
+                                        self.logic.as_deref(),
+                                        pure_dl,
+                                        sparse_dl,
+                                        self.has_injective_distinct,
+                                    );
+                                    continue;
+                                }
+                                self.certification_failure = Some(
+                                "injective-distinct model collision: separation rounds exhausted"
+                                    .into(),
+                            );
+                                return SolverResult::Unknown;
+                            }
+                        }
                         self.unsat_core = None;
                         self.debug_check_invariants("check_core: before returning sat");
                         return SolverResult::Sat;
@@ -2232,7 +2491,9 @@ impl Solver {
                     // follows outright and MBQI has nothing left to add.  When
                     // it does not, nothing changes: the certifier declines and
                     // the instantiation loop below runs exactly as before.
-                    if self.certify_quantified_sat(manager) {
+                    if self.certify_quantified_sat(manager)
+                        && !self.downgrade_if_injective_model_dishonest(manager)
+                    {
                         self.unsat_core = None;
                         self.debug_check_invariants(
                             "check_core: before returning sat (certified model)",
@@ -2250,6 +2511,9 @@ impl Solver {
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
+                            if self.downgrade_if_injective_model_dishonest(manager) {
+                                return SolverResult::Unknown;
+                            }
                             self.unsat_core = None;
                             self.debug_check_invariants(
                                 "check_core: before returning sat (no quantifiers)",
@@ -2258,6 +2522,9 @@ impl Solver {
                         }
                         MBQIResult::Satisfied => {
                             // All quantifiers satisfied by the current model.
+                            if self.downgrade_if_injective_model_dishonest(manager) {
+                                return SolverResult::Unknown;
+                            }
                             self.unsat_core = None;
                             self.debug_check_invariants(
                                 "check_core: before returning sat (mbqi fixpoint)",
@@ -3073,6 +3340,9 @@ impl Solver {
                         }
                         TrailOp::DistinctSpecAdded => {
                             self.injective_distinct_specs.pop();
+                        }
+                        TrailOp::ColocatedSplitPairAdded { pair } => {
+                            self.colocated_split_done.remove(&pair);
                         }
                         TrailOp::EncodedTermAdded { term, previous } => {
                             // Take back exactly this one memo write.  `None`

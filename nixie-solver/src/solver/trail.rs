@@ -28,6 +28,12 @@ pub(crate) enum TrailOp {
     /// scope no longer constrains and could downgrade a later, legitimate
     /// `Sat` to `Unknown`.
     DistinctSpecAdded,
+    /// A co-located split trichotomy clause was emitted (and its dedup key
+    /// recorded) by `refine_colocated_splits`.  Popping the scope removes the
+    /// clause, so the key must go too or the pair is never re-split after the
+    /// pop – the same retract-with-the-clause discipline as
+    /// `NumericEqSplitPairAdded`.
+    ColocatedSplitPairAdded { pair: (TermId, TermId) },
     /// A numeric-equality trichotomy pair was recorded (and its clause
     /// emitted into the *current* SAT scope) by
     /// `ensure_numeric_equality_splits`.  A `pop` removes the clause with the
@@ -298,6 +304,11 @@ impl super::Solver {
             // injective-map encoding exists; a popped scope's clauses vanish but
             // keeping the latch on only *over*-enables the (sound, deduplicated)
             // care-split proposals and the model honesty gate. Never re-cleared.
+            colocated_split_done: _, // TRAIL: ColocatedSplitPairAdded – every
+            // insertion is journaled and retracted by exactly that op with the
+            // clause it accompanied.
+            colocated_rounds: _, // INVARIANT: monotone lifetime counter, mirroring
+            // `arrangement_rounds`; the dedup set does the per-pair work.
             injective_distinct_specs: _, // INVARIANT: grows monotonically with each
             // encoding; a popped encoding's spec is checked against models it no
             // longer constrains. A stale spec can only demand pairwise-distinct
