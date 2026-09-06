@@ -404,6 +404,15 @@ pub(crate) struct TheoryManager<'a> {
     /// away from for cause (see `arrange_model_equal_pairs`'s DL-family
     /// gate and the wisas note there).
     has_injective_distinct: bool,
+    /// `(result term, arguments)` of the live injective-map `distinct`
+    /// encodings (borrowed from the `Solver`).  The co-located proposal
+    /// block consults the *result literals*: separation is the encoding's
+    /// business only in models where a `distinct` term is actually TRUE –
+    /// a negated `distinct` collides its arguments by design, and
+    /// proposing splits for it manufactures phantom work (measured: a
+    /// bare ¬distinct over 33 free Int variables burned ~2500 final-check
+    /// arith refutations fighting its own witness before this gate).
+    injective_specs: &'a [(TermId, Vec<TermId>)],
     /// Pairs already proposed as co-located care splits by this manager
     /// (dedup across the final checks of one search; cross-round dedup is
     /// `Solver::colocated_split_done`).
@@ -626,6 +635,7 @@ impl<'a> TheoryManager<'a> {
         pure_dl: bool,
         sparse_dl: bool,
         has_injective_distinct: bool,
+        injective_specs: &'a [(TermId, Vec<TermId>)],
     ) -> Self {
         #[cfg(feature = "std")]
         let deadline = if timeout_ms > 0 {
@@ -637,6 +647,7 @@ impl<'a> TheoryManager<'a> {
         let _ = timeout_ms;
         let mut this = Self {
             has_injective_distinct,
+            injective_specs,
             colocated_split_proposed: FxHashSet::default(),
             colocated_split_pairs: Vec::new(),
             manager,
@@ -1891,6 +1902,17 @@ impl<'a> TheoryManager<'a> {
             // tentative-arrangement round is DL-gated for exactly that
             // reason – see the wisas note in `arrange_model_equal_pairs`).
             if self.has_injective_distinct {
+                // Polarity gate: propose only when some live encoding's
+                // result literal is TRUE in the current (full) assignment –
+                // see `injective_specs`.
+                let any_result_true = self.injective_specs.iter().any(|(t, _)| {
+                    self.term_to_var
+                        .get(t)
+                        .is_some_and(|&v| self.assigned_pol_of(v) == Some(true))
+                });
+                if !any_result_true {
+                    continue;
+                }
                 // Deliberately SMALL: the search digests a couple hundred new
                 // trichotomy clauses per round comfortably, but a full batch
                 // (780 pairs at n = 40) measurably derails the re-descent –

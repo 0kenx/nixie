@@ -184,13 +184,38 @@ clauses at once (780 at n = 40) measurably derails the re-descent (~300
 full assignments between generalizing conflicts).  The search digests
 small batches; the round *loop* provides the scale.
 
+Postscript (same day): gap (b) closed, and it was not a witness-guidance
+problem at all.  The co-located proposal block ignored the result
+literal's polarity: a ¬distinct instance *legitimately* collides its
+arguments, yet the block proposed – and the refine loop emitted –
+trichotomy clauses separating exactly the pair the witness was merging,
+manufacturing ~2500 final-check arith refutations of phantom work (the
+measured 10 s at n = 33, timeout at n = 100).  A polarity gate (propose
+only while some live encoding's result literal is TRUE in the current
+assignment) plus natural-witness phase hints (the first two `L`s at
+true, the `F`s at false) makes both polarities instant: bare ¬distinct
+n = 33 goes 10.2 s → 0.020 s, n = 100 timeout → 0.029 s, and the
+positive n = 60 cell drops 77 s → 7.4 s as a side effect (intermediate
+candidates with result not-yet-true no longer burn proposal rounds).
+
+Also landed: composite finite datatypes now count for the pigeonhole
+short-circuit (Σ_ctor Π_selector cardinality, Z3 `get_num_elements`
+shape, with visited-set cycle detection so recursive/mutual carriers
+stay conservatively infinite) – `(declare-datatypes ((Pair 0)) (((mk (a
+E2) (b E3)))))` with 7 arguments now refutes by one unit clause.
+
+Considered and deferred: folding uninterpreted-witness equality into
+`combine_eq` (so `(get-value ((= x1 x2)))` answers instead of echoing on
+uninterpreted sorts).  `EvalVal` has two variants and ~37 match sites,
+several of them load-bearing for the certificate gate's verdict
+semantics (the deliberately-undetermined `Distinct`, the
+boundary-softened strict comparisons); the echo is cosmetic, the gate is
+soundness-sensitive – not worth the blast radius without its own session.
+
 Remaining gaps, in order: (a) n ≥ ~100 free variables still times out –
 the reset+rebuild per round is O(rounds × problem), and the Z3-style
-in-tableau repair remains the eventual answer; (b) the *bare*
-`(not (distinct …))` over free Int variables is a pre-existing slow shape
-under both encodings (the negated side needs to witness a collision;
-nothing yet guides the search to one) – improved from hang to 11 s by
-this work, still open; (c) BitVec, unchanged (see below).
+in-tableau repair remains the eventual answer; (b) BitVec, unchanged
+(see below).
 
 ## Attack 3: the order encoding over BitVec — correct, measured, no flip
 

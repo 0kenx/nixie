@@ -1884,6 +1884,7 @@ impl Solver {
             pure_dl,
             sparse_dl,
             self.has_injective_distinct,
+            &self.injective_distinct_specs,
         );
 
         // MBQI loop for quantified formulas
@@ -2091,6 +2092,7 @@ impl Solver {
                                 pure_dl,
                                 sparse_dl,
                                 self.has_injective_distinct,
+                                &self.injective_distinct_specs,
                             );
                             continue;
                         }
@@ -2140,6 +2142,7 @@ impl Solver {
                                 pure_dl,
                                 sparse_dl,
                                 self.has_injective_distinct,
+                                &self.injective_distinct_specs,
                             );
                             continue;
                         }
@@ -2185,6 +2188,7 @@ impl Solver {
                                 pure_dl,
                                 sparse_dl,
                                 self.has_injective_distinct,
+                                &self.injective_distinct_specs,
                             );
                             continue;
                         }
@@ -2272,6 +2276,7 @@ impl Solver {
                                 pure_dl,
                                 sparse_dl,
                                 self.has_injective_distinct,
+                                &self.injective_distinct_specs,
                             );
                             continue;
                         }
@@ -2347,6 +2352,7 @@ impl Solver {
                                     pure_dl,
                                     sparse_dl,
                                     self.has_injective_distinct,
+                                    &self.injective_distinct_specs,
                                 );
                                 continue;
                             }
@@ -2404,6 +2410,7 @@ impl Solver {
                                 pure_dl,
                                 sparse_dl,
                                 self.has_injective_distinct,
+                                &self.injective_distinct_specs,
                             );
                             continue;
                         }
@@ -2458,6 +2465,7 @@ impl Solver {
                                         pure_dl,
                                         sparse_dl,
                                         self.has_injective_distinct,
+                                        &self.injective_distinct_specs,
                                     );
                                     continue;
                                 }
@@ -2804,6 +2812,7 @@ impl Solver {
                         pure_dl,
                         sparse_dl,
                         self.has_injective_distinct,
+                        &self.injective_distinct_specs,
                     );
                 }
             }

@@ -345,6 +345,7 @@ mod tests {
                 false,
                 true,
                 false,
+                &[],
             )
         }
     }

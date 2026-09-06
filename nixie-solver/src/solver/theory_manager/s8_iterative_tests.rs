@@ -70,6 +70,7 @@ impl Scratch {
             false,
             true,
             false,
+            &[],
         )
     }
 }

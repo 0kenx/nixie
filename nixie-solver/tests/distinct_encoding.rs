@@ -523,12 +523,11 @@ fn large_distinct_int_bounds_pinned_collision_is_unsat() {
     check(&script, "unsat");
 }
 
-// NOTE: the *bare* `(not (distinct x1 .. xn))` over free Int variables is a
-// pre-existing slow shape in nixie for BOTH encodings (pairwise at n = 32 and
-// injective at n = 33 both hang today; z3 answers instantly).  The negated
-// Int tests below therefore pair the negation with a constraint that makes
-// the witness easy.  The bare shape stays a known gap, recorded in
-// docs/studies/2026-09-distinct-theory-owned-sorts.md.
+// The *bare* `(not (distinct x1 .. xn))` over free Int variables used to be
+// a slow shape for both encodings (the co-located proposal block ignored the
+// result literal's polarity and manufactured phantom separation work –
+// ~2500 final-check arith refutations at n = 33).  Since the polarity gate
+// it is instant, and the bare shape is asserted directly below.
 
 #[test]
 fn large_distinct_int_negated_with_all_pinned_is_unsat() {
@@ -541,6 +540,27 @@ fn large_distinct_int_negated_with_all_pinned_is_unsat() {
         int_distinct(33)
     ));
     check(&script, "unsat");
+}
+
+#[test]
+fn large_distinct_int_negated_alone_is_sat() {
+    // 0.02 s since the polarity gate (was 10 s at n = 33, timeout at 100).
+    check(
+        &format!(
+            "{}(assert (not {}))\n(check-sat)\n",
+            int_header(N),
+            int_distinct(N)
+        ),
+        "sat",
+    );
+    check(
+        &format!(
+            "{}(assert (not {}))\n(check-sat)\n",
+            int_header(100),
+            int_distinct(100)
+        ),
+        "sat",
+    );
 }
 
 #[test]
@@ -584,6 +604,15 @@ fn large_distinct_int_boundary_32_33() {
             int_distinct(33)
         ),
         "unsat",
+    );
+    // The bare negated shape at the boundary, both encodings' sides.
+    check(
+        &format!(
+            "{}(assert (not {}))\n(check-sat)\n",
+            int_header(33),
+            int_distinct(33)
+        ),
+        "sat",
     );
 }
 
@@ -637,4 +666,77 @@ fn large_distinct_real_free_vars_is_sat() {
         .join(" ");
     script.push_str(&format!("(assert (distinct {args}))\n(check-sat)\n"));
     check(&script, "sat");
+}
+
+// ---------------------------------------------------------------------
+// Composite finite datatypes and the pigeonhole short-circuit
+// ---------------------------------------------------------------------
+
+#[test]
+fn distinct_over_composite_finite_datatype_pigeonhole_is_unsat() {
+    // |Pair| = |E2| * |E3| = 6; seven arguments cannot be distinct.
+    check(
+        "(declare-datatypes ((E2 0)) (((e1) (e2))))\n\
+         (declare-datatypes ((E3 0)) (((f1) (f2) (f3))))\n\
+         (declare-datatypes ((Pair 0)) (((mk (a E2) (b E3)))))\n\
+         (declare-const p1 Pair)(declare-const p2 Pair)(declare-const p3 Pair)\n\
+         (declare-const p4 Pair)(declare-const p5 Pair)(declare-const p6 Pair)\n\
+         (declare-const p7 Pair)\n\
+         (assert (distinct p1 p2 p3 p4 p5 p6 p7))\n(check-sat)\n",
+        "unsat",
+    );
+}
+
+#[test]
+fn distinct_over_composite_finite_datatype_exact_fit_is_sat() {
+    // Exactly |Pair| = 6 arguments: no short-circuit may fire, and the
+    // datatype theory itself must accept the enumeration.
+    check(
+        "(declare-datatypes ((E2 0)) (((e1) (e2))))\n\
+         (declare-datatypes ((E3 0)) (((f1) (f2) (f3))))\n\
+         (declare-datatypes ((Pair 0)) (((mk (a E2) (b E3)))))\n\
+         (declare-const p1 Pair)(declare-const p2 Pair)(declare-const p3 Pair)\n\
+         (declare-const p4 Pair)(declare-const p5 Pair)(declare-const p6 Pair)\n\
+         (assert (distinct p1 p2 p3 p4 p5 p6))\n(check-sat)\n",
+        "sat",
+    );
+}
+
+#[test]
+fn distinct_over_recursive_datatype_is_never_shortcircuited() {
+    // A self-referential datatype is infinite: three variables over it stay
+    // a normal (sat) distinct.
+    check(
+        "(declare-datatypes ((L 0)) (((nil) (cons (hd Int) (tl L)))))\n\
+         (declare-const v1 L)(declare-const v2 L)(declare-const v3 L)\n\
+         (assert (distinct v1 v2 v3))\n(check-sat)\n",
+        "sat",
+    );
+}
+
+#[test]
+fn distinct_over_mutually_recursive_datatypes_is_never_shortcircuited() {
+    // A ⇄ B mutual recursion: infinite carriers, no short-circuit.
+    check(
+        "(declare-datatypes ((A 0) (B 0)) (((a1) (mkA (b B))) ((b1) (mkB (a A)))))\n\
+         (declare-const x1 A)(declare-const x2 A)(declare-const x3 A)\n\
+         (assert (distinct x1 x2 x3))\n(check-sat)\n",
+        "sat",
+    );
+}
+
+#[test]
+fn distinct_over_nested_composite_datatype_pigeonhole_is_unsat() {
+    // |Wrap| = |Pair| = 6 through one level of nesting; 7 arguments refute.
+    check(
+        "(declare-datatypes ((E2 0)) (((e1) (e2))))\n\
+         (declare-datatypes ((E3 0)) (((f1) (f2) (f3))))\n\
+         (declare-datatypes ((Pair 0)) (((mk (a E2) (b E3)))))\n\
+         (declare-datatypes ((Wrap 0)) (((wrap (inner Pair)))))\n\
+         (declare-const w1 Wrap)(declare-const w2 Wrap)(declare-const w3 Wrap)\n\
+         (declare-const w4 Wrap)(declare-const w5 Wrap)(declare-const w6 Wrap)\n\
+         (declare-const w7 Wrap)\n\
+         (assert (distinct w1 w2 w3 w4 w5 w6 w7))\n(check-sat)\n",
+        "unsat",
+    );
 }

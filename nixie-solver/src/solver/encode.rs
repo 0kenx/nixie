@@ -3337,6 +3337,30 @@ impl Solver {
     /// irrelevant here).  A `None` is always the conservative answer: it merely
     /// forgoes the pigeonhole short-circuit.
     fn finite_sort_cardinality(sort: SortId, manager: &TermManager) -> Option<u64> {
+        // Visited-set entry point for the recursive case: mutual/self
+        // recursion makes the cardinality infinite, and the visited set is
+        // what detects it (a cycle re-entering a sort mid-computation
+        // cannot contribute a finite factor).
+        let mut visited: rustc_hash::FxHashSet<SortId> = rustc_hash::FxHashSet::default();
+        Self::finite_sort_cardinality_vis(sort, manager, &mut visited)
+    }
+
+    /// The recursive body of [`Self::finite_sort_cardinality`].
+    ///
+    /// Beyond the base sorts and plain enumerations, a *composite* finite
+    /// datatype counts too: a datatype whose every constructor's selectors are
+    /// themselves of finite-cardinality sorts has cardinality
+    /// `Σ_ctor Π_selector |selector sort|` (Z3 computes exactly this in
+    /// `get_num_elements`).  Recursive or mutually-recursive references hit the
+    /// visited set and answer `None` – the conservative infinite – and so does
+    /// any over-64-bit product, which can never be smaller than a real
+    /// argument list anyway.  A `None` only forgoes the pigeonhole
+    /// short-circuit; it is never a wrong answer.
+    fn finite_sort_cardinality_vis(
+        sort: SortId,
+        manager: &TermManager,
+        visited: &mut rustc_hash::FxHashSet<SortId>,
+    ) -> Option<u64> {
         let s = manager.sorts.get(sort)?;
         match &s.kind {
             SortKind::Bool => Some(2),
@@ -3349,10 +3373,25 @@ impl Solver {
             SortKind::Datatype(_) => {
                 let name = manager.sorts.datatype_name(sort)?;
                 let def = manager.sorts.get_datatype(name)?;
-                def.constructors
-                    .iter()
-                    .all(|c| c.selectors.is_empty())
-                    .then_some(def.constructors.len() as u64)
+                if !visited.insert(sort) {
+                    // Recursive (or mutually recursive) reference: the
+                    // carrier is infinite.
+                    return None;
+                }
+                let mut total: u64 = 0;
+                for c in &def.constructors {
+                    let mut product: u64 = 1;
+                    for &(_, selector_sort) in &c.selectors {
+                        product = product.checked_mul(Self::finite_sort_cardinality_vis(
+                            selector_sort,
+                            manager,
+                            visited,
+                        )?)?;
+                    }
+                    total = total.checked_add(product)?;
+                }
+                visited.remove(&sort);
+                Some(total)
             }
             _ => None,
         }
@@ -3489,9 +3528,14 @@ impl Solver {
             self.suppress_numeric_eq_trichotomy = saved_suppress;
             self.sat.add_clause([lit_a]);
 
-            // B: result → f(t_i) = m_i.
+            // B: result → f(t_i) = m_i.  Phase guidance: the natural model
+            // for the NEGATED side keeps every F false (nothing forces them
+            // true, and a true F merges an `m` into the chase – with default
+            // true-first phases every descent collided value-marked
+            // witnesses and re-descended, the measured ¬distinct wander).
             let eq_f = manager.mk_eq(f_app, m_terms[i]);
             let lit_f = self.encode_depth(eq_f, manager, depth + 1);
+            self.sat.set_preferred_phase(lit_f.var(), false);
             f_lits.push(lit_f);
             self.sat.add_clause([result.negate(), lit_f]);
 
@@ -3508,6 +3552,25 @@ impl Solver {
         // D: ¬result → at_least_two(L_1..L_n).
         let at_least_two = self.encode_at_least_two(&l_lits, manager, id);
         self.sat.add_clause([result, at_least_two]);
+
+        // Witness guidance for the negated side: a satisfying witness for
+        // ¬distinct needs exactly two `L`s true, and nothing else in the
+        // encoding points the search at any particular pair – the `L`s are
+        // fresh equality atoms over the fresh sort, propagation-free until
+        // decided, so CDCL wandered (measured: a bare ¬distinct over 33
+        // free Int variables took 10 s; n = 100 timed out).  Pointing the
+        // first two at their true branch makes the first descent witness
+        // the collision directly (the g-units then merge the two arguments,
+        // exactly the semantics of ¬distinct).  Harmless on the positive
+        // side: with `result` true the E-clause refutes any two-true `L`
+        // pair in a few propagations.  Phases are hints – every branch
+        // stays reachable, no answer changes.
+        if let Some(&l1) = l_lits.first()
+            && let Some(&l2) = l_lits.get(1)
+        {
+            self.sat.set_preferred_phase(l1.var(), true);
+            self.sat.set_preferred_phase(l2.var(), true);
+        }
 
         // E: result → ¬at_least_two(L_1..L_n).
         //
