@@ -1708,6 +1708,28 @@ impl Default for Solver {
     }
 }
 
+/// Force-enable the ELS round mid-search (study knob
+/// `NIXIE_ELS_FORCE=1`): `enable_equiv_substitution` is false in every
+/// preset (2026-09-05 measured net-negative under the OLD defaults);
+/// this knob re-tests it under the landed effort schedule +
+/// randomized subsumption + widened probing.
+#[doc(hidden)]
+pub(super) fn els_force_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_ELS_FORCE")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 impl Solver {
     /// Attach the two watchers of a clause whose stored literals are
     /// `l0`/`l1` (positions [0]/[1]): key `~l0` with blocker `l1`, and

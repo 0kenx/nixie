@@ -158,40 +158,14 @@ impl Solver {
     /// `(x_i∨q)` is satisfied.  Candidate pairs are enumerated only among
     /// the highest-degree literals (degree = co-occurrence count), so the
     /// pass stays linear-ish in the binary count instead of quadratic.
-    fn and_gate_pair_round(&mut self, scan_cap: usize, max_intros: usize) -> usize {
-        // Co-occurrence: for each literal, the OTHER literals of its
-        // binaries (a binary (a∨b) co-lists a↔b once per orientation,
-        // deduplicated per clause by checking id monotonicity below).
-        let mut co: std::collections::HashMap<u32, SmallVec<[u32; 8]>> =
-            std::collections::HashMap::default();
-        // clause id per co-occurrence, for retirement: co[a] entries align
-        // with co_id[a] (the binary that produced the pair).
-        let mut co_id: std::collections::HashMap<u32, SmallVec<[u32; 8]>> =
-            std::collections::HashMap::default();
-        let mut scanned = 0usize;
-        'outer: for cid in self.clauses.iter_ids() {
-            let Some(c) = self.clauses.get(cid) else {
-                continue;
-            };
-            if c.deleted || c.learned || c.lits.len() != 2 {
-                continue;
-            }
-            scanned += 1;
-            if scanned > scan_cap {
-                break 'outer;
-            }
-            let (a, b) = (c.lits[0].code(), c.lits[1].code());
-            co.entry(a).or_default().push(b);
-            co_id.entry(a).or_default().push(cid.index() as u32);
-            co.entry(b).or_default().push(a);
-            co_id.entry(b).or_default().push(cid.index() as u32);
-        }
-        // Pair enumeration among top-degree literals (deterministic:
-        // degree desc, then code asc).
-        // Study knobs for the scale (kissat factors 51k+ hubs on the
-        // worker class - 55% of its variables): `NIXIE_ANDGATE_TOP`
-        // (default 256) caps the degree-ranked hub set;
-        // `NIXIE_ANDGATE_MAXI` overrides the per-round introduction cap.
+    fn and_gate_pair_round(&mut self, _scan_cap: usize, max_intros: usize) -> usize {
+        // BIG-based construction (2026-09-07 performance fix): read the
+        // pivot's binary co-occurrences directly from the BIG's CSR edge
+        // lists instead of scanning the full DB into a HashMap.  Edge
+        // ¬x → q in the BIG encodes binary clause (x ∨ q), so the
+        // implication targets of a literal ARE its binary co-occurrences.
+        // This eliminates the O(N) DB scan + HashMap inserts per round
+        // — the wall bottleneck at worker-class scale (10M+ binaries).
         let top: usize = std::env::var("NIXIE_ANDGATE_TOP")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -200,34 +174,66 @@ impl Solver {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(max_intros);
-        let mut hubs: Vec<(u32, usize)> =
-            co.iter().map(|(l, cs)| (*l, cs.len())).collect::<Vec<_>>();
-        hubs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        hubs.truncate(top);
+        // Hub ranking: literals by BIG out-degree (implication count =
+        // binary co-occurrence count).  Deterministic: degree desc, then
+        // literal code asc.
+        let num_lits = 2 * self.num_vars;
+        let mut hub_deg: Vec<(u32, u32)> = Vec::new();
+        for code in 0..num_lits {
+            // Rank by the degree that MATCHES the target collection: targets
+            // come from edges out of ¬L (binaries containing L), so the
+            // ranking is ¬L's out-degree (= L's binary co-occurrence count).
+            let deg = self
+                .binary_graph
+                .get(Lit::from_code(code as u32).negate())
+                .len() as u32;
+            if deg >= 4 {
+                hub_deg.push((code as u32, deg));
+            }
+        }
+        hub_deg.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        hub_deg.truncate(top);
+        // Materialize sorted target sets for the hubs: for pivot x, the
+        // binaries containing x are the BIG edges FROM ¬x (each edge
+        // ¬x→q encodes binary (x∨q)).
+        let mut targets: Vec<Vec<(u32, u32)>> = Vec::with_capacity(hub_deg.len());
+        for &(code, _) in &hub_deg {
+            // BIG edge ¬x→q encodes binary (x∨q): to find binaries
+            // CONTAINING x, iterate edges FROM ¬x (edge source = the
+            // negation of the contained literal).
+            let src = Lit::from_code(code).negate();
+            let mut t: Vec<(u32, u32)> = self
+                .binary_graph
+                .get(src)
+                .iter()
+                .map(|&(lit, cid)| (lit.code(), cid.index() as u32))
+                .collect();
+            t.sort_unstable_by_key(|&(l, _)| l);
+            targets.push(t);
+        }
         let mut introduced = 0usize;
-        'pairs: for i in 0..hubs.len() {
-            for j in (i + 1)..hubs.len() {
+        'pairs: for i in 0..hub_deg.len() {
+            for j in (i + 1)..hub_deg.len() {
                 if introduced >= max_intros {
                     break 'pairs;
                 }
-                let (x1, x2) = (hubs[i].0, hubs[j].0);
-                // Shared tails with live clause ids for BOTH sides.
-                let (small, large, small_ids, large_ids) = if co[&x1].len() <= co[&x2].len() {
-                    (&co[&x1], &co[&x2], &co_id[&x1], &co_id[&x2])
-                } else {
-                    (&co[&x2], &co[&x1], &co_id[&x2], &co_id[&x1])
-                };
-                // For each tail in `small`, find the matching tail in
-                // `large` (both sorted? no — linear scan per tail over
-                // large; fine at these sizes because TOP caps pairs and
-                // degree bounds the scans).
+                let (x1, x2) = (hub_deg[i].0, hub_deg[j].0);
+                // Sorted-vector intersection of the two target sets.
+                let (a, b) = (&targets[i], &targets[j]);
                 let mut tails: SmallVec<[u32; 8]> = SmallVec::new();
                 let mut ids: SmallVec<[u32; 16]> = SmallVec::new();
-                for (k, &q) in small.iter().enumerate() {
-                    if let Some(pos) = large.iter().position(|&l| l == q) {
-                        tails.push(q);
-                        ids.push(small_ids[k]);
-                        ids.push(large_ids[pos]);
+                let (mut p, mut q) = (0usize, 0usize);
+                while p < a.len() && q < b.len() {
+                    match a[p].0.cmp(&b[q].0) {
+                        core::cmp::Ordering::Less => p += 1,
+                        core::cmp::Ordering::Greater => q += 1,
+                        core::cmp::Ordering::Equal => {
+                            tails.push(a[p].0);
+                            ids.push(a[p].1);
+                            ids.push(b[q].1);
+                            p += 1;
+                            q += 1;
+                        }
                     }
                 }
                 if tails.len() < 3 {

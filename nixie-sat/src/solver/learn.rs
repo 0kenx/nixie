@@ -2914,7 +2914,10 @@ impl Solver {
         // below: theory lemmas can force the opposite polarity of a
         // Boolean-pure variable, and folding it mid-search desyncs the
         // theory's atom view.
-        if self.config.enable_equiv_substitution && self.destructive_preprocessing_safe() {
+        let els_force = super::els_force_enabled();
+        if (self.config.enable_equiv_substitution || els_force)
+            && self.destructive_preprocessing_safe()
+        {
             if self.substitute_equivalent_literals_round() == equiv::SubstOutcome::Unsat {
                 self.trivially_unsat = true;
                 return;
