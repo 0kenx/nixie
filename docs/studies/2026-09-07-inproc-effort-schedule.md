@@ -601,3 +601,32 @@ failed literals over non-binary structure, congruence closure
 
 Both levers are therefore **calibrated, specified, and open** — neither
 closes with the landed infrastructure's knobs alone.
+
+## Both residue levers: first rigorous slices landed (2026-09-07, `2f14a8a`)
+
+**Probe widening (landed default-on)** — the probing-depth lever: the
+candidate queue now includes variables with binaries in BOTH polarities
+(the legacy single-polarity filter skipped them entirely; on the 6s167
+class this emptied the queue — the effort sweep's flatness was the
+schedule binding, not the budget).  5-seed screen: **6s167 0.80×, mrpp
+0.79×, FEC 0.89×** (medians), frb65/worker identical (no harm).
+`NIXIE_PROBE_WIDE=0` restores the legacy schedule.  20k differential
+fuzz clean, all gates green, z3 parity 0 mismatches.
+
+**Tombstone factor retirement (landed)** — the wall fix for the factor
+lever: pair-mode AND-gate uses raw `clauses::remove` (no per-clause BIG
+purge / watcher removal / DRAT; the caller rebuilds once after the pass)
+with live-reason group skipping.  Removes the 100+-retirements-per-
+introduction × 50k-introductions bottleneck on 10M-clause graphs.
+Full-scale still needs watch-based quotient lists (kissat's incremental
+construction from live watch structures rather than our fresh HashMap
+scan — pre-registered as the next port increment).
+
+**Remaining work on both levers**:
+- Factor: the `distinct_paths` scoring (structure-aware pivot-pair
+  selection via watch-graph connectivity, not degree ranking) and the
+  incremental quotient-list construction.  Both are performance-and-
+  selection fixes for the scale the calibration demands (51k+ intros).
+- Probing: congruence closure (equivalence classes from the BIG after
+  each probe round — the cheapest unexplored component) and look-ahead
+  hyper-binary resolution at the widened probe depth.
