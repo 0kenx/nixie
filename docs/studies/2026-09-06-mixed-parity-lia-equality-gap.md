@@ -161,8 +161,21 @@ fuzzer sweeps 57/58 (stressed) and 56/58 (medium) decided, 0 wrong.
    (the theory lacks that signal — it would need solver-side plumbing
    of an "atoms-fully-decided" flag), or lifting the mod-2 signature
    of the equality system into a parity lemma for the SAT core.
-2. `parity-mixedboundary`: exact div/mod chain links still block both
-   the refutation and the incumbent.
+2. **`parity-mixedboundary` (rung 2) — theory side complete, same
+   search gap (measured 2026-09-06).**  With every cross-edge Boolean
+   fixed at level 0, the div/mod-linked instance is refuted instantly
+   (z3 agreement): the Euclidean axiom chains (`v = 4q + r1`,
+   `q = 2w + t2`, `i = t2`) plus the fixed links give the Hermite view
+   exactly what it needs.  During search the instance fast-bails to
+   `unknown` (~1.2 s) rather than long-searching: the incumbent is
+   always rejected (the axiom rows bound `t2 ∈ [0,1]`), so the theory
+   reports `Unknown` and the core stops — honest, incomplete.  The
+   integration design that would close *both* rungs is the mod-2
+   parity lemma: derive the equality system's parity signature over
+   the linked literals (`Σ b_e ≡ Σc (mod 2)` through `t2 ≡ b_e`) and
+   hand it to the SAT core as a lemma, where `XorDetector` machinery
+   can consume it.  That is a cross-theory derivation feature, not a
+   patch; scoped here, not attempted.
 
 ## Reproducers
 

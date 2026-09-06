@@ -112,10 +112,13 @@ with the certificate:
    Diophantine reasoning — see
    `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md` for the
    implementation record and the remaining rungs.
-2. **Exact div/mod links block the refutation entirely**
+2. **Exact div/mod links block the in-search refutation**
    (`parity-mixedboundary-unsat-*`, all sizes): when the Bool→Int edge
    link is `i_e = (mod (div (ite b_e C1 C0) D) 2)` (exact on both
-   constants), nixie answers `unknown`; z3 answers `unsat`.
+   constants), nixie answers `unknown` (~1.2 s); z3 answers `unsat`.
+   Theory side is leaf-complete (all Booleans fixed ⇒ instant
+   refutation, z3 agreement) — the gap is the same search integration
+   as finding 1; see the study's mod-2 parity-lemma rung.
 3. **Deep right-nested binary arithmetic/bv chains yielded `unknown` on
    foldable/associable tautologies** (`--stress heavy`) — **FIXED** in two
    steps: the iterative ground-constant fold (rescues constant chains
