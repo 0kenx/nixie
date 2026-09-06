@@ -253,39 +253,39 @@ impl Solver {
                     .and_then(|v| v.parse().ok())
                     .filter(|k| *k >= 3)
                     .unwrap_or(0); // 0 = use all (legacy behavior)
-                let (tails_eff, ids_eff): (Vec<u32>, Vec<u32>) = if max_tails > 0
-                    && tails.len() > max_tails
-                {
-                    // Rank tails by their BIG in-degree (how many literals
-                    // imply this tail — lower = more specific); keep the
-                    // K most specific.
-                    let mut ranked: Vec<(u32, u32, usize)> = tails
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &q)| {
-                            let spec = self
-                                .binary_graph
-                                .get(Lit::from_code(q).negate())
-                                .len() as u32;
-                            (q, spec, i)
-                        })
-                        .collect();
-                    ranked.sort_unstable_by_key(|&(_, spec, _)| spec);
-                    let keep: std::collections::HashSet<usize> =
-                        ranked[..max_tails].iter().map(|&(_, _, i)| i).collect();
-                    let mut t2 = Vec::new();
-                    let mut i2 = Vec::new();
-                    for (i, &q) in tails.iter().enumerate() {
-                        if keep.contains(&i) {
-                            t2.push(q);
-                            i2.push(ids[i * 2]);
-                            i2.push(ids[i * 2 + 1]);
+                let (tails_eff, ids_eff): (Vec<u32>, Vec<u32>) =
+                    if max_tails > 0 && tails.len() > max_tails {
+                        // Rank tails by their BIG in-degree (how many literals
+                        // imply this tail — lower = more specific); keep the
+                        // K most specific.
+                        let mut ranked: Vec<(u32, u32, usize)> = tails
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &q)| {
+                                let spec =
+                                    self.binary_graph.get(Lit::from_code(q).negate()).len() as u32;
+                                (q, spec, i)
+                            })
+                            .collect();
+                        ranked.sort_unstable_by_key(|&(_, spec, _)| spec);
+                        let keep: std::collections::HashSet<usize> =
+                            ranked[..max_tails].iter().map(|&(_, _, i)| i).collect();
+                        let mut t2 = Vec::new();
+                        let mut i2 = Vec::new();
+                        for (i, &q) in tails.iter().enumerate() {
+                            if keep.contains(&i) {
+                                t2.push(q);
+                                i2.push(ids[i * 2]);
+                                i2.push(ids[i * 2 + 1]);
+                            }
                         }
-                    }
-                    (t2, i2)
-                } else {
-                    (tails.iter().copied().collect(), ids.iter().copied().collect())
-                };
+                        (t2, i2)
+                    } else {
+                        (
+                            tails.iter().copied().collect(),
+                            ids.iter().copied().collect(),
+                        )
+                    };
                 if tails_eff.len() < 3 {
                     continue;
                 }
