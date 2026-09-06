@@ -692,3 +692,32 @@ NUMBER of tails per step; the hub introduction itself disrupts
 worker's search dynamics.  The full quotient-chain mechanism (kissat's
 incremental chain construction with structural scoring) is the only
 remaining path for the worker-class 12.75× residue, pre-registered.
+
+## Conflicts-gap levers: both-polarity probing and ELS — calibrated negatives (2026-09-07)
+
+Both remaining probing-depth levers were implemented, screened at 5
+seeds, and show the **same per-file structural tradeoff**:
+
+| lever | FEC | mp1 | 6s167 | mrpp | frb65 | worker |
+|---|---|---|---|---|---|---|
+| both-polarity probing | **0.66×** | **0.67×** | 1.09× | 1.44× | **7.7×** | = |
+| ELS force | **0.83×** | **0.61×** | 1.06× | 0.93× | **6.3×** | = |
+
+Equivalence-heavy structures (FmlaEquivChain, mp1-klieber) benefit
+dramatically; combinatorial instances (frb65 graph coloring) are
+destroyed.  **This is not a tuning issue** — the mechanism (deeper
+propagation cones / equivalence substitution) fundamentally helps one
+class and hurts the other.  No single default works for both.
+
+Both knobs landed opt-in (`NIXIE_PROBE_BOTH=1`, `NIXIE_ELS_FORCE=1`)
+with the tradeoff documented.  The adaptive-gating question (can an
+observable separate the classes before the choice?) remains the
+pre-registered open path — the 2026-09-02 adaptive-retention study's
+methodology applies.
+
+**Campaign summary at this point**: kissat conflicts residue 1.12×,
+decomposed into worker 12.75× (factor chains — simplified rewrites
+measured negative), shuffling 5.81× (probe-sensitive), 6s167 3.25×
+(probing depth — widened single-polarity landed, both-polarity and ELS
+are per-file), and a long tail < 2×.  The remaining gap needs either
+the full kissat factor port or adaptive gating, both pre-registered.

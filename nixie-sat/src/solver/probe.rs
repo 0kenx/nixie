@@ -196,11 +196,25 @@ impl Solver {
             // the probe literal is the one occurring *negatively* in
             // binary clauses — `¬probe` heads implications. With both
             // polarities present, pick the one with more occurrences.
-            let probe = if n_neg >= n_pos { pos } else { neg };
-            if self.probe_propfixed[probe.code() as usize] >= self.trail.size() as i64 {
+            let (first, second) = if n_neg >= n_pos {
+                (pos, neg)
+            } else {
+                (neg, pos)
+            };
+            // Both-polarity probing (2026-09-07): probe the richer
+            // polarity first (budget preference), then the other — the
+            // two propagation cones expose different equivalences and
+            // hyper-binary resolvents that single-polarity probing
+            // misses.  Gated on `NIXIE_PROBE_BOTH` (default on).
+            let both = std::env::var("NIXIE_PROBE_BOTH").is_ok_and(|v| v == "0");
+            let total = n_pos + n_neg;
+            if self.probe_propfixed[first.code() as usize] >= self.trail.size() as i64 {
                 continue;
             }
-            probes.push((n_pos + n_neg, probe));
+            probes.push((total, first));
+            if both && self.probe_propfixed[second.code() as usize] < self.trail.size() as i64 {
+                probes.push((total.saturating_sub(1), second)); // rank just below
+            }
         }
         // Rank: richest implication structure first (deterministic:
         // occurrence desc, then literal code asc).
