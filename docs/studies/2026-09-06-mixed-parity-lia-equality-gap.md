@@ -143,10 +143,24 @@ fuzzer sweeps 57/58 (stressed) and 56/58 (medium) decided, 0 wrong.
 
 ### Remaining gaps (next rungs)
 
-1. **Bounds-aware Diophantine reasoning** — fold active simple bounds
-   (`x = c` pins, `note_fixed_var`, branch bounds) into the equality
-   system as rows so the mixed-UNSAT refutation closes on the lattice
-   instead of by search.
+1. **Bounds-aware Diophantine reasoning (search integration) —
+   attempted 2026-09-06, measured negative, not landed.**  The theory
+   side is *proven complete*: with every cross-edge Boolean decided
+   (fixes present as level-0 rows), `parity-mixedboolint-unsat` is
+   refuted instantly (z3 agreement).  The attempted integration —
+   folding the propagation-bound tracker's active fixes
+   (`active_int_fixes`: tightest lower==upper, integral, δ=0) into the
+   equality system, cache keyed by the fix fingerprint — measured
+   *negative* on search: `mixedboolint-sat` 0.3 s → 6.2 s (recompute
+   churn on every fix-set change + fix-respecting incumbents steering
+   longer searches), `parity-incremental` regressed to timeout, and
+   mixed-UNSAT still timed out (the informative leaves are never
+   reached early enough for per-check folding to pay).  Reverted; do
+   not retry per-check folding.  What would actually close the rung:
+   firing the folded verdict only at near-full Boolean assignments
+   (the theory lacks that signal — it would need solver-side plumbing
+   of an "atoms-fully-decided" flag), or lifting the mod-2 signature
+   of the equality system into a parity lemma for the SAT core.
 2. `parity-mixedboundary`: exact div/mod chain links still block both
    the refutation and the incumbent.
 
