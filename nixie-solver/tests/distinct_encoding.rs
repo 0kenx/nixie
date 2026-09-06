@@ -576,6 +576,39 @@ fn large_distinct_int_negated_with_equality_is_sat() {
 }
 
 #[test]
+fn large_distinct_int_boundary_8_9() {
+    // The *numeric* pairwise threshold (measured; see the study): n = 8
+    // stays pairwise, n = 9 takes the injective map.  Both sides of the
+    // boundary, both polarities.
+    for n in [8usize, 9] {
+        check(
+            &format!(
+                "{}(assert {})\n(check-sat)\n",
+                int_header(n),
+                int_distinct(n)
+            ),
+            "sat",
+        );
+        check(
+            &format!(
+                "{}(assert {})\n(assert (= x1 x2))\n(check-sat)\n",
+                int_header(n),
+                int_distinct(n)
+            ),
+            "unsat",
+        );
+        check(
+            &format!(
+                "{}(assert (not {}))\n(check-sat)\n",
+                int_header(n),
+                int_distinct(n)
+            ),
+            "sat",
+        );
+    }
+}
+
+#[test]
 fn large_distinct_int_boundary_32_33() {
     // Both sides of the encoding threshold.  n = 32 keeps pairwise (its
     // satisfiable shape is a pre-existing slow case in debug builds, so only

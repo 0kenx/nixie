@@ -2901,13 +2901,7 @@ impl Solver {
                 // for the full soundness story and the measurements).
                 // Falls back to pairwise if the fresh witnesses could not be
                 // minted unambiguously (name collision with a user symbol).
-                if args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
-                    && Self::common_distinct_sort(args, manager).is_some_and(|s| {
-                        matches!(
-                            manager.sorts.get(s).map(|s| &s.kind),
-                            Some(SortKind::Uninterpreted(_) | SortKind::Int | SortKind::Real)
-                        )
-                    })
+                if Self::distinct_takes_injective(args, manager)
                     && self.encode_distinct_injective(term, result_var, args, manager, depth)
                 {
                     return result;
@@ -3310,8 +3304,45 @@ impl Solver {
     }
 
     /// Arity at and below which `distinct` stays pairwise-encoded.  Z3's
-    /// `distinct_max_args` (`euf_internalize.cpp`): 32.
+    /// `distinct_max_args` (`euf_internalize.cpp`): 32 – kept for EUF-owned
+    /// (uninterpreted) sorts, whose pairwise atoms carry no arithmetic
+    /// trichotomy tax and stay cheap at small arity.
     const DISTINCT_PAIRWISE_MAX_ARGS: usize = 32;
+
+    /// The pairwise threshold for *arithmetic* sorts (Int/Real).  Measured,
+    /// not inherited: nixie's pairwise path pays a trichotomy clause per
+    /// pair, and the sweep (see the study) shows the injective map at parity
+    /// from n ≈ 4 and strictly ahead from n ≈ 8 on every polarity shape –
+    /// free-variable `sat` at n = 28/32 goes 1.6 s/timeout (pairwise)
+    /// vs 8 ms (injective), and the negated shapes are orders of magnitude
+    /// apart in decisions already at n = 12.  8 sits in the clear win zone
+    /// while keeping the atom-minimal pairwise encoding for tiny arities.
+    const DISTINCT_NUMERIC_PAIRWISE_MAX_ARGS: usize = 8;
+
+    /// Whether the injective map owns this `distinct`: the arity exceeds the
+    /// pairwise threshold of the argument sort's family (numeric sorts use
+    /// the measured lower threshold; everything else Z3's 32).
+    fn distinct_takes_injective(args: &[TermId], manager: &TermManager) -> bool {
+        let Some(sort) = Self::common_distinct_sort(args, manager) else {
+            return false;
+        };
+        let Some(kind) = manager.sorts.get(sort).map(|s| &s.kind) else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            SortKind::Uninterpreted(_) | SortKind::Int | SortKind::Real
+        ) {
+            return false;
+        }
+        let numeric = matches!(kind, SortKind::Int | SortKind::Real);
+        let threshold = if numeric {
+            Self::DISTINCT_NUMERIC_PAIRWISE_MAX_ARGS
+        } else {
+            Self::DISTINCT_PAIRWISE_MAX_ARGS
+        };
+        args.len() > threshold
+    }
 
     /// The common sort of a `distinct` argument list, or `None` when the
     /// arguments are not all of one sort (ill-typed input; the caller falls
@@ -3856,13 +3887,7 @@ impl Solver {
                     // (`emit_distinct_pairwise_trichotomies`), so the
                     // (astronomically unlikely) name-collision fallback stays
                     // exactly as strong.
-                    let injective_owned = args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
-                        && Self::common_distinct_sort(args, manager).is_some_and(|s| {
-                            matches!(
-                                manager.sorts.get(s).map(|sk| &sk.kind),
-                                Some(SortKind::Uninterpreted(_) | SortKind::Int | SortKind::Real)
-                            )
-                        });
+                    let injective_owned = Self::distinct_takes_injective(args, manager);
                     if !injective_owned {
                         let args_clone: Vec<TermId> = args.iter().copied().collect();
                         for i in 0..args_clone.len() {

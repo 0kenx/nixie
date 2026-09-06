@@ -246,6 +246,27 @@ Convergence is now one round for these shapes (a cap=1 build still
 answers `sat` at n = 200); the honesty gate remains as the backstop for
 multi-group shapes.  The whole 43-test distinct suite runs in 0.4 s.
 
+Postscript 3: the threshold cliff.  Z3's `distinct_max_args = 32` was
+inherited for every sort, but nixie's pairwise path pays a trichotomy
+clause per pair on the *satisfiable* side, and the sweep shows the
+cliff that buys: free-variable `distinct` over Int at n = 24/28/32 takes
+254 ms / 1.6 s / timeout under pairwise vs 7 / 8 / 9 ms under the
+injective map, and the negated shapes are already 30-45000× apart in
+decisions at n = 12-28.  Below n ≈ 8 the two encodings are at parity
+(worst pairwise deficit: single-digit decisions on 2-6-argument
+positive shapes).  The numeric threshold is therefore measured, not
+inherited: `DISTINCT_NUMERIC_PAIRWISE_MAX_ARGS = 8`, with Z3's 32 kept
+for EUF-owned sorts (no trichotomy tax, no cliff observed).
+
+Corpus validation of the whole program (the `smt-lib/non-incremental`
+extracts): 4360 files carry `distinct`, 380 at arity >= 8 including
+Dartagnan ReachSafety instances at arity 225-267 over QF_LIA/QF_NIA.
+A/B of the direct parent binary against the new build over all 380:
+**zero verdict mismatches**, 20 strict wins, 0 losses; the 63 shared
+timeouts are hard for non-`distinct` reasons (the encoding is not
+their bottleneck).  The synthetic sweep supplies the isolated wins;
+the corpus certifies that nothing real regressed.
+
 Remaining gaps: BitVec, unchanged (see below) – and that is now the
 only row of the original table still open.
 
