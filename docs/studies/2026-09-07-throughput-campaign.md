@@ -322,6 +322,46 @@ far — no arena reordering, prefetching or layout change shortens a chain
 that already hits in L1. The 2026-08-22 studies' conclusion ("density is
 not where the propagate cost lives") is confirmed at the cycle level.
 
+### Where the instruction ratio actually lives (asked: "Rust codegen?")
+
+Correct the denominator first: **per-propagations is inflated**. cadical
+runs 138.5 props per conflict against our 119.0, so the honest same-work
+comparison is **per-conflict: 220.3 k vs 164.8 k instructions = 1.34×**
+(per-prop reads 1.56×). Inside the loop, per entry-event (visit or BIG
+edge): ours **40 instr** (5.59 G propagate instructions, the
+instruction-sampled share, over 140 M events) vs cadical **~24** (their
+entry count derived from `ticks = 1 + ceil(16n/64)` → n ≈ 22/prop; their
+share is cycle-sampled, so treat as ±20 %). ≈ **1.6× per entry**.
+
+Attribution of the extra ~15 instructions per entry, from the session's
+disassembly pass:
+
+* **Rust safety/codegen, ≈ 7–9**: the bounds-check pair on every
+  `watches[write]` store; the values-array base reload after each `&mut`
+  arena call (aliasing — C++ caches `vals` in a register across the
+  loop); `read`/`write` as `usize` indices with `lea` math vs C++
+  pointer post-increment; capacity checks on every watch-move push;
+  SmallVec inline/heap machinery.
+* **Deliberate structure, ≈ 6–8**: the 12-byte watcher carries BOTH the
+  clause id and the arena ref (3 loads + 3 stores per copy vs their
+  2+2 — the 8-byte variant was measured +0.7 % and reverted at the bar);
+  the `write != read` elision branch (our measured win; cadical copies
+  unconditionally); the BIG two-pass with phantom-tick accounting and the
+  bounded-check branch chain; the LRAT/step-limit branch chain.
+
+**The twist that matters**: the codegen half is real instructions but not
+real wall time. Measured three ways — PGO removed 7 % of instructions
+(exactly the removable codegen class) for **0 % cycles**; the slice
+rewrites removed the bounds checks and base reloads and measured
+neutral-to-negative; and the branch-miss *rates* are the same in both
+solvers (4.7 % vs 5.1 %) — we pay 2× the misses per propagation because
+we execute 2× the branches per entry, which is the structural half. The
+IPC term (1.57 vs 1.86) is the same story: their loop holds fewer live
+values (16-byte watcher in two registers, pointers not indices), so each
+stall overlaps more work. Conclusion: Rust codegen accounts for roughly
+half the instruction gap, ~none of the cycle gap; the cycle gap scales
+with the branch/visit structure.
+
 ### The final decomposition (6s167-opt, E-core)
 
 | factor | ratio | class |
