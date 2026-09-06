@@ -599,3 +599,115 @@ fn conditional_store_equality_read_congruence_is_unsat() {
     );
     assert_eq!(script_result(script), crate::SolverResult::Unsat);
 }
+
+// ---------------------------------------------------------------------------
+// Model-based instantiation of synthetic reads (the `memory`-alias cascade
+// fix; see docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+// ---------------------------------------------------------------------------
+
+/// Two 12-deep store chains over all-distinct symbolic indices with one
+/// planted alias and distinct anchor values – the `memory-alias` shape in
+/// miniature.  Before the fix, the refinement loop minted extensionality
+/// witnesses for ~12 adjacent chain-link pairs per chain, each spawning
+/// synthetic reads whose full flat read-over-write batch re-asserted per
+/// round: ~60 refinement rounds of re-solving (20 s at the 50-deep large
+/// size, where z3 takes 25 ms).  With synthetic reads routed through the
+/// model filter, the entailed-only separation cause, and the miss-guarded
+/// else, the loop converges in a handful of rounds.
+#[test]
+fn memory_alias_shape_converges() {
+    let n = 12u32;
+    let mut script = String::from("(set-logic QF_AUFLIA)\n");
+    for i in 0..n {
+        script.push_str(&format!("(declare-fun idx{i} () Int)\n"));
+    }
+    script.push_str("(declare-fun v9 () Int)\n(declare-fun v16 () Int)\n");
+    script.push_str("(assert (distinct");
+    for i in 0..n {
+        if i != 16 % n {
+            script.push_str(&format!(" idx{i}"));
+        }
+    }
+    script.push_str("))\n");
+    script.push_str("(assert (= idx9 idx4))\n"); // the planted alias (4 ≡ 16 mod 12)
+    script.push_str("(assert (= v9 7))\n(assert (= v16 9))\n");
+    script.push_str("(declare-fun b () (Array Int Int))\n");
+    let mut a1 = "b".to_string();
+    let mut a2 = "b".to_string();
+    for i in 0..n {
+        let v1 = if i == 9 {
+            "v9"
+        } else if i == 4 {
+            "v16"
+        } else {
+            "100"
+        };
+        let v2 = if i == 9 {
+            "v16"
+        } else if i == 4 {
+            "v9"
+        } else {
+            "100"
+        };
+        a1 = format!("(store {a1} idx{i} {v1})");
+        a2 = format!("(store {a2} idx{i} {v2})");
+    }
+    script.push_str(&format!(
+        "(declare-fun a1 () (Array Int Int))\n(assert (= a1 {a1}))\n"
+    ));
+    script.push_str(&format!(
+        "(declare-fun a2 () (Array Int Int))\n(assert (= a2 {a2}))\n"
+    ));
+    script.push_str("(assert (distinct (select a1 idx9) (select a2 idx9)))\n(check-sat)\n");
+    assert_eq!(script_result(&script), crate::SolverResult::Sat);
+
+    // The same shape with EQUAL anchor values: both chains agree at the
+    // aliased cell and everywhere else, so the read disequality is
+    // refuted.
+    let unsat = script
+        .replace("(assert (= v9 7))", "(assert (= v9 5))")
+        .replace("(assert (= v16 9))", "(assert (= v16 5))");
+    assert_eq!(script_result(&unsat), crate::SolverResult::Unsat);
+}
+
+/// The synthetic-read model filter must not lose completeness when the
+/// model's witness index actually LANDS on a write: the violated
+/// per-level implication is asserted the round the model needs it.
+#[test]
+fn witness_read_landing_on_a_write_is_decided() {
+    // `a != b` forced through a UF application (congruence); both are
+    // chains over a common base, so the pair needs a differing read.  The
+    // witness index `k` is synthetic – its read-over-write content is
+    // model-filtered, and the model that puts `k` on the differing write
+    // must be found (sat side), while the equal-writes variant must be
+    // refuted (unsat side).
+    // (a) differing write at 2, k pinned there, a and b read apart at 1:
+    // the extensionality witness for the congruence-forced `a != b` finds
+    // the differing read through the model-filtered instances.
+    let sat_shape = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a () (Array Int Int))\n",
+        "(declare-fun b () (Array Int Int))\n",
+        "(declare-fun g ((Array Int Int)) Int)\n",
+        "(assert (= b (store (store a 1 10) 2 20)))\n",
+        "(assert (not (= (g a) (g b))))\n",
+        "(assert (= (select a 2) 5))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(sat_shape), crate::SolverResult::Sat);
+
+    // (b) both chains agree everywhere they are constrained (base read
+    // equal, differing writes never exercised): `a != b` cannot be
+    // witnessed and the conjunction is refuted.
+    let unsat_shape = concat!(
+        "(set-logic QF_AUFLIA)\n",
+        "(declare-fun a () (Array Int Int))\n",
+        "(declare-fun b () (Array Int Int))\n",
+        "(declare-fun g ((Array Int Int)) Int)\n",
+        "(assert (= b (store a 1 10)))\n",
+        "(assert (not (= (g a) (g b))))\n",
+        "(assert (= (select a 1) 10))\n",
+        "(check-sat)\n",
+    );
+    assert_eq!(script_result(unsat_shape), crate::SolverResult::Unsat);
+}

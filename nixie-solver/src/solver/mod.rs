@@ -400,6 +400,15 @@ pub struct Solver {
     /// waiting for.  Left `false` when the instance budget ran out – that
     /// exit is not a fixpoint, and certifying it would fabricate `Sat`.
     pub(super) array_axioms_saturated: bool,
+    /// Witness pairs minted by the array refinement loop in the current
+    /// `check` (see `array_axioms::MAX_ARRAY_WITNESS_PAIRS`).  Reset at
+    /// every `check_core` entry.
+    pub(super) array_witness_mints: usize,
+    /// Set when the witness budget refused a mint in the current `check`:
+    /// the refinement is NOT saturated (a separated pair may lack its
+    /// differing-read witness), so the array honesty gate must answer
+    /// `Unknown` rather than certify the candidate model.
+    pub(super) array_witness_budget_exhausted: bool,
     /// `div` / `mod` / numeric-`ite` terms whose defining axioms have already
     /// been asserted (see [`Solver::instantiate_arith_axioms`]).  The linear
     /// solver treats those terms as opaque atoms, so this set is what tells the
@@ -803,6 +812,8 @@ impl Solver {
             array_theory: array_theory::ArrayTheory::new(),
             array_axiom_instances: FxHashSet::default(),
             array_axioms_saturated: false,
+            array_witness_mints: 0,
+            array_witness_budget_exhausted: false,
             arith_defined_terms: FxHashSet::default(),
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
@@ -1387,6 +1398,8 @@ impl Solver {
 
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
         self.array_axioms_saturated = false;
+        self.array_witness_mints = 0;
+        self.array_witness_budget_exhausted = false;
         // Per-goal theory-lemma log (certified mode reads it after the
         // search; see `solver/certification.rs`).
         self.derived_reasons.clear_theory_lemmas();
@@ -2236,7 +2249,8 @@ impl Solver {
                         // Context-level array honesty gate asks for has been
                         // checked axiom by axiom.  Only the budget-exhausted
                         // exit keeps this `false` (see the field's doc).
-                        self.array_axioms_saturated = !array_refined;
+                        self.array_axioms_saturated =
+                            !array_refined && !self.array_witness_budget_exhausted;
                         if array_refined {
                             array_refinement_rounds += 1;
                             if array_refinement_rounds >= max_array_refinement_rounds {

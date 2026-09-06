@@ -168,15 +168,18 @@ with the certificate:
    `docs/studies/2026-09-07-memory-alias-arrangement-gap.md`; the scoped
    fix is arithmetic-side injective candidate repair, a heuristic change
    under the full benchmarking discipline.
-   **Final (2026-09-07): the repair was built and measured — see the
-   study's Attempt 3 — and NOT landed.**  Ungated: family-aggregate
-   treatment/null 0.97.  Gated to clusters ≥ 8 and replayed on fresh
-   seeds (new `obligation-gen --seed-offset`): 0.93 aggregate (0.91 on
-   large), below the certifiable threshold at n = 60.  Concurrently,
-   `b9c750d` (chain-shaped separation) independently converted the
-   family's timeouts from the split side.  The remaining 14–22 s is the
-   array-axiom saturation cascade (67 rounds, ~200 instances/round),
-   root-caused in the study as the next rung.
+   **Final (2026-09-07, end of day): FIXED.**  The saturation cascade was
+   closed by model-based instantiation of synthetic reads in the array
+   refinement loop (input-select tracking + witness-name routing into
+   the model-filtered assertion path, a miss-guarded ultimate-base else
+   that terminates instead of peeling one chain level per round, a
+   256-pair witness budget whose exhaustion forces `Unknown` rather than
+   a dishonest `Sat`, and entailed-only separation demand) — see the
+   study's implementation record.  `memory` medium 56/58 → **58/58**,
+   large 2/8 → **8/8**; the alias/incremental larges decide in 1.3–4.8 s
+   (z3 25 ms).  The injective-repair attempt itself was also built and
+   measured (treatment/null 0.97 ungated, 0.93 gated at n = 60 — not
+   certifiable) and is documented as not-landed in the same study.
 
 ## What this is not
 

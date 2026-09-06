@@ -76,6 +76,33 @@ use super::{EvalVal, Solver};
 /// instances.
 const MAX_ARRAY_AXIOM_INSTANCES: usize = 20_000;
 
+/// Per-`check` budget on extensionality witness pairs.  One witness index
+/// per unordered pair is semantically sufficient (the deterministic mint
+/// already guarantees it); this bounds how many DISTINCT pairs may demand
+/// one within a single check.  A pair that is genuinely separated but
+/// witnessless because the budget tripped leaves the candidate model
+/// unable to justify its `a != b` through a differing read – the round
+/// then must NOT count as saturated, so exhaustion forces
+/// [`Solver::array_axioms_saturated`] to `false` and the Context-level
+/// honesty gate answers `Unknown` instead of printing a model whose array
+/// disequality has no witness.  (The measured `memory`-alias cascade
+/// needs ~2 witnesses per round; 256 covers every real input the fuzzer
+/// and the standing corpora produce, and the bound exists for the
+/// adversarial closure, not the realistic ones.)
+pub(super) const MAX_ARRAY_WITNESS_PAIRS: usize = 256;
+
+/// Witness-mint bookkeeping for one `check` (see
+/// [`MAX_ARRAY_WITNESS_PAIRS`]).
+#[derive(Debug, Default)]
+pub(super) struct WitnessBudget {
+    /// Witness pairs minted so far in this check (across refinement
+    /// rounds).
+    pub(super) used: usize,
+    /// Set when a mint was REFUSED by the cap: the caller must treat the
+    /// refinement as unsaturated.
+    pub(super) exhausted: bool,
+}
+
 impl Solver {
     /// One round of lazy array-axiom instantiation against the current candidate
     /// model.  Returns `true` when at least one new ground array lemma was
@@ -164,13 +191,22 @@ impl Solver {
         // clauses can tell `build_read_over_write` which arrays need no eager
         // chain unfolding (the lever for deep `storecomm` chains).
         let mut candidates: Vec<TermId> = Vec::new();
+        let mut budget = WitnessBudget {
+            used: self.array_witness_mints,
+            exhausted: false,
+        };
         let no_eager = build_extensionality_and_congruence(
             manager,
             &collected,
             &separated_pairs,
             &interface_pairs,
             &mut candidates,
+            &mut budget,
         );
+        self.array_witness_mints = budget.used;
+        if budget.exhausted {
+            self.array_witness_budget_exhausted = true;
+        }
         let mut ssc_premise_pairs: Vec<(TermId, TermId)> = Vec::new();
         build_store_congruence(manager, &collected, &mut candidates, &mut ssc_premise_pairs);
         // Trichotomy for the premise pairs (lazy A1 for lemma-borne atoms:
@@ -188,13 +224,19 @@ impl Solver {
         let mut upward_candidates: Vec<TermId> = Vec::new();
         let upward_defined =
             build_connected_upward_read_over_write(manager, &collected, &mut upward_candidates);
+        let mut witness_row_candidates: Vec<TermId> = Vec::new();
         build_read_over_write(
             manager,
             &collected,
             &no_eager,
             &upward_defined,
             &mut candidates,
+            &mut witness_row_candidates,
         );
+        // Witness-borne read-over-write joins the upward list in the
+        // model-filtered assertion path (see the routing note in
+        // `build_read_over_write`).
+        upward_candidates.extend(witness_row_candidates);
         // Array-congruence at store-chain write indices: for an inline array
         // equality `(= A B)` whose store chain exposes write indices, assert
         // the theorem `(= A B) => (= (select A i) (select B i))` per write index.
@@ -374,7 +416,31 @@ impl Solver {
         if let Some(&var) = self.term_to_var.get(&atom)
             && self.sat.model_value(var).is_false()
         {
-            return PairSeparation::AtomFalse;
+            // Only an *entailed* falsity (assigned at the root level: unit
+            // propagation from level-0 clauses) is a durable demand for an
+            // extensionality witness.  A branch-committed falsity can be
+            // retracted by the next backtrack, and this module's witness
+            // clauses PERSIST at the root – so reading every branch commit
+            // as a demand mints witnesses for atoms the search keeps
+            // flipping (the measured `memory`-alias engine: store-
+            // congruence premise atoms between chain links are satisfied
+            // VACUOUSLY false by phase, and each was spawning witness
+            // reads whose re-flattening dominated the refinement loop).
+            // Z3's `new_diseq_eh` fires on in-search disequality
+            // assertions whose propagation is *incremental*; the
+            // round-based equivalent of "durable" is exactly level 0.
+            // SOUNDNESS: an AtomFalse pair no longer gets a witness clause
+            // it would only have gotten for a transient reason; a pair
+            // whose disequality is *decided* in the final accepting
+            // candidate is either entailed (level 0, covered) or its
+            // branch commit survives to that candidate, whose model then
+            // needs the differing read – that need re-surfaces every round
+            // this pair is queried, and a level>0 commit that STICKS
+            // across the loop's root-backtracking re-asserts itself until
+            // the propagation reaches level 0.
+            if self.sat.trail().level(var) == 0 {
+                return PairSeparation::AtomFalse;
+            }
         }
         PairSeparation::None
     }
@@ -393,6 +459,14 @@ type StoreMap = (TermId, Vec<(TermId, TermId)>, Vec<(TermId, TermId)>);
 struct ArrayStructure {
     /// `(select_term, array_operand, index)` for every `select` encountered.
     selects: Vec<(TermId, TermId, TermId)>,
+    /// Select terms reachable from the USER assertions (as opposed to from
+    /// axiom instances this module asserted earlier).  A read whose select
+    /// term is NOT in here is *synthetic* – it exists only because some
+    /// lemma minted it (an extensionality witness read, an else-clause base
+    /// read, an equality-congruence copy at a write index) – and its
+    /// read-over-write content is instantiated model-based (see the routing
+    /// in [`build_read_over_write`]).
+    input_selects: FxHashSet<TermId>,
     /// Unordered array-sorted equality atoms `(a, b)` (`a != b` syntactically).
     eq_pairs: Vec<(TermId, TermId)>,
     /// The subset of [`ArrayStructure::eq_pairs`] whose `Eq` atom occurs in
@@ -531,6 +605,9 @@ fn collect_array_structure(
             }
             TermKind::Select(array, index) => {
                 out.selects.push((term, *array, *index));
+                if from_input {
+                    out.input_selects.insert(term);
+                }
                 let entry = out.read_indices.entry(*array).or_default();
                 if !entry.contains(index) {
                     entry.push(*index);
@@ -845,8 +922,41 @@ fn build_read_over_write(
     no_eager: &FxHashSet<TermId>,
     upward_defined: &FxHashSet<(TermId, TermId)>,
     candidates: &mut Vec<TermId>,
+    model_filtered: &mut Vec<TermId>,
 ) {
     for &(select_term, array, index) in &collected.selects {
+        // SYNTHETIC-READ ROUTING (per-level, model-based instantiation):
+        // a read whose select term no user assertion mentions is synthetic
+        // – it exists only because some earlier lemma minted it (an
+        // extensionality witness read at a fresh index, an else-clause
+        // base read, an equality-congruence copy at a write index).  Its
+        // flat chain encoding's `(k = i_w) ⇒ select = v_w` implications
+        // are vacuously true in every candidate model until the model's
+        // `k` actually lands on a store index, and the else clause is the
+        // only content the model cannot yet confirm.  Batch-asserting the
+        // whole chain per synthetic read re-flattens every chain per
+        // round – the saturation cascade measured on the `memory`-alias
+        // family (100 congruence-minted reads × 51 clauses ≈ 5 100
+        // instances in the first rounds alone, ~+200 per refinement
+        // round, 60+ rounds; see
+        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+        // Routing the read's candidates to the model-filtered list keeps
+        // every instance AVAILABLE (re-proposed each round, asserted the
+        // round the candidate model does not already prove it true – the
+        // `upward` family's contract), so the loop's saturation
+        // guarantee is unchanged while the asserted volume collapses to
+        // the ~1-2 instances per read the model actually needs.  INPUT
+        // reads keep the eager flat batch: the drip-feeding risk the
+        // model filter was removed for (deep-chain goals whose search
+        // keeps moving the index) lives on exactly those.
+        let synthetic = !collected.input_selects.contains(&select_term)
+            || is_extensionality_witness(index, manager);
+        let sink: &mut Vec<TermId> = if synthetic {
+            model_filtered
+        } else {
+            candidates
+        };
+        let candidates = sink;
         // A read whose (array, index) the upward closure already defined gets
         // its read-over-write content ONE level at a time from those clauses
         // (each level links to the next); re-flattening the whole chain here
@@ -904,10 +1014,40 @@ fn build_read_over_write(
                 // rounds on QF_ANIA avg40).
                 if !entries.iter().any(|(ki, _)| *ki == index) {
                     let base_read = manager.mk_select(ultimate_base, index);
-                    let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
-                    else_disj.push(manager.mk_eq(select_term, base_read));
-                    else_disj.extend(idx_eqs);
-                    candidates.push(manager.mk_or(else_disj));
+                    if synthetic {
+                        // SYNTHETIC else: the miss-guarded ultimate-base
+                        // implication `(∧_w index ≠ k_w) ⇒ select =
+                        // select(ultimate_base, index)` instead of the
+                        // `⋁(index = k_w)` disjunction.  Both are theorems;
+                        // the difference is the model filter's reach: the
+                        // disjunctive else is undetermined whenever the
+                        // select equality is (which is every round until
+                        // the read's value settles), so it asserts, and
+                        // the base read it mints re-seeds the next chain
+                        // level – one level per refinement round, the
+                        // O(depth) peel measured on the `memory` family.
+                        // The miss-guarded form is DETERMINED by the
+                        // model's index values: as soon as the model puts
+                        // the index on (or off) any write, the guard
+                        // evaluates and the clause is skipped as true or
+                        // asserted exactly once – and the single base read
+                        // it can mint is over the ULTIMATE base (a
+                        // non-store), so it terminates instead of peeling.
+                        let misses: Vec<TermId> =
+                            idx_eqs.iter().map(|&e| manager.mk_not(e)).collect();
+                        let miss_guard = if misses.len() == 1 {
+                            misses[0]
+                        } else {
+                            manager.mk_and(misses)
+                        };
+                        let eq = manager.mk_eq(select_term, base_read);
+                        candidates.push(manager.mk_implies(miss_guard, eq));
+                    } else {
+                        let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
+                        else_disj.push(manager.mk_eq(select_term, base_read));
+                        else_disj.extend(idx_eqs);
+                        candidates.push(manager.mk_or(else_disj));
+                    }
                 }
             }
         } else if let Some(store_terms) = collected.aliases.get(&array) {
@@ -965,12 +1105,27 @@ fn build_read_over_write(
                     });
                     idx_eqs.push(idx_eq);
                 }
-                // Else (guarded): select = select(base, index) ∨ ∨_i (index = ki).
+                // Else (guarded): for INPUT reads, `select =
+                // select(base, index) ∨ ∨_i (index = ki)`; for SYNTHETIC
+                // reads the miss-guarded ultimate-base implication (see
+                // the direct path's note – the disjunctive form peels one
+                // chain level per refinement round on exactly those).
                 let base_read = manager.mk_select(base, index);
-                let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
-                else_disj.push(manager.mk_eq(select_term, base_read));
-                else_disj.extend(idx_eqs);
-                let else_clause = manager.mk_or(else_disj);
+                let else_clause = if synthetic {
+                    let misses: Vec<TermId> = idx_eqs.iter().map(|&e| manager.mk_not(e)).collect();
+                    let miss_guard = if misses.len() == 1 {
+                        misses[0]
+                    } else {
+                        manager.mk_and(misses)
+                    };
+                    let eq = manager.mk_eq(select_term, base_read);
+                    manager.mk_implies(miss_guard, eq)
+                } else {
+                    let mut else_disj: Vec<TermId> = Vec::with_capacity(entries.len() + 1);
+                    else_disj.push(manager.mk_eq(select_term, base_read));
+                    else_disj.extend(idx_eqs);
+                    manager.mk_or(else_disj)
+                };
                 candidates.push(match guard_term {
                     Some(g) => manager.mk_implies(g, else_clause),
                     None => else_clause,
@@ -1128,16 +1283,31 @@ fn build_equality_read_congruence(
         {
             continue;
         }
-        // Gather the write indices exposed by either side's store chain.
+        // Gather the write indices exposed by either side's store chain,
+        // RESTRICTED to indices something already READS (input reads,
+        // witness reads, or any observed read on either operand).  The
+        // original write-index closure minted `select(var, store_idx)` at
+        // EVERY write of a deep chain — on the `memory`-alias family that
+        // is 50 fresh synthetic reads per chain per pair, each of which
+        // then paid the full flat read-over-write treatment — the
+        // measured ~5 100-instance head of the saturation cascade (see
+        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).  The
+        // shape this family exists for (`cvc/read8`: an ite-conditional
+        // `(= (store…) var)` whose read-over-write consequence must
+        // propagate) reads the array at the very index whose consequence
+        // it needs, so that index is already observed; an index nothing
+        // reads cannot have an observable consequence, and the read of a
+        // symbolic index `X` reaches every write index it could equal
+        // through the ordinary read-over-write family on
+        // `select(chain, X)`.
         let mut idx_terms: Vec<TermId> = Vec::new();
-        if let Some((_, entries)) = direct_store_map(a, manager) {
-            for (idx, _val) in &entries {
-                idx_terms.push(*idx);
-            }
-        }
-        if let Some((_, entries)) = direct_store_map(b, manager) {
-            for (idx, _val) in &entries {
-                idx_terms.push(*idx);
+        for array in [a, b] {
+            if let Some(indices) = collected.read_indices.get(&array) {
+                for idx in indices {
+                    if !idx_terms.contains(idx) {
+                        idx_terms.push(*idx);
+                    }
+                }
             }
         }
         if idx_terms.is_empty() {
@@ -1480,6 +1650,7 @@ fn build_extensionality_and_congruence(
     separated_pairs: &FxHashSet<(TermId, TermId)>,
     interface_pairs: &[(TermId, TermId)],
     candidates: &mut Vec<TermId>,
+    budget: &mut WitnessBudget,
 ) -> FxHashSet<TermId> {
     let mut finite_decided: FxHashSet<TermId> = FxHashSet::default();
     // Extensionality candidate pairs: the asserted array equalities, PLUS
@@ -1582,14 +1753,21 @@ fn build_extensionality_and_congruence(
             && separated_pairs.contains(&unordered_pair(a, b))
             && let Some(domain) = array_domain(a, manager)
         {
-            let witness = extensionality_witness(manager, a, b, domain);
-            let read_a = manager.mk_select(a, witness);
-            let read_b = manager.mk_select(b, witness);
-            let reads_eq = manager.mk_eq(read_a, read_b);
-            let reads_diff = manager.mk_not(reads_eq);
-            let eq_ab = manager.mk_eq(a, b);
-            let ext = manager.mk_or([eq_ab, reads_diff]);
-            candidates.push(ext);
+            if budget.used >= MAX_ARRAY_WITNESS_PAIRS {
+                // Refuse the mint (honesty: the caller marks the
+                // refinement unsaturated – see [`MAX_ARRAY_WITNESS_PAIRS`]).
+                budget.exhausted = true;
+            } else {
+                budget.used += 1;
+                let witness = extensionality_witness(manager, a, b, domain);
+                let read_a = manager.mk_select(a, witness);
+                let read_b = manager.mk_select(b, witness);
+                let reads_eq = manager.mk_eq(read_a, read_b);
+                let reads_diff = manager.mk_not(reads_eq);
+                let eq_ab = manager.mk_eq(a, b);
+                let ext = manager.mk_or([eq_ab, reads_diff]);
+                candidates.push(ext);
+            }
         }
 
         // Both cases above already provide a complete path for every relevant
@@ -1671,6 +1849,20 @@ fn extensionality_witness(
     // The `!nixie!ext!` prefix cannot collide with an SMT-LIB source symbol.
     let name = format!("!nixie!ext!{lo}!{hi}");
     manager.mk_var(&name, domain)
+}
+
+/// Whether `term` is an extensionality witness index minted by
+/// [`extensionality_witness`]: a variable whose name carries the
+/// solver-internal `!nixie!ext!` prefix (which cannot collide with an
+/// SMT-LIB source symbol – the same guarantee the mint relies on).  A read
+/// at such an index is a SYNTHETIC read: no input constraint mentions the
+/// index, so its read-over-write content is instantiated model-based (see
+/// the routing in [`build_read_over_write`]).
+fn is_extensionality_witness(term: TermId, manager: &TermManager) -> bool {
+    match manager.get(term).map(|t| &t.kind) {
+        Some(TermKind::Var(name)) => manager.resolve_str(*name).starts_with("!nixie!ext!"),
+        _ => false,
+    }
 }
 
 /// If `term` is a `store`, return `(base, index, value)`.

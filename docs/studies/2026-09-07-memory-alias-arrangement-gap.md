@@ -250,3 +250,79 @@ inverted from its rationale: a level-0 false atom is *unit-propagated*
 (entailed — a genuinely demanded separation), while a level>0 false can
 be a mere decision.  Reverted with the rest; the pair population is not
 the cascade's main engine — the ~5 500-instance closure itself is.
+
+## The structural fix (IMPLEMENTED 2026-09-07, later still: all three points)
+
+`nixie-solver/src/solver/array_axioms.rs` now instantiates synthetic reads
+model-based, z3-`theory_array_full`-shaped.  The composition:
+
+1. **Synthetic-read routing (points 1+2).**  A read whose select term no
+   USER assertion mentions (`ArrayStructure::input_selects`, recorded by
+   the collection walk's `from_input` flag) or whose index is an
+   extensionality witness (structural: the `!nixie!ext!` name prefix —
+   attempt 4's registry was rebuilt per round and only saw FRESH mints,
+   the bug that made it measure nil) routes its whole read-over-write
+   batch into the model-filtered assertion path (the `upward` family's
+   contract: skip iff the candidate model PROVES the instance true;
+   undetermined asserts).  Input reads keep the eager flat batch — the
+   drip-feed negative lives on exactly those.
+2. **Miss-guarded else for synthetic reads.**  The disjunctive else
+   (`sel = select(base, i) ∨ ⋁(i = k_w)`) is undetermined until the read
+   settles, asserts every round, and the base read it mints re-seeds the
+   next chain level — one level per refinement round, the O(depth) peel.
+   Synthetic reads instead get `(∧_w i ≠ k_w) ⇒ sel =
+   select(ultimate_base, i)`: determined by the model's index values
+   (skipped as true the moment `i` lands on or off any write), asserted
+   at most once ever (dedup), and the single base read it can mint is
+   over the ULTIMATE base — it terminates instead of peeling.
+3. **Witness budget (point 3).**  At most `MAX_ARRAY_WITNESS_PAIRS = 256`
+   witness pairs per `check` (one index per pair was already guaranteed
+   by the deterministic mint).  A refused mint sets
+   `array_witness_budget_exhausted`, which forces
+   `array_axioms_saturated = false` — the Context honesty gate answers
+   `Unknown`, never a dishonest `Sat` whose array disequality lost its
+   witness.
+4. **Entailed-only `AtomFalse` separation.**  A pair whose equality atom
+   the model falsifies counts as a demanded separation only when the
+   falsity is assigned at the ROOT level (unit propagation — durable);
+   a branch-committed falsity can be retracted by the next backtrack
+   while this module's clauses persist at the root, so reading every
+   commit as demand minted witnesses the search kept flipping.
+
+**Falsified in passing (do not retry):** a broad skip of e-graph-PROVEN
+disequal pairs — reading Z3's `assert_extensionality` → `already_diseq`
+as "skip proven-apart pairs" — measured spectacular (all four larges to
+1.3–2.7 s) but broke `array_incompleteness1_needs_interface_witness`:
+Z3's `already_diseq` checks whether a pair of SELECT terms over the two
+classes is ALREADY disequal (a concrete differing read exists), NOT
+blanket e-graph apartness; congruence-derived array disequalities (a UF
+application `g(a) ≠ g(b)`) still need their witness.  The correct port
+needs e-graph parent scans and was not taken; levers 1–4 above close the
+family without it.
+
+### Measured (release, `memory` family)
+
+| instance (large) | before | after |
+|---|---|---|
+| `memory-alias-sat-s0` | 15.8 s sat | ~1.3–2.9 s sat |
+| `memory-alias-sat-s1` | 17.7 s sat | ~1.9–2.1 s sat |
+| `memory-incremental-s0` | 15.0 s sat | ~1.5–3.1 s sat |
+| `memory-incremental-s1` | timeout (40 s) | ~2.7–4.8 s sat |
+| fuzzer `--seeds 2 --size medium` (all families) | 56/58 | **58/58** |
+| fuzzer `--seeds 2 --size large`, memory family | 2/8 | **8/8** |
+
+(Wall clock under this session's parallel-agent load varied ×5; the
+conflict counts — ~4.5–5.5 k on the larges, unchanged by the else-form
+A/B — confirm the residual cost is the integer-arrangement search, which
+`b9c750d`'s chain-shaped separation bounds and the fuzzer's 10 s cap now
+accommodates.)  Gates: nextest 10 603/10 603 (including the
+storecomm/swap/storeinv/read8-shaped regressions and the interface-
+witness test), clippy/fmt/doc `-D warnings` clean, z3 parity 170 entries
+/ 0 mismatches with no verdict changes, 40/40 QF_AUFLIA and 24/24
+storecomm/swap industrial spot checks identical, fuzzer sweeps zero
+FAIL/CRASH/GENFAIL.  New tests: the 12-deep alias shape both polarities,
+and the witness-read-lands-on-a-write decision (sat + unsat sides, z3
+agreement).
+
+Remaining honest timeouts: `parity`-large CNF/BV/incremental graphs (the
+SAT-side in-search xor rung), and the arrangement residue above.
