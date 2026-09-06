@@ -102,3 +102,85 @@ and falls under the matched-null discipline of `docs/BENCHMARKING.md`
   `idx_i := 10+i` (and `idx16 := 19`, alias assertion dropped) —
   0.03 s.  Generator-side knob idea: a `--concrete-indices` variant
   would keep this control reproducible.
+
+## Attempt 3 — injective-candidate repair (implemented, measured, NOT landed)
+
+The scoped design above was built exactly as specified:
+`ArithSolver::probe_term_pins` (a scoped LP probe at term granularity, the
+`try_eq_incumbent` shape: push, pin, one lean feasibility pass + integrality
+scan, `lia_model` snapshot on accept, pop — nothing survives the pop except
+the snapshot, so no pin ever constrains a later search) plus
+`Solver::repair_injective_distinct_collisions` (cluster the colliding
+members of an asserted-true `distinct` by model value, re-seat every
+cluster at fresh pairwise-distinct integers disjoint from the spec's
+values, probe, and only on full acceptance rebuild the model).  Sound by
+construction: a rejected probe leaves the candidate untouched; an accepted
+one still faces the whole-assertion evaluation and the dishonesty
+downstream gate.  A matched null (`NIXIE_REPAIR_NULL`) did the identical
+work with collision-preserving values.
+
+### Measurement 1 — ungated, seeds 0–9 (60 instances: alias-sat + incremental, small/medium/large)
+
+| arm | wall (both-decided 47) | per-instance ratio |
+|---|---|---|
+| treatment | 438 s | median 1.01, min 0.49, max 1.43 |
+| null | 454 s | |
+
+Aggregate T/N = **0.97** — the large-instance wins (0.49–0.66 on the four
+previously-stuck larges) were paid back as probe overhead on small/medium,
+where candidates collide on tiny clusters the chain-shaped splits already
+separate in one round.
+
+### Measurement 2 — gated to clusters ≥ 8, FRESH seeds 10–19 (added `--seed-offset` to `obligation-gen` for exactly this)
+
+| size | n | T/N | median ratio | max ratio |
+|---|---|---|---|---|
+| small | 20 | 1.00 | 1.05 | 1.28 |
+| medium | 20 | 0.96 | 0.99 | 1.29 |
+| large | 20 | 0.91 | 0.90 | 1.42 |
+| all | 60 | **0.93** | 1.00 | 1.42 |
+
+Zero verdict mismatches in both protocols.  Directionally right on the
+large tail, but a 7–10 % aggregate effect needs an order of magnitude more
+runs to certify against the null (`docs/BENCHMARKING.md` power table) —
+**the gated repair cannot be certified at this sample size and was not
+landed.**  Code reverted; this section is the artifact, and
+`probe_term_pins`'s pattern (scoped term-granularity probe) is worth
+resurrecting if a certified consumer appears.
+
+### Interaction with b9c750d (chain-shaped separation)
+
+Landed concurrently, `b9c750d` ("chain-shaped separation — O(n)
+convergence for free-variable distinct") fixes the ARRANGEMENT side from
+within the split machinery: k−1 chained trichotomy clauses instead of
+clique pairs.  It converted the memory family's timeouts on its own
+(null-arm ≈ chain-only ≈ 20 s on the larges) but does not touch the
+remaining cost (below), which is why the larges still sit at 14–22 s.
+
+## The actual remaining cost: the array-axiom saturation cascade
+
+Instrumented rounds on `memory-alias-sat-s0-large` (with the repair):
+**67 array refinement rounds**, the first asserting 103 read-over-write
+instances, subsequent rounds ~200 new instances each, decreasing by ~4
+per round — each round is a full `rebase_theory_state` + re-solve over a
+formula that keeps growing.  The driver is the saturation design itself:
+`instantiate_array_axioms` re-walks the assertions *plus every axiom
+instance asserted so far*, so each round's fresh lemmas (base-reads the
+else-clauses mint, congruence pairs over the growing array-term
+population) seed the next round.  ~13 of the ~15 s is this loop; the
+arrangement search it was mistaken for is gone.  Closing it means bounding
+the cascade — eager flat whole-chain read-over-write for observed reads
+behind *define-fun* aliases (the `aliased_store_map` path exists but these
+instances reach the drip-fed family), or de-duplicating the
+congruence-pair enumeration — a scoped next rung, in
+`nixie-solver/src/solver/array_axioms.rs`.
+
+## Verdict table (memory-alias-sat-s0-large, end to end)
+
+| configuration | time |
+|---|---|
+| baseline (b63a9c0) | 20.4 s sat (s1: timeout) |
+| + chain-shaped separation (b9c750d) | ≈ 20–22 s sat, all seeds decided |
+| + ungated repair | 15.7 s (T/N 0.63 vs null on the larges) |
+| + gated repair (fresh seeds) | 0.93 aggregate T/N — not certifiable, not landed |
+| z3 | 25 ms |

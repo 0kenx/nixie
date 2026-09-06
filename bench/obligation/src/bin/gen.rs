@@ -13,6 +13,9 @@ use std::process::ExitCode;
 
 struct Opts {
     seeds: u64,
+    /// First seed (fresh-seed replay for the benchmarking protocol:
+    /// calibrate on seeds 0..k, validate the gated variant on k..2k).
+    seed_offset: u64,
     size: Size,
     family: String,
     stress: Option<StressCfg>,
@@ -23,6 +26,7 @@ struct Opts {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         seeds: 3,
+        seed_offset: 0,
         size: Size::Medium,
         family: "all".into(),
         stress: None,
@@ -39,6 +43,13 @@ fn parse_args() -> Result<Opts, String> {
                     .get(i)
                     .and_then(|v| v.parse::<u64>().ok())
                     .ok_or("--seeds needs an integer")?;
+            }
+            "--seed-offset" => {
+                i += 1;
+                o.seed_offset = args
+                    .get(i)
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .ok_or("--seed-offset needs an integer")?;
             }
             "--size" => {
                 i += 1;
@@ -87,7 +98,7 @@ fn main() -> ExitCode {
     };
     let mut instances = Vec::new();
     for &f in &families {
-        for seed in 0..opts.seeds {
+        for seed in opts.seed_offset..opts.seed_offset + opts.seeds {
             match registry::generate_family(f, seed, opts.size, opts.stress.as_ref()) {
                 Ok(v) => instances.extend(v),
                 Err(e) => {

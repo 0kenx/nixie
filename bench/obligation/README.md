@@ -168,6 +168,15 @@ with the certificate:
    `docs/studies/2026-09-07-memory-alias-arrangement-gap.md`; the scoped
    fix is arithmetic-side injective candidate repair, a heuristic change
    under the full benchmarking discipline.
+   **Final (2026-09-07): the repair was built and measured — see the
+   study's Attempt 3 — and NOT landed.**  Ungated: family-aggregate
+   treatment/null 0.97.  Gated to clusters ≥ 8 and replayed on fresh
+   seeds (new `obligation-gen --seed-offset`): 0.93 aggregate (0.91 on
+   large), below the certifiable threshold at n = 60.  Concurrently,
+   `b9c750d` (chain-shaped separation) independently converted the
+   family's timeouts from the split side.  The remaining 14–22 s is the
+   array-axiom saturation cascade (67 rounds, ~200 instances/round),
+   root-caused in the study as the next rung.
 
 ## What this is not
 
