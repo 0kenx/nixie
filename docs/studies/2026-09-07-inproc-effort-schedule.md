@@ -630,3 +630,28 @@ scan — pre-registered as the next port increment).
 - Probing: congruence closure (equivalence classes from the BIG after
   each probe round — the cheapest unexplored component) and look-ahead
   hyper-binary resolution at the widened probe depth.
+
+## Both levers: BIG-based factor construction + polarity fixes (2026-09-07, `071d372`)
+
+**BIG-based pair construction**: replaces the O(N) DB scan + HashMap
+with sorted-vector intersections read from the BIG's CSR edge lists.
+Two polarity bugs found and fixed (both were false-UNSAT class, caught
+by cross-seed verdict checking on worker_550, NOT by the small-formula
+fuzz — lesson recorded): the divider clauses and the hub ranking both
+had the wrong BIG edge direction.
+
+The construction finds **344-tail hub pairs** on worker (vs 0 with the
+HashMap version — the polarity error was silently emptying every
+intersection).  At TOP=256 (default): worker 5-seed screen is mixed —
+seed 5 solves where base TOs, seeds 2-4 are 2.8-7.5× worse.  The bulk
+all-shared-tails intersection over-consolidates: 344 tails per
+introduction is too aggressive (688 clauses replaced by 346 in one
+step).  kissat's chain discipline — incremental matched-tail selection
+(the quotient list grows one tail at a time, checking that the clause
+remains matched) — is the remaining port increment, pre-registered.
+
+**ELS re-test knob** (`NIXIE_ELS_FORCE=1`): 3-seed screen under the new
+defaults shows FEC 0.84× (real — the equivalence-chain structure is its
+name), 6s167 1.04×, frb65 mixed.  Not default-on: the ELS round's SCC +
+substitution work needs the same effort-budget treatment the other
+passes got before it can be re-evaluated (pre-registered).
