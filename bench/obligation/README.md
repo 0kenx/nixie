@@ -101,20 +101,27 @@ with the certificate:
    (`parity-mixedboolint-*`, medium): nixie decides the pure-BV and
    pure-CNF realizations of the same obstruction but returns `unknown` on
    the mixed Bool+LIA encoding, in *both* polarities, and on the base
-   `sat` query of the incremental history. Reconciling the XOR equations
-   with the `sum(i_e) = c_v + 2*k_v` LIA equations across the
-   `ite`-linked edge variables is where it stalls.
+   `sat` query of the incremental history. **Root-caused** to the LIA
+   side (not the theory combination): a *pure-LIA* parity instance with
+   no Booleans reproduces the `unknown` — branch-and-bound is complete
+   only for bounded systems, and the unbounded vertex-equality system
+   exhausts the node budget. The principled fix is a Smith/HNF
+   integer-equality fast path; see
+   `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`. The
+   ite-domain lemma (implied `min <= v <= max` side-conditions for
+   constant-branch ites) landed as the sound partial step.
 2. **Exact div/mod links block the refutation entirely**
    (`parity-mixedboundary-unsat-*`, all sizes): when the Bool→Int edge
    link is `i_e = (mod (div (ite b_e C1 C0) D) 2)` (exact on both
    constants), nixie answers `unknown`; z3 answers `unsat`.
-3. **Deep right-nested binary `+` yields `unknown` on a foldable
-   tautology** (`--stress heavy`): a 5000-deep
-   `(+ c (+ c ... 0))` chain asserted equal to its exact sum is not
-   decided; wide n-ary sums with 5000 terms *are* decided, and 5000-deep
-   `not` chains are fine, so the gap is specific to right-nested binary
-   arithmetic (also reproduces with deep `bvxor` chains). z3: `sat`.
-   Minimal repro: `/tmp`-style two-liner — see `stress::apply_smt2`.
+3. **Deep right-nested binary arithmetic/bv chains yielded `unknown` on
+   foldable/associable tautologies** (`--stress heavy`) — **FIXED** in two
+   steps: the iterative ground-constant fold (rescues constant chains
+   before the encode-depth guard measures them), then associative-chain
+   normalization (same-op splicing + exact constant combination), which
+   also collapses deep `bvxor`/`bvadd`/`bvmul` constant chains over a
+   variable to `x <op> C` and `(+ 1 (+ 1 ... x))` to `(+ C x)`. 5000-deep
+   constant chains of every covered shape now answer like z3.
 4. **Parser leniency** (observation, not an issue): nixie accepts `(_ extract
    i i x)` application syntax and top-level `(let ...)` commands; both are
    rejected by z3. Direction of divergence is safe — accepting a superset
@@ -124,7 +131,8 @@ with the certificate:
 5. **Scaling boundary** (`large`): 50-write offset-implied array
    histories and 60-vertex parity graphs exceed a 30s budget (timeouts,
    not wrong answers); an 11-variable `gap` system scaled by 10^9
-   returns `unknown` where z3 decides `unsat`.
+   returns `unknown` where z3 decides `unsat`. The pure-equality part of
+   the parity timeouts is the same LIA equality gap as finding 1.
 
 ## What this is not
 
