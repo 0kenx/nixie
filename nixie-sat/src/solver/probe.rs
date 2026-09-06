@@ -164,7 +164,18 @@ impl Solver {
             noccs[c.lits[0].code() as usize] += 1;
             noccs[c.lits[1].code() as usize] += 1;
         }
-        let mut probes: Vec<Lit> = Vec::new();
+        // Candidate widening (2026-09-07): cadical/kissat probe BOTH
+        // polarities of every unassigned variable, not only the
+        // single-polarity binary roots.  The old filter skipped every
+        // variable with binaries in both polarities — on the 6s167 class
+        // that emptied the queue (the probe-effort sweep was flat because
+        // the schedule, not the budget, was binding).  Probe the polarity
+        // with MORE binary occurrences (richer implication cascade),
+        // ranked by total occurrence count descending.
+        // A/B knob: `NIXIE_PROBE_WIDE=0` restores the legacy
+        // single-polarity binary-roots-only schedule.
+        let wide = !std::env::var("NIXIE_PROBE_WIDE").is_ok_and(|v| v == "0");
+        let mut probes: Vec<(u32, Lit)> = Vec::new();
         for idx in 0..num_vars {
             let v = Var::new(idx as u32);
             if self.trail.is_assigned(v) || self.var_eliminated(v) {
@@ -172,27 +183,35 @@ impl Solver {
             }
             let pos = Lit::pos(v);
             let neg = pos.negate();
-            let have_pos = noccs[pos.code() as usize] > 0;
-            let have_neg = noccs[neg.code() as usize] > 0;
+            let n_pos = noccs[pos.code() as usize];
+            let n_neg = noccs[neg.code() as usize];
+            if wide {
+                if n_pos == 0 && n_neg == 0 {
+                    continue; // no binary structure at all
+                }
+            } else if !((n_neg > 0 && n_pos == 0) || (n_pos > 0 && n_neg == 0)) {
+                continue; // legacy: exactly one polarity in binaries
+            }
             // Root (cadical `probe = have_neg_bin_occs ? idx : -idx`):
-            // the probe literal is the one occurring *negatively* in binary
-            // clauses — i.e. `¬probe` heads implications, so probing `probe`
-            // drives the richest cascade. Exactly one polarity occurs.
-            let probe = if have_neg && !have_pos {
-                pos
-            } else if have_pos && !have_neg {
-                neg
-            } else {
-                continue;
-            };
+            // the probe literal is the one occurring *negatively* in
+            // binary clauses — `¬probe` heads implications. With both
+            // polarities present, pick the one with more occurrences.
+            let probe = if n_neg >= n_pos { pos } else { neg };
             if self.probe_propfixed[probe.code() as usize] >= self.trail.size() as i64 {
                 continue;
             }
-            probes.push(probe);
+            probes.push((n_pos + n_neg, probe));
         }
-        // Rank: more negated occurrences of the probe (i.e. occurrences of
-        // ¬probe) first.
-        probes.sort_unstable_by_key(|&p| core::cmp::Reverse(noccs[p.negate().code() as usize]));
+        // Rank: richest implication structure first (deterministic:
+        // occurrence desc, then literal code asc).
+        probes.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.code().cmp(&b.1.code())));
+        // Budget the queue (kissat `proberounds` caps per round; our
+        // bound is the probe budget itself, but a queue cap keeps the
+        // sort + scheduling cheap on huge var sets).
+        const MAX_PROBE_QUEUE: usize = 50_000;
+        probes.truncate(MAX_PROBE_QUEUE);
+        let mut probes: Vec<Lit> = probes.into_iter().map(|(_, l)| l).collect();
+
         // Matched-null arm (docs/BENCHMARKING.md): reverse the rank order.
         // The null runs the identical schedule/budget/propagations on the
         // same root literals, differing ONLY in the semantic content under

@@ -252,6 +252,30 @@ impl Solver {
                 if !live {
                     continue;
                 }
+                // Reason hygiene: skip groups with live level-0 reason
+                // clauses (conflict analysis must never resolve against a
+                // retired clause; the caller's rebuild handles the rest).
+                if group
+                    .iter()
+                    .any(|&cid| self.is_live_reason_clause(cid, &[]))
+                {
+                    continue;
+                }
+                // Re-check reasons with actual literals (the empty-slice
+                // call above is a cheap pre-filter; this is exact).
+                let mut has_reason = false;
+                for &cid in &group {
+                    if let Some(c) = self.clauses.get(cid) {
+                        let lits: SmallVec<[Lit; 8]> = c.lits.iter().copied().collect();
+                        if self.is_live_reason_clause(cid, &lits) {
+                            has_reason = true;
+                            break;
+                        }
+                    }
+                }
+                if has_reason {
+                    continue;
+                }
                 let l1 = Lit::from_code(x1);
                 let l2 = Lit::from_code(x2);
                 let t = Lit::pos(self.new_var());
@@ -265,13 +289,18 @@ impl Solver {
                 }
                 let mut touched: SmallVec<[Lit; 32]> = SmallVec::new();
                 touched.extend([t, t.negate(), l1, l2]);
+                // Tombstone retirement: raw `clauses::remove` (counter
+                // update, no BIG purge / watcher removal / DRAT) — the
+                // caller rebuilds watches/BIG once after the whole pass.
+                // This is the performance fix for the worker-class scale:
+                // `remove_clause`'s per-clause BIG purge was the wall
+                // killer (100+ retirements per introduction × 50k
+                // introductions over 10M-clause graphs).
                 for &cid in &group {
                     if let Some(c) = self.clauses.get(cid) {
                         touched.extend(c.lits.iter().copied());
                     }
-                }
-                for &cid in &group {
-                    self.remove_clause(cid);
+                    self.clauses.remove(cid);
                 }
                 self.mark_elim_vars(touched.iter().copied());
                 introduced += 1;
