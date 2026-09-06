@@ -432,6 +432,84 @@ The corpus aggregate stands at 0.88× conflicts vs cadical, so this is a
 Gates: conflicts and solved-at-cap with matched nulls, never instructions
 (the PGO result shows instructions are uninformative for wall time).
 
+### Tier 1 executed: the class, the mechanism, and a causal test (this session)
+
+**Class distribution** (standing corpus, both-solved files, nixie
+current-default median over 5 seeds vs cadical, from stored
+`conflicts_to_verdict` cells):
+
+| tail (>1.5×) | ratio | nixie seed range | secondary (1.2–1.75×) | parity | we win |
+|---|---|---|---|---|---|
+| constraints_17 **5.04×** | | 9.6k–119k (**12×**) | stable-300 1.75×, x9 1.62×, crn 1.53× | circuit×3, summle×3, Break_06, si2 | worker_20 **0.10×**, Break_08 0.19×, shuffling 0.20×, j3037 0.23×, af 0.28×, frb 0.45×, barman 0.52×, ITC 0.55× |
+| 6s167 **4.43×** | | 70k–82k (tight) | mrpp 1.41× | | |
+| qwh.50 **4.05×** | | 27k–280k (**10×**) | | | |
+| worker_550 **3.05×** | | 2.5k–55k (**22×**) | | | |
+
+n=25, geomean 0.892 (the standing 0.88×), median 0.985 — the aggregate
+hides **four files that carry the whole gap**, three of them with 10–22×
+seed instability (nixie's search is *unreliable* there; cadical is
+consistent).
+
+**Mechanism found on the tail** (shape stats at matched conflict caps):
+
+| | worker_550 | qwh | constraints_17 | 6s167 |
+|---|---|---|---|---|
+| our avg LBD | **517.6** | **241.2** | 27.7 | 11.7 |
+| our restarts (per conflict) | **19 (1/1344)** | 772 (1/65) | 4188 (1/12) | 4107 (1/12) |
+| cadical restarts (per conflict) | 226 (1/22.6) | 640 (1/37.8) | 319 (1/22.2) | 1206 (1/13.8) |
+| our dec/conflict | 10.1 | 23.6 | 5.6 | 3.7 |
+| cadical dec/conflict | **58.5** | 21.0 | 3.7 | 3.9 |
+| our stable share | 62 % | 68 % | 57 % | 53 % |
+| cadical stable share | 75 % | 48 % | 32 % | 36.5 % |
+
+The restart scheme itself is verified ported correctly (windows 33/1e5,
+glue = levels−1, 10 % focused margin, per-conflict update, mode-swap —
+checked against `restart.cpp`/`averages.cpp` line by line). The stall is
+an **equilibrium property**: when the glue stream is uniform-huge
+(worker_550: every learned clause ~LBD 500), the fast EMA never crosses
+1.10× slow → focused restarts stop firing → the search runs deep without
+recovery. cadical's glue on worker_550 is also large (~126) but *noisy*
+(conflict depth varies), so their EMAs cross every ~22 conflicts.
+
+**Causal test** (`RESTART=geometric`, unconditional interval restarts,
+single seed):
+
+| | base | forced restarts | cadical |
+|---|---|---|---|
+| qwh | 134 113 | **63 395 (−53 %)** | 24 182 |
+| constraints_17 | 87 007 | **49 893 (−43 %)** | 7 075 |
+| worker_550 | 25 532 | >200 000 (**8× worse**) | 5 113 |
+| 6s167 | 62 241 | >200 000 (3× worse) | 16 654 |
+
+The restart stall IS causal on the seed-unstable tail (qwh,
+constraints_17) — and blanket restart cadence splits the class 2-and-2,
+because worker_550/6s167 need search depth. cadical wins all four *with*
+frequent restarts: their restarts are **productive** — the worker_550
+dec/conflict gap (58.5 vs 10.1) says their phases/branching make each
+restart land on a different productive shallow region, while ours thrash.
+
+**Pre-registered treatments** (all matched-null class):
+
+* **T1 — stall-aware restart**: fire a focused restart when the glue EMA
+  is *flat* (stalled) rather than only when it *degrades* — e.g. an
+  additional trigger on conflicts-since-last-restart exceeding a
+  multiple of the recent restart interval. Not a cadical port (they have
+  no max-gap fallback); a nixie-original policy, so the full null
+  program applies. The geometric test predicts it recovers ~half the gap
+  on qwh/constraints_17 without touching worker_550/6s167 — *if* gated
+  on measured stall rather than blanket cadence.
+* **T2 — restart productivity** (phase quality): why do cadical's
+  restarts help them on worker_550/6s167 and ours hurt? dec/conflict is
+  the metric; targets are the rephase/walk cadence and target/best phase
+  machinery. This is the lever that must land for T1 to be safe on the
+  deep-search tail.
+* **T3 — equivalence substitution per-class gating**: ours substitutes
+  **zero variables on every file** (default off since the 2026-09-06
+  corpus-negative study) while cadical substituted 12.5 % of all
+  variables on 6s167 — where the disabled feature had measured 0.349×
+  conflicts. The ELS=1 arm exists; the study needs a gate rule
+  (instance-class or effort-scheduled) rather than a global flip.
+
 ### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
 
 - **Gent saved-position scan** (`clause->pos`, cadical/JAIR'13): starts
@@ -491,6 +569,11 @@ write-elision branch (it is a measured win).
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **`cnf_solve`'s `RESTART=luby` token is not recognized** (falls through
+  to the CaDiCaL preset silently — trajectories identical to base), and
+  `INTERVAL=N` does not change the geometric arm's trajectory (geo22 ≡
+  geo200): verify a knob actually moves counters before using it as an
+  arm. `RESTART=geometric` does switch strategies.
 * **Worktree builds go stale silently after RUSTFLAGS/feature flips**: two
   variant measurements this session were of stale binaries (`Finished in
   0.1 s` after an edit, no `Compiling` line). Protocol that fixed it:
