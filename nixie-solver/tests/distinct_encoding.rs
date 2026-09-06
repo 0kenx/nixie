@@ -655,6 +655,59 @@ fn large_distinct_int_incremental_rechecks_stay_consistent() {
 }
 
 #[test]
+fn large_distinct_int_scale_200_is_fast_sat_with_distinct_model() {
+    // The chain-shaped separation: one round of n-1 oriented clauses
+    // distinctifies the whole co-located group by transitivity.  Before the
+    // chain, n = 200 free variables did not converge (star/clique-shaped
+    // proposals, one pair separating per round).
+    let script = format!(
+        "{}(assert {})\n(check-sat)\n(get-model)\n",
+        int_header(200),
+        int_distinct(200)
+    );
+    let out = run(&script);
+    let body = out.join("\n");
+    let vals: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("define-fun x"))
+        .map(|l| l.split_whitespace().last().unwrap_or("?"))
+        .collect();
+    assert_eq!(vals.len(), 200, "model lists all 200 variables");
+    let mut sorted = vals.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted.len(),
+        vals.len(),
+        "all 200 model values pairwise distinct"
+    );
+}
+
+#[test]
+fn large_distinct_int_scale_200_forced_eq_is_unsat() {
+    check(
+        &format!(
+            "{}(assert {})\n(assert (= x3 x77))\n(check-sat)\n",
+            int_header(200),
+            int_distinct(200)
+        ),
+        "unsat",
+    );
+}
+
+#[test]
+fn large_distinct_int_negated_scale_100_is_sat() {
+    check(
+        &format!(
+            "{}(assert (not {}))\n(check-sat)\n",
+            int_header(100),
+            int_distinct(100)
+        ),
+        "sat",
+    );
+}
+
+#[test]
 fn large_distinct_real_free_vars_is_sat() {
     let mut script = String::from("(set-logic QF_LRA)\n");
     for i in 1..=N {

@@ -1913,34 +1913,52 @@ impl<'a> TheoryManager<'a> {
                 if !any_result_true {
                     continue;
                 }
-                // Deliberately SMALL: the search digests a couple hundred new
-                // trichotomy clauses per round comfortably, but a full batch
-                // (780 pairs at n = 40) measurably derails the re-descent –
-                // ~300 full assignments between generalizing conflicts, the
-                // same thrash signature as the pre-separation encoding.
-                // Convergence comes from the round *loop* (each round's
-                // clauses persist), not from batching.
+                // CHAIN-shaped proposals, not a clique.  A strict
+                // trichotomy row composes by transitivity (t_1 < t_2 ∧
+                // t_2 < t_3 gives t_1 < t_3 in the tableau), so separating
+                // each co-located group's *consecutive* members in one
+                // canonical order distinctifies the whole group with k−1
+                // clauses instead of C(k,2) – the difference between O(n)
+                // and O(n²) total separation work, and the reason n ≥ 100
+                // free-variable instances converged too slowly with the
+                // clique shape.  (An *eq-decision* group needs all pairs –
+                // separating everyone from one witness leaves the rest
+                // free – but a *strict-row* chain does not.)
+                //
+                // Pairs are emitted in TermId order, and the refine side
+                // orients every clause's strict literals along that order,
+                // so the chain is born acyclic instead of a random
+                // tournament the arithmetic solver must reject cycle by
+                // cycle (the failure mode `add_arith_trichotomy_clause`'s
+                // orientation hint exists for – a hint gated to array
+                // problems for historical reasons, hence re-created here).
+                //
+                // Per-round cap deliberately SMALL relative to what a chain
+                // needs: the cap bounds digestion, and a chain of ≤ n−1
+                // consistently-oriented clauses measurably digests where a
+                // same-size clique of redundant pairs derailed the
+                // re-descent.
                 const MAX_COLOCATED_SPLIT_PROPOSALS: usize = 256;
                 let mut proposed = 0usize;
                 'groups: for terms in by_val.values() {
                     if terms.len() < 2 {
                         continue;
                     }
-                    for i in 0..terms.len() {
-                        for j in (i + 1)..terms.len() {
-                            if proposed >= MAX_COLOCATED_SPLIT_PROPOSALS {
-                                break 'groups;
-                            }
-                            let (a, b) = (terms[i], terms[j]);
-                            let (na, nb) = (self.euf.intern(a), self.euf.intern(b));
-                            if self.euf.are_equal(na, nb) {
-                                continue;
-                            }
-                            let key = if a < b { (a, b) } else { (b, a) };
-                            if self.colocated_split_proposed.insert(key) {
-                                self.colocated_split_pairs.push((a, b));
-                                proposed += 1;
-                            }
+                    let mut chain: Vec<TermId> = terms.clone();
+                    chain.sort_unstable_by_key(|t| t.raw());
+                    for w in chain.windows(2) {
+                        if proposed >= MAX_COLOCATED_SPLIT_PROPOSALS {
+                            break 'groups;
+                        }
+                        let (a, b) = (w[0], w[1]);
+                        let (na, nb) = (self.euf.intern(a), self.euf.intern(b));
+                        if self.euf.are_equal(na, nb) {
+                            continue;
+                        }
+                        // `a.raw() < b.raw()` by the sort; the key is the pair.
+                        if self.colocated_split_proposed.insert((a, b)) {
+                            self.colocated_split_pairs.push((a, b));
+                            proposed += 1;
                         }
                     }
                 }

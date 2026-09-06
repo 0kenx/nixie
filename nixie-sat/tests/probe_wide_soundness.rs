@@ -82,16 +82,17 @@ fn probe_wide_differential_soundness() {
         let nv = 6 + (rand(&mut seed) as usize) % 30;
         let nc = 20 + (rand(&mut seed) as usize) % 160;
         let f = gen_formula(&mut seed, nv, nc);
-        let cnf = format!("p cnf {nv} {}\n", f.len())
-            + &f.iter()
-                .map(|c| {
-                    c.iter()
-                        .map(|v| v.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        + " 0\n"
-                })
-                .collect::<String>();
+        let body: String = f
+            .iter()
+            .map(|c| {
+                c.iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    + " 0\n"
+            })
+            .collect();
+        let cnf = format!("p cnf {nv} {}\n{}", f.len(), body);
         let (r, m) = solve(&cnf);
         if matches!(r, SolverResult::Sat) {
             sat += 1;

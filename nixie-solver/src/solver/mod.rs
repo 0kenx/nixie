@@ -1008,19 +1008,28 @@ impl Solver {
             if model.get(*result_term) != Some(true_id) {
                 continue;
             }
-            let mut seen: FxHashMap<TermId, TermId> = FxHashMap::default();
+            // Chain-shaped, not star-shaped: group the arguments by their
+            // (colliding) value, then emit *consecutive* pairs in canonical
+            // TermId order.  A strict trichotomy row composes by
+            // transitivity, so k−1 chain clauses distinctify a k-member
+            // collision group; a star (or clique) of C(k,2)-shaped pairs is
+            // redundant work that measurably derails the re-descent.
+            let mut by_value: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
             for &arg in args {
                 let Some(&value) = model.assignments().get(&arg) else {
                     // No printed value: the model builder's distinct-default
                     // for unconstrained UF arguments covers it.
                     continue;
                 };
-                if let Some(&prev) = seen.get(&value)
-                    && prev != arg
-                {
-                    out.push((prev, arg));
-                } else {
-                    seen.insert(value, arg);
+                by_value.entry(value).or_default().push(arg);
+            }
+            for mut group in by_value.into_values() {
+                if group.len() < 2 {
+                    continue;
+                }
+                group.sort_unstable_by_key(|t| t.raw());
+                for w in group.windows(2) {
+                    out.push((w[0], w[1]));
                 }
             }
         }
@@ -1086,6 +1095,22 @@ impl Solver {
             self.trail
                 .push(crate::solver::trail::TrailOp::ColocatedSplitPairAdded { pair });
             self.add_arith_trichotomy_clause(pair.0, pair.1, manager);
+            // Orient the fresh clause's strict literals along the pair's
+            // canonical order, so the chain of proposals is born acyclic.
+            // `add_arith_trichotomy_clause`'s own orientation hint is gated
+            // to array-bearing problems (its originating family); without an
+            // orientation here, a pure-LIA chain arrives as a random
+            // tournament and the arithmetic solver pays one conflict per
+            // cycle to sort it out.  Phase hints only – both literals stay
+            // in the valid clause, every branch reachable.
+            let lt_term = manager.mk_lt(pair.0, pair.1);
+            let gt_term = manager.mk_gt(pair.0, pair.1);
+            if let Some(&lt_var) = self.term_to_var.get(&lt_term)
+                && let Some(&gt_var) = self.term_to_var.get(&gt_term)
+            {
+                self.sat.set_deterministic_phase(lt_var, true);
+                self.sat.set_deterministic_phase(gt_var, false);
+            }
             added = true;
         }
         if added {

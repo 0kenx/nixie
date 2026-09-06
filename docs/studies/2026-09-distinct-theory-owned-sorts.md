@@ -212,10 +212,42 @@ semantics (the deliberately-undetermined `Distinct`, the
 boundary-softened strict comparisons); the echo is cosmetic, the gate is
 soundness-sensitive – not worth the blast radius without its own session.
 
-Remaining gaps, in order: (a) n ≥ ~100 free variables still times out –
-the reset+rebuild per round is O(rounds × problem), and the Z3-style
-in-tableau repair remains the eventual answer; (b) BitVec, unchanged
-(see below).
+Postscript 2: gap (a) closed too, and again not by the mechanism first
+reached for.  The Z3-style in-tableau repair was queued as the next
+enabling change, but the actual blocker was the *shape of the
+proposals*: both proposal sources emitted star/clique-shaped pairs, and
+each round's candidate separated roughly one pair.  The observation that
+makes it O(n): a strict trichotomy row composes by **transitivity** –
+`t_1 < t_2 ∧ t_2 < t_3` already gives `t_1 ≠ t_3` in the tableau – so a
+CHAIN of k−1 consecutively-paired, consistently-oriented clauses
+distinctifies a k-member co-located group.  (This is exactly where the
+eq-decision intuition from the earlier care-split work was wrong:
+separating everyone from one witness leaves the rest free when the
+separation is an equality decision, but a strict-row chain composes.)
+Both sources now emit TermId-ordered chains, and the refine side orients
+every clause's strict literals along that order (the existing
+orientation hint in `add_arith_trichotomy_clause` is gated to
+array-bearing problems for historical reasons, so the orientation is
+re-created at the refine call site).
+
+Measured (release, free-variable `distinct` over Int):
+
+| n | before the chain | after |
+|---|---|---|
+| 40 | 0.82 s | 0.007 s |
+| 60 | 7.4 s | 0.014 s |
+| 100 | timeout | 0.040 s |
+| 200 | timeout (600 s+) | 0.094 s |
+| 500 | timeout | 0.150 s |
+| 1000 | – | 1.48 s |
+| 2000 | – | 13.4 s (model verified 2000/2000 distinct) |
+
+Convergence is now one round for these shapes (a cap=1 build still
+answers `sat` at n = 200); the honesty gate remains as the backstop for
+multi-group shapes.  The whole 43-test distinct suite runs in 0.4 s.
+
+Remaining gaps: BitVec, unchanged (see below) – and that is now the
+only row of the original table still open.
 
 ## Attack 3: the order encoding over BitVec — correct, measured, no flip
 
