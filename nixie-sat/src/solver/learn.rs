@@ -34,20 +34,26 @@ pub(super) fn inproc_round_trace_enabled() -> bool {
     false
 }
 
-/// Whether the effort-relative inprocessing-round schedule is on (env
-/// `NIXIE_INPROC_SCHED=1`; study `2026-09-07-inproc-effort-schedule.md`).
-/// cadical `SET_EFFORT_LIMIT` shape: each mid-search round's pass budgets are
-/// a fixed per-mille of the search work since the last round, and the round
-/// interval grows `interval × log10(rounds + 9)` (cadical `inprobe`).
-/// Default off: the legacy flat interval and absolute budgets run, keeping
-/// the binary trajectory-identical to the pre-change build.
+/// Whether the effort-relative inprocessing-round schedule is on.
+/// **Default ON** since 2026-09-07 (user-directed landing of the
+/// `sched-vivon` arm: 0.83× conflicts geomean corpus-wide at 5 seeds,
+/// P(solve) statistically tied, 0 verdict mismatches — see
+/// `docs/studies/2026-09-07-inproc-effort-schedule.md`).  cadical
+/// `SET_EFFORT_LIMIT` shape: each mid-search round's pass budgets are a
+/// fixed per-mille of the search work since the last round, and the round
+/// interval grows `interval × log10(rounds + 9)`.  `NIXIE_INPROC_SCHED=0`
+/// is the A/B opt-OUT (restores the legacy flat interval + absolute
+/// budgets); the null arm `NIXIE_INPROC_SCHED_NULL=1` still implies it.
 #[cfg(feature = "std")]
 pub(super) fn inproc_sched_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_INPROC_SCHED")
-            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+        if std::env::var("NIXIE_INPROC_SCHED_NULL").is_ok_and(|v| !v.is_empty() && v != "0") {
+            return true;
+        }
+        !std::env::var("NIXIE_INPROC_SCHED")
+            .is_ok_and(|v| v == "0" || v.eq_ignore_ascii_case("false"))
     })
 }
 
@@ -82,12 +88,18 @@ pub(super) fn inproc_sched_null() -> bool {
 /// `NIXIE_INPROC_VIVON=1`: disable the cadical `vivifythresh` skip in the
 /// effort schedule (study arm; see `inproc_round_budgets`).
 #[cfg(feature = "std")]
+/// Whether the cadical `vivifythresh` skip is DISABLED (τ=0: budgeted
+/// vivify runs, never threshold-skipped).  **Default ON** since
+/// 2026-09-07 — this is the `vivon` half of the landed `sched-vivon`
+/// default (budgeted vivify at 50 ‰ of the window; the skip starves
+/// mid-size instances entirely).  `NIXIE_INPROC_VIVSKIP=1` restores
+/// cadical's τ=20 skip for A/B.
 pub(super) fn vivify_thresh_disabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
     *FLAG.get_or_init(|| {
-        std::env::var("NIXIE_INPROC_VIVON")
-            .is_ok_and(|v| !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"))
+        !std::env::var("NIXIE_INPROC_VIVSKIP")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
     })
 }
 

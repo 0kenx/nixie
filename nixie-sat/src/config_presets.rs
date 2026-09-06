@@ -6,8 +6,15 @@
 //!
 //! # Inprocessing is disabled in every preset (measured, not soundness)
 //!
-//! All presets set `enable_inprocessing: false`.  An earlier version of this
-//! note attributed that to a soundness defect inherited from upstream v0.3.2
+//! **Inprocessing defaults** (2026-09-07): the CaDiCaL preset runs
+//! `enable_inprocessing: true` with the **effort-scheduled** round bundle
+//! (cadical `SET_EFFORT_LIMIT` budgets, log-growing interval, budgeted
+//! vivify — the `sched-vivon` arm of
+//! `docs/studies/2026-09-07-inproc-effort-schedule.md`: 0.83× conflicts
+//! geomean corpus-wide at 5 seeds, P(solve) tied, 0 mismatches).
+//! Other presets keep it off.  The soundness history below stands: an
+//! earlier version of this note attributed the off-default to a soundness
+//! defect inherited from upstream v0.3.2
 //! (a "hanging unit at a propagation fixpoint" from missing watch rebuilds,
 //! with `pigeonhole(7,6)` + `inprocessing_interval: 1` cited as a false
 //! `Sat`).  **That repro no longer reproduces**: the intervening
@@ -596,20 +603,24 @@ impl ConfigPreset {
             use_vmtf: true,
             focused_vmtf: true,
             use_chb_branching: false,
-            use_lrb_branching: false,   // VMTF in real CaDiCaL
-            enable_inprocessing: false, // measured net-negative as a default: the
-            // 2026-09-04 standing-corpus A/B (docs/studies/
-            // 2026-09-04-inprocessing-standing-corpus.md) lost 8 solved
-            // files at the 60 s cap (50 -> 42) despite 2-6x conflicts wins
-            // on the clause-DB-heavy tail; the periodic rounds also cause
-            // every loss. A gating policy for the rounds is the open path.
-            // cadical runs `decompose`/`sweep` by default, but OUR ELS round
-            // measures net-negative at the cap on the standing corpus when
-            // actually executed (2026-09-05 study: solved 50→41, geomean
-            // 1.03 neutral, one 0.36× structural win on 6s167-opt).  Note this
-            // setting was INERT from 58df118 until the latch fix landed: the
-            // scheduled call site set `did_equiv_subst` before calling, so the
-            // pass silently no-op'd (see the fix's comment in `learn.rs`).
+            use_lrb_branching: false,  // VMTF in real CaDiCaL
+            enable_inprocessing: true, // DEFAULT-ON since 2026-09-07 (user-directed
+            // landing of the effort-scheduled bundle; see the revision
+            // history below).  History: the flat-interval absolute-budget
+            // bundle measured net-negative (2026-09-04: 50->42 solved,
+            // rounds burned the cap).  The effort schedule (cadical
+            // SET_EFFORT_LIMIT budgets + log-growing interval + budgeted
+            // vivify, `sched-vivon` arm) reversed that: 0.83x conflicts
+            // geomean corpus-wide at 5 seeds (sat 0.837 / unsat 0.813),
+            // P(solve) statistically tied (191 vs 194, sign p=0.71),
+            // 0 verdict mismatches over 810 paired cells + 68k fuzz +
+            // z3-parity clean (docs/studies/
+            // 2026-09-07-inproc-effort-schedule.md).  Opt-out knobs:
+            // NIXIE_INPROC_SCHED=0 (legacy flat schedule),
+            // NIXIE_INPROC_VIVSKIP=1 (cadical vivifythresh skip).  The ELS
+            // round itself stays off (enable_equiv_substitution below):
+            // the 2026-09-05 study measured it net-negative at the cap
+            // independent of the schedule work.
             enable_equiv_substitution: false,
             // by default in CaDiCaL. Bundled with BVE below this recovers the
             // elimination-heavy families the 2026-08-17 study left off by
