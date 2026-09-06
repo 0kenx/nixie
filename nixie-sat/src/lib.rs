@@ -578,6 +578,42 @@ pub mod diag_bcp {
     /// Blocker hits are *derived* (`visits - deleted - miss`): every visited
     /// entry resolves to exactly one of the three, so counting them inline
     /// (a per-visit branch on the hottest path) buys nothing.
+    /// Conflict-analysis anatomy (same gating; sizes the analyze-side
+    /// levers the 2026-09-07 throughput study names).
+    pub mod analysis {
+        use core::sync::atomic::{AtomicU64, Ordering};
+        macro_rules! an_diag {
+            ($name:ident, $doc:literal) => {
+                #[doc = $doc]
+                pub static $name: AtomicU64 = AtomicU64::new(0);
+            };
+        }
+        an_diag!(CONFLICTS_ANALYZED, "analyze() calls");
+        an_diag!(BUMP_N, "sum of vars_to_bump lengths");
+        an_diag!(BUMP_N_MAX, "max vars_to_bump length");
+        an_diag!(BUMP_SORT_LARGE, "bump sorts over the insertion limit");
+        an_diag!(SHRINK_SORT_N, "sum of shrink-sorted literal counts");
+        an_diag!(CLASSIFY_CALLS, "minimize_classify calls");
+        an_diag!(CLASSIFY_EARLY_TRUE, "classify early-true returns");
+        an_diag!(CLASSIFY_EARLY_FALSE, "classify early-false returns");
+        an_diag!(WALK_CHILD_STEPS, "minimizer child-iteration steps");
+        pub fn dump() {
+            let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+            eprintln!(
+                "ana: conflicts={} bump_n={} bump_max={} bump_large={} shrink_n={} \
+classify={} cl_true={} cl_false={} walk_children={}",
+                g(&CONFLICTS_ANALYZED),
+                g(&BUMP_N),
+                g(&BUMP_N_MAX),
+                g(&BUMP_SORT_LARGE),
+                g(&SHRINK_SORT_N),
+                g(&CLASSIFY_CALLS),
+                g(&CLASSIFY_EARLY_TRUE),
+                g(&CLASSIFY_EARLY_FALSE),
+                g(&WALK_CHILD_STEPS),
+            );
+        }
+    }
     pub fn dump() {
         let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
         let hits = g(&VISITS) - g(&DELETED_SKIPS) - g(&MISS_VISITS);
@@ -600,6 +636,7 @@ visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps=
             g(&CONFLICTS),
             g(&SWAPS),
         );
+        analysis::dump();
     }
     pub fn enabled() -> bool {
         use std::sync::OnceLock;

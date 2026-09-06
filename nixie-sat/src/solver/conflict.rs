@@ -325,6 +325,12 @@ impl Solver {
     }
 
     pub(super) fn analyze(&mut self, conflict: ClauseId) -> (u32, SmallVec<[Lit; 32]>) {
+        #[cfg(feature = "bcp-stats")]
+        {
+            use crate::diag_bcp::analysis::*;
+            use core::sync::atomic::Ordering::Relaxed;
+            CONFLICTS_ANALYZED.fetch_add(1, Relaxed);
+        }
         // Debug: print conflict info (only with analyze-debug feature)
         #[cfg(feature = "analyze-debug")]
         if self.num_vars <= 5 {
@@ -751,6 +757,17 @@ impl Solver {
             // cadical switches algorithms at 800 (`MSORT`). Both branches
             // below are stable, so the order – and therefore the whole search
             // trajectory – is identical to the pure insertion sweep.
+            #[cfg(feature = "bcp-stats")]
+            {
+                use crate::diag_bcp::analysis::*;
+                use core::sync::atomic::Ordering::Relaxed;
+                let n = vars_to_bump.len() as u64;
+                BUMP_N.fetch_add(n, Relaxed);
+                BUMP_N_MAX.fetch_max(n, Relaxed);
+                if n as usize > BUMP_SORT_INSERTION_LIMIT {
+                    BUMP_SORT_LARGE.fetch_add(1, Relaxed);
+                }
+            }
             let mut keyed: SmallVec<[(u64, Var); 32]> = vars_to_bump
                 .iter()
                 .map(|&v| (self.vmtf.activity(v), v))
@@ -1050,11 +1067,23 @@ impl Solver {
     /// depth 0; the `v.trail <= l.seen.trail` early abort fires at every
     /// depth (its counter still only at depth 0).
     fn minimize_classify(&mut self, lit: Lit, depth: u32) -> Result<ClauseId, bool> {
+        #[cfg(feature = "bcp-stats")]
+        {
+            use crate::diag_bcp::analysis::*;
+            use core::sync::atomic::Ordering::Relaxed;
+            CLASSIFY_CALLS.fetch_add(1, Relaxed);
+        }
         const MINIMIZE_DEPTH_LIMIT: u32 = 100;
         let var = lit.var();
         let f = self.mf_get(var);
         let level = self.trail.level(var);
         if level == 0 || (f & MF_REMOVABLE) != 0 || (f & MF_KEEP) != 0 {
+            #[cfg(feature = "bcp-stats")]
+            {
+                use crate::diag_bcp::analysis::*;
+                use core::sync::atomic::Ordering::Relaxed;
+                CLASSIFY_EARLY_TRUE.fetch_add(1, Relaxed);
+            }
             return Err(true);
         }
         let reason = self.trail.reason(var);
@@ -1075,6 +1104,12 @@ impl Solver {
         // it into a clause resolution does not derive (false UNSAT on
         // `circuit_48in64out…dist128_seed1`, SAT verified by CaDiCaL).
         if no_reason || (f & MF_POISON) != 0 || level == self.current_conflict_level {
+            #[cfg(feature = "bcp-stats")]
+            {
+                use crate::diag_bcp::analysis::*;
+                use core::sync::atomic::Ordering::Relaxed;
+                CLASSIFY_EARLY_FALSE.fetch_add(1, Relaxed);
+            }
             return Err(false);
         }
         // Don Knuth's gate (cadical `!depth && l.seen.count < 2`): at the top
@@ -1188,6 +1223,12 @@ impl Solver {
                 }
                 (child, depth)
             };
+            #[cfg(feature = "bcp-stats")]
+            {
+                use crate::diag_bcp::analysis::*;
+                use core::sync::atomic::Ordering::Relaxed;
+                WALK_CHILD_STEPS.fetch_add(1, Relaxed);
+            }
             let Some(child_lit) = child else {
                 // Children exhausted without failure: removable.
                 if let Some(frame) = stack.pop() {
@@ -1581,6 +1622,12 @@ impl Solver {
                 })
                 .collect();
             keyed.sort_unstable_by_key(|&(key, _)| std::cmp::Reverse(key));
+            #[cfg(feature = "bcp-stats")]
+            {
+                use crate::diag_bcp::analysis::*;
+                use core::sync::atomic::Ordering::Relaxed;
+                SHRINK_SORT_N.fetch_add(keyed.len() as u64, Relaxed);
+            }
             for (i, (_, lit)) in keyed.into_iter().enumerate() {
                 self.learnt[i + 1] = lit;
             }

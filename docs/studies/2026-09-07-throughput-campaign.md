@@ -210,6 +210,71 @@ are:
   of samples; nobody has profiled `minimize_literal_plain` /
   `shrink_and_minimize_clause` against cadical's the way BCP now has been.
 
+## Addendum (same session, second half): the analysis side
+
+The study's closing map named the non-BCP half (~45 % of samples) as
+unexplored. It was decomposed the same way — 55 k-sample `perf record` on
+6s167 (single-sample percentages before that were noise: at ~110 samples,
+one sample ≈ 0.9 %, which had inflated `minimize` to "18 %" in one capture):
+
+| share of samples (6s167) | |
+|---|---|
+| `propagate` | 48 % |
+| `solve_with_theory` (search glue) | 9.5 % |
+| `shrink_and_minimize_clause` + `minimize_literal_plain` + `classify` + `mark_antecedent` | ~10 % |
+| allocator traffic (`_int_malloc`+`cfree`+`unlink_chunk`+`memmove`) | ~3 % |
+| `memset` (per-conflict full-width `seen` reset) | 1.35 % |
+| sorts (bump-order driftsort) | 2.3 % |
+
+The anatomy counters landed with this addendum (`diag_bcp::analysis`, same
+`bcp-stats` feature) measure the volumes: **3.65 M bump-sort elements**
+across 62 k conflicts (27 % of sorts over the 64-element insertion limit,
+max 1 304), 1.91 M shrink-sorted literals, 4.14 M `minimize_classify`
+calls, 2.78 M minimizer child steps.
+
+### The persistent-scratch arm (cadical `analyzed`-member port): measured, REVERTED
+
+The obvious candidate was the cadical-faithful restructuring: `analyzed` /
+`unit_analyzed` as persistent member vectors (capacity survives across
+conflicts), sort-key scratch as members, and `clear_analyzed_literals`-
+style exact seen-reset instead of the entry memset. Built in full
+(bit-identical trajectories on all 22 corpus files + both anchors — the
+exact-coverage reset carries a debug-mode full-scan assert replacing the
+silent scrub).
+
+**Verdict: neutral-to-negative, reverted.** Instructions (paired, pinned):
+
+* 22-file corpus (`MAXC=40000`): geomean **+0.24 %**, 13 files improved
+  (≤ +0.9 %), 9 small files regressed (−0.07 % each);
+* 6s167 full solve −0.87 %, crypto1@40k −0.59 %;
+* **worker_550@30k (550 k vars — the design's target case for the memset
+  cut): +0.13 % slower.** The full-width `seen` reset is bandwidth-cheap
+  relative to even this file's per-conflict work, and glibc's fast-path
+  malloc/free of the spilled SmallVecs costs about what the persistent
+  buffers' extra clear bookkeeping does.
+
+With one measured regression and a geomean deep inside the band, the arm
+fails every landing rule (it also adds a real invariant — exact coverage
+of `seen` writers — where the BCP arm added none). Reverted wholesale;
+the instrumentation extension alone lands.
+
+### Where this leaves the constant-factor program
+
+Six measured closures now bracket the per-conflict cost: flat arena
+(−4.5 %), 8-byte watcher (+0.7 %), word-split (+0.04 %), write-elision
+(landed), BIG probe fold + assign cold-split (landed, +1.4 % geomean),
+persistent analysis scratch (reverted, +0.24 %). Both halves of the run
+have been decomposed to the level of "the remaining delta vs cadical is
+spread across the whole loop body / analysis walk, with no lever above
+~1 %". Closing the rest of the 1.4–1.6× per-propagation and per-conflict
+instruction gap means *doing less work* — visit counts (blocker quality,
+watch-move policy), miss-visit rates (Gent's saved-position scan — a
+semantic policy), bump-set reduction (cadical's
+`bumpreasonlimit`-capped reason bumping) — all heuristic-class changes
+that require the matched-null machinery of `docs/BENCHMARKING.md`, or the
+kissat-shape single-pass BCP (inline binary watchers), which is gated on
+reworking the BIG's non-BCP consumers (transred, ELS, AND-gate factoring).
+
 ## Harness notes (all bitten this session)
 
 * **Pin *outside* perf**: `taskset -c 10 perf stat …`. With `perf stat
@@ -227,6 +292,10 @@ are:
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **Feature-build analysis counters run unconditionally**: the
+  `bcp-stats`-gated counter blocks in `conflict.rs` have no runtime env
+  check (the propagate-side ones do). A feature build pays full counter
+  cost regardless of `NIXIE_BCP_STATS`; never benchmark one.
 * Instrumentation cost, for the record: naive per-event counter branches
   measured **+5.2 %/+5.7 %** whole-run instructions *disabled* (register
   pressure, not the branches themselves). The landed form is compile-time
