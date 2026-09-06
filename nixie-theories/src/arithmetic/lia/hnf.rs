@@ -64,8 +64,12 @@ const MAX_ENTRIES: usize = 200_000;
 /// Result of [`solve_integer_eq_system`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EqSolution {
-    /// The system `A·x = b` has no integer solution.
-    Infeasible,
+    /// The system `A·x = b` has no integer solution, with the indices of
+    /// the input rows responsible (the lineage of the reduced row whose
+    /// exact-divisibility failed, or the failing consistency row).  This
+    /// is the small infeasibility core CDCL(T) needs: a full-core clause
+    /// teaches the SAT solver nothing it can resolve usefully.
+    Infeasible(Vec<usize>),
     /// An integer solution (free variables set to zero). The witness is
     /// indexed by the matrix's column order.
     Feasible(Vec<i128>),
@@ -273,7 +277,16 @@ pub fn solve_integer_eq_system(a: &[Vec<i128>], b: &[i128]) -> EqSolution {
             return EqSolution::GiveUp;
         }
         if val % d != 0 {
-            return EqSolution::Infeasible;
+            // Lineage: the failing effective row is `pr` after
+            // substituting the earlier pivots, so every pivot row that
+            // fed a z value (transitively) is responsible.
+            let mut core: Vec<usize> = Vec::new();
+            for j in 0..=i {
+                core.push(e.pivot_rows[j]);
+            }
+            core.sort_unstable();
+            core.dedup();
+            return EqSolution::Infeasible(core);
         }
         z[i] = val / d;
         if !fits(z[i]) {
@@ -301,7 +314,13 @@ pub fn solve_integer_eq_system(a: &[Vec<i128>], b: &[i128]) -> EqSolution {
             }
         }
         if sum != b[w] {
-            return EqSolution::Infeasible;
+            // The consistency row failed on its own; the earlier pivots
+            // determined z, so their lineage is responsible too.
+            let mut core: Vec<usize> = vec![w];
+            core.extend_from_slice(&e.pivot_rows);
+            core.sort_unstable();
+            core.dedup();
+            return EqSolution::Infeasible(core);
         }
     }
     // Witness: y = [z; 0] over the transformed columns, x = U·y.
@@ -559,11 +578,12 @@ mod tests {
         // gives 2x − 2z = 1, which has no integer solution.
         let a = vec![vec![2, -1, 0], vec![0, -1, 2]];
         let b = vec![0, -1];
-        assert_eq!(
-            solve_integer_eq_system(&a, &b),
-            EqSolution::Infeasible,
-            "2x = 2z + 1 has no integer solution"
-        );
+        match solve_integer_eq_system(&a, &b) {
+            EqSolution::Infeasible(core) => {
+                assert!(!core.is_empty() && core.len() <= a.len());
+            }
+            other => panic!("expected Infeasible, got {other:?}"),
+        }
         // 2x + y = 1 with y free: the classic row-Gaussian+free=0 trap
         // (x = (1−y)/2 is integral only for odd y). The column-echelon
         // solver must find the (0, 1) family member.
@@ -574,10 +594,10 @@ mod tests {
             other => panic!("expected Feasible, got {other:?}"),
         }
         // Zero row with nonzero rhs: infeasible.
-        assert_eq!(
-            solve_integer_eq_system(&[vec![0, 0]], &[5]),
-            EqSolution::Infeasible
-        );
+        match solve_integer_eq_system(&[vec![0, 0]], &[5]) {
+            EqSolution::Infeasible(core) => assert_eq!(core, vec![0]),
+            other => panic!("expected Infeasible, got {other:?}"),
+        }
         // Empty system: feasible with the empty witness.
         assert_eq!(
             solve_integer_eq_system(&[], &[]),
@@ -638,10 +658,13 @@ mod tests {
                 steps += 1;
             }
             match got {
-                EqSolution::Infeasible => assert!(
-                    found.is_none(),
-                    "solver said Infeasible but brute force found {found:?} for A={a:?} b={b:?}"
-                ),
+                EqSolution::Infeasible(core) => {
+                    assert!(!core.is_empty() && core.len() <= rows);
+                    assert!(
+                        found.is_none(),
+                        "solver said Infeasible but brute force found {found:?} for A={a:?} b={b:?}"
+                    );
+                }
                 EqSolution::Feasible(ref x) => {
                     // The witness itself may lie outside the brute-force
                     // box; verify it directly instead.
@@ -696,9 +719,12 @@ mod tests {
             }
             other => panic!("even-charge parity system must be feasible, got {other:?}"),
         }
-        // Odd charge: infeasible.
+        // Odd charge: infeasible, and the core spans every vertex row.
         let mut odd = charge;
         odd[0] += 1;
-        assert_eq!(solve_integer_eq_system(&a, &odd), EqSolution::Infeasible);
+        match solve_integer_eq_system(&a, &odd) {
+            EqSolution::Infeasible(core) => assert_eq!(core.len(), verts),
+            other => panic!("odd charge must be infeasible, got {other:?}"),
+        }
     }
 }

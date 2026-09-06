@@ -151,6 +151,9 @@ pub struct ArithSolver {
 struct IntEquation {
     terms: Vec<(VarId, i64)>,
     rhs: i64,
+    /// The atom/lemma whose assertion recorded this row — names the row
+    /// in Diophantine infeasibility cores.
+    reason: TermId,
 }
 
 /// A propagation-only single-variable constant bound (see
@@ -203,7 +206,9 @@ const BRANCH_REASON: u32 = u32::MAX;
 /// * `GiveUp` defers to branch-and-bound (magnitude/size guard).
 #[derive(Debug, Clone, PartialEq)]
 enum IntEqVerdict {
-    Infeasible,
+    /// Proven infeasible, with the responsible equations' reason terms
+    /// (the small infeasibility core; a full core teaches CDCL nothing).
+    Infeasible(Vec<TermId>),
     Incumbent(Vec<(VarId, Rational64)>),
     GiveUp,
 }
@@ -837,6 +842,7 @@ impl ArithSolver {
                 self.int_equalities.push(IntEquation {
                     terms: eq_terms,
                     rhs: const_term,
+                    reason,
                 });
                 // A new equality changes the Diophantine system → invalidate
                 // the cached feasibility verdict.
@@ -1455,7 +1461,23 @@ impl ArithSolver {
         }
 
         match super::lia::solve_integer_eq_system(&mat, &rhs) {
-            super::lia::EqSolution::Infeasible => IntEqVerdict::Infeasible,
+            // Map the row-lineage core to its reason terms; an unmappable
+            // row (stale index — cannot happen while rows and reasons are
+            // pushed/truncated in lockstep) falls back to the full core.
+            super::lia::EqSolution::Infeasible(core) => {
+                let terms: Option<Vec<TermId>> = core
+                    .iter()
+                    .map(|&r| self.int_equalities.get(r).map(|eq| eq.reason))
+                    .collect();
+                match terms {
+                    Some(mut t) => {
+                        t.sort_unstable();
+                        t.dedup();
+                        IntEqVerdict::Infeasible(t)
+                    }
+                    None => IntEqVerdict::Infeasible(self.full_unsat_core()),
+                }
+            }
             super::lia::EqSolution::GiveUp => IntEqVerdict::GiveUp,
             super::lia::EqSolution::Feasible(x) => {
                 let mut witness = Vec::with_capacity(cols);
@@ -1553,14 +1575,23 @@ impl ArithSolver {
     /// theory check into a different atom assignment (where a cut would be
     /// unsound).
     fn lia_branch_and_bound(&mut self) -> Result<TheoryResult> {
-        // Diophantine fast path, fired eagerly when the recorded
-        // equalities cover every integer variable: the Hermite solve then
-        // decides the system outright — `Infeasible` is a proof, and an
-        // accepted incumbent is a model — instead of burning the
-        // branch-and-bound node budget on the unbounded pure-equality
-        // class it cannot close.  When coverage is partial (rows beyond
-        // the equalities exist) the pinned re-solve still vetoes any
-        // witness the other rows reject, so this is sound regardless.
+        // Eager Diophantine refutation: when the Hermite solve of the
+        // recorded equalities (assertion rows plus search-propagated
+        // equality atoms — the cache invalidates on every assert_eq/pop)
+        // already proves integer-infeasibility, return the conflict NOW.
+        // This is the leaf-firing mechanism: at a search leaf the
+        // propagated link equalities make the system parity-inconsistent,
+        // and without this check the refutation only surfaces AFTER
+        // branch-and-bound burns LIA_MAX_NODES at that check — which
+        // starves CDCL of the fast conflict loop it needs to learn the
+        // parity clauses (the mixed-parity study's honest-timeout class).
+        // Only the Infeasible direction is eager: an accepted incumbent
+        // eagerly changes theory verdicts from Unknown to Sat under
+        // partial assignments and measurably steers searches badly; the
+        // incumbent stays post-hoc.
+        if let IntEqVerdict::Infeasible(core) = self.cached_int_eq_verdict() {
+            return Ok(TheoryResult::Unsat(core));
+        }
         self.simplex.push();
         let result = self.lia_cuts_then_bnb()?;
         self.simplex.pop();
@@ -1577,7 +1608,7 @@ impl ArithSolver {
         // acceptance yields a genuine integral model where branch-and-bound
         // could not construct one (the unbounded pure-equality class).
         match self.cached_int_eq_verdict() {
-            IntEqVerdict::Infeasible => Ok(TheoryResult::Unsat(self.full_unsat_core())),
+            IntEqVerdict::Infeasible(core) => Ok(TheoryResult::Unsat(core)),
             IntEqVerdict::Incumbent(_) => {
                 if self.try_cached_eq_incumbent() {
                     Ok(TheoryResult::Sat)
