@@ -136,6 +136,74 @@ gated for it.
   inert today (uninterpreted arguments carry no arithmetic values).
 * The gate comment in the `Distinct` arm pointing here.
 
+## Attack 3: the order encoding over BitVec — correct, measured, no flip
+
+The study's original conclusion predicted BitVec as the order encoding's
+home turf: `bvule` is a total order (the whitelist passes), and every atom
+is a bit-blasted gate circuit.  The encoder was built accordingly –
+comparators as `bvule` atoms, mux pins as conditional BV equalities, the
+chain as `bvult` atoms, pads as free bit-vectors (the pigeonhole
+short-circuit guarantees `n ≤ 2^w`, hence `n2 = next_power_of_two(n) ≤
+2^w` and the padded chain always fits the domain), plus an identity
+phase-hint pass (each wire's bits pointed at its index so the identity
+arrangement is the first descent).
+
+**Correctness: complete.**  All polarities and edges agree with Z3:
+free-variable `sat` (model verified pairwise-distinct), forced-equality
+`unsat`, duplicate-argument `unsat`, negated-with-all-pinned-apart
+`unsat`, the 32/33 boundary in both polarities, the exactly-full-domain
+edge (`n=40, w=6 → n2 = 64 = 2^6`), and 200 randomized differential
+trials (n ∈ {2..120}, w ∈ {4..32}, constants/compounds mixed in, both
+polarities, forced equalities) — zero verdict disagreements.
+
+**Performance: a wash.**  Release builds, old (pairwise) vs new (network):
+
+| cell | pairwise | network |
+|---|---|---|
+| n=300 w=16 sat | 4.15 s | 3.80 s |
+| n=300 w=16 unsat (explicit `= x1 x300`) | 0.055 s | 0.179 s |
+| n=600 w=32 sat | 51.4 s | 42.1 s |
+| n=2000 w=16 unsat (explicit) | 1.44 s | 0.99 s |
+| n=2000 w=16 sat | timeout | timeout |
+| n=600 w=10 sat (dense domain) | 35.6 s | 33.2 s |
+| n=1000 w=11 sat (dense) | timeout | timeout |
+| n=500 w=9 sat (dense) | 35.3 s | 34.7 s |
+
+Differences are within the noise band `docs/BENCHMARKING.md` documents
+(an RNG-seed change alone moves cost 7.31×).  No cell shows the decisive
+win an encoding flip needs; the mid-n explicit-unsat cell actively
+regresses (pairwise's lazy circuit for one `(= x_i x_j)` is trivial,
+the network must derive the contradiction through its log² levels).
+
+**Why the prediction failed – two architectural facts:**
+
+1. **The BV circuits do not live in the main SAT core.**  `BvSolver`
+   owns an *embedded* SAT instance, asserted into at theory-check time
+   and solved in batches.  The order encoding's whole advantage –
+   comparator decisions propagating through gates *during* the descent –
+   is exactly what batching removes: gate propagation happens per theory
+   check, not per decision.  (This is also why the identity phase hints
+   inside the embedded instance could not rescue the n=2000 sat cell:
+   the bottleneck is the interleaving, not the embedded search.)
+2. **Pairwise circuits are built lazily per asserted atom.**  A pairwise
+   `distinct` only pays for the equality circuits of atoms the search
+   actually assigns; the C(n,2) blowup is *potential*, not eager.  The
+   network, by contrast, needs every comparator of the chain wired for
+   the encoding to mean anything.  At every reachable n both pay
+   comparable eager costs.
+
+**What would flip the verdict:** unify BV circuits into the main SAT
+core (or give the embedded solver a per-decision propagation
+interface).  Then comparators genuinely propagate mid-descent, the
+identity phases guide the whole descent, and the network's O(n log²n)
+shape should beat pairwise's on-demand C(n,2).  Until then, BitVec
+stays pairwise for n > 32, exactly like Int/Real — for a different
+reason: not a soundness gap, but the absence of a measurable win.
+
+Code not landed (design lives here; the bitonic generator and 0-1
+verification are reproduced in the Int/Real section above and in git
+history of the experiment branch).
+
 ## Test evidence
 
 `nixie-solver/tests/distinct_encoding.rs` (unchanged, 23 tests) plus the
