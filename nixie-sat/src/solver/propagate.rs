@@ -12,13 +12,14 @@ impl Solver {
     pub(super) fn propagate(&mut self) -> Option<ClauseId> {
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SatPropagation);
+        // Hoist the bounded check out of the hot loop: a single predictable
+        // branch at loop entry instead of an Option pattern match per
+        // propagation step (the limit is always None during search).
+        let bounded = self.propagate_step_limit.is_some();
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
 
-            // Bounded propagation for preprocessing: bail (as "no conflict, but
-            // incomplete") once the step budget is exhausted, so a single doomed
-            // cascade can't run unbounded. The real search leaves this `None`.
-            if let Some(ref mut limit) = self.propagate_step_limit {
+            if bounded && let Some(ref mut limit) = self.propagate_step_limit {
                 if *limit == 0 {
                     self.propagate_aborted = true;
                     return None;
