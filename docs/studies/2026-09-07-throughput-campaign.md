@@ -275,6 +275,84 @@ that require the matched-null machinery of `docs/BENCHMARKING.md`, or the
 kissat-shape single-pass BCP (inline binary watchers), which is gated on
 reworking the BIG's non-BCP consumers (transred, ELS, AND-gate factoring).
 
+## Second addendum: the loop is stall-bound — PGO closes the question
+
+After the analysis-side closure, two further engineering arms were built and
+measured (both **negative**, both reverted):
+
+**BIG-pass slice iteration.** Three variants (field-borrowed `BigList` with
+deferred conflict tail; the same with the conflict tail inlined at field
+level; two plain slice loops with a shared body macro replacing the
+`Chain` iterator's per-edge branch). The disassembly showed the index form
+paying two bounds checks + two base reloads per edge; the slice forms
+remove them. Measured (properly rebuilt, md5-verified binaries): best
+variant **−0.36 % on 6s167, +0.29 % on crypto1** — mixed, sub-bar.
+LLVM's index-loop codegen beats all three hand-restructures; the watch-write
+bounds-check elision (unchecked stores under the documented-invariant
+pattern) never got a clean isolated measurement after the build-fingerprint
+trap below, and is not worth pursuing at that effect size.
+
+**PGO** (`-Cprofile-generate`/`-profile-use`, trained on 6s167 + crypto1 +
+3 corpus files, the recipe from `nixie-sat/Cargo.toml` that nothing had
+ever exercised):
+
+| 6s167 | base | PGO |
+|---|---|---|
+| instructions | 13.71 G | **12.78 G (−6.8 %)** |
+| **cycles** | 8.73 G | **8.62 G (−1.3 %)** |
+| IPC | 1.57 | 1.48 |
+| branch-misses | 134 M | 136 M |
+| crypto1@40k | instr −7.0 %, **cycles +0.0 %** | |
+
+This is the decisive experiment for the whole campaign's premise. PGO
+removes 7 % of retired instructions — more than every landed source change
+of this campaign combined — and the wall does not move, because **the
+propagate loop's cycle cost is not instructions: it is the 18.1
+data-dependent branch misses and ~19 L1→L2 loads per propagation**, which
+no inlining, layout or instruction-count change removes. (PGO is therefore
+*not* proposed for the standing builds: −7 % instructions at 0 % cycles
+buys nothing but build complexity.)
+
+**PEBS load-source attribution** (`perf mem`, ldlat 30, 52 k sampled
+propagate loads) closes Target 1 at every cache level, not just LLC: the
+long-latency loads are **27 % L1 hits / 13 % L2 hits / 3 % L3 hits /
+0.2 % L2 misses**. They are slow because they sit on dependent
+pointer-chains (watcher → arena header → literals), not because data is
+far — no arena reordering, prefetching or layout change shortens a chain
+that already hits in L1. The 2026-08-22 studies' conclusion ("density is
+not where the propagate cost lives") is confirmed at the cycle level.
+
+### The final decomposition (6s167-opt, E-core)
+
+| factor | ratio | class |
+|---|---|---|
+| wall | **5.8×** | |
+| = conflicts | 3.74× | heuristic (search quality; corpus-wide standing is 0.88× — this anchor is a tail case) |
+| × instructions/prop | ~1.45× | measured floor: restructures ±0.4 %, PGO −7 % (no cycle effect) |
+| × stall efficiency (IPC) | ~1.25× | branch-miss/L1-latency bound; immune to codegen |
+
+Everything that remains above ~1 % is one of:
+
+1. **visit count** (17.4/prop) and **miss-visit structure** (30–55 % miss
+   rate, 48–72 % of misses move the watch, 1.95 replacement-scan steps) —
+   policies like cadical's Gent saved-position scan (`clause->pos`,
+   JAIR'13) or blocker-refresh strategies. *Heuristic class*: they change
+   which watch moves and which clauses park where, i.e. the trajectory;
+   they require the matched-null machinery of `docs/BENCHMARKING.md`, not
+   trajectory identity.
+2. **the conflicts factor itself** — the standing-gap program's territory
+   (restart/reduce/branching policy deltas vs cadical/kissat).
+3. **kissat-shape single-pass BCP** (inline tagged binary watchers, 4–8
+   byte watch granularity) — the one structural rewrite left; it changes
+   tick accounting and stored watch order, so it is heuristic-class too,
+   and it must rework the BIG's non-BCP consumers (transred, ELS, AND-gate
+   factoring).
+
+The constant-factor program on the current architecture is closed: eight
+measured source arms (four landed, four reverted) plus PGO bound the
+recoverable instruction share, and the PGO cycle result shows even a full
+instruction-parity rewrite would recover at most the IPC term.
+
 ## Harness notes (all bitten this session)
 
 * **Pin *outside* perf**: `taskset -c 10 perf stat …`. With `perf stat
@@ -292,6 +370,11 @@ reworking the BIG's non-BCP consumers (transred, ELS, AND-gate factoring).
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **Worktree builds go stale silently after RUSTFLAGS/feature flips**: two
+  variant measurements this session were of stale binaries (`Finished in
+  0.1 s` after an edit, no `Compiling` line). Protocol that fixed it:
+  `touch` the edited file, require a real rebuild, and `md5sum` the binary
+  before trusting any A/B number.
 * **Feature-build analysis counters run unconditionally**: the
   `bcp-stats`-gated counter blocks in `conflict.rs` have no runtime env
   check (the propagate-side ones do). A feature build pays full counter
