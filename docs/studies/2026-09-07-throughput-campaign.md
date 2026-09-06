@@ -520,6 +520,38 @@ restart land on a different productive shallow region, while ours thrash.
   conflicts. The ELS=1 arm exists; the study needs a gate rule
   (instance-class or effort-scheduled) rather than a global flip.
 
+### T2 executed: restart productivity = never entering the starvation regime
+
+Three candidate mechanisms were checked and one confirmed:
+
+* **Port divergences: none.** Rephase mode (1 = always) and interval
+  (base 1000, growth ×(k+1) — cadical's effective ~1110 on 6s167) match;
+  trail reuse, target/best phases and the walk are ported with matching
+  counters.
+* **H-reuse rejected** (`REUSE=0`, 5 seeds): worker_550 geomean 10.5k →
+  **28.4k (2.7× worse)** — the reused trail is load-bearing for deep
+  search, not the thrash mechanism. `stall8+reuse0` loses to `stall8`
+  alone everywhere.
+* **The bimodality is decided early** (worker_550 @ 2 000 conflicts):
+  the bad seed's avg LBD is already **1 131** vs **393–473** for the
+  good seeds (which then solve at 2.4–21k), and cadical has **154
+  restarts** by then against our 6–9. The tail problem is not capability
+  — our best seed beats cadical (2 463 vs 5 113) — it is *reliability*:
+  some seeds learn fat clauses from the start and never recover.
+* **Complete mechanism**: Glucose's slow glue EMA (window 1e5 ≈ the
+  run-global mean) fires on *sustained degradation* (fast ≥ 1.10 ×
+  slow). Instances whose glue trend is fat-early-then-improving
+  (worker_550/qwh/constraints_17) never cross it — restart starvation
+  from conflict ~1, self-reinforcing (no restarts → deep fat conflicts
+  → flat EMA). cadical never enters the regime because its frequent
+  restarts keep the glue stream shallow and noisy from the start.
+
+T2's answer to "why are cadical's restarts productive": they *never
+stop*. The remaining T2 question — why `stall8` regresses worker_550
+(1.57×) when it recovers qwh/constraints_17 — is whether the forced
+restarts break genuinely productive deep runs there; gentler triggers
+(k = 16/32) or gap-EMA floors are the tuning axes inside the T1 study.
+
 ### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
 
 - **Gent saved-position scan** (`clause->pos`, cadical/JAIR'13): starts
