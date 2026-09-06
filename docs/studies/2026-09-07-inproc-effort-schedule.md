@@ -327,6 +327,71 @@ bar: paired P(solve) ≥ baseline AND conflicts geomean ≤ 0.95 AND T/N ≤
 (divider binaries per hop, shared-tail matching across hops, structural
 scoring) — the single-hop slice here is the minimal sound core of it.
 
+### The combined 5-seed corpus + tails (2026-09-07 final: 1 230 cells recorded)
+
+Machine layout note: this program ran pinned to **E-cores 10–19** (the
+allocated cores) with the 60 s wall cap — per-file arm pairing keeps every
+comparison internally consistent, but absolute solved counts are NOT
+comparable to the P-core standing table, and the tails' TO columns are
+E-core-contaminated (files solving in ~20 s on P-cores TO here).  A
+stray duplicate of `mrpp_4x4` (64-hex double-prefixed name) appeared in
+the corpus directory mid-run; its 15 cells are excluded everywhere and
+it is flagged for hygiene.
+
+**Corpus** (54 files × {off, sched-vivon, gate} × seeds 1–5 = 810 cells,
+suite `sc24f-ms5b`):
+
+| arm | P(solve) | paired flips vs off | conflicts geomean vs off |
+|---|---|---|---|
+| off | 194/270 | — | 1.00× |
+| sched-vivon | 191/270 | −16/+13, sign-test **p = 0.711** | **0.8298×** (n=113; sat 0.837 / unsat 0.813) |
+| gate | 187/270 | −22/+15, p = 0.324 | **0.8200×** (n=107) |
+
+**0 verdict mismatches** across all 810 paired cells; the two
+singleton-decisive SATs (mdp gate s1, circuit_64i gate s5) re-run with
+`PRINT_MODEL` and model-validated against the original CNFs (0 violated
+clauses, conflicts reproduced exactly).  gate/vivon = 0.9616× — the
+AND-gate adds nothing corpus-wide beyond the effort schedule.
+
+**Tails** (12 files × 4 arms × 10 seeds = 420 cells, suite
+`sc24f-effort-tails2`; decisive medians valid, TO columns ignored):
+
+* T/N vivon-vs-schednull ≈ **0.95** (per-file 0.46–1.47, mixed) — the
+  window-reactivity signal remains null; the schedule's value is the
+  budget level + interval growth (consistent with the corpus-level
+  1.16 measured earlier).
+* T/N gate-vs-gatenull: 0.875/0.974/1.011 on the three files with valid
+  pairs — the AND-gate rank signal is also ≈ null.
+* **frb65 damage confirmed**: gate 821 888 conflicts / 4 TOs vs vivon
+  294 722 / 1 TO at 10 seeds — the screen's 0.52× was default-seed luck.
+* worker 10-seed medians: vivon **15 155**, gate 24 022 — even on the
+  factor class, vivon is the better arm; the single-hop AND-gate's
+  worker 0.42× screen was seed luck too.
+
+### Final verdicts (2026-09-07)
+
+1. **`sched-vivon` (effort schedule + budgeted vivify)**: a large,
+   multi-seed, corpus-wide conflicts win — **0.83× geomean, both
+   verdict families, 0 mismatches** — with P(solve) statistically
+   indistinguishable from off (p = 0.71).  The pre-registered letter
+   ("P(solve) not lower") fails by 3 cells on the point estimate
+   (191 vs 194), so **no default flip**: per §11.1 a ±3-cell deficit on
+   a 270-cell table is inside flip noise, but the bar was written
+   before the layout was known and it stands.  Resolver, pre-registered:
+   a 10-seed corpus halves the flip-count CI; if the paired sign test
+   stays ≥ 0.5 the flip lands under the enablement rule (0
+   disagreements + solved-not-worse).
+2. **AND-gate factoring**: corpus-neutral over vivon (0.96×, inside the
+   band), tail-negative on frb65/worker medians, rank signal null —
+   **stays env-gated**.  Its mechanism thesis (hub restructuring of
+   shared-tail binaries) remains sound and fuzz-clean; the payoff needs
+   kissat's full chain/hop rule, not the single-hop slice.
+3. The effort schedule's round machinery (budgets, interval growth,
+   attribution telemetry) is now the standing substrate for every
+   future inprocessing component (factor chains, kitten sweeps,
+   deeper probing) — each rides `InprocBudgets` with its own effort
+   constant and matched null.
+
 ### Open follow-ups (pre-registered next steps, re-ranked 2026-09-07)
 
 0. **Mid-search factor/BVA port** — **first cut landed** (see the BVA +
@@ -334,11 +399,9 @@ scoring) — the single-hop slice here is the minimal sound core of it.
    groups anywhere), AND-gate factoring screens 0.42–0.71× on the
    factor classes with the full study pre-registered.  kissat's full rule
    adds quotient chains + structural hops on top of the landed core.
-1. **Multi-seed corpus P(solve) run** (54 × {off, sched-vivon} × 5 seeds,
-   ≈ 540 cells): the single-seed corpus score bar measured luck on
-   seed-unstable files; the tails show the flip set collapsing to
-   ~1 systematic loss (Timetable).  Go bar: paired P(solve) not lower
-   than off AND conflicts geomean ≤ 0.95 over both-solved.
+1. **Multi-seed corpus P(solve) run** — **DONE** (the combined 5-seed run
+   above; the remaining resolver is the 10-seed CI shrink, ~1 620 cells,
+   E-core layout fine).
 2. **Flat-budget variant**: T/N ≈ 1.16 says drop the window reactivity —
    budget = fixed per-mille of a long-horizon EMA, cadical's tier-scheduled
    vivify (glue-weighted candidate selection, per-tier budgets) as the
