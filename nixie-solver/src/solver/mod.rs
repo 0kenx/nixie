@@ -25,6 +25,7 @@ pub(super) mod model_blocking;
 pub(super) mod model_builder;
 pub(super) mod model_eval;
 pub(super) mod nla_relax;
+pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
 pub(super) mod static_features;
@@ -206,6 +207,37 @@ pub struct Solver {
     /// z3-style triangle axiomatization can target exactly them, keeping the
     /// added boolean structure small.
     pub(super) ite_result_terms: FxHashSet<TermId>,
+    /// Definitions of those same fresh `__nixie_ite_*` constants (recorded
+    /// by `eliminate_nonbool_ite`): variable → `(cond, then-branch,
+    /// else-branch)`, branches already substituted.  Consumed by
+    /// [`Solver::derive_parity_lemmas`] to evaluate a column's two-phase
+    /// image (its value under `cond` true / false) exactly.  Entries are
+    /// keyed by hash-consed `TermId`s and written idempotently (the same
+    /// `ite` term always maps to the same fresh variable), so the map may
+    /// safely outlive the scope that created an entry: a stale entry is
+    /// only ever consulted for variables that occur in the *current*
+    /// assertions, and those re-created after a `pop` re-insert the same
+    /// key with the same definition.  Cleared on `reset`.
+    pub(super) ite_defs: FxHashMap<TermId, parity_lemma::IteDef>,
+    /// Monotone counter bumped on every user-level mutation that can change
+    /// the parity-lemma basis (`assert` / `assert_named` / `pop`).  The
+    /// derivation in [`Solver::derive_parity_lemmas`] runs at the next
+    /// `check_core` entry after a bump — never per theory check (the
+    /// measured failure mode; see
+    /// `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`).
+    pub(super) parity_generation: u64,
+    /// Value of [`Solver::parity_generation`] at the last derivation.
+    pub(super) parity_last_derived: u64,
+    /// Integer-equality rows harvested from the assertions, scoped by the
+    /// trail (`TrailOp::ParityScanAdded`).
+    pub(super) parity_rows: Vec<parity_lemma::ParityRow>,
+    /// Number of assertions already harvested into
+    /// [`Solver::parity_rows`]; restored by the same trail op on `pop`.
+    pub(super) parity_watermark: usize,
+    /// Ground xor lemmas already emitted (hash-consed term ids), scoped by
+    /// the trail (`TrailOp::ParityLemmaAdded`) in lockstep with the SAT
+    /// clauses `pop` retracts.
+    pub(super) parity_lemmas: FxHashSet<TermId>,
     /// Function symbols that appear inside an asserted quantifier (the body or
     /// a trigger of a `forall`/`exists`). `purify_numeric_uf_args` skips
     /// abstracting the numeric arguments of any function in this set, so a
@@ -725,6 +757,12 @@ impl Solver {
             has_bv_arith_ops: false,
             arith_terms: FxHashSet::default(),
             ite_result_terms: FxHashSet::default(),
+            ite_defs: FxHashMap::default(),
+            parity_generation: 0,
+            parity_last_derived: 0,
+            parity_rows: Vec::new(),
+            parity_watermark: 0,
+            parity_lemmas: FxHashSet::default(),
             quantifier_uf_funcs: FxHashSet::default(),
             numarg_proxies: FxHashMap::default(),
             quant_uf_const_pins: FxHashMap::default(),
@@ -1298,6 +1336,11 @@ impl Solver {
         // and the CDCL(T) loop below would reason about a formula that has lost
         // the terms' semantics.
         self.instantiate_arith_axioms(manager);
+
+        // Lift the mod-2 signature of the asserted integer equalities into
+        // ground xor lemmas (parity obstructions across Bool/Int views).
+        // Runs once per assertion generation, not per theory check.
+        self.derive_parity_lemmas(manager);
 
         // Supply the defining axioms of every datatype term as well.  Without
         // them a selector, a tester and a constructor application are three
@@ -2903,6 +2946,9 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
+        // Retracting a scope changes the parity-lemma basis (assertions of
+        // the scope disappear; their rows and lemmas go with the trail ops).
+        self.parity_generation = self.parity_generation.wrapping_add(1);
         if let Some(state) = self.context_stack.pop() {
             // The verdict on the table was computed against the scope being
             // retracted.  Its unsat core indexes an `assertions` vector this
@@ -2998,6 +3044,23 @@ impl Solver {
                             // honesty gate trust an atom whose meaning has just
                             // been dropped from the SAT core.
                             self.arith_defined_terms.remove(&term);
+                        }
+                        TrailOp::ParityScanAdded {
+                            rows_len,
+                            watermark,
+                        } => {
+                            // Take back the rows harvested in the popped
+                            // scope and restore the assertion watermark so
+                            // only assertions of the popped scope are
+                            // re-scanned later.
+                            self.parity_rows.truncate(rows_len);
+                            self.parity_watermark = watermark;
+                        }
+                        TrailOp::ParityLemmaAdded { term } => {
+                            // The unit clause is retracted with the popped
+                            // SAT scope; forget the dedup entry so a later
+                            // scope re-emits the lemma if it still holds.
+                            self.parity_lemmas.remove(&term);
                         }
                         TrailOp::ArithConstAxiomAdded { term, const_val } => {
                             // The triangle clauses for this `(term, const)` pair
@@ -3183,6 +3246,12 @@ impl Solver {
         self.bv_terms.clear();
         self.arith_terms.clear();
         self.ite_result_terms.clear();
+        self.ite_defs.clear();
+        self.parity_generation = self.parity_generation.wrapping_add(1);
+        self.parity_last_derived = self.parity_generation;
+        self.parity_rows.clear();
+        self.parity_watermark = 0;
+        self.parity_lemmas.clear();
         self.care_split_pairs.clear();
         self.table_index_terms.clear();
         self.table_index_domain_eqs.clear();

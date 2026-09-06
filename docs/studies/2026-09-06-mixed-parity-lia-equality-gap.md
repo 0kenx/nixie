@@ -1,8 +1,8 @@
 # Study: mixed Bool+LIA parity stalls — root cause decomposition and the LIA equality-system gap
 
-**Date:** 2026-09-06
+**Date:** 2026-09-06 (parity-lemma rung implemented 2026-09-07)
 **Found by:** the obligation-grammar fuzzer (`bench/obligation`, finding A4)
-**Status:** root cause isolated; partial fix landed (ite-domain lemma); complete fix scoped but not implemented (Smith/HNF equality fast path)
+**Status:** **CLOSED** — the mod-2 parity lemma (`nixie-solver/src/solver/parity_lemma.rs`) decides both mixed-parity classes; implementation record below
 
 ## The finding
 
@@ -193,6 +193,89 @@ fuzzer sweeps 57/58 (stressed) and 56/58 (medium) decided, 0 wrong.
    hand it to the SAT core as a lemma, where `XorDetector` machinery
    can consume it.  That is a cross-theory derivation feature, not a
    patch; scoped here, not attempted.
+
+## The parity-lemma rung (IMPLEMENTED 2026-09-07, closes both gaps)
+
+After the two measured negatives above, the conclusion stood: the
+constraint must reach the SAT core as a synthesized xor lemma.  A
+hand-written spike confirmed the design first — appending the
+hand-derived `xor(b_cross…) = Σc (mod 2)` lemma to the medium
+`mixedboolint`/`mixedboundary` instances flipped timeout/unknown to
+`unsat` in ~0.1 s — before any derivation machinery was built.
+
+### Design (see `nixie-solver/src/solver/parity_lemma.rs` for the full
+soundness argument)
+
+The derivation lives **solver-side**, not in `ArithSolver`, for two
+reasons: the theory can only return `TheoryResult` (it cannot assert
+Bool lemmas), and its recorded rows include search-time
+(decided-literal) equalities that would make a lemma derived from them
+scope-invalid.  Working from the preprocessed level-0 `assertions`
+(that list is exactly the asserted formulas) keeps every ingredient a
+logical consequence of the input:
+
+1. **Rows**: walk the assertions' top-level conjunctions and collect
+   every Int-sorted linear equality (via `extract_linear_terms`, which
+   treats `div`/`mod`/`ite` terms as opaque columns), integral `i64`
+   coefficients only.
+2. **Mod-2 elimination**: GF(2) Gaussian elimination pivoting on the
+   *non-image-determined* columns; the surviving rows (zero
+   non-determined support) are the mod-2 consequences over
+   literal-linked columns — for the parity graphs exactly
+   `Σ_cross i_e ≡ Σ_I c_v (mod 2)` (interior edges and `2·k_v` slack
+   have even coefficients and vanish).
+3. **Literal images**: a column is *image-determined* when its value is
+   fixed under both phases of one Boolean — the fresh variable of a
+   non-Bool `ite` over constant branches (`ite_defs`, recorded by
+   `eliminate_nonbool_ite`), possibly chained through exact Euclidean
+   `div`/`mod` by constants (the `mixedboundary` link).  Both images are
+   evaluated exactly in checked `i128` Rust arithmetic (`div_euclid` /
+   `rem_euclid`; zero divisor or a second distinct condition bails).
+   Differing parities map the column to `b` or `¬b`; agreeing parities
+   fold a constant into the rhs.
+4. **Lemma**: `xor(l_1 … l_k) = c`, asserted as a ground unit lemma
+   through the `arith_axioms` channel (`encode` + unit clause, scoped
+   clause store + trail journal so `pop` retracts rows, lemmas and
+   clauses in lockstep).
+
+Timing: derived once per **assertion generation** (bumped by
+`assert`/`assert_named`/`pop`), consumed at the next `check_core`
+entry — never per theory check (the measured failure mode of attempt
+#1).  All quantities are capped (rows/columns ≤ 1024, ≤ 256 lemmas,
+width ≤ 256, evaluation depth ≤ 64); a cap tripping emits nothing.
+
+The SAT-side xor machinery is *not* involved: the input's Bool xor
+chains and the lemma are Tseitin-encoded with full equivalences, and
+plain CDCL closes the parity contradiction through the shared `b_e`
+literals (the phase-seeding xor slice only reads strict `2^(k-1)`
+clause groups and neither needs nor uses this lemma).
+
+### Measured outcome (this tree vs the finding, medium, seeds 0/1)
+
+| instance | before | after |
+|---|---|---|
+| `parity-mixedboolint-unsat-s0` | timeout | `unsat`, 0.06 s |
+| `parity-mixedboolint-unsat-s1` | timeout | `unsat`, 0.02 s |
+| `parity-mixedboundary-unsat-s0` | `unknown` 1.2 s | `unsat`, 0.03 s |
+| `parity-mixedboundary-unsat-s1` | `unknown` | `unsat`, 0.02 s |
+| `parity-mixedboolint-sat-s0/s1` | `sat` 0.3 s | `sat` 0.6 / 0.2 s |
+| `parity-incremental` (sat unsat sat unsat sat) | correct | correct |
+| fuzzer `--seeds 2 --size medium --family parity` | 12/16 | **16/16**, 0 wrong |
+| fuzzer small+stress-heavy / medium / large | 58/58, 56/58, 46/58 | 58/58, 56/58, 50/58 (0 FAIL/CRASH/GENFAIL; large gained the two mixed-unsat unknowns, same 12 honest timeouts as baseline) |
+
+Gates on this tree: build/nextest 10557/10557, clippy/fmt/doc
+`-D warnings` clean, z3 parity 170 entries / 0 mismatches (timings
+unchanged within noise), 60 spot-checked industrial QF_LIA/UFLIA/
+UFIDL instances (incl. mux-heavy `cmodelsdiff`) with 0 verdict changes.
+Unit tests pin the GF(2) elimination shape, image classification
+(ite link, div/mod chain, two-condition bail, zero-divisor bail,
+negative-constant Euclidean semantics), literal folding, both fuzzer
+graph shapes end-to-end (odd ⇒ unsat + lemma fired; even ⇒ sat and
+re-asserting the lemmas keeps it sat), and pop-retraction.
+
+Remaining (unchanged): the `large` mixed instances beyond ~60 vertices
+still exceed a 10 s budget (`s0` solves in 6–10 s, `s1` times out) —
+honest timeouts on bigger graphs, not wrong answers.
 
 ## Reproducers
 

@@ -345,8 +345,9 @@ impl Solver {
     }
 
     /// Encode `lemma` and force it true with a unit clause at the current
-    /// assertion level.
-    fn assert_ground_lemma(&mut self, lemma: TermId, manager: &mut TermManager) {
+    /// assertion level.  Also the channel for the mod-2 parity lemmas
+    /// (`parity_lemma.rs`) — same contract, same scoping.
+    pub(super) fn assert_ground_lemma(&mut self, lemma: TermId, manager: &mut TermManager) {
         let lit = self.encode(lemma, manager);
         let _ = self.sat.add_clause([lit]);
     }

@@ -67,6 +67,15 @@ pub(crate) enum TrailOp {
     ArrayAxiomInstanceAdded { term: TermId },
     /// A `div` / `mod` / numeric-`ite` term received its defining axioms
     ArithDefinedTermAdded { term: TermId },
+    /// Integer-equality rows were harvested into `Solver::parity_rows` and
+    /// the assertion watermark advanced (see `derive_parity_lemmas`).  A
+    /// `pop` removes the rows and restores the watermark in lockstep with
+    /// the `AssertionAdded` truncations of the same scope.
+    ParityScanAdded { rows_len: usize, watermark: usize },
+    /// A ground xor parity lemma was asserted to the SAT core.  The clause
+    /// is retracted with the scope, so the dedup entry must go too or a
+    /// later scope would never re-emit the (still valid) lemma.
+    ParityLemmaAdded { term: TermId },
     /// A z3-style triangle axiom `(t = c) ⟺ (t ≤ c ∧ t ≥ c)` was asserted for
     /// the `(term, const)` pair (see `axiomatize_arith_constant_equalities`).
     ArithConstAxiomAdded { term: TermId, const_val: i64 },
@@ -195,6 +204,15 @@ impl super::Solver {
             // a stale entry after `pop` only makes `axiomatize_arith_constant_
             // equalities` re-emit a *valid* (redundant) triangle axiom, so it is
             // sound to leave it (cleared wholesale only by `reset`).
+            ite_defs: _, // same accumulation discipline as `ite_result_terms`:
+            // entries are idempotent per hash-consed `ite` term, and a stale
+            // entry is only ever consulted for variables present in the live
+            // assertions (see the field doc in `solver/mod.rs`).
+            parity_generation: _,   // monotone counter; never needs restoring.
+            parity_last_derived: _, // monotone watermark on that counter.
+            parity_rows: _,         // TRAIL: ParityScanAdded
+            parity_watermark: _,    // TRAIL: ParityScanAdded
+            parity_lemmas: _,       // TRAIL: ParityLemmaAdded
             quantifier_uf_funcs: _, // accumulates function symbols seen inside
             // asserted quantifiers; a stale entry after `pop` only makes
             // `purify_numeric_uf_args` over-conservatively skip a *sound*

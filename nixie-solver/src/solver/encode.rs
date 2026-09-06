@@ -622,6 +622,9 @@ impl Solver {
     /// `Solver::invalidate_results` (private) for the rule and for why the unsat
     /// core goes with it.
     pub fn assert(&mut self, term: TermId, manager: &mut TermManager) {
+        // A new assertion changes the parity-lemma basis; the derivation
+        // re-runs at the next check (see `derive_parity_lemmas`).
+        self.parity_generation = self.parity_generation.wrapping_add(1);
         // Keep the caller's exact assertion outside the preprocessing path.
         // Certified mode must not trust rewrites, purification, or auxiliary
         // definitions when checking a candidate result.
@@ -1399,6 +1402,8 @@ impl Solver {
 
     /// Assert a term and associate it with an SMT-LIB assertion name.
     pub fn assert_named(&mut self, term: TermId, name: &str, manager: &mut TermManager) {
+        // See `assert`: the parity-lemma basis changed.
+        self.parity_generation = self.parity_generation.wrapping_add(1);
         let index = self.assertions.len();
         self.assertions.push(term);
         self.certificate_assertions.push(term);
@@ -2052,6 +2057,12 @@ impl Solver {
             let c_sub = manager.substitute(c, &map);
             let t_sub = manager.substitute(tb, &map);
             let e_sub = manager.substitute(eb, &map);
+            // Record the definition (branches substituted) so the mod-2
+            // parity derivation (`derive_parity_lemmas`) can evaluate the
+            // variable's two-phase image exactly.  Idempotent: the fresh
+            // variable is keyed by the hash-consed `ite` term, so a
+            // re-assertion of the same `ite` re-inserts the same entry.
+            self.ite_defs.insert(*v, (c_sub, t_sub, e_sub));
             let eq_v_t = manager.mk_eq(*v, t_sub);
             let eq_v_e = manager.mk_eq(*v, e_sub);
             let not_c = manager.mk_not(c_sub);

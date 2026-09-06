@@ -112,6 +112,12 @@ with the certificate:
    Diophantine reasoning — see
    `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md` for the
    implementation record and the remaining rungs.
+   **Update (2026-09-07): FIXED** by the mod-2 parity lemma
+   (`nixie-solver/src/solver/parity_lemma.rs`): the parity signature of
+   the asserted integer equalities is lifted into a ground xor lemma and
+   asserted to the SAT core.  `parity-mixedboolint-unsat-*` (medium) now
+   refutes in ~0.02–0.06 s (z3 agreement), and `--seeds 2 --size medium
+   --family parity` is 16/16 decided, 0 wrong.
 2. **Exact div/mod links block the in-search refutation**
    (`parity-mixedboundary-unsat-*`, all sizes): when the Bool→Int edge
    link is `i_e = (mod (div (ite b_e C1 C0) D) 2)` (exact on both
@@ -119,6 +125,10 @@ with the certificate:
    Theory side is leaf-complete (all Booleans fixed ⇒ instant
    refutation, z3 agreement) — the gap is the same search integration
    as finding 1; see the study's mod-2 parity-lemma rung.
+   **Update (2026-09-07): FIXED** by the same parity lemma — the two
+   branch images of the div/mod chain are evaluated exactly in Rust, so
+   the linked variable maps to its Boolean literal and the xor lemma
+   covers this family too (medium unsat: ~0.02–0.03 s, z3 agreement).
 3. **Deep right-nested binary arithmetic/bv chains yielded `unknown` on
    foldable/associable tautologies** (`--stress heavy`) — **FIXED** in two
    steps: the iterative ground-constant fold (rescues constant chains
