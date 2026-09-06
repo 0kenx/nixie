@@ -22,6 +22,15 @@
 //!
 //! # Semantics contract
 //!
+//! In addition to ground collapse, associative chains are *normalized*:
+//! same-operator, same-sort children are spliced flat and their constants
+//! combined exactly — Int sums/products in `BigInt`, Real sums via checked
+//! `Rational64` (on overflow the partial sum is kept and later constants
+//! stay as arguments — same value, no loss), and wraparound BV
+//! `xor`/`add`/`mul` in exact modular arithmetic.  A 5 000-deep constant
+//! `bvxor` chain over a variable collapses to `x ⊕ C`; `(+ 1 (+ 1 … x))`
+//! becomes `(+ C x)`.
+//!
 //! * Integer folding is exact and unbounded (`BigInt`), which is *more*
 //!   precise than the `i64`-backed [`crate::rewrite::arith`] rules.
 //! * Rational folding is `Rational64` with checked arithmetic; any
@@ -41,13 +50,14 @@
 //!   are left to the main simplifier, which runs once the term is known
 //!   to be shallow.
 
+use crate::ast::bv_fold::{bv_add, bv_wrap_unsigned};
 use crate::ast::traversal::get_children;
 use crate::ast::{TermId, TermKind, TermManager};
 use crate::prelude::FxHashMap;
 use crate::sort::Sort;
 use num_bigint::BigInt;
 use num_rational::Rational64;
-use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, Signed, Zero};
+use num_traits::{CheckedAdd, CheckedDiv, CheckedMul, One, Signed, Zero};
 use smallvec::SmallVec;
 
 /// Collapse all fully-ground arithmetic/Boolean subterms of `term` to
@@ -131,6 +141,24 @@ fn big_rem_euclid(a: &BigInt, b: &BigInt) -> BigInt {
         r += b.abs();
     }
     r
+}
+
+fn int_val(kid: TermId, manager: &TermManager) -> Option<BigInt> {
+    match &manager.get(kid)?.kind {
+        TermKind::IntConst(n) => Some(n.clone()),
+        _ => None,
+    }
+}
+
+fn rat_val(kid: TermId, manager: &TermManager) -> Option<Rational64> {
+    match &manager.get(kid)?.kind {
+        TermKind::IntConst(n) => {
+            let v: i64 = n.try_into().ok()?;
+            Some(Rational64::from_integer(v))
+        }
+        TermKind::RealConst(r) => Some(*r),
+        _ => None,
+    }
 }
 
 fn as_int(kid: TermId, manager: &TermManager) -> Option<&BigInt> {
@@ -218,18 +246,82 @@ fn fold_node(
 ) -> Option<TermId> {
     match kind {
         TermKind::Add(_) => {
-            if sort_is(manager, sort, Sort::is_int) {
-                let mut sum = BigInt::from(0);
-                for &k in kids {
-                    sum += as_int(k, manager)?;
+            // Associative-chain normalization: splice same-op, same-sort
+            // children into one flat argument list, then combine the
+            // constants exactly.  This subsumes the fully-ground collapse
+            // and additionally rescues chains with a variable base —
+            // `(+ 1 (+ 1 … x))` normalizes to `(+ 600 x)` — so the
+            // encode-depth guard measures the *normalized* term, not the
+            // unfolded chain.
+            let is_int = sort_is(manager, sort, Sort::is_int);
+            let disc = std::mem::discriminant(kind);
+            let mut flat: Vec<TermId> = Vec::with_capacity(kids.len());
+            let mut spliced = false;
+            for &k in kids {
+                let child = manager
+                    .get(k)
+                    .filter(|n| std::mem::discriminant(&n.kind) == disc && n.sort == sort);
+                if let Some(TermKind::Add(cs)) = child.map(|n| &n.kind) {
+                    flat.extend_from_slice(cs);
+                    spliced = true;
+                } else {
+                    flat.push(k);
                 }
-                Some(manager.mk_int(sum))
+            }
+            let mut non_const: Vec<TermId> = Vec::with_capacity(flat.len());
+            let mut int_sum = BigInt::from(0);
+            let mut rat_sum = Rational64::zero();
+            let mut rat_overflow = false;
+            let mut const_count = 0usize;
+            for &k in flat.iter() {
+                if is_int {
+                    if let Some(v) = int_val(k, manager) {
+                        int_sum += v;
+                        const_count += 1;
+                        continue;
+                    }
+                } else if !rat_overflow && let Some(v) = rat_val(k, manager) {
+                    // Real: checked combine; on overflow keep the partial
+                    // sum as one constant and stop combining (the remaining
+                    // constants stay as arguments — same value, no loss).
+                    match rat_sum.checked_add(&v) {
+                        Some(s) => {
+                            rat_sum = s;
+                            const_count += 1;
+                            continue;
+                        }
+                        None => rat_overflow = true,
+                    }
+                }
+                non_const.push(k);
+            }
+            if const_count == flat.len() && !flat.is_empty() {
+                // Fully ground: the exact constant.
+                if is_int {
+                    Some(manager.mk_int(int_sum))
+                } else {
+                    Some(manager.mk_real(rat_sum))
+                }
             } else {
-                let mut sum = Rational64::zero();
-                for &k in kids {
-                    sum = sum.checked_add(&as_rat(k, manager)?)?;
+                let mut args = non_const;
+                if is_int {
+                    if !int_sum.is_zero() || args.is_empty() {
+                        args.push(manager.mk_int(int_sum));
+                    }
+                } else if !rat_sum.is_zero() || args.is_empty() {
+                    args.push(manager.mk_real(rat_sum));
                 }
-                Some(manager.mk_real(sum))
+                if args.len() == 1 {
+                    return Some(args[0]);
+                }
+                let unchanged = !spliced
+                    && args.len() == kids.len()
+                    && args.iter().zip(kids.iter()).all(|(&a, &b)| a == b);
+                if unchanged {
+                    None
+                } else {
+                    Some(manager.mk_add(args))
+                }
             }
         }
         TermKind::Sub(_, _) if kids.len() == 2 => {
@@ -265,6 +357,93 @@ fn fold_node(
                     product = product.checked_mul(&as_rat(k, manager)?)?;
                 }
                 Some(manager.mk_real(product))
+            }
+        }
+        TermKind::BvXor(_, _) | TermKind::BvAdd(_, _) | TermKind::BvMul(_, _)
+            if kids.len() == 2 =>
+        {
+            // Associative-chain normalization for wraparound BV ops:
+            // `(x ⊕ c1) ⊕ c2` flattens to `[x, c1, c2]` and combines the
+            // constants exactly, so a 5 000-deep constant-xor chain over a
+            // variable collapses to `x ⊕ C` before the depth guard runs.
+            let width = manager.sorts.get(sort).and_then(Sort::bitvec_width)?;
+            let disc = std::mem::discriminant(kind);
+            let mut flat: Vec<TermId> = Vec::with_capacity(4);
+            let mut spliced = false;
+            for &k in kids {
+                let child = manager
+                    .get(k)
+                    .filter(|n| std::mem::discriminant(&n.kind) == disc && n.sort == sort);
+                match child.map(|n| &n.kind) {
+                    Some(TermKind::BvXor(a, b))
+                    | Some(TermKind::BvAdd(a, b))
+                    | Some(TermKind::BvMul(a, b)) => {
+                        flat.push(*a);
+                        flat.push(*b);
+                        spliced = true;
+                    }
+                    _ => flat.push(k),
+                }
+            }
+            let mut acc: Option<BigInt> = None;
+            let mut non_const: Vec<TermId> = Vec::with_capacity(flat.len());
+            for &k in flat.iter() {
+                let cv = manager.get(k).and_then(|n| match &n.kind {
+                    TermKind::BitVecConst { value, width: w } if *w == width => Some(value.clone()),
+                    _ => None,
+                });
+                match cv {
+                    Some(v) => {
+                        acc = Some(match acc {
+                            Some(a) => match kind {
+                                TermKind::BvXor(..) => a ^ v,
+                                TermKind::BvAdd(..) => bv_add(&a, &v, width),
+                                _ => bv_wrap_unsigned(&(a * v), width),
+                            },
+                            None => v,
+                        });
+                    }
+                    None => non_const.push(k),
+                }
+            }
+            // Annihilator: x * 0 = 0.
+            if matches!(kind, TermKind::BvMul(..)) && acc.as_ref().is_some_and(|a| a.is_zero()) {
+                return Some(manager.mk_bitvec(BigInt::from(0), width));
+            }
+            let mk = |m: &mut TermManager, a: TermId, b: TermId| match kind {
+                TermKind::BvXor(..) => m.mk_bv_xor(a, b),
+                TermKind::BvAdd(..) => m.mk_bv_add(a, b),
+                _ => m.mk_bv_mul(a, b),
+            };
+            let identity_zero = matches!(kind, TermKind::BvXor(..) | TermKind::BvAdd(..));
+            let const_is_identity = |c: &BigInt| c.is_zero() || (!identity_zero && c.is_one());
+            match (non_const.len(), acc) {
+                (0, Some(c)) => Some(manager.mk_bitvec(c, width)),
+                (1, None) => Some(non_const[0]),
+                (1, Some(c)) => {
+                    if const_is_identity(&c) {
+                        Some(non_const[0])
+                    } else {
+                        let cc = manager.mk_bitvec(c, width);
+                        Some(mk(manager, non_const[0], cc))
+                    }
+                }
+                (_, acc) => {
+                    if !spliced && acc.is_none() {
+                        return None; // structurally unchanged binary node
+                    }
+                    let mut t = non_const[0];
+                    for &k in non_const[1..].iter() {
+                        t = mk(manager, t, k);
+                    }
+                    if let Some(c) = acc
+                        && !const_is_identity(&c)
+                    {
+                        let cc = manager.mk_bitvec(c, width);
+                        t = mk(manager, t, cc);
+                    }
+                    Some(t)
+                }
             }
         }
         TermKind::Div(_, _) if kids.len() == 2 => {
@@ -479,16 +658,69 @@ mod tests {
     }
 
     #[test]
-    fn variable_chain_is_left_alone() {
+    fn deep_variable_add_chain_normalizes_to_one_constant() {
         let mut manager = TermManager::new();
         let x = mk_var(&mut manager, "x");
-        let mut term = x;
         let one = manager.mk_int(1);
+        let mut term = x;
         for _ in 0..600 {
             term = manager.mk_add([one, term]);
         }
         let folded = fold_ground(term, &mut manager);
-        assert_eq!(folded, term, "non-ground chain must not change");
+        // (+ 1 (+ 1 … x)) => (+ x 600): nesting gone, one folded constant.
+        let c = manager.mk_int(600);
+        let expect = manager.mk_add([x, c]);
+        assert_eq!(folded, expect);
+        assert!(compute_depth(folded, &manager) <= 3);
+    }
+
+    #[test]
+    fn deep_bv_xor_constant_chain_collapses() {
+        let mut manager = TermManager::new();
+        let w = 32;
+        let bv_sort = manager.sorts.bitvec(w);
+        let x = manager.mk_var("x", bv_sort);
+        // (bvxor (bvxor x c1) c2) … with the constants XOR-ing to K.
+        let mut term = x;
+        let mut k: i64 = 0;
+        for i in 0..600u64 {
+            let c = ((i * 7 + 3) % 1000) as i64;
+            k ^= c;
+            let cc = manager.mk_bitvec(c, w);
+            term = manager.mk_bv_xor(term, cc);
+        }
+        let folded = fold_ground(term, &mut manager);
+        let kc = manager.mk_bitvec(k, w);
+        let expect = manager.mk_bv_xor(x, kc);
+        assert_eq!(folded, expect, "chain must collapse to x ⊕ K");
+        assert!(compute_depth(folded, &manager) <= 3);
+    }
+
+    #[test]
+    fn bv_chain_identities() {
+        let mut manager = TermManager::new();
+        let w = 8;
+        let bv_sort = manager.sorts.bitvec(w);
+        let x = manager.mk_var("x", bv_sort);
+        // (bvxor x 0) => x
+        let z = manager.mk_bitvec(0, w);
+        let t = manager.mk_bv_xor(x, z);
+        assert_eq!(fold_ground(t, &mut manager), x);
+        // (bvmul x 1) => x ; (bvmul x 0) => 0
+        let one = manager.mk_bitvec(1, w);
+        let t = manager.mk_bv_mul(x, one);
+        assert_eq!(fold_ground(t, &mut manager), x);
+        let t = manager.mk_bv_mul(x, z);
+        assert_eq!(fold_ground(t, &mut manager), z);
+        // (bvadd (bvadd x 250) 10) => (bvadd x 4): 260 wraps mod 2^8.
+        let c250 = manager.mk_bitvec(250, w);
+        let c10 = manager.mk_bitvec(10, w);
+        let inner = manager.mk_bv_add(x, c250);
+        let t = manager.mk_bv_add(inner, c10);
+        let folded = fold_ground(t, &mut manager);
+        let c4 = manager.mk_bitvec(4, w);
+        let expect = manager.mk_bv_add(x, c4);
+        assert_eq!(folded, expect);
     }
 
     #[test]

@@ -504,11 +504,59 @@ fn deep_foldable_constant_assertion_is_decided_not_unknown() {
         .expect("foldable-deep assert+check must return");
 }
 
-/// The honest path is intact: a 12 500-deep chain over a *variable* does
-/// not fold, still trips the guard, and still answers `unknown` (never a
-/// guess) — the rescue must not weaken the stack-safety contract.
+/// Foldable-deep rescue, BV flavor: a 12 500-deep wraparound `bvxor`
+/// constant chain over a variable (`(x ⊕ c1) ⊕ c2 …`, constants XOR-ing to
+/// zero, so the chain equals `x`) must normalize to `x ⊕ 0`-equivalent
+/// shape and be *decided*, not refused (obligation fuzzer, stressed sweep:
+/// reconverge-bv answered `unknown` before associativity normalization).
 #[test]
-fn deep_unfoldable_assertion_still_answers_unknown() {
+fn deep_bvxor_constant_assertion_is_decided_not_unknown() {
+    const STACK_SIZE: usize = 1 << 17; // 128 KiB
+    const DEPTH: usize = 12_500;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut solver = Solver::new();
+            let mut manager = TermManager::new();
+            let w = 32;
+            let bv_sort = manager.sorts.bitvec(w);
+            let x = manager.mk_var("x", bv_sort);
+            let mut term = x;
+            for i in 0..DEPTH {
+                let c = ((i * 7 + 3) % 1000) as i64;
+                let cc = manager.mk_bitvec(c, w);
+                term = manager.mk_bv_xor(term, cc);
+            }
+            // The constants XOR to `total`; chain = x ⊕ total.
+            let mut total: i64 = 0;
+            for i in 0..DEPTH {
+                total ^= ((i * 7 + 3) % 1000) as i64;
+            }
+            let kc = manager.mk_bitvec(total, w);
+            let expect = manager.mk_bv_xor(x, kc);
+            let eq = manager.mk_eq(term, expect);
+            solver.assert(eq, &mut manager);
+            assert!(
+                !solver.encode_depth_exceeded,
+                "a constant-xor chain must normalize, not be refused"
+            );
+            assert_eq!(
+                solver.check(&mut manager),
+                SolverResult::Sat,
+                "the chain is exactly x ⊕ total by associativity"
+            );
+        })
+        .expect("spawning a 128 KiB-stack thread should succeed");
+
+    handle.join().expect("bvxor-chain assert+check must return");
+}
+
+/// A deep chain over a *variable* is now decidable too — associative
+/// normalization collapses `(+ 1 (+ 1 … x))` to `(+ 12_500 x)`, and
+/// `x = x + 12_500` is correctly `unsat`.
+#[test]
+fn deep_variable_add_chain_is_decided_unsat() {
     const STACK_SIZE: usize = 1 << 17;
     const DEPTH: usize = 12_500;
 
@@ -521,9 +569,44 @@ fn deep_unfoldable_assertion_still_answers_unknown() {
             let chain = build_add_chain(&mut manager, DEPTH, x);
             let eq = manager.mk_eq(chain, x);
             solver.assert(eq, &mut manager);
+            assert!(!solver.encode_depth_exceeded);
+            assert_eq!(
+                solver.check(&mut manager),
+                SolverResult::Unsat,
+                "x = x + 12_500 has no solution"
+            );
+        })
+        .expect("spawning a 128 KiB-stack thread should succeed");
+
+    handle
+        .join()
+        .expect("variable-chain assert+check must return");
+}
+
+/// The honest path is intact for structures no normalization applies to:
+/// a 12 500-deep nested `neg` chain still trips the guard and still
+/// answers `unknown` (never a guess) — the rescue must not weaken the
+/// stack-safety contract.
+#[test]
+fn deep_unnormalizable_assertion_still_answers_unknown() {
+    const STACK_SIZE: usize = 1 << 17;
+    const DEPTH: usize = 12_500;
+
+    let handle = std::thread::Builder::new()
+        .stack_size(STACK_SIZE)
+        .spawn(|| {
+            let mut solver = Solver::new();
+            let mut manager = TermManager::new();
+            let x = manager.mk_var("x", manager.sorts.int_sort);
+            let mut chain = x;
+            for _ in 0..DEPTH {
+                chain = manager.mk_neg(chain);
+            }
+            let eq = manager.mk_eq(chain, x);
+            solver.assert(eq, &mut manager);
             assert!(
                 solver.encode_depth_exceeded,
-                "a genuinely deep non-ground assertion must still trip the guard"
+                "a genuinely deep non-normalizable assertion must still trip the guard"
             );
             assert_eq!(solver.check(&mut manager), SolverResult::Unknown);
         })
@@ -531,7 +614,7 @@ fn deep_unfoldable_assertion_still_answers_unknown() {
 
     handle
         .join()
-        .expect("unfoldable-deep assert+check must return");
+        .expect("unnormalizable-deep assert+check must return");
 }
 
 /// Doubling DAG: level `i+1` references level `i` **twice**, alternating

@@ -20,6 +20,33 @@ pub(crate) mod finite_expand;
 mod skolem_candidates;
 mod track_theory_vars;
 
+/// For an ite whose two branches are numeric constants of an arithmetic
+/// sort, return `(max, min)` as terms for the implied domain lemma
+/// (`min <= v <= max` when `v` equals one of the branches).  Mixed
+/// Int/Real constants are compared through their rational view when
+/// i64-representable, else skipped — the lemma is an optimization, never
+/// a requirement.
+fn const_branch_bounds(t: TermId, e: TermId, manager: &TermManager) -> Option<(TermId, TermId)> {
+    use num_rational::Rational64;
+    let rat_of = |id: TermId| -> Option<(Rational64, TermId)> {
+        match &manager.get(id)?.kind {
+            TermKind::IntConst(v) => {
+                let r: i64 = v.try_into().ok()?;
+                Some((Rational64::from_integer(r), id))
+            }
+            TermKind::RealConst(r) => Some((*r, id)),
+            _ => None,
+        }
+    };
+    let (rt, tt) = rat_of(t)?;
+    let (re, te) = rat_of(e)?;
+    if rt <= re {
+        Some((te, tt)) // (max, min)
+    } else {
+        Some((tt, te))
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -2030,6 +2057,20 @@ impl Solver {
             let not_c = manager.mk_not(c_sub);
             side.push(manager.mk_implies(c_sub, eq_v_t));
             side.push(manager.mk_implies(not_c, eq_v_e));
+            // Domain lemma for constant branches: `v` equals one of two
+            // numeric constants, so `min <= v <= max` is implied — sound
+            // by construction, and it hands the arithmetic solver the
+            // finite interval *now* instead of only after the condition is
+            // decided.  Without it, a `(= i_e (ite b_e 1 0))` link leaves
+            // `i_e` an unbounded integer for LIA until CDCL case-splits
+            // `b_e`, and parity-style obligations over linked variables
+            // stall at `unknown` (obligation fuzzer finding: mixed
+            // Bool+LIA parity, even charge, ~26 vertices) where the pure
+            // CNF/BV realizations of the same obstruction are decided.
+            if let Some((lo, hi)) = const_branch_bounds(t_sub, e_sub, manager) {
+                side.push(manager.mk_le(*v, lo));
+                side.push(manager.mk_ge(*v, hi));
+            }
         }
         // Preserve define-fun body aliases / table-index keys across mux rewrite.
         // The alias machinery exists only to help flattened table indices inherit
