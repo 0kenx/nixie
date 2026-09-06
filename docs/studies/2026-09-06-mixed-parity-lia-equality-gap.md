@@ -161,6 +161,23 @@ fuzzer sweeps 57/58 (stressed) and 56/58 (medium) decided, 0 wrong.
    (the theory lacks that signal — it would need solver-side plumbing
    of an "atoms-fully-decided" flag), or lifting the mod-2 signature
    of the equality system into a parity lemma for the SAT core.
+
+   **Attempt #2 (2026-09-06, landed as infrastructure, negative on the
+   target class):** lineage-tracked Diophantine cores (the failing
+   pivot-prefix is itself an infeasible subsystem — column ops preserve
+   rows) + eager Infeasible firing before the B&B burn. Cores are a
+   real win where infeasibility is local (the classic `y = 2x ∧ y =
+   2z + 1` now conflicts on its 2 equations), and no instance
+   regressed (suite, parity, fuzzer sweeps all clean). But the
+   mixed-UNSAT class still times out: the parity-failure core spans
+   the *entire* Int view (~60 literals — every vertex equation, link,
+   and fix), and a clause that wide teaches CDCL nothing. Conclusion
+   after two attempts: no core-size or firing-order variant closes
+   this; the constraint genuinely needs to reach the SAT core as an
+   **xor lemma** (`Σ b_e ≡ c (mod 2)` synthesized from the equality
+   system's mod-2 signature through the link structure, handed to
+   `XorDetector`), which is lemma-export infrastructure plus literal
+   synthesis — a dedicated feature, the last rung.
 2. **`parity-mixedboundary` (rung 2) — theory side complete, same
    search gap (measured 2026-09-06).**  With every cross-edge Boolean
    fixed at level 0, the div/mod-linked instance is refuted instantly
