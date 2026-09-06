@@ -395,6 +395,19 @@ pub(crate) struct TheoryManager<'a> {
     /// subset of the true Farkas proof, so bound propagation is gated to this
     /// family.
     is_dl_family: bool,
+    /// A large-`distinct` injective-map encoding is live (borrowed from the
+    /// `Solver`).  Gates the co-located care-split proposals in
+    /// [`Self::nelson_oppen_combine`]: without an injective encoding in the
+    /// clause set, co-located-but-unmerged UF arguments are none of this
+    /// round's business, and proposing splits for them would perturb input
+    /// families whose search the tentative-arrangement rounds were gated
+    /// away from for cause (see `arrange_model_equal_pairs`'s DL-family
+    /// gate and the wisas note there).
+    has_injective_distinct: bool,
+    /// Pairs already proposed as co-located care splits by this manager
+    /// (dedup across the final checks of one search; cross-round dedup is
+    /// `Solver::care_split_pairs`).
+    colocated_split_proposed: FxHashSet<(TermId, TermId)>,
     /// Pairs whose tentative arrangement merge was refuted during the last
     /// [`Self::model_based_combination`] round (`C ⊢ x ≠ y` for then-true
     /// facts C).  Drained by `Solver::refine_arrangement_splits`, which
@@ -606,6 +619,7 @@ impl<'a> TheoryManager<'a> {
         logic: Option<&str>,
         pure_dl: bool,
         sparse_dl: bool,
+        has_injective_distinct: bool,
     ) -> Self {
         #[cfg(feature = "std")]
         let deadline = if timeout_ms > 0 {
@@ -616,6 +630,8 @@ impl<'a> TheoryManager<'a> {
         #[cfg(not(feature = "std"))]
         let _ = timeout_ms;
         let mut this = Self {
+            has_injective_distinct,
+            colocated_split_proposed: FxHashSet::default(),
             manager,
             euf,
             arith,
@@ -1825,6 +1841,66 @@ impl<'a> TheoryManager<'a> {
                         let (a, b) = (terms[i], terms[j]);
                         candidates.insert(if a < b { (a, b) } else { (b, a) });
                         added_pairs += 1;
+                    }
+                }
+            }
+
+            // ===== co-located care splits for the injective-map encoding =====
+            //
+            // The candidate loop below merges a model-equal pair only when
+            // arithmetic *entails* the equality (two simplex probes).  A pair
+            // the tableau merely co-locates – both constrained into the same
+            // value without the equality being forced – is left unmerged, and
+            // for a large `distinct`'s arguments that is a soundness exposure:
+            // the encoding's `f(t_i) = m_i` atoms plus the pairwise-distinct
+            // `m_i` mean EUF holds the arguments apart, so a *final* model
+            // printing them equal violates the asserted `distinct` while
+            // nothing refutes it during the search (the certificate gate
+            // deliberately evaluates `Distinct` as undetermined).
+            //
+            // Z3 closes this in `theory_arith`'s final check by forcing the
+            // simplex model apart; the channel nixie already has for exactly
+            // this shape is the care split: internalize `(= x y)` so CDCL
+            // commits the arrangement – true merges (and congruence either
+            // fires usefully or the diseq side refutes it), false runs the
+            // trichotomy split that separates the tableau.
+            //
+            // All pairs of a co-located group are proposed (capped): unlike
+            // an *entailed-merge* group, separating each member from one
+            // witness does NOT distinctify the rest – the tableau is free to
+            // re-co-locate `x2` with `x3` while both sit apart from `x1`,
+            // and the printed model stays dishonest.  The atoms are created
+            // lazily, only for pairs the tableau actually co-locates, so a
+            // search that keeps its arguments apart pays nothing.
+            //
+            // Gated on `has_injective_distinct` so no other input family's
+            // search changes: without an injective encoding, co-located
+            // unmerged arguments are none of this round's business (the
+            // tentative-arrangement round is DL-gated for exactly that
+            // reason – see the wisas note in `arrange_model_equal_pairs`).
+            if self.has_injective_distinct {
+                const MAX_COLOCATED_SPLIT_PROPOSALS: usize = 256;
+                let mut proposed = 0usize;
+                'groups: for terms in by_val.values() {
+                    if terms.len() < 2 {
+                        continue;
+                    }
+                    for i in 0..terms.len() {
+                        for j in (i + 1)..terms.len() {
+                            if proposed >= MAX_COLOCATED_SPLIT_PROPOSALS {
+                                break 'groups;
+                            }
+                            let (a, b) = (terms[i], terms[j]);
+                            let (na, nb) = (self.euf.intern(a), self.euf.intern(b));
+                            if self.euf.are_equal(na, nb) {
+                                continue;
+                            }
+                            let key = if a < b { (a, b) } else { (b, a) };
+                            if self.colocated_split_proposed.insert(key) {
+                                self.arrangement_splits.push((a, b));
+                                proposed += 1;
+                            }
+                        }
                     }
                 }
             }

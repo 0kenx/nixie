@@ -2878,7 +2878,20 @@ impl Solver {
                     return result;
                 }
 
-                // (4) Large arity over an EUF-owned sort: injective map.
+                // (4) Large arity over a sort EUF owns: injective map.
+                //
+                // Int/Real are deliberately NOT here yet: the encoding is
+                // *sound* over them (the care graph refutes pinned
+                // collisions; dishonest candidate models are caught), but the
+                // satisfiable free-variable case does not converge – closing
+                // it needs the arithmetic model to *separate* arguments the
+                // e-graph holds apart (Z3's `theory_arith` final-check
+                // repair), which nixie's tableau does not do; the care-split
+                // channel that approximates it drowns in lazy `(= x y)`
+                // atoms and degrades to `Unknown` through the model-blocking
+                // gate.  Measured in
+                // `docs/studies/2026-09-distinct-theory-owned-sorts.md`,
+                // which also records what the enabling change is.
                 // Falls back to pairwise if the fresh witnesses could not be
                 // minted unambiguously (name collision with a user symbol).
                 if args.len() > Self::DISTINCT_PAIRWISE_MAX_ARGS
@@ -3430,6 +3443,11 @@ impl Solver {
                     false,
                     "fresh distinct-witness name collided with a user symbol"
                 );
+                // `add_arith_diseq_split` skipped this distinct on the
+                // assumption the injective map owns it; the pairwise
+                // fallback must carry the trichotomies itself or the
+                // numeric disequality atoms lose their case splits.
+                self.emit_distinct_pairwise_trichotomies(args, manager);
                 return false;
             }
             self.euf
@@ -3447,9 +3465,20 @@ impl Solver {
             let f_app = manager.mk_apply(&f_name, [t], u_sort);
 
             // A: g(f(t_i)) = t_i, as a unit.
+            //
+            // The numeric-eq trichotomy (`add_arith_eq_trichotomy`) is
+            // suppressed for this atom: its equality is a level-0 unit, so
+            // the trichotomy clause is forever satisfied and its two `lt`/
+            // `gt` atoms are pure decision fodder – measured as the thrash
+            // driver on satisfiable instances (each free comparator-ish
+            // atom conflicts only at final_check, one arrangement per full
+            // ~n·30-decision re-descent; 4.3M decisions at n = 40).
             let g_app = manager.mk_apply(&g_name, [f_app], s_sort);
             let eq_a = manager.mk_eq(g_app, t);
+            let saved_suppress = self.suppress_numeric_eq_trichotomy;
+            self.suppress_numeric_eq_trichotomy = true;
             let lit_a = self.encode_depth(eq_a, manager, depth + 1);
+            self.suppress_numeric_eq_trichotomy = saved_suppress;
             self.sat.add_clause([lit_a]);
 
             // B: result → f(t_i) = m_i.
@@ -3471,7 +3500,44 @@ impl Solver {
         // D: ¬result → at_least_two(L_1..L_n).
         let at_least_two = self.encode_at_least_two(&l_lits, manager, id);
         self.sat.add_clause([result, at_least_two]);
+
+        // E: result → ¬at_least_two(L_1..L_n).
+        //
+        // Valid: with `result` true, every `F_i` holds, so two true `L`s
+        // would give `m_i = f(t_i) = a = f(t_j) = m_j` across distinct
+        // distinguished values – impossible.  Semantically E is already
+        // implied (the e-graph value marks refute the merge), but *as a
+        // clause* it moves that refutation from a final-check theory
+        // conflict – one arrangement per full-assignment re-descent, the
+        // measured thrash driver (4.3M decisions at n = 40) – into ordinary
+        // unit propagation through the counter, where the descent never
+        // even reaches a bad full assignment.
+        self.sat
+            .add_clause([result.negate(), at_least_two.negate()]);
+
+        // Register the encoding for the two Int/Real safety mechanisms that
+        // live outside the encoder: the care-graph co-location proposals
+        // (theory layer) and the post-model honesty gate (verdict layer).
+        // Uninterpreted sorts need neither – the e-graph alone owns equality
+        // there – but recording the spec unconditionally keeps the gate
+        // cheap and uniform.
+        self.has_injective_distinct = true;
+        self.injective_distinct_specs.push(args.to_vec());
+        self.trail.push(TrailOp::DistinctSpecAdded);
         true
+    }
+
+    /// The per-pair trichotomy splits `add_arith_diseq_split` would have
+    /// emitted for a pairwise-encoded numeric `distinct` – used by the
+    /// injective encoder's bail-to-pairwise path so that the
+    /// (astronomically unlikely) fresh-name-collision fallback is exactly as
+    /// strong as the pre-pass path it replaces.
+    fn emit_distinct_pairwise_trichotomies(&mut self, args: &[TermId], manager: &mut TermManager) {
+        for i in 0..args.len() {
+            for j in (i + 1)..args.len() {
+                self.add_arith_trichotomy_clause(args[i], args[j], manager);
+            }
+        }
     }
 
     /// Full Tseitin encoding of *at least two of `lits` are true*, returning
@@ -3693,11 +3759,18 @@ impl Solver {
                 TermKind::Distinct(args) => {
                     // For *numeric* arguments the theory layer only learns about
                     // each pair through the strict ordering atoms introduced
-                    // here (uninterpreted/other sorts no-op below).  Numeric
-                    // `distinct` stays pairwise in `encode` regardless of arity,
-                    // so this enumeration matches the encoding; the large-
-                    // arity injective map is only ever taken for EUF-owned
-                    // sorts, which never reach `add_arith_trichotomy_clause`.
+                    // here (uninterpreted/other sorts no-op below).  This
+                    // enumeration must mirror the encoding the `Distinct` arm
+                    // actually takes: pairwise (n ≤ 32, or any arity over a
+                    // sort neither EUF-owned nor arithmetic) creates one
+                    // disequality atom per pair, each needing this split.
+                    // The large-arity *uninterpreted* case is the injective-map
+                    // encoding, which never reaches this helper (its
+                    // arguments are not numeric); large numeric distincts stay
+                    // pairwise and keep these splits – see
+                    // `docs/studies/2026-09-distinct-theory-owned-sorts.md`
+                    // for why enabling the injective map there requires the
+                    // arithmetic-side separation first.
                     let args_clone: Vec<TermId> = args.iter().copied().collect();
                     for i in 0..args_clone.len() {
                         for j in (i + 1)..args_clone.len() {
@@ -3751,6 +3824,11 @@ impl Solver {
     /// [`Solver::add_arith_diseq_split`]: instantiation results never pass the
     /// assert-time depth gate, and `()` has no honest cap channel.
     pub(super) fn add_arith_eq_trichotomy(&mut self, term: TermId, manager: &mut TermManager) {
+        // Encoder-internal tautological units (the injective map's A-family)
+        // skip the trichotomy – see `encode_distinct_injective`.
+        if self.suppress_numeric_eq_trichotomy {
+            return;
+        }
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = vec![term];
 

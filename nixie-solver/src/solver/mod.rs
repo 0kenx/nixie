@@ -125,6 +125,24 @@ pub struct Solver {
     /// (the fresh names derive from this counter, so each encoding pass gets
     /// its own).
     pub(super) next_distinct_id: u64,
+    /// A large-`distinct` injective-map encoding is live in the clause set.
+    /// Enables the theory layer's co-located care-split proposals (see
+    /// `TheoryManager::nelson_oppen_combine`) – gated so no other input
+    /// family's search trajectory changes.
+    pub(super) has_injective_distinct: bool,
+    /// Argument lists of every successful injective-map `distinct` encoding,
+    /// for the post-model honesty gate
+    /// [`Solver::verify_injective_distinct_models`]: a candidate `Sat` model
+    /// must give the Int/Real-sorted arguments pairwise-distinct values, or
+    /// the verdict is downgraded to `Unknown` rather than risk a false `Sat`
+    /// (the certificate gate cannot do this – it deliberately treats
+    /// `Distinct` as undetermined).
+    pub(super) injective_distinct_specs: Vec<Vec<TermId>>,
+    /// Suppress the numeric-eq trichotomy for equality atoms being encoded
+    /// right now (set only around the injective map's A-family units, whose
+    /// equalities are level-0 true and whose trichotomy `lt`/`gt` atoms would
+    /// be unconstrained decision fodder).
+    pub(super) suppress_numeric_eq_trichotomy: bool,
     /// Term to SAT variable mapping
     pub(super) term_to_var: FxHashMap<TermId, Var>,
     /// SAT variable to term mapping
@@ -673,6 +691,9 @@ impl Solver {
             has_quantifiers: false,
             next_skolem_id: 0,
             next_distinct_id: 0,
+            has_injective_distinct: false,
+            injective_distinct_specs: Vec::new(),
+            suppress_numeric_eq_trichotomy: false,
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
             var_to_constraint: FxHashMap::default(),
@@ -1685,6 +1706,7 @@ impl Solver {
             self.logic.as_deref(),
             pure_dl,
             sparse_dl,
+            self.has_injective_distinct,
         );
 
         // MBQI loop for quantified formulas
@@ -1875,6 +1897,7 @@ impl Solver {
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
+                                self.has_injective_distinct,
                             );
                             continue;
                         }
@@ -1919,6 +1942,7 @@ impl Solver {
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
+                                self.has_injective_distinct,
                             );
                             continue;
                         }
@@ -2005,6 +2029,7 @@ impl Solver {
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
+                                self.has_injective_distinct,
                             );
                             continue;
                         }
@@ -2079,6 +2104,7 @@ impl Solver {
                                     self.logic.as_deref(),
                                     pure_dl,
                                     sparse_dl,
+                                    self.has_injective_distinct,
                                 );
                                 continue;
                             }
@@ -2135,6 +2161,7 @@ impl Solver {
                                 self.logic.as_deref(),
                                 pure_dl,
                                 sparse_dl,
+                                self.has_injective_distinct,
                             );
                             continue;
                         }
@@ -2466,6 +2493,7 @@ impl Solver {
                         self.logic.as_deref(),
                         pure_dl,
                         sparse_dl,
+                        self.has_injective_distinct,
                     );
                 }
             }
@@ -2979,6 +3007,9 @@ impl Solver {
                         }
                         TrailOp::CareSplitAdded { a, b } => {
                             self.care_split_pairs.remove(&(a, b));
+                        }
+                        TrailOp::DistinctSpecAdded => {
+                            self.injective_distinct_specs.pop();
                         }
                         TrailOp::EncodedTermAdded { term, previous } => {
                             // Take back exactly this one memo write.  `None`

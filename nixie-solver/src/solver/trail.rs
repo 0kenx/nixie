@@ -21,6 +21,13 @@ use super::types::Polarity;
 pub(crate) enum TrailOp {
     /// An assertion was added
     AssertionAdded { index: usize },
+    /// A large-`distinct` injective-map encoding registered its argument
+    /// list (`Solver::injective_distinct_specs`).  Popping the scope removes
+    /// the encoding's clauses, so the spec must go too – a stale spec would
+    /// keep demanding pairwise-distinct model values for terms the popped
+    /// scope no longer constrains and could downgrade a later, legitimate
+    /// `Sat` to `Unknown`.
+    DistinctSpecAdded,
     /// A numeric-equality trichotomy pair was recorded (and its clause
     /// emitted into the *current* SAT scope) by
     /// `ensure_numeric_equality_splits`.  A `pop` removes the clause with the
@@ -266,6 +273,20 @@ impl super::Solver {
             next_skolem_id: _, // INVARIANT: monotone – a popped scope's Skolem
             // names must never be handed out again, so this counter deliberately
             // survives `pop` (re-using an id would alias two distinct witnesses).
+            suppress_numeric_eq_trichotomy: _, // TRANSIENT: save/restored around a single
+            // `encode_depth` call in `encode_distinct_injective`; never observed
+            // set across an assertion boundary.
+            has_injective_distinct: _, // INVARIANT: monotone latch – set once an
+            // injective-map encoding exists; a popped scope's clauses vanish but
+            // keeping the latch on only *over*-enables the (sound, deduplicated)
+            // care-split proposals and the model honesty gate. Never re-cleared.
+            injective_distinct_specs: _, // INVARIANT: grows monotonically with each
+            // encoding; a popped encoding's spec is checked against models it no
+            // longer constrains. A stale spec can only demand pairwise-distinct
+            // values of terms that were once `distinct` arguments: the gate then
+            // compares model values and, at worst, downgrades a `Sat` it cannot
+            // verify to `Unknown` – never the reverse. (Trimming on pop would
+            // need its own trail entry for no soundness gain.)
             next_distinct_id: _, // INVARIANT: monotone – same rationale as
             // `next_skolem_id`: a popped large-`distinct` encoding's fresh sort,
             // functions and e-graph value ids must never be re-attached to a
