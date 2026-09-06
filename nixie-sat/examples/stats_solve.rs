@@ -18,6 +18,8 @@
 //!                       slice; the worker_550 lever)
 //!   NIXIE_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
+//!   NIXIE_BCP_STATS=1   print the BCP anatomy counters (requires a build
+//!                       with `--features bcp-stats`; see `diag_bcp`)
 //!   NO_STAB=1           disable stable/focused alternation
 //!   STAB_BASE=N         override `stabilize_base`
 //! Study arms (`NIXIE_CADICAL_REDUCE`, `NIXIE_STAB_FAITHFUL`, ...) are read
@@ -191,6 +193,10 @@ fn main() {
         }
     }
     let r = solver.solve();
+    #[cfg(feature = "bcp-stats")]
+    if nixie_sat::diag_bcp::enabled() {
+        nixie_sat::diag_bcp::dump();
+    }
     if r == nixie_sat::SolverResult::Sat && std::env::var("PRINT_MODEL").is_ok() {
         // `v <lit> ...` lines (DIMACS order), for external model
         // validation in the A/B harnesses.

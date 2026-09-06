@@ -232,6 +232,7 @@ impl Trail {
         self.assign(lit, Reason::Theory);
     }
 
+    #[inline]
     fn assign(&mut self, lit: Lit, reason: Reason) {
         let var = lit.var();
         let idx = var.index();
@@ -239,12 +240,11 @@ impl Trail {
 
         // Resize if needed. `new_var` normally sizes us up front, so this is
         // only hit by the small standalone tests that assign without `new_var`.
+        // Kept out-of-line and cold: with the grow path split off, the hot
+        // core is small enough to inline into the BCP assignment sites
+        // (2026-09-07; previously a real `call` per BIG-edge propagation).
         if idx >= self.var_info.len() {
-            self.var_info.resize(idx + 1, VarInfo::default());
-            let need = (idx + 1) * 2;
-            if self.values.len() < need {
-                self.values.resize(need, 0);
-            }
+            self.assign_grow(idx);
         }
 
         let value = if lit.is_pos() {
@@ -265,6 +265,19 @@ impl Trail {
         };
 
         self.assignments.push(lit);
+    }
+
+    /// Cold half of [`Self::assign`]: the rare "assigned beyond the sized
+    /// range" path (standalone tests only – `new_var` sizes both arrays up
+    /// front in solver use).
+    #[cold]
+    #[inline(never)]
+    fn assign_grow(&mut self, idx: usize) {
+        self.var_info.resize(idx + 1, VarInfo::default());
+        let need = (idx + 1) * 2;
+        if self.values.len() < need {
+            self.values.resize(need, 0);
+        }
     }
 
     /// Get the next literal to propagate (if any)

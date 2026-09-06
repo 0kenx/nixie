@@ -16,6 +16,12 @@ std = [
 profiling = ["std", "nixie-core/profiling"]
 # Enable verbose debug output in conflict analysis
 analyze-debug = []
+# Compile in the BCP anatomy counters (`NIXIE_BCP_STATS=1` at runtime to
+# print; see `nixie_sat::diag_bcp` and
+# docs/studies/2026-09-07-throughput-campaign.md). Feature-gated because the
+# disabled-but-present per-event branches measured +0.6-1.9% whole-run
+# instructions on the anchors (2026-09-07) -- the same shape as `profiling`.
+bcp-stats = []
 
 [dependencies]
 nixie-core = { workspace = true, default-features = false }

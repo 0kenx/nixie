@@ -550,6 +550,66 @@ pub static DIAG_REASON_ORIGINAL: core::sync::atomic::AtomicU64 =
 #[doc(hidden)]
 pub static DIAG_VMTF_SCAN: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
+/// Diagnostics (`NIXIE_BCP_STATS=1` arms all of these): per-event BCP
+/// anatomy counters used by the throughput studies.
+#[doc(hidden)]
+pub mod diag_bcp {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    macro_rules! bcp_diag {
+        ($name:ident, $doc:literal) => {
+            #[doc = $doc]
+            pub static $name: AtomicU64 = AtomicU64::new(0);
+        };
+    }
+    bcp_diag!(LITS, "propagated literals dequeued");
+    bcp_diag!(BIG_LISTS, "literals whose BIG list was non-empty");
+    bcp_diag!(BIG_EDGES, "BIG edges iterated");
+    bcp_diag!(BIG_PROPS, "BIG-edge propagations");
+    bcp_diag!(BIG_CONFLICTS, "BIG-edge conflicts");
+    bcp_diag!(VISITS, "watch-list entries visited");
+    bcp_diag!(DELETED_SKIPS, "visits skipped as deleted clauses");
+    bcp_diag!(MISS_VISITS, "visits that dereferenced the arena");
+    bcp_diag!(SATISFIED_FIRST, "miss visits with first watch true");
+    bcp_diag!(SATISFIED_REPL, "miss visits parked on satisfied repl");
+    bcp_diag!(MOVED, "miss visits that moved the watch");
+    bcp_diag!(UNIT, "miss visits that propagated a unit");
+    bcp_diag!(CONFLICTS, "miss visits that hit a conflict");
+    bcp_diag!(SWAPS, "clause literal swaps (0/1 normalize)");
+    /// Blocker hits are *derived* (`visits - deleted - miss`): every visited
+    /// entry resolves to exactly one of the three, so counting them inline
+    /// (a per-visit branch on the hottest path) buys nothing.
+    pub fn dump() {
+        let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let hits = g(&VISITS) - g(&DELETED_SKIPS) - g(&MISS_VISITS);
+        eprintln!(
+            "bcp: lits={} big_lists={} big_edges={} big_props={} big_conf={} \
+visits={} hits={} del={} miss={} sat1={} satr={} moved={} unit={} conf={} swaps={}",
+            g(&LITS),
+            g(&BIG_LISTS),
+            g(&BIG_EDGES),
+            g(&BIG_PROPS),
+            g(&BIG_CONFLICTS),
+            g(&VISITS),
+            hits,
+            g(&DELETED_SKIPS),
+            g(&MISS_VISITS),
+            g(&SATISFIED_FIRST),
+            g(&SATISFIED_REPL),
+            g(&MOVED),
+            g(&UNIT),
+            g(&CONFLICTS),
+            g(&SWAPS),
+        );
+    }
+    pub fn enabled() -> bool {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_BCP_STATS").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+}
+
 /// Gate for [`DIAG_VMTF_SCAN`] accumulation (`NIXIE_VMTF_SCAN=1`).
 #[doc(hidden)]
 pub fn vmtf_scan_enabled() -> bool {

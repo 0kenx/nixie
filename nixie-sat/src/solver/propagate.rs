@@ -3,6 +3,7 @@
 use super::*;
 #[cfg(feature = "profiling")]
 use crate::profiling::{ProfilingCategory, ScopedTimer};
+use core::sync::atomic::Ordering::Relaxed;
 
 impl Solver {
     /// Unit propagation using two-watched literals
@@ -16,8 +17,15 @@ impl Solver {
         // branch at loop entry instead of an Option pattern match per
         // propagation step (the limit is always None during search).
         let bounded = self.propagate_step_limit.is_some();
+        #[cfg(feature = "bcp-stats")]
+        let bcp_stats = crate::diag_bcp::enabled();
+        #[cfg(not(feature = "bcp-stats"))]
+        let bcp_stats = false;
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
+            if bcp_stats {
+                crate::diag_bcp::LITS.fetch_add(1, Relaxed);
+            }
 
             if bounded && let Some(ref mut limit) = self.propagate_step_limit {
                 if *limit == 0 {
@@ -41,12 +49,19 @@ impl Solver {
             // `lit`), and deletions never run inside propagation.
             //
             // Most propagated literals have no binary implications at all –
-            // the `is_empty` probe keeps the common case down to two
-            // length loads instead of the full loop setup.
-            if !self.binary_graph.get(lit).is_empty() {
-                let code = lit.code() as usize;
-                let (span_start, plen) = self.binary_graph.span_of(code);
-                let xlen = self.binary_graph.extra_len(code);
+            // the combined-length probe (`plen + xlen == 0`) keeps the common
+            // case down to three array loads instead of constructing the
+            // `BigList` view through the (non-inlined, 2026-09-07 perf) `get`
+            // call: `span_of` + `extra_len` are the same two length reads the
+            // loop needs anyway, so the empty case pays no extra work and the
+            // non-empty case saves the call + its post-call register restores.
+            let code = lit.code() as usize;
+            let (span_start, plen) = self.binary_graph.span_of(code);
+            let xlen = self.binary_graph.extra_len(code);
+            if plen + xlen != 0 {
+                if bcp_stats {
+                    crate::diag_bcp::BIG_LISTS.fetch_add(1, Relaxed);
+                }
                 for i in 0..plen + xlen {
                     let (implied_lit, clause_id) = if i < plen {
                         self.binary_graph.edge_at(span_start + i)
@@ -61,6 +76,9 @@ impl Solver {
                     // In incremental mode (pop/forget), edges could go stale; that
                     // path would need edge invalidation, not per-propagation checks.
 
+                    if bcp_stats {
+                        crate::diag_bcp::BIG_EDGES.fetch_add(1, Relaxed);
+                    }
                     let value = self.trail.lit_val(implied_lit);
                     if value < 0 {
                         // Conflict in binary clause. `lit`'s remaining implication
@@ -69,10 +87,16 @@ impl Solver {
                         // `Trail::requeue_last_propagated`; preserves the
                         // propagation-queue contract so a later solve() re-visits
                         // it and rescans those edges).
+                        if bcp_stats {
+                            crate::diag_bcp::BIG_CONFLICTS.fetch_add(1, Relaxed);
+                        }
                         self.note_conflict_prefix();
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
                     } else if value == 0 {
+                        if bcp_stats {
+                            crate::diag_bcp::BIG_PROPS.fetch_add(1, Relaxed);
+                        }
                         // Propagate.
                         //
                         // No lazy hyper-binary resolution here: the reason is
@@ -101,6 +125,13 @@ impl Solver {
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
             let mut watches = core::mem::take(self.watches.get_mut(lit));
+            // Visit counting at list granularity (exact: the two-pointer scan
+            // visits every entry of the pre-scan list; the conflict-abort
+            // path below subtracts the tail it never reached). A per-visit
+            // branch measured +5% whole-run instructions when disabled.
+            if bcp_stats {
+                crate::diag_bcp::VISITS.fetch_add(watches.len() as u64, Relaxed);
+            }
             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
             //
             // NOTE: deliberately counts 8 bytes/watcher even though our
@@ -156,6 +187,9 @@ impl Solver {
                     Some(lits) => lits,
                     None => {
                         // Deleted clause – drop (don't advance write).
+                        if bcp_stats {
+                            crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
+                        }
                         continue;
                     }
                 };
@@ -170,13 +204,22 @@ impl Solver {
                 // miss visit. See
                 // `studies/2026-09-propagate-write-elision.md` (slice a,
                 // reverted).
+                if bcp_stats {
+                    crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
+                }
                 if clause[0] == lit.negate() {
+                    if bcp_stats {
+                        crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
+                    }
                     clause.swap(0, 1);
                 }
 
                 // If first watch is true, clause is satisfied
                 let first = clause[0];
                 if self.trail.lit_val_hot(first) > 0 {
+                    if bcp_stats {
+                        crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
+                    }
                     if write != read {
                         watches[write] = watcher;
                     }
@@ -221,6 +264,9 @@ impl Solver {
                         }
                         watches[write].blocker = l;
                         write += 1;
+                        if bcp_stats {
+                            crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
+                        }
                         found = true;
                         break;
                     }
@@ -229,6 +275,9 @@ impl Solver {
                         // conditional swap above already normalized
                         // `lits[0]` to the non-false watch).
                         clause.swap(1, j);
+                        if bcp_stats {
+                            crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
+                        }
                         self.watches.add(
                             clause[1].negate(),
                             Watcher {
@@ -252,6 +301,14 @@ impl Solver {
                 watches[write].blocker = first;
 
                 if self.trail.lit_val_hot(first) < 0 {
+                    if bcp_stats {
+                        crate::diag_bcp::CONFLICTS.fetch_add(1, Relaxed);
+                        // Entries after the conflicting one were never
+                        // visited (the len-based count above overcounts by
+                        // exactly this tail).
+                        crate::diag_bcp::VISITS
+                            .fetch_sub((watches.len() - read - 1) as u64, Relaxed);
+                    }
                     conflict_found = Some(watcher.clause);
                     write += 1; // keep the conflicting watcher
                     // Copy remaining watchers to preserve them
@@ -262,6 +319,9 @@ impl Solver {
                     break;
                 } else {
                     // Unit propagation
+                    if bcp_stats {
+                        crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
+                    }
                     self.trail.assign_propagation(first, watcher.clause);
                     // Diagnostic (`NIXIE_REASON_STATS`): classify each BCP
                     // propagation by whether its reason clause was learned.
