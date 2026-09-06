@@ -57,7 +57,7 @@ system into explicit assignments. The class “integer feasibility of
 `A·x = b`” is decidable in polynomial time (Smith / Hermite normal
 form); no search is required.
 
-## The principled fix (scoped, not implemented here)
+## The principled fix (IMPLEMENTED 2026-09-06, see below)
 
 An **equality fast path** in the integer arithmetic check:
 
@@ -90,6 +90,65 @@ An **equality fast path** in the integer arithmetic check:
   (`rewrite::ground_fold`): deep constant `bvxor`/`bvadd`/`bvmul`
   chains over a variable collapse to `x ⊕ C` etc. before the
   encode-depth guard — fixes the reconverge-bv stressed finding.
+
+## Implementation record (2026-09-06, later the same day)
+
+`lia/hnf.rs` was rewritten from scratch (the old file is gone):
+
+* **Canonical column-echelon (Hermite) reduction** with the
+  `A · U = H` invariant maintained by construction (unimodular column
+  operations only, applied to `U` in lockstep), Euclidean gcd pair
+  elimination per pivot row, column swaps installing pivots at
+  `0..rank`, positive pivots, and the canonical reduction pass
+  (`0 ≤ H[i][j] < H[i][i]` below the diagonal).  `pivot_rows` is the
+  authoritative echelon ordering for rank-deficient inputs (pure column
+  ops cannot reorder rows).  All arithmetic is checked `i128` under a
+  `2^40` magnitude guard: guards trip → `None`, never a wrapped result.
+  Unit tests pin every invariant (`A·U == H`, `|det U| = 1`, echelon
+  shape, canonical bounds, known values, overflow bail) including the
+  exact inputs the old implementation broke on.
+* **`solve_integer_eq_system`**: complete decision of `A·x = b` over ℤ
+  by forward substitution over pivot rows — pivot variables are uniquely
+  determined by their predecessors, so free variables are genuinely
+  free and setting them to zero is lossless (the row-Gaussian + free=0
+  trap, `2x + y = 1`, is covered by a test and a 400-case randomized
+  brute-force cross-check).
+* **Wiring** (`arithmetic/solver.rs`): the memoized one-sided
+  `int_equalities_infeasible` fallback in `lia_branch_and_bound` became
+  the complete `IntEqVerdict` — `Infeasible` (proof) / `Incumbent`
+  (witness) / `GiveUp`.  An incumbent is never trusted: it is re-pinned
+  through a scoped LP re-solve (`try_eq_incumbent`: push, pin every
+  covered variable, one simplex pass + integrality scan, pop) so rows
+  beyond the equalities get to veto it.  Rejections are memoized per
+  equality-set state (a doomed pinning costs one LP, once).
+
+Measured outcomes (this tree vs the finding):
+
+| instance (medium, seed 0) | before | after |
+|---|---|---|
+| pure-LIA parity, even charge (the study repro) | `unknown` | `sat`, 0.05 s |
+| pure-LIA parity, odd charge | `unsat` | `unsat` |
+| `parity-mixedboolint-sat` | `unknown` | `sat`, 0.3 s |
+| `parity-mixedboolint-unsat` | `unknown` (0.26 s) | honest long search → timeout |
+| `parity-mixedboundary` (div/mod links) | `unknown` | `unknown` (unchanged, separate gap) |
+
+The mixed-UNSAT trajectory change deserves note: the theory now
+(correctly) reports `sat` under partial assignments where it used to
+abort the whole check with `unknown`, so the SMT core keeps searching
+instead of bailing in 0.26 s — honest but slower on that class; the
+refutation needs bounds-aware Diophantine reasoning (below).  Gates on
+this tree: nextest 10542/10542 (corpora present), clippy/fmt/doc
+`-D warnings` clean, z3 parity 170 entries / 0 mismatches; obligation
+fuzzer sweeps 57/58 (stressed) and 56/58 (medium) decided, 0 wrong.
+
+### Remaining gaps (next rungs)
+
+1. **Bounds-aware Diophantine reasoning** — fold active simple bounds
+   (`x = c` pins, `note_fixed_var`, branch bounds) into the equality
+   system as rows so the mixed-UNSAT refutation closes on the lattice
+   instead of by search.
+2. `parity-mixedboundary`: exact div/mod chain links still block both
+   the refutation and the incumbent.
 
 ## Reproducers
 

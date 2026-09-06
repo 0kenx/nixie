@@ -97,19 +97,21 @@ plain and heavily stressed). The findings below are all *honest*
 `unknown`/timeout/capability results, each with a z3 cross-check agreeing
 with the certificate:
 
-1. **Cross-theory parity undecided at ~26 vertices**
-   (`parity-mixedboolint-*`, medium): nixie decides the pure-BV and
-   pure-CNF realizations of the same obstruction but returns `unknown` on
-   the mixed Bool+LIA encoding, in *both* polarities, and on the base
-   `sat` query of the incremental history. **Root-caused** to the LIA
-   side (not the theory combination): a *pure-LIA* parity instance with
-   no Booleans reproduces the `unknown` — branch-and-bound is complete
-   only for bounded systems, and the unbounded vertex-equality system
-   exhausts the node budget. The principled fix is a Smith/HNF
-   integer-equality fast path; see
-   `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md`. The
-   ite-domain lemma (implied `min <= v <= max` side-conditions for
-   constant-branch ites) landed as the sound partial step.
+1. **Cross-theory parity undecided at ~26 vertices** — **largely FIXED**.
+   Root cause was the LIA side: branch-and-bound is complete only for
+   bounded systems, and the unbounded vertex-equality system exhausted
+   the node budget. The fix — a canonical Hermite (column-echelon)
+   reduction with a complete integer-equality solver wired into
+   `lia_branch_and_bound` (memoized `Infeasible`/`Incumbent` verdicts,
+   incumbents re-pinned through a scoped LP) — now decides the pure-LIA
+   parity class (`sat`/`unsat` in ~50 ms) and the mixed **sat** side
+   (`parity-mixedboolint-sat-*`: `sat` in ~0.3 s, was `unknown`). The
+   mixed **unsat** side changed from a fast `unknown` to an honest long
+   search (timeout at 60 s): the theory correctly reports `sat` under
+   partial assignments now, and the refutation needs bounds-aware
+   Diophantine reasoning — see
+   `docs/studies/2026-09-06-mixed-parity-lia-equality-gap.md` for the
+   implementation record and the remaining rungs.
 2. **Exact div/mod links block the refutation entirely**
    (`parity-mixedboundary-unsat-*`, all sizes): when the Bool→Int edge
    link is `i_e = (mod (div (ite b_e C1 C0) D) 2)` (exact on both
