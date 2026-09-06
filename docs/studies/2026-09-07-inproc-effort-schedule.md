@@ -476,3 +476,45 @@ official table's layout — outside this session's core allocation);
 (b) amortize the round rebuild (incremental watch attach instead of
 whole-DB rebuild — the per-conflict-wall 1.14× headroom); (c) kissat's
 chain/hop factor for the 1.23× conflicts residue.
+
+## Follow-up work log (2026-09-07, items 2+3)
+
+### Item 2: round wall amortization — first slice landed, target measured
+
+Per-pass WALL telemetry added to the round trace (`pass_us
+els/bva/pure_sub/vivify/tred`).  Measured split on the big-DB files:
+`pure_sub` owns the round wall (28–78 ms/round on g2-slp/FEC vs vivify
+2–21 ms).  Direct experiments exonerated both the per-round ~90 MB
+occurrence-array allocation (removed by the landed solver-level scratch
+reuse — trajectory-identical by construction and by full-counter
+verification) and the schedule sort (a no-sort arm measured within
+noise).  The remaining cost is the intrinsic O(DB) scan+connect:
+**the amortization target is cadical's persistent occurrence-list
+design** (occurrences maintained across rounds, only changed clauses
+re-scheduled — the pair-stability argument makes it sound: two
+unchanged clauses' subsumption relation cannot change).  Pre-registered
+as its own study (same shape as the eliminator-persistence work).
+
+### Item 3: pair-mode factoring — landed as opt-in, screen negative on the target class
+
+`NIXIE_ANDGATE=2` implements kissat's 2-chain shape faithfully: one hub
+per pivot PAIR across ALL shared tails (`2|Q|` binaries become `|Q|+2`
+clauses — the economical form vs one hub per tail; equisatisfiability
+and model preservation argued in `solver/bva.rs`, 15 k-iteration
+differential fuzz clean with introductions confirmed).  Screen (default
+seed, on the landed default bundle): FEC 602 k→604 k (tie with mode 1),
+frb65 359 k→243 k (single-seed; mode 1's 10-seed median says treat with
+suspicion), 6s167 88 k→73 k, **worker 12 k→29 k — worse on exactly the
+class the port targeted**.  The degree-ranked top-256 pair enumeration
+over-consolidates worker's densest region while covering a sliver of
+its structure.
+
+**Conclusion**: the AND-gate family (both modes) does not reproduce
+kissat's worker-class factor win.  The faithful port needs the full
+machinery — quotient CHAINS with `distinct_paths` watch-graph scoring
+(structure-aware pivot selection, not degree), the eliminate-round
+interleave (factor→BVE→factor iteration across rounds — kissat spends
+284 M factor ticks on worker, i.e. repeated deep factoring), and
+incremental watcher maintenance.  Pre-registered as its own study with
+the semantics extracted above; the landed `NIXIE_ANDGATE` modes are the
+sound scaffolding for it.

@@ -465,3 +465,106 @@ fn mid_bva_reset_and_resolve() {
     let r2 = s.solve();
     assert_eq!(r1, r2, "re-solve after mid-BVA must agree");
 }
+
+/// Pair-mode AND-gate (NIXIE_ANDGATE=2): one hub per pivot pair across all
+/// shared tails.  Soundness must not depend on the mode; the hub generator
+/// produces the pivot-pair pattern densely (several tails shared between
+/// pairs of hub literals).
+#[test]
+fn mid_andgate_pair_mode_soundness() {
+    // Construct config directly: pair mode is env-selected at the pass, so
+    // this test sets it via the same env read (one process per test under
+    // nextest; safe there, and `cargo test` runs it before any parallel
+    // solver test can race the OnceLock in this binary).
+    // Safety: single-threaded test start; nextest runs each test in its
+    // own process, and this is the first statement before any solver runs.
+    unsafe { std::env::set_var("NIXIE_ANDGATE", "2") };
+    let mut seed: u64 = 0xB4A1_202B;
+    let (mut mismatch, mut invalid, mut introduced_seen) = (0usize, 0usize, false);
+    let iters = 15_000;
+    for i in 0..iters {
+        let nvars = 6 + (rand(&mut seed) as usize) % 28;
+        let mut f = Vec::new();
+        // Pivot-pair spines: pick x1,x2 and 2-5 shared tails q.
+        let spines = 1 + (rand(&mut seed) as usize) % 3;
+        for _ in 0..spines {
+            let x1 = 1 + (rand(&mut seed) as usize) % nvars;
+            let x2 = 1 + (rand(&mut seed) as usize) % nvars;
+            if x1 == x2 {
+                continue;
+            }
+            let ntails = 2 + (rand(&mut seed) as usize) % 4;
+            for _ in 0..ntails {
+                let q = 1 + (rand(&mut seed) as usize) % nvars;
+                let mut mk = |v: usize| -> i32 {
+                    let l = v as i32;
+                    if rand(&mut seed) & 1 == 0 { l } else { -l }
+                };
+                let (a, b, c) = (mk(x1), mk(x2), mk(q));
+                if a != c && a != -c {
+                    f.push(vec![a, c]);
+                }
+                if b != c && b != -c {
+                    f.push(vec![b, c]);
+                }
+            }
+        }
+        let extra = 30 + (rand(&mut seed) as usize) % 120;
+        for _ in 0..extra {
+            let len = 2 + (rand(&mut seed) as usize) % 3;
+            let mut c: Vec<i32> = Vec::new();
+            let mut guard = 0;
+            while c.len() < len && guard < 4 * len {
+                guard += 1;
+                let v = 1 + (rand(&mut seed) as usize) % nvars;
+                let l = if rand(&mut seed) & 1 == 0 {
+                    v as i32
+                } else {
+                    -(v as i32)
+                };
+                if !c.contains(&l) && !c.contains(&-l) {
+                    c.push(l);
+                }
+            }
+            if c.len() >= 2 {
+                f.push(c);
+            }
+        }
+        let cnf = to_cnf(nvars, &f);
+        let (r_off, _, _, _) = solve(SolverConfig::default(), &cnf);
+        let (r_on, m_on, _, bva_n) = solve(gate_cfg(5, false), &cnf);
+        if bva_n > 0 {
+            introduced_seen = true;
+        }
+        let agree = matches!(
+            (r_off, r_on),
+            (SolverResult::Sat, SolverResult::Sat)
+                | (SolverResult::Unsat, SolverResult::Unsat)
+                | (SolverResult::Unknown, _)
+                | (_, SolverResult::Unknown)
+        );
+        if !agree {
+            mismatch += 1;
+            if mismatch <= 3 {
+                eprintln!("PAIR MISMATCH iter={i} nv={nvars}: off={r_off:?} on={r_on:?}");
+            }
+            continue;
+        }
+        if matches!(r_on, SolverResult::Sat) && !model_ok(&m_on, &f) {
+            invalid += 1;
+            if invalid <= 3 {
+                eprintln!("PAIR INVALID MODEL iter={i} nv={nvars}");
+            }
+        }
+    }
+    unsafe { std::env::remove_var("NIXIE_ANDGATE") };
+    println!(
+        "pair iters={iters} mismatches={mismatch} invalid_models={invalid} intros={introduced_seen}"
+    );
+    assert_eq!(mismatch, 0);
+    assert_eq!(invalid, 0);
+    assert!(
+        introduced_seen,
+        "generator never triggered a pair introduction"
+    );
+}

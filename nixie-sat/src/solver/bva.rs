@@ -135,6 +135,138 @@ impl Solver {
     /// [`Solver::remove_clause`] (BIG-edge purge, live-reason re-pointing,
     /// watcher removal, live counters); the caller rebuilds watches/BIG
     /// and re-propagates once after the whole BVA block.
+    /// Mode knob for [`Self::and_gate_factoring_mid`]: `NIXIE_ANDGATE=1`
+    /// (default) = per-tail hubs (one `t` per shared-tail group);
+    /// `NIXIE_ANDGATE=2` = kissat's 2-chain shape: one hub per pivot PAIR
+    /// across ALL its shared tails (dividers `(t∨x_1)`,`(t∨x_2)` + one
+    /// quotient `(¬t∨q)` per shared tail — `2|Q|` clauses become `|Q|+2`).
+    #[cfg(feature = "std")]
+    fn andgate_pair_mode(&self) -> bool {
+        std::env::var("NIXIE_ANDGATE").as_deref() == Ok("2")
+    }
+
+    /// The pair-mode core of [`Self::and_gate_factoring_mid`]: for pivot
+    /// pairs `(x₁, x₂)` whose shared-tail set `Q` (binaries `(x_i ∨ q)` for
+    /// `q ∈ Q`) has `|Q| ≥ 3` (the break-even of `2|Q| → |Q|+2` clauses,
+    /// strictly better for `|Q| > 2`), introduce one hub `t` with dividers
+    /// `(t∨x₁)`, `(t∨x₂)` and quotients `(¬t∨q)` per `q ∈ Q`, deleting all
+    /// `2|Q|` originals via `remove_clause`.  Equisatisfiability:
+    /// `t := true` iff all tails true satisfies the new clauses under any
+    /// original model; `t := false` forces exactly the `x_i` the originals
+    /// forced.  Model-downward preservation: `t` true ⇒ all `q` true;
+    /// `t` false ⇒ both `x_i` true — either way every original
+    /// `(x_i∨q)` is satisfied.  Candidate pairs are enumerated only among
+    /// the highest-degree literals (degree = co-occurrence count), so the
+    /// pass stays linear-ish in the binary count instead of quadratic.
+    fn and_gate_pair_round(&mut self, scan_cap: usize, max_intros: usize) -> usize {
+        // Co-occurrence: for each literal, the OTHER literals of its
+        // binaries (a binary (a∨b) co-lists a↔b once per orientation,
+        // deduplicated per clause by checking id monotonicity below).
+        let mut co: std::collections::HashMap<u32, SmallVec<[u32; 8]>> =
+            std::collections::HashMap::default();
+        // clause id per co-occurrence, for retirement: co[a] entries align
+        // with co_id[a] (the binary that produced the pair).
+        let mut co_id: std::collections::HashMap<u32, SmallVec<[u32; 8]>> =
+            std::collections::HashMap::default();
+        let mut scanned = 0usize;
+        'outer: for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned || c.lits.len() != 2 {
+                continue;
+            }
+            scanned += 1;
+            if scanned > scan_cap {
+                break 'outer;
+            }
+            let (a, b) = (c.lits[0].code(), c.lits[1].code());
+            co.entry(a).or_default().push(b);
+            co_id.entry(a).or_default().push(cid.index() as u32);
+            co.entry(b).or_default().push(a);
+            co_id.entry(b).or_default().push(cid.index() as u32);
+        }
+        // Pair enumeration among top-degree literals (deterministic:
+        // degree desc, then code asc).
+        const TOP: usize = 256;
+        let mut hubs: Vec<(u32, usize)> =
+            co.iter().map(|(l, cs)| (*l, cs.len())).collect::<Vec<_>>();
+        hubs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        hubs.truncate(TOP);
+        let mut introduced = 0usize;
+        'pairs: for i in 0..hubs.len() {
+            for j in (i + 1)..hubs.len() {
+                if introduced >= max_intros {
+                    break 'pairs;
+                }
+                let (x1, x2) = (hubs[i].0, hubs[j].0);
+                // Shared tails with live clause ids for BOTH sides.
+                let (small, large, small_ids, large_ids) = if co[&x1].len() <= co[&x2].len() {
+                    (&co[&x1], &co[&x2], &co_id[&x1], &co_id[&x2])
+                } else {
+                    (&co[&x2], &co[&x1], &co_id[&x2], &co_id[&x1])
+                };
+                // For each tail in `small`, find the matching tail in
+                // `large` (both sorted? no — linear scan per tail over
+                // large; fine at these sizes because TOP caps pairs and
+                // degree bounds the scans).
+                let mut tails: SmallVec<[u32; 8]> = SmallVec::new();
+                let mut ids: SmallVec<[u32; 16]> = SmallVec::new();
+                for (k, &q) in small.iter().enumerate() {
+                    if let Some(pos) = large.iter().position(|&l| l == q) {
+                        tails.push(q);
+                        ids.push(small_ids[k]);
+                        ids.push(large_ids[pos]);
+                    }
+                }
+                if tails.len() < 3 {
+                    continue;
+                }
+                // Re-validate every member live (an earlier introduction
+                // may have retired one) and collect ClauseIds.
+                let mut group: SmallVec<[ClauseId; 16]> = SmallVec::new();
+                let mut live = true;
+                for &idx in &ids {
+                    let cid = ClauseId::new(idx);
+                    match self.clauses.get(cid) {
+                        Some(c) if !c.deleted && !c.learned && c.lits.len() == 2 => {
+                            group.push(cid);
+                        }
+                        _ => {
+                            live = false;
+                            break;
+                        }
+                    }
+                }
+                if !live {
+                    continue;
+                }
+                let l1 = Lit::from_code(x1);
+                let l2 = Lit::from_code(x2);
+                let t = Lit::pos(self.new_var());
+                self.clauses.add_original([t, l1]);
+                self.clauses.add_original([t, l2]);
+                for &q in &tails {
+                    self.clauses.add_original([t.negate(), Lit::from_code(q)]);
+                }
+                let mut touched: SmallVec<[Lit; 32]> = SmallVec::new();
+                touched.extend([t, t.negate(), l1, l2]);
+                for &cid in &group {
+                    if let Some(c) = self.clauses.get(cid) {
+                        touched.extend(c.lits.iter().copied());
+                    }
+                }
+                for &cid in &group {
+                    self.remove_clause(cid);
+                }
+                self.mark_elim_vars(touched.iter().copied());
+                introduced += 1;
+                self.stats.bva_introduced += 1;
+            }
+        }
+        introduced
+    }
+
     pub(super) fn and_gate_factoring_mid(&mut self) -> usize {
         if self.trail.decision_level() != 0
             || self.proof.is_some()
@@ -153,6 +285,9 @@ impl Solver {
         } else {
             (4_000_000, 20_000)
         };
+        if self.andgate_pair_mode() {
+            return self.and_gate_pair_round(scan_cap, max_intros);
+        }
 
         // ---- 1. Tail index over original binaries: literal q -> partners
         // (with clause ids).  Each binary (a ∨ b) feeds both orientations.
