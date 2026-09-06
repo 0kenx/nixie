@@ -413,6 +413,11 @@ pub struct EufSolver {
     /// `intern` consults it only on a `term_to_node` miss, so the steady-state
     /// cost is zero.
     value_consts: FxHashMap<TermId, u32>,
+    /// Monotone source of distinctness ids for distinguished values.
+    /// Survives `reset()` alongside the registry so an id is never reused
+    /// for a different constant across rebuilds (see
+    /// [`Self::declare_value_const`]).
+    next_value_id: u32,
     /// Fingerprint table: maps fingerprint -> list of node indices with that fingerprint.
     /// Used as a fast pre-filter before full signature comparison in congruence checks.
     ///
@@ -550,6 +555,7 @@ impl EufSolver {
             value_summary_trail: Vec::new(),
             value_summary_trail_limits: Vec::new(),
             value_consts: FxHashMap::default(),
+            next_value_id: 0,
             fingerprint_table: FxHashMap::default(),
             context_stack: Vec::new(),
             proof_forest: Vec::new(),
@@ -629,6 +635,15 @@ impl EufSolver {
     /// `nixie-solver/src/solver/encode.rs`.
     pub fn declare_value_const(&mut self, term: TermId, value: u32) {
         self.value_consts.entry(term).or_insert(value);
+    }
+
+    /// Mint a fresh distinctness id (monotone, never reused across rebuilds).
+    pub fn fresh_value_id(&mut self) -> u32 {
+        let id = self.next_value_id;
+        self.next_value_id = id
+            .checked_add(1)
+            .expect("e-graph value-id space exhausted (2^32 constants)");
+        id
     }
 
     /// Intern a function application.
@@ -891,7 +906,27 @@ impl EufSolver {
     pub fn are_proven_disequal(&self, a: u32, b: u32) -> bool {
         let ra = self.uf.find_no_compress(a);
         let rb = self.uf.find_no_compress(b);
-        ra != rb && self.diseq_pair_counts.contains_key(&ordered_pair(ra, rb))
+        ra != rb
+            && (self.diseq_pair_counts.contains_key(&ordered_pair(ra, rb))
+                || self.roots_value_apart(ra, rb))
+    }
+
+    /// Whether two *root* nodes carry different distinguished-value summaries
+    /// – the mark-based form of proven disequality (two different ground
+    /// constants can never merge).  Callers that also need a *reason* should
+    /// treat a `None` from `try_explain_diseq` on a value-apart pair as an
+    /// empty (tautological) justification, not as "not proven".
+    fn roots_value_apart(&self, ra: u32, rb: u32) -> bool {
+        let va = self.class_value.get(ra as usize).copied().flatten();
+        let vb = self.class_value.get(rb as usize).copied().flatten();
+        va.is_some_and(|x| vb.is_some_and(|y| x != y))
+    }
+
+    /// Whether two nodes' classes carry different distinguished-value
+    /// summaries (the tautological ground-constant form of apartness).
+    #[must_use]
+    pub fn classes_value_apart(&self, a: u32, b: u32) -> bool {
+        self.roots_value_apart(self.uf.find_no_compress(a), self.uf.find_no_compress(b))
     }
 
     /// Get the number of E-graph nodes

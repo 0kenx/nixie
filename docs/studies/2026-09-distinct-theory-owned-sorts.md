@@ -267,8 +267,45 @@ timeouts are hard for non-`distinct` reasons (the encoding is not
 their bottleneck).  The synthetic sweep supplies the isolated wins;
 the corpus certifies that nothing real regressed.
 
-Remaining gaps: BitVec, unchanged (see below) – and that is now the
-only row of the original table still open.
+## Postscript 4: ground-constant distinctness via value marks
+
+The e-graph's `declare_value_const` machinery (built for the injective
+map) replaces the last quadratic ground-constant mechanism: the per-pair
+`assert_diseq` edges among distinct Int/BV constants that
+`intern_leaf_deep` / `intern_leaf_for_congruence` maintained – C(k,2)
+edges for k distinct literals.  Findings along the way:
+
+* The **Int** half was *dead code*: `intern_term_deep` had no callers
+  left (an earlier refactor moved constant interning to the
+  `intern_term_for_congruence` family, which never had Int edges).
+  Deleted outright, together with its `interned_int_constants`
+  bookkeeping.
+* The **BV** half was live and is migrated: each canonical constant is
+  declared with a fresh monotone value id *before* interning (the node
+  is born marked; ids survive rebuilds via the symbol-level registry,
+  so two different constants can never share one).  k literals now
+  cost k marks, O(k) total.
+* The old edges also fed `are_proven_disequal` and, through it, the
+  equality-atom watch propagation (`(= x #x01)` forced false once `x`
+  merges into `#x00`'s class).  Marks now feed the same paths: the
+  proven-disequal test accepts differing class-value summaries, the
+  merge-time atom re-test enqueues value-apart atoms, and a value-apart
+  pair whose edge-explanation is absent propagates with an *empty*
+  (tautological) justification – a level-0 fact, exactly what "two
+  different ground constants" is.
+
+Measured (release, k distinct BV constants under UF applications):
+
+| k | edges (old) | marks (new) |
+|---|---|---|
+| 2000 | 4.75 s | 0.37 s |
+| 4000 | 9.26 s | 0.64 s |
+
+Corpus A/B on a 300-file random sample of the QF_BV/QF_ANIA extracts:
+zero verdict mismatches, 3 wins / 1 loss / 296 ties.  Parity 100%.
+
+Remaining gaps: BitVec large-arity `distinct`, unchanged (see below) –
+still the only row of the original table left open.
 
 ## Attack 3: the order encoding over BitVec — correct, measured, no flip
 

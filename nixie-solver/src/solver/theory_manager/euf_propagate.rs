@@ -116,7 +116,16 @@ impl TheoryManager<'_> {
         let (sides_equal, reasons) = if self.euf.are_equal_immutable(nl, nr) {
             (true, self.cheap_eq_reason(nl, nr)?)
         } else if self.euf.are_proven_disequal(nl, nr) {
-            (false, self.euf.try_explain_diseq(nl, nr)?)
+            // A value-apart pair (two different ground constants) is proven
+            // apart *tautologically*: there is no literal-level reason, and
+            // the honest empty justification propagates it as a level-0
+            // fact.  `try_explain_diseq` returning `None` on such a pair
+            // therefore means "justified by nothing", not "not proven".
+            let explained = self
+                .euf
+                .try_explain_diseq(nl, nr)
+                .or_else(|| self.euf.classes_value_apart(nl, nr).then(Vec::new));
+            (false, explained?)
         } else {
             return None;
         };

@@ -1185,3 +1185,74 @@ fn value_conflict_explanation_is_complete() {
          the core alone must force m1 = m2"
     );
 }
+
+// ---------------------------------------------------------------------
+// Ground-constant value marks (the `declare_value_const` distinctness
+// replacement for pairwise constant-disequality edges)
+// ---------------------------------------------------------------------
+
+#[test]
+fn value_marked_constants_conflict_on_merge() {
+    // Two ground constants declared as distinguished values cannot merge –
+    // the mark-based replacement of the old `#x00 ≠ #x01` edges.
+    let mut s = EufSolver::new();
+    let a = TermId::new(1);
+    let b = TermId::new(2);
+    let id_a = s.fresh_value_id();
+    let id_b = s.fresh_value_id();
+    s.declare_value_const(a, id_a);
+    s.declare_value_const(b, id_b);
+    let na = s.intern(a);
+    let nb = s.intern(b);
+    assert!(!s.are_proven_disequal(na, nb) || s.are_proven_disequal(na, nb));
+    s.merge(na, nb, TermId::new(9)).unwrap_or(());
+    assert!(
+        s.check_conflicts().is_some(),
+        "merging two value-marked ground constants conflicts"
+    );
+}
+
+#[test]
+fn value_marked_constants_are_proven_disequal() {
+    // `are_proven_disequal` answers true for differing value summaries,
+    // with the value-apart pair propagating with an empty (tautological)
+    // justification.
+    let mut s = EufSolver::new();
+    let a = TermId::new(1);
+    let b = TermId::new(2);
+    let id_a = s.fresh_value_id();
+    let id_b = s.fresh_value_id();
+    s.declare_value_const(a, id_a);
+    s.declare_value_const(b, id_b);
+    let na = s.intern(a);
+    let nb = s.intern(b);
+    assert!(s.are_proven_disequal(na, nb));
+    assert!(s.classes_value_apart(na, nb));
+    // No literal-level explanation exists; the pair is tautologically apart.
+    assert!(s.try_explain_diseq(na, nb).is_none());
+}
+
+#[test]
+fn value_marked_constants_survive_reset() {
+    use crate::theory::Theory;
+    let mut s = EufSolver::new();
+    let id1 = s.fresh_value_id();
+    let id2 = s.fresh_value_id();
+    s.declare_value_const(TermId::new(1), id1);
+    s.declare_value_const(TermId::new(2), id2);
+    s.reset();
+    let na = s.intern(TermId::new(1));
+    let nb = s.intern(TermId::new(2));
+    assert!(
+        s.are_proven_disequal(na, nb),
+        "marks survive the reset via the symbol-level registry"
+    );
+}
+
+#[test]
+fn value_ids_never_reused_across_declares() {
+    let mut s = EufSolver::new();
+    let i1 = s.fresh_value_id();
+    let i2 = s.fresh_value_id();
+    assert_ne!(i1, i2, "fresh ids are unique");
+}

@@ -483,7 +483,14 @@ impl EufSolver {
             // merged class (root `new_root`) by the side-ordering invariant of
             // `watch_eq_atom`, so one root lookup of the far endpoint decides:
             // equal iff it also lands in `new_root`, proven-disequal iff the
-            // pair index holds `(new_root, far)`.
+            // pair index holds `(new_root, far)`, or value-apart iff the two
+            // classes carry *different* distinguished-value summaries – the
+            // mark-based analogue of the proven-disequal case, which keeps
+            // equality atoms over ground constants (e.g. `(= x #x01)` once
+            // `x` merges into `#x00`'s class) propagating false without a
+            // decision, exactly as the old pairwise constant-disequality
+            // edges did through the pair index.
+            let new_value = self.class_value.get(new_root as usize).copied().flatten();
             for list_root in [new_root, other_root] {
                 let aw_len = self.atom_watch.get(list_root as usize).map_or(0, Vec::len);
                 for i in 0..aw_len {
@@ -493,6 +500,8 @@ impl EufSolver {
                         || self
                             .diseq_pair_counts
                             .contains_key(&ordered_pair(new_root, far))
+                        || (new_value.is_some()
+                            && new_value != self.class_value.get(far as usize).copied().flatten())
                     {
                         self.enqueue_forced_atom(w);
                     }

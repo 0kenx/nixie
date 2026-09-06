@@ -457,7 +457,6 @@ pub(crate) struct TheoryManager<'a> {
     /// disequality edges – bounded by the number of *distinct* integer literal
     /// values in the original formula, not by the total number of term IDs
     /// created across all MBQI iterations (which grows without bound).
-    interned_int_constants: FxHashMap<i64, u32>,
     /// Canonical EUF nodes for distinct bit-vector constant *values*, keyed by
     /// `(value, width)`.  Mirrors `interned_int_constants` but for the BV theory:
     /// EUF has no notion that `#x00 != #x01`, so without explicit disequality
@@ -685,7 +684,6 @@ impl<'a> TheoryManager<'a> {
                 .unwrap_or(false),
             dl_pure: pure_dl,
             sparse_dl: sparse_dl || pure_dl,
-            interned_int_constants: FxHashMap::default(),
             interned_bv_constants: FxHashMap::default(),
             ite_const_axioms: Self::build_ite_const_axioms(
                 var_to_constraint,
@@ -1135,7 +1133,6 @@ impl<'a> TheoryManager<'a> {
         self.arith.reset();
         self.bv.reset();
         self.diff.reset();
-        self.interned_int_constants.clear();
         self.interned_bv_constants.clear();
         self.bool_true_node = None;
         self.bool_false_node = None;
@@ -2854,56 +2851,6 @@ impl<'a> TheoryManager<'a> {
     /// stack.  `euf.term_to_node` remains the cross-call memo, so shared
     /// sub-terms of the hash-consed DAG are interned once.
     #[allow(dead_code)]
-    fn intern_term_deep(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        let mut frames: Vec<InternFrame> = Vec::new();
-        let mut current = term;
-        'open: loop {
-            // Intern `current`, descending into application operands first.
-            let mut value: u32 = loop {
-                if let Some(idx) = self.euf.term_to_node(current) {
-                    break idx;
-                }
-                match Self::intern_operands(current, manager) {
-                    Some((func_id, operands)) => match operands.first().copied() {
-                        Some(first) => {
-                            frames.push(InternFrame {
-                                term: current,
-                                func_id,
-                                operands,
-                                next: 1,
-                                nodes: SmallVec::new(),
-                            });
-                            current = first;
-                        }
-                        None => {
-                            break self.euf.intern_app(
-                                current,
-                                func_id,
-                                SmallVec::<[u32; 4]>::new(),
-                            );
-                        }
-                    },
-                    None => break self.intern_leaf_deep(current, manager),
-                }
-            };
-
-            // Hand the finished operand node to the innermost application.
-            loop {
-                let Some(mut frame) = frames.pop() else {
-                    return value;
-                };
-                frame.nodes.push(value);
-                if let Some(&child) = frame.operands.get(frame.next) {
-                    frame.next += 1;
-                    frames.push(frame);
-                    current = child;
-                    continue 'open;
-                }
-                value = self.euf.intern_app(frame.term, frame.func_id, frame.nodes);
-            }
-        }
-    }
-
     /// The application structure of `term` for EUF interning: `Apply` uses its
     /// function symbol, `Select(array, index)` is a binary application of the
     /// sentinel [`Self::SELECT_FUNC_ID`] so that congruence closure fires when
@@ -2922,61 +2869,6 @@ impl<'a> TheoryManager<'a> {
             )),
             _ => None,
         }
-    }
-
-    /// Intern a non-application term for [`Self::intern_term_deep`]: integer
-    /// constants get a canonical node plus pairwise disequalities, everything
-    /// else a plain opaque node.
-    fn intern_leaf_deep(&mut self, term: TermId, manager: &TermManager) -> u32 {
-        if let Some(t) = manager.get(term) {
-            if let TermKind::IntConst(n) = &t.kind {
-                // Intern the integer constant as an EUF node and maintain
-                // pairwise disequalities between *distinct* integer values.
-                //
-                // EUF has no built-in notion of numeric inequality.  Without
-                // explicit disequality edges, a congruence chain equating a
-                // node merged with `10` and one merged with `20` would not
-                // produce a conflict.  We therefore assert `10 ≠ 20` etc.
-                //
-                // Performance: we track one *canonical* EUF node per unique
-                // integer value.  When the same value appears again (e.g. as a
-                // fresh TermId created during MBQI instantiation) we merge the
-                // new node into the canonical one.  This bounds the number of
-                // entries – and therefore of pairwise disequality edges – to the
-                // number of *distinct* literal values in the formula, preventing
-                // the O(n²) blowup that arises when MBQI creates many fresh
-                // TermIds for the same integer literal across iterations.
-                if let Some(val) = n.to_i64() {
-                    let new_node = self.euf.intern(term);
-                    // Both the merge and the disequalities below carry `term`
-                    // as their reason and `term` names no literal; they are
-                    // true in every model.  Declaring that keeps
-                    // `terms_to_conflict_clause` able to distinguish "omitted
-                    // because tautological" from "justification lost".
-                    self.tautological_reasons.insert(term);
-                    if let Some(&canonical) = self.interned_int_constants.get(&val) {
-                        // This value already has a canonical node.  Merge the
-                        // new term's node into it so that congruence closure
-                        // treats them as equal (they represent the same number).
-                        // Ignore merge errors: the nodes may already be in the
-                        // same class if this term was interned before.
-                        let _ = self.euf.merge(new_node, canonical, term);
-                        return canonical;
-                    }
-                    // First time we see this value: register the canonical node
-                    // and assert disequality against every other distinct value.
-                    let diseq_targets: Vec<u32> =
-                        self.interned_int_constants.values().copied().collect();
-                    for other_node in diseq_targets {
-                        self.euf.assert_diseq(new_node, other_node, term);
-                    }
-                    self.interned_int_constants.insert(val, new_node);
-                    return new_node;
-                }
-                // BigInt too large for i64 -- fall through to plain intern.
-            }
-        }
-        self.euf.intern(term)
     }
 
     /// Intern a term into EUF for congruence closure, using `intern_app` for
@@ -3080,27 +2972,29 @@ impl<'a> TheoryManager<'a> {
                     value.iter_u64_digits().collect::<SmallVec<[u64; 2]>>(),
                     *width,
                 );
+                // Distinctness between different constant values is carried by
+                // the e-graph's distinguished-value marks instead of pairwise
+                // `assert_diseq` edges: k distinct literals cost k marks
+                // (O(k)) rather than C(k,2) edges (O(k^2)), and a merge that
+                // would equate two different constants raises a value
+                // conflict whose explanation is the complete proof-forest
+                // core between the two witness nodes.  The mark is declared
+                // BEFORE `intern` so this node is born marked; re-declaring
+                // on a rebuild keeps the first id (registry is
+                // `entry().or_insert`), and ids come from the e-graph's
+                // monotone counter, so two different constants can never
+                // share one.
+                let fresh_id = self.euf.fresh_value_id();
+                self.euf.declare_value_const(term, fresh_id);
                 let new_node = self.euf.intern(term);
-                // Every edge asserted from here carries `term` as its reason
-                // and `term` names no literal: two ids for the same constant
-                // really are equal and two distinct constants really are
-                // unequal, in every model.  Declare that so a conflict clause
-                // can omit it *knowingly*.
+                // The same-value merge below carries `term` as its reason and
+                // `term` names no literal: two ids for the same constant
+                // really are equal, in every model.  Declare that so a
+                // conflict clause can omit it *knowingly*.
                 self.tautological_reasons.insert(term);
                 if let Some(&canonical) = self.interned_bv_constants.get(&key) {
                     let _ = self.euf.merge(new_node, canonical, term);
                     return canonical;
-                }
-                // First time we see this value: assert disequality against every
-                // other distinct constant of the SAME width (different widths are
-                // different sorts and are never merged), then register it.
-                let diseq_targets: Vec<u32> = self
-                    .interned_bv_constants
-                    .iter()
-                    .filter_map(|(&(_, w), &node)| (w == *width).then_some(node))
-                    .collect();
-                for other_node in diseq_targets {
-                    self.euf.assert_diseq(new_node, other_node, term);
                 }
                 self.interned_bv_constants.insert(key, new_node);
                 return new_node;
@@ -4396,15 +4290,14 @@ impl TheoryCallback for TheoryManager<'_> {
         }
         self.processed_count = *self.level_stack.last().unwrap_or(&0);
 
-        // Evict stale integer-constant canonicals whose EUF nodes were removed
-        // by the preceding pop().  After truncation, any node index >=
-        // euf.node_count() is invalid; keeping such entries would cause an
-        // out-of-bounds access in `intern_term_deep` when `merge` is called
-        // against the stale canonical.  Evicting them forces re-registration
-        // (and fresh disequality assertions) the next time those values appear.
+        // Evict stale bit-vector-constant canonicals whose EUF nodes were
+        // removed by the preceding pop(): after truncation any node index >=
+        // euf.node_count() is invalid, and keeping such an entry would hand a
+        // stale canonical to the next same-value merge.  Evicting forces
+        // re-registration; the constant's *distinctness mark* needs no
+        // eviction – it is keyed by term in the e-graph's symbol-level
+        // registry, which survives pops and rebuilds.
         let live_nodes = self.euf.node_count();
-        self.interned_int_constants
-            .retain(|_val, &mut canonical| (canonical as usize) < live_nodes);
 
         // Evict stale bit-vector-constant canonicals for the same reason.
         self.interned_bv_constants
