@@ -28,6 +28,16 @@
 use super::*;
 use crate::clause::{ClauseId, ClauseTier};
 
+/// Solver-level scratch for `subsume_round` (reused across rounds; see
+/// `Solver::subsume_scratch`).  Plain data — taken/replaced wholesale via
+/// `mem::take` so the pass body keeps disjoint-local borrows.
+#[derive(Default, Clone, Debug)]
+pub(crate) struct SubsumeScratch {
+    pub(super) schedule: Vec<(u32, ClauseId)>,
+    pub(super) occs: Vec<SmallVec<[ClauseId; 4]>>,
+    pub(super) mark: Vec<i8>,
+}
+
 /// Outcome of one subsumption check of candidate `c` against connected `d`.
 enum SubCheck {
     /// Every literal of `d` occurs in `c`: `c` is subsumed by `d`.
@@ -71,11 +81,35 @@ impl Solver {
         };
         let mut subchecks: u64 = 0;
 
+        // Reused scratch (2026-09-07 amortization): the per-round fresh
+        // `vec![SmallVec::new(); 2*num_vars]` + mark vec were a ~90 MB
+        // alloc/free per round on big-DB instances - the dominant round
+        // wall cost (measured 78 ms/round on g2-slp).  Same contents, same
+        // order: trajectory-identical by construction.
+        let mut sched = std::mem::take(&mut self.subsume_scratch.schedule);
+        let mut occs = std::mem::take(&mut self.subsume_scratch.occs);
+        let mut mark = std::mem::take(&mut self.subsume_scratch.mark);
+        sched.clear();
+        let num_lits = 2 * self.num_vars;
+        if occs.len() == num_lits {
+            for e in occs.iter_mut() {
+                e.clear();
+            }
+        } else {
+            occs.clear();
+            occs.resize_with(num_lits, SmallVec::new);
+        }
+        if mark.len() != num_lits {
+            mark.clear();
+            mark.resize(num_lits, 0);
+        }
+        // (A same-length `mark` needs no clearing: the per-candidate unmark
+        // discipline leaves every entry zero at every exit.)
+
         // Snapshot the schedule: live clauses within the size limit and with
         // no level-0-fixed literal, sorted ascending by size so smaller
         // (potential subsumers) are connected first.
         const CLS_LIMIT: usize = 100; // cadical subsumeclslim
-        let mut schedule: Vec<(u32, ClauseId)> = Vec::new();
         let mut has_candidate = false;
         for cid in self.clauses.iter_ids() {
             let Some(c) = self.clauses.get(cid) else {
@@ -97,25 +131,21 @@ impl Solver {
             if c.lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
                 continue;
             }
-            schedule.push((c.lits.len() as u32, cid));
+            sched.push((c.lits.len() as u32, cid));
             has_candidate = true;
         }
         if !has_candidate {
+            self.subsume_scratch.schedule = sched;
+            self.subsume_scratch.occs = occs;
+            self.subsume_scratch.mark = mark;
             return (0, 0);
         }
-        schedule.sort_unstable_by_key(|&(size, _)| size);
-
-        // One-watched occurrence lists over clause ids, by literal code.
-        let num_lits = 2 * self.num_vars;
-        let mut occs: Vec<SmallVec<[ClauseId; 4]>> = vec![SmallVec::new(); num_lits];
-
-        // Signed marks over literal codes: 0 = unmarked, +pos/-neg.
-        let mut mark: Vec<i8> = vec![0; num_lits];
+        sched.sort_unstable_by_key(|&(size, _)| size);
 
         let mut subsumed = 0usize;
         let mut strengthened = 0usize;
 
-        for &(_, cid) in &schedule {
+        for &(_, cid) in &sched {
             if subchecks >= budget || self.trivially_unsat {
                 break;
             }

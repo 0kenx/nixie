@@ -1748,7 +1748,8 @@ impl Solver {
                      orig={}->{} learned={}->{} yield={work_yield} db={} \
                      lbd_ema={:.2}/{:.2} \
                      els={} units={} shr={} sub={} tred={} tfailed={} \
-                     pass_props els={} bva={} pure_sub={} vivify={} tred={} bva_n={}",
+                     pass_props els={} bva={} pure_sub={} vivify={} tred={} bva_n={} \\
+                     pass_us els={} bva={} pure_sub={} vivify={} tred={}",
                     budgets_used.window,
                     budgets_used.vivify_props,
                     budgets_used.vivify_allowed,
@@ -1773,6 +1774,11 @@ impl Solver {
                     self.inproc_diag_props[3],
                     self.inproc_diag_props[4],
                     self.stats.bva_introduced,
+                    self.inproc_diag_wall[0],
+                    self.inproc_diag_wall[1],
+                    self.inproc_diag_wall[2],
+                    self.inproc_diag_wall[3],
+                    self.inproc_diag_wall[4],
                 );
             }
         }
@@ -2882,6 +2888,7 @@ impl Solver {
         // subsumption's.  Propagation is the dominant round cost on the
         // corpus (occurrence scans barely propagate); diagnostic only.
         let els_p0 = t.then_some(self.stats.propagations);
+        let els_w0 = t.then(std::time::Instant::now);
 
         // Equivalent-literal substitution round (cadical interleaves its
         // `decompose`/`sweep`-class ELS inside the inprocessing schedule).
@@ -2920,7 +2927,12 @@ impl Solver {
         if let Some(p) = els_p0 {
             diag_props[0] = self.stats.propagations.saturating_sub(p);
         }
+        let mut diag_wall = [0u64; 5];
+        if let Some(w) = els_w0 {
+            diag_wall[0] = w.elapsed().as_micros() as u64;
+        }
         let bva_p0 = t.then_some(self.stats.propagations);
+        let bva_w0 = t.then(std::time::Instant::now);
         let mut introduced_now = 0usize;
         if self.config.enable_mid_bva {
             let (n, _saved) = self.structured_bva_mid();
@@ -2943,12 +2955,16 @@ impl Solver {
         if let Some(p) = bva_p0 {
             diag_props[1] = self.stats.propagations.saturating_sub(p);
         }
+        if let Some(w) = bva_w0 {
+            diag_wall[1] = w.elapsed().as_micros() as u64;
+        }
 
         // Create preprocessor with the CURRENT number of variables —
         // after BVA, which may have introduced new ones.
         let mut preprocessor = Preprocessor::new(self.num_vars);
         // Per-pass cost attribution: pure-literal + subsume pass marker.
         let puresub_p0 = t.then_some(self.stats.propagations);
+        let puresub_w0 = t.then(std::time::Instant::now);
         // Snapshot every live clause's literals before the elimination passes
         // below run. `Preprocessor::pure_literal_elimination` and
         // `subsumption_elimination` retire clauses by setting `Clause::deleted`
@@ -3081,7 +3097,11 @@ impl Solver {
         if let Some(p) = puresub_p0 {
             diag_props[2] = self.stats.propagations.saturating_sub(p);
         }
+        if let Some(w) = puresub_w0 {
+            diag_wall[2] = w.elapsed().as_micros() as u64;
+        }
         let viv_p0 = t.then_some(self.stats.propagations);
+        let viv_w0 = t.then(std::time::Instant::now);
 
         // Vivification round (cadical schedules `vivify` inside its
         // inprocessing rounds): shortens both learned and – when no proof is
@@ -3093,7 +3113,11 @@ impl Solver {
         if let Some(p) = viv_p0 {
             diag_props[3] = self.stats.propagations.saturating_sub(p);
         }
+        if let Some(w) = viv_w0 {
+            diag_wall[3] = w.elapsed().as_micros() as u64;
+        }
         let tred_p0 = t.then_some(self.stats.propagations);
+        let tred_w0 = t.then(std::time::Instant::now);
 
         // Transitive reduction of the binary implication graph (cadical
         // schedules `transred` inside `inprobe`; the documented amortizer
@@ -3103,6 +3127,9 @@ impl Solver {
         let (_tred, _tfailed) = self.transred_round();
         if let Some(p) = tred_p0 {
             diag_props[4] = self.stats.propagations.saturating_sub(p);
+        }
+        if let Some(w) = tred_w0 {
+            diag_wall[4] = w.elapsed().as_micros() as u64;
         }
 
         // Stash the per-pass deltas for the round-site trace (telemetry).
@@ -3116,6 +3143,7 @@ impl Solver {
                 _tfailed as u64,
             ];
             self.inproc_diag_props = diag_props;
+            self.inproc_diag_wall = diag_wall;
         }
 
         // Re-arm unit propagation over the whole surviving trail.

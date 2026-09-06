@@ -12,6 +12,7 @@ pub mod heuristic;
 mod incremental;
 mod learn;
 use learn::InprocBudgets;
+use subsume::SubsumeScratch;
 mod lucky;
 mod probe;
 mod propagate;
@@ -1376,6 +1377,16 @@ pub struct Solver {
     /// (`[els_props, purelit_subsume_props, vivify_props, transred_props]`),
     /// written only when `NIXIE_INPROC_TRACE` is on.  Diagnostic only.
     pub(super) inproc_diag_props: [u64; 5],
+    /// Per-pass WALL attribution of the most recent `inprocess()` round
+    /// (microseconds; `[els, bva, pure+sub, vivify, transred]`),
+    /// trace-gated.  Diagnostic only.
+    pub(super) inproc_diag_wall: [u64; 5],
+
+    /// Reused scratch for `subsume_round` (2026-09-07 amortization: the
+    /// per-round `vec![SmallVec::new(); 2·num_vars]` occurrence array was a
+    /// ~90 MB alloc/free per round on big-DB instances — the dominant round
+    /// wall cost).  Contents are cleared per round; capacity persists.
+    pub(super) subsume_scratch: SubsumeScratch,
 
     /// Completed mid-search `inprocess()` rounds (the effort-schedule
     /// study's round counter; drives the cadical `log10(rounds + 9)` interval
@@ -1851,6 +1862,8 @@ impl Solver {
             conflicts_since_local_restart: 0,
             conflicts_since_inprocessing: 0,
             inproc_diag_props: [0; 5],
+            inproc_diag_wall: [0; 5],
+            subsume_scratch: SubsumeScratch::default(),
             inproc_rounds_done: 0,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
@@ -4286,6 +4299,7 @@ impl Solver {
         self.conflicts_since_local_restart = 0;
         self.conflicts_since_inprocessing = 0;
         self.inproc_diag_props = [0; 5];
+        self.inproc_diag_wall = [0; 5];
         self.inproc_rounds_done = 0;
         self.inproc_search_props_mark = 0;
         self.inproc_window_ring = [0, 0];
