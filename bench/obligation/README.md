@@ -156,8 +156,18 @@ with the certificate:
    the exact-rational pivot products that overflowed `i64` (→ honest
    `Unknown` via `resource_limit`) never form.  Both gap polarities at
    `large` now decide in ~0.01 s (z3 agreement); the `int_equalities`
-   Hermite view gets the same minimal magnitudes.  Remaining open: the
-   `memory`-large timeouts.
+   Hermite view gets the same minimal magnitudes.
+   **Update (2026-09-07, later): the `memory` half is root-caused** to
+   the integer-arrangement search (50 pairwise-distinct symbolic `Int`
+   indices that the LP co-locates; EUF congruence refutes each candidate
+   one pair at a time; 1.98 M decisions / 5.9 k conflicts on
+   `memory-alias-sat-s0-large`, 20 s, where the identical instance with
+   concrete index constants takes 0.03 s and z3 25 ms).  Two eager
+   array-side attempts measured negative and are documented with
+   do-not-retry notes in
+   `docs/studies/2026-09-07-memory-alias-arrangement-gap.md`; the scoped
+   fix is arithmetic-side injective candidate repair, a heuristic change
+   under the full benchmarking discipline.
 
 ## What this is not
 
