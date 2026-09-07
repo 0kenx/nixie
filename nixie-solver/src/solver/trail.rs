@@ -180,6 +180,13 @@ impl super::Solver {
             // `pop` rebases (embedded reset) regardless.
             all_assertions_bv_fragment: _, // NOT trailed: `push` clears it;
             // a stale `false` only keeps the lazy route.
+            bv_order_specs: _, // NOT trailed: specs only record at base scope
+            // (the eligibility gate requires an empty context stack), so no
+            // scope ever retracts one.
+            bv_order_built: _, // NOT trailed: base-scope circuits, permanent
+            // like the specs that produced them.
+            bv_order_guarded: _, // NOT trailed: monotone dedup set; a stale
+            // entry only skips a duplicate (valid) clause.
             diff: _,            // SCOPED: reset by `rebase_theory_state`
             derived_reasons: _, // SCOPED: pruned with the theory scopes it explains, cleared by `rebase_theory_state` with the three solvers
             #[cfg(feature = "std")]

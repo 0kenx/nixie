@@ -149,4 +149,31 @@ impl Solver {
             self.lrb.unassign(var);
         }
     }
+
+    /// Assign `lits` at decision level 0 and propagate to a fixpoint,
+    /// without running a search.
+    ///
+    /// This is the external bit-blaster's evaluation primitive: it derives
+    /// everything the current clause database entails about the assignment
+    /// (every gate variable of a bit-blasted circuit settles), which the
+    /// caller can read through [`Self::trail`] before rewinding with
+    /// [`Self::restore_to_trail_size`] to the size captured before the
+    /// call.  Returns `false` when propagation hits a conflict – the trail
+    /// is then left at the conflict point, and the same rewind restores a
+    /// clean state (the caller normally treats a conflict here as "the
+    /// proposed guiding assignment is not a model; skip the guidance").
+    ///
+    /// Literals already assigned on the trail are skipped when they agree
+    /// with the request; a disagreeing already-assigned literal returns
+    /// `false` without assigning anything.
+    pub fn assign_and_propagate_level0(&mut self, lits: &[Lit]) -> bool {
+        for &lit in lits {
+            match self.trail.lit_value(lit) {
+                LBool::True => {}
+                LBool::False => return false,
+                LBool::Undef => self.trail.assign_decision(lit),
+            }
+        }
+        self.propagate().is_none()
+    }
 }

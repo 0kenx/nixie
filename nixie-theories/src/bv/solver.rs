@@ -12,6 +12,7 @@ use smallvec::SmallVec;
 
 /// Division / remainder encodings (`bvudiv`, `bvurem`, `bvsdiv`, `bvsrem`).
 mod division;
+mod order;
 /// Barrel-shifter encodings (`bvshl`, `bvlshr`, `bvashr`).
 mod shifts;
 
@@ -670,6 +671,14 @@ impl BvSolver {
     #[must_use]
     pub fn get_bv(&self, term: TermId) -> Option<&BvVar> {
         self.term_to_bv.get(&term)
+    }
+
+    /// The bit variables of `term`'s bit-vector (LSB first), for callers
+    /// that build further circuits over an existing blasting (the
+    /// order-encoding network's input wires).
+    #[must_use]
+    pub fn bv_bits(&self, term: TermId) -> Option<smallvec::SmallVec<[Var; 32]>> {
+        self.term_to_bv.get(&term).map(|v| v.bits.clone())
     }
 
     /// Get the current configuration

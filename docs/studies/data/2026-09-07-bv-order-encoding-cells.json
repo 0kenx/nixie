@@ -1,0 +1,56 @@
+{
+ "timeouts": null,
+ "note": "None = timeout at the cell budget (120s stage1, 240s flag-off)",
+ "cells": {
+  "sat_100_8": {
+   "stage1_pairwise_s": 0.24,
+   "order_s": 0.07,
+   "pairwise_flagoff_s": 0.17
+  },
+  "sat_300_16": {
+   "stage1_pairwise_s": 3.2,
+   "order_s": 0.93,
+   "pairwise_flagoff_s": 3.5
+  },
+  "sat_500_16": {
+   "stage1_pairwise_s": 12.4,
+   "order_s": 1.0,
+   "pairwise_flagoff_s": 11.7
+  },
+  "sat_600_32": {
+   "stage1_pairwise_s": null,
+   "order_s": 11.0,
+   "pairwise_flagoff_s": null
+  },
+  "sat_600_10": {
+   "stage1_pairwise_s": 48.5,
+   "order_s": 1.7,
+   "pairwise_flagoff_s": 48.4
+  },
+  "sat_1000_11": {
+   "stage1_pairwise_s": null,
+   "order_s": 2.1,
+   "pairwise_flagoff_s": null
+  },
+  "sat_2000_16": {
+   "stage1_pairwise_s": null,
+   "order_s": 17.2,
+   "pairwise_flagoff_s": null
+  },
+  "unsat_100_8": {
+   "stage1_pairwise_s": 0.052,
+   "order_s": 0.053,
+   "pairwise_flagoff_s": 0.044
+  },
+  "unsat_300_16": {
+   "stage1_pairwise_s": 0.8,
+   "order_s": 0.56,
+   "pairwise_flagoff_s": 0.78
+  },
+  "unsat_2000_16": {
+   "stage1_pairwise_s": null,
+   "order_s": 9.4,
+   "pairwise_flagoff_s": null
+  }
+ }
+}

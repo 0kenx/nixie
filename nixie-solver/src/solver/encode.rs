@@ -199,7 +199,7 @@ impl Solver {
     /// A write that changes nothing is not journalled – re-encoding a term at
     /// the coverage it already has emits duplicate clauses but no new memo
     /// state, and a trail entry for it would only make `pop` do redundant work.
-    fn memoize_encoding(&mut self, term: TermId, lit: Lit, polarity: Polarity) {
+    pub(super) fn memoize_encoding(&mut self, term: TermId, lit: Lit, polarity: Polarity) {
         let previous = self.encoded_terms.insert(term, (lit, polarity));
         if previous == Some((lit, polarity)) {
             return;
@@ -883,6 +883,13 @@ impl Solver {
         // Hand MBQI only the quantifiers this assertion actually entails.
         self.register_asserted_quantifiers(term_to_encode, manager);
 
+        // Track the eager dispatch's fragment candidacy *before* encoding:
+        // the order-distinct handoff and the unified window both read the
+        // flag during `emit_assertion_clauses` (the per-assertion walk is
+        // monotone in the flag, so an early check is exact).
+        if !super::dispatch_pure_bv::assertion_in_bv_fragment(term_to_encode, manager) {
+            self.all_assertions_bv_fragment = false;
+        }
         // Encode the assertion immediately – *structurally*: the top-level
         // Boolean skeleton of the assertion (conjunctions, negations,
         // disjunctions under a negation) is flattened into clauses directly,
@@ -1829,6 +1836,24 @@ impl Solver {
                 self.sat.add_clause([if pol { lit } else { lit.negate() }]);
                 continue;
             };
+            // Order-encoding handoff (Option A stage 2, `bv_unified`): a
+            // `distinct` over same-width bit-vectors, asserted as a *fact*
+            // at arity above the pairwise threshold, defers to the bitonic
+            // sorting-network encoding instead of minting C(n,2) equality
+            // atoms here.  Only fact positions are eligible: the network
+            // defines the term via free pad wires, which is sound exactly
+            // where the assertion pins the term true (see `order.rs`'s
+            // module docs).  The unit below is that pin; the spec is built
+            // by the unified link pass or falls back to pairwise at
+            // `check` entry.
+            if pol
+                && matches!(td.kind, TermKind::Distinct(_))
+                && self.order_distinct_eligible(&td.kind, manager)
+            {
+                let lit = self.encode_order_distinct_fact(t, &td.kind, manager);
+                self.sat.add_clause([lit]);
+                continue;
+            }
             match td.kind {
                 TermKind::True if pol => continue,
                 TermKind::False if pol => note_false(self),
@@ -3312,7 +3337,7 @@ impl Solver {
     /// `distinct_max_args` (`euf_internalize.cpp`): 32 – kept for EUF-owned
     /// (uninterpreted) sorts, whose pairwise atoms carry no arithmetic
     /// trichotomy tax and stay cheap at small arity.
-    const DISTINCT_PAIRWISE_MAX_ARGS: usize = 32;
+    pub(super) const DISTINCT_PAIRWISE_MAX_ARGS: usize = 32;
 
     /// The pairwise threshold for *arithmetic* sorts (Int/Real).  Measured,
     /// not inherited: nixie's pairwise path pays a trichotomy clause per

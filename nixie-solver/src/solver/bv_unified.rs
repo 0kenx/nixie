@@ -79,6 +79,28 @@ struct BvAtomToLink {
     term: TermId,
 }
 
+/// One pending **order-encoding spec** for a spine-asserted `distinct` over
+/// BitVec (Option A stage 2 of the campaign): the term, its main-core
+/// result var, the argument wires followed by the minted pad wires, and the
+/// common width.
+///
+/// Recorded by `emit_assertion_clauses` exactly at fact positions (the
+/// unit on `var` is emitted there; see `order.rs`'s module docs for why the
+/// encoding is only sound in that shape).  The unified link pass builds the
+/// bitonic network and drains the spec; `check` materialises any spec that
+/// is still pending as the pairwise encoding at base scope.
+#[derive(Debug, Clone)]
+pub(crate) struct BvOrderSpec {
+    /// The `distinct` term (for memoisation, guards, and diagnostics).
+    pub term: TermId,
+    /// The main-core var carrying the term's truth value.
+    pub var: nixie_sat::Var,
+    /// Argument wires first, then pads; every wire `width` bits.
+    pub wires: Vec<TermId>,
+    /// Common bit width of all wires.
+    pub width: u32,
+}
+
 impl Solver {
     /// Whether unified bit-blasting is enabled (`NIXIE_BV_UNIFIED=0` disables;
     /// default on for eligible generations).
@@ -186,6 +208,7 @@ impl Solver {
                 linked_atoms += 1;
             }
         });
+        self.build_order_specs_in_window(manager);
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_BV_UNIFIED_TRACE").is_ok() {
             eprintln!(
@@ -433,6 +456,233 @@ impl Solver {
             });
         } else {
             self.bv.new_bv(term, width);
+        }
+    }
+
+    /// Whether the order encoding may replace pairwise for spine-asserted
+    /// large `distinct` over BitVec (`NIXIE_BV_DISTINCT_ORDER=0` disables;
+    /// default on).
+    pub(super) fn bv_distinct_order_enabled() -> bool {
+        match std::env::var("NIXIE_BV_DISTINCT_ORDER") {
+            Ok(v) => !(v == "0" || v.is_empty()),
+            Err(_) => true,
+        }
+    }
+
+    /// Eligibility of a `distinct` term for the order-encoding handoff:
+    /// arity above the pairwise threshold, every argument a bit-vector of
+    /// one width, and the cheap unified-generation preconditions hold (the
+    /// full window decision happens later; a spec whose generation never
+    /// engages falls back to pairwise at `check`).
+    pub(super) fn order_distinct_eligible(&self, kind: &TermKind, manager: &TermManager) -> bool {
+        let TermKind::Distinct(args) = kind else {
+            return false;
+        };
+        if args.len() <= Self::DISTINCT_PAIRWISE_MAX_ARGS
+            || !Self::bv_distinct_order_enabled()
+            || !Self::bv_unify_enabled()
+        {
+            return false;
+        }
+        if !(self.context_stack.is_empty()
+            && !self.has_quantifiers
+            && !self.has_array_ops
+            && self.array_select_terms.is_empty()
+            && self.array_store_terms.is_empty()
+            && !self.has_bv_result_uf
+            && self.proof.is_none()
+            && self.config.certification_mode == CertificationMode::Uncertified
+            && !self.all_assertions_bv_fragment)
+        {
+            return false;
+        }
+        let Some(w) = manager
+            .get(args[0])
+            .and_then(|t| manager.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width())
+        else {
+            return false;
+        };
+        // The pigeonhole short-circuit upstream already refuted arities
+        // over the domain size; the network additionally needs the identity
+        // arrangement to fit (`n2 <= 2^w`), which the same bound grants.
+        if w < 63 && args.len() > (1usize << w) {
+            return false;
+        }
+        args.iter().all(|&a| {
+            manager.get(a).is_some_and(|t| {
+                // Ground-constant arguments pin their wire's bits outright,
+                // so the identity-arrangement guidance (which assumes every
+                // wire free) misleads the descent: measured as timeouts on
+                // constant-mixed shapes that pairwise solves easily.  Those
+                // inputs keep the pairwise row.
+                !matches!(t.kind, TermKind::BitVecConst { .. })
+                    && manager.sorts.get(t.sort).and_then(|s| s.bitvec_width()) == Some(w)
+            })
+        })
+    }
+
+    /// Encode a spine-asserted `distinct` via the order-encoding handoff:
+    /// allocate (or reuse) the term's var, memoise, record the spec with
+    /// minted pads.  The caller emits the unit that pins the term true.
+    pub(super) fn encode_order_distinct_fact(
+        &mut self,
+        term: TermId,
+        kind: &TermKind,
+        manager: &mut TermManager,
+    ) -> Lit {
+        let TermKind::Distinct(args) = kind else {
+            unreachable!("caller checked the kind");
+        };
+        let result_var = self.get_or_create_var(term);
+        self.memoize_encoding(term, Lit::pos(result_var), Polarity::Positive);
+        let width = manager
+            .get(args[0])
+            .and_then(|t| manager.sorts.get(t.sort))
+            .and_then(|s| s.bitvec_width())
+            .unwrap_or(1);
+        let n2 = args.len().next_power_of_two();
+        let sort = manager
+            .get(args[0])
+            .map(|t| t.sort)
+            .unwrap_or_else(|| manager.sorts.bitvec(width));
+        let mut wires: Vec<TermId> = args.to_vec();
+        for i in args.len()..n2 {
+            let name = format!("__nixie_order_pad_{}_{}", self.bv_order_specs.len(), i);
+            wires.push(manager.mk_var(&name, sort));
+        }
+        self.bv_order_specs.push(BvOrderSpec {
+            term,
+            var: result_var,
+            wires,
+            width,
+        });
+        Lit::pos(result_var)
+    }
+
+    /// Build every pending order-encoding spec's bitonic network into the
+    /// main core (inside the link pass's window); built specs move to
+    /// `bv_order_built`, refused ones stay pending for the pairwise
+    /// fallback at `check`.
+    pub(super) fn build_order_specs_in_window(&mut self, manager: &TermManager) {
+        if self.bv_order_specs.is_empty() {
+            return;
+        }
+        let specs = std::mem::take(&mut self.bv_order_specs);
+        let mut built: Vec<BvOrderSpec> = Vec::new();
+        self.bv.build_with(&mut self.sat, |bv| {
+            let mut encoded: FxHashSet<TermId> = FxHashSet::default();
+            for spec in &specs {
+                let mut inputs: Vec<smallvec::SmallVec<[nixie_sat::Var; 32]>> = Vec::new();
+                for &wire in &spec.wires {
+                    if !encode_bv_term_recursive(bv, wire, manager, &mut encoded) {
+                        bv.new_bv(wire, spec.width);
+                    }
+                    match bv.bv_bits(wire) {
+                        Some(bits) => inputs.push(bits),
+                        None => break,
+                    }
+                }
+                if inputs.len() == spec.wires.len()
+                    && bv.encode_distinct_order_network(spec.var, &inputs)
+                {
+                    built.push(spec.clone());
+                }
+            }
+        });
+        let built_set: FxHashSet<nixie_sat::Var> = built.iter().map(|s| s.var).collect();
+        self.bv_order_built.retain(|s| !built_set.contains(&s.var));
+        self.bv_order_built.extend(built);
+        self.bv_order_specs = specs
+            .into_iter()
+            .filter(|s| !built_set.contains(&s.var))
+            .collect();
+    }
+
+    /// Materialise the pairwise encoding for every spec still pending at
+    /// `check` entry (the generation never engaged, died, or the builder
+    /// refused the shape), and add the equality guards for built specs.
+    ///
+    /// The pairwise fallback is the historical encoding for the same term,
+    /// emitted at base scope; the unit on the result var is already on the
+    /// trail from the assertion.  Speculative pad wires carry no
+    /// constraints and are ignored.  Capped: a spec whose pair count
+    /// exceeds the cap is left unencoded (the distinct floats; the model
+    /// gate turns a would-be `Sat` into `Unknown`) rather than minting
+    /// millions of atoms at check time – those arities time out under
+    /// pairwise anyway.
+    pub(super) fn materialise_pending_order_specs(&mut self, manager: &mut TermManager) {
+        self.add_order_spec_eq_guards();
+        const MAX_PAIRS: usize = 200_000;
+        let specs = std::mem::take(&mut self.bv_order_specs);
+        for spec in specs {
+            // The pairwise atoms are over the *arguments*; recover them
+            // from the term so pads are excluded (cloned out so the
+            // `&mut TermManager` borrow is free for `mk_eq`).
+            let args: Vec<TermId> = {
+                let Some(td) = manager.get(spec.term) else {
+                    continue;
+                };
+                let TermKind::Distinct(args) = &td.kind else {
+                    continue;
+                };
+                args.to_vec()
+            };
+            if args.len() * args.len().saturating_sub(1) / 2 > MAX_PAIRS {
+                continue;
+            }
+            let result = Lit::pos(spec.var);
+            let mut diseq_lits: Vec<Lit> = Vec::new();
+            for i in 0..args.len() {
+                for j in (i + 1)..args.len() {
+                    let eq = manager.mk_eq(args[i], args[j]);
+                    diseq_lits.push(self.encode_depth(eq, manager, 0).negate());
+                }
+            }
+            for &diseq in &diseq_lits {
+                self.sat.add_clause([result.negate(), diseq]);
+            }
+            let mut clause: Vec<Lit> = diseq_lits.iter().map(|l| l.negate()).collect();
+            clause.push(result);
+            self.sat.add_clause(clause);
+        }
+    }
+
+    /// For every built order-encoding spec, emit the valid guard clause
+    /// `distinct -> ~(x_i = x_j)` for each argument pair that already has
+    /// an equality atom in the main core.
+    ///
+    /// The network refutes duplicates only through the full sort (hard for
+    /// resolution: measured 4M conflicts at n=16), while a single asserted
+    /// `(= x_i x_j)` against its guard clause conflicts at once –
+    /// pairwise's instant refutation, paid only for the pairs the formula
+    /// actually equates (O(#eq atoms), typically a handful).  Sound
+    /// unconditionally: `distinct` implies every pair differs, so
+    /// `¬R ∨ ¬E` is valid for any pair, atom or not.
+    fn add_order_spec_eq_guards(&mut self) {
+        if self.bv_order_built.is_empty() || self.var_to_constraint.is_empty() {
+            return;
+        }
+        let entries: Vec<(nixie_sat::Var, TermId, TermId)> = self
+            .var_to_constraint
+            .iter()
+            .filter_map(|(&v, c)| match c {
+                Constraint::Eq(a, b) => Some((v, *a, *b)),
+                _ => None,
+            })
+            .collect();
+        if entries.is_empty() {
+            return;
+        }
+        for spec in &self.bv_order_built {
+            for &(eq_var, a, b) in &entries {
+                if spec.wires.contains(&a)
+                    && spec.wires.contains(&b)
+                    && self.bv_order_guarded.insert((spec.term, eq_var))
+                {
+                    self.sat.add_clause([Lit::neg(spec.var), Lit::neg(eq_var)]);
+                }
+            }
         }
     }
 

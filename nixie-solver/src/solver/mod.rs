@@ -61,6 +61,7 @@ use nixie_theories::bv::BvSolver;
 use nixie_theories::euf::EufSolver;
 use num_rational::Rational64;
 
+use bv_unified::BvOrderSpec;
 use theory_manager::TheoryManager;
 use trail::{ContextState, TrailOp};
 use types::{Constraint, ParsedArithConstraint, Polarity};
@@ -226,6 +227,24 @@ pub struct Solver {
     /// sites and the assertion path can decide without borrowing the theory
     /// solvers out from under the `TheoryManager`.
     pub(super) bv_unified: bool,
+    /// Pending **order-encoding specs** for large `distinct` over BitVec
+    /// (Option A stage 2, see `bv_unified`): one per spine-asserted
+    /// `distinct` whose arguments are all bit-vectors of one width and
+    /// whose arity exceeds the pairwise threshold.  Each spec carries the
+    /// argument wires plus the minted pad wires; the unified link pass
+    /// builds its bitonic network into the main core (draining the spec),
+    /// and any spec still unbuilt at `check` entry falls back to the
+    /// pairwise encoding materialised at base scope (the lazy
+    /// architecture's behaviour), so a generation that never engaged or
+    /// died leaves the term correctly encoded either way.
+    pub(super) bv_order_specs: Vec<BvOrderSpec>,
+    /// Order-encoding specs whose network was built into the main core
+    /// (kept for the equality-guard sweep at `check` entry).
+    pub(super) bv_order_built: Vec<BvOrderSpec>,
+    /// `(distinct term, eq atom var)` pairs already guarded by
+    /// [`bv_unified::Solver::add_order_spec_eq_guards`] (dedup across
+    /// checks).
+    pub(super) bv_order_guarded: FxHashSet<(TermId, nixie_sat::Var)>,
     /// Whether every assertion so far is inside the eager pure-BV dispatch's
     /// fragment (updated per assertion; any non-BV/Bool content, a user
     /// scope, or a non-blastable shape clears it).  While true, the unified
@@ -808,6 +827,9 @@ impl Solver {
             has_bv_ring_ops: false,
             has_bv_result_uf: false,
             bv_unified: false,
+            bv_order_specs: Vec::new(),
+            bv_order_built: Vec::new(),
+            bv_order_guarded: FxHashSet::default(),
             all_assertions_bv_fragment: true,
             has_bv_arith_ops: false,
             arith_terms: FxHashSet::default(),
@@ -1787,6 +1809,11 @@ impl Solver {
         } else {
             None
         };
+
+        // Order-encoding fallback (Option A stage 2, `bv_unified`): any
+        // `distinct` spec still pending gets its pairwise encoding here, at
+        // base scope, before the search and the theory-manager borrow.
+        self.materialise_pending_order_specs(manager);
 
         // Pre-encode care-graph equality atoms (cvc5-style `ensureLiteral`)
         // so CDCL can branch on shared-term arrangements during the single
@@ -3676,6 +3703,9 @@ impl Solver {
         // the theory side; the solver-side flag follows here.
         self.bv.reset();
         self.bv_unified = false;
+        self.bv_order_specs.clear();
+        self.bv_order_built.clear();
+        self.bv_order_guarded.clear();
         self.all_assertions_bv_fragment = true;
         self.has_bv_result_uf = false;
         self.diff.reset();
