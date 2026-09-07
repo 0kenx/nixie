@@ -120,9 +120,11 @@ struct RoundOccs {
     primary: Vec<u32>,
     /// Exclusive end offset of each literal's primary span.
     span_end: Vec<u32>,
-    /// Live length of each literal's primary span (`<=` the span extent;
-    /// shrunk by flushes/clears, never regrows — additions go to `extra`).
-    prim_len: Vec<u32>,
+    /// Absolute live end of each literal's primary span. During connection
+    /// this is the fill cursor, so each occurrence needs only one indexed
+    /// cursor load, without reconstructing `span_start + live_length`.
+    /// Flushes/clears may move it back; later additions go to `extra`.
+    prim_end: Vec<u32>,
     /// Per-literal overflow for mid-round additions, in arrival order.
     extra: Vec<Vec<u32>>,
 }
@@ -133,7 +135,7 @@ impl RoundOccs {
         Self {
             primary: Vec::new(),
             span_end: vec![0; n],
-            prim_len: vec![0; n],
+            prim_end: vec![0; n],
             extra: vec![Vec::new(); n],
         }
     }
@@ -143,31 +145,37 @@ impl RoundOccs {
     /// can fill `primary` exactly, with no per-literal doubling growth.
     fn layout(&mut self, counts: &[u32]) {
         let mut acc = 0u32;
-        for (end, &n) in self.span_end.iter_mut().zip(counts.iter()) {
+        for ((end, live_end), &n) in self
+            .span_end
+            .iter_mut()
+            .zip(self.prim_end.iter_mut())
+            .zip(counts.iter())
+        {
+            *live_end = acc;
             acc = acc.saturating_add(n);
             *end = acc;
         }
         self.primary = vec![0; acc as usize];
-        // `prim_len` stays 0 here and doubles as the fill cursor: `connect`
-        // writes at `span_start + prim_len` and advances it, so it reaches
-        // the span's extent exactly when the connect pass completes (any
-        // reader between layout and connect sees empty lists, matching a
-        // fresh `Vec::new()` per literal).
+        // Each live end starts at its span's beginning: readers between
+        // layout and connect see empty lists. Connection advances it to
+        // the immutable span end, in exactly the original arrival order.
     }
 
     /// Append `cid` to literal `code`'s primary span (connect pass only,
     /// while spans still have room — mid-round additions use `push`).
     #[inline]
     fn connect(&mut self, code: usize, cid: ClauseId) {
-        let at = code_span_start(&self.span_end, code) + self.prim_len[code] as usize;
-        self.primary[at] = cid.0;
-        self.prim_len[code] += 1;
+        let end = &mut self.prim_end[code];
+        debug_assert!(*end < self.span_end[code]);
+        self.primary[*end as usize] = cid.0;
+        *end += 1;
     }
 
     /// Combined-view length of literal `code`'s list.
     #[inline]
     fn len(&self, code: usize) -> usize {
-        self.prim_len[code] as usize + self.extra[code].len()
+        self.prim_end[code] as usize - code_span_start(&self.span_end, code)
+            + self.extra[code].len()
     }
 
     /// Append `cid` to literal `code`'s overflow (mid-round additions).
@@ -180,7 +188,7 @@ impl RoundOccs {
     /// exactly the historical `Vec<ClauseId>` contents and order.
     fn combined(&self, code: usize) -> Vec<ClauseId> {
         let start = code_span_start(&self.span_end, code);
-        let pl = self.prim_len[code] as usize;
+        let pl = self.prim_end[code] as usize - start;
         let mut v = Vec::with_capacity(pl + self.extra[code].len());
         v.extend(self.primary[start..start + pl].iter().map(|&r| ClauseId(r)));
         v.extend(self.extra[code].iter().map(|&r| ClauseId(r)));
@@ -190,7 +198,7 @@ impl RoundOccs {
     /// Position of `cid` in literal `code`'s combined view, if present.
     fn position(&self, code: usize, cid: ClauseId) -> Option<usize> {
         let start = code_span_start(&self.span_end, code);
-        let pl = self.prim_len[code] as usize;
+        let pl = self.prim_end[code] as usize - start;
         self.primary[start..start + pl]
             .iter()
             .position(|&r| r == cid.0)
@@ -205,7 +213,7 @@ impl RoundOccs {
     /// `Vec::swap_remove` semantics over the combined view: move the last
     /// combined element into `pos`, dropping the previous occupant.
     fn swap_remove(&mut self, code: usize, pos: usize) {
-        let pl = self.prim_len[code] as usize;
+        let pl = self.prim_end[code] as usize - code_span_start(&self.span_end, code);
         if let Some(last) = self.extra[code].pop() {
             // The combined tail lives in the overflow: it fills the hole,
             // wherever the hole sits.
@@ -223,7 +231,7 @@ impl RoundOccs {
         } else {
             // Overflow empty: the combined tail closes the primary span.
             let start = code_span_start(&self.span_end, code);
-            self.prim_len[code] -= 1;
+            self.prim_end[code] -= 1;
             if pos + 1 < pl {
                 self.primary[start + pos] = self.primary[start + pl - 1];
             }
@@ -233,7 +241,7 @@ impl RoundOccs {
     /// Empty literal `code`'s list (the span's bytes stay but are unread).
     #[inline]
     fn clear(&mut self, code: usize) {
-        self.prim_len[code] = 0;
+        self.prim_end[code] = code_span_start(&self.span_end, code) as u32;
         self.extra[code].clear();
     }
 
@@ -248,7 +256,7 @@ impl RoundOccs {
         for (i, &cid) in lits.iter().take(head).enumerate() {
             self.primary[start + i] = cid.0;
         }
-        self.prim_len[code] = head as u32;
+        self.prim_end[code] = (start + head) as u32;
         self.extra[code].clear();
         self.extra[code].extend(lits[head..].iter().map(|&c| c.0));
     }
@@ -256,7 +264,7 @@ impl RoundOccs {
     /// Iterate literal `code`'s combined view, primary then overflow.
     fn iter(&self, code: usize) -> impl Iterator<Item = ClauseId> + '_ {
         let start = code_span_start(&self.span_end, code);
-        let pl = self.prim_len[code] as usize;
+        let pl = self.prim_end[code] as usize - start;
         self.primary[start..start + pl]
             .iter()
             .chain(self.extra[code].iter())
@@ -763,9 +771,8 @@ impl Solver {
                 }
             }
             ctx.occs.layout(&ctx.noccs);
-            for c in ctx.noccs.iter_mut() {
-                *c = 0;
-            }
+            // Retain the exact counts. Neither clauses nor ctx's value
+            // snapshot change before the connect pass finishes below.
         }
         for cid in self.clauses.iter_ids() {
             let Some(c) = self.clauses.get(cid) else {
@@ -798,10 +805,15 @@ impl Solver {
                 if ctx.lit_val(lit) == 0 {
                     let code = lit.code() as usize;
                     ctx.occs.connect(code, cid);
-                    ctx.noccs[code] += 1;
                 }
             }
         }
+        debug_assert!(
+            ctx.noccs
+                .iter()
+                .enumerate()
+                .all(|(code, &count)| ctx.occs.len(code) == count as usize)
+        );
         for cid in to_retire {
             self.elim_retire(cid);
             self.stats.deleted_clauses += 1;
@@ -1869,6 +1881,18 @@ impl Solver {
 mod round_occs_tests {
     use super::*;
 
+    fn assert_views(occs: &RoundOccs, reference: &[Vec<ClauseId>], log: &[String]) {
+        for (code, expected) in reference.iter().enumerate() {
+            assert_eq!(occs.len(code), expected.len(), "code {code}: {log:?}");
+            assert_eq!(occs.combined(code), *expected, "code {code}: {log:?}");
+            assert_eq!(
+                occs.iter(code).collect::<Vec<_>>(),
+                *expected,
+                "code {code}: {log:?}"
+            );
+        }
+    }
+
     /// Reference differential: every RoundOccs operation must leave the
     /// combined view identical to the plain `Vec<Vec<ClauseId>>` it
     /// replaced, under the eliminator's operation mix (bulk connect with
@@ -1896,16 +1920,24 @@ mod round_occs_tests {
                     ids.push((code, ClauseId(next() as u32)));
                 }
             }
+            // Real construction interleaves literal lists in clause order;
+            // adjacent span boundaries must stay fixed as other lists fill.
+            for i in (1..ids.len()).rev() {
+                let j = (next() % (i as u64 + 1)) as usize;
+                ids.swap(i, j);
+            }
             let stream = ids;
             let mut ref_occs: Vec<Vec<ClauseId>> = vec![Vec::new(); n];
             let mut occs = RoundOccs::new(n);
             occs.layout(&counts);
             let mut log: Vec<String> = Vec::new();
             let mut fresh = 1_000_000u32 + round as u32 * 10_000;
+            assert_views(&occs, &ref_occs, &log);
             for &(code, cid) in &stream {
                 ref_occs[code].push(cid);
                 occs.connect(code, cid);
                 log.push(format!("connect({code}, {cid:?})"));
+                assert_views(&occs, &ref_occs, &log);
             }
             for _ in 0..300 {
                 let code = (next() as usize) % n;
@@ -1949,16 +1981,7 @@ mod round_occs_tests {
                     }
                     _ => {}
                 }
-                assert_eq!(
-                    occs.len(code),
-                    ref_occs[code].len(),
-                    "len mismatch round {round} code {code} after ops: {log:?}"
-                );
-                assert_eq!(
-                    occs.combined(code),
-                    ref_occs[code],
-                    "combined mismatch round {round} code {code} after ops: {log:?}"
-                );
+                assert_views(&occs, &ref_occs, &log);
             }
         }
     }
