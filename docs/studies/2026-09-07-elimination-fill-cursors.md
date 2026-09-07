@@ -4,6 +4,12 @@
 fewer whole-invocation cycles/conflict on si2-b03m. The four-file aggregate
 is 4.0% lower, **neutral** under the repository's ±5% rule.
 
+**Scope correction:** the Nixie/Kissat ratio below describes four inputs
+at a 40,000-conflict cap with default reference settings. It understates
+the gap seen in the user's broader, mode-matched completion runs. See the
+[mode-matched follow-up](2026-09-07-mode-matched-throughput.md); the cursor
+change's trajectory-paired measurements remain valid within this scope.
+
 ## Pre-registration
 
 Baseline solver source `482b806` (later commits `4a88b3c` and `0970b39`
@@ -55,8 +61,9 @@ conflicts, decisions, propagations, restart counts, learned/deleted clauses,
 subsumption/elimination counts, ticks, verdict and any printed SAT model.
 All 14 SAT models per arm pass independent checking against the original
 CNF. The other 26 cells hit the conflict cap; they are not counted as solved.
-All four input families are satisfiable, so these are not UNSAT performance
-measurements.
+The earlier description of all four families as satisfiable was incorrect:
+`j3037` is UNSAT, as the later completion runs establish. No UNSAT verdict
+was reached in these 40k-capped Nixie cells.
 
 Ratios below are treatment/baseline geometric means over paired seeds.
 The baseline distribution is amortized user-mode cycles/conflict; it includes
