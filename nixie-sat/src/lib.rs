@@ -165,6 +165,8 @@ mod preprocessing_core;
 mod recursive_minimization;
 #[cfg(feature = "bcp-regions")]
 mod region_stats;
+#[cfg(feature = "std")]
+pub mod relation_factor;
 mod reluctant;
 mod resolution_graph;
 mod restart_model;

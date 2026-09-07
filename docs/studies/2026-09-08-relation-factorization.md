@@ -39,8 +39,9 @@ CaDiCaL preset, 10 million conflicts, CPU 2, portable release build, with a
 300-second emergency timeout. Transform once, independently check the full
 prefix and original-CNF model, and retain content hashes and artifacts in the
 result store. Reuse original circuit results and Kissat references already
-recorded; do not rerun controls. Collect whole-process instructions/cycles for
-both transformation and solving so preprocessing cost cannot disappear.
+recorded; do not rerun controls. Collect whole-process user-space
+instructions/cycles for both transformation and solving so preprocessing work
+cannot disappear. Kernel work and independent audit checks are excluded.
 Primary work is their summed instructions; cycles/conflict is descriptive.
 No parameter tuning or additional seeds follow the result in this step.
 
@@ -58,3 +59,49 @@ must reproduce 700 groups, 44,800 non-unit clauses and 224,000 non-unit literal
 slots. A mismatch, invalid proof/model, or new unresolved correctness failure
 blocks use. Failure to solve within the registered cap rejects operational
 feasibility on this input; a successful solve only licenses further study.
+
+## Using the explicit transformer
+
+```sh
+cargo build --release -p nixie-sat --example relation_factor --example stats_solve
+target/release/examples/relation_factor input.cnf factored.cnf prefix.lrat map.json
+target/release/examples/stats_solve factored.cnf
+```
+
+All three output paths must be new. The transformer prints a JSON size/proof
+summary and produces no SAT verdict. Its strict DIMACS reader rejects missing
+or repeated headers, invalid literals/tokens, unterminated clauses, mismatched
+clause counts and `%` trailers. Library callers use
+`nixie_sat::relation_factor::factor_relations`; a limit error leaves their
+borrowed input untouched, and the example writes that original formula with
+an empty proof prefix and an explicit `fallback: true` summary.
+
+`map.json` identifies each output clause in the original formula's proof ID
+space. A downstream solver sees its own originals as IDs `1..M`; replace those
+references with the exported IDs, and map each derived ID `d > M` to
+`last_proof_id + d - M`. Deletion IDs need the same translation (their leading
+line label is cosmetic). Check the composed proof against the **original**
+CNF. A regression test exercises the complete UNSAT composition. For SAT,
+there is no reconstruction: validate the returned model on the original CNF.
+
+The reusable measurement/checker is
+`bench/suite/scripts/relation_factor_probe.py`. Its checker independently
+replays set resolution, checks the surviving clause-ID map and every dropped
+original clause, then exhaustively checks the reverse implication for each
+replaced relation. Completed subprocess results are retained immediately;
+an interrupted recording never licenses rerunning an existing solver cell.
+
+## Implementation verification
+
+The implementation passes all-feature build, strict all-target clippy, format
+and strict documentation checks; **10,660 nextest tests** (12 skipped),
+**111 doctests** (29 ignored), the two explicit parser example tests, and
+three Python certificate-auditor rejection tests. The eight new library tests
+include complete LRAT composition, signed/permuted nonlinear relations,
+overlapping groups, incomplete/nonfunctional tables, duplicate/tautological
+clauses, empty/unit clauses, exact limit boundaries and output errors.
+
+Fresh Z3 **4.16.0** parity reports **169 agreements, zero disagreements and one
+inconclusive case** (`array_unique.smt2`: Nixie UNSAT, Z3 UNKNOWN). The available
+Z3 release is recorded explicitly; this is not a comparison to the historical
+4.15.4 snapshot. Ordinary solver paths do not call the new transformer.
