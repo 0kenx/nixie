@@ -403,3 +403,22 @@ Both are CDCL(T)-core work.  Everything short of them on this family is
 now measured: the cascade (fixed), post-hoc repair (closed, 1.022),
 else-forms (equivalent), input-read filtering (neutral), separation
 gating (entailed-only landed; broad EUF-skip falsified).
+
+## Correction to the decision-trace reading (2026-09-07, final diagnostic)
+
+The "5 700 legend-less vars" in the trace above is a **measurement
+artifact, not a hidden variable population**: the varlegend dumps at the
+first `check`, but 19 068 SAT variables are created across the LATER
+refinement rounds (array axiom atoms, trichotomies, premise atoms — all
+theory-mapped and legend'd in the final state; verified by a `new_var`
+call counter: 19 068 calls, all through `get_or_create_var`, with the
+legend snapshot taken before ~97 % of them existed).  The next agent
+should not hunt phantom anonymous vars — the wandering space is exactly
+the round-created Boolean materialization the rungs address.
+
+Corrected residual picture for `memory-alias-sat-s0-large`: 19 068
+Boolean vars, 1.35 M decisions, 4.6 k conflicts, 55 restarts, median
+decision level 2 772 — i.e. ~24 k decisions per restart cycle over the
+materialized arrangement, ~22 clauses learned per cycle.  Both closing
+rungs (in-search lemma assertion; tableau-side separation) stand, and
+the artifact correction removes the one red herring.
