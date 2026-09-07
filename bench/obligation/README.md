@@ -177,9 +177,12 @@ with the certificate:
    a dishonest `Sat`, and entailed-only separation demand) — see the
    study's implementation record.  `memory` medium 56/58 → **58/58**,
    large 2/8 → **8/8**; the alias/incremental larges decide in 1.3–4.8 s
-   (z3 25 ms).  The injective-repair attempt itself was also built and
-   measured (treatment/null 0.97 ungated, 0.93 gated at n = 60 — not
-   certifiable) and is documented as not-landed in the same study.
+   (z3 25 ms).  The injective-repair attempt was built and
+   measured three times (0.97 ungated / 0.93 gated by wall; 1.022 by
+   conflicts on the fixed tree — neutral, with a mechanistic account of
+   why post-hoc repair cannot work here) and is closed as not-landed in
+   the same study; the residual gap to z3 is in-search separation +
+   root-backtrack-free lemma assertion.
 
 ## What this is not
 

@@ -326,3 +326,44 @@ agreement).
 
 Remaining honest timeouts: `parity`-large CNF/BV/incremental graphs (the
 SAT-side in-search xor rung), and the arrangement residue above.
+
+## Attempt 3, third measurement — on the clean tree, with a deterministic metric (closed)
+
+After the saturation cascade was fixed (`0d51a30`), the repair was
+rebuilt from this record and re-measured with **conflicts as the primary
+metric** (deterministic, load-independent — the session's wall-clock was
+unusable at machine load ~60): 60 instances (alias-sat + incremental,
+seeds 0–9, all sizes), treatment vs matched null, same protocol.
+
+| size | n | conflicts T/N |
+|---|---|---|
+| small | 20 | 0.998 |
+| medium | 20 | 1.048 |
+| large | 19 | 1.018 |
+| **all** | 60 | **1.022** |
+
+Zero verdict mismatches.  **Neutral-to-slightly-negative — the attempt is
+closed with a mechanistic account:** the ~4.5–5.5 k conflicts on this
+family are spent *on the path to the first candidate* (the arrangement
+search), before any model exists to repair; a post-hoc repair can only
+shorten the collision-rejection tail after a candidate arrives, and the
+chain-shaped separation plus the synthetic-read fixes already minimized
+exactly that tail.  The earlier 0.91–0.93 wall readings were the repair
+interacting with the (then-dominant) array-round cost, which no longer
+exists.  No further measurement of post-hoc model repair on this family
+is warranted; the remaining gap to z3's 25 ms is closable only by
+separation that happens *during* the search — the in-search rung below.
+
+## The remaining gap to z3's 25 ms (decomposed)
+
+1. **Arrangement conflicts (~4.5–5.5 k)**: CDCL learns the pairwise
+   arrangement one trichotomy clause at a time; z3's `theory_arith`
+   final check separates e-graph-apart variables *inside the simplex
+   model*, paying ~zero conflicts.  In-search separation (propagation-
+   time or final-check tableau repair) is the only lever that touches
+   this term.
+2. **Round-based theory work**: each array refinement round backtracks
+   the SAT core to root, rebases every theory solver, and re-solves from
+   zero; z3 asserts its axioms on the live trail.  A handful of rounds ×
+   a full re-solve is most of the residual wall time.  Lemma assertion
+   without root-backtrack is the architectural rung.
