@@ -548,3 +548,43 @@ Also measured en passant: `record_lemma` is called 54 677 times for
 4 695 SAT conflicts — the theory callback records ~12× more lemmas
 (propagations) than conflicts; any future census must separate the
 populations before drawing conclusions.
+
+## The census-driven fix (IMPLEMENTED 2026-09-07, night): distinct-semantics guard clauses — conflicts −37..−47 %
+
+The census's dominant population was the RoW guard equalities `eq(v,v)` —
+CDCL learning `(= t_i t_j)`-false between a live distinct's arguments one
+conflict at a time.  But that falsity is a THEOREM of the distinct
+itself: `distinct(t_1..t_n)` true ⟹ `¬(t_i = t_j)` for every i≠j.
+
+**The fix**: after each array-refinement round (when the round's asserted
+instances have created their guard atoms), emit one VALID binary clause
+`¬distinct_result ∨ ¬(t_i = t_j)` per *existing* encoded atom between a
+live spec's arguments — bounded by the atoms that exist, never C(n,2);
+both operand orders probed (hash-consing interns `Eq(a,b)` and `Eq(b,a)`
+distinctly — the order-blind first attempt measured byte-identical until
+fixed).  With a top-level asserted distinct, `result` is a level-0 unit,
+so ordinary unit propagation falsifies every guard at the START of the
+next descent — no theory channel, no new propagation machinery.
+
+An earlier same-day variant propagated the atoms from `final_check`
+(theory-channel `Propagated`); it measured byte-identical because
+`final_check` runs AFTER each round's descent — the wandering happens
+during it.  The clause form works because it fires at level 0 before the
+descent begins.  Also required: a lookup-only `TermManager::find_interned`
+(`mk_eq` interns, i.e. CREATES the very C(n,2) atoms the probe must
+avoid, and needs `&mut` the theory side doesn't have).
+
+**Measured** (deterministic metric, same instances):
+
+| instance (large) | conflicts | decisions |
+|---|---|---|
+| `memory-alias-sat-s0` | 4695 → **2959** (−37 %) | 1.35 M → **567 k** (−58 %) |
+| `memory-alias-sat-s1` | 5239 → **2762** (−47 %) | 1.50 M → **434 k** (−71 %) |
+| `memory-incremental-s0` | 4514 → **3151** (−30 %) | 1.23 M → **596 k** (−52 %) |
+| `memory-incremental-s1` | ~5200 → **2987** | → **462 k** |
+
+Fuzzer: zero FAIL, memory-large 6/8 at the 10 s cap under machine load
+20–60 (from 4/8).  Gates: nextest 4061/4061, z3 parity 169/1/0 with no
+verdict changes, 30/30 QF_AUFLIA/QF_UF spot checks identical,
+clippy/fmt clean.  Tests: the eq-atom refutation, a conditional (ite)
+distinct both polarities, and the storecomm shape both anchor polarities.
