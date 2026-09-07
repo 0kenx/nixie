@@ -3,6 +3,7 @@
 pub(super) mod arith_axioms;
 pub(super) mod array_axioms;
 pub(super) mod array_theory;
+pub(super) mod bv_unified;
 pub(super) mod candidates;
 pub(super) mod certification;
 pub(super) mod check_array;
@@ -207,6 +208,32 @@ pub struct Solver {
     pub(super) statistics: Statistics,
     /// Bitvector terms (for model extraction)
     pub(super) bv_terms: FxHashSet<TermId>,
+    /// Whether the formula contains BV ring operations (`bvadd`/`bvsub`/
+    /// `bvmul`).  One input to the unified-blasting eligibility gate
+    /// ([`bv_unified`]): ring-dominated formulas whose comparisons the
+    /// encoder also relaxed into the arithmetic solver keep the lazy path,
+    /// mirroring the eager dispatch's routing (see `dispatch_pure_bv`).
+    pub(super) has_bv_ring_ops: bool,
+    /// Whether a UF application returning a bit-vector (including datatype
+    /// selectors over BV carriers) has been seen.  Sticky input to the
+    /// unified-blasting gate: congruence merges of such applications cannot
+    /// be expressed as clauses, so any sighting parks the problem on the
+    /// lazy path for good (see `bv_unified`'s module docs).
+    pub(super) has_bv_result_uf: bool,
+    /// Whether a **unified BV generation** is active (the BV-circuit
+    /// unification campaign, Option A stage 1; see [`bv_unified`]).
+    /// Mirrors `BvSolver::is_unified` on the solver side so the rebasing
+    /// sites and the assertion path can decide without borrowing the theory
+    /// solvers out from under the `TheoryManager`.
+    pub(super) bv_unified: bool,
+    /// Whether every assertion so far is inside the eager pure-BV dispatch's
+    /// fragment (updated per assertion; any non-BV/Bool content, a user
+    /// scope, or a non-blastable shape clears it).  While true, the unified
+    /// link pass stays off: the dispatch's single-shot embedded solve is the
+    /// better architecture for that fragment, and linking first would
+    /// bit-blast every file twice (once into the main core, once into the
+    /// dispatch's instance).
+    pub(super) all_assertions_bv_fragment: bool,
     /// Whether we've seen arithmetic BV operations (division/remainder)
     /// Used to decide when to run eager BV checking
     pub(super) has_bv_arith_ops: bool,
@@ -778,6 +805,10 @@ impl Solver {
             simplifier: Simplifier::new(),
             statistics: Statistics::new(),
             bv_terms: FxHashSet::default(),
+            has_bv_ring_ops: false,
+            has_bv_result_uf: false,
+            bv_unified: false,
+            all_assertions_bv_fragment: true,
             has_bv_arith_ops: false,
             arith_terms: FxHashSet::default(),
             ite_result_terms: FxHashSet::default(),
@@ -1287,13 +1318,37 @@ impl Solver {
         // base level (`assert_const` pinning `x = 5`), which are not wired into
         // `Solver::push` / `pop` at all and would otherwise outlive both the
         // check and a user `pop` – a stale `x = 5` refuting a later `(= x 6)`.
-        self.bv.reset();
+        //
+        // A *unified* BV generation is the exception (Option A stage 1 of the
+        // BV-circuit unification campaign, `bv_unified`): its tables name
+        // vars of this SAT core, whose base-scope circuit clauses are
+        // permanent, so the memo stays truthful across rebases and only the
+        // embedded path's per-probe state is dropped.  Wiping here would
+        // orphan every linked atom into the pending-unlinked honesty gate
+        // and re-duplicate their circuits on the next link pass.
+        self.reset_bv_theory_for_round();
         self.diff.reset();
         // The tableau these explanations were read out of is gone, and so are
         // the equalities they justified; keeping them would let a later conflict
         // cite literals belonging to a retracted scope.  This also returns the
         // absolute scope-depth counter to zero, matching the solvers.
         self.derived_reasons.clear();
+    }
+
+    /// Reset the BV theory solver for a search-round boundary (the rebase
+    /// sites and the refinement rounds in `check_core`).
+    ///
+    /// A *unified* BV generation keeps its tables across rounds: they name
+    /// main-core vars whose base-scope circuits are permanent, so the memo
+    /// stays truthful and the round's re-drive must not orphan it.  A lazy
+    /// generation takes the historical full reset (`assert_const` unit
+    /// residue and per-probe learned clauses are real hazards there).
+    fn reset_bv_theory_for_round(&mut self) {
+        if self.bv_unified {
+            self.bv.reset_embedded_state();
+        } else {
+            self.bv.reset();
+        }
     }
 
     /// Get a SAT variable for a term, then check satisfiability
@@ -1934,6 +1989,11 @@ impl Solver {
         // saturation well within this generous cap for realistic inputs.
         let max_array_refinement_rounds = 256;
         let mut array_refinement_rounds = 0;
+        // Unified-BV pending-link rounds (see the `Sat` exit): each round
+        // links every late-minted BV atom found by the previous search, so
+        // one round is the common case; the cap guards against a
+        // pathological minting source.
+        let mut bv_pending_rounds: u32 = 0;
 
         // NOTE: there is deliberately NO wall-clock gate on the non-convex
         // integer case-split refinement below.  The refinement is the only
@@ -2036,6 +2096,72 @@ impl Solver {
                     }
                     // If no quantifiers, we're done
                     if !self.has_quantifiers {
+                        // Unified BV generation (Option A stage 1, `bv_unified`):
+                        // adopt the main core's model for BV value reads, then
+                        // refuse a `Sat` while late-minted BV atoms still lack
+                        // their circuits – their semantics are enforced by
+                        // *nothing* in this round.  Building the missing links
+                        // adds base-scope clauses, so the next search round
+                        // enforces them; a bounded round budget keeps a
+                        // pathological minting source from looping forever
+                        // (budget out ⇒ honest `Unknown`).
+                        if self.bv_unified {
+                            self.bv.adopt_model_snapshot(self.sat.model());
+                            if self.bv.has_pending_unlinked() {
+                                if bv_pending_rounds >= 8 {
+                                    self.model = None;
+                                    self.unsat_core = None;
+                                    return SolverResult::Unknown;
+                                }
+                                bv_pending_rounds += 1;
+                                let linked = self.link_pending_bv_atoms(manager);
+                                if linked > 0 {
+                                    self.sat.backtrack_to_root();
+                                    self.euf.reset();
+                                    self.arith.reset();
+                                    self.reset_bv_theory_for_round();
+                                    self.diff.reset();
+                                    let zero_term = manager.mk_int(0);
+                                    theory_manager = TheoryManager::new(
+                                        manager,
+                                        &mut self.euf,
+                                        &mut self.arith,
+                                        &mut self.bv,
+                                        &mut self.diff,
+                                        &mut self.array_theory,
+                                        &self.bv_terms,
+                                        &self.var_to_constraint,
+                                        &self.var_to_parsed_arith,
+                                        &self.term_to_var,
+                                        &self.var_to_term,
+                                        &self.numarg_proxies,
+                                        &self.quant_uf_const_pins,
+                                        zero_term,
+                                        &self.ite_result_terms,
+                                        &mut self.derived_reasons,
+                                        self.config.theory_mode,
+                                        &mut self.statistics,
+                                        self.config.max_conflicts,
+                                        self.config.max_decisions,
+                                        self.has_bv_arith_ops,
+                                        self.config.timeout_ms,
+                                        self.logic.as_deref(),
+                                        pure_dl,
+                                        sparse_dl,
+                                        self.has_injective_distinct,
+                                        &self.injective_distinct_specs,
+                                    );
+                                    continue;
+                                }
+                                // Nothing was linkable: every pending atom is a
+                                // shape `encode_bool_node` cannot define – the
+                                // same shapes the lazy path's bit-blasters
+                                // refuse, so today's architecture enforced
+                                // them no more than we do.  Fall through.
+                            }
+                            #[cfg(debug_assertions)]
+                            self.debug_verify_unified_circuits(manager);
+                        }
                         self.build_model(manager);
                         #[cfg(test)]
                         self.repair_paths_saw_model.push(self.model.is_some());
@@ -2100,7 +2226,7 @@ impl Solver {
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
-                            self.bv.reset();
+                            self.reset_bv_theory_for_round();
                             self.diff.reset();
                             let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
@@ -2150,7 +2276,7 @@ impl Solver {
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
-                            self.bv.reset();
+                            self.reset_bv_theory_for_round();
                             self.diff.reset();
                             let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
@@ -2196,7 +2322,7 @@ impl Solver {
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
-                            self.bv.reset();
+                            self.reset_bv_theory_for_round();
                             self.diff.reset();
                             let zero_term = manager.mk_int(0);
                             theory_manager = TheoryManager::new(
@@ -2418,7 +2544,7 @@ impl Solver {
                             self.sat.backtrack_to_root();
                             self.euf.reset();
                             self.arith.reset();
-                            self.bv.reset();
+                            self.reset_bv_theory_for_round();
                             self.diff.reset();
                             self.rebase_theory_state();
                             let zero_term = manager.mk_int(0);
@@ -2474,7 +2600,7 @@ impl Solver {
                                     self.sat.backtrack_to_root();
                                     self.euf.reset();
                                     self.arith.reset();
-                                    self.bv.reset();
+                                    self.reset_bv_theory_for_round();
                                     self.diff.reset();
                                     let zero_term = manager.mk_int(0);
                                     theory_manager = TheoryManager::new(
@@ -3221,6 +3347,14 @@ impl Solver {
         // stated once ("the verdict belongs to the stack it was computed on")
         // instead of depending on what the caller does next.
         self.invalidate_results();
+        // A user scope ends any unified BV generation (Option A stage 1):
+        // circuits added above the base scope would be retracted by the
+        // matching `sat.pop()` while the BV memo entries stayed, the
+        // pop-decapitation hazard of the embedded solver all over again.
+        // Scope-journalled memo retraction is stage-2 work; until then,
+        // scoped sessions keep the lazy embedded path from the first push.
+        self.end_bv_unified_generation();
+        self.all_assertions_bv_fragment = false;
         self.context_stack.push(ContextState {
             num_assertions: self.assertions.len(),
             num_vars: self.var_to_term.len(),
@@ -3528,7 +3662,12 @@ impl Solver {
         self.model_blocking_active = 0;
         self.euf.reset();
         self.arith.reset();
+        // `Theory::reset` on the BV solver ends any unified generation from
+        // the theory side; the solver-side flag follows here.
         self.bv.reset();
+        self.bv_unified = false;
+        self.all_assertions_bv_fragment = true;
+        self.has_bv_result_uf = false;
         self.diff.reset();
         self.derived_reasons.clear();
         // Quantifier reasoning state must be cleared too: leaving the previous

@@ -64,6 +64,13 @@ impl crate::solver::Solver {
             return None;
         }
 
+        // The dispatch drives the BV solver's *embedded* instance; a unified
+        // generation's tables name main-core vars and must not be consumed by
+        // it.  End the generation (already-added main-core circuits are
+        // definitional and stay sound); the dispatch re-blasts everything it
+        // needs into the embedded instance below.
+        self.end_bv_unified_generation();
+
         // Fresh theory state: `rebase_theory_state` drops any residue an
         // earlier check or the assert-time pre-passes left in the embedded
         // solver (branch facts, per-probe learned clauses).
@@ -438,6 +445,15 @@ fn assertions_ring_dominated(assertions: &[TermId], manager: &TermManager) -> bo
 /// Iterative: the check walks children on an explicit stack (shared
 /// sub-terms are visited once), so a deeply nested input cannot overflow
 /// the native call stack.
+/// Whether `term` lies in the blastable Bool+BV fragment (the dispatch's
+/// per-assertion eligibility).  Exposed for the unified-blasting router
+/// (`bv_unified::link_or_blast_bv_circuits`): while *every* assertion is in
+/// the fragment, the eager dispatch owns the goal and unified linking stays
+/// off.
+pub(super) fn assertion_in_bv_fragment(term: TermId, manager: &TermManager) -> bool {
+    term_in_blastable_fragment(term, manager)
+}
+
 fn term_in_blastable_fragment(term: TermId, manager: &TermManager) -> bool {
     // Bound the total work: the walk visits each distinct sub-term once, so
     // this is a defence against pathologically large inputs rather than a

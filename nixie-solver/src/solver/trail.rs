@@ -172,6 +172,14 @@ impl super::Solver {
             euf: _,             // SCOPED: reset by `rebase_theory_state`
             arith: _,           // SCOPED: reset by `rebase_theory_state`
             bv: _,              // SCOPED: reset by `rebase_theory_state`
+            has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
+            // `true` after pop only keeps the lazy route.
+            has_bv_result_uf: _, // NOT trailed: monotone routing input; same
+            // conservative direction as the flag above.
+            bv_unified: _, // NOT trailed: `push` ends the generation, and
+            // `pop` rebases (embedded reset) regardless.
+            all_assertions_bv_fragment: _, // NOT trailed: `push` clears it;
+            // a stale `false` only keeps the lazy route.
             diff: _,            // SCOPED: reset by `rebase_theory_state`
             derived_reasons: _, // SCOPED: pruned with the theory scopes it explains, cleared by `rebase_theory_state` with the three solvers
             #[cfg(feature = "std")]

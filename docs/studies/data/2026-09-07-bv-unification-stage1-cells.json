@@ -1,0 +1,1269 @@
+{
+ "cells": {
+  "dist_100_8": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 4955,
+    "wall": 28.71
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 52185,
+    "conf": 452,
+    "prop": 592499,
+    "wall": 0.284
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 4955,
+    "wall": 30.283
+   }
+  },
+  "dist_300_16": {
+   "old": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 778113,
+    "conf": 654,
+    "prop": 6076631,
+    "wall": 8.331
+   },
+   "lazy": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   }
+  },
+  "dist_300_16_unsat": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 1,
+    "wall": 0.05
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 1,
+    "wall": 3.0
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 1,
+    "wall": 0.047
+   }
+  },
+  "dist_500_16": {
+   "old": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 3478741,
+    "conf": 1037,
+    "prop": 12762625,
+    "wall": 18.223
+   },
+   "lazy": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   }
+  },
+  "dist_600_32": {
+   "old": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   },
+   "uni": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   },
+   "lazy": {
+    "verdict": "timeout",
+    "wall": 60,
+    "dec": 0,
+    "conf": 0,
+    "prop": 0
+   }
+  },
+  "mix_sat_00": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 15,
+    "wall": 0.081
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 776,
+    "conf": 72,
+    "prop": 7369,
+    "wall": 0.033
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 15,
+    "wall": 0.028
+   }
+  },
+  "mix_sat_01": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.026
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 121,
+    "conf": 32,
+    "prop": 2748,
+    "wall": 0.044
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.043
+   }
+  },
+  "mix_sat_02": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 14,
+    "wall": 0.022
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 3200,
+    "conf": 190,
+    "prop": 23031,
+    "wall": 0.039
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 14,
+    "wall": 0.02
+   }
+  },
+  "mix_sat_03": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.059
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2140,
+    "conf": 101,
+    "prop": 14233,
+    "wall": 0.025
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.037
+   }
+  },
+  "mix_sat_04": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 16,
+    "wall": 0.059
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2476,
+    "conf": 122,
+    "prop": 18663,
+    "wall": 0.02
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 16,
+    "wall": 0.079
+   }
+  },
+  "mix_sat_05": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 12,
+    "wall": 0.027
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 726,
+    "conf": 80,
+    "prop": 8711,
+    "wall": 0.021
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 12,
+    "wall": 0.014
+   }
+  },
+  "mix_sat_06": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.039
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 95,
+    "conf": 16,
+    "prop": 1771,
+    "wall": 0.037
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.016
+   }
+  },
+  "mix_sat_07": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 17,
+    "wall": 0.046
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2868,
+    "conf": 108,
+    "prop": 16533,
+    "wall": 0.036
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 17,
+    "wall": 0.022
+   }
+  },
+  "mix_sat_08": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.059
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 1912,
+    "conf": 42,
+    "prop": 9779,
+    "wall": 0.033
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.027
+   }
+  },
+  "mix_sat_09": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 10,
+    "wall": 0.102
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 11132,
+    "conf": 940,
+    "prop": 157274,
+    "wall": 0.064
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 10,
+    "wall": 0.047
+   }
+  },
+  "mix_sat_10": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 12,
+    "wall": 0.01
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 1129,
+    "conf": 68,
+    "prop": 10081,
+    "wall": 0.031
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 12,
+    "wall": 0.023
+   }
+  },
+  "mix_sat_11": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 20,
+    "wall": 0.015
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 349,
+    "conf": 16,
+    "prop": 2118,
+    "wall": 0.01
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 20,
+    "wall": 0.019
+   }
+  },
+  "mix_sat_12": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 21,
+    "wall": 0.018
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2725,
+    "conf": 93,
+    "prop": 18354,
+    "wall": 0.019
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 21,
+    "wall": 0.023
+   }
+  },
+  "mix_sat_13": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 26,
+    "wall": 0.038
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2419,
+    "conf": 70,
+    "prop": 12446,
+    "wall": 0.016
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 26,
+    "wall": 0.022
+   }
+  },
+  "mix_sat_14": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 16,
+    "wall": 0.042
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 8125,
+    "conf": 368,
+    "prop": 58886,
+    "wall": 0.025
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 1,
+    "prop": 16,
+    "wall": 0.036
+   }
+  },
+  "mix_sat_15": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 14,
+    "wall": 0.019
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 883,
+    "conf": 34,
+    "prop": 3785,
+    "wall": 0.014
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 14,
+    "wall": 0.009
+   }
+  },
+  "mix_sat_16": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 23,
+    "wall": 0.033
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 225,
+    "conf": 13,
+    "prop": 1224,
+    "wall": 0.022
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 23,
+    "wall": 0.012
+   }
+  },
+  "mix_sat_17": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 15,
+    "wall": 0.018
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 901,
+    "conf": 94,
+    "prop": 11954,
+    "wall": 0.025
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 15,
+    "wall": 0.023
+   }
+  },
+  "mix_sat_18": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.025
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2497,
+    "conf": 66,
+    "prop": 13644,
+    "wall": 0.011
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 25,
+    "wall": 0.044
+   }
+  },
+  "mix_sat_19": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 10,
+    "wall": 0.025
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 6338,
+    "conf": 325,
+    "prop": 58645,
+    "wall": 0.015
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 10,
+    "wall": 0.051
+   }
+  },
+  "mix_sat_20": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 11,
+    "wall": 0.02
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 632,
+    "conf": 107,
+    "prop": 7669,
+    "wall": 0.017
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 11,
+    "wall": 0.011
+   }
+  },
+  "mix_sat_21": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 23,
+    "wall": 0.015
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 625,
+    "conf": 19,
+    "prop": 2643,
+    "wall": 0.015
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 23,
+    "wall": 0.014
+   }
+  },
+  "mix_sat_22": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 17,
+    "wall": 0.022
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 2845,
+    "conf": 147,
+    "prop": 18162,
+    "wall": 0.011
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 17,
+    "wall": 0.067
+   }
+  },
+  "mix_sat_23": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 25,
+    "wall": 0.016
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 1713,
+    "conf": 100,
+    "prop": 10321,
+    "wall": 0.013
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 25,
+    "wall": 0.03
+   }
+  },
+  "mix_sat_24": {
+   "old": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 12,
+    "wall": 0.05
+   },
+   "uni": {
+    "verdict": "sat",
+    "dec": 3096,
+    "conf": 130,
+    "prop": 22334,
+    "wall": 0.017
+   },
+   "lazy": {
+    "verdict": "sat",
+    "dec": 1,
+    "conf": 0,
+    "prop": 12,
+    "wall": 0.038
+   }
+  },
+  "mix_unsat_00": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.038
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 1960,
+    "conf": 303,
+    "prop": 54871,
+    "wall": 0.028
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.021
+   }
+  },
+  "mix_unsat_01": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 26,
+    "wall": 0.023
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 91,
+    "conf": 31,
+    "prop": 11880,
+    "wall": 0.025
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 26,
+    "wall": 0.023
+   }
+  },
+  "mix_unsat_02": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.022
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 2137,
+    "conf": 209,
+    "prop": 43728,
+    "wall": 0.038
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.016
+   }
+  },
+  "mix_unsat_03": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 31,
+    "wall": 0.021
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 983,
+    "conf": 103,
+    "prop": 20188,
+    "wall": 0.019
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 31,
+    "wall": 0.02
+   }
+  },
+  "mix_unsat_04": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.04
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 7247,
+    "conf": 619,
+    "prop": 126009,
+    "wall": 0.026
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.023
+   }
+  },
+  "mix_unsat_05": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 19,
+    "wall": 0.012
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 377,
+    "conf": 42,
+    "prop": 11802,
+    "wall": 0.014
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 19,
+    "wall": 0.011
+   }
+  },
+  "mix_unsat_06": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 26,
+    "wall": 0.013
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 103,
+    "conf": 20,
+    "prop": 5000,
+    "wall": 0.01
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 26,
+    "wall": 0.006
+   }
+  },
+  "mix_unsat_07": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.036
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 5423,
+    "conf": 577,
+    "prop": 116684,
+    "wall": 0.027
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.018
+   }
+  },
+  "mix_unsat_08": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 32,
+    "wall": 0.018
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 2427,
+    "conf": 167,
+    "prop": 55572,
+    "wall": 0.046
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 32,
+    "wall": 0.025
+   }
+  },
+  "mix_unsat_09": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.044
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 14366,
+    "conf": 841,
+    "prop": 227090,
+    "wall": 0.046
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.053
+   }
+  },
+  "mix_unsat_10": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 21,
+    "wall": 0.042
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 1021,
+    "conf": 96,
+    "prop": 18376,
+    "wall": 0.018
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 21,
+    "wall": 0.024
+   }
+  },
+  "mix_unsat_11": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 30,
+    "wall": 0.031
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 198,
+    "conf": 81,
+    "prop": 13215,
+    "wall": 0.019
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 30,
+    "wall": 0.016
+   }
+  },
+  "mix_unsat_12": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 23,
+    "wall": 0.022
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 3123,
+    "conf": 443,
+    "prop": 114502,
+    "wall": 0.056
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 23,
+    "wall": 0.03
+   }
+  },
+  "mix_unsat_13": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 33,
+    "wall": 0.021
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 967,
+    "conf": 195,
+    "prop": 28319,
+    "wall": 0.025
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 33,
+    "wall": 0.009
+   }
+  },
+  "mix_unsat_14": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.026
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 17105,
+    "conf": 1725,
+    "prop": 449099,
+    "wall": 0.107
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 18,
+    "wall": 0.04
+   }
+  },
+  "mix_unsat_15": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 5,
+    "wall": 0.014
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 5,
+    "wall": 0.012
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 0,
+    "prop": 5,
+    "wall": 0.016
+   }
+  },
+  "mix_unsat_16": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 28,
+    "wall": 0.016
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 134,
+    "conf": 29,
+    "prop": 3481,
+    "wall": 0.017
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 28,
+    "wall": 0.015
+   }
+  },
+  "mix_unsat_17": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.027
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 4059,
+    "conf": 1030,
+    "prop": 360688,
+    "wall": 0.076
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 22,
+    "wall": 0.015
+   }
+  },
+  "mix_unsat_18": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 32,
+    "wall": 0.021
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 2283,
+    "conf": 227,
+    "prop": 40672,
+    "wall": 0.035
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 32,
+    "wall": 0.019
+   }
+  },
+  "mix_unsat_19": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 17,
+    "wall": 0.018
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 18366,
+    "conf": 1005,
+    "prop": 377991,
+    "wall": 0.043
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 17,
+    "wall": 0.02
+   }
+  },
+  "mix_unsat_20": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.013
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 387,
+    "conf": 47,
+    "prop": 19448,
+    "wall": 0.014
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 20,
+    "wall": 0.01
+   }
+  },
+  "mix_unsat_21": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 28,
+    "wall": 0.014
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 247,
+    "conf": 63,
+    "prop": 8925,
+    "wall": 0.012
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 28,
+    "wall": 0.012
+   }
+  },
+  "mix_unsat_22": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 23,
+    "wall": 0.021
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 2494,
+    "conf": 163,
+    "prop": 29369,
+    "wall": 0.014
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 23,
+    "wall": 0.011
+   }
+  },
+  "mix_unsat_23": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 29,
+    "wall": 0.026
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 220,
+    "conf": 33,
+    "prop": 12749,
+    "wall": 0.014
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 29,
+    "wall": 0.016
+   }
+  },
+  "mix_unsat_24": {
+   "old": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 17,
+    "wall": 0.018
+   },
+   "uni": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 180,
+    "wall": 0.02
+   },
+   "lazy": {
+    "verdict": "unsat",
+    "dec": 0,
+    "conf": 1,
+    "prop": 17,
+    "wall": 0.019
+   }
+  }
+ }
+}

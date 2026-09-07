@@ -1092,6 +1092,14 @@ impl<'a> TheoryManager<'a> {
         if !self.bv.at_base_scope() {
             return;
         }
+        // Unified generation: the vocabulary's circuits already live in the
+        // main SAT core (permanent, base scope) and this re-blast would
+        // target the *embedded* instance the manager alone can reach – two
+        // var spaces aliased.  Nothing to rebuild: the unified memo survived
+        // the reset (`BvSolver::reset_embedded_state`).
+        if self.bv.is_unified() {
+            return;
+        }
         let mut roots: Vec<TermId> = Vec::new();
         for c in self.var_to_constraint.values() {
             match c {
@@ -1131,7 +1139,18 @@ impl<'a> TheoryManager<'a> {
         // those paths.
         self.euf.reset();
         self.arith.reset();
-        self.bv.reset();
+        // Unified BV generation (`bv_unified`, Option A stage 1): the tables
+        // name main-core vars whose base-scope circuits are permanent, so the
+        // resync keeps them and drops only the embedded path's per-probe
+        // state.  A full `Theory::reset` here would wipe the memo mid-search,
+        // silently end the generation inside the solver while the owning
+        // `Solver` still believes it is active, and make the next link pass
+        // re-blast fresh duplicate circuits besides the surviving ones.
+        if self.bv.is_unified() {
+            self.bv.reset_embedded_state();
+        } else {
+            self.bv.reset();
+        }
         self.diff.reset();
         self.interned_bv_constants.clear();
         self.bool_true_node = None;
@@ -3128,6 +3147,14 @@ impl<'a> TheoryManager<'a> {
     ///
     /// Returns `Some(Conflict(..))` on a detected BV theory conflict, `None`
     /// otherwise (including when the operands are not equal-width BV terms).
+    ///
+    /// **Unified generation** (`bv_unified`): when the atom's circuit is
+    /// linked into the main SAT core, its semantics are ordinary clauses
+    /// there – the embedded assert+check round-trip is dead work and is
+    /// skipped.  When the generation is unified but this atom has no link
+    /// (late-minted), the atom is recorded as pending: the owning solver
+    /// builds its circuit at the next round boundary, and a `Sat` exit with
+    /// pending atoms is refused by the honesty gate.
     fn bv_check_neq(
         &mut self,
         lhs: TermId,
@@ -3135,6 +3162,12 @@ impl<'a> TheoryManager<'a> {
         constraint_term: TermId,
         manager: &TermManager,
     ) -> Option<TheoryCheckResult> {
+        if self.bv.is_unified() {
+            if !self.bv.is_unified_atom(constraint_term) {
+                self.bv.note_unlinked_atom_assigned(constraint_term);
+            }
+            return None;
+        }
         if !self.bit_blast_bv_pair(lhs, rhs, manager) {
             return None;
         }
@@ -3146,6 +3179,8 @@ impl<'a> TheoryManager<'a> {
     ///
     /// Returns `Some(Conflict(..))` on a detected BV theory conflict, `None`
     /// otherwise (including when the operands are not equal-width BV terms).
+    ///
+    /// **Unified generation**: see [`Self::bv_check_neq`].
     fn bv_check_eq(
         &mut self,
         lhs: TermId,
@@ -3153,6 +3188,12 @@ impl<'a> TheoryManager<'a> {
         constraint_term: TermId,
         manager: &TermManager,
     ) -> Option<TheoryCheckResult> {
+        if self.bv.is_unified() {
+            if !self.bv.is_unified_atom(constraint_term) {
+                self.bv.note_unlinked_atom_assigned(constraint_term);
+            }
+            return None;
+        }
         if !self.bit_blast_bv_pair(lhs, rhs, manager) {
             return None;
         }
@@ -3417,6 +3458,21 @@ impl<'a> TheoryManager<'a> {
 
                 // Handle BV comparisons
                 if lhs_is_bv || rhs_is_bv {
+                    // Unified generation (`bv_unified`): a linked comparison
+                    // atom's circuit already lives in the main SAT core as
+                    // clauses – no embedded assert+check.  An atom without a
+                    // link is recorded as pending (see `bv_check_neq`).  The
+                    // unsigned arithmetic relaxation below is *not* skipped:
+                    // it is a sound consequence channel the general path
+                    // keeps for every BV comparison regardless of who owns
+                    // the bit level.
+                    let bv_unified = self.bv.is_unified();
+                    if bv_unified {
+                        let constraint_term = self.term_for_var(var);
+                        if !self.bv.is_unified_atom(constraint_term) {
+                            self.bv.note_unlinked_atom_assigned(constraint_term);
+                        }
+                    }
                     // Get BV width.  Both operands must agree: `BvSolver`'s
                     // comparison asserts require equal-width operands, and
                     // bit-blasting each side at its *own* declared width (which
@@ -3435,7 +3491,9 @@ impl<'a> TheoryManager<'a> {
                         _ => None,
                     };
 
-                    if let Some(width) = width {
+                    if let Some(width) = width
+                        && !bv_unified
+                    {
                         // Bit-blast both operands *with constant bits pinned*.
                         //
                         // `new_bv` alone allocates a fresh, completely

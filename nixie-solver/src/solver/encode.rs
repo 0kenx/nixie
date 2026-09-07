@@ -891,7 +891,7 @@ impl Solver {
         // quality; anything that is not plain skeleton falls back to the full
         // memoised Tseitin encoder, so semantics are unchanged.
         self.emit_assertion_clauses(term_to_encode, manager);
-        self.blast_bv_circuits_at_base_scope(term_to_encode, manager);
+        self.link_or_blast_bv_circuits(term_to_encode, manager);
 
         // Track unit `(= name body)` from nullary define-fun so table indices
         // that are inlined bodies inherit bounds on `name`.
@@ -1478,7 +1478,7 @@ impl Solver {
         // Encode the assertion immediately – structurally, exactly like the
         // unnamed `assert` path above (see `emit_assertion_clauses`).
         self.emit_assertion_clauses(term_to_encode, manager);
-        self.blast_bv_circuits_at_base_scope(term_to_encode, manager);
+        self.link_or_blast_bv_circuits(term_to_encode, manager);
 
         // Eagerly add arith diseq split for Not(Eq(a,b)) assertions
         self.add_arith_diseq_split(term_to_encode, manager);
@@ -2532,7 +2532,7 @@ impl Solver {
                     self.trail.push(TrailOp::BvTermAdded { term });
                     // Register with BV solver if not already registered
                     if let Some(width) = sort.bitvec_width() {
-                        self.bv.new_bv(term, width);
+                        self.bv_new_free_vector(term, width);
                     }
                     // Bit-vector content present: fall back to the cadical
                     // focused-mode VMTF scores (see `Solver::new`'s
@@ -3027,13 +3027,18 @@ impl Solver {
             | TermKind::BvAnd(_, _)
             | TermKind::BvOr(_, _)
             | TermKind::BvXor(_, _)
-            | TermKind::BvAdd(_, _)
-            | TermKind::BvSub(_, _)
-            | TermKind::BvMul(_, _)
             | TermKind::BvShl(_, _)
             | TermKind::BvLshr(_, _)
             | TermKind::BvAshr(_, _) => {
                 // Bitvector terms - should not appear at boolean top level
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
+            TermKind::BvAdd(_, _) | TermKind::BvSub(_, _) | TermKind::BvMul(_, _) => {
+                // Ring operations: recorded for the unified-blasting routing
+                // gate (`bv_unified::bv_unified_window_open` – ring-dominated
+                // formulas with the arith relaxation active stay lazy).
+                self.has_bv_ring_ops = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }

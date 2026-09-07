@@ -105,7 +105,7 @@ impl Solver {
                         self.bv_terms.insert(current);
                         self.trail.push(TrailOp::BvTermAdded { term: current });
                         if let Some(width) = sort.bitvec_width() {
-                            self.bv.new_bv(current, width);
+                            self.bv_new_free_vector(current, width);
                         }
                         // Also intern in ArithSolver for BV comparison constraints
                         // (BV comparisons are handled as bounded integer arithmetic)
@@ -151,6 +151,14 @@ impl Solver {
                 | TermKind::BvConcat(lhs, rhs) => {
                     if !self.claim_tracked_compound(current) {
                         continue;
+                    }
+                    if matches!(
+                        term.kind,
+                        TermKind::BvAdd(_, _) | TermKind::BvSub(_, _) | TermKind::BvMul(_, _)
+                    ) {
+                        // Ring operation seen: input to the unified-blasting
+                        // routing gate (`bv_unified::bv_unified_window_open`).
+                        self.has_bv_ring_ops = true;
                     }
                     stack.push(*rhs);
                     stack.push(*lhs);

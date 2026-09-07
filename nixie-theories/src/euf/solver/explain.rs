@@ -139,6 +139,38 @@ impl EufSolver {
         self.try_explain_equality(a, b)
     }
 
+    /// Explain why two nodes' classes carry *different* distinguished-value
+    /// summaries, or `None` when they do not (or the explanation is
+    /// incomplete).
+    ///
+    /// The apartness of two values is tautological only in the ground-constant
+    /// case: when a node already *is* its class's value carrier (born marked
+    /// by `intern_value_const`), no literal contributed to the summary and the
+    /// honest justification is empty.  When a class acquired its value through
+    /// merges – e.g. a variable merged with `#x01` under an assigned equality
+    /// atom – the carrier link is a *consequence* of those merge reasons, and
+    /// the explanation must cite them.  Propagating such an apartness with an
+    /// empty justification instead would pin a conditional fact as a permanent
+    /// level-0 unit: unsound across backtracks within a search, and across
+    /// `check`s in incremental mode (a first check's branch choice then
+    /// falsely refuted a later assertion – `(or (= v c1) (= v c2))` followed
+    /// by `(assert (= v c2))` answered `unsat` on satisfiable input).
+    pub fn try_explain_value_apart(&mut self, a: u32, b: u32) -> Option<Vec<TermId>> {
+        let ra = self.uf.find(a);
+        let rb = self.uf.find(b);
+        if ra == rb {
+            return None;
+        }
+        let (va, wa) = self.class_value.get(ra as usize).copied().flatten()?;
+        let (vb, wb) = self.class_value.get(rb as usize).copied().flatten()?;
+        if va == vb {
+            return None;
+        }
+        let mut expl = self.try_explain_equality(a, wa)?;
+        expl.extend(self.try_explain_equality(b, wb)?);
+        Some(expl)
+    }
+
     /// Explain why `a` and `b` are proven disequal, or `None` if they are not
     /// (or the justifying disequality cannot be fully explained).
     pub fn try_explain_diseq(&mut self, a: u32, b: u32) -> Option<Vec<TermId>> {

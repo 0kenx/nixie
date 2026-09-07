@@ -45,6 +45,33 @@ enum Sig {
     Var(Var),
 }
 
+/// Which SAT instance receives the clauses and variables that the circuit
+/// builders allocate.
+///
+/// The default [`Embedded`] target is `BvSolver`'s own SAT instance – the
+/// historical architecture, in which bit-blasted circuits live in a private
+/// solver that the theory manager drives once per asserted atom ("lazy"
+/// bit-blasting; see `docs/studies/2026-09-distinct-theory-owned-sorts.md`,
+/// Attack 3, for the measured cost of that interleaving).
+///
+/// [`External`] is the *unified* mode of the BV-circuit unification campaign
+/// (`docs/handovers/2026-09-07-bv-unification.md`): while an external
+/// instance is installed (see [`BvSolver::build_with`]), every `new_var` /
+/// `add_clause` the builders perform lands in the **caller's** solver – the
+/// main CDCL(T) core – so gate circuits propagate natively during the main
+/// descent instead of in per-theory-check batches.  The external window is
+/// only ever open while the caller holds both solvers (assertion-time
+/// encoding and round boundaries); during the search itself the manager
+/// never builds circuits, so the two var spaces can never interleave
+/// mid-flight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuildTarget {
+    /// `self.sat` is the embedded instance.
+    Embedded,
+    /// `self.sat` is the caller's instance, installed by `build_with`.
+    External,
+}
+
 /// Comparison tracking for conflict detection
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ComparisonKey {
@@ -223,6 +250,46 @@ pub struct BvSolver {
     /// in reverse by [`Theory::pop`] so the link is retracted with the decision
     /// level that established it.
     outer_bool_journal: Vec<(TermId, Option<bool>)>,
+    /// Which instance circuit building currently targets (see [`BuildTarget`]).
+    build_target: BuildTarget,
+    /// The embedded SAT instance while an external build window is open
+    /// (`build_with` parks it here so `self.sat` can hold the caller's core).
+    parked_sat: Option<SatSolver>,
+    /// The embedded instance's reserved constant-bit pair, saved while an
+    /// external window is open so `build_with` can restore it exactly.
+    parked_const: Option<(Var, Var)>,
+    /// The external instance's reserved constant-bit pair.  Created on the
+    /// first `build_with` window of a unified generation and reused by every
+    /// later window of that generation (the caller's instance persists across
+    /// windows); cleared when the generation ends so a *different* caller
+    /// instance can never inherit another instance's constant vars.
+    external_const: Option<(Var, Var)>,
+    /// Whether this solver currently runs the *unified* generation of the
+    /// BV-circuit unification campaign: all bit-vector state (bits, gate
+    /// clauses, bool nodes) lives in the caller's main SAT core, and the
+    /// embedded instance is dormant.  Set/cleared only by the owning
+    /// `nixie-solver::Solver` (`enter_unified` / `exit_unified`), never from
+    /// inside the theories crate.
+    unified: bool,
+    /// Bool-sorted BV atoms whose defining circuit was linked into the main
+    /// core during the current unified generation.  The theory manager skips
+    /// the embedded assert+check for exactly these atoms (their semantics are
+    /// ordinary clauses now); any *other* BV atom it sees assigned is recorded
+    /// in `pending_unlinked` instead.
+    unified_atoms: FxHashSet<TermId>,
+    /// BV atoms the theory manager observed assigned **without** a unified
+    /// circuit (late-minted atoms: `distinct` pair atoms, refinement-round
+    /// lemmas, ...).  Drained by the owning solver at round boundaries, where
+    /// both solvers are reachable and the missing circuits can be built into
+    /// the main core.  A non-empty set at a `Sat` exit is *not* an honest
+    /// model – the caller must build the links and re-search (or answer
+    /// `Unknown` once its round budget is spent).
+    pending_unlinked: Vec<TermId>,
+    /// Model snapshot adopted from the caller's main core (unified mode).
+    /// Preferred by `read_model_bit` over the embedded instance's snapshot:
+    /// in a unified generation every bit var belongs to the caller's var
+    /// space, and only the caller's model assigns them.
+    adopted_model: Vec<LBool>,
 }
 
 impl Default for BvSolver {
@@ -260,6 +327,14 @@ impl BvSolver {
             bool_node: FxHashMap::default(),
             outer_bool: FxHashMap::default(),
             outer_bool_journal: Vec::new(),
+            build_target: BuildTarget::Embedded,
+            parked_sat: None,
+            parked_const: None,
+            external_const: None,
+            unified: false,
+            unified_atoms: FxHashSet::default(),
+            pending_unlinked: Vec::new(),
+            adopted_model: Vec::new(),
             const_true,
             const_false,
         }
@@ -279,6 +354,210 @@ impl BvSolver {
         sat.add_clause([Lit::pos(const_true)]);
         sat.add_clause([Lit::neg(const_false)]);
         (const_true, const_false)
+    }
+
+    /// Open an external build window: for the duration of `f`, every circuit
+    /// the builders add lands in `sat` (the caller's SAT core), not in the
+    /// embedded instance.
+    ///
+    /// This is the seam of the BV-circuit unification campaign
+    /// (`docs/handovers/2026-09-07-bv-unification.md`): the gate constructors
+    /// stay exactly as they are – they already funnel through `self.sat` /
+    /// `self.const_true` / `self.const_false` – and this method repoints those
+    /// three at the caller's instance for the window.  Memo tables
+    /// (`term_to_bv`, `ult_cache`, `bool_node`) persist across windows and
+    /// therefore accumulate *caller-var-space* entries during a unified
+    /// generation; `exit_unified` is the only sanctioned way to clear them, so
+    /// a generation can never mix the two var spaces.
+    ///
+    /// The reserved constant bits are allocated in the caller's instance on
+    /// the first window of a generation and reused afterwards (the caller's
+    /// instance persists across windows).
+    ///
+    /// Windows must not nest (`debug_assert`), and the caller must not touch
+    /// `sat` from inside `f` – the borrow checker enforces the latter by
+    /// construction.
+    pub fn build_with<R>(&mut self, sat: &mut SatSolver, f: impl FnOnce(&mut Self) -> R) -> R {
+        debug_assert_eq!(
+            self.build_target,
+            BuildTarget::Embedded,
+            "external build windows must not nest"
+        );
+        // Park the embedded instance: `self.sat` becomes the caller's core.
+        let embedded = core::mem::take(&mut self.sat);
+        self.parked_sat = Some(embedded);
+        self.parked_const = Some((self.const_true, self.const_false));
+        core::mem::swap(&mut self.sat, sat);
+        let (t, f_) = match self.external_const {
+            Some(pair) => pair,
+            None => {
+                let pair = Self::reserve_const_bits(&mut self.sat);
+                self.external_const = Some(pair);
+                pair
+            }
+        };
+        self.const_true = t;
+        self.const_false = f_;
+        self.build_target = BuildTarget::External;
+        let result = f(self);
+        // Close the window: hand the caller's core back and restore the
+        // embedded instance (and its constant pair) exactly.
+        core::mem::swap(&mut self.sat, sat);
+        if let Some(embedded) = self.parked_sat.take() {
+            self.sat = embedded;
+        }
+        if let Some((ct, cf)) = self.parked_const.take() {
+            self.const_true = ct;
+            self.const_false = cf;
+        }
+        self.build_target = BuildTarget::Embedded;
+        result
+    }
+
+    /// Begin a *unified* generation (see [`Self::build_with`]).  The caller (the
+    /// main solver) has verified the generation's eligibility gates; from now
+    /// until [`Self::exit_unified`], all bit-vector state is built into the
+    /// caller's core through [`Self::build_with`] windows and the embedded
+    /// instance is dormant.
+    ///
+    /// Every var-space-carrying table is wiped on entry, exactly as on
+    /// [`Self::exit_unified`]: the encode-time theory-variable walk may have
+    /// created free vectors in the **embedded** instance for this very
+    /// assertion before the generation was decided, and a unified generation
+    /// must never consume those vars.  (The orphaned embedded free vectors
+    /// stay behind unreferenced – harmless.)
+    pub fn enter_unified(&mut self) {
+        self.unified = true;
+        self.term_to_bv.clear();
+        self.ult_cache.clear();
+        self.bool_node.clear();
+        self.unified_atoms.clear();
+        self.pending_unlinked.clear();
+        self.adopted_model.clear();
+        self.external_const = None;
+    }
+
+    /// End a unified generation and **wipe every var-space-carrying table**.
+    ///
+    /// The memo entries of a unified generation name vars of the caller's
+    /// core.  The lazy (embedded) path would feed those vars to the embedded
+    /// solver's clause space – two unrelated var spaces silently aliased, the
+    /// classic mixed-era corruption – so ending a generation must drop them
+    /// all.  Circuits already added to the caller's core survive (they are
+    /// definitional clauses of atoms and remain equisatisfiable); only the
+    /// *memory* of them is dropped, so a later generation re-blasts lazily
+    /// into the embedded instance if it is not itself unified.
+    pub fn exit_unified(&mut self) {
+        self.unified = false;
+        self.term_to_bv.clear();
+        self.ult_cache.clear();
+        self.bool_node.clear();
+        self.unified_atoms.clear();
+        self.pending_unlinked.clear();
+        self.adopted_model.clear();
+        self.external_const = None;
+    }
+
+    /// Rebase for a *continuing* unified generation.
+    ///
+    /// The owning solver's rebasing sites (check entry, refinement-round
+    /// boundaries, model-blocking repair) call this instead of
+    /// [`Theory::reset`] while [`Self::is_unified`] holds: the unified tables
+    /// (`term_to_bv`, `ult_cache`, `bool_node`, `unified_atoms`) name vars of
+    /// the caller's core, whose base-scope clauses are permanent, so those
+    /// tables stay truthful across rebases and must survive.  Only the
+    /// embedded path's per-probe state (assertions, guard terms, outer-bool
+    /// journal, snapshots) is dropped, exactly as `Theory::reset` would drop
+    /// it.
+    pub fn reset_embedded_state(&mut self) {
+        self.assertions.clear();
+        self.context_stack.clear();
+        self.shared_equalities.clear();
+        self.equality_notifications.clear();
+        self.assertion_guard_terms.clear();
+        self.last_sat_model.clear();
+        self.outer_bool.clear();
+        self.outer_bool_journal.clear();
+        self.adopted_model.clear();
+        // The embedded SAT instance itself is untouched: in a unified
+        // generation nothing was ever asserted into it, so it carries no
+        // probe residue (the `Theory::reset` doc's leak classes all arise
+        // from driving it, which only the lazy path does).
+    }
+
+    /// Whether a unified generation is active.
+    #[must_use]
+    pub fn is_unified(&self) -> bool {
+        self.unified
+    }
+
+    /// Whether `term` (a Bool-sorted BV atom) has its defining circuit linked
+    /// into the caller's core in the current unified generation.  The theory
+    /// manager skips the embedded assert+check for exactly these atoms.
+    #[must_use]
+    pub fn is_unified_atom(&self, term: TermId) -> bool {
+        self.unified && self.unified_atoms.contains(&term)
+    }
+
+    /// Record `term` as a linked atom of the current unified generation.
+    pub fn note_unified_atom(&mut self, term: TermId) {
+        self.unified_atoms.insert(term);
+    }
+
+    /// Record that the theory manager saw BV atom `term` assigned with no
+    /// unified circuit behind it (a late-minted atom).  See
+    /// `pending_unlinked`.
+    pub fn note_unlinked_atom_assigned(&mut self, term: TermId) {
+        if self.unified && !self.pending_unlinked.contains(&term) {
+            self.pending_unlinked.push(term);
+        }
+    }
+
+    /// Drain the late-minted (unlinked) BV atoms recorded since the last
+    /// drain.  The owning solver calls this at round boundaries, where it can
+    /// open a `build_with` window and link them.
+    pub fn take_pending_unlinked_atoms(&mut self) -> Vec<TermId> {
+        core::mem::take(&mut self.pending_unlinked)
+    }
+
+    /// Whether any late-minted BV atom awaits linking (the owning solver's
+    /// `Sat`-exit honesty gate).
+    #[must_use]
+    pub fn has_pending_unlinked(&self) -> bool {
+        self.unified && !self.pending_unlinked.is_empty()
+    }
+
+    /// Link two Bool vars of the caller's core with `a <=> b` (two clauses).
+    ///
+    /// Unified mode only: this is how a main-core atom var `a` is tied to the
+    /// output var `b` of the atom's freshly built circuit (`a` may also be
+    /// older than the circuit, e.g. an atom the Tseitin encoder created
+    /// before the BV blast ran).
+    pub fn link_bool_vars(&mut self, a: Var, b: Var) {
+        debug_assert_eq!(self.build_target, BuildTarget::External);
+        if a != b {
+            self.emit_bit_eq(a, b);
+        }
+    }
+
+    /// Adopt `model` – a satisfying assignment of the **caller's** core – as
+    /// the value source for unified-generation model reads (`get_value*`,
+    /// `bits_all_determined`, `bool_value`).
+    ///
+    /// In a unified generation every bit var belongs to the caller's var
+    /// space; the embedded instance's trail says nothing about them.  The
+    /// owning solver calls this once, after its search answered `Sat` and
+    /// before any model is read out.
+    pub fn adopt_model_snapshot(&mut self, model: &[LBool]) {
+        self.adopted_model.clear();
+        self.adopted_model.extend_from_slice(model);
+    }
+
+    /// The linked atoms of the current unified generation (for the owning
+    /// solver's debug-verification net and round bookkeeping).
+    #[must_use]
+    pub fn unified_atoms(&self) -> &FxHashSet<TermId> {
+        &self.unified_atoms
     }
 
     /// SAT-solver configuration for the embedded bit-blasting engine.
@@ -723,6 +1002,13 @@ impl BvSolver {
     /// still picks it up – the outer assignment and the bit-blasting can happen
     /// in either order.
     pub fn assert_bool_value(&mut self, term: TermId, value: bool) {
+        if self.unified {
+            // Unified generation: the outer assignment is already visible to
+            // the caller's core (the atom is one of its vars), and pinning it
+            // here would add a unit clause *globally forcing* that var in the
+            // caller's clause space – a scope error, not an echo.  No-op.
+            return;
+        }
         let previous = self.outer_bool.insert(term, value);
         self.outer_bool_journal.push((term, previous));
         if let Some(&var) = self.bool_node.get(&term) {
@@ -792,8 +1078,14 @@ impl BvSolver {
         if let Some(&v) = self.bool_node.get(&term) {
             // Re-apply any outer truth value: the node may have been created
             // below a decision level that has since been popped, which retracts
-            // the unit clause but not the cached variable.
-            if let Some(&value) = self.outer_bool.get(&term) {
+            // the unit clause but not the cached variable.  Unified mode never
+            // records outer values (the atom *is* a var of the caller's core,
+            // whose assignment the search itself maintains), so the guard is
+            // vacuous there – but keep it explicit so a pinning clause can
+            // never silently land in the caller's core.
+            if !self.unified
+                && let Some(&value) = self.outer_bool.get(&term)
+            {
                 self.pin_bool_var(v, value);
             }
             return Some(v);
@@ -965,7 +1257,10 @@ impl BvSolver {
         };
         self.bool_node.insert(term, out);
         // Honour an outer assignment recorded before this node existed.
-        if let Some(&value) = self.outer_bool.get(&term) {
+        // (Unified mode records none – see the memoised branch above.)
+        if !self.unified
+            && let Some(&value) = self.outer_bool.get(&term)
+        {
             self.pin_bool_var(out, value);
         }
         Some(out)
@@ -2637,12 +2932,23 @@ impl BvSolver {
 
     /// Read a single SAT variable's boolean value from the model.
     ///
-    /// Prefers the snapshot captured at the last SAT check: the live trail
-    /// has been backtracked to root and would read all-`Undef` (→ 0). Falls
-    /// back to the live model only when no snapshot exists (e.g. direct
-    /// unit-test usage that reads before any backtrack).
+    /// In a unified generation the variable belongs to the **caller's** var
+    /// space, so the adopted main-core snapshot is the only honest source (the
+    /// embedded instance never assigned it); an undefined entry reads as
+    /// `false`, the same convention the embedded fallback below uses for
+    /// unassigned vars.  Otherwise the snapshot captured at the last SAT
+    /// check is preferred: the live trail has been backtracked to root and
+    /// would read all-`Undef` (→ 0).  Falls back to the live model only when
+    /// no snapshot exists (e.g. direct unit-test usage that reads before any
+    /// backtrack).
     fn read_model_bit(&self, var: Var) -> bool {
         let idx = var.index();
+        if self.unified {
+            return self
+                .adopted_model
+                .get(idx)
+                .is_some_and(|l| l.is_defined() && l.is_true());
+        }
         if let Some(v) = self.last_sat_model.get(idx)
             && v.is_defined()
         {
@@ -2702,10 +3008,28 @@ impl Theory for BvSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
+        if self.unified {
+            // Unified generation: the embedded instance holds nothing (every
+            // BV atom's semantics lives in the caller's core as clauses), so
+            // there is no batch check to run.  The caller's CDCL search is the
+            // consistency check.
+            return Ok(TheoryResult::Sat);
+        }
         self.check_body()
     }
 
     fn push(&mut self) {
+        if self.unified {
+            // Unified generation: `self.sat` is the *embedded* instance here
+            // (windows are closed during the search), but the generation's
+            // clauses all live in the caller's core at its base scope.  The
+            // theory-scope stack the manager drives per decision level must
+            // not touch the caller's assertion levels, and the embedded
+            // instance has no state to scope – so a push is a pure no-op.
+            // (`context_stack` stays empty, keeping `at_base_scope()` true,
+            // which is exactly the invariant a unified generation requires.)
+            return;
+        }
         self.context_stack.push(ContextMark {
             assertions_len: self.assertions.len(),
             guard_terms_len: self.assertion_guard_terms.len(),
@@ -2715,6 +3039,10 @@ impl Theory for BvSolver {
     }
 
     fn pop(&mut self) {
+        if self.unified {
+            // Mirror of the unified `push` no-op above; see its comment.
+            return;
+        }
         if let Some(mark) = self.context_stack.pop() {
             self.assertions.truncate(mark.assertions_len);
             self.assertion_guard_terms.truncate(mark.guard_terms_len);
@@ -2733,6 +3061,13 @@ impl Theory for BvSolver {
     }
 
     fn reset(&mut self) {
+        // A full reset ends any unified generation: the caller's core may be
+        // torn down or reused, so its var-space-carrying tables cannot be
+        // trusted afterwards.
+        self.exit_unified();
+        self.build_target = BuildTarget::Embedded;
+        self.parked_sat = None;
+        self.parked_const = None;
         self.sat.reset();
         // `sat.reset()` rebuilds the variable space from index 0, so the
         // reserved constant bits must be re-created (and re-pinned) or every
@@ -2754,6 +3089,14 @@ impl Theory for BvSolver {
     }
 
     fn get_model(&self) -> Vec<(TermId, TermId)> {
+        if self.unified {
+            // Unified generation: the embedded instance holds no assignment
+            // (its model is over a var space no term maps to).  The owning
+            // solver reads BV values through `get_value_big`/
+            // `model_bv_values`, which consult the adopted main-core
+            // snapshot.
+            return Vec::new();
+        }
         // Read the SAT model and construct bit-vector value assignments.
         // For each BV variable term, read its bit values from the SAT model
         // and group terms by their concrete value. For each group, the
@@ -2796,6 +3139,13 @@ impl Theory for BvSolver {
 
 impl TheoryCombination for BvSolver {
     fn notify_equality(&mut self, eq: EqualityNotification) -> bool {
+        if self.unified {
+            // Unified generation: the equality is a semantic consequence of
+            // clauses already in the caller's core (or of atoms the honesty
+            // gate enforces); asserting it here would write main-core vars
+            // into the dormant embedded instance.  Accept and no-op.
+            return true;
+        }
         // Check if both terms are relevant to the BV theory
         let lhs_known = self.term_to_bv.contains_key(&eq.lhs);
         let rhs_known = self.term_to_bv.contains_key(&eq.rhs);
