@@ -171,8 +171,8 @@ instrumented solver is intentionally not reported as a performance result.
 
 ### Implementation verification
 
-All required gates passed on the implementation, including the seven new
-observation tests: workspace all-features build; nextest (10,630 passed,
+All required gates passed on the integrated implementation, including the
+seven new observation tests: workspace all-features build; nextest (10,637 passed,
 12 skipped); doctests (111 passed, 29 ignored); all-targets/all-features
 clippy with warnings denied; formatting; and all-features documentation with
 warnings denied. The 100,000-case SAT differential found zero mismatches and
@@ -184,8 +184,16 @@ An additional, non-required native `cargo check -p nixie-sat
 --no-default-features` check stops at the pre-existing frozen-clock assertion
 in `nixie-math/src/lib.rs:111`. It is not a passing configuration. The new
 observer explicitly requires `std` and is excluded when its feature is off.
-Logs and command results are retained under
-`precompile/d907929/benchmark/shared-satisfaction-verification/`.
+The initial verification (10,630 tests) is retained under
+`precompile/d907929/benchmark/shared-satisfaction-verification/`. Source
+auditing then detected the concurrent `4689d14` library changes, so the full
+gates and fresh differentials were repeated on the integrated code. The final
+logs, exact source fingerprint and parity report are under
+`precompile/603ff9b/benchmark/shared-satisfaction-integration-verification/`.
+The subsequent `27b27f6` landing only changed documentation and the independent
+`cnf_solve` example; all-targets clippy was rechecked for that example. Library
+sources and the measured `stats_solve` binary were unchanged by it. No
+measurement cell was repeated during integration verification.
 
 ## First experiment: opportunity gate passed on two of three inputs
 
@@ -241,6 +249,23 @@ walking every watcher on every visit would recreate the traffic it aims to
 remove. A negative group check must still allow later truth transitions;
 only a currently true shared blocker certifies skipping its members.
 
+A concrete candidate is a fixed-size tile of watchers with a small set of
+`(blocker, membership mask)` headers. A true header clears its members from
+the work mask; visiting the remaining set bits in increasing position keeps
+the original order. Members skipped as satisfied still have to survive any
+compaction, and a false header cannot suppress later individual checks.
+Tile boundaries can split the measured whole-list groups, so retained
+opportunity and mask/compaction traffic both need measurement. This is a
+prototype design, not an implemented representation or a proven cost win.
+
+Keep scheduler accounting separate from cost measurement in that prototype.
+The current propagation ticks deliberately charge logical list size using
+eight bytes per watcher and include phantom binary entries, despite a
+twelve-byte physical watcher. Preserving those ticks can preserve search;
+they cannot then establish the new representation's physical saving. Record
+actual group checks, visits, copies and rebuild work separately, followed by
+instructions and cycles per conflict in a bounded comparison.
+
 This result establishes removable *check counts* on two registered inputs.
 It establishes no cycle reduction, does not cover binary propagation or
 conflict analysis, and assumes free grouping when computing the opportunity.
@@ -257,8 +282,10 @@ Control binary: `precompile/eb3a62d/stats_solve`, SHA-256
 `76a883a819c437d1e8dd4c43828975b860212027b13554219f4b8f5cde119332`.
 Both use the same dependency lock, SHA-256
 `3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`.
-The intervening `3a4622f` change is in the SMT solver; the observation binary
-and its controls use the same underlying SAT search implementation.
+The intervening `3a4622f` and `4689d14` changes concern SMT/BV solving.
+`4689d14` also adds an explicit level-zero propagation API, which these
+DIMACS runs do not call. The observation binary and its controls use the same
+underlying SAT search implementation.
 
 | Input | Observation record | Reused/control record | Input SHA-256 |
 |---|---|---|---|
