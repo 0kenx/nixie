@@ -1218,6 +1218,9 @@ pub struct Solver {
     pub(super) trail: Trail,
     /// Watch lists
     pub(super) watches: WatchLists,
+    /// Read-only observations; never consulted by search or propagation.
+    #[cfg(feature = "bcp-groups")]
+    pub(crate) watch_group_stats: Option<Box<crate::watch_groups::Collector>>,
 
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
@@ -1912,6 +1915,8 @@ impl Solver {
             clauses: ClauseDatabase::new(),
             trail: Trail::new(0),
             watches: WatchLists::new(0),
+            #[cfg(feature = "bcp-groups")]
+            watch_group_stats: None,
             vsids: VSIDS::new(0),
             domain_priority: Vec::new(),
             vmtf: VMTF::new(0),
@@ -3429,6 +3434,8 @@ impl Solver {
 
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
+        #[cfg(feature = "bcp-groups")]
+        self.clear_watch_group_history();
         // Defensive deferral flush: a bulk loader that aborted between
         // `begin_deferred_big` and `finish_deferred_big` must not reach
         // propagation with an unmaterialized graph (a missing BIG edge is
@@ -3840,6 +3847,8 @@ impl Solver {
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
+        #[cfg(feature = "bcp-groups")]
+        self.clear_watch_group_history();
         if self.fatal_error.is_some() {
             return (SolverResult::Unknown, None);
         }
@@ -4353,6 +4362,8 @@ impl Solver {
     /// can be removed with pop(). Automatically backtracks to decision level 0
     /// to ensure a clean state for adding new constraints.
     pub fn push(&mut self) {
+        #[cfg(feature = "bcp-groups")]
+        self.clear_watch_group_history();
         self.ever_pushed = true;
         // Backtrack to level 0 to ensure clean state
         // This is necessary because solve() may leave assignments on the trail
@@ -4366,6 +4377,8 @@ impl Solver {
 
     /// Pop to previous assertion level
     pub fn pop(&mut self) {
+        #[cfg(feature = "bcp-groups")]
+        self.clear_watch_group_history();
         if self.assertion_levels.len() > 1 {
             self.assertion_levels.pop();
 

@@ -139,3 +139,53 @@ workspace build/tests/doctests/clippy/fmt/docs checks and fresh Z3 parity with
 the user-authorized available version. Exact diagnostic and SAT-model checks
 accompany the three measurement cells. Results and the next decision will be
 appended here; no speedup is claimed by the registration.
+
+### Observation implementation
+
+The `bcp-groups` feature adds a per-solver collector and is absent from
+ordinary builds. `Solver::enable_watch_group_stats(NonZeroU64)` starts/resets
+collection; `write_watch_group_report` writes `nixie-watch-groups/1` JSON.
+`stats_solve` exposes this as `NIXIE_WATCH_GROUPS=256` and writes the report
+to stderr, preserving the existing stdout diagnostics/model format.
+
+Memory limits are 262,144 entries per snapshot, one million retained history
+entries and 65,536 retained trigger lists. Both entry and list limits are
+needed because an empty post-compaction list still occupies a history record.
+Omitted snapshot/history coverage is counted. History compares sorted exact
+`(clause id, blocker)` multisets; it clears at solve entries and push/pop.
+The membership denominator includes complete lists, while opportunity counts
+and histograms include only actual visited prefixes. Those denominators must
+not be interchanged.
+
+`group_counts` and `group_entries` use size bins 1, 2, 3, 4–7, 8–15, 16–31,
+32+. `by_conflicts` uses conflict bins 0, 1–1023, 1024–16383, 16384+ and
+columns `[visited, entry_true, duplicate_entry_true, large_group_entries]`.
+`removed` covers moves/deletions from this trigger's list, not destruction of
+the clause. `history_gap_sum / history_pairs` is a gap in global nonempty
+list visits between sampled observations; it is not a number of restarts.
+
+The reproducible runner is `bench/suite/scripts/watch_group_probe.py`. After
+building and caching `stats_solve` with `--features bcp-groups` at a committed
+source revision, pass `--binary precompile/<sha>/stats_solve-groups --sha <sha>`.
+It writes per-input benchstore manifests, refuses to repeat existing or
+incompletely recorded cells, checks SAT models, reuses two cached release
+controls and allows the registered missing noL control. Timing of the
+instrumented solver is intentionally not reported as a performance result.
+
+### Implementation verification
+
+All required gates passed on the implementation, including the seven new
+observation tests: workspace all-features build; nextest (10,630 passed,
+12 skipped); doctests (111 passed, 29 ignored); all-targets/all-features
+clippy with warnings denied; formatting; and all-features documentation with
+warnings denied. The 100,000-case SAT differential found zero mismatches and
+zero invalid models. Fresh Z3 parity against the user-authorized available
+Z3 4.16.0 gave 169 agreements, zero disagreements and one unresolved case
+out of 170. That unresolved case is not counted as an agreement.
+
+An additional, non-required native `cargo check -p nixie-sat
+--no-default-features` check stops at the pre-existing frozen-clock assertion
+in `nixie-math/src/lib.rs:111`. It is not a passing configuration. The new
+observer explicitly requires `std` and is excluded when its feature is off.
+Logs and command results are retained under
+`precompile/d907929/benchmark/shared-satisfaction-verification/`.

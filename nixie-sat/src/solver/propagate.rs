@@ -162,10 +162,21 @@ impl Solver {
             // bounds-check elision on the read index (0..len range).
             let mut write = 0usize;
 
+            #[cfg(feature = "bcp-groups")]
+            let mut group_sample = self
+                .watch_group_stats
+                .as_mut()
+                .and_then(|stats| stats.begin(lit, &watches, &self.trail, self.stats.conflicts));
+
             for read in 0..watches.len() {
                 let watcher = watches[read];
 
-                if self.trail.lit_val_hot(watcher.blocker) > 0 {
+                let blocker_true = self.trail.lit_val_hot(watcher.blocker) > 0;
+                #[cfg(feature = "bcp-groups")]
+                if let Some(sample) = &mut group_sample {
+                    sample.observe(watcher, blocker_true);
+                }
+                if blocker_true {
                     // Kept watcher. While `write == read` (no watcher dropped
                     // yet in this scan) the write-back would be a pure
                     // self-write — skip it; the compaction copy is only
@@ -349,6 +360,14 @@ impl Solver {
             }
 
             watches.truncate(write);
+
+            #[cfg(feature = "bcp-groups")]
+            if let Some(sample) = group_sample {
+                let Some(stats) = self.watch_group_stats.as_mut() else {
+                    panic!("watch group collector disappeared during propagation");
+                };
+                stats.finish(sample, &watches, conflict_found.is_some());
+            }
 
             *self.watches.get_mut(lit) = watches;
 

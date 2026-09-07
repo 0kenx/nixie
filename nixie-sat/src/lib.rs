@@ -181,6 +181,8 @@ mod vivification;
 mod vmtf;
 mod vmtf_queue;
 mod vsids;
+#[cfg(feature = "bcp-groups")]
+mod watch_groups;
 mod watched;
 mod xor;
 

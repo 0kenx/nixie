@@ -22,6 +22,8 @@
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NIXIE_BCP_STATS=1   print the BCP anatomy counters (requires a build
 //!                       with `--features bcp-stats`; see `diag_bcp`)
+//!   NIXIE_WATCH_GROUPS=N sample every Nth nonempty watch list (positive N;
+//!                       requires `--features bcp-groups`); JSON on stderr
 //!   NO_STAB=1           disable stable/focused alternation
 //!   STAB_BASE=N         override `stabilize_base`
 //! Study arms (`NIXIE_CADICAL_REDUCE`, `NIXIE_STAB_FAITHFUL`, ...) are read
@@ -136,6 +138,24 @@ fn main() {
         cfg.stabilize_base = n;
     }
     let mut solver = Solver::with_config(cfg);
+    #[cfg(feature = "bcp-groups")]
+    let observe_groups = match std::env::var("NIXIE_WATCH_GROUPS") {
+        Ok(value) => match value.parse::<std::num::NonZeroU64>() {
+            Ok(stride) => {
+                solver.enable_watch_group_stats(stride);
+                true
+            }
+            Err(error) => {
+                eprintln!("invalid NIXIE_WATCH_GROUPS: {error}");
+                std::process::exit(2);
+            }
+        },
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => {
+            eprintln!("invalid NIXIE_WATCH_GROUPS: {error}");
+            std::process::exit(2);
+        }
+    };
     if let Ok(v) = std::env::var("MAXC")
         && let Ok(n) = v.parse::<u64>()
     {
@@ -210,6 +230,12 @@ fn main() {
         }
     }
     let r = solver.solve();
+    #[cfg(feature = "bcp-groups")]
+    if observe_groups && let Err(error) = solver.write_watch_group_report(std::io::stderr().lock())
+    {
+        eprintln!("writing watch group observations failed: {error}");
+        std::process::exit(2);
+    }
     #[cfg(feature = "bcp-stats")]
     if nixie_sat::diag_bcp::enabled() {
         nixie_sat::diag_bcp::dump();

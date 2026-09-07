@@ -34,6 +34,8 @@ impl Solver {
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        #[cfg(feature = "bcp-groups")]
+        self.clear_watch_group_history();
         // LRAT: solve-entry deferred parse-unit flush (see `Solver::solve`).
         if !self.pending_parse_unit_flushes.is_empty() {
             let pending = core::mem::take(&mut self.pending_parse_unit_flushes);
