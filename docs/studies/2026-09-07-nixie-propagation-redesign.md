@@ -131,14 +131,11 @@ cycles/conflict ratio if total cost or solved-at-cap worsens materially.
 
 ## Verification and status
 
-Documentation and feasibility registration are the first landed step. The
-observation implementation must have tests for repeated blockers, conflict
-tails, mid-visit truth transitions, membership churn, history invalidation,
-and bounded coverage. Before landing shared-solver changes, run the complete
-workspace build/tests/doctests/clippy/fmt/docs checks and fresh Z3 parity with
-the user-authorized available version. Exact diagnostic and SAT-model checks
-accompany the three measurement cells. Results and the next decision will be
-appended here; no speedup is claimed by the registration.
+The agenda and feasibility criteria were committed before measurement in
+`d907929`. The observer and reproducible runner landed in `603ff9b` after
+the correctness gates below. Tests cover repeated blockers, conflict tails,
+mid-visit truth transitions, membership churn, history invalidation and
+bounded coverage. The completed first experiment and next decision follow.
 
 ### Observation implementation
 
@@ -189,3 +186,92 @@ in `nixie-math/src/lib.rs:111`. It is not a passing configuration. The new
 observer explicitly requires `std` and is excluded when its feature is off.
 Logs and command results are retained under
 `precompile/d907929/benchmark/shared-satisfaction-verification/`.
+
+## First experiment: opportunity gate passed on two of three inputs
+
+The registered seed-1 measurements used four new solver cells: three observed
+runs and the missing capped noL control. The break and circuit controls were
+reused. There were no repeat cells, new reference-solver benchmark runs, seed
+sweeps or configuration searches. All three observed stdout reports matched
+their controls byte for byte, including every printed search counter and the
+circuit model. The circuit model also satisfies every original input clause.
+No snapshot or history observations were omitted by the memory limits.
+
+| Input | Reported result / conflicts | Sampled visited entries | Duplicate entry-true checks | Entries in groups of size ≥4 | Gate |
+|---|---|---:|---:|---:|---|
+| break_unsat_06_07 | UNSAT / 33,293 | 348,456 | 141,822 / **40.70%** | 127,767 / **36.67%** | pass |
+| circuit_48in64out | SAT / 186,114 | 3,086,423 | 1,188,116 / **38.49%** | 1,066,460 / **34.55%** | pass |
+| noL_11_14 | Unknown at cap / 100,000 | 721,938 | 160,691 / **22.26%** | 91,302 / **12.65%** | fail |
+
+Percentages use sampled visited entries as the denominator, not all original
+list entries or just blocker hits. The sampled-list counts are 14,373,
+75,122 and 15,275 respectively. The 100,000-conflict noL prefix is an
+opportunity measurement, not a solved case or a full-search result. Break's
+reported UNSAT is trajectory-checked here, without a newly checked proof;
+the canonical record therefore does not mark that verdict proof-verified.
+
+The passing results are not caused only by the initial search prefix. Among
+visits at conflict counts ≥16,384, duplicate fractions are 46.85% for break
+and 37.81% for circuit; large-group fractions are 43.30% and 33.72%. Capped
+noL remains below both gates in that bin (22.84% and 13.12%). This checks
+where the measured opportunity occurs; it is not an independent replication.
+
+### Maintenance cost is the next uncertainty
+
+| Input | Adjacent repeated hits / visits | Entries moved or removed / visits | Blocker updates / visits | Retained old membership between sampled visits | Mean sampling gap in global list visits |
+|---|---:|---:|---:|---:|---:|
+| break_unsat_06_07 | 20.64% | 23.15% | 9.17% | 25.71% | 174,731 |
+| circuit_48in64out | 17.44% | 16.39% | 15.93% | 27.75% | 656,570 |
+| noL_11_14 | 10.11% | 22.80% | 10.80% | 20.70% | 139,555 |
+
+Adjacent repeated hits alone expose less opportunity than grouping across
+the whole list. The move/removal and blocker-update counts also show real
+maintenance work within observed visits. Membership persistence uses a
+different denominator: the exact intersection divided by the preceding
+sampled post-visit membership. Its large sampling gaps prevent interpreting
+it as immediate per-visit group survival or a rebuild schedule.
+
+**Decision: advance idea 1 to an order-preserving shadow representation and
+cost replay.** The feasibility screen is complete; a production grouped
+propagator is not implemented by this step. The next prototype must preserve
+the original order of unsatisfied watcher visits, retain an ordinary delta
+for mutations, and account for group checks, skipped watcher traffic,
+compaction, blocker changes and rebuilding. Reconstructing every group by
+walking every watcher on every visit would recreate the traffic it aims to
+remove. A negative group check must still allow later truth transitions;
+only a currently true shared blocker certifies skipping its members.
+
+This result establishes removable *check counts* on two registered inputs.
+It establishes no cycle reduction, does not cover binary propagation or
+conflict analysis, and assumes free grouping when computing the opportunity.
+NoL's capped prefix gives weaker support. A single seed and three inputs
+do not establish benchmark-wide benefit, and the existing Kissat throughput
+gap remains unclosed by this diagnostic implementation.
+
+### Reproducibility and stored evidence
+
+Observer source: `603ff9be3cb9446acf9f8035198442e31d04c36c`.
+Probe binary: `precompile/603ff9b/stats_solve-groups`, SHA-256
+`4923f7e325c4799a113c8dd1535877e93b10095e4213cdb3599881ee311b1235`.
+Control binary: `precompile/eb3a62d/stats_solve`, SHA-256
+`76a883a819c437d1e8dd4c43828975b860212027b13554219f4b8f5cde119332`.
+Both use the same dependency lock, SHA-256
+`3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`.
+The intervening `3a4622f` change is in the SMT solver; the observation binary
+and its controls use the same underlying SAT search implementation.
+
+| Input | Observation record | Reused/control record | Input SHA-256 |
+|---|---|---|---|
+| break_unsat_06_07 | `aa076232602d9693` | `50fa8316e92aed2a` | `8c94b7be135467462330cd4819c1d2acdbabd2c7f9290a6c53409186021a4bbf` |
+| circuit_48in64out | `6a37f1404f1a6e5b` | `a6b0151744a458c1` | `d3338c04e29f5c8b7e75686fa30fd9927babb7b34b9f7c87785397662f59d8e2` |
+| noL_11_14 | `582f3db2286905aa` | `4e70e8d19a55d4c0` | `04fa242c31eb4b487c776adb647f03cc2486afbc7a4bbdc902b227ba96dc8b68` |
+
+The runner's manifests, raw reports and complete summary are under
+`precompile/603ff9b/benchmark/shared-satisfaction-probe/`; canonical
+observation records are under that commit's `benchmark/runs/` directory.
+Canonical control records are under `precompile/219bed6/benchmark/runs/`
+(break/circuit) and `precompile/eb3a62d/benchmark/runs/` (noL).
+The binary build manifest records the compiler and build recipe. The
+measurement used CPU 2, stride 256, the CaDiCaL preset and the registered
+conflict caps. All report arithmetic and record identities were independently
+checked from saved data without additional solver runs.
