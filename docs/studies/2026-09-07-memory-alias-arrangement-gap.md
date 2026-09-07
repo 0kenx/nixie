@@ -422,3 +422,44 @@ decision level 2 772 — i.e. ~24 k decisions per restart cycle over the
 materialized arrangement, ~22 clauses learned per cycle.  Both closing
 rungs (in-search lemma assertion; tableau-side separation) stand, and
 the artifact correction removes the one red herring.
+
+## Rung 2 implemented at both sites (2026-09-07, final): neutral — and the arc's actual bottom
+
+`ArithSolver::probe_term_pins` (the scoped term-pin LP probe, recovered
+from attempt 3's record) + chain-ordered separation was wired at BOTH
+sites the rung could live:
+
+* **`check_core` (post-search, next to `refine_colocated_splits`)**:
+  never fires — instrumentation shows the drained `colocated_split_pairs`
+  are ALWAYS EMPTY on this family.  The in-search combine consumes them
+  long before the search returns.
+* **`nelson_oppen_combine` (in-search, the colocated-groups block)**:
+  fires (the injective encoding's `f` makes the idx terms UF arguments,
+  so the groups form), separates via the scoped probe with the
+  `try_eq_incumbent` snapshot contract — and the conflict counts are
+  BYTE-IDENTICAL to the landed state (4695/5239/4514/5231 on the four
+  larges).  Neutral.  (A first runner pass suggested a regression to 4/8;
+  single-instance re-measurement under lower load showed the reverted
+  tree identical — the 4/8 was the 10 s wall cap under machine load
+  ~20–60, not the change.  Conflict counts, not wall-capped pass counts,
+  remain the metric under this machine's contention.)
+
+Both hooks reverted; the probe pattern stays documented in attempt 3.
+
+### The arc's actual bottom
+
+The residual ~4.6 k conflicts are **the injective-distinct encoding's
+own SAT atoms** (`f(t_i) = m_i` / `L_i` / their eq atoms): CDCL explores
+them, EUF congruence collides the pairwise-distinct `m_i`, and each
+conflict teaches one triple — ~C(n,2) lessons ≈ the observed conflict
+count.  This is BELOW both rungs: no array theory, no colocation, no
+rounds.  z3 pays zero because its `mk_model_value`-based distinct
+encoding lives entirely in the e-graph (interpreted elements + congru
+ence), with no Boolean atoms to arrange.  The real closing lever for
+this family is therefore **an e-graph-resident distinct encoding** (or
+theory propagation of pairwise disequalities from the distinct marks) —
+a self-contained encoding project in `encode_distinct_injective`, not
+CDCL(T)-core surgery.
+
+Rung 1 (in-search lemma assertion) remains unimplemented and correctly
+so for this arc: it would speed the rounds this family no longer has.
