@@ -665,3 +665,85 @@ and the one that was sample-luck (the QF_UF random-24) was the only
 claim made without a shape check.  Rule going forward: **a no-effect
 result must cite the shape census of its corpus, not just the delta
 measurement.**
+
+## Census-round-2 rung: Z3 `already_diseq` at the mint site — measured NEGATIVE, reverted (2026-09-08)
+
+The scoped next rung from census round 2 was implemented exactly as
+planned: the **precise** e-graph form of Z3's
+`theory_array_base::already_diseq`, as a gate at the extensionality-witness
+mint site.
+
+**Implementation** (reverted; shape recorded so a future architecture that
+retries it does not have to re-derive it):
+
+* a new `Solver::read_separated_pairs` screening step (Phase 1.6, right
+  after the Phase 1.5 separation query, same pre-assertion snapshot):
+  class roots of both sides of every `separated_pairs` member are
+  collected; every `collected.selects` entry whose three terms are
+  e-internalized (Z3's `is_relevant` filter — a term with no e-node cannot
+  carry a *proven* disequality) and whose array operand's class is one of
+  interest is bucketed by `(array-class root, index-class root)`; per
+  separated pair the two classes' read maps are hash-joined on the index
+  class (smaller side first, Z3's class-size swap) and each joined read
+  pair is probed with `are_proven_disequal` (asserted-diseq + value-apart);
+* pairs that land in the set skip the fresh-witness mint in
+  `build_extensionality_and_congruence` (same gate position as
+  `is_self_alias` / `pair_complete`); nothing persisted, re-derived from the
+  live e-graph every round, so a backtrack that retracts the read-diseq
+  re-mints next round.
+
+The semantics match Z3's exactly — this is NOT the falsified broad
+EUF-skip: `array_incompleteness1`'s congruence-separated pairs (no reads
+over the two classes) never qualify.
+
+**Measured** (deterministic conflicts/decisions; base = `main` `22e05d8`
+release build, which reproduces the landed census-round-2 table exactly —
+2959/2762/3151/2987 — so the A/B is clean and the nixie-sat landings since
+`32110e1` did not move this family):
+
+| instance (large) | conflicts base → gated | decisions base → gated |
+|---|---|---|
+| `memory-alias-s0` | 2959 → **4384 (+48 %)** | 566 937 → 966 572 |
+| `memory-alias-s1` | 2762 → **4405 (+59 %)** | 433 659 → 665 081 |
+| `memory-incremental-s0` | 3151 → **4670 (+48 %)** | 596 401 → 1 009 405 |
+| `memory-incremental-s1` | 2987 → **4769 (+60 %)** | 461 781 → 874 537 |
+| `memory-reorder-distinct-unsat` s0/s1 | 1 → 1 (byte-identical) | 3 → 3 |
+| `memory-reorder-offset-unsat` s0/s1 | 118/103 → 118/103 (byte-identical) | identical |
+
+All verdicts identical; the gated numbers reproduce exactly on re-run
+(deterministic).  The gate fires on exactly the census population (the
+alias/incremental EUF-proven-link families) and is inert where it does not
+(the reorder families).
+
+**Confounders ruled out**: the 256-witness budget never binds on these
+instances in either run — exhaustion trips the array honesty gate to
+`Unknown`, and both binaries reported clean `sat` — so the regression is
+not budget-reshuffling; it is the skip itself.
+
+**Why it fails (mechanism)**: in Z3, `assert_extensionality` fires lazily
+from `new_diseq_eh` *during* the search, and the skip avoids internalizing
+new skolem reads mid-search — a cost cut.  In nixie's round-based lazy
+instantiation the witness clause is **root-persisted structure**: its two
+witness reads unfold via read-over-write units and settle the whole
+adjacent-link arrangement by *unit propagation* in the next search.
+  Removing it makes CDCL re-derive the same arrangement through conflicts
+  instead — the exact mirror image of the guard-clause landing
+  (`32110e1`), which *added* unit-propagated level-0 structure and measured
+  −37…−47 % conflicts on the same population.  Same semantic gate,
+  opposite sign in a different instantiation architecture.
+
+**What not to retry**: any form of skipping or thinning witness mints for
+read-separated pairs in the round-based loop (including an `Euf`-only
+provenance refinement — it fires on a subset of the same population under
+the same mechanism account).  The census-round-2 residue (~17.5 k
+synthetic-read consequent conflicts + ~8.7 k `eq(v,v)` guards) is not
+wasted witness work to be reclaimed — it is the unit-propagation machinery
+*doing its job*; if there is headroom left in this population it is in the
+opposite direction (more level-0 structure, the guard-clause pattern), not
+less.  Re-open only if instantiation moves in-search (Z3-style lazy),
+where the original Z3 cost argument applies verbatim.
+
+**Quiet-window re-measure of the 10 s-cap residuals** (load ≈ 5): the
+larges cost 9.6–18.1 s wall on the base binary — the fuzzer's 2/8
+`memory`-large residuals at the 10 s cap are **true solver cost, not load
+artifacts**.  The residual headroom is real and remains open.
