@@ -80,6 +80,30 @@ impl<'a> Parser<'a> {
             "Int" => Ok(self.manager.sorts.int_sort),
             "Real" => Ok(self.manager.sorts.real_sort),
             "String" => Ok(self.manager.sorts.string_sort()),
+            // The SMT-LIB FloatingPoint theory declares four canonical
+            // format aliases as part of the theory's language —
+            // `Float16` = `(_ FloatingPoint 5 11)`, `Float32` =
+            // `(_ FloatingPoint 8 24)`, `Float64` = `(_ FloatingPoint 11
+            // 53)`, `Float128` = `(_ FloatingPoint 15 113)` — and
+            // essentially every QF_FP script declares its variables at one
+            // of these names.  Previously they fell through to the generic
+            // `Uninterpreted` fallback, silently building a fresh free
+            // sort: a `(declare-const x Float32)` variable then carried a
+            // *different* sort than the `(_ FloatingPoint 8 24)` terms the
+            // `fp.*` operators produce, so `x` was an uninterpreted-sorted
+            // stranger to every FP mechanism (the pattern conflict checks,
+            // the concrete model builder, the theory atoms the honesty gate
+            // tracks), and any constraint linking `x` to an fp expression
+            // collapsed to the gate's honest `Unknown`.  Resolving the
+            // aliases here to the exact indexed sorts is the semantics z3
+            // and cvc5 give these names in FP logics.  A user `define-sort`
+            // of the same name resolves through the alias table first, so
+            // these theory names keep priority, matching the reference
+            // solvers' treatment of theory-declared sorts.
+            "Float16" => Ok(self.manager.sorts.float_sort(5, 11)),
+            "Float32" => Ok(self.manager.sorts.float_sort(8, 24)),
+            "Float64" => Ok(self.manager.sorts.float_sort(11, 53)),
+            "Float128" => Ok(self.manager.sorts.float_sort(15, 113)),
             // `RoundingMode` (Floats) and `RegLan` (Strings) are reserved
             // SMT-LIB theory sort names. Previously these fell through to
             // the generic `Uninterpreted` fallback below, which silently
@@ -689,5 +713,51 @@ mod tests {
         let parser = Parser::new("", &mut manager);
         assert_eq!(parser.sort_id_to_string(param), "T");
         assert_eq!(parser.sort_id_to_string(list), "(List Int)");
+    }
+
+    /// The SMT-LIB FloatingPoint theory declares `Float16` / `Float32` /
+    /// `Float64` / `Float128` as part of the theory's language — canonical
+    /// aliases of the indexed `(_ FloatingPoint eb sb)` sorts — and
+    /// essentially every QF_FP script declares its variables at one of these
+    /// names.  They used to fall through to the `Uninterpreted` fallback,
+    /// silently mistyping those variables into a fresh free sort that no FP
+    /// mechanism could reach: `(declare-const y Float32)` alongside
+    /// `(= y (fp.add RNE c c))` answered `unknown` where z3 says `sat`, because
+    /// `y`'s sort was `Uninterpreted("Float32")` while the `fp.add` term was
+    /// `(_ FloatingPoint 8 24)`.
+    #[test]
+    fn float_format_aliases_resolve_to_the_indexed_floatingpoint_sorts() {
+        use super::super::{Command, parse_script};
+
+        let mut manager = TermManager::new();
+        let script = r#"
+            (declare-const a Float16)
+            (declare-const b Float32)
+            (declare-const c Float64)
+            (declare-const d Float128)
+            (check-sat)
+        "#;
+        let commands =
+            parse_script(script, &mut manager).expect("should parse the FP alias script");
+        let expected = [
+            ("a", "(_ FloatingPoint 5 11)"),
+            ("b", "(_ FloatingPoint 8 24)"),
+            ("c", "(_ FloatingPoint 11 53)"),
+            ("d", "(_ FloatingPoint 15 113)"),
+        ];
+        for (command, (name, sort)) in commands.iter().zip(expected) {
+            match command {
+                Command::DeclareConst(n, s) => {
+                    assert_eq!(n, name);
+                    assert_eq!(
+                        s, sort,
+                        "the {name} alias must resolve to the indexed FP sort \
+                         (a plain string like \"Float32\" here means it fell through to the \
+                         Uninterpreted fallback)"
+                    );
+                }
+                other => panic!("expected DeclareConst, got {other:?}"),
+            }
+        }
     }
 }
