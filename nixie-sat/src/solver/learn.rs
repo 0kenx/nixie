@@ -1637,19 +1637,25 @@ impl Solver {
                     .or_else(|| crate::restart_stall_null_enabled().then_some(8.0))
             })
             .flatten();
-        let stall_restart = stall_k.is_some_and(|k| {
-            // Null arm: threshold from the scrambled-history EMA (same gap
-            // magnitudes, no stall information); treatment: the real one.
-            let ema = if crate::restart_stall_null_enabled() {
-                self.restart_gap_ema_null
-            } else {
-                self.restart_gap_ema
-            };
-            self.stats
-                .conflicts
-                .saturating_sub(self.last_restart_conflict)
-                >= (k * ema).max(200.0) as u64
-        });
+        let gap = self
+            .stats
+            .conflicts
+            .saturating_sub(self.last_restart_conflict);
+        // Max-gap fallback (`NIXIE_RESTART_MAXGAP=<n>`): a flat floor on
+        // the restart gap, independent of any EMA. Checked before the
+        // stall trigger so the two arms compose predictably when both are
+        // set (the tighter bound wins).
+        let stall_restart = crate::restart_maxgap().is_some_and(|n| gap >= n)
+            || stall_k.is_some_and(|k| {
+                // Null arm: threshold from the scrambled-history EMA (same gap
+                // magnitudes, no stall information); treatment: the real one.
+                let ema = if crate::restart_stall_null_enabled() {
+                    self.restart_gap_ema_null
+                } else {
+                    self.restart_gap_ema
+                };
+                gap >= (k * ema).max(200.0) as u64
+            });
         let do_restart = if stall_restart {
             true
         } else if self.config.enable_stabilize {

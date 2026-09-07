@@ -527,6 +527,38 @@ restart land on a different productive shallow region, while ours thrash.
   and worker_550 (1.25×, noisy)**. Tail-wide: 1.46× total, of which
   1.26× is the generic restart rate and 1.16× the aligned trigger.
 
+  **Max-gap follow-up** (`NIXIE_RESTART_MAXGAP=<n>`, landed env-gated):
+  the null's generic-cadence finding suggested a flat floor on the restart
+  gap — the MiniSAT-lineage mechanism, no EMA, no semantic signal at all.
+  Matrix (10 seeds, same cells):
+
+  | arm | tail geomean vs base | worker_550 | qwh | constraints_17 | 6s167 |
+  |---|---|---|---|---|---|
+  | stall8 (ref) | 1.46× | 1.11× | 1.65× | 2.66× | 0.95× |
+  | maxgap 250 | 1.09× | 1.04× | 0.92× | 1.51× | 0.96× |
+  | maxgap 500 | 1.27× | 1.61× | 1.40× | 1.19× | 0.99× |
+  | **maxgap 1000** | **1.46×** | **2.18×** | 1.30× | 1.63× | 0.99× |
+  | maxgap 2000 | 1.19× | 0.85× | 1.65× | 1.52× | 0.94× |
+
+  maxgap=1000 equals the stall trigger's tail effect **with a better
+  per-file profile** — it *fixes* worker_550 (2.18×, 10/10 solved vs
+  base's 2 TOs) and is neutral on 6s167 (0.99×) — and the response is
+  non-monotone in the constant (2000 collapses worker_550 to 0.85×),
+  pinning the operating point at ~1000. At the right constant the
+  drought-*alignment* premium is ≈ zero: the flat floor captures
+  everything the EMA trigger does. 6s167 remains untouched by restart
+  policy at any setting — its 4.4× is T3's (substitution) territory.
+
+  **Default flip: NO.** Paired differential (54 files × 5 seeds, 60 s,
+  fresh base arm vs maxgap=1000): solved-at-cap **157 → 154 (−3)** with
+  17 gained / 20 lost boundary cells and **0 verdict disagreements**
+  (both-solved). The enablement rule's "solved count not worse" bar
+  fails; the corpus cost of the flat floor is small but real at the
+  60 s cap, so both restart arms stay env-gated. A future flip needs
+  either a cheaper constant, a class gate, or a portfolio shape (the
+  `SEEDS` harness's later arms convert exactly these tail wins at zero
+  risk to files the default arm already solves).
+
   **Safety screen** (54 files × 5 seeds, 60 s, base vs stall8):
   solved-at-cap 153 → 151 (8 files −1/−2, 6 files +1/+3, notably
   mp1-Nb7T42 +3), **0 verdict disagreements** where both arms solved.
@@ -639,6 +671,10 @@ write-elision branch (it is a measured win).
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **Worktrees can vanish mid-session** (shared box; /tmp hygiene or
+  another agent's sweep): the max-gap arm's verified code was lost
+  uncommitted once and re-applied. Commit early in the worktree even for
+  study arms, or keep the patches outside /tmp.
 * **A silently-degraded null arm is worse than no null**: the broken
   null (never-updated EMA → constant threshold) produced a *plausible,
   clean-looking* result table that mis-attributed qwh's effect to

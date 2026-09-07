@@ -665,6 +665,28 @@ pub fn restart_stall_multiplier() -> Option<f64> {
     })
 }
 
+/// Max-gap fallback arm (`NIXIE_RESTART_MAXGAP=<n>`): a focused-mode
+/// restart also fires when the gap since the last restart reaches `n`
+/// conflicts — the MiniSAT-lineage restart floor the Glucose condition
+/// lacks. Simpler than the stall trigger (no EMA); the T1 study's proper
+/// null measured the generic-cadence share of the tail effect at 1.26×
+/// with effective thresholds in the 200–800 range, and the max-gap matrix
+/// (2026-09-07 campaign) found the operating point at 1000: tail geomean
+/// 1.46× — equal to the stall trigger — with a better per-file profile
+/// (worker_550 2.18×, 6s167 0.99×). Default off; see the study for the
+/// no-flip differential.
+#[doc(hidden)]
+pub fn restart_maxgap() -> Option<u64> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<u64>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_RESTART_MAXGAP")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|n| *n > 0)
+    })
+}
+
 /// T1 matched-null arm (`NIXIE_RESTART_STALL_NULL=1`, implies the
 /// treatment machinery with the multiplier from
 /// [`restart_stall_multiplier`], default 8 when only the null flag is set):
