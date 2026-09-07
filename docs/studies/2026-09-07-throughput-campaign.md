@@ -759,6 +759,18 @@ write-elision branch (it is a measured win).
   drought alignment. The repair: verify the null actually fires (compare
   restart counts across arms at a fixed conflict cap) before trusting
   any treatment/null ratio.
+* **Identity checks are one-directional — say which direction and why.**
+  "Default-off is bit-identical" verifies only that the gate doesn't
+  leak; it is *silent about the gate being wired*. Inert-knob bugs are
+  invisible to it — indeed they *produce* identity (geo22 ≡ geo200 was
+  the bug's signature, and the fake-SEED replicas passed every identity
+  check for the same reason). Every gated arm needs the second
+  direction: ON(a) ≢ ON(b) on a real counter (restart schedule counts,
+  not conflicts-at-cap). A single-file counter spot-check labeled
+  "bit-identical" is also an overclaim — the corpus identity sweep
+  (verdict + conflicts-to-verdict, files that solve) is the minimum
+  honest form, and files that cap out carry no signal (report them as
+  such, don't count them).
 * **`cnf_solve`'s RESTART/INTERVAL knob family was silently inert —
   fixed.** Three stacked defects: the `luby` token was unrecognized
   (silent CaDiCaL fallthrough); the strategy arms replaced the whole
