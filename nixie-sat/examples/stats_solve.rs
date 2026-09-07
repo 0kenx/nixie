@@ -138,17 +138,6 @@ fn main() {
         cfg.stabilize_base = n;
     }
     let mut solver = Solver::with_config(cfg);
-    #[cfg(feature = "bcp-tiles")]
-    if let Ok(value) = std::env::var("NIXIE_WATCH_TILES") {
-        match value.as_str() {
-            "0" => solver.enable_watch_tiles(false),
-            "1" => solver.enable_watch_tiles(true),
-            _ => {
-                eprintln!("NIXIE_WATCH_TILES must be 0 or 1");
-                std::process::exit(2);
-            }
-        }
-    }
     #[cfg(feature = "bcp-groups")]
     let observe_groups = match std::env::var("NIXIE_WATCH_GROUPS") {
         Ok(value) => match value.parse::<std::num::NonZeroU64>() {
@@ -241,11 +230,6 @@ fn main() {
         }
     }
     let r = solver.solve();
-    #[cfg(feature = "bcp-tiles-stats")]
-    if let Err(error) = solver.write_watch_tile_report(std::io::stderr().lock()) {
-        eprintln!("writing watch tile report failed: {error}");
-        std::process::exit(2);
-    }
     #[cfg(feature = "bcp-groups")]
     if observe_groups && let Err(error) = solver.write_watch_group_report(std::io::stderr().lock())
     {

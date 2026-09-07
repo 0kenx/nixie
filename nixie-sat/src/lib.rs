@@ -183,8 +183,6 @@ mod vmtf_queue;
 mod vsids;
 #[cfg(feature = "bcp-groups")]
 mod watch_groups;
-#[cfg(feature = "bcp-tiles")]
-mod watch_tiles;
 mod watched;
 mod xor;
 

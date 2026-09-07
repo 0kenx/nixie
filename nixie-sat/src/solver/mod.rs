@@ -1221,10 +1221,6 @@ pub struct Solver {
     /// Read-only observations; never consulted by search or propagation.
     #[cfg(feature = "bcp-groups")]
     pub(crate) watch_group_stats: Option<Box<crate::watch_groups::Collector>>,
-    #[cfg(feature = "bcp-tiles")]
-    pub(crate) use_watch_tiles: bool,
-    #[cfg(feature = "bcp-tiles-stats")]
-    pub(crate) watch_tile_work: crate::watch_tiles::Work,
 
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
@@ -1921,10 +1917,6 @@ impl Solver {
             watches: WatchLists::new(0),
             #[cfg(feature = "bcp-groups")]
             watch_group_stats: None,
-            #[cfg(feature = "bcp-tiles")]
-            use_watch_tiles: true,
-            #[cfg(feature = "bcp-tiles-stats")]
-            watch_tile_work: crate::watch_tiles::Work::default(),
             vsids: VSIDS::new(0),
             domain_priority: Vec::new(),
             vmtf: VMTF::new(0),
