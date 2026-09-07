@@ -367,3 +367,39 @@ separation that happens *during* the search — the in-search rung below.
    zero; z3 asserts its axioms on the live trail.  A handful of rounds ×
    a full re-solve is most of the residual wall time.  Lemma assertion
    without root-backtrack is the architectural rung.
+
+## The residual-gap diagnosis, closed out (2026-09-07, final)
+
+Two last falsifications/measurements, then the rung is named precisely:
+
+* **Filtering the input reads' flat batch too** (all reads through the
+  model filter): conflicts 5267 → 4552, decisions 1.2 M → 1.2 M — within
+  the family's own variance (4508–5491 observed across else-form A/Bs),
+  and it would re-open the drip-feed risk on deep-chain UNSAT goals.
+  Reverted.  The `(idx_w = idx9)` atoms are NOT the wandering space.
+* **Decision trace** (`NIXIE_TRACE_DECISIONS`, post-fix s0-large):
+  1.21 M decisions / 4.6 k conflicts / **median decision level 2772,
+  max 7144**.  The search stacks ~300 decisions per conflict: the
+  Boolean materialization of the array theory (flat clauses, trichotomy
+  atoms, stc premise atoms, witness clauses — accumulated across
+  refinement rounds) is an assignment space the theories only weakly
+  constrain, and each theory collision teaches one local fact.
+
+z3's 25 ms is the absence of this structure: its array theory asserts
+axioms on the live trail, per store level, lazily by relevance — the
+arrangement never becomes a SAT problem.  The nixie rungs that would
+close the gap, in payoff order:
+
+1. **In-search lemma assertion** — assert refinement lemmas at the
+   current decision level (CDCL re-propagates) instead of
+   `backtrack_to_root` + full theory rebuild + re-solve per round.
+   Removes both the round multiplier AND, with per-level lazy
+   instantiation, most of the Boolean materialization.
+2. **Tableau-side separation at final check** (z3 `theory_arith`'s
+   re-seating of e-graph-apart variables inside the simplex model) —
+   removes the arrangement conflicts outright.
+
+Both are CDCL(T)-core work.  Everything short of them on this family is
+now measured: the cascade (fixed), post-hoc repair (closed, 1.022),
+else-forms (equivalent), input-read filtering (neutral), separation
+gating (entailed-only landed; broad EUF-skip falsified).
