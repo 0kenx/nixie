@@ -1,5 +1,11 @@
 # Structured propagation regions: registered traffic screen
 
+**Result: the registered AND/XOR subset fails on all three inputs.** No gates
+were recognized in the activation snapshots. The same census shows substantial
+learned-clause traffic. A post-hoc static audit also identifies a different,
+exactly factorable eight-variable representation in circuit; it is described
+separately below and does not reopen the failed screen.
+
 This is idea 2 from the [propagation agenda](2026-09-07-nixie-propagation-redesign.md),
 following the rejected shared-blocker tile kernel. The question is whether
 recognized structure accounts for enough actual BCP work to justify a native
@@ -137,3 +143,129 @@ change after the full tests; reconstructing its old comment reproduced the
 exact tested source fingerprint. Strict docs and both parity runs then passed
 on the final source. Partial pre-integration checks and the failed docs check
 are retained separately from the completed verification.
+
+## Registered result
+
+Exactly three new observation cells completed at seed 1, using all three
+cached controls. Complete stdout was byte-identical in every cell, including
+search diagnostics and the circuit model. That model also satisfies every
+original input clause. Break's reported UNSAT has no newly checked proof;
+its canonical record remains unverified/unknown. NoL reports Unknown at the
+100,000-conflict cap. These are observations, not throughput comparisons.
+
+| Input | Reported answer / conflicts | Distinct short clauses at activation | Sampled edge-plus-watch visits | Recognized AND/XOR gates | Registered gate |
+|---|---|---:|---:|---:|---|
+| break_unsat_06_07 | UNSAT / 33,293 | 4,388 | 389,608 | 0 / 0 | fail |
+| circuit_48in64out | SAT / 186,114 | 0 | 3,138,836 | 0 / 0 | fail |
+| noL_11_14 | Unknown / 100,000 | 7,821 | 730,306 | 0 / 0 | fail |
+
+Certified region traffic is zero overall and in the late conflict bin on all
+three inputs. No capacity limit was exceeded. The registered ≥25% coverage
+criterion therefore fails, and no shadow AND/XOR block evaluator or additional
+performance run follows. This is an absence of the recognized patterns, not
+an invalidation-rate result or a claim that all useful structure is absent.
+
+### Learned clauses account for much of the observed work
+
+| Input | Learned visits / all visits | Learned share from conflict 16,384 onward | Learned tail inspections / all tail inspections | Learned propagations / all propagations |
+|---|---:|---:|---:|---:|
+| break | 350,270 / 389,608 = **89.90%** | **93.28%** | 283,720 / 301,711 = **94.04%** | 2,766 / 20,307 |
+| circuit | 1,735,463 / 3,138,836 = **55.29%** | **56.19%** | 1,177,736 / 1,666,682 = **70.66%** | 22,957 / 81,765 |
+| capped noL | 639,354 / 730,306 = **87.55%** | **88.67%** | 453,132 / 510,147 = **88.82%** | 2,336 / 15,186 |
+
+These are sampled BCP counts. Visits include both binary edges and long
+watchers; tail inspections are literal checks after the watched pair. The
+denominator also retains visits to missing/deleted clauses (722 on break,
+11,181 on circuit, zero on noL). Original/learned status is the live header
+flag. These observations do not price an edge and a long watcher equally in
+cycles, count full explanation expansion, or establish clause usefulness.
+Learned clauses can prevent large amounts of search without often being the
+immediate reason. In particular, low direct-use counts do not justify deleting
+them. The result motivates idea 3's per-clause traffic/use census and a separate
+matched-null design before any retention policy is tested.
+
+## Post-hoc static audit: circuit uses eight-variable relations
+
+The zero result prompted a read-only input audit, without another solver run.
+Circuit contains **64 unit clauses and 168,000 clauses of width eight**, so
+the registered short-clause recognizer cannot represent its structure.
+Break's raw widths are `{1: 1, 2: 4482, 3: 386, 4: 18, 10: 150}`; noL's are
+`{1: 14, 3: 7821}`. Activation counts above are after parsing/normalization
+and canonical deduplication, and are not raw input-width counts.
+
+Group circuit's non-unit clauses by their sorted eight variable IDs. Each
+clause forbids one complete assignment: a positive literal contributes a zero
+bit and a negative literal a one bit. All **700 groups** contain **240 distinct
+forbidden assignments**, leaving **16 allowed assignments** each. This accounts
+for every non-unit input clause. All 70 four-variable projections were checked
+against each group's allowed rows. Every group has a bijective projection onto
+four Boolean inputs: 655 groups have one possible projection, 42 have two,
+one has three and two have four. These are exact local relation facts.
+
+There is consequently a simple smaller encoding. Choose the lexicographically
+first valid projection. For each of its 16 input assignments and each of the
+four remaining variables, emit the implication from those four input values
+to that output value. This yields **64 clauses of width five per group**.
+An exhaustive check of all 256 assignments for each of the 700 groups
+(179,200 assignment checks) found exactly the same allowed rows as the original
+encoding. Shared variables between groups do not invalidate local logical
+equivalence, and the 64 original units remain unchanged.
+
+| Non-unit representation | Clauses | Literal slots |
+|---|---:|---:|
+| Original eight-variable relations | 168,000 | 1,344,000 |
+| Audited four-input/four-output factorization | 44,800 | 224,000 |
+
+That is **73.33% fewer non-unit clauses and 6× fewer non-unit literal slots**.
+It is an offline, exhaustively checked encoding candidate; it has not been
+applied by Nixie or benchmarked. The smaller encoding also propagates outputs
+after four input assignments, so it changes search and cannot be presented as
+a trajectory-preserving throughput optimization.
+
+**Next circuit-specific candidate:** implement proof-emitting factorization of
+these small relations, with original-clause provenance, exact equivalence
+checks, deterministic extraction bounds and a complete fallback. Resolve away
+the three unmentioned outputs to justify each five-literal clause through
+checkable intermediate steps; do not claim that an arbitrary final clause is
+already RUP. Register the comparison and its matched null before performance
+evaluation, and keep the strongest relevant Kissat reference. Actual native
+table propagation would additionally need incremental state, backtracking and
+explanations. The offline size reduction is not a measured runtime improvement.
+
+This audit is exploratory and specific to circuit. It does not change the
+AND/XOR screen's verdict or qualify a default change. The learned-clause
+traffic on break and noL remains the broader throughput lead.
+
+## Stored evidence
+
+Registration: `c92e953` (also carried into main as `ef0a426` during concurrent
+integration). Observer and measured source:
+`2f8df46f3aff2e9833f84c53e5abe41d44a35c91`.
+Binary: `precompile/2f8df46/stats_solve-regions`, SHA-256
+`9ec366caba31dda56d6b71f0c7097d45623baf2de3b1b3fc65461c736e631f67`.
+The build manifest records Rust 1.96.0, the portable release recipe, final
+source fingerprint and dependency-lock hash. Concurrent SMT/BV changes were
+included in verification; they do not change the DIMACS SAT search paths used
+by these cells, whose complete stdout matched their controls.
+
+| Input | Observation record | Reused control |
+|---|---|---|
+| break | `815c59961e36e0ae` | `50fa8316e92aed2a` |
+| circuit | `14a9f7a6db3d615f` | `a6b0151744a458c1` |
+| capped noL | `0f8746909b6f6bd5` | `4e70e8d19a55d4c0` |
+
+Manifests, raw stdout/stderr, summaries and the verdict are in
+`precompile/2f8df46/benchmark/structured-region-traffic/`; canonical records
+are under that commit's `benchmark/runs/structured-region-traffic/`.
+The same raw directory contains `input-width-audit.json`,
+`circuit-relation-audit.json` (all supports, allowed rows and valid projections)
+and `circuit-factorization-audit.json` (chosen projections and replacement
+clause hashes). These static analyses introduce no new solver cells.
+
+The final correctness logs and both fresh parity reports are in
+`precompile/2f8df46/benchmark/region-traffic-verification/`; interrupted
+pre-integration checks and the incoming formatting failure have separate
+directories. Binary hashes, canonical record IDs, control stdout and report
+arithmetic were independently checked from saved artifacts. The temporary
+worktree and build products are removed after landing the result; cached
+binaries and canonical evidence remain available for reuse.

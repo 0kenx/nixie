@@ -105,10 +105,13 @@ cost, solved-at-cap, conflicts and cycles/conflict are reported together.
 
 ## 2. Native propagation blocks for structured regions
 
-The [registered traffic screen](2026-09-07-structured-region-traffic.md) tests
-the recovered AND/XOR subset with three observed cells and cached controls.
-It measures live-certificate traffic and learned-clause interactions before
-committing to a block evaluator.
+The [three-cell traffic screen](2026-09-07-structured-region-traffic.md) found
+no recognized AND/XOR groups and rejected that subset. Its offline follow-up
+identified 700 eight-variable relations in circuit, each with 16 allowed rows.
+An exhaustively checked factorization would reduce that input's non-unit
+literal slots sixfold; runtime benefit is unmeasured. Proof-emitting relation
+factorization is the next circuit-specific candidate. Learned clauses dominate
+traffic on break and noL, providing a broader lead for idea 3.
 
 Preserve SMT expression structure and recover verified structure from DIMACS
 where possible. Compile suitable gate networks, parity systems and cardinality
@@ -130,6 +133,12 @@ by eligible regions, including boundary interactions and explanation cost.
 Do not implement a broad compiler when coverage alone rules out a material win.
 
 ## 3. Learned-clause usefulness relative to propagation cost
+
+The [region traffic census](2026-09-07-structured-region-traffic.md) measured
+learned clauses at 89.90% / 55.29% / 87.55% of sampled visits on break / circuit /
+capped noL, and 94.04% / 70.66% / 88.82% of replacement-tail inspections. This
+supports collecting cost/use per learned clause; it does not establish that
+the clauses are dispensable or qualify a deletion policy.
 
 Measure each eligible learned clause's recurring watch/scan traffic alongside
 its use as a propagation/conflict reason. Explore an active set and dormant
