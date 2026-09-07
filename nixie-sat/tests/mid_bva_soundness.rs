@@ -211,6 +211,10 @@ fn mid_andgate_differential_soundness() {
             if invalid <= 3 {
                 eprintln!("GATE INVALID MODEL iter={i} nv={nvars}");
             }
+            if std::env::var("DUMP_INVALID").is_ok() {
+                std::fs::write(format!("/tmp/bcp_gate_invalid_{i}.cnf"), to_cnf(nvars, &f)).ok();
+                eprintln!("dumped /tmp/bcp_gate_invalid_{i}.cnf");
+            }
         }
     }
     println!(
