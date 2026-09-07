@@ -499,15 +499,43 @@ restart land on a different productive shallow region, while ours thrash.
   6s167/crn_11 full solves and 22-file-equivalent behavior; the trigger
   cannot fire when restarts already outpace 8× their own EMA).
 
-  **5-seed screen** (conflicts-to-verdict, base vs `k=8`): constraints_17
-  geomean **45.4k → 14.7k (3.1× better)**; qwh **91.3k → 52.1k (1.75×
-  better)**; worker_550 **10.5k → 16.4k (1.57× worse)** — the same
-  split the forced-geometric causal test predicted: the unstable tail
-  recovers, the deep-search tail still needs restart *productivity* (T2)
-  before any default flip. Per-seed variance remains huge in both arms
-  (3–60×), so this is a screen, not a landing case: the full study needs
-  the matched null (trigger at the same rate, scrambled stall signal),
-  ≥10 seeds, and the standing corpus before any default change.
+  **5-seed screen** (base vs `k=8`): constraints_17 geomean 45.4k →
+  14.7k (3.1×), qwh 91.3k → 52.1k (1.75×), worker_550 10.5k → 16.4k
+  (1.57× worse).
+
+  **Full study** (10 seeds × {base, stall8, null8} × tail files, 60 s+
+  caps, cores 10–19; 54-file × 5-seed standing safety screen):
+
+  | file | treatment/base | null/base | treatment/null | solved@10 |
+  |---|---|---|---|---|
+  | constraints_17 | **2.66×** | 1.81× | **1.47×** | 8→10 |
+  | qwh | **1.65×** | **1.65×** | **1.00×** | 7→9 |
+  | worker_550 | 1.11× | 0.88× | 1.25× | 8→8 |
+  | 6s167 | 0.95× | 0.96× | 0.99× | 10→10 |
+  | tail geomean | **1.46×** | **1.26×** | **1.16×** | |
+
+  **The null corrects the attribution.** The first null build was
+  broken (its scrambled-EMA bookkeeping never ran — the arm silently
+  degraded to a constant 800-conflict-gap trigger, near-inert on
+  healthy-cadence files), and under that weak null the treatment looked
+  uniformly null-clean. The proper null (gap-history EMA fed from
+  pseudo-randomly reordered ring entries; restart-rate matched, e.g.
+  cons17 seed 0: treatment 207 restarts / null 386, same magnitude
+  family) shows: **qwh's entire effect is generic "add restarts of this
+  magnitude"** (null/base = treatment/base = 1.65×); **drought
+  alignment adds real signal only on constraints_17 (1.47× over null)
+  and worker_550 (1.25×, noisy)**. Tail-wide: 1.46× total, of which
+  1.26× is the generic restart rate and 1.16× the aligned trigger.
+
+  **Safety screen** (54 files × 5 seeds, 60 s, base vs stall8):
+  solved-at-cap 153 → 151 (8 files −1/−2, 6 files +1/+3, notably
+  mp1-Nb7T42 +3), **0 verdict disagreements** where both arms solved.
+  The enablement rule's "solved count not worse" bar fails by 2 cells:
+  **no default flip at k=8.** The arm stays env-gated; the next
+  iteration's axes are gentler triggers (k = 16/32, higher floors) or
+  drought-gated variants that keep worker_550/6s167/summle untouched —
+  and the null shows any such variant must be compared against the
+  *generic-restart* control, not just base.
 * **T2 — restart productivity** (phase quality): why do cadical's
   restarts help them on worker_550/6s167 and ours hurt? dec/conflict is
   the metric; targets are the rephase/walk cadence and target/best phase
@@ -611,6 +639,12 @@ write-elision branch (it is a measured win).
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **A silently-degraded null arm is worse than no null**: the broken
+  null (never-updated EMA → constant threshold) produced a *plausible,
+  clean-looking* result table that mis-attributed qwh's effect to
+  drought alignment. The repair: verify the null actually fires (compare
+  restart counts across arms at a fixed conflict cap) before trusting
+  any treatment/null ratio.
 * **`cnf_solve`'s `RESTART=luby` token is not recognized** (falls through
   to the CaDiCaL preset silently — trajectories identical to base), and
   `INTERVAL=N` does not change the geometric arm's trajectory (geo22 ≡

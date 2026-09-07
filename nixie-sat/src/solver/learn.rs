@@ -1632,13 +1632,23 @@ impl Solver {
         // a healthy search never sees 8x its own restart cadence, a stalled
         // one lives above it.
         let stall_k = (!self.stable)
-            .then(crate::restart_stall_multiplier)
+            .then(|| {
+                crate::restart_stall_multiplier()
+                    .or_else(|| crate::restart_stall_null_enabled().then_some(8.0))
+            })
             .flatten();
         let stall_restart = stall_k.is_some_and(|k| {
+            // Null arm: threshold from the scrambled-history EMA (same gap
+            // magnitudes, no stall information); treatment: the real one.
+            let ema = if crate::restart_stall_null_enabled() {
+                self.restart_gap_ema_null
+            } else {
+                self.restart_gap_ema
+            };
             self.stats
                 .conflicts
                 .saturating_sub(self.last_restart_conflict)
-                >= (k * self.restart_gap_ema).max(200.0) as u64
+                >= (k * ema).max(200.0) as u64
         });
         let do_restart = if stall_restart {
             true

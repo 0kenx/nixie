@@ -576,6 +576,18 @@ impl Solver {
             self.last_restart_conflict = self.stats.conflicts;
             let a = 1.0 / 8.0;
             self.restart_gap_ema += a * (gap as f64 - self.restart_gap_ema);
+            // Null arm (`NIXIE_RESTART_STALL_NULL=1`): a second EMA fed
+            // from a pseudo-randomly chosen RING entry of the same gaps —
+            // same magnitudes and window, no current-stall alignment. The
+            // PRNG is only drawn when armed, so the default path stays
+            // trajectory-identical.
+            if crate::restart_stall_null_enabled() {
+                let slot = (self.stats.restarts % 8) as usize;
+                self.restart_gap_ring[slot] = gap as f64;
+                let pick = (self.rand_u64() % 8) as usize;
+                let scrambled = self.restart_gap_ring[pick];
+                self.restart_gap_ema_null += a * (scrambled - self.restart_gap_ema_null);
+            }
         }
         // Target/best phase bookkeeping no longer lives here: every
         // `backtrack_with_phase_saving` (this one included) routes through

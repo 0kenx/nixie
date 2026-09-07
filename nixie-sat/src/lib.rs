@@ -665,6 +665,22 @@ pub fn restart_stall_multiplier() -> Option<f64> {
     })
 }
 
+/// T1 matched-null arm (`NIXIE_RESTART_STALL_NULL=1`, implies the
+/// treatment machinery with the multiplier from
+/// [`restart_stall_multiplier`], default 8 when only the null flag is set):
+/// the stall threshold is computed from a pseudo-randomly *reordered*
+/// history of the same restart gaps — same physical trigger, same gap
+/// magnitudes and window, no current-stall information
+/// (docs/studies/2026-09-07-throughput-campaign.md, T1).
+#[doc(hidden)]
+pub fn restart_stall_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_RESTART_STALL_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 /// Gate for [`DIAG_VMTF_SCAN`] accumulation (`NIXIE_VMTF_SCAN=1`).
 #[doc(hidden)]
 pub fn vmtf_scan_enabled() -> bool {

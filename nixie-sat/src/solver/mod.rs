@@ -1349,6 +1349,15 @@ pub struct Solver {
     /// opt-in stall trigger (`NIXIE_RESTART_STALL=<multiplier>`), never the
     /// default path.
     pub(super) restart_gap_ema: f64,
+    /// Matched-null machinery for the T1 stall trigger
+    /// (`NIXIE_RESTART_STALL_NULL=1`): a ring of recent restart gaps and a
+    /// second EMA fed from *pseudo-randomly reordered* ring entries. Same
+    /// gap magnitudes, same window — the alignment between the current gap
+    /// and the threshold carries no stall information. Only touched when
+    /// the null is armed (the PRNG draw would otherwise perturb other
+    /// seeded consumers and break default-off trajectory identity).
+    pub(super) restart_gap_ring: [f64; 8],
+    pub(super) restart_gap_ema_null: f64,
     pub(super) glue_saved: GlueAverages,
     /// Knuth reluctant-doubling (Luby) restart trigger for stable mode.
     pub(super) reluctant: Reluctant,
@@ -1940,6 +1949,8 @@ impl Solver {
             glue_current: GlueAverages::new(),
             last_restart_conflict: 0,
             restart_gap_ema: 100.0,
+            restart_gap_ring: [100.0; 8],
+            restart_gap_ema_null: 100.0,
             glue_saved: GlueAverages::new(),
             reluctant: Reluctant::default(),
             ticks_focused: 0,
