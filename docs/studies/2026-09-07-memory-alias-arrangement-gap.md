@@ -588,3 +588,41 @@ Fuzzer: zero FAIL, memory-large 6/8 at the 10 s cap under machine load
 verdict changes, 30/30 QF_AUFLIA/QF_UF spot checks identical,
 clippy/fmt clean.  Tests: the eq-atom refutation, a conditional (ite)
 distinct both polarities, and the storecomm shape both anchor polarities.
+
+## Census round 2 + generalization sweep (2026-09-07, late)
+
+**Census on the guard-clause tree** (`memory-alias-s0-large`, 29 447
+classified, down from 58 757 — consistent with the conflict halving):
+
+| population | before | after | what it is |
+|---|---|---|---|
+| `eq(v,v)` guards | 20 949 | 8 722 | spec-arg pairs (mostly covered now) + **witness-vs-index pairs** — `k` is not a spec arg, the guard clause cannot reach it |
+| `eq(v,sel)`/`eq(sel,sel)` consequents | ~26 000 | ~17 500 | the synthetic (witness) reads' value equalities |
+| `eq(*,kwit)` witness guards | (inside above) | ~5 000 | `k = idx_w` arrangements — genuinely free choices, learned pairwise |
+
+Both remaining populations trace to **extensionality witnesses minted for
+EUF-proven adjacent chain links** — pairs that already *have* differing
+reads (the write at the link's own index witnesses `link_i ≠ link_{i+1}`).
+z3's `assert_extensionality` skips exactly these via `already_diseq`: a
+*pair of select terms over the two classes already proven disequal*.  The
+broad EUF-skip tried earlier broke `array_incompleteness1`
+(congruence-derived diseqs with no reads still need witnesses); the
+correct port is the precise check — an e-graph parent scan for an
+existing differing read pair — which kills the adjacent-link witnesses
+legitimately while keeping `array_incompleteness1`'s.  **Scoped as the
+next rung** (an e-graph API addition + the mint-site gate).
+
+**Generalization sweep** (the discipline follow-up to `8960361`):
+
+| corpus | result |
+|---|---|
+| storecomm/swap, QF_AUFLIA (30 files) | conflicts **+0 %** on every file (literal indices — the guard population does not exist there) |
+| QF_UF distinct-bearing (24 files) | 0 verdict diffs; aggregate conflicts identical (289 631 = 289 631) |
+| fuzzer memory family | conflicts −37..−47 % (the landed measurement) |
+
+Verdict: the guard clauses are **family-shaped and inert elsewhere** —
+valid clauses bounded by the atoms that exist; on real corpora no
+`(= t_i t_j)` atoms between a live distinct's symbolic args exist, so
+nothing is emitted.  No cost, no risk, benefit where the census measured
+it.  (Whether real-world symbolic-distinct+read shapes exist outside the
+fuzzer is an open corpus question — none in the standing corpora.)
