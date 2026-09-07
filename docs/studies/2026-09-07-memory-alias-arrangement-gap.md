@@ -502,3 +502,49 @@ checks identical.  The rung-2 verdict stands (neutral at the
 check_core site, correctly-scoped at the in-search site) — but for the
 RIGHT reason now, and the encoding-level bottom (the F/L atom
 arrangement) below it is unchanged.
+
+## Conflict census (2026-09-07, night): the encoding-bottom account was WRONG — the conflicts cite array-axiom atoms
+
+A literal-level census (histogram of every clause `record_lemma` sees —
+theory conflicts AND propagated lemmas, 58 757 classifications on
+`memory-alias-sat-s0-large`) replaces inference with measurement:
+
+| class | count |
+|---|---|
+| `eq(v,v),eq(v,v),eq(v,v)` | 20 949 |
+| `eq(sel,sel),eq(v,sel),eq(v,sel)` | 14 392 |
+| `eq(v,sel)×4` | 6 061 |
+| `eq(c,c),eq(v,sel),eq(v,sel)` | 5 649 |
+| `eq(v,v)×4` | 2 203 |
+| `eq(v,app),eq(v,app),eq(v,v),eq(v,v)` | 2 040 |
+| `eq(v,app)×4` + others | … |
+| **all `eq(v,app)` (injective F-atoms)** | **~3.4 k of 58.8 k** |
+
+The conflict population is **array-axiom structure**: the read-over-write
+guard equalities `eq(v,v)` (`(= idx_w idx9)`), the select equalities
+`eq(v,sel)`/`eq(sel,sel)` (RoW consequents and select congruences), and
+constant-disequality marks `eq(c,c)` — NOT the injective-distinct
+encoding's F/L atoms (the `eq(v,app)` classes are ~6 % of the total).
+The "arc's actual bottom" section above is superseded by this: the
+residual cost is CDCL learning the *read-over-write arrangement* — which
+the earlier all-reads-filtered experiment touched (conflicts 5267→4552,
+calls "within variance" then; the census now says that drop was real and
+that experiment was pointed at the right structure) — but input-read
+filtering alone cannot remove it (decisions were unchanged), because the
+ATOMS are still created by the synthetic reads' asserted instances.
+
+**The correctly-re-scoped lever**: the select-equality atoms the
+conflicts cite are created by the refinement rounds' asserted axioms
+(each RoW instance creates its guard and consequent atoms).  A census
+driven fix — e.g. conflict-aware instance selection (assert the
+instance whose guard the model is closest to deciding, not the whole
+batch), or EUF-propagation of the guards before clause creation —
+targets the measured population.  The census harness itself (one shared
+thread-local histogram at `record_lemma` — note the per-function
+`thread_local!` distinct-statics trap that ate the first two census
+attempts) is the foundation for that work.
+
+Also measured en passant: `record_lemma` is called 54 677 times for
+4 695 SAT conflicts — the theory callback records ~12× more lemmas
+(propagations) than conflicts; any future census must separate the
+populations before drawing conclusions.
