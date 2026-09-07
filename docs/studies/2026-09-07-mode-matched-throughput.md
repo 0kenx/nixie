@@ -1,5 +1,93 @@
 # Mode-matched throughput follow-up (2026-09-07)
 
+## Reduced sweep results
+
+The user requested fewer runs while the sweep was in progress. Stop at the
+largest fully completed seed prefix: **seeds 1–6, eight inputs, three arms
+(144 runs)**. The original ten-seed registration remains below;
+this is an explicit budget reduction, not a completed ten-seed qualification.
+Another 22 completed seed-7 cells are exported but excluded from the balanced
+comparison. CaDiCaL `noL_11_14` seed 7 was interrupted; its partial logs remain
+archived and are not a completed cell. No remaining cells were launched.
+The reduced sample supports a descriptive gap estimate, not a narrow-effect
+significance claim. No new solver optimization qualified for landing.
+
+Nixie `0263862` takes **2.14× instructions/conflict and 2.22× cycles/conflict**
+relative to Kissat with the user's nine switches on this panel. Relative to
+default CaDiCaL the corresponding ratios are **1.57× and 1.62×**. These are
+geometric means of within-seed ratios, first within each input, then equally
+across inputs. Ratios above one mean more Nixie cost. Hardware counters were
+pinned to E-core CPU 10 on an Intel Core Ultra 7 265K; they are not wall-time
+estimates or comparisons of solver-specific ticks.
+
+| input | verdict | instructions/conflict N/K | cycles/conflict N/K | cycles/conflict N/C | Nixie decisive at cap |
+|---|---|---:|---:|---:|---:|
+| break_unsat_06_07 | UNSAT | 2.22 | 2.40 | 2.15 | 6/6 |
+| noL_11_14 | SAT | 1.60 | 1.61 | 1.43 | 1/6 |
+| crn_11_99_u | UNSAT | 2.10 | 2.31 | 2.21 | 6/6 |
+| summle_x4044 | SAT | 1.49 | 1.62 | 1.71 | 6/6 |
+| j3037 | UNSAT | 1.81 | 2.21 | 1.67 | 6/6 |
+| circuit_48in64out | SAT | 3.26 | 3.93 | 2.41 | 6/6 |
+| constraints_17 | SAT | 2.40 | 2.16 | 1.44 | 6/6 |
+| si2-b03m | SAT | 2.73 | 2.16 | 0.70 | 6/6 |
+
+Both references report decisive answers in all 48 cells. Nixie reports 43/48:
+`noL_11_14` seeds 2–6 return `Unknown` at ten million conflicts, whereas seed 1
+solves at 4,218,261. Those capped rows remain in cost-per-conflict distributions.
+Nixie's `noL` median is ten million conflicts versus Kissat's 770,318.5;
+its trajectory problem remains substantial alongside its implementation cost.
+Unknown is not counted as a matching answer. UNSAT observations here have no
+checked certificates; “decisive” describes the printed result, not proof
+verification. All 85 SAT models in the balanced panel satisfy their original
+CNFs; no contradictory decisive results were observed.
+
+| group | instructions/conflict N/K | cycles/conflict N/K | instructions/conflict N/C | cycles/conflict N/C |
+|---|---:|---:|---:|---:|
+| ALL | 2.14 | 2.22 | 1.57 | 1.62 |
+| SAT | 2.20 | 2.17 | 1.44 | 1.43 |
+| UNSAT | 2.04 | 2.31 | 1.81 | 2.00 |
+
+Per-input cycles/conflict distributions below are **median [min, max]** in
+thousands of hardware cycles over six seeds. They include capped runs.
+
+| input | Nixie | Kissat | CaDiCaL |
+|---|---:|---:|---:|
+| break_unsat_06_07 | 163.3 [143.3, 184.4] | 68.6 [65.5, 73.3] | 76.3 [75.3, 77.6] |
+| noL_11_14 | 156.3 [143.4, 158.9] | 92.2 [77.0, 131.1] | 107.9 [101.0, 120.1] |
+| crn_11_99_u | 80.7 [78.6, 87.2] | 35.2 [33.6, 37.7] | 37.5 [32.9, 39.9] |
+| summle_x4044 | 703.5 [642.3, 723.8] | 421.4 [372.2, 487.9] | 408.0 [370.0, 431.1] |
+| j3037 | 533.6 [518.0, 548.3] | 242.4 [238.8, 246.8] | 318.1 [311.2, 337.2] |
+| circuit_48in64out | 250.3 [234.2, 256.6] | 61.6 [47.9, 94.2] | 102.2 [93.3, 115.6] |
+| constraints_17 | 1032.1 [957.9, 1153.2] | 481.5 [384.9, 659.4] | 717.0 [698.3, 769.5] |
+| si2-b03m | 246.3 [225.9, 267.2] | 111.7 [93.4, 139.0] | 344.1 [277.8, 436.0] |
+
+The circuit gap is 3.93× cycles/conflict, with 2.17× reported propagations per
+conflict and 1.81× cycles per reported propagation. This decomposition helps
+separate work count from amortized cost but cannot isolate watcher throughput:
+all invocation work is included and propagation counters differ in coverage.
+
+Costs-to-verdict in the data summary use only pairs where both arms finish:
+six per input except `noL`, which has only one. Their equal-input geometric
+means (2.42× cycles versus Kissat, 2.77× versus CaDiCaL) are conditional on that
+selection and are **not** unconditional solve-cost estimates for this panel.
+
+The [166 completed PMU rows](data/2026-09-07-mode-matched-pmu.csv) identify the
+144 comparison rows with `included_in_comparison`. The accompanying
+[metadata and distributions](data/2026-09-07-mode-matched-pmu.json) preserve
+binary/input hashes, exact commands, seed reduction, conflict distributions,
+per-input ratios, and the audit. Kissat is 4.0.4 (`8af8e56`); CaDiCaL is 3.0.1
+(`68fdd30`). Raw stdout/perf output and canonical records stay in the per-version
+`precompile` result store. No completed cell was repeated.
+
+The final audit checked all 178 canonical records, including the 12 seed-0
+screen cells: hashes/schema/record identities pass; all 106 SAT models pass
+independent clause evaluation; every measured PMU event was scheduled 100%.
+All candidate source/test edits were removed. Rebuilding the release example
+produced the exact cached baseline SHA-256
+`29a91de64ffaae517d25cd6d185cf8ea9b87013e45e5d9157c07ce6b5762569c`.
+This follow-up lands documentation and measurements only; it makes no fresh
+claim that the full solver validation or SMT parity suite was rerun.
+
 ## Correction and pre-registration
 
 The four-file, 40,000-conflict comparison in
@@ -180,4 +268,30 @@ Source review also found that `subsume_round` returns scratch buffers to
 drops them, despite the reuse comment. This is a separate allocation-reuse
 candidate; it is not bundled into the signature-filter experiment.
 
-Status: attribution and corrected standing measurements in progress.
+## Interpreting cost per conflict
+
+Hardware cycles cover the complete invocation, including parsing,
+inprocessing, local search, statistics/model output and cleanup. Dividing
+by conflicts measures amortized run cost, not the isolated conflict-analysis
+function or equal work per conflict across solvers. The supplied default-seed
+circuit logs report 1.83 times as many propagations per Nixie conflict; `noL`
+reports 0.96 times as many. Consequently the circuit's per-conflict gap has a
+larger work-count contribution. Reported propagation counts themselves do not
+measure watcher visits, and omit walk/subsolver work; their normalization is
+additional context, not a replacement complete-work metric.
+
+The three narrow rejected rewrites do not establish that the remaining
+implementation gap is unavoidable or that all engineering opportunities
+have been exhausted. A next propagation experiment needs to establish which
+part is visit count, work per visit, or other search/inprocessing work before
+claiming it can remove the full cycles-per-conflict gap.
+
+The high conflict cap can still censor a trajectory: Nixie `noL_11_14`
+seed 2 reaches 10,000,000 conflicts and returns `Unknown`. Such a row remains
+in cycles/conflict distributions, with its actual work and cap status, but
+is excluded from costs-to-verdict that require both arms to finish. Report
+those complete-pair counts explicitly; they select easier trajectories and
+do not estimate unconditional time or work to solve the panel.
+
+Status: sweep stopped at the user’s request; six-seed comparison recorded.
+Three engineering screens rejected; no new solver source change landed.

@@ -1,0 +1,1199 @@
+{
+  "suite": "mode-matched-throughput",
+  "original_plan": {
+    "suite": "mode-matched-throughput",
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "instances": [
+      {
+        "name": "break_unsat_06_07",
+        "path": "/media/data/proj/nixie/nixie-sat/tests/fixtures/break_unsat_06_07.cnf",
+        "sha256": "8c94b7be135467462330cd4819c1d2acdbabd2c7f9290a6c53409186021a4bbf"
+      },
+      {
+        "name": "noL_11_14",
+        "path": "/media/data/proj/nixie/nixie-sat/tests/fixtures/noL_11_14.cnf",
+        "sha256": "04fa242c31eb4b487c776adb647f03cc2486afbc7a4bbdc902b227ba96dc8b68"
+      },
+      {
+        "name": "crn_11_99_u",
+        "path": "/media/data/proj/nixie/nixie-sat/tests/fixtures/crn_11_99_u.cnf",
+        "sha256": "301a5351b7cec4bbc27bf066df769db2870c1e3f3948d6c2ff0b7a9f6bab52eb"
+      },
+      {
+        "name": "summle_x4044",
+        "path": "/media/data/proj/nixie/nixie-sat/tests/fixtures/summle_x4044.cnf",
+        "sha256": "6fdc72e329cc9c034aed42dde04a5b4446acdb0565dd4995a224a9ebec03037e"
+      },
+      {
+        "name": "j3037",
+        "path": "/media/data/proj/nixie/satcomp2024/bench/07e6413459f92b613498a719125b6239-j3037_10_mdd_bm1.cnf",
+        "sha256": "7672cb34e4b32cf83292630f1155b7e564bdcf4b2eedd60f7f25cf59b4b5bcc7"
+      },
+      {
+        "name": "circuit_48in64out",
+        "path": "/media/data/proj/nixie/satcomp2024/bench/303480ca7e8322d771c94caf4ebd4e95-circuit_48in64out_with_700gates_4in4out_dist128_seed1.sanitized.cnf",
+        "sha256": "d3338c04e29f5c8b7e75686fa30fd9927babb7b34b9f7c87785397662f59d8e2"
+      },
+      {
+        "name": "constraints_17",
+        "path": "/media/data/proj/nixie/satcomp2024/bench/8e720686372c5037f30b4fc7b1c71d48-constraints_17_0.4_1.sanitized.cnf",
+        "sha256": "c6cf6b1b83ab83cf92e35590b12c9739fa1d606acc8fa4d0bad6ee01703d1892"
+      },
+      {
+        "name": "si2-b03m",
+        "path": "/media/data/proj/nixie/satcomp2024/bench/af750c18578d52e60472315692ad83c0-si2-b03m-m800-03.cnf",
+        "sha256": "8e24efbf17294a0fe9a2f7681d5cbb615f7f3417cc04258debb6c2ee498192ee"
+      }
+    ],
+    "arms": [
+      "baseline",
+      "kissat-mode-matched",
+      "cadical-default"
+    ],
+    "max_conflicts": 10000000,
+    "cpu": 10,
+    "emergency_timeout_seconds": 900,
+    "primary": "instructions:u",
+    "secondary": [
+      "cycles:u",
+      "branches:u",
+      "branch-misses:u"
+    ]
+  },
+  "reduced_seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "reduction_reason": "User requested fewer runs; use the largest fully completed seed prefix across all inputs and arms. No performance-based exclusions.",
+  "completed_cells": 166,
+  "included_cells": 144,
+  "additional_completed_cells": 22,
+  "interrupted_cell": {
+    "arm": "cadical",
+    "instance": "noL_11_14",
+    "seed": 7,
+    "status": "operator interruption; partial output only; no canonical completed-run record",
+    "raw_prefix": "precompile/68fdd30/benchmark/mode-matched-throughput/cadical-mode-matched/noL_11_14.s7"
+  },
+  "arms": {
+    "baseline": {
+      "git": {
+        "dirty": false,
+        "sha_long": "02638626bfb6fe47967bc8c049f14c3a4d004f0a",
+        "sha_short": "0263862"
+      },
+      "binary": {
+        "path": "/media/data/proj/nixie/precompile/0263862/stats_solve",
+        "sha256": "29a91de64ffaae517d25cd6d185cf8ea9b87013e45e5d9157c07ce6b5762569c"
+      },
+      "host": {
+        "cpu": "Intel Core Ultra 7 265K, CPU 10",
+        "id": "workstation",
+        "os": "Linux-7.2.2-x86_64-with-glibc2.42"
+      },
+      "config": {
+        "cmdline": [
+          "taskset",
+          "-c",
+          "10",
+          "perf",
+          "stat",
+          "-x",
+          ";",
+          "-o",
+          "/media/data/proj/nixie/precompile/0263862/benchmark/mode-matched-throughput/baseline-mode-matched/constraints_17.s6.perf",
+          "-e",
+          "instructions:u,cycles:u,branches:u,branch-misses:u",
+          "--",
+          "/media/data/proj/nixie/precompile/0263862/stats_solve",
+          "/media/data/proj/nixie/satcomp2024/bench/8e720686372c5037f30b4fc7b1c71d48-constraints_17_0.4_1.sanitized.cnf"
+        ],
+        "features": [],
+        "flags": {
+          "cpu": 10,
+          "emergency_timeout_s": 900,
+          "max_conflicts": 10000000,
+          "pmu": [
+            "instructions:u",
+            "cycles:u",
+            "branches:u",
+            "branch-misses:u"
+          ],
+          "profile": "release",
+          "solver_options": [
+            "CaDiCaL-preset"
+          ],
+          "variant": "mode-matched"
+        },
+        "id": "baseline-mode-matched"
+      }
+    },
+    "kissat": {
+      "git": {
+        "dirty": false,
+        "sha_long": "8af8e56f174b778aef3aa45af9f739b2a5f492c2",
+        "sha_short": "8af8e56"
+      },
+      "binary": {
+        "path": "/media/data/proj/temp/kissat/build/kissat",
+        "sha256": "5c91c37e4bcab56c71e304d610e303e239ab1de9809de409fe012d1d73d34fa4"
+      },
+      "host": {
+        "cpu": "Intel Core Ultra 7 265K, CPU 10",
+        "id": "workstation",
+        "os": "Linux-7.2.2-x86_64-with-glibc2.42"
+      },
+      "config": {
+        "cmdline": [
+          "taskset",
+          "-c",
+          "10",
+          "perf",
+          "stat",
+          "-x",
+          ";",
+          "-o",
+          "/media/data/proj/nixie/precompile/8af8e56/benchmark/mode-matched-throughput/kissat-mode-matched/si2-b03m.s2.perf",
+          "-e",
+          "instructions:u,cycles:u,branches:u,branch-misses:u",
+          "--",
+          "/media/data/proj/temp/kissat/build/kissat",
+          "--statistics",
+          "--conflicts=10000000",
+          "--seed=2",
+          "--probe=0",
+          "--preprocess=0",
+          "--factor=0",
+          "--substitute=0",
+          "--sweep=0",
+          "--vivify=0",
+          "--transitive=0",
+          "--backbone=0",
+          "--congruence=0",
+          "/media/data/proj/nixie/satcomp2024/bench/af750c18578d52e60472315692ad83c0-si2-b03m-m800-03.cnf"
+        ],
+        "features": [],
+        "flags": {
+          "cpu": 10,
+          "emergency_timeout_s": 900,
+          "max_conflicts": 10000000,
+          "pmu": [
+            "instructions:u",
+            "cycles:u",
+            "branches:u",
+            "branch-misses:u"
+          ],
+          "profile": "reference-build",
+          "solver_options": [
+            "--probe=0",
+            "--preprocess=0",
+            "--factor=0",
+            "--substitute=0",
+            "--sweep=0",
+            "--vivify=0",
+            "--transitive=0",
+            "--backbone=0",
+            "--congruence=0"
+          ],
+          "variant": "mode-matched"
+        },
+        "id": "kissat-mode-matched"
+      }
+    },
+    "cadical": {
+      "git": {
+        "dirty": false,
+        "sha_long": "68fdd30944813565004bf3b26b08644cada6e00f",
+        "sha_short": "68fdd30"
+      },
+      "binary": {
+        "path": "/media/data/proj/temp/cadical/build/cadical",
+        "sha256": "015dafc87f3ecf1eca5a85a7dd90252862e669720ebc81a37d5142ca0cb3bb17"
+      },
+      "host": {
+        "cpu": "Intel Core Ultra 7 265K, CPU 10",
+        "id": "workstation",
+        "os": "Linux-7.2.2-x86_64-with-glibc2.42"
+      },
+      "config": {
+        "cmdline": [
+          "taskset",
+          "-c",
+          "10",
+          "perf",
+          "stat",
+          "-x",
+          ";",
+          "-o",
+          "/media/data/proj/nixie/precompile/68fdd30/benchmark/mode-matched-throughput/cadical-mode-matched/noL_11_14.s5.perf",
+          "-e",
+          "instructions:u,cycles:u,branches:u,branch-misses:u",
+          "--",
+          "/media/data/proj/temp/cadical/build/cadical",
+          "--stats=true",
+          "-c",
+          "10000000",
+          "--seed=5",
+          "/media/data/proj/nixie/nixie-sat/tests/fixtures/noL_11_14.cnf"
+        ],
+        "features": [],
+        "flags": {
+          "cpu": 10,
+          "emergency_timeout_s": 900,
+          "max_conflicts": 10000000,
+          "pmu": [
+            "instructions:u",
+            "cycles:u",
+            "branches:u",
+            "branch-misses:u"
+          ],
+          "profile": "reference-build",
+          "solver_options": [
+            "default"
+          ],
+          "variant": "mode-matched"
+        },
+        "id": "cadical-mode-matched"
+      }
+    }
+  },
+  "nixie_environment": {
+    "MAXC": "10000000",
+    "PRINT_MODEL": "1",
+    "SEED": "1 through 6"
+  },
+  "audit_including_screens": {
+    "records": 178,
+    "dirty_pilot_records": 9,
+    "independently_checked_sat_models": 106,
+    "observed_answers": {
+      "sat": 106,
+      "unsat": 67,
+      "unknown": 5
+    },
+    "pmu_scheduled_percent": {
+      "min": 100.0,
+      "max": 100.0
+    }
+  },
+  "summary": {
+    "counts": {
+      "baseline": 48,
+      "kissat": 48,
+      "cadical": 48
+    },
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "original_planned_seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "reduction_reason": "User requested fewer runs",
+    "instances": [
+      {
+        "name": "break_unsat_06_07",
+        "expected": "unsat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 31281,
+              "median": 33881.0,
+              "max": 42368
+            },
+            "cycles_per_conflict": {
+              "min": 143346.2348070714,
+              "median": 163317.3046125622,
+              "max": 184376.6067787009
+            },
+            "instructions_per_conflict": {
+              "min": 225496.70052108308,
+              "median": 248933.0096874619,
+              "max": 274645.3075994604
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 23899,
+              "median": 27215.0,
+              "max": 30364
+            },
+            "cycles_per_conflict": {
+              "min": 65472.46236244194,
+              "median": 68594.34344960847,
+              "max": 73264.13329919781
+            },
+            "instructions_per_conflict": {
+              "min": 107589.25561688564,
+              "median": 113635.54497513697,
+              "max": 120859.23932411674
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 23675,
+              "median": 26322.5,
+              "max": 27093
+            },
+            "cycles_per_conflict": {
+              "min": 75336.65449875467,
+              "median": 76314.10036814962,
+              "max": 77630.22031521056
+            },
+            "instructions_per_conflict": {
+              "min": 122304.64885585305,
+              "median": 124652.71416079235,
+              "max": 125409.17265776561
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.4044695520092256,
+            "instructions_per_conflict": 2.222272536791082,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.9307256126831067,
+            "cycles_to_verdict": 3.1710064289259545,
+            "conflicts_to_verdict": 1.318796666098847,
+            "cycles_per_conflict_ratios": {
+              "min": 2.094551145598779,
+              "median": 2.427500981693174,
+              "max": 2.805142309118928
+            },
+            "reported_propagations_per_conflict": 1.0302993890846082,
+            "cycles_per_reported_propagation": 2.333758107093054
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.153317787824906,
+            "instructions_per_conflict": 2.0200858712621756,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.7961663361982754,
+            "cycles_to_verdict": 2.9805835460306067,
+            "conflicts_to_verdict": 1.3841819181930095,
+            "cycles_per_conflict_ratios": {
+              "min": 1.9027422409557746,
+              "median": 2.140089081091728,
+              "max": 2.4329923605343615
+            },
+            "reported_propagations_per_conflict": 1.0321513130337767,
+            "cycles_per_reported_propagation": 2.086242356748753
+          }
+        }
+      },
+      {
+        "name": "noL_11_14",
+        "expected": "sat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 1,
+            "verified_sat_models": 1,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 4218261,
+              "median": 10000000.0,
+              "max": 10000000
+            },
+            "cycles_per_conflict": {
+              "min": 143387.2529438079,
+              "median": 156317.17330234998,
+              "max": 158897.7244423
+            },
+            "instructions_per_conflict": {
+              "min": 248979.4921063443,
+              "median": 303511.6183021,
+              "max": 305596.055834
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 354945,
+              "median": 770318.5,
+              "max": 6422820
+            },
+            "cycles_per_conflict": {
+              "min": 77031.77520460916,
+              "median": 92186.34632173786,
+              "max": 131050.47272553177
+            },
+            "instructions_per_conflict": {
+              "min": 142743.76230401892,
+              "median": 174034.0515803515,
+              "max": 259153.8859952482
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 256972,
+              "median": 499062.5,
+              "max": 1334862
+            },
+            "cycles_per_conflict": {
+              "min": 100995.92627484424,
+              "median": 107903.29180721723,
+              "max": 120104.28565125084
+            },
+            "instructions_per_conflict": {
+              "min": 168217.19406005324,
+              "median": 179206.829275136,
+              "max": 203329.00360187044
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.6111815574938844,
+            "instructions_per_conflict": 1.5985070343245324,
+            "both_decisive_pairs": 1,
+            "instructions_to_verdict": 3.463270105071295,
+            "cycles_to_verdict": 3.909089290551374,
+            "conflicts_to_verdict": 2.7722243982713115,
+            "cycles_per_conflict_ratios": {
+              "min": 1.1954935161403424,
+              "median": 1.7054150192578006,
+              "max": 2.0627555839163945
+            },
+            "reported_propagations_per_conflict": 0.9405333440692933,
+            "cycles_per_reported_propagation": 1.7130509701261387
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.4280790466757693,
+            "instructions_per_conflict": 1.620670914789853,
+            "both_decisive_pairs": 1,
+            "instructions_to_verdict": 19.019489711702654,
+            "cycles_to_verdict": 18.37163666720154,
+            "conflicts_to_verdict": 12.940205103978455,
+            "cycles_per_conflict_ratios": {
+              "min": 1.3044496254315663,
+              "median": 1.4237284942831874,
+              "max": 1.5701847644522833
+            },
+            "reported_propagations_per_conflict": 1.02250741249387,
+            "cycles_per_reported_propagation": 1.3966441995689012
+          }
+        }
+      },
+      {
+        "name": "crn_11_99_u",
+        "expected": "unsat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 81428,
+              "median": 87721.5,
+              "max": 96584
+            },
+            "cycles_per_conflict": {
+              "min": 78639.63330197554,
+              "median": 80730.72053936362,
+              "max": 87241.45987948314
+            },
+            "instructions_per_conflict": {
+              "min": 130078.18140667367,
+              "median": 134428.54488018993,
+              "max": 141859.71384494327
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 65466,
+              "median": 77387.0,
+              "max": 88535
+            },
+            "cycles_per_conflict": {
+              "min": 33596.45164520093,
+              "median": 35185.85093430779,
+              "max": 37742.306734157115
+            },
+            "instructions_per_conflict": {
+              "min": 60259.86572915244,
+              "median": 64224.74443134932,
+              "max": 69550.85813359139
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 48306,
+              "median": 56708.5,
+              "max": 65564
+            },
+            "cycles_per_conflict": {
+              "min": 32862.49492977501,
+              "median": 37500.08065250378,
+              "max": 39913.01726070757
+            },
+            "instructions_per_conflict": {
+              "min": 57492.44856801683,
+              "median": 65103.12713563359,
+              "max": 70256.42714893336
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.3097990001268314,
+            "instructions_per_conflict": 2.0973327325642974,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.429590975202633,
+            "cycles_to_verdict": 2.6757160264117377,
+            "conflicts_to_verdict": 1.1584194236229273,
+            "cycles_per_conflict_ratios": {
+              "min": 2.1535011708762966,
+              "median": 2.317578071599094,
+              "max": 2.435894789233647
+            },
+            "reported_propagations_per_conflict": 0.9070249432306287,
+            "cycles_per_reported_propagation": 2.5465661306951732
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.210558821604866,
+            "instructions_per_conflict": 2.102839182009021,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 3.2873851110592693,
+            "cycles_to_verdict": 3.4557840749009716,
+            "conflicts_to_verdict": 1.563307902565593,
+            "cycles_per_conflict_ratios": {
+              "min": 2.006458839467229,
+              "median": 2.1323544629031908,
+              "max": 2.654742437112958
+            },
+            "reported_propagations_per_conflict": 1.2121491435582765,
+            "cycles_per_reported_propagation": 1.8236690042247996
+          }
+        }
+      },
+      {
+        "name": "summle_x4044",
+        "expected": "sat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 24081,
+              "median": 75515.5,
+              "max": 146427
+            },
+            "cycles_per_conflict": {
+              "min": 642275.5057929488,
+              "median": 703458.4464237888,
+              "max": 723811.4951613041
+            },
+            "instructions_per_conflict": {
+              "min": 1142032.3556990405,
+              "median": 1220886.4458649387,
+              "max": 1254689.588899618
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 28505,
+              "median": 49065.5,
+              "max": 52589
+            },
+            "cycles_per_conflict": {
+              "min": 372235.0538801847,
+              "median": 421367.1779681988,
+              "max": 487906.0503069637
+            },
+            "instructions_per_conflict": {
+              "min": 723230.5879875587,
+              "median": 803241.0319149182,
+              "max": 986547.7855113138
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 62067,
+              "median": 71707.0,
+              "max": 166716
+            },
+            "cycles_per_conflict": {
+              "min": 370016.92211905273,
+              "median": 407994.17349212256,
+              "max": 431143.35219679197
+            },
+            "instructions_per_conflict": {
+              "min": 638402.6113250606,
+              "median": 749853.9057559968,
+              "max": 770640.0143715662
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.6185539881064932,
+            "instructions_per_conflict": 1.4946944358264331,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.1658648079909533,
+            "cycles_to_verdict": 2.3453416555571733,
+            "conflicts_to_verdict": 1.4490351713883398,
+            "cycles_per_conflict_ratios": {
+              "min": 1.4649815622216316,
+              "median": 1.6106969555495894,
+              "max": 1.889158988226974
+            },
+            "reported_propagations_per_conflict": 0.7463843086714962,
+            "cycles_per_reported_propagation": 2.1685262796954943
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.7063256746566648,
+            "instructions_per_conflict": 1.690734491381301,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 1.2692349604891786,
+            "cycles_to_verdict": 1.2809392671022877,
+            "conflicts_to_verdict": 0.750700341750428,
+            "cycles_per_conflict_ratios": {
+              "min": 1.5565175098382713,
+              "median": 1.707050104317109,
+              "max": 1.9004838852874006
+            },
+            "reported_propagations_per_conflict": 1.481040055683237,
+            "cycles_per_reported_propagation": 1.152113116798518
+          }
+        }
+      },
+      {
+        "name": "j3037",
+        "expected": "unsat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 342242,
+              "median": 351545.5,
+              "max": 366828
+            },
+            "cycles_per_conflict": {
+              "min": 517977.6599045008,
+              "median": 533552.4069871831,
+              "max": 548308.3368526939
+            },
+            "instructions_per_conflict": {
+              "min": 747538.34931261,
+              "median": 757139.7423518351,
+              "max": 765818.3224297427
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 270787,
+              "median": 299458.5,
+              "max": 306158
+            },
+            "cycles_per_conflict": {
+              "min": 238787.08468056418,
+              "median": 242403.12552269787,
+              "max": 246761.8569070391
+            },
+            "instructions_per_conflict": {
+              "min": 407696.9677858258,
+              "median": 416604.2251899168,
+              "max": 426249.784395115
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 0,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 304759,
+              "median": 345155.5,
+              "max": 369386
+            },
+            "cycles_per_conflict": {
+              "min": 311193.53296211106,
+              "median": 318083.04595223855,
+              "max": 337168.7650344084
+            },
+            "instructions_per_conflict": {
+              "min": 537850.675116639,
+              "median": 545310.4505532549,
+              "max": 552960.631834943
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.2057840859414437,
+            "instructions_per_conflict": 1.8130473234701365,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.1719259668695026,
+            "cycles_to_verdict": 2.64240192274421,
+            "conflicts_to_verdict": 1.197942237223284,
+            "cycles_per_conflict_ratios": {
+              "min": 2.1588691111688036,
+              "median": 2.176420826012036,
+              "max": 2.296222752525287
+            },
+            "reported_propagations_per_conflict": 1.3375128165914902,
+            "cycles_per_reported_propagation": 1.649168560165764
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.6710610833555397,
+            "instructions_per_conflict": 1.3869599753170612,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 1.4335677499844324,
+            "cycles_to_verdict": 1.727215867786607,
+            "conflicts_to_verdict": 1.0336042679650626,
+            "cycles_per_conflict_ratios": {
+              "min": 1.5983898611223495,
+              "median": 1.6841458119672572,
+              "max": 1.704798720971174
+            },
+            "reported_propagations_per_conflict": 1.091472194397607,
+            "cycles_per_reported_propagation": 1.5310157161427393
+          }
+        }
+      },
+      {
+        "name": "circuit_48in64out",
+        "expected": "sat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 186114,
+              "median": 196082.5,
+              "max": 203102
+            },
+            "cycles_per_conflict": {
+              "min": 234183.1553082235,
+              "median": 250258.92286938243,
+              "max": 256560.36570179948
+            },
+            "instructions_per_conflict": {
+              "min": 361652.80854981916,
+              "median": 385972.36973748374,
+              "max": 397974.024277635
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 167929,
+              "median": 225233.0,
+              "max": 301298
+            },
+            "cycles_per_conflict": {
+              "min": 47908.84857290879,
+              "median": 61567.08883668887,
+              "max": 94191.473083127
+            },
+            "instructions_per_conflict": {
+              "min": 92076.42913374104,
+              "median": 114542.19394871945,
+              "max": 172068.6927427331
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 191646,
+              "median": 201034.5,
+              "max": 224820
+            },
+            "cycles_per_conflict": {
+              "min": 93261.91090865449,
+              "median": 102189.17047058488,
+              "max": 115641.95222400142
+            },
+            "instructions_per_conflict": {
+              "min": 169726.09392838881,
+              "median": 184062.97371257632,
+              "max": 200391.14726447826
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 3.9317453735992474,
+            "instructions_per_conflict": 3.2632694949485606,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 2.8105640435446277,
+            "cycles_to_verdict": 3.3863038871036233,
+            "conflicts_to_verdict": 0.86127242873912,
+            "cycles_per_conflict_ratios": {
+              "min": 2.5855811174506145,
+              "median": 4.067135694034763,
+              "max": 5.16454623739601
+            },
+            "reported_propagations_per_conflict": 2.168834203164621,
+            "cycles_per_reported_propagation": 1.8128381449639175
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.4098850856017506,
+            "instructions_per_conflict": 2.0858855411123307,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 1.9943977086686717,
+            "cycles_to_verdict": 2.3041864944880537,
+            "conflicts_to_verdict": 0.9561395720712118,
+            "cycles_per_conflict_ratios": {
+              "min": 2.1059804815197896,
+              "median": 2.4267165235129404,
+              "max": 2.7137593433128697
+            },
+            "reported_propagations_per_conflict": 2.058413723541725,
+            "cycles_per_reported_propagation": 1.1707486488456174
+          }
+        }
+      },
+      {
+        "name": "constraints_17",
+        "expected": "sat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 5040,
+              "median": 16731.0,
+              "max": 160294
+            },
+            "cycles_per_conflict": {
+              "min": 957853.4198412698,
+              "median": 1032115.9582534144,
+              "max": 1153237.0963309915
+            },
+            "instructions_per_conflict": {
+              "min": 1899838.8482975033,
+              "median": 1928299.0567295447,
+              "max": 2079320.2632936507
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 8466,
+              "median": 39698.5,
+              "max": 145142
+            },
+            "cycles_per_conflict": {
+              "min": 384946.4103567541,
+              "median": 481496.27892981376,
+              "max": 659361.7841956059
+            },
+            "instructions_per_conflict": {
+              "min": 684353.2290171005,
+              "median": 818826.1868112888,
+              "max": 1098005.000472478
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 7075,
+              "median": 7075.0,
+              "max": 7075
+            },
+            "cycles_per_conflict": {
+              "min": 698304.7044522968,
+              "median": 717027.7062190813,
+              "max": 769470.1382332155
+            },
+            "instructions_per_conflict": {
+              "min": 1583900.7204240283,
+              "median": 1583904.0320848057,
+              "max": 1583908.428409894
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.1600588973141246,
+            "instructions_per_conflict": 2.397976764119064,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 1.2230418150009532,
+            "cycles_to_verdict": 1.1016963941477345,
+            "conflicts_to_verdict": 0.5100307197723235,
+            "cycles_per_conflict_ratios": {
+              "min": 1.7303691577892932,
+              "median": 2.1474855602981835,
+              "max": 2.601464827911714
+            },
+            "reported_propagations_per_conflict": 1.4251256966822619,
+            "cycles_per_reported_propagation": 1.5156971082219701
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 1.4439316476211908,
+            "instructions_per_conflict": 1.2408860581438605,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 4.01186193661733,
+            "cycles_to_verdict": 4.668320977700126,
+            "conflicts_to_verdict": 3.233062302769639,
+            "cycles_per_conflict_ratios": {
+              "min": 1.331715580364424,
+              "median": 1.4062359091292247,
+              "max": 1.6172585252549951
+            },
+            "reported_propagations_per_conflict": 0.9386886700420253,
+            "cycles_per_reported_propagation": 1.5382433960309179
+          }
+        }
+      },
+      {
+        "name": "si2-b03m",
+        "expected": "sat",
+        "arms": {
+          "baseline": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 25703,
+              "median": 34167.5,
+              "max": 51067
+            },
+            "cycles_per_conflict": {
+              "min": 225889.9656333836,
+              "median": 246278.14394197756,
+              "max": 267152.69213710463
+            },
+            "instructions_per_conflict": {
+              "min": 631563.4183152273,
+              "median": 709867.6086458648,
+              "max": 838129.9694199121
+            }
+          },
+          "kissat": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 35371,
+              "median": 47223.0,
+              "max": 62618
+            },
+            "cycles_per_conflict": {
+              "min": 93360.31221054649,
+              "median": 111654.22241614426,
+              "max": 139019.37984784224
+            },
+            "instructions_per_conflict": {
+              "min": 226444.65781404707,
+              "median": 257784.69202319032,
+              "max": 307325.5207655989
+            }
+          },
+          "cadical": {
+            "n": 6,
+            "decisive": 6,
+            "verified_sat_models": 6,
+            "emergency_timeouts": 0,
+            "conflicts": {
+              "min": 24829,
+              "median": 29247.0,
+              "max": 46042
+            },
+            "cycles_per_conflict": {
+              "min": 277772.6743842579,
+              "median": 344130.74036653474,
+              "max": 436036.31789439765
+            },
+            "instructions_per_conflict": {
+              "min": 633705.6900655923,
+              "median": 804004.816240085,
+              "max": 1068917.1326368637
+            }
+          }
+        },
+        "ratios": {
+          "kissat": {
+            "pairs": 6,
+            "cycles_per_conflict": 2.162597851340808,
+            "instructions_per_conflict": 2.734544497889699,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 1.9337795670950693,
+            "cycles_to_verdict": 1.5293177858300993,
+            "conflicts_to_verdict": 0.7071669773841328,
+            "cycles_per_conflict_ratios": {
+              "min": 1.6340808141004044,
+              "median": 2.1354273692986325,
+              "max": 2.8615231227442877
+            },
+            "reported_propagations_per_conflict": 0.804247019489335,
+            "cycles_per_reported_propagation": 2.6889721676730267
+          },
+          "cadical": {
+            "pairs": 6,
+            "cycles_per_conflict": 0.7046595699328344,
+            "instructions_per_conflict": 0.8687700635469802,
+            "both_decisive_pairs": 6,
+            "instructions_to_verdict": 0.9574989747407422,
+            "cycles_to_verdict": 0.7766276073064241,
+            "conflicts_to_verdict": 1.1021316397937369,
+            "cycles_per_conflict_ratios": {
+              "min": 0.5610167980670603,
+              "median": 0.6941391467165368,
+              "max": 0.8925737188781603
+            },
+            "reported_propagations_per_conflict": 0.9166433395466467,
+            "cycles_per_reported_propagation": 0.7687390935293816
+          }
+        }
+      }
+    ],
+    "complete": true,
+    "aggregate": {
+      "all": {
+        "kissat": {
+          "cycles_per_conflict": 2.218486860568948,
+          "instructions_per_conflict": 2.1352093314909326,
+          "cycles_to_verdict": 2.4190810277660817,
+          "instructions_to_verdict": 2.295562392934435,
+          "conflicts_to_verdict": 1.108742547383502
+        },
+        "cadical": {
+          "cycles_per_conflict": 1.6203818804306098,
+          "instructions_per_conflict": 1.5667227946218245,
+          "cycles_to_verdict": 2.773130185468522,
+          "instructions_to_verdict": 2.6506878954914628,
+          "conflicts_to_verdict": 1.7126596854118326
+        }
+      },
+      "sat": {
+        "kissat": {
+          "cycles_per_conflict": 2.168002024296879,
+          "instructions_per_conflict": 2.1964937671264635,
+          "cycles_to_verdict": 2.2065484143833136,
+          "instructions_to_verdict": 2.1855054481110545,
+          "conflicts_to_verdict": 1.0452814229198046
+        },
+        "cadical": {
+          "cycles_per_conflict": 1.4297736837697776,
+          "instructions_per_conflict": 1.4385981430129535,
+          "cycles_to_verdict": 2.875500910694189,
+          "instructions_to_verdict": 2.840582387532011,
+          "conflicts_to_verdict": 2.0135170992438396
+        }
+      },
+      "unsat": {
+        "kissat": {
+          "cycles_per_conflict": 2.3052542074395532,
+          "instructions_per_conflict": 2.0368447658731865,
+          "cycles_to_verdict": 2.819759096577926,
+          "instructions_to_verdict": 2.4914439103300734,
+          "conflicts_to_verdict": 1.223187918919291
+        },
+        "cadical": {
+          "cycles_per_conflict": 1.9961852534257414,
+          "instructions_per_conflict": 1.8061200205107855,
+          "cycles_to_verdict": 2.6105469358163846,
+          "instructions_to_verdict": 2.361985731118645,
+          "conflicts_to_verdict": 1.3077678694080674
+        }
+      }
+    }
+  }
+}
