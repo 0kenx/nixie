@@ -21,6 +21,16 @@ the repository's full correctness gates.
 
 ## 1. Shared satisfaction across watcher groups — first experiment
 
+**Current status:** the opportunity gate passed, but the subsequent
+[order-preserving tile kernel failed its registered cost screen](2026-09-07-watch-tiles-prototype.md).
+It skipped 25.64% and 17.57% of logical visits on break and circuit, yet used
+1.818× instructions and 1.744× cycles/conflict in the two-input geometric mean.
+The kernel was removed; its source and four-cell evidence are archived. No
+holdout or parameter search followed the rejection. Another representation
+must eliminate per-entry traversal and maintenance costs, rather than add
+cached groups around the existing flat vectors. The registration and earlier
+opportunity evidence below remain as historical context.
+
 Within a trigger's watch list, group clauses sharing a blocking literal. If
 that literal is true, one check can establish satisfaction for the whole
 group. Unlike the rejected four-watcher prefix experiment, the proposed
