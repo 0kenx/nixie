@@ -180,6 +180,19 @@ pub struct BvSolver {
     term_to_bv: FxHashMap<TermId, BvVar>,
     /// Pending assertions
     assertions: Vec<(TermId, bool)>,
+    /// Argument pairs the dispatch path has already asserted *equal* at the
+    /// bit level (`assert_eq` through `assert_formula_true`).  The
+    /// order-encoding arm consults this at network-build time: an asserted
+    /// equality between two arguments refutes the (pinned-true) `distinct`
+    /// outright, and saying so with one empty clause is the guard the
+    /// network cannot provide itself (refuting a duplicate through the full
+    /// sort is resolution-hard; see `order`).
+    asserted_eq_pairs: FxHashSet<(TermId, TermId)>,
+    /// Argument sets of the `distinct` terms this solver has
+    /// order-encoded.  A later `assert_eq` whose endpoints both lie in one
+    /// set refutes that (pinned-true) `distinct` outright – the
+    /// assert-order-independent half of the same guard.
+    order_distinct_argsets: Vec<FxHashSet<TermId>>,
     /// CEGAR bvmul abstractions created while [`Self::abstract_mul_width`]
     /// was set (drained by the pure-BV dispatch).  Each entry records one
     /// `bvmul` whose exact circuit was replaced by fresh result wires plus
@@ -315,6 +328,8 @@ impl BvSolver {
             sat,
             term_to_bv: FxHashMap::default(),
             assertions: Vec::new(),
+            asserted_eq_pairs: FxHashSet::default(),
+            order_distinct_argsets: Vec::new(),
             mul_abstractions: Vec::new(),
             abstract_mul_width: 0,
             abstract_div_width: 0,
@@ -472,6 +487,8 @@ impl BvSolver {
     /// it.
     pub fn reset_embedded_state(&mut self) {
         self.assertions.clear();
+        self.asserted_eq_pairs.clear();
+        self.order_distinct_argsets.clear();
         self.context_stack.clear();
         self.shared_equalities.clear();
         self.equality_notifications.clear();
@@ -707,6 +724,17 @@ impl BvSolver {
     /// Returns `false` – asserting nothing – when either operand has not been
     /// bit-blasted or the two have different widths.
     pub fn assert_eq(&mut self, a: TermId, b: TermId) -> bool {
+        // Order-encoding guard, assert-first direction: an equality between
+        // two arguments of an already-built (pinned-true) order-encoded
+        // `distinct` refutes it outright.
+        if !self.order_distinct_argsets.is_empty() {
+            for set in &self.order_distinct_argsets {
+                if set.contains(&a) && set.contains(&b) {
+                    let _ = self.sat.add_clause([]);
+                    return true;
+                }
+            }
+        }
         if let Some((va, vb)) = self.binop_bits(a, b) {
             for i in 0..va.width as usize {
                 // a[i] <=> b[i], folded on constant bits: equal constants
@@ -1396,7 +1424,32 @@ impl BvSolver {
                         return false;
                     }
                 }
-                TermKind::Eq(l, r) if self.both_bv_blasted(*l, *r) && self.assert_eq(*l, *r) => {}
+                // Order-encoding handoff (dispatch side): an eligible
+                // `distinct` at a *fact* position becomes the bitonic
+                // sorting network instead of C(n,2) equality nodes.  Only
+                // fact positions are sound with free pads (see `order`'s
+                // module docs); every other occurrence – nested, or under
+                // `not` – keeps `encode_bool_node`'s exact pairwise
+                // definition.
+                TermKind::Distinct(args)
+                    if self.distinct_order_dispatch_eligible(args, manager) =>
+                {
+                    if !self.assert_distinct_order_network(args, manager) {
+                        match self.encode_bool_node(tid, manager) {
+                            Some(v) => self.pin_bool_var(v, true),
+                            None => return false,
+                        }
+                    }
+                }
+                TermKind::Eq(l, r) if self.both_bv_blasted(*l, *r) => {
+                    // Permanent for this instance (the dispatch is
+                    // single-shot): recorded for the order-encoding guard's
+                    // assert-first direction.
+                    self.asserted_eq_pairs.insert(((*l).min(*r), (*l).max(*r)));
+                    if !self.assert_eq(*l, *r) {
+                        continue;
+                    }
+                }
                 TermKind::BvUlt(l, r)
                     if self.both_bv_blasted(*l, *r) && self.assert_ult(*l, *r) => {}
                 TermKind::BvUle(l, r)
@@ -3074,6 +3127,8 @@ impl Theory for BvSolver {
         // torn down or reused, so its var-space-carrying tables cannot be
         // trusted afterwards.
         self.exit_unified();
+        self.asserted_eq_pairs.clear();
+        self.order_distinct_argsets.clear();
         self.build_target = BuildTarget::Embedded;
         self.parked_sat = None;
         self.parked_const = None;

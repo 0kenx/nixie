@@ -166,6 +166,24 @@ impl TermManager {
         self.terms.get(id.0 as usize)
     }
 
+    /// Lookup the interned id of `(kind, sort)` WITHOUT interning: `None`
+    /// when no such term exists.  The read-only half of [`Self::intern`]
+    /// for callers that must not mint terms (e.g. probing whether an
+    /// equality atom between two terms already exists — creating it would
+    /// be exactly the quadratic blowup the probe exists to avoid).
+    #[must_use]
+    pub fn find_interned(&self, kind: &TermKind, sort: SortId) -> Option<TermId> {
+        let hash = hash_term_key(kind, sort);
+        let Self { terms, table, .. } = self;
+        table
+            .find(hash, |&id| {
+                terms
+                    .get(id.0 as usize)
+                    .is_some_and(|t| t.sort == sort && &t.kind == kind)
+            })
+            .copied()
+    }
+
     /// Intern a string, returning its key
     pub fn intern_str(&mut self, s: &str) -> Spur {
         self.interner.get_or_intern(s)

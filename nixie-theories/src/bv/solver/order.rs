@@ -70,6 +70,7 @@
 //! assignment for small n, and randomly for wider inputs.
 
 use super::*;
+use nixie_core::ast::{TermKind, TermManager};
 
 /// One network wire: its bits, LSB first.  Intermediate comparator outputs
 /// never need a `TermId` – the builder works over raw bit vectors of the
@@ -174,6 +175,101 @@ impl BvSolver {
         if hint_identity {
             self.hint_identity_arrangement(first_network_var, inputs);
         }
+        true
+    }
+
+    /// Dispatch-side eligibility for the order-encoding handoff (see
+    /// `assert_formula_true`'s `Distinct` arm): arity above the pairwise
+    /// threshold, every argument an already-blasted bit-vector of one
+    /// width, no ground-constant argument (a pinned wire defeats the
+    /// identity guidance – measured timeouts on constant-mixed shapes), and
+    /// `n <= 2^width` so both the pigeonhole short-circuit and the identity
+    /// arrangement hold.  `NIXIE_BV_DISTINCT_ORDER=0` disables.
+    pub(super) fn distinct_order_dispatch_eligible(
+        &self,
+        args: &[TermId],
+        manager: &TermManager,
+    ) -> bool {
+        const PAIRWISE_MAX_ARGS: usize = 32;
+        if args.len() <= PAIRWISE_MAX_ARGS {
+            return false;
+        }
+        if Self::order_env_disabled() {
+            return false;
+        }
+        let Some(first) = self.term_to_bv.get(&args[0]) else {
+            return false;
+        };
+        let width = first.width;
+        if width < 63 && args.len() > (1usize << width) {
+            return false;
+        }
+        if manager
+            .get(args[0])
+            .is_some_and(|t| matches!(t.kind, TermKind::BitVecConst { .. }))
+        {
+            return false;
+        }
+        args.iter().all(|&a| {
+            manager
+                .get(a)
+                .is_some_and(|t| !matches!(t.kind, TermKind::BitVecConst { .. }))
+                && self.term_to_bv.get(&a).is_some_and(|v| v.width == width)
+        })
+    }
+
+    /// Whether `NIXIE_BV_DISTINCT_ORDER=0` disables the order encoding.
+    pub(crate) fn order_env_disabled() -> bool {
+        match std::env::var("NIXIE_BV_DISTINCT_ORDER") {
+            Ok(v) => v == "0" || v.is_empty(),
+            Err(_) => false,
+        }
+    }
+
+    /// Build the bitonic network for an eligible dispatch-side `distinct`
+    /// and pin its result var true.  Returns `false` – building nothing –
+    /// when the builder refuses (size cap), so the caller falls back to the
+    /// pairwise node.
+    ///
+    /// Pads are anonymous SAT variables (no `TermId` needs to exist for a
+    /// wire that only the network ever sees).  If an already-asserted
+    /// equality hits two of the arguments, the `distinct` is refuted on the
+    /// spot – the guard the network cannot provide itself.
+    pub(super) fn assert_distinct_order_network(
+        &mut self,
+        args: &[TermId],
+        manager: &TermManager,
+    ) -> bool {
+        let width = self.term_to_bv.get(&args[0]).map_or(0, |v| v.width);
+        let arg_set: FxHashSet<TermId> = args.iter().copied().collect();
+        // Assert-first guard: an equality already pinned between two
+        // arguments refutes the pinned-true distinct outright.
+        for &(a, b) in &self.asserted_eq_pairs {
+            if arg_set.contains(&a) && arg_set.contains(&b) {
+                let _ = self.sat.add_clause([]);
+                self.order_distinct_argsets.push(arg_set);
+                return true;
+            }
+        }
+        let n2 = args.len().next_power_of_two();
+        let mut inputs: Vec<Wire> = Vec::with_capacity(n2);
+        for &a in args {
+            let Some(bits) = self.bv_bits(a) else {
+                return false;
+            };
+            inputs.push(bits);
+        }
+        for _ in args.len()..n2 {
+            let pad: Wire = (0..width).map(|_| self.sat.new_var()).collect();
+            inputs.push(pad);
+        }
+        let out = self.sat.new_var();
+        if !self.encode_distinct_order_network(out, &inputs) {
+            return false;
+        }
+        self.pin_bool_var(out, true);
+        self.order_distinct_argsets.push(arg_set);
+        let _ = manager;
         true
     }
 
@@ -444,6 +540,68 @@ mod tests {
 
     /// Probe (scratch, not for landing): one duplicate pair, other wires
     /// free, embedded solve -- isolates the network's unsat side.
+    /// End-to-end dispatch-path test: `assert_formula_true` on a
+    /// `distinct` term runs the same arm the eager QF_BV dispatch uses
+    /// (blast, then assert); `check()` solves the embedded instance.
+    #[test]
+    fn order_dispatch_free_vars_sat() {
+        let mut mgr = TermManager::new();
+        let bv_sort = mgr.sorts.bitvec(8);
+        let args: Vec<TermId> = (0..40)
+            .map(|i| mgr.mk_var(&format!("d{i}"), bv_sort))
+            .collect();
+        let mut bv = BvSolver::new();
+        for &a in &args {
+            bv.new_bv(a, 8);
+        }
+        let distinct = mgr.mk_distinct(args.iter().copied());
+        assert!(bv.assert_formula_true(distinct, &mgr));
+        assert!(matches!(bv.check(), Ok(TheoryResult::Sat)));
+    }
+
+    /// The equality guard, assert-first direction: an equality already
+    /// asserted between two arguments must refute the pinned-true network
+    /// `distinct` without searching through the sort.
+    #[test]
+    fn order_dispatch_eq_guard_refutes() {
+        let mut mgr = TermManager::new();
+        let bv_sort = mgr.sorts.bitvec(8);
+        let args: Vec<TermId> = (0..40)
+            .map(|i| mgr.mk_var(&format!("d{i}"), bv_sort))
+            .collect();
+        let mut bv = BvSolver::new();
+        for &a in &args {
+            bv.new_bv(a, 8);
+        }
+        // Assert `d0 = d17` first (bit-level, as the dispatch spine does)…
+        let eq = mgr.mk_eq(args[0], args[17]);
+        assert!(bv.assert_formula_true(eq, &mgr));
+        // …then the distinct: the guard refutes on the spot.
+        let distinct = mgr.mk_distinct(args.iter().copied());
+        assert!(bv.assert_formula_true(distinct, &mgr));
+        assert!(matches!(bv.check(), Ok(TheoryResult::Unsat(_))));
+    }
+
+    /// The equality guard, distinct-first direction: a later equality
+    /// between two arguments of an already-built network refutes it.
+    #[test]
+    fn order_dispatch_eq_guard_later_refutes() {
+        let mut mgr = TermManager::new();
+        let bv_sort = mgr.sorts.bitvec(8);
+        let args: Vec<TermId> = (0..40)
+            .map(|i| mgr.mk_var(&format!("d{i}"), bv_sort))
+            .collect();
+        let mut bv = BvSolver::new();
+        for &a in &args {
+            bv.new_bv(a, 8);
+        }
+        let distinct = mgr.mk_distinct(args.iter().copied());
+        assert!(bv.assert_formula_true(distinct, &mgr));
+        let eq = mgr.mk_eq(args[3], args[39]);
+        assert!(bv.assert_formula_true(eq, &mgr));
+        assert!(matches!(bv.check(), Ok(TheoryResult::Unsat(_))));
+    }
+
     /// The size cap refuses absurd shapes without building anything.
     #[test]
     fn order_network_refuses_oversized_shapes() {

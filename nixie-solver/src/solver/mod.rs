@@ -148,6 +148,11 @@ pub struct Solver {
     /// [`Self::refine_colocated_splits`] (dedup across rounds; retracted by
     /// `pop` together with its clause via `TrailOp::ColocatedSplitPairAdded`).
     pub(super) colocated_split_done: FxHashSet<(TermId, TermId)>,
+    /// `(= t_i t_j)` atoms already carrying a `¬distinct ∨ ¬atom` guard
+    /// clause (the distinct-semantics companion pass of the array
+    /// refinement), trail-journalled
+    /// (`TrailOp::DistinctGuardClauseAdded`).
+    pub(super) distinct_guard_clauses: FxHashSet<TermId>,
     /// Soft co-located split rounds used over this solver's lifetime
     /// (capped; see `refine_colocated_splits`).  Monotone, mirroring
     /// `arrangement_rounds`: the clauses persist across checks, so the
@@ -794,6 +799,7 @@ impl Solver {
             has_injective_distinct: false,
             injective_distinct_specs: Vec::new(),
             colocated_split_done: FxHashSet::default(),
+            distinct_guard_clauses: FxHashSet::default(),
             colocated_rounds: 0,
             suppress_numeric_eq_trichotomy: false,
             term_to_var: FxHashMap::default(),
@@ -2401,6 +2407,53 @@ impl Solver {
                         // then re-solve.  Only genuine array models survive.
                         let array_refined =
                             self.has_array_ops && self.instantiate_array_axioms(manager);
+                        // Distinct-semantics guard clauses: for a live
+                        // injective-`distinct` spec, every encoded
+                        // `(= t_i t_j)` atom between two of its arguments is
+                        // falsified by `¬result ∨ ¬(t_i = t_j)` — a VALID
+                        // clause (distinct true ⟹ pairwise distinct).  With
+                        // the asserted top-level distinct, `result` is a
+                        // level-0 unit, so ordinary unit propagation falsifies
+                        // every existing guard atom at the START of the next
+                        // descent — exactly the atoms the conflict census
+                        // found CDCL learning one conflict at a time (the RoW
+                        // guard equalities `eq(v,v)`: 23 k of 58 k classified
+                        // theory lemmas on memory-alias-s0-large; see
+                        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+                        // Bounded by the atoms that already exist (created by
+                        // the refinement's asserted instances), never C(n,2);
+                        // both operand orders probed (hash-consing interns
+                        // them distinctly).
+                        if self.has_injective_distinct {
+                            for &(result, ref args) in &self.injective_distinct_specs {
+                                let Some(&rv) = self.term_to_var.get(&result) else {
+                                    continue;
+                                };
+                                let not_result = Lit::neg(rv);
+                                for wi in 0..args.len() {
+                                    for wj in (wi + 1)..args.len() {
+                                        for (a, b) in [(args[wi], args[wj]), (args[wj], args[wi])] {
+                                            let Some(eq) = manager.find_interned(
+                                                &TermKind::Eq(a, b),
+                                                manager.sorts.bool_sort,
+                                            ) else {
+                                                continue;
+                                            };
+                                            let Some(&ev) = self.term_to_var.get(&eq) else {
+                                                continue;
+                                            };
+                                            if self.distinct_guard_clauses.insert(eq) {
+                                                self.trail.push(
+                                                    TrailOp::DistinctGuardClauseAdded { term: eq },
+                                                );
+                                                let _ =
+                                                    self.sat.add_clause([not_result, Lit::neg(ev)]);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         // The refinement loop reported "no instance the
                         // candidate model violates" (or there are no array
                         // operations at all): the element-wise agreement the
@@ -3563,6 +3616,11 @@ impl Solver {
                         TrailOp::ColocatedSplitPairAdded { pair } => {
                             self.colocated_split_done.remove(&pair);
                         }
+                        TrailOp::DistinctGuardClauseAdded { term } => {
+                            // The clause is retracted with the popped SAT scope; the dedup
+                            // key goes with it.
+                            self.distinct_guard_clauses.remove(&term);
+                        }
                         TrailOp::EncodedTermAdded { term, previous } => {
                             // Take back exactly this one memo write.  `None`
                             // means the term's whole encoding was emitted inside
@@ -3704,6 +3762,7 @@ impl Solver {
         self.bv.reset();
         self.bv_unified = false;
         self.bv_order_specs.clear();
+        self.distinct_guard_clauses.clear();
         self.bv_order_built.clear();
         self.bv_order_guarded.clear();
         self.all_assertions_bv_fragment = true;

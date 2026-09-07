@@ -122,6 +122,13 @@ fn main() {
     if let Ok(v) = std::env::var("BVE") {
         config.enable_bve = v != "0";
     }
+    // Pre-search probing bundle (failed-literal + hyper-binary): the
+    // CaDiCaL preset enables both, bare Default neither — the 2026-09-07
+    // preset-ablation arm isolates which carries the tail-class swings.
+    if let Ok(v) = std::env::var("PROBING") {
+        config.enable_failed_literal_probing = v != "0";
+        config.enable_hyper_binary_probing = v != "0";
+    }
     // Chronological backtracking A/B knob (cadical defaults it on; our
     // measurements elsewhere were neutral-to-slightly-negative — the
     // satcomp standing-gap study names it the cheap first trial for the

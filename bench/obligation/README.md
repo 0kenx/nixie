@@ -181,8 +181,15 @@ with the certificate:
    measured three times (0.97 ungated / 0.93 gated by wall; 1.022 by
    conflicts on the fixed tree — neutral, with a mechanistic account of
    why post-hoc repair cannot work here) and is closed as not-landed in
-   the same study; the residual gap to z3 is in-search separation +
-   root-backtrack-free lemma assertion.
+   the same study.
+   **Final (2026-09-07, night): the conflict census + guard clauses
+   landed.**  A literal-level census showed the residual conflicts cite
+   the read-over-write guard atoms (not the distinct encoding as first
+   inferred); emitting the VALID binary clause `¬distinct ∨ ¬(t_i = t_j)`
+   for every existing atom between a live distinct's arguments falsifies
+   them by unit propagation at descent start: conflicts −37..−47 %,
+   decisions −52..−71 % on the alias/incremental larges, zero verdict
+   changes anywhere (see the study's census + guard-clause sections).
 
 ## What this is not
 

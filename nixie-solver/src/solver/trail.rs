@@ -34,6 +34,11 @@ pub(crate) enum TrailOp {
     /// pop – the same retract-with-the-clause discipline as
     /// `NumericEqSplitPairAdded`.
     ColocatedSplitPairAdded { pair: (TermId, TermId) },
+    /// A `¬distinct ∨ ¬(t_i = t_j)` guard clause was asserted (the
+    /// distinct-semantics companion pass of the array refinement).  The
+    /// clause is retracted with the popped SAT scope; the dedup key goes
+    /// with it.
+    DistinctGuardClauseAdded { term: TermId },
     /// A numeric-equality trichotomy pair was recorded (and its clause
     /// emitted into the *current* SAT scope) by
     /// `ensure_numeric_equality_splits`.  A `pop` removes the clause with the
@@ -322,6 +327,7 @@ impl super::Solver {
             // keeping the latch on only *over*-enables the (sound, deduplicated)
             // care-split proposals and the model honesty gate. Never re-cleared.
             colocated_split_done: _, // TRAIL: ColocatedSplitPairAdded – every
+            distinct_guard_clauses: _, // TRAIL: DistinctGuardClauseAdded
             // insertion is journaled and retracted by exactly that op with the
             // clause it accompanied.
             colocated_rounds: _, // INVARIANT: monotone lifetime counter, mirroring
