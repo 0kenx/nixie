@@ -124,7 +124,22 @@ impl Solver {
 
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
+            #[cfg(feature = "bcp-tiles")]
+            let mut tile_cache = if self.use_watch_tiles && self.watches.count(lit) >= 16 {
+                Some(self.watches.take_tile_cache(lit))
+            } else {
+                None
+            };
             let mut watches = core::mem::take(self.watches.get_mut(lit));
+            #[cfg(feature = "bcp-tiles")]
+            let mut tile_work = crate::watch_tiles::Work::default();
+            #[cfg(feature = "bcp-tiles")]
+            if let Some(cache) = &mut tile_cache {
+                crate::watch_tiles::count!(tile_work, lists, 1);
+                cache.prepare(&watches, &mut tile_work);
+            }
+            #[cfg(feature = "bcp-tiles")]
+            let mut tile_cursor = crate::watch_tiles::Cursor::default();
             // Visit counting at list granularity (exact: the two-pointer scan
             // visits every entry of the pre-scan list; the conflict-abort
             // path below subtracts the tail it never reached). A per-visit
@@ -168,7 +183,34 @@ impl Solver {
                 .as_mut()
                 .and_then(|stats| stats.begin(lit, &watches, &self.trail, self.stats.conflicts));
 
-            for read in 0..watches.len() {
+            let mut next_read = 0;
+            while next_read < watches.len() {
+                #[cfg(feature = "bcp-tiles")]
+                if let Some(cache) = &tile_cache {
+                    let end = tile_cursor.skip(cache, &self.trail, next_read, &mut tile_work);
+                    if end != next_read {
+                        let skipped = end - next_read;
+                        crate::watch_tiles::count!(tile_work, skipped, skipped);
+                        crate::watch_tiles::count!(tile_work, skip_spans, 1);
+                        #[cfg(feature = "bcp-groups")]
+                        if let Some(sample) = &mut group_sample {
+                            for &watcher in &watches[next_read..end] {
+                                sample.observe(watcher, true);
+                            }
+                        }
+                        if write != next_read {
+                            watches.copy_within(next_read..end, write);
+                            crate::watch_tiles::count!(tile_work, skipped_copies, skipped);
+                        }
+                        write += skipped;
+                        next_read = end;
+                        continue;
+                    }
+                }
+                let read = next_read;
+                next_read += 1;
+                #[cfg(feature = "bcp-tiles")]
+                crate::watch_tiles::count!(tile_work, scalar_visits, 1);
                 let watcher = watches[read];
 
                 let blocker_true = self.trail.lit_val_hot(watcher.blocker) > 0;
@@ -197,6 +239,10 @@ impl Solver {
                 let clause = match self.clauses.live_lits_by_ref(watcher.r) {
                     Some(lits) => lits,
                     None => {
+                        #[cfg(feature = "bcp-tiles")]
+                        if let Some(cache) = &mut tile_cache {
+                            cache.changed(&tile_cursor, read, true);
+                        }
                         // Deleted clause – drop (don't advance write).
                         if bcp_stats {
                             crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
@@ -242,6 +288,12 @@ impl Solver {
                     // unchanged; while `write == read` a full write-back
                     // would be a pure self-write).
                     watches[write].blocker = first;
+                    #[cfg(feature = "bcp-tiles")]
+                    if first != watcher.blocker
+                        && let Some(cache) = &mut tile_cache
+                    {
+                        cache.changed(&tile_cursor, read, false);
+                    }
                     write += 1;
                     continue;
                 }
@@ -278,6 +330,12 @@ impl Solver {
                             watches[write] = watcher;
                         }
                         watches[write].blocker = l;
+                        #[cfg(feature = "bcp-tiles")]
+                        if l != watcher.blocker
+                            && let Some(cache) = &mut tile_cache
+                        {
+                            cache.changed(&tile_cursor, read, false);
+                        }
                         write += 1;
                         if bcp_stats {
                             crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
@@ -286,6 +344,10 @@ impl Solver {
                         break;
                     }
                     if v == 0 {
+                        #[cfg(feature = "bcp-tiles")]
+                        if let Some(cache) = &mut tile_cache {
+                            cache.changed(&tile_cursor, read, true);
+                        }
                         // Unassigned replacement: move the watch (the
                         // eager normalization above already set
                         // `lits[0]` to the non-false watch).
@@ -314,6 +376,12 @@ impl Solver {
                     watches[write] = watcher;
                 }
                 watches[write].blocker = first;
+                #[cfg(feature = "bcp-tiles")]
+                if first != watcher.blocker
+                    && let Some(cache) = &mut tile_cache
+                {
+                    cache.changed(&tile_cursor, read, false);
+                }
 
                 if self.trail.lit_val_hot(first) < 0 {
                     if bcp_stats {
@@ -360,6 +428,12 @@ impl Solver {
             }
 
             watches.truncate(write);
+            #[cfg(feature = "bcp-tiles")]
+            if let Some(cache) = &mut tile_cache {
+                cache.finish(&watches, &mut tile_work);
+            }
+            #[cfg(feature = "bcp-tiles-stats")]
+            self.watch_tile_work.merge(tile_work);
 
             #[cfg(feature = "bcp-groups")]
             if let Some(sample) = group_sample {
@@ -370,6 +444,10 @@ impl Solver {
             }
 
             *self.watches.get_mut(lit) = watches;
+            #[cfg(feature = "bcp-tiles")]
+            if let Some(cache) = tile_cache {
+                self.watches.put_tile_cache(lit, cache);
+            }
 
             if let Some(conflict) = conflict_found {
                 // The watch list was abandoned mid-scan, so `lit` is only

@@ -7,7 +7,12 @@ publish = false
 [workspace]
 # This is a standalone crate, not part of the main workspace
 
+[features]
+# Explicitly exercise the experimental SAT kernel through the library runner.
+bcp-tiles = ["dep:nixie-sat", "nixie-sat/bcp-tiles"]
+
 [dependencies]
+nixie-sat = { path = "../../nixie-sat", optional = true }
 nixie = { path = "../../nixie" }
 nixie-solver = { path = "../../nixie-solver" }
 nixie-core = { path = "../../nixie-core" }

@@ -65,6 +65,8 @@ pub struct WatchLists {
     /// Per-literal count of binary clauses keyed here in the old scheme
     /// (tick parity bookkeeping – see the module-level note above).
     bin_phantom: Vec<u32>,
+    #[cfg(feature = "bcp-tiles")]
+    tile_caches: Vec<Option<Box<crate::watch_tiles::Cache>>>,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -92,7 +94,34 @@ impl WatchLists {
         Self {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
+            #[cfg(feature = "bcp-tiles")]
+            tile_caches: (0..num_vars * 2).map(|_| None).collect(),
         }
+    }
+
+    #[cfg(feature = "bcp-tiles")]
+    pub(crate) fn clear_tile_caches(&mut self) {
+        for cache in &mut self.tile_caches {
+            *cache = None;
+        }
+    }
+
+    #[cfg(feature = "bcp-tiles")]
+    pub(crate) fn take_tile_cache(&mut self, lit: Lit) -> Box<crate::watch_tiles::Cache> {
+        if let Some(cache) = self.tile_caches.get_mut(lit.index())
+            && let Some(cache) = cache.take()
+        {
+            return cache;
+        }
+        Box::default()
+    }
+
+    #[cfg(feature = "bcp-tiles")]
+    pub(crate) fn put_tile_cache(&mut self, lit: Lit, cache: Box<crate::watch_tiles::Cache>) {
+        if lit.index() >= self.tile_caches.len() {
+            self.tile_caches.resize_with(lit.index() + 1, || None);
+        }
+        self.tile_caches[lit.index()] = Some(cache);
     }
 
     /// Record one binary clause direction keyed under `lit` (tick parity;
@@ -141,6 +170,10 @@ impl WatchLists {
 
     /// Get mutable access to the watch list for a literal
     pub fn get_mut(&mut self, lit: Lit) -> &mut Vec<Watcher> {
+        #[cfg(feature = "bcp-tiles")]
+        if let Some(cache) = self.tile_caches.get_mut(lit.index()) {
+            *cache = None;
+        }
         let idx = lit.index();
         if idx >= self.watches.len() {
             self.watches.resize(idx + 1, Vec::new());
@@ -151,6 +184,10 @@ impl WatchLists {
     /// Remove all watchers for a clause from a literal's watch list
     #[allow(dead_code)]
     pub fn remove_clause(&mut self, lit: Lit, clause: ClauseId) {
+        #[cfg(feature = "bcp-tiles")]
+        if let Some(cache) = self.tile_caches.get_mut(lit.index()) {
+            *cache = None;
+        }
         let idx = lit.index();
         if idx < self.watches.len() {
             self.watches[idx].retain(|w| w.clause != clause);
@@ -190,6 +227,8 @@ impl WatchLists {
     /// Restore the exact list contents captured by [`Self::packed_snapshot`]
     /// (the array length and every watcher, in order; empty lists included).
     pub fn restore(&mut self, snap: WatchSnapshot) {
+        #[cfg(feature = "bcp-tiles")]
+        self.clear_tile_caches();
         let WatchSnapshot {
             packed,
             ends,
@@ -220,6 +259,8 @@ impl WatchLists {
 
     /// Clear all watch lists
     pub fn clear(&mut self) {
+        #[cfg(feature = "bcp-tiles")]
+        self.clear_tile_caches();
         for watches in &mut self.watches {
             watches.clear();
         }

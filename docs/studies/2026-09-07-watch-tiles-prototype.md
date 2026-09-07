@@ -24,7 +24,8 @@ a propagation pass or backtrack.
 Clear changed blockers from cached groups; delete removed mask positions in
 descending order to follow stable compaction. Rebuild a tile after 64
 accumulated removals/blocker changes, or when it has fewer than 16 survivors;
-the latter returns its entries to a later rebuild without changing order.
+the latter exposes the suffix beginning at that tile for rebuilding in
+logical order, charging every suffix entry scanned.
 Generic mutable access, explicit removal, clear and snapshot restoration
 invalidate affected caches. Appending preserves existing prefix groups.
 Arena relocation changes references only and preserves blocker membership.
@@ -66,3 +67,34 @@ clippy, fmt and strict docs; fresh Z3 parity using available Z3 4.16.0; and
 additional parity with the tiled kernel enabled. Tests must cover sparse mask
 compaction, tile boundaries, blocker changes, moves, appends, restoration,
 mid-pass truth changes, conflicts and SAT/UNSAT trajectory/proof identity.
+
+## Implementation and verification
+
+The `bcp-tiles` feature now runs the tiled kernel; `bcp-tiles-stats` adds
+explanatory counters. Both are outside the default feature set. The
+`stats_solve` example accepts `NIXIE_WATCH_TILES=0|1` in a tiled build and
+writes `nixie-watch-tiles/1` JSON on stderr in a statistics build. A depleted
+tile exposes the suffix beginning at that tile for rebuilding, with every
+scanned suffix entry included in the build counter.
+
+Eight new tests cover exhaustive small-mask compaction (including high-bit
+positions), mid-pass truth transitions, tile boundaries, mask repair,
+appending, external invalidation, snapshot restoration and scope changes.
+Two tests force real skips: one compares compaction, trail and conflict-tail
+state; another compares exact LRAT transcripts after grouped propagation.
+
+All required gates passed in the isolated worktree: all-features build,
+10,645 nextest tests (12 skipped), doctests, strict clippy, fmt and strict
+docs. The 100,000-case tiled SAT differential found zero mismatches and zero
+invalid models. Z3 4.16.0 parity gave 169 agreements, zero disagreements and
+one unresolved case in each of the ordinary and tiled builds. The standalone
+parity harness exposes a `bcp-tiles` feature so its library runner, not merely
+an unrelated CLI binary, exercises the experimental kernel.
+
+The reproducible four-cell runner is `bench/suite/scripts/watch_tile_bench.py`.
+Pass `--optimized`, `--diagnostic`, `--sha`, and optionally `--root` for the
+primary checkout containing shared corpora and precompiled controls. It
+stores complete manifests, raw outputs, PMU reports and canonical records;
+existing cells are reused. Hardware counts cover the complete process.
+Internal counters describe BCP maintenance and explain cost; they do not
+claim to count allocator internals or replace the hardware measurement.

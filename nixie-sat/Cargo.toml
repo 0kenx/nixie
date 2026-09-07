@@ -25,6 +25,9 @@ bcp-stats = []
 # Read-only, sampled shared-blocker feasibility observations. Entirely absent
 # from ordinary builds; enable explicitly through Solver or stats_solve.
 bcp-groups = ["std"]
+# Experimental order-preserving shared-blocker tiles (not in default builds).
+bcp-tiles = ["std"]
+bcp-tiles-stats = ["bcp-tiles"]
 
 [dependencies]
 nixie-core = { workspace = true, default-features = false }
