@@ -4095,6 +4095,99 @@ impl Solver {
         self.detect_gate_count()
     }
 
+    /// Live BIG edge count (diagnostic twin of
+    /// [`Solver::binary_scc_mass`]).
+    #[doc(hidden)]
+    pub fn big_edge_count(&self) -> usize {
+        self.binary_graph.edge_accounting().0
+    }
+
+    /// Equivalence mass of the **parse-time** binary-implication graph:
+    /// `(vars in non-trivial SCCs, vars in SCCs of size >= 3, largest SCC
+    /// literal count)`.  Read-only iterative Tarjan over `binary_graph`
+    /// (no refresh, no gate augmentation, no mutation) — the pre-existing
+    /// mutual-implication structure, which is exactly the input the ELS
+    /// SCC fold consumes modulo congruence augmentation.  Diagnostic
+    /// accessor for the ELS-gating studies (`SCC_MASS=1`); deterministic
+    /// and trajectory-invariant by construction.
+    #[doc(hidden)]
+    pub fn binary_scc_mass(&self) -> (usize, usize, usize) {
+        let num_lits = self.num_vars * 2;
+        let mut index: Vec<i64> = vec![-1; num_lits];
+        let mut lowlink = vec![0usize; num_lits];
+        let mut on_stack = vec![false; num_lits];
+        let mut stack: Vec<usize> = Vec::new();
+        let mut work: Vec<(usize, usize)> = Vec::new();
+        let mut counter: usize = 0;
+        let (mut mass, mut mass3, mut largest) = (0usize, 0usize, 0usize);
+        for root in 0..num_lits {
+            if index[root] != -1 {
+                continue;
+            }
+            index[root] = counter as i64;
+            lowlink[root] = counter;
+            counter += 1;
+            stack.push(root);
+            on_stack[root] = true;
+            work.push((root, 0));
+            while let Some(&mut (node, ref mut cursor)) = work.last_mut() {
+                // Successor walk: BIG edges FROM this literal code.
+                let (span_start, plen) = self.binary_graph.span_of(node);
+                let xlen = self.binary_graph.extra_len(node);
+                let mut advanced = false;
+                while *cursor < plen + xlen {
+                    let succ = if *cursor < plen {
+                        self.binary_graph.edge_at(span_start + *cursor).0.code() as usize
+                    } else {
+                        self.binary_graph.extra_at(node, *cursor - plen).0.code() as usize
+                    };
+                    *cursor += 1;
+                    if index[succ] == -1 {
+                        index[succ] = counter as i64;
+                        lowlink[succ] = counter;
+                        counter += 1;
+                        stack.push(succ);
+                        on_stack[succ] = true;
+                        work.push((succ, 0));
+                        advanced = true;
+                        break;
+                    } else if on_stack[succ] {
+                        lowlink[node] = lowlink[node].min(index[succ] as usize);
+                    }
+                }
+                if advanced {
+                    continue;
+                }
+                // Node finished: pop the SCC if it is a root.
+                work.pop();
+                if let Some(&(parent, _)) = work.last() {
+                    lowlink[parent] = lowlink[parent].min(lowlink[node]);
+                }
+                if lowlink[node] == index[node] as usize {
+                    let mut size = 0usize;
+                    while let Some(top) = stack.pop() {
+                        on_stack[top] = false;
+                        size += 1;
+                        if top == node {
+                            break;
+                        }
+                    }
+                    if size >= 2 {
+                        // A non-trivial SCC of L literals = size/2 equivalent
+                        // variables (both polarities are in the SCC).
+                        let vars = size / 2;
+                        mass += vars;
+                        if size >= 6 {
+                            mass3 += vars;
+                        }
+                        largest = largest.max(size);
+                    }
+                }
+            }
+        }
+        (mass, mass3, largest)
+    }
+
     /// Study knob (doc-hidden measurement API): arm or disarm the
     /// equivalence-substitution pass after construction — the ELS-gate
     /// study decides its per-instance gate after parse

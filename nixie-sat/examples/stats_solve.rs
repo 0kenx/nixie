@@ -176,6 +176,21 @@ fn main() {
         println!("gates={}", solver.detected_gate_count());
         return;
     }
+    if std::env::var("SCC_MASS").is_ok() {
+        // Structural telemetry (2026-09-07 ELS SCC-gate study): the
+        // equivalence mass of the parse-time binary-implication graph.
+        // The DIMACS bulk load defers BIG edges; materialize exactly what
+        // `solve()` would build (deterministic, no pass execution), then
+        // measure read-only.
+        solver.finish_deferred_big();
+        let (mass, mass3, largest) = solver.binary_scc_mass();
+        println!(
+            "scc_mass={mass} scc_mass3={mass3} scc_largest={largest} big_edges={} vars={}",
+            solver.big_edge_count(),
+            solver.num_vars()
+        );
+        return;
+    }
     if let Ok(path) = std::env::var("PHASE_HINT") {
         // cadical model file: `v 1 -2 3 ...` lines.  Index 0 unused.
         if let Ok(txt) = std::fs::read_to_string(&path) {
