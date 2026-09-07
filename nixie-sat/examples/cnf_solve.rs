@@ -11,13 +11,16 @@
 //! Optional env overrides for A/B testing single files:
 //!   PRESET=<name>   (cadical|default|industrial|glucose|...; wins over below)
 //!   RESTART=luby|glucose|geometric|locallbd  INTERVAL=N  REUSE=0|1
+//!                   (luby/geometric/locallbd disable the stabilize schedule;
+//!                    unknown tokens are a hard error, and INTERVAL drives
+//!                    the interval strategies' schedule)
 //!   INPROCESS=0|1  BVE=0|1  EQUIV=0|1  STABLE=0|1  REPHASE=N  MAXC=N
 //!
 //! ```text
 //! cargo run --release --example cnf_solve -- path/to/file.cnf
 //! ```
 
-use nixie_sat::{ConfigPreset, DimacsParser, RestartStrategy, Solver, SolverConfig, SolverResult};
+use nixie_sat::{ConfigPreset, DimacsParser, RestartStrategy, Solver, SolverResult};
 
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
@@ -49,22 +52,51 @@ fn main() {
     let mut config = if let Some(c) = preset_config {
         c
     } else {
+        // Strategy arms override ONLY the strategy on the CaDiCaL preset
+        // base (like every other knob here), and the interval-scheduled
+        // strategies disable the stabilize schedule — the stable/focused
+        // restart path implements Glucose+reluctant and never consults
+        // `restart_strategy`, so `RESTART=luby/geometric/locallbd` was
+        // silently inert on the preset (geo22 == geo200, 2026-09-07
+        // campaign harness notes). An unknown token is a hard error, not
+        // a silent preset fallback.
         match std::env::var("RESTART").ok().as_deref() {
-            Some("glucose") => SolverConfig {
-                restart_strategy: RestartStrategy::Glucose,
-                ..SolverConfig::default()
-            },
-            Some("geometric") => SolverConfig {
-                restart_strategy: RestartStrategy::Geometric,
-                ..SolverConfig::default()
-            },
-            Some("locallbd") => SolverConfig {
-                restart_strategy: RestartStrategy::LocalLbd,
-                ..SolverConfig::default()
-            },
-            _ => ConfigPreset::CaDiCaL.config(),
+            Some("luby") => {
+                let mut c = ConfigPreset::CaDiCaL.config();
+                c.restart_strategy = RestartStrategy::Luby;
+                c.enable_stabilize = false;
+                c
+            }
+            Some("geometric") => {
+                let mut c = ConfigPreset::CaDiCaL.config();
+                c.restart_strategy = RestartStrategy::Geometric;
+                c.enable_stabilize = false;
+                c
+            }
+            Some("locallbd") => {
+                let mut c = ConfigPreset::CaDiCaL.config();
+                c.restart_strategy = RestartStrategy::LocalLbd;
+                c.enable_stabilize = false;
+                c
+            }
+            Some("glucose") => {
+                let mut c = ConfigPreset::CaDiCaL.config();
+                c.restart_strategy = RestartStrategy::Glucose;
+                c
+            }
+            Some(other) => {
+                eprintln!(
+                    "unknown RESTART strategy {other:?} (expected luby|glucose|geometric|locallbd)"
+                );
+                std::process::exit(2);
+            }
+            None => ConfigPreset::CaDiCaL.config(),
         }
     };
+    // Base restart interval. Only the interval-scheduled strategies read
+    // it as their schedule (luby/geometric — which this example disables
+    // stabilize for, see RESTART above); for glucose it is the minimum
+    // restart gap of the non-stabilize path.
     if let Some(v) = std::env::var("INTERVAL").ok().filter(|s| !s.is_empty())
         && let Ok(n) = v.parse::<u64>()
     {
