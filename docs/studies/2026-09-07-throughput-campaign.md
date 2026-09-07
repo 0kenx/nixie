@@ -759,11 +759,19 @@ write-elision branch (it is a measured win).
   drought alignment. The repair: verify the null actually fires (compare
   restart counts across arms at a fixed conflict cap) before trusting
   any treatment/null ratio.
-* **`cnf_solve`'s `RESTART=luby` token is not recognized** (falls through
-  to the CaDiCaL preset silently — trajectories identical to base), and
-  `INTERVAL=N` does not change the geometric arm's trajectory (geo22 ≡
-  geo200): verify a knob actually moves counters before using it as an
-  arm. `RESTART=geometric` does switch strategies.
+* **`cnf_solve`'s RESTART/INTERVAL knob family was silently inert —
+  fixed.** Three stacked defects: the `luby` token was unrecognized
+  (silent CaDiCaL fallthrough); the strategy arms replaced the whole
+  CaDiCaL preset with bare `SolverConfig::default()` (losing every preset
+  tuning); and under the preset's stabilize schedule `restart_strategy`
+  is *never consulted* (the stable/focused path implements
+  Glucose+reluctant), so `RESTART=luby/geometric/locallbd` and `INTERVAL`
+  did nothing (geo22 ≡ geo200). Fixed: strategy arms override only the
+  strategy on the preset base, the interval strategies disable stabilize,
+  unknown tokens are a hard error (exit 2). Verified with
+  `NIXIE_TRACE_DECISIONS=1` restart counts (luby@10k: INTERVAL=50 → 69
+  restarts vs INTERVAL=5000 → 2; geometric: 333 vs 36) — count restarts,
+  not conflicts-at-cap, when checking a restart knob.
 * **Worktree builds go stale silently after RUSTFLAGS/feature flips**: two
   variant measurements this session were of stale binaries (`Finished in
   0.1 s` after an edit, no `Compiling` line). Protocol that fixed it:
