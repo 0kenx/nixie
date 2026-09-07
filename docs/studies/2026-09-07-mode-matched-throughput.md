@@ -107,4 +107,77 @@ report this cost and reject if it overwhelms the component saving. Apply the
 same three-file seed-0 screen and ten-seed confirmation bar. This candidate
 is independent of the BCP scan refactor, which is removed before building it.
 
+### Signature candidate screen: not qualified for landing
+
+All three outputs remain byte-identical. The single-seed screen gives:
+
+| input | instructions candidate/base | cycles/conflict candidate/base | branch misses candidate/base |
+|---|---:|---:|---:|
+| break_unsat_06_07 | 0.9962 | 0.9873 | 0.9783 |
+| circuit_48in64out | 0.9783 | 1.0040 | 0.9334 |
+| noL_11_14 | 0.9818 | 0.9872 | 0.9372 |
+
+The filter lowers instructions and branch misses, but the whole-run cycle
+screen does not establish a useful saving. It adds a cached-signature
+invariant and doubles each connected occurrence's storage. It was removed
+before full qualification; these three cells do **not** establish either a
+multi-seed win or neutrality. The two targeted tests passed, including an
+independent exhaustive exact-match oracle with hash collisions and a round
+that must connect a post-strengthening signature. The discarded source/tests
+and binary are archived as `stats_solve-sub-signature-pilot.patch` and
+`stats_solve-sub-signature-pilot` under the experiment directory.
+
+## Third candidate: repair scratch reuse
+
+The normal-return allocation-reuse omission below is a simpler independent
+mechanism. Restore the three scratch buffers on that return, just as the
+empty-schedule return already does. At next entry, schedules and occurrence
+lists are cleared and mark sizes reconciled by existing code. Every candidate
+unmarks both signs before any round exit, so the reused mark array starts
+zero. Test successful, repeated, budget-limited, and empty-schedule returns;
+preserve signatures' original absence and the original occurrence width.
+
+Use the same three-file seed-0 completion screen (reuse baseline cells),
+then ten seeds on the whole eight-file panel. No tick, scheduling, or clause
+mutation change. It must satisfy the existing component/whole-run bars and
+fresh SMT correctness gate. Unlike a cached match summary, this restores the
+already documented lifetime of existing scratch data.
+
+### Scratch-return candidate verdict: rejected
+
+The regression test passed all four return paths, and all three completion
+outputs were byte-identical to baseline. Nevertheless the independent PMU
+screen gave:
+
+| input | instructions candidate/base | cycles/conflict candidate/base | branch misses candidate/base |
+|---|---:|---:|---:|
+| break_unsat_06_07 | 0.9997 | 1.0738 | 0.9968 |
+| circuit_48in64out | 0.9989 | 1.0932 | 0.9969 |
+| noL_11_14 | 0.9996 | 1.0281 | 0.9991 |
+
+It fails the no-obvious-regression screen, so the production change and its
+test were removed. The existing reuse comments do not describe the normal
+return's actual allocation lifetime; simply making that lifetime persistent
+is not an established optimization. Retaining buffers also changes heap
+placement and retained memory, even with identical logical state. The screen
+does not isolate which of those effects caused the cycle result. Do not
+reinstate this three-assignment change solely from the misleading comment.
+The discarded binary, patch/test, and complete PMU records are archived.
+
+## Attribution notes
+
+All three sampled baseline completion runs exactly reproduce every diagnostic
+line in the supplied logs (models were additionally requested). Propagation
+shares are 72.41% (`break`), 60.90% (`circuit`) and 61.80% (`noL`); subsumption
+shares are 3.04%, 16.32% and 11.15%, respectively. The `noL` attribution run's
+tail overlapped a 16-second release build pinned to CPUs 0–1. It remains an
+approximate hotspot map, and will not be used as a quiet paired component
+measurement. All PMU throughput screen cells ran without our builds or other
+solver measurements overlapping.
+
+Source review also found that `subsume_round` returns scratch buffers to
+`subsume_scratch` only on its empty-schedule early return; the normal return
+drops them, despite the reuse comment. This is a separate allocation-reuse
+candidate; it is not bundled into the signature-filter experiment.
+
 Status: attribution and corrected standing measurements in progress.
