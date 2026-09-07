@@ -635,3 +635,33 @@ it.  NOTE for future sweeps: verify the sample exercises the shape (the
 "identical conflicts" smell is the same tell as the dead-gate episode —
 here it flagged small sampling, not a dead hook; the arity>8 scan is
 the fix).
+
+## Retroactive validation of every "identical/inert" claim (2026-09-08)
+
+Applying the sample-must-exercise-the-shape discipline to all four prior
+no-effect claims (shape = arity>8 `distinct`, the injective-encoding
+threshold — the precondition for every landed mechanism in this arc to
+be able to fire at all):
+
+| claim | corpus | shape check | verdict |
+|---|---|---|---|
+| storecomm/swap "+0 % all files" | 30 files | **max arity 0** (no `distinct` at all) | inert **verified by shape absence** — literal indices, as claimed |
+| z3 parity "no changes" (×6 runs) | 170 files | **max arity 5** (below threshold 8) | inert **verified by shape absence** |
+| QF_AUFLIA spot "0/30 diffs" | 30 files | **max arity 0** | inert **verified by shape absence** |
+| fuzzer capacity neutral | 14 files | **max arity 1** | inert **verified by shape absence** |
+
+And the constituencies that DO carry the shape, exhaustively in the
+standing corpora: QF_UF (309 files arity>8; the 60-file scan: 46/49
+conflict-identical, 3 small mixed deltas, 0 verdict diffs — recorded
+above), QF_UFLIA (215 distinct-bearing, **max arity 5** — below
+threshold), QF_UFIDL (200 distinct-bearing, **max arity 1**).
+
+Conclusion: the memory-alias family's shape (symbolic-index arity>8
+`distinct` combined with array reads) exists in the standing corpora
+**only** in QF_UF's injective files, where the activation measures
+neutral; every other corpus cannot fire the mechanisms at all.  All
+prior no-effect claims are now shape-verified rather than asserted —
+and the one that was sample-luck (the QF_UF random-24) was the only
+claim made without a shape check.  Rule going forward: **a no-effect
+result must cite the shape census of its corpus, not just the delta
+measurement.**
