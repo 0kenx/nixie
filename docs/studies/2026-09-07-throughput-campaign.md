@@ -505,6 +505,26 @@ tail class this campaign studies. Named follow-up: **preset ablation on
 the tail** — the 4-file × 5-seed matrix with one preset component
 disabled per arm.
 
+**Ablation executed (same session; `PROBING=0|1` knob added to
+`cnf_solve` for it)** — conflicts geomean vs the preset, 5 seeds:
+
+| arm | worker_550 | qwh | constraints_17 | 6s167 |
+|---|---|---|---|---|
+| everything off (`PRESET=default`) | 0.03× (0/5 solved) | 0.40× | **1.56×** | 0.23× |
+| inprocessing off | 0.52× | 0.62× | **2.43×** | 0.49× |
+| BVE off | 0.40× | 0.98× | 1.04× | 0.75× |
+| probing off | 0.39× | **1.46×** | 1.27× | 0.55× |
+
+**No component flip is a free win.** The ±2× config sensitivity is
+per-file bimodality, not a mis-set default: inprocessing carries the
+constraints_17 win and the worker/qwh/6s167 losses (the 2026-09-04
+corpus picture at file resolution), probing carries qwh's, BVE is
+near-neutral — and every removal costs ~2× somewhere else. The preset
+is a defensible corpus-wide compromise; each tail file wants a
+*different* config, which is the same per-file trade-off shape as every
+gating study this campaign ran, and the same conclusion: the conversion
+path is trajectory diversity (seeds/portfolio), not a component flip.
+
 **Pre-registered treatments** (all matched-null class):
 
 * **T1 — stall-aware restart** (`NIXIE_RESTART_STALL=<k>`, landed this
