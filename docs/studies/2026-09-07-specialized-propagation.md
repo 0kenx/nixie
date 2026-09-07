@@ -32,3 +32,13 @@ qualify this duplication of machine-code paths for landing. Source removed;
 no confirmation sweep started. Patch, binary, raw outputs and PMU records
 are retained under `precompile/de17156/benchmark/`. These are single-seed
 screen outcomes, not statistical estimates of a regression or its cause.
+
+## Measurement limitation discovered after the screen
+
+A subsequent host process check found another task's multi-core SAT sweep
+on CPUs 10–17, including this experiment's CPU 10. The recent screens may
+have overlapped that workload; their cycle differences cannot be treated as
+quiet paired measurements against the older cached baseline. Preserve all
+rows and rejection decisions as screening outcomes; the hardware-cycle
+cause is unresolved. No claim of a cycle regression is justified here.
+Further cycle qualification uses fresh paired cells on a separate P-core.

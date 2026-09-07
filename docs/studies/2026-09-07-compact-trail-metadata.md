@@ -44,3 +44,13 @@ module and is not re-exported, so a future justified representation change
 can simplify that existing type directly. Keeping an unused compatibility
 record is unnecessary. Do not retry merely for the 20-to-16-byte footprint
 saving without evidence that metadata traffic dominates the workload.
+
+## Measurement limitation discovered after the screen
+
+A subsequent host process check found another task's multi-core SAT sweep
+on CPUs 10–17, including this experiment's CPU 10. The recent screens may
+have overlapped that workload; their cycle differences cannot be treated as
+quiet paired measurements against the older cached baseline. Preserve all
+rows and rejection decisions as screening outcomes; the hardware-cycle
+cause is unresolved. No claim of a cycle regression is justified here.
+Further cycle qualification uses fresh paired cells on a separate P-core.

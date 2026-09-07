@@ -26,3 +26,13 @@ a useful cycle saving; it was removed without a confirmation sweep.
 These two cells do not isolate the cause of the cycle movement or establish
 a multi-seed regression. Patch, binary and records are archived under
 `precompile/1d217a2/benchmark/`.
+
+## Measurement limitation discovered after the screen
+
+A subsequent host process check found another task's multi-core SAT sweep
+on CPUs 10–17, including this experiment's CPU 10. The recent screens may
+have overlapped that workload; their cycle differences cannot be treated as
+quiet paired measurements against the older cached baseline. Preserve all
+rows and rejection decisions as screening outcomes; the hardware-cycle
+cause is unresolved. No claim of a cycle regression is justified here.
+Further cycle qualification uses fresh paired cells on a separate P-core.
