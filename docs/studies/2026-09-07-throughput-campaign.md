@@ -471,22 +471,39 @@ an **equilibrium property**: when the glue stream is uniform-huge
 recovery. cadical's glue on worker_550 is also large (~126) but *noisy*
 (conflict depth varies), so their EMAs cross every ~22 conflicts.
 
-**Causal test** (`RESTART=geometric`, unconditional interval restarts,
-single seed):
+**Causal test — CORRECTED (the knob fix invalidated it).** The original
+test ran `RESTART=geometric` on the pre-fix `cnf_solve`, where that arm
+was silently inert (`SolverConfig::default()` base, stabilize on,
+strategy never consulted). After the fix, every one of its numbers
+reproduces **exactly as `PRESET=default`** (qwh 63 395, constraints_17
+49 893, worker_550 400 000 — all bit-equal to the arm's original
+readings): it measured *bare default vs CaDiCaL preset*, not restart
+cadence.
 
-| | base | forced restarts | cadical |
-|---|---|---|---|
-| qwh | 134 113 | **63 395 (−53 %)** | 24 182 |
-| constraints_17 | 87 007 | **49 893 (−43 %)** | 7 075 |
-| worker_550 | 25 532 | >200 000 (**8× worse**) | 5 113 |
-| 6s167 | 62 241 | >200 000 (3× worse) | 16 654 |
+| | base (preset) | `PRESET=default` | true geo-22 (fixed knob) | cadical |
+|---|---|---|---|---|
+| qwh | 134 113 | **63 395 (−53 %)** | 229 369 (**1.7× worse**) | 24 182 |
+| constraints_17 | 87 007 | **49 893 (−43 %)** | 89 400 (≈ base) | 7 075 |
+| worker_550 | 25 532 | 400 000 (**16× worse**) | TO | 5 113 |
+| 6s167 | 62 241 | >200 000 (3× worse) | — | 16 654 |
 
-The restart stall IS causal on the seed-unstable tail (qwh,
-constraints_17) — and blanket restart cadence splits the class 2-and-2,
-because worker_550/6s167 need search depth. cadical wins all four *with*
-frequent restarts: their restarts are **productive** — the worker_550
-dec/conflict gap (58.5 vs 10.1) says their phases/branching make each
-restart land on a different productive shallow region, while ours thrash.
+**Forced-geometric restarts on the preset help no tail file** — the
+restart-stall causality rests entirely on the env-gated arms
+(stall8 / maxgap1000, measured on the true preset; those stand, with
+maxgap's flat floor far better than geometric's schedule). cadical
+still wins all four *with* frequent restarts: their restarts are
+**productive** — the worker_550 dec/conflict gap (58.5 vs 10.1) says
+their phases/branching make each restart land on a different productive
+shallow region, while ours thrash.
+
+**New finding the correction exposes — config sensitivity on the tail.**
+Bare `SolverConfig::default()` beats the CaDiCaL preset **1.7–2.1× on
+qwh/constraints_17** and loses **3–16× on worker_550/6s167**. Some
+preset component (candidates: reduce schedule, inprocessing mix,
+phase/walk schedule, decay rates) is worth ±2× per file on exactly the
+tail class this campaign studies. Named follow-up: **preset ablation on
+the tail** — the 4-file × 5-seed matrix with one preset component
+disabled per arm.
 
 **Pre-registered treatments** (all matched-null class):
 
@@ -759,11 +776,31 @@ write-elision branch (it is a measured win).
   drought alignment. The repair: verify the null actually fires (compare
   restart counts across arms at a fixed conflict cap) before trusting
   any treatment/null ratio.
-* **`cnf_solve`'s `RESTART=luby` token is not recognized** (falls through
-  to the CaDiCaL preset silently — trajectories identical to base), and
-  `INTERVAL=N` does not change the geometric arm's trajectory (geo22 ≡
-  geo200): verify a knob actually moves counters before using it as an
-  arm. `RESTART=geometric` does switch strategies.
+* **Identity checks are one-directional — say which direction and why.**
+  "Default-off is bit-identical" verifies only that the gate doesn't
+  leak; it is *silent about the gate being wired*. Inert-knob bugs are
+  invisible to it — indeed they *produce* identity (geo22 ≡ geo200 was
+  the bug's signature, and the fake-SEED replicas passed every identity
+  check for the same reason). Every gated arm needs the second
+  direction: ON(a) ≢ ON(b) on a real counter (restart schedule counts,
+  not conflicts-at-cap). A single-file counter spot-check labeled
+  "bit-identical" is also an overclaim — the corpus identity sweep
+  (verdict + conflicts-to-verdict, files that solve) is the minimum
+  honest form, and files that cap out carry no signal (report them as
+  such, don't count them).
+* **`cnf_solve`'s RESTART/INTERVAL knob family was silently inert —
+  fixed.** Three stacked defects: the `luby` token was unrecognized
+  (silent CaDiCaL fallthrough); the strategy arms replaced the whole
+  CaDiCaL preset with bare `SolverConfig::default()` (losing every preset
+  tuning); and under the preset's stabilize schedule `restart_strategy`
+  is *never consulted* (the stable/focused path implements
+  Glucose+reluctant), so `RESTART=luby/geometric/locallbd` and `INTERVAL`
+  did nothing (geo22 ≡ geo200). Fixed: strategy arms override only the
+  strategy on the preset base, the interval strategies disable stabilize,
+  unknown tokens are a hard error (exit 2). Verified with
+  `NIXIE_TRACE_DECISIONS=1` restart counts (luby@10k: INTERVAL=50 → 69
+  restarts vs INTERVAL=5000 → 2; geometric: 333 vs 36) — count restarts,
+  not conflicts-at-cap, when checking a restart knob.
 * **Worktree builds go stale silently after RUSTFLAGS/feature flips**: two
   variant measurements this session were of stale binaries (`Finished in
   0.1 s` after an edit, no `Compiling` line). Protocol that fixed it:
