@@ -2379,3 +2379,207 @@ fn big_compact_dead_drops_exactly_dead_edges() {
     assert_eq!(deg(&g, 0), 1);
     assert_eq!(deg(&g, 3), 1);
 }
+
+/// SAT-sweep integration tests (the kitten port, `solver/sweep.rs`).
+/// The env knobs are process-wide; tests arm the pass through the
+/// thread-local overrides (see `crate::test_knobs`). Formulas avoid
+/// unit-determined chains (UP alone fixes every variable, leaving
+/// nothing for the sweep to do — the pass correctly skips those) and
+/// disable lucky pre-solving (which would answer before the sweep).
+mod sweep_tests {
+    use super::*;
+
+    fn sweep_solver() -> Solver {
+        Solver::with_config(SolverConfig {
+            enable_lucky: false,
+            ..SolverConfig::default()
+        })
+    }
+
+    struct SweepArm {
+        _guard: (),
+    }
+    impl SweepArm {
+        fn on() -> Self {
+            crate::test_knobs::set_kitten_sweep(Some(true));
+            Self { _guard: () }
+        }
+        fn on_null() -> Self {
+            crate::test_knobs::set_kitten_sweep(Some(true));
+            crate::test_knobs::set_kitten_sweep_null(Some(true));
+            Self { _guard: () }
+        }
+    }
+    impl Drop for SweepArm {
+        fn drop(&mut self) {
+            crate::test_knobs::set_kitten_sweep(None);
+            crate::test_knobs::set_kitten_sweep_null(None);
+        }
+    }
+
+    /// An equivalence chain x1 ≡ x2 ≡ … ≡ xN by construction (the
+    /// FmlaEquivChain shape): binaries (¬xi ∨ xi+1) and (xi ∨ ¬xi+1),
+    /// with no units (a unit would let UP fix the whole chain before
+    /// the sweep could act). The sweep must prove the equivalences and
+    /// fold variables away through the substitution round.
+    #[test]
+    fn sweep_folds_equivalence_chain() {
+        let _arm = SweepArm::on();
+        let mut s = sweep_solver();
+        const N: i32 = 64;
+        for _ in 0..=N {
+            let _ = s.new_var();
+        }
+        for i in 1..N {
+            s.add_clause_dimacs(&[-i, i + 1]);
+            s.add_clause_dimacs(&[i, -(i + 1)]);
+        }
+        // A non-unit top clause: satisfiable either way, not by UP.
+        s.add_clause_dimacs(&[1, N]);
+        assert_eq!(s.solve(), SolverResult::Sat);
+        assert!(
+            s.stats.sweep_equivalences > 0,
+            "sweep must prove chain equivalences (got {})",
+            s.stats.sweep_equivalences
+        );
+        assert!(
+            s.stats.substitutions > 0,
+            "the substitution round must fold the proved classes"
+        );
+        // The model must satisfy the chain: all variables share x1's value.
+        let v1 = s.model_value(Var::new(0));
+        for v in 0..N {
+            assert_eq!(
+                s.model_value(Var::new(v as u32)),
+                v1,
+                "model reconstruction must unfold every folded variable"
+            );
+        }
+    }
+
+    /// Backbone extraction: (a∨b∨c)(a∨b∨¬c)(a∨¬b∨c)(a∨¬b∨¬c) entails a
+    /// without any unit propagating it at level 0. The sweep's backbone
+    /// test must derive the unit — or, when kitten's own env solve
+    /// already learned it at level 0 (phase-dependent, deterministic),
+    /// skip it as fixed (kissat `sweep_fixed_backbone`); either way the
+    /// verdict and the model must be right.
+    #[test]
+    fn sweep_finds_backbone_unit() {
+        let _arm = SweepArm::on();
+        let mut s = sweep_solver();
+        for _ in 0..3 {
+            let _ = s.new_var();
+        }
+        for (b, c) in [(2, 3), (2, -3), (-2, 3), (-2, -3)] {
+            s.add_clause_dimacs(&[1, b, c]);
+        }
+        assert_eq!(s.solve(), SolverResult::Sat);
+        assert!(
+            s.stats.sweep_units > 0 || s.stats.sweep_fixed_backbone > 0,
+            "backbone either extracted (units={}) or fixed-skipped (fixed={})",
+            s.stats.sweep_units,
+            s.stats.sweep_fixed_backbone
+        );
+        assert!(
+            s.stats.sweep_units > 0,
+            "sweep must derive the backbone unit x2"
+        );
+        assert_eq!(s.model_value(Var::new(0)), crate::literal::LBool::True);
+    }
+
+    /// The sweep must never change a verdict: a small UNSAT formula the
+    /// environment alone refutes.
+    #[test]
+    fn sweep_keeps_unsat_verdict() {
+        let _arm = SweepArm::on();
+        let mut s = sweep_solver();
+        let _ = s.new_var();
+        let _ = s.new_var();
+        for (a, b) in [(1, 2), (1, -2), (-1, 2), (-1, -2)] {
+            s.add_clause_dimacs(&[a, b]);
+        }
+        assert_eq!(s.solve(), SolverResult::Unsat);
+    }
+
+    /// A formula whose *environment* is unsat while level-0 unit
+    /// propagation alone is quiet: the sweep's first env solve returns
+    /// UNSAT and must surface the empty clause (verdict Unsat).
+    #[test]
+    fn sweep_env_unsat_derives_unsat() {
+        let _arm = SweepArm::on();
+        let mut s = sweep_solver();
+        for _ in 0..6 {
+            let _ = s.new_var();
+        }
+        // (1∨2)(1∨¬2)(¬1∨2)(¬1∨¬2): the cone of x1 is unsatisfiable.
+        for (a, b) in [(1, 2), (1, -2), (-1, 2), (-1, -2)] {
+            s.add_clause_dimacs(&[a, b]);
+        }
+        s.add_clause_dimacs(&[3, 4, 5, 6]);
+        assert_eq!(s.solve(), SolverResult::Unsat);
+    }
+
+    /// The matched null (scrambled ranking) must produce the same
+    /// verdict and the same *machinery* (kitten solves fire) — the
+    /// null-fires check the handover mandates before trusting any
+    /// treatment/null ratio.
+    #[test]
+    fn sweep_null_arm_fires_and_agrees() {
+        let _arm = SweepArm::on_null();
+        let mut s = sweep_solver();
+        const N: i32 = 48;
+        for _ in 0..=N {
+            let _ = s.new_var();
+        }
+        for i in 1..N {
+            s.add_clause_dimacs(&[-i, i + 1]);
+            s.add_clause_dimacs(&[i, -(i + 1)]);
+        }
+        s.add_clause_dimacs(&[1, N]);
+        assert_eq!(s.solve(), SolverResult::Sat);
+        assert!(
+            s.stats.kitten_solved > 0,
+            "the null must actually run kitten solves"
+        );
+    }
+
+    /// Default-off identity: with the override explicitly off, no sweep
+    /// state may be touched even on an equivalence chain.
+    #[test]
+    fn sweep_default_off_is_inert() {
+        crate::test_knobs::set_kitten_sweep(Some(false));
+        let mut s = sweep_solver();
+        const N: i32 = 32;
+        for _ in 0..=N {
+            let _ = s.new_var();
+        }
+        for i in 1..N {
+            s.add_clause_dimacs(&[-i, i + 1]);
+            s.add_clause_dimacs(&[i, -(i + 1)]);
+        }
+        s.add_clause_dimacs(&[1, N]);
+        assert_eq!(s.solve(), SolverResult::Sat);
+        assert_eq!(s.stats.sweep_rounds, 0);
+        assert_eq!(s.stats.kitten_ticks, 0);
+        crate::test_knobs::set_kitten_sweep(None);
+    }
+
+    /// Sweep under an incremental push/pop cycle must not corrupt the
+    /// base scope (the pass is gated to the base scope; equivalences
+    /// are permanent and sound there).
+    #[test]
+    fn sweep_respects_base_scope() {
+        let _arm = SweepArm::on();
+        let mut s = sweep_solver();
+        let _ = s.new_var();
+        let _ = s.new_var();
+        s.add_clause_dimacs(&[1, 2]);
+        s.add_clause_dimacs(&[-1, 2]);
+        assert_eq!(s.solve(), SolverResult::Sat);
+        s.push();
+        s.add_clause_dimacs(&[-2]);
+        assert_eq!(s.solve(), SolverResult::Unsat);
+        s.pop();
+        assert_eq!(s.solve(), SolverResult::Sat);
+    }
+}

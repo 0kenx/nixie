@@ -18,6 +18,7 @@ mod probe;
 mod propagate;
 mod search_ext;
 mod subsume;
+mod sweep;
 mod transred;
 mod walk;
 mod xor;
@@ -938,6 +939,65 @@ pub struct SolverStats {
     /// Auxiliary hub variables introduced by the kissat `factor.c` port
     /// (quotient chains; `solver/factor.rs`).
     pub factor_introduced: u64,
+    /// Kitten (embedded sub-solver) ticks consumed by sweep rounds — the
+    /// budget currency of the sweep port (kissat `kitten_ticks`).
+    /// Deterministic work counter, never wall clock.
+    pub kitten_ticks: u64,
+    /// Total kitten solves across sweep rounds (kissat `kitten_solved`).
+    pub kitten_solved: u64,
+    /// Sweep rounds run (kissat `stats.sweep`).
+    pub sweep_rounds: u64,
+    /// Variables swept (environments built and solved).
+    pub sweep_variables: u64,
+    /// Variables whose environment solved/tested before the budget died
+    /// (kissat `swept`).
+    pub sweep_swept: u64,
+    /// Equivalences proved by the sweep (kissat `sweep_equivalences`).
+    pub sweep_equivalences: u64,
+    /// Backbone units assigned by the sweep (kissat `sweep_units`).
+    pub sweep_units: u64,
+    /// kitten assumption solves under the sweep (kissat `sweep_solved`).
+    pub sweep_solved: u64,
+    /// kitten assumption solves that returned SAT (candidate refuted).
+    pub sweep_sat: u64,
+    /// kitten assumption solves that returned UNSAT (candidate proved).
+    pub sweep_unsat: u64,
+    /// Total environment variables across swept variables (kissat
+    /// `sweep_environment`).
+    pub sweep_environment: u64,
+    /// Total environment clauses encoded (kissat `sweep_clauses`).
+    pub sweep_environment_clauses: u64,
+    /// Sum of environment depths reached (kissat `sweep_depth`).
+    pub sweep_depth: u64,
+    /// Larger core lemmas dropped (proof-side only in kissat; proofs are
+    /// gated off in this port).
+    pub sweep_lemmas_dropped: u64,
+    /// Backbone-candidate flip attempts (kissat `sweep_flip_backbone`).
+    pub sweep_flip_backbone: u64,
+    /// Backbone-candidate flips that succeeded (model surgery replaced a
+    /// solve; kissat `sweep_flipped_backbone`).
+    pub sweep_flipped_backbone: u64,
+    /// Backbone candidates already root-fixed in kitten
+    /// (kissat `sweep_fixed_backbone`).
+    pub sweep_fixed_backbone: u64,
+    /// Backbone test solves by outcome (kissat `sweep_{sat,unsat,unknown}_backbone`).
+    pub sweep_sat_backbone: u64,
+    /// See [`Self::sweep_sat_backbone`].
+    pub sweep_unsat_backbone: u64,
+    /// See [`Self::sweep_sat_backbone`].
+    pub sweep_unknown_backbone: u64,
+    /// Equivalence-candidate flip attempts (kissat `sweep_flip_equivalences`).
+    pub sweep_flip_equivalences: u64,
+    /// Successful equivalence-candidate flips
+    /// (kissat `sweep_flipped_equivalences`).
+    pub sweep_flipped_equivalences: u64,
+    /// Equivalence test solves by outcome
+    /// (kissat `sweep_{sat,unsat,unknown}_equivalences`).
+    pub sweep_sat_equivalences: u64,
+    /// See [`Self::sweep_sat_equivalences`].
+    pub sweep_unsat_equivalences: u64,
+    /// See [`Self::sweep_sat_equivalences`].
+    pub sweep_unknown_equivalences: u64,
     /// Clauses rewritten by the factor port (dividers + quotients added;
     /// the deleted chain clauses are counted separately below).
     pub factor_clauses_rewritten: u64,
@@ -1491,6 +1551,22 @@ pub struct Solver {
     /// growth under `NIXIE_INPROC_SCHED`).
     pub(super) inproc_rounds_done: u64,
 
+    /// Untried sweep candidates retained from the previous sweep round
+    /// (kissat `solver->sweep_schedule`): variables that were scheduled
+    /// but never reached before the tick budget died.
+    pub(super) sweep_schedule: Vec<u32>,
+    /// Per-variable "needs sweeping" flag (kissat `flags[idx].sweep`):
+    /// marks the scheduled-but-unswept set that an incomplete round
+    /// leaves behind; the next round prioritizes exactly these.
+    pub(super) sweep_incomplete_flags: Vec<bool>,
+    /// Whether the last sweep round ended incomplete (kissat
+    /// `solver->sweep_incomplete`).
+    pub(super) sweep_incomplete: bool,
+    /// Completed sweeps (kissat `stats.sweep_completed`): grows the
+    /// per-round environment limits (`sweepvars`/`sweepclauses` <<
+    /// completed, `sweepdepth` + completed, each capped).
+    pub(super) sweep_completed: u32,
+
     /// `stats.propagations` at the end of the last mid-search round.  The
     /// search-work window for the next round's effort-relative budgets is
     /// `stats.propagations - this mark`; round-internal propagation sits
@@ -1999,6 +2075,10 @@ impl Solver {
             subsume_rounds_done: 0,
             subsume_dirty_list: Vec::new(),
             inproc_rounds_done: 0,
+            sweep_schedule: Vec::new(),
+            sweep_incomplete_flags: Vec::new(),
+            sweep_incomplete: false,
+            sweep_completed: 0,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
             inproc_round_props_total: 0,
@@ -3781,6 +3861,26 @@ impl Solver {
             }
         }
 
+        // Pre-search SAT sweep (kissat `preprocesssweep = 1` default; the
+        // kitten port, `solver/sweep.rs`): prove equivalences and backbone
+        // units with the embedded sub-solver over bounded cone
+        // environments, then fold through the substitution round. Runs
+        // regardless of `sched_parity` — it is new pass content, not a
+        // relocation of an existing cadical pass — under its own gates
+        // (level 0, base scope, no proof, theory-safe; `sweep_allowed`).
+        // Effort: kissat's `SET_EFFORT_LIMIT` reference at preprocess time
+        // is its `mineffort` floor, so the window here is 0 and the budget
+        // floors at `SWEEP_MIN_EFFORT` × `sweepeffort`‰ inside the round.
+        // Inert unless `NIXIE_SWEEP=1` (one cached bool load).
+        if crate::kitten_sweep_enabled() && self.sweep_round(0) == sweep::SweepOutcome::Unsat {
+            self.drat_emit_empty(None);
+            return SolverResult::Unsat;
+        }
+        if self.trivially_unsat {
+            self.drat_emit_empty(None);
+            return SolverResult::Unsat;
+        }
+
         // ===== CDCL search =====
         //
         // One search loop for every caller.  Historically `solve` carried its
@@ -4580,6 +4680,14 @@ impl Solver {
         self.inproc_diag_props = [0; 5];
         self.inproc_diag_wall = [0; 5];
         self.inproc_rounds_done = 0;
+        // Sweep scheduling state is per-solve (kissat resets its sweep
+        // schedule with the solver): a fresh search re-ranks from
+        // scratch. Proved equivalences/units are already applied to the
+        // formula and survive via the substitution ledger.
+        self.sweep_schedule.clear();
+        self.sweep_incomplete_flags.clear();
+        self.sweep_incomplete = false;
+        self.sweep_completed = 0;
         self.inproc_search_props_mark = 0;
         self.inproc_window_ring = [0, 0];
         self.inproc_round_props_total = 0;

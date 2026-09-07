@@ -152,6 +152,11 @@ mod hyper_binary;
 // solver tests call the checkers directly.
 #[cfg(any(debug_assertions, test))]
 mod invariants;
+/// The embedded sub-solver behind SAT sweeping (kissat `kitten.c`
+/// port; see `solver/sweep.rs`). Compiled unconditionally: the sweeper
+/// is default-off at runtime (`NIXIE_SWEEP`), not at compile time, so
+/// the arm is a pure runtime toggle.
+mod kitten;
 mod literal;
 mod lookahead;
 mod lrb;
@@ -260,6 +265,131 @@ pub fn root_sweep_strip_enabled() -> bool {
     *FLAG.get_or_init(|| {
         std::env::var("NIXIE_ROOT_SWEEP_STRIP").is_ok_and(|v| !v.is_empty() && v != "0")
     })
+}
+
+/// The kitten SAT-sweeping port (`nixie-sat/src/kitten.rs` +
+/// `solver/sweep.rs`, kissat `kitten.c`/`sweep.c`): proves equivalences
+/// and backbone units with an embedded sub-solver over bounded cone
+/// environments. **Default OFF** (`NIXIE_SWEEP=1` arms it) pending the
+/// standing-corpus A/B gates; see the module documentation in
+/// `solver/sweep.rs` and the handover
+/// `docs/handovers/2026-09-07-kitten-sweep-port.md`.
+#[doc(hidden)]
+pub fn kitten_sweep_enabled() -> bool {
+    // Test override (thread-local so parallel tests can arm the pass
+    // without the process-wide env OnceLock).
+    #[cfg(test)]
+    {
+        if let Some(v) = crate::test_knobs::kitten_sweep_override() {
+            return v;
+        }
+    }
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("NIXIE_SWEEP").is_ok_and(|v| !v.is_empty() && v != "0"))
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Matched null for the sweep's candidate ranking (`NIXIE_SWEEP_NULL=1`):
+/// identical machinery, budgets and candidate *set*, with the ranking
+/// scrambled by a deterministic hash of the variable index. Report
+/// treatment/null ratios, never treatment/base (see BENCHMARKING.md).
+#[doc(hidden)]
+pub fn kitten_sweep_null_enabled() -> bool {
+    #[cfg(test)]
+    {
+        if let Some(v) = crate::test_knobs::kitten_sweep_null_override() {
+            return v;
+        }
+    }
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SWEEP_NULL").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Sweep round effort override in per-mille of the round window
+/// (`NIXIE_SWEEP_EFFORT`, kissat `sweepeffort` default 100).
+#[doc(hidden)]
+pub fn kitten_sweep_effort_permille() -> u64 {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<u64> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SWEEP_EFFORT")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(100)
+                .min(10_000)
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        100
+    }
+}
+
+/// Per-round sweep telemetry (`NIXIE_SWEEP_TRACE=1`): one stderr line
+/// per round (scheduled/swept/equivalences/units/ticks/budget).
+#[doc(hidden)]
+pub fn kitten_sweep_trace_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SWEEP_TRACE").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Thread-local test overrides for the sweep env knobs (the env flags
+/// are process-wide `OnceLock`s, which parallel tests cannot isolate;
+/// unit tests set these instead).
+#[cfg(test)]
+#[doc(hidden)]
+pub(crate) mod test_knobs {
+    use std::cell::Cell;
+
+    thread_local! {
+        static SWEEP: Cell<Option<bool>> = const { Cell::new(None) };
+        static SWEEP_NULL: Cell<Option<bool>> = const { Cell::new(None) };
+    }
+
+    pub(crate) fn set_kitten_sweep(v: Option<bool>) {
+        SWEEP.with(|c| c.set(v));
+    }
+
+    pub(crate) fn kitten_sweep_override() -> Option<bool> {
+        SWEEP.with(Cell::get)
+    }
+
+    pub(crate) fn set_kitten_sweep_null(v: Option<bool>) {
+        SWEEP_NULL.with(|c| c.set(v));
+    }
+
+    pub(crate) fn kitten_sweep_null_override() -> Option<bool> {
+        SWEEP_NULL.with(Cell::get)
+    }
 }
 
 /// A/B switch for the walk-objective fixed-literal study (see the

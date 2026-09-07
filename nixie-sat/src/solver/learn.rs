@@ -2964,6 +2964,26 @@ impl Solver {
             }
         }
 
+        // SAT sweep (the kitten port, `solver/sweep.rs`; kissat runs its
+        // sweep inside the probe/inprocess cycle): prove equivalences and
+        // backbone units with the embedded sub-solver under this round's
+        // effort budget, then fold the proved equivalences through the
+        // substitution round (the sweep's `sweep_round` does both — it
+        // re-checks every soundness gate itself).  Placed after the ELS
+        // slot so the static pass folds what it can see first and the
+        // sweep only spends kitten solves on the residual; before
+        // BVA/factor so introduced structure sees the folded formula.
+        // Inert unless `NIXIE_SWEEP=1`.
+        if crate::kitten_sweep_enabled()
+            && self.sweep_round(self.inproc_budgets.window) == sweep::SweepOutcome::Unsat
+        {
+            self.trivially_unsat = true;
+            return;
+        }
+        if self.trivially_unsat {
+            return;
+        }
+
         // Mid-search structured BVA (kissat `factor`-class component; see
         // `solver/bva.rs`): introduce aux vars merging original-clause
         // groups under the round's effort budgets.  Runs BEFORE the
