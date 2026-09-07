@@ -463,3 +463,42 @@ CDCL(T)-core surgery.
 
 Rung 1 (in-search lemma assertion) remains unimplemented and correctly
 so for this arc: it would speed the rounds this family no longer has.
+
+## Correction (2026-09-07, evening): both rung-2 hooks measured a DEAD path — preexisting polarity-gate bug, now fixed
+
+The "byte-identical conflicts" verdict above was itself the tell: a
+behavior-changing hook cannot be byte-identical.  Gate-by-gate
+instrumentation of `nelson_oppen_combine` found the preexisting bug:
+
+**`assigned_pol_of` only ever stamped theory-constrained vars.**
+`on_assignment` called `set_assigned_polarity` *after* the
+`var_to_constraint` early return, so any plain-Boolean atom — including
+the injective-distinct encoding's asserted result literal — had
+`NOVAR` polarity forever.  The `any_result_true` gate therefore read
+false on every top-level asserted `distinct`, and **the entire
+co-located split machinery (b9c750d's chain-shaped separation) has been
+dead code on the common case since its polarity gate landed.**  Both of
+today's rung-2 hooks, the earlier repair's collision checks, and every
+measurement claiming "the colocated path never fires on this family"
+were all observing the same dead gate — not the machinery's behavior.
+
+**Fix** (`theory_manager.rs`): stamp polarity/level for every assigned
+var before the early return (pure bookkeeping; the only consumers that
+can newly see a value are the injective-spec gates).  With the gate
+alive, the machinery engages — and on array-bearing inputs it measures
+NEGATIVE (memory-alias s0: conflicts 4695 → 5051, decisions 1.35 M →
+2.75 M; the arrangement atoms it mints churn the same search the array
+refinement walks), while pure-distinct inputs decide trivially either
+way (the shapes b9c750d's measurements targeted are all sub-100 ms
+today regardless).  The fix therefore lands together with an activation
+scope: the colocated proposal loop is gated `!has_array_ops` (threaded
+through `TheoryManager::new`), keeping the machinery live for its
+measured constituency and exactly preserving the landed behavior on
+array inputs (verified: conflicts 4695/1.35 M byte-identical).
+
+Battery: nextest 4051/4051, fuzzer sweeps zero FAIL (medium 58/58),
+z3 parity 169/1/0 with no verdict changes, 30/30 QF_AUFLIA/QF_UF spot
+checks identical.  The rung-2 verdict stands (neutral at the
+check_core site, correctly-scoped at the in-search site) — but for the
+RIGHT reason now, and the encoding-level bottom (the F/L atom
+arrangement) below it is unchanged.

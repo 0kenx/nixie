@@ -404,6 +404,7 @@ pub(crate) struct TheoryManager<'a> {
     /// away from for cause (see `arrange_model_equal_pairs`'s DL-family
     /// gate and the wisas note there).
     has_injective_distinct: bool,
+    has_array_ops: bool,
     /// `(result term, arguments)` of the live injective-map `distinct`
     /// encodings (borrowed from the `Solver`).  The co-located proposal
     /// block consults the *result literals*: separation is the encoding's
@@ -629,6 +630,7 @@ impl<'a> TheoryManager<'a> {
         max_conflicts: u64,
         max_decisions: u64,
         has_bv_arith_ops: bool,
+        has_array_ops: bool,
         timeout_ms: u64,
         logic: Option<&str>,
         pure_dl: bool,
@@ -678,6 +680,7 @@ impl<'a> TheoryManager<'a> {
             max_conflicts,
             max_decisions,
             has_bv_arith_ops,
+            has_array_ops,
             arrangement_splits: Vec::new(),
             is_dl_family: logic
                 .map(|l| matches!(l, "QF_UFIDL" | "UFIDL"))
@@ -1955,26 +1958,37 @@ impl<'a> TheoryManager<'a> {
                 // same-size clique of redundant pairs derailed the
                 // re-descent.
                 const MAX_COLOCATED_SPLIT_PROPOSALS: usize = 256;
-                let mut proposed = 0usize;
-                'groups: for terms in by_val.values() {
-                    if terms.len() < 2 {
-                        continue;
-                    }
-                    let mut chain: Vec<TermId> = terms.clone();
-                    chain.sort_unstable_by_key(|t| t.raw());
-                    for w in chain.windows(2) {
-                        if proposed >= MAX_COLOCATED_SPLIT_PROPOSALS {
-                            break 'groups;
-                        }
-                        let (a, b) = (w[0], w[1]);
-                        let (na, nb) = (self.euf.intern(a), self.euf.intern(b));
-                        if self.euf.are_equal(na, nb) {
+                // Measured activation scope: with the polarity-stamp bug
+                // fixed above, this machinery engages on every asserted
+                // injective-`distinct` — and on ARRAY-bearing instances
+                // that measured negative (memory-alias large: conflicts
+                // 4695 → 5051, decisions 1.35 M → 2.75 M; the arrangement
+                // atoms it mints churn the same search the array
+                // refinement walks), while pure-distinct inputs decide
+                // trivially either way.  Scope it to the constituency its
+                // chain shape was measured on.
+                if !self.has_array_ops {
+                    let mut proposed = 0usize;
+                    'groups: for terms in by_val.values() {
+                        if terms.len() < 2 {
                             continue;
                         }
-                        // `a.raw() < b.raw()` by the sort; the key is the pair.
-                        if self.colocated_split_proposed.insert((a, b)) {
-                            self.colocated_split_pairs.push((a, b));
-                            proposed += 1;
+                        let mut chain: Vec<TermId> = terms.clone();
+                        chain.sort_unstable_by_key(|t| t.raw());
+                        for w in chain.windows(2) {
+                            if proposed >= MAX_COLOCATED_SPLIT_PROPOSALS {
+                                break 'groups;
+                            }
+                            let (a, b) = (w[0], w[1]);
+                            let (na, nb) = (self.euf.intern(a), self.euf.intern(b));
+                            if self.euf.are_equal(na, nb) {
+                                continue;
+                            }
+                            // `a.raw() < b.raw()` by the sort; the key is the pair.
+                            if self.colocated_split_proposed.insert((a, b)) {
+                                self.colocated_split_pairs.push((a, b));
+                                proposed += 1;
+                            }
                         }
                     }
                 }
@@ -3833,12 +3847,22 @@ impl TheoryCallback for TheoryManager<'_> {
             return TheoryCheckResult::Sat;
         }
 
+        // Stamp polarity/level for EVERY assigned var, BEFORE the
+        // theory-constraint early return.  The stamp is pure bookkeeping
+        // (direct-indexed, generation-stamped), and gating it on
+        // `var_to_constraint` made `assigned_pol_of` return `None` forever
+        // for plain-Boolean atoms — notably the injective-distinct
+        // encoding's asserted result literal, whose polarity gate
+        // (`any_result_true` in `nelson_oppen_combine`) then held the
+        // co-located split machinery dead on every top-level asserted
+        // `distinct` (found via the memory-alias arc; see
+        // docs/studies/2026-09-07-memory-alias-arrangement-gap.md).
+        self.set_assigned_polarity(var, is_positive);
+        self.set_assigned_level(var, self.current_level);
+
         if !self.var_to_constraint.contains_key(&var) {
             return TheoryCheckResult::Sat;
         }
-
-        self.set_assigned_polarity(var, is_positive);
-        self.set_assigned_level(var, self.current_level);
 
         if !self.bv_terms.is_empty()
             && let Some(term) = self.var_to_term.get(var.index()).copied()
