@@ -1,5 +1,9 @@
 # Elimination occurrence lists: absolute fill cursors
 
+**Landed:** `72720d9`. About half the sampled elimination cycles and 12.9%
+fewer whole-invocation cycles/conflict on si2-b03m. The four-file aggregate
+is 4.0% lower, **neutral** under the repository's ±5% rule.
+
 ## Pre-registration
 
 Baseline solver source `482b806` (later commits `4a88b3c` and `0970b39`
@@ -40,7 +44,11 @@ and Z3 parity before a source landing. Report missing corpus inputs and
 pre-existing failures explicitly. Kissat/CaDiCaL context uses the same
 available files/seeds/cap, separately from the trajectory-paired control.
 
-## Paired result (ten seeds per file)
+## Committed-binary result (ten seeds per file)
+
+Baseline `482b806`, treatment **`72720d9`**, independently rebuilt from the
+clean committed tree. The following figures use the treatment's clean
+result-store cells, reusing the original baseline and reference cells.
 
 Every one of the 40 pairs has byte-identical diagnostic output, including
 conflicts, decisions, propagations, restart counts, learned/deleted clauses,
@@ -56,15 +64,17 @@ parsing, preprocessing, search and cleanup.
 
 | file | baseline min / median / max cycles per conflict | instructions T/B | cycles/conflict T/B | solved at 40k B/T |
 |---|---:|---:|---:|---:|
-| j3037 | 434,892 / 458,346 / 475,933 | 0.9991 | 1.0051 | 0 / 0 |
-| circuit_48in | 116,669 / 124,887 / 133,238 | 0.9818 | 0.9738 | 0 / 0 |
-| constraints_17 | 935,269 / 1,031,964 / 1,099,963 | 0.9877 | 0.9909 | 5 / 5 |
-| si2-b03m | 243,177 / 277,365 / 316,599 | 0.9574 | **0.8820** | 9 / 9 |
-| equal-family aggregate | | **0.9814** | **0.9617** | **14 / 14** |
+| j3037 | 434,892 / 458,346 / 475,933 | 0.9992 | 1.0170 | 0 / 0 |
+| circuit_48in | 116,669 / 124,887 / 133,238 | 0.9818 | 0.9689 | 0 / 0 |
+| constraints_17 | 935,269 / 1,031,964 / 1,099,963 | 0.9875 | 0.9876 | 5 / 5 |
+| si2-b03m | 243,177 / 277,365 / 316,599 | 0.9556 | **0.8714** | 9 / 9 |
+| equal-family aggregate | | **0.9809** | **0.9596** | **14 / 14** |
 
 The aggregate is **neutral under the ±5% rule**, not a general solver
 speedup claim. si2-b03m's improvement is consistent: its ten ratios range
-from 0.8576 to 0.9185. No family regresses beyond the neutrality band.
+from 0.8134 to 0.9107. No family regresses beyond the neutrality band.
+Individual cycle outliers are retained, including j3037's maximum 1.1751
+and constraints_17's maximum 1.2000; no timing-based trimming or reruns.
 
 ### Component attribution
 
@@ -104,13 +114,13 @@ medians of amortized cycles/conflict, not pure conflict-analysis costs.
 
 | file | Nixie baseline | Nixie cursors | Kissat | CaDiCaL |
 |---|---:|---:|---:|---:|
-| j3037 | 458,346 | 460,297 | 389,404 | 342,485 |
-| circuit_48in | 124,887 | 121,795 | 104,304 | 66,601 |
-| constraints_17 | 1,031,964 | 1,011,177 | 657,217 | 723,689 |
-| si2-b03m | 277,365 | 244,661 | 309,697 | 337,285 |
+| j3037 | 458,346 | 460,563 | 389,404 | 342,485 |
+| circuit_48in | 124,887 | 122,921 | 104,304 | 66,601 |
+| constraints_17 | 1,031,964 | 989,238 | 657,217 | 723,689 |
+| si2-b03m | 277,365 | 245,784 | 309,697 | 337,285 |
 
 Across the 40 paired instance/seed rows, geometric-mean Nixie/Kissat
-cycles/conflict changes from **1.1332 to 1.0898**. This is descriptive
+cycles/conflict changes from **1.1332 to 1.0874**. This is descriptive
 context on four available files, not a competition-wide standing claim.
 Searches differ: for example, median constraints_17 conflicts are 36,788
 for Nixie, 39,362 for Kissat, and 7,075 for CaDiCaL. Solved-at-40k counts
@@ -152,6 +162,16 @@ All commands completed successfully on the final proposed source:
   66,993 satisfiable generated formulas checked against their original CNFs.
 
 The initial performance cells are explicitly marked dirty and excluded from
-reuse. After landing, build/cache the committed binary and record its own
-ten-seed cells, reusing the existing baseline and reference cells. Preserve
-the prototype measurements as the pre-landing decision evidence.
+reuse: their aggregate cycle ratio was 0.9617 and si2-b03m ratio 0.8820.
+They remain the pre-landing decision evidence, not the final table above.
+
+The clean `72720d9` rebuild is **byte-identical** to the prototype (SHA-256
+`693d1ce2ab890d07803834f9ca2bf2577b3dbcaa90dfd0a948af6db5e658b429`), so the
+component profiles measure the same executable. Its own 40 fresh cells are
+recorded with `git.dirty=false` under
+`precompile/72720d9/benchmark/runs/bcp-blocker-batching/`. Raw output,
+manifests, the measurement harness and the final summary are under
+`precompile/72720d9/benchmark/bcp-blocker-batching/`; verification logs,
+the Z3-versioned parity snapshot and the binary-identity check are under
+`precompile/72720d9/benchmark/verification/`. Cached executables are
+`precompile/72720d9/nixie` and `precompile/72720d9/stats_solve-perf`.
