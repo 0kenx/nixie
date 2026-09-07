@@ -617,12 +617,21 @@ next rung** (an e-graph API addition + the mint-site gate).
 | corpus | result |
 |---|---|
 | storecomm/swap, QF_AUFLIA (30 files) | conflicts **+0 %** on every file (literal indices — the guard population does not exist there) |
-| QF_UF distinct-bearing (24 files) | 0 verdict diffs; aggregate conflicts identical (289 631 = 289 631) |
+| QF_UF distinct-bearing, random 24 | 0 verdict diffs; aggregate conflicts identical (289 631 = 289 631) |
+| **QF_UF arity>8 distincts (the injective constituency), 60 files** | **46/49 both-finished files conflict-identical; 3 with deltas: hanoi.3 192→161 (−16 %), itc99_b12 23→25 and 54→55 (±2, reshuffling noise); 0 verdict diffs; 49/49 decided both sides** |
 | fuzzer memory family | conflicts −37..−47 % (the landed measurement) |
 
-Verdict: the guard clauses are **family-shaped and inert elsewhere** —
-valid clauses bounded by the atoms that exist; on real corpora no
-`(= t_i t_j)` atoms between a live distinct's symbolic args exist, so
-nothing is emitted.  No cost, no risk, benefit where the census measured
-it.  (Whether real-world symbolic-distinct+read shapes exist outside the
-fuzzer is an open corpus question — none in the standing corpora.)
+Verdict (corrected after re-examination): the random-24 "identical"
+result was a **small-sample artifact** — those files happened not to
+exercise the shapes.  On the arity>8 constituency the landings are
+ACTIVE (the polarity fix woke the colocated machinery on non-array
+inputs exactly as designed) but **roughly neutral**: one −16 % delta,
+two ±2-conflict noise points, zero verdict changes, zero decided-count
+changes.  The guard clauses themselves stay family-shaped (no
+`(= t_i t_j)` atoms between a live distinct's args exist in these
+files); the deltas trace to the colocated-machinery activation.  No
+cost measured anywhere; benefit concentrated where the census measured
+it.  NOTE for future sweeps: verify the sample exercises the shape (the
+"identical conflicts" smell is the same tell as the dead-gate episode —
+here it flagged small sampling, not a dead hook; the arity>8 scan is
+the fix).
