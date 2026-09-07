@@ -471,22 +471,39 @@ an **equilibrium property**: when the glue stream is uniform-huge
 recovery. cadical's glue on worker_550 is also large (~126) but *noisy*
 (conflict depth varies), so their EMAs cross every ~22 conflicts.
 
-**Causal test** (`RESTART=geometric`, unconditional interval restarts,
-single seed):
+**Causal test — CORRECTED (the knob fix invalidated it).** The original
+test ran `RESTART=geometric` on the pre-fix `cnf_solve`, where that arm
+was silently inert (`SolverConfig::default()` base, stabilize on,
+strategy never consulted). After the fix, every one of its numbers
+reproduces **exactly as `PRESET=default`** (qwh 63 395, constraints_17
+49 893, worker_550 400 000 — all bit-equal to the arm's original
+readings): it measured *bare default vs CaDiCaL preset*, not restart
+cadence.
 
-| | base | forced restarts | cadical |
-|---|---|---|---|
-| qwh | 134 113 | **63 395 (−53 %)** | 24 182 |
-| constraints_17 | 87 007 | **49 893 (−43 %)** | 7 075 |
-| worker_550 | 25 532 | >200 000 (**8× worse**) | 5 113 |
-| 6s167 | 62 241 | >200 000 (3× worse) | 16 654 |
+| | base (preset) | `PRESET=default` | true geo-22 (fixed knob) | cadical |
+|---|---|---|---|---|
+| qwh | 134 113 | **63 395 (−53 %)** | 229 369 (**1.7× worse**) | 24 182 |
+| constraints_17 | 87 007 | **49 893 (−43 %)** | 89 400 (≈ base) | 7 075 |
+| worker_550 | 25 532 | 400 000 (**16× worse**) | TO | 5 113 |
+| 6s167 | 62 241 | >200 000 (3× worse) | — | 16 654 |
 
-The restart stall IS causal on the seed-unstable tail (qwh,
-constraints_17) — and blanket restart cadence splits the class 2-and-2,
-because worker_550/6s167 need search depth. cadical wins all four *with*
-frequent restarts: their restarts are **productive** — the worker_550
-dec/conflict gap (58.5 vs 10.1) says their phases/branching make each
-restart land on a different productive shallow region, while ours thrash.
+**Forced-geometric restarts on the preset help no tail file** — the
+restart-stall causality rests entirely on the env-gated arms
+(stall8 / maxgap1000, measured on the true preset; those stand, with
+maxgap's flat floor far better than geometric's schedule). cadical
+still wins all four *with* frequent restarts: their restarts are
+**productive** — the worker_550 dec/conflict gap (58.5 vs 10.1) says
+their phases/branching make each restart land on a different productive
+shallow region, while ours thrash.
+
+**New finding the correction exposes — config sensitivity on the tail.**
+Bare `SolverConfig::default()` beats the CaDiCaL preset **1.7–2.1× on
+qwh/constraints_17** and loses **3–16× on worker_550/6s167**. Some
+preset component (candidates: reduce schedule, inprocessing mix,
+phase/walk schedule, decay rates) is worth ±2× per file on exactly the
+tail class this campaign studies. Named follow-up: **preset ablation on
+the tail** — the 4-file × 5-seed matrix with one preset component
+disabled per arm.
 
 **Pre-registered treatments** (all matched-null class):
 
