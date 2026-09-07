@@ -3,6 +3,54 @@
 use super::*;
 #[cfg(feature = "profiling")]
 use crate::profiling::{ProfilingCategory, ScopedTimer};
+#[cfg(feature = "bcp-regions")]
+use crate::region_stats as regions;
+
+#[cfg(all(test, feature = "bcp-regions"))]
+mod region_tests {
+    use super::*;
+
+    #[test]
+    fn region_census_excludes_binary_and_long_conflict_tails() {
+        for binary in [false, true] {
+            let mut s = Solver::new();
+            let vars: Vec<_> = (0..5).map(|_| s.new_var()).collect();
+            let t = Lit::pos(vars[0]);
+            let a = Lit::pos(vars[1]);
+            let b = Lit::pos(vars[2]);
+            let mut ids = Vec::new();
+            for tail in [a, Lit::pos(vars[3])] {
+                let mut lits = vec![t.negate(), tail];
+                if !binary {
+                    lits.push(b);
+                }
+                let id = s.clauses.add_original(lits);
+                s.attach_watchers(id, t.negate(), tail);
+                ids.push(id);
+            }
+            assert!(s.enable_region_stats(std::num::NonZeroU64::MIN).is_ok());
+            s.trail.new_decision_level();
+            s.trail.assign_decision(a.negate());
+            s.trail.assign_decision(b.negate());
+            while s.trail.next_to_propagate().is_some() {}
+            s.trail.assign_decision(t);
+            assert_eq!(s.propagate(), Some(ids[0]));
+            let mut output = Vec::new();
+            assert!(s.write_region_report(&mut output).is_ok());
+            let Ok(report) = serde_json::from_slice::<serde_json::Value>(&output) else {
+                panic!("invalid report");
+            };
+            let channel = usize::from(!binary);
+            assert_eq!(report["counts"][channel][5][0], 1);
+            assert_eq!(report["counts"][channel][5][5], 1);
+            assert_eq!(report["counts"][channel][5][2], u64::from(!binary));
+            assert_eq!(report["counts"][channel][5][3], u64::from(!binary));
+            if !binary {
+                assert_eq!(s.watches.get(t).len(), 2);
+            }
+        }
+    }
+}
 use core::sync::atomic::Ordering::Relaxed;
 
 impl Solver {
@@ -58,6 +106,11 @@ impl Solver {
             let code = lit.code() as usize;
             let (span_start, plen) = self.binary_graph.span_of(code);
             let xlen = self.binary_graph.extra_len(code);
+            #[cfg(feature = "bcp-regions")]
+            let region_sample = self
+                .region_stats
+                .as_mut()
+                .is_some_and(|s| s.begin(plen + xlen != 0 || !self.watches.get(lit).is_empty()));
             if plen + xlen != 0 {
                 if bcp_stats {
                     crate::diag_bcp::BIG_LISTS.fetch_add(1, Relaxed);
@@ -80,7 +133,22 @@ impl Solver {
                         crate::diag_bcp::BIG_EDGES.fetch_add(1, Relaxed);
                     }
                     let value = self.trail.lit_val(implied_lit);
+                    #[cfg(feature = "bcp-regions")]
+                    let region_event = regions::visit(
+                        &mut self.region_stats,
+                        region_sample,
+                        &self.clauses,
+                        clause_id,
+                        0,
+                        self.stats.conflicts,
+                    );
+                    #[cfg(feature = "bcp-regions")]
+                    if value > 0 {
+                        regions::record(&mut self.region_stats, region_event, regions::HIT);
+                    }
                     if value < 0 {
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
                         // Conflict in binary clause. `lit`'s remaining implication
                         // edges (and its whole watch list) have not been examined,
                         // so requeue the literal (see
@@ -94,6 +162,8 @@ impl Solver {
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
                     } else if value == 0 {
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::UNIT);
                         if bcp_stats {
                             crate::diag_bcp::BIG_PROPS.fetch_add(1, Relaxed);
                         }
@@ -170,6 +240,15 @@ impl Solver {
 
             for read in 0..watches.len() {
                 let watcher = watches[read];
+                #[cfg(feature = "bcp-regions")]
+                let region_event = regions::visit(
+                    &mut self.region_stats,
+                    region_sample,
+                    &self.clauses,
+                    watcher.clause,
+                    1,
+                    self.stats.conflicts,
+                );
 
                 let blocker_true = self.trail.lit_val_hot(watcher.blocker) > 0;
                 #[cfg(feature = "bcp-groups")]
@@ -177,6 +256,8 @@ impl Solver {
                     sample.observe(watcher, blocker_true);
                 }
                 if blocker_true {
+                    #[cfg(feature = "bcp-regions")]
+                    regions::record(&mut self.region_stats, region_event, regions::HIT);
                     // Kept watcher. While `write == read` (no watcher dropped
                     // yet in this scan) the write-back would be a pure
                     // self-write — skip it; the compaction copy is only
@@ -194,6 +275,8 @@ impl Solver {
                 // clause). Validation is unchanged: bounds + deleted flag,
                 // with deleted/invalid slots reading as "no clause" exactly
                 // like the id-based path.
+                #[cfg(feature = "bcp-regions")]
+                regions::record(&mut self.region_stats, region_event, regions::PAYLOAD);
                 let clause = match self.clauses.live_lits_by_ref(watcher.r) {
                     Some(lits) => lits,
                     None => {
@@ -268,6 +351,8 @@ impl Solver {
                 // parked on satisfied literals kept stale blockers).
                 let mut found = false;
                 for j in 2..clause.len() {
+                    #[cfg(feature = "bcp-regions")]
+                    regions::record(&mut self.region_stats, region_event, regions::SCAN);
                     let l = clause[j];
                     let v = self.trail.lit_val_hot(l);
                     if v > 0 {
@@ -316,6 +401,8 @@ impl Solver {
                 watches[write].blocker = first;
 
                 if self.trail.lit_val_hot(first) < 0 {
+                    #[cfg(feature = "bcp-regions")]
+                    regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
                     if bcp_stats {
                         crate::diag_bcp::CONFLICTS.fetch_add(1, Relaxed);
                         // Entries after the conflicting one were never
@@ -334,6 +421,8 @@ impl Solver {
                     break;
                 } else {
                     // Unit propagation
+                    #[cfg(feature = "bcp-regions")]
+                    regions::record(&mut self.region_stats, region_event, regions::UNIT);
                     if bcp_stats {
                         crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
                     }

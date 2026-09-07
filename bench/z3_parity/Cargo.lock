@@ -657,6 +657,7 @@ dependencies = [
  "colored",
  "nixie",
  "nixie-core",
+ "nixie-sat",
  "nixie-solver",
  "rayon",
  "serde",

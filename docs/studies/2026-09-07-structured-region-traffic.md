@@ -32,7 +32,8 @@ traffic is an optimistic opportunity for this snapshot's blocks, not proof
 that a whole block is currently executable. Clause IDs are never reused.
 New clauses and variables are classified against the fixed snapshot; repeated
 solves accumulate observations, and explicit activation replaces the snapshot
-and counters. Scope changes never allow deleted support clauses to certify
+and counters. A full solver reset discards the snapshot before IDs restart.
+Scope changes never allow deleted support clauses to certify
 traffic. The observer has no solver-state semantics.
 
 ## Fixed telemetry
@@ -43,7 +44,8 @@ per-solver deterministic ordinal. Observe only entries actually visited,
 including conflict-prefix termination. Classify binary edges and long watchers
 separately. For each, count visits, immediate satisfaction, clause-payload
 accesses, replacement-tail literal inspections, propagations and conflicts.
-Report visits before search, during conflicts 1–16,383, and from 16,384 onward.
+Report visits at conflict count zero, during conflicts 1–16,383, and from
+16,384 onward. The zero bin includes search before its first conflict.
 
 Classes distinguish certified candidate-region clauses, certified small-gate
 clauses, invalidated gate certificates, other original clauses, learned
@@ -83,3 +85,55 @@ Before landing the observer, run all required workspace gates, targeted
 certificate/compaction/scope/conflict-prefix tests, exact diagnostic/proof
 identity tests, and fresh available-Z3 parity. The observer is explicitly
 activated in the parity library runner for an additional instrumented check.
+
+## Observation format and verification details
+
+The report schema is `nixie-region-traffic/1`. `counts[channel][class][metric]`
+uses channels binary / long watchers, and these classes in order:
+candidate-region gate, small gate, invalidated gate certificate, other original
+local / boundary / outside, learned local / boundary / outside, missing or
+deleted clause. Metrics are visits, immediate satisfaction, payload-access
+attempts, replacement-tail inspections, propagations and conflicts.
+`by_conflicts[bin][channel][class]` stores visits in the three registered bins.
+Immediate satisfaction means a true implied literal for a binary edge or a
+true cached blocker for a long watcher; it excludes later satisfaction tests.
+Original/learned classes follow the current clause header, not an immutable
+derivation history. Sampling and these counters never enter a solver budget.
+
+The canonical first copy of each equal short-clause signature supplies the
+certificate. Duplicate copies outside those selected certificates are counted
+as other clauses. A changed or removed support clause invalidates its retained
+certificate even if an equivalent replacement was added under a new ID. Thus
+this census is neither complete extraction of all possible encodings nor an
+upper bound on all possible structural optimizations.
+
+`stats_solve` activates the snapshot after parsing with `NIXIE_REGION_STATS=256`.
+For additional SMT parity, the standalone harness's `bcp-regions` feature and
+`NIXIE_REGION_PARITY=1` activate every SAT solver's hooks against an empty
+reference snapshot. This exercises counting/classification throughout the
+private Context runner; direct truth-table, scope, mutation, conflict-tail and
+LRAT-identity tests cover the nonempty certificate paths. This parity switch
+is absent from ordinary builds and is cleared by the measurement runner.
+
+## Implementation verification
+
+Nine focused tests cover signed AND/XOR truth tables, incomplete/duplicate
+encodings, exact certificate repair/invalidation, arena relocation, component
+and boundary classes, capacity errors, push/pop, full reset with reused IDs,
+binary/long conflict prefixes, and exact SAT/UNSAT search and LRAT transcripts.
+The observer and runner are opt-in; there is no block evaluator or search-policy
+change in this slice.
+
+All required gates passed after integrating the concurrent SMT/BV changes:
+workspace all-features build; 10,652 nextest tests (12 skipped); 111 doctests
+(29 ignored); strict clippy, fmt and strict docs. Fresh Z3 4.16.0 parity gave
+169 agreements, zero disagreements and one inconclusive case in both ordinary
+and instrumented library runners. `array_unique.smt2` is unresolved because
+Z3 returns Unknown; it is not counted as an agreement.
+
+Integration also fixed formatting in the incoming `injective_repair` test and
+a public rustdoc link to a private AST method. The latter was the sole source
+change after the full tests; reconstructing its old comment reproduced the
+exact tested source fingerprint. Strict docs and both parity runs then passed
+on the final source. Partial pre-integration checks and the failed docs check
+are retained separately from the completed verification.

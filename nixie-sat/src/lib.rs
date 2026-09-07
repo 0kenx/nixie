@@ -163,6 +163,8 @@ mod occurrence;
 pub mod preprocessing;
 mod preprocessing_core;
 mod recursive_minimization;
+#[cfg(feature = "bcp-regions")]
+mod region_stats;
 mod reluctant;
 mod resolution_graph;
 mod restart_model;

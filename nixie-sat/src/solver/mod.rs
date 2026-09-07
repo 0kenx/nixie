@@ -1221,6 +1221,8 @@ pub struct Solver {
     /// Read-only observations; never consulted by search or propagation.
     #[cfg(feature = "bcp-groups")]
     pub(crate) watch_group_stats: Option<Box<crate::watch_groups::Collector>>,
+    #[cfg(feature = "bcp-regions")]
+    pub(crate) region_stats: Option<Box<crate::region_stats::Collector>>,
 
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
@@ -1917,6 +1919,8 @@ impl Solver {
             watches: WatchLists::new(0),
             #[cfg(feature = "bcp-groups")]
             watch_group_stats: None,
+            #[cfg(feature = "bcp-regions")]
+            region_stats: crate::region_stats::parity_collector(),
             vsids: VSIDS::new(0),
             domain_priority: Vec::new(),
             vmtf: VMTF::new(0),
@@ -4502,6 +4506,12 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        // Clause and variable IDs restart at zero below. A census snapshot
+        // belongs to the old database and must never classify reused IDs.
+        #[cfg(feature = "bcp-regions")]
+        {
+            self.region_stats = crate::region_stats::parity_collector();
+        }
         self.clauses = ClauseDatabase::new();
         self.trail.clear();
         // The trail is empty now, so no `Reason::Theory` assignment is

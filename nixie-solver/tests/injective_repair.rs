@@ -17,7 +17,6 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
-
 // ---------------------------------------------------------------------------
 // Distinct-semantics guard clauses (the census-driven fix; see the
 // arrangement-gap study's conflict census).
@@ -100,8 +99,20 @@ fn memory_alias_shape_with_guard_clauses_both_polarities() {
     let mut a1 = "b".to_string();
     let mut a2 = "b".to_string();
     for i in 0..n {
-        let w1 = if i == 9 { "v9" } else if i == 4 { "v4" } else { "100" };
-        let w2 = if i == 9 { "v4" } else if i == 4 { "v9" } else { "100" };
+        let w1 = if i == 9 {
+            "v9"
+        } else if i == 4 {
+            "v4"
+        } else {
+            "100"
+        };
+        let w2 = if i == 9 {
+            "v4"
+        } else if i == 4 {
+            "v9"
+        } else {
+            "100"
+        };
         a1 = format!("(store {a1} idx{i} {w1})");
         a2 = format!("(store {a2} idx{i} {w2})");
     }
@@ -112,7 +123,11 @@ fn memory_alias_shape_with_guard_clauses_both_polarities() {
         "(declare-fun a2 () (Array Int Int))\n(assert (= a2 {a2}))\n"
     ));
     script.push_str("(assert (distinct (select a1 idx9) (select a2 idx9)))\n(check-sat)\n");
-    assert_eq!(run(&script), vec!["sat"], "different anchors differ at the aliased cell");
+    assert_eq!(
+        run(&script),
+        vec!["sat"],
+        "different anchors differ at the aliased cell"
+    );
     let unsat = script
         .replace("(assert (= v9 7))", "(assert (= v9 5))")
         .replace("(assert (= v4 9))", "(assert (= v4 5))");

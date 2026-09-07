@@ -105,6 +105,11 @@ cost, solved-at-cap, conflicts and cycles/conflict are reported together.
 
 ## 2. Native propagation blocks for structured regions
 
+The [registered traffic screen](2026-09-07-structured-region-traffic.md) tests
+the recovered AND/XOR subset with three observed cells and cached controls.
+It measures live-certificate traffic and learned-clause interactions before
+committing to a block evaluator.
+
 Preserve SMT expression structure and recover verified structure from DIMACS
 where possible. Compile suitable gate networks, parity systems and cardinality
 regions into compact propagation blocks. A block consumes changed inputs,

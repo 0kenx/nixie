@@ -25,6 +25,8 @@ bcp-stats = []
 # Read-only, sampled shared-blocker feasibility observations. Entirely absent
 # from ordinary builds; enable explicitly through Solver or stats_solve.
 bcp-groups = ["std"]
+# Read-only sampled traffic through certified AND/XOR clause groups.
+bcp-regions = ["std"]
 
 [dependencies]
 nixie-core = { workspace = true, default-features = false }

@@ -24,6 +24,8 @@
 //!                       with `--features bcp-stats`; see `diag_bcp`)
 //!   NIXIE_WATCH_GROUPS=N sample every Nth nonempty watch list (positive N;
 //!                       requires `--features bcp-groups`); JSON on stderr
+//!   NIXIE_REGION_STATS=N sample every Nth nonempty propagation trigger;
+//!                       requires `--features bcp-regions`; JSON on stderr
 //!   NO_STAB=1           disable stable/focused alternation
 //!   STAB_BASE=N         override `stabilize_base`
 //! Study arms (`NIXIE_CADICAL_REDUCE`, `NIXIE_STAB_FAITHFUL`, ...) are read
@@ -165,6 +167,27 @@ fn main() {
         solver.set_random_seed(sd.parse::<u64>().unwrap_or(0));
     }
     parser.parse_file(&path, &mut solver).expect("parse ok");
+    #[cfg(feature = "bcp-regions")]
+    let observe_regions = match std::env::var("NIXIE_REGION_STATS") {
+        Ok(value) => match value.parse::<std::num::NonZeroU64>() {
+            Ok(stride) => match solver.enable_region_stats(stride) {
+                Ok(()) => true,
+                Err(error) => {
+                    eprintln!("region snapshot failed: {error}");
+                    std::process::exit(2);
+                }
+            },
+            Err(error) => {
+                eprintln!("invalid NIXIE_REGION_STATS: {error}");
+                std::process::exit(2);
+            }
+        },
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => {
+            eprintln!("invalid NIXIE_REGION_STATS: {error}");
+            std::process::exit(2);
+        }
+    };
     if let Some((src, k)) = els_gate {
         // The gate scalar: congruence-gate count (treatment) or the
         // instance content hash (matched null — same threshold shape,
@@ -230,6 +253,11 @@ fn main() {
         }
     }
     let r = solver.solve();
+    #[cfg(feature = "bcp-regions")]
+    if observe_regions && let Err(error) = solver.write_region_report(std::io::stderr().lock()) {
+        eprintln!("writing region observations failed: {error}");
+        std::process::exit(2);
+    }
     #[cfg(feature = "bcp-groups")]
     if observe_groups && let Err(error) = solver.write_watch_group_report(std::io::stderr().lock())
     {
