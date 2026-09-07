@@ -230,8 +230,20 @@ fn main() {
                 .map_or(arm_cap, |global| global.min(arm_cap));
             solver.set_max_conflicts(Some(cap));
         }
+        // Arm seed precedence: the arm token's explicit seed (e.g. `els:1`),
+        // else the `SEED` env (per-invocation seed for single-arm runs and
+        // for portfolio arms that do not pin one), else the solver default.
+        // (`stats_solve` always had `SEED`; `cnf_solve` silently ignored it,
+        // which made "seeded" screens replicas — caught in the 2026-09-07
+        // portfolio campaign when replica verdicts differed only at the
+        // 60 s wall boundary.)
+        let seed = seed.or_else(|| {
+            std::env::var("SEED")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok())
+        });
         if let Some(sd) = seed {
-            solver.set_random_seed(*sd);
+            solver.set_random_seed(sd);
         }
         let mut parser = DimacsParser::new();
         if let Err(e) = parser.parse_file(&path, &mut solver) {

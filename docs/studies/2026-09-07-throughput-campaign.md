@@ -642,13 +642,46 @@ budget constant is the trade: 100k keeps most near-cap default wins and
 still buys the second trajectory; 250k truncates more than the ELS arm
 recovers.
 
-This is a **harness configuration**, not a solver default: the standing
-table's invocation would carry the `SEEDS`/`ARM_CONFLICTS` prefix. The
-`chrono`-arm precedent is identical (converts cadical-only standing
-losses at zero risk). Both restart arms (`NIXIE_RESTART_STALL`,
-`NIXIE_RESTART_MAXGAP`) are likewise portfolio-eligible — e.g.
-`SEEDS=default,els,maxgap:1000` composes fresh trajectories for the
-whole tail class inside one deterministic budget schedule.
+### Correction (same campaign, real-seed rerun): portfolios are dominated by plain seed diversity
+
+The +8 above was measured against a **replica base** — `cnf_solve`
+silently ignored the `SEED` env (fixed in this campaign: the arm loop now
+honors `SEED` when the arm token has no seed; `stats_solve` always did),
+so both arms' "5 seeds" were identical deterministic replicas whose only
+verdict variance was wall-cap jitter (3–5 mixed files per config, right
+at 60 s). Re-run with **real seeds** (5 trajectories per config, one
+invocation each at the 60 s cap, 54 files):
+
+| config | solved cells /270 | shape |
+|---|---|---|
+| **default, plain (5 real seeds)** | **176** | one trajectory per invocation |
+| pfA: default@100k → els | 165 | strategy switch |
+| S1: seed s@100k → seed s′@rest | 156 | one seed re-roll |
+| S2: seed s@200k → seed s′@rest | 146 | re-roll, fatter first budget |
+| S3: s@100k → s′@200k → els@rest | 149 | re-roll + strategy |
+
+**Every within-cap portfolio loses to plain multi-seed runs.** Seed
+diversity alone converts +23 cells over the replica base (13 files have
+mixed verdicts across real seeds — the single-trajectory base was simply
+unlucky on them), and any budget split costs more in truncated arm-0
+runs (mrpp needs 138k conflicts; a 100k budget kills it) than the extra
+trajectories buy. Bigger first budgets are *worse* (S2 < S1): the second
+arm inherits almost no wall budget. The portfolio arms remain available
+(`SEEDS`/`els`/`chrono`/`maxgap` tokens) for cap-free or
+per-invocation-budgeted settings, but **the standing config stays plain
+default at full cap** — which is also the standard methodology, so no
+protocol change is warranted.
+
+Standing numbers on this corpus (60 s cap, 5 seeds, 270 cells,
+deterministic per seed): **nixie default 176, kissat 84, cadical 51** —
+with the caveat that `sc24f` is the standing-campaign residue corpus
+(selected around nixie's timeouts), not a neutral sample. Zero verdict
+disagreements in every paired comparison.
+
+The earlier T1/max-gap safety screens shared the replica defect (their
+±2–3 cell counts were 5×-weighted per-file flips); their **rejection**
+verdicts are unaffected — replicas bias toward *confirming* the paired
+difference, and the decisions were conservative anyway.
 
 ### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
 
@@ -709,6 +742,13 @@ write-elision branch (it is a measured win).
 * `nixie-cli interpolate::tests::test_temp_proof_log_is_cleaned_up` flakes
   once per ~10k tests under heavy parallel load (temp-file collision);
   passes in isolation on both arms. Pre-existing.
+* **`cnf_solve` ignored the `SEED` env** (only `stats_solve` honored it):
+  every "5-seed" `cnf_solve` screen in this campaign ran identical
+  replicas, and their only verdict variance was wall-cap jitter — a
+  replica base measured 153 where the real-seed base is 176, which
+  inverted the portfolio conclusion. Fixed (arm seed falls back to
+  `SEED`); screens comparing deterministic configs remain valid as
+  paired comparisons, but any seed-variance claim needs real seeds.
 * **Worktrees can vanish mid-session** (shared box; /tmp hygiene or
   another agent's sweep): the max-gap arm's verified code was lost
   uncommitted once and re-applied. Commit early in the worktree even for
