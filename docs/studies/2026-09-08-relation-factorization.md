@@ -1,5 +1,10 @@
 # Exact small-relation factorization
 
+**Result: the operational gate passes.** The explicit transformer replaces all
+700 circuit relations with checked proofs, and the single registered solve
+returns a model valid on the original input. This is a one-seed feasibility
+result; ordinary solver defaults remain unchanged.
+
 Registered before implementation and new measurements. This follows the
 700 eight-variable tables audited in
 [the region traffic study](2026-09-07-structured-region-traffic.md).
@@ -105,3 +110,80 @@ Fresh Z3 **4.16.0** parity reports **169 agreements, zero disagreements and one
 inconclusive case** (`array_unique.smt2`: Nixie UNSAT, Z3 UNKNOWN). The available
 Z3 release is recorded explicitly; this is not a comparison to the historical
 4.15.4 snapshot. Ordinary solver paths do not call the new transformer.
+
+## Recorded result
+
+Source and binaries: `f033bfa908e69c7b4f97a8af53fcce3084810c1b`.
+Exactly **one new circuit solver run**, seed 1; no new controls, references,
+tuning runs or seed top-ups. The transform reproduces the registered size:
+168,064 clauses / 1,344,064 literals become **44,864 clauses / 224,064 literals**,
+including the 64 unchanged units. All 700 relations factor; no limit fallback.
+
+The independent checker accepts **313,600 binary-resolution additions**,
+**436,800 clause-ID deletions**, the complete output map, and **179,200 local
+assignments**. The SAT model satisfies both the transformed and original CNFs.
+The solve records 91,833 conflicts, 315,010 decisions and 8,369,710 propagations.
+
+| Measured stage | User instructions | User cycles |
+|---|---:|---:|
+| Transformation, equivalence checks, CNF/proof/map emission | 2,486,694,962 | 554,780,135 |
+| Parse transformed CNF and solve | 25,032,870,585 | 15,053,306,582 |
+| **Sum** | **27,519,565,547** | **15,608,086,717** |
+
+The sum is **299,670 instructions/conflict and 169,962 cycles/conflict**.
+Solve-only cycles/conflict is 163,920. Preprocessing/proof generation is 9.04%
+of summed instructions. Kernel work and the independent audit are excluded;
+the transform's own exhaustive checks and all proof emission are included.
+Both counted events are `cpu_core/.../u` on CPU 2, with 100% event coverage.
+Combined wall time was 3.44 seconds, retained only as a secondary observation.
+
+### Historical context, not a matched improvement comparison
+
+| Existing or new observation | Seed | Conflicts | Instructions (billions) | Cycles/conflict |
+|---|---:|---:|---:|---:|
+| Cached original Nixie (`a6b0151744a458c1`) | 1 | 186,114 | 70.65 | 245,459 |
+| New factorization + Nixie (`744c236b1187d08d`) | 1 | 91,833 | 27.52 | 169,962 |
+| Cached mode-matched Kissat (`b154fe60f88659f8`) | 1 | 167,929 | 15.46 | 47,909 |
+| Cached default Kissat 4.0.4 (`c79029ceaa24aa20`) | 0 | 108,188 | unavailable | unavailable |
+
+For context, the three cached original Nixie seeds have instruction min /
+median / max **70.63 / 70.65 / 76.48 billion**, and conflict min / median / max
+**186,114 / 194,500 / 197,665**. The seven mode-matched Kissat seeds have
+instruction min / median / max **15.46 / 26.64 / 51.84 billion**. Its
+instructions/conflict range is 92,076–172,069 (median 116,984). The new Nixie
+observation still expends substantial work per conflict.
+
+These are historical context only. The original Nixie records carry
+`dirty: true` with pinned binary hashes; they are not clean committed controls
+for a new causal study. Kissat's PMU cells use CPU 10, while these Nixie cells
+use CPU 2, so cycles are not a common-core comparison. Default Kissat is the
+stronger relevant reference, and its cached cell has no PMU measurement.
+Neither the three-/seven-seed historical panels nor the single treatment meet
+the ten-seed, matched-null standard. In particular, do not turn the raw table
+into a claimed speedup against Kissat or a qualified default change.
+
+**Verdict:** exact factorization is implemented and operationally useful as an
+explicit tool on this input. Its size and proof claims are established; its
+general performance merit is not. The per-conflict gap remains open. The
+next throughput work should inspect Nixie's remaining search cost on the fixed
+factored representation, alongside the previously observed learned-clause
+traffic. Optimizing proof emission alone targets only 9% of this cell's
+instructions, so it cannot explain away the remaining search cost.
+
+## Evidence and reproducibility
+
+Registration landed on main as `6cd7b0d` before implementation/measurement.
+The canonical new record is **`744c236b1187d08d`**, stored under
+`precompile/f033bfa/benchmark/runs/relation-factorization-feasibility/`.
+The corresponding raw directory
+`precompile/f033bfa/benchmark/relation-factorization-feasibility/` contains the
+manifest, both commands and immediate subprocess records, raw PMU/stdout/stderr,
+factored CNF, LRAT prefix, ID map, independent check report and historical
+context. Keeping the transformed CNF there supports reuse as a fixed input.
+
+`precompile/f033bfa/build.json` pins Rust 1.96.0, portable release flags, both
+pipeline binary hashes and the copied dependency lock. The ordinary release
+CLI is byte-identical to the cached `2f8df46/nixie` binary. Correctness logs,
+source fingerprints, parity results and reference metadata are in
+`precompile/f033bfa/benchmark/relation-factor-verification/`. The initial
+example type-alias clippy failure and its successful recheck are retained.

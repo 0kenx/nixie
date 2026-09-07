@@ -108,10 +108,12 @@ cost, solved-at-cap, conflicts and cycles/conflict are reported together.
 The [three-cell traffic screen](2026-09-07-structured-region-traffic.md) found
 no recognized AND/XOR groups and rejected that subset. Its offline follow-up
 identified 700 eight-variable relations in circuit, each with 16 allowed rows.
-An exhaustively checked factorization would reduce that input's non-unit
-literal slots sixfold; runtime benefit is unmeasured. Proof-emitting relation
-factorization is the next circuit-specific candidate. Learned clauses dominate
-traffic on break and noL, providing a broader lead for idea 3.
+The [proof-emitting factorization](2026-09-08-relation-factorization.md) is now
+implemented as an explicit tool and reduces non-unit literal slots sixfold.
+Its one-run screen returns a checked model at 91,833 conflicts and 169,962
+cycles/conflict including transformation/proof generation. General performance
+merit remains unestablished; ordinary defaults are unchanged. Learned clauses
+dominate traffic on break and noL, providing a broader lead for idea 3.
 
 Preserve SMT expression structure and recover verified structure from DIMACS
 where possible. Compile suitable gate networks, parity systems and cardinality

@@ -217,20 +217,22 @@ equivalence, and the 64 original units remain unchanged.
 | Audited four-input/four-output factorization | 44,800 | 224,000 |
 
 That is **73.33% fewer non-unit clauses and 6× fewer non-unit literal slots**.
-It is an offline, exhaustively checked encoding candidate; it has not been
-applied by Nixie or benchmarked. The smaller encoding also propagates outputs
+At this audit stage it was an offline, exhaustively checked candidate.
+The subsequent [proof-emitting implementation and one-run feasibility
+screen](2026-09-08-relation-factorization.md) now pass, with the transformer
+available as an explicit tool. The smaller encoding also propagates outputs
 after four input assignments, so it changes search and cannot be presented as
 a trajectory-preserving throughput optimization.
 
-**Next circuit-specific candidate:** implement proof-emitting factorization of
-these small relations, with original-clause provenance, exact equivalence
-checks, deterministic extraction bounds and a complete fallback. Resolve away
-the three unmentioned outputs to justify each five-literal clause through
-checkable intermediate steps; do not claim that an arbitrary final clause is
-already RUP. Register the comparison and its matched null before performance
-evaluation, and keep the strongest relevant Kissat reference. Actual native
-table propagation would additionally need incremental state, backtracking and
-explanations. The offline size reduction is not a measured runtime improvement.
+**Follow-up implementation (now completed):** factorization retains original
+clause provenance, exact equivalence checks, deterministic extraction bounds
+and a complete fallback. It resolves away the three unmentioned outputs
+through checkable intermediate steps, justifying every five-literal clause.
+The follow-up records a registered operational screen and existing Kissat
+references; it does not establish a matched-null performance gain. Actual
+native table propagation would additionally need incremental state,
+backtracking and explanations. The size result alone cannot establish runtime
+improvement.
 
 This audit is exploratory and specific to circuit. It does not change the
 AND/XOR screen's verdict or qualify a default change. The learned-clause
