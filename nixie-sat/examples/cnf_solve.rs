@@ -170,22 +170,33 @@ fn main() {
     // wall-clock.  `Unsat`/`Sat` from any arm is a real verdict (verdicts
     // are arm-independent facts) and returns immediately; only budget
     // exhaustion advances to the next arm.
-    let parse_arm = |t: &str| -> (Option<u64>, bool) {
+    let parse_arm = |t: &str| -> (Option<u64>, bool, bool) {
         let t = t.trim();
         if t.is_empty() || t == "default" {
-            return (None, false);
+            return (None, false, false);
         }
         if let Some(rest) = t.strip_prefix("chrono") {
             let seed = rest
                 .strip_prefix(':')
                 .and_then(|s| s.trim().parse::<u64>().ok());
-            return (seed, true);
+            return (seed, true, false);
         }
-        (t.parse::<u64>().ok(), false)
+        if let Some(rest) = t.strip_prefix("els") {
+            // ELS portfolio arm (2026-09-07 campaign, T3 portfolio
+            // conversion): default config + the scheduled equivalence-
+            // literal-substitution one-shot (`ELS=1` semantics) — the arm
+            // measured 0.349x conflicts on 6s167-opt whose static gates
+            // are falsified four ways. Optional seed suffix `els:<n>`.
+            let seed = rest
+                .strip_prefix(':')
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            return (seed, false, true);
+        }
+        (t.parse::<u64>().ok(), false, false)
     };
-    let arms: Vec<(Option<u64>, bool)> = match std::env::var("SEEDS") {
+    let arms: Vec<(Option<u64>, bool, bool)> = match std::env::var("SEEDS") {
         Ok(v) if !v.trim().is_empty() => v.split(',').map(&parse_arm).collect(),
-        _ => vec![(None, false)],
+        _ => vec![(None, false, false)],
     };
     let arm_budgets: Vec<Option<u64>> = match std::env::var("ARM_CONFLICTS") {
         Ok(v) if v.contains(',') => v.split(',').map(|t| t.trim().parse().ok()).collect(),
@@ -196,11 +207,14 @@ fn main() {
         Err(_) => arms.iter().map(|_| None).collect(),
     };
 
-    for (arm, (seed, chrono)) in arms.iter().enumerate() {
+    for (arm, (seed, chrono, els)) in arms.iter().enumerate() {
         let mut arm_config = config.clone();
         if *chrono {
             arm_config.chrono_reuse = true;
             arm_config.chrono_reuse_after = 0;
+        }
+        if *els {
+            arm_config.enable_equiv_substitution = true;
         }
         let mut solver = Solver::with_config(arm_config);
         if let Some(v) = std::env::var("MAXC").ok().filter(|s| !s.is_empty())
@@ -227,9 +241,10 @@ fn main() {
         let result = solver.solve();
         if arms.len() > 1 {
             eprintln!(
-                "c arm {arm} seed {} chrono={} -> {result:?} (conflicts {})",
+                "c arm {arm} seed {} chrono={} els={} -> {result:?} (conflicts {})",
                 seed.map_or_else(|| "default".to_string(), |s| s.to_string()),
                 chrono,
+                els,
                 solver.stats().conflicts,
             );
         }

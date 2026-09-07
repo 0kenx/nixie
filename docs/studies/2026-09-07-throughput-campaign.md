@@ -612,6 +612,44 @@ stop*. The remaining T2 question — why `stall8` regresses worker_550
 restarts break genuinely productive deep runs there; gentler triggers
 (k = 16/32) or gap-EMA floors are the tuning axes inside the T1 study.
 
+### T3 executed: portfolio conversion — the ELS tail wins land at +8 standing cells
+
+The static-gate family was falsified four ways in parallel studies
+(online observables, gate density, placement, SCC mass — the last two
+*inverted*: every ELS anchor-winner has zero surface structure, the
+biggest losers have the most). What survived is the shape this study's
+max-gap section named: **a portfolio arm** — the ELS one-shot is not a
+default and not a gate, but a *second trajectory* the harness rolls when
+the default arm's budget exhausts.
+
+`cnf_solve` gained an `els` arm token (`SEEDS=default,els
+ARM_CONFLICTS=<n>,<rest>` — `ELS=1` semantics on a fresh solver;
+example-only change, no library code). Screen (54 files × 5 seeds,
+60 s cap, cores 10–19):
+
+| config | solved-at-cap | gained | lost | verdict disagreements |
+|---|---|---|---|---|
+| default | 153 | — | — | — |
+| **portfolio: default@100k → els** | **161 (+8)** | 13 | 5 | **0** |
+| portfolio: default@250k → els | 153 (0) | 10 | 10 | 0 |
+
+The gains are exactly the ELS-anchor class the gates could not isolate:
+**FmlaEquivChain ×5** (base TOs it; the ELS arm solves — the equivalence
+chain is *invisible* to every static observable but folded by the pass
+itself) and worker_550 ×2. The losses are truncation (circuit_48in64out
+needs >100k conflicts of default; 64_25, summle_X11112 reshuffle). The
+budget constant is the trade: 100k keeps most near-cap default wins and
+still buys the second trajectory; 250k truncates more than the ELS arm
+recovers.
+
+This is a **harness configuration**, not a solver default: the standing
+table's invocation would carry the `SEEDS`/`ARM_CONFLICTS` prefix. The
+`chrono`-arm precedent is identical (converts cadical-only standing
+losses at zero risk). Both restart arms (`NIXIE_RESTART_STALL`,
+`NIXIE_RESTART_MAXGAP`) are likewise portfolio-eligible — e.g.
+`SEEDS=default,els,maxgap:1000` composes fresh trajectories for the
+whole tail class inside one deterministic budget schedule.
+
 ### Tier 2 — miss-visit and watch-move policies (per-visit × search coupling)
 
 - **Gent saved-position scan** (`clause->pos`, cadical/JAIR'13): starts
