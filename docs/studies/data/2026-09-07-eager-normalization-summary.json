@@ -1,0 +1,439 @@
+{
+  "pmu_records": 54,
+  "independently_checked_sat_models": 25,
+  "all_events_scheduled_percent": 100,
+  "confirmation": [
+    {
+      "name": "j3037",
+      "seed": 1,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9934531145783879,
+      "cycles": 0.9337850716503684,
+      "misses": 0.9173981350401595
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 1,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9931965027826476,
+      "cycles": 1.0253203451603516,
+      "misses": 0.9403086602996786
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 3,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9858813098522764,
+      "cycles": 0.9087418300519934,
+      "misses": 0.8569886725759219
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 1,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.987104927935869,
+      "cycles": 1.0589176732229701,
+      "misses": 0.8758482956205527
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 3,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9879667574943563,
+      "cycles": 0.9167542960529,
+      "misses": 0.8638277686716433
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 3,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9931516004233722,
+      "cycles": 1.0878671430786553,
+      "misses": 0.9346631426466149
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 1,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.987866154605524,
+      "cycles": 0.9613663453080618,
+      "misses": 0.8646702567089647
+    },
+    {
+      "name": "crn_11_99_u",
+      "seed": 2,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9881641396020994,
+      "cycles": 0.9122799269567478,
+      "misses": 0.8727913000958223
+    },
+    {
+      "name": "crn_11_99_u",
+      "seed": 1,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9878957035901498,
+      "cycles": 0.9721102468951788,
+      "misses": 0.8710714948162813
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 2,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9879740127011971,
+      "cycles": 0.9431142694026677,
+      "misses": 0.865433659350012
+    },
+    {
+      "name": "crn_11_99_u",
+      "seed": 3,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9885001126967422,
+      "cycles": 0.9256121136890239,
+      "misses": 0.8770530678953645
+    },
+    {
+      "name": "noL_11_14",
+      "seed": 1,
+      "cap": 100000,
+      "identity": true,
+      "instructions": 0.9886082752239966,
+      "cycles": 0.9213744013433848,
+      "misses": 0.8721838463989049
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 2,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9855463004552237,
+      "cycles": 0.9098475393616888,
+      "misses": 0.8545488835135893
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 2,
+      "cap": 10000000,
+      "identity": true,
+      "instructions": 0.9928518200544731,
+      "cycles": 0.9281166408579044,
+      "misses": 0.9431723102687465
+    }
+  ],
+  "component": [
+    {
+      "seed": 4,
+      "baseline_samples": 1055,
+      "candidate_samples": 927,
+      "estimated_cycles_ratio": 0.8786729857819905
+    },
+    {
+      "seed": 5,
+      "baseline_samples": 569,
+      "candidate_samples": 474,
+      "estimated_cycles_ratio": 0.8330404217926186
+    },
+    {
+      "seed": 6,
+      "baseline_samples": 1069,
+      "candidate_samples": 933,
+      "estimated_cycles_ratio": 0.872778297474275
+    }
+  ],
+  "component_geomean": 0.8612563350939545,
+  "binaries": {
+    "baseline-mode-matched-0263862": {
+      "path": "/media/data/proj/nixie/precompile/0263862/stats_solve",
+      "sha256": "29a91de64ffaae517d25cd6d185cf8ea9b87013e45e5d9157c07ce6b5762569c"
+    },
+    "candidate-eager-normalization-2bd403c": {
+      "path": "/media/data/proj/nixie/precompile/2bd403c/benchmark/eager-watch-normalization/stats_solve-pilot",
+      "sha256": "196da79f9d3b6f02f9bd241bcdb352992bfbb05fb62bb3e84e785f383a8cb573"
+    },
+    "candidate-compact-trail-162644c": {
+      "path": "/media/data/proj/nixie/precompile/162644c/benchmark/compact-trail-metadata/stats_solve-pilot",
+      "sha256": "3589959f2ec5adf80998e035dc2ba8f32db0c9b71ab1482d4b9fc00f3eb4cd64"
+    },
+    "candidate-specialized-propagation-de17156": {
+      "path": "/media/data/proj/nixie/precompile/de17156/benchmark/specialized-propagation/stats_solve-pilot",
+      "sha256": "35ae047b71fc7bb22e085cd7c1244afa7acba9fe59b6d7ed1774fb740e779b12"
+    },
+    "candidate-inline-trail-1d217a2": {
+      "path": "/media/data/proj/nixie/precompile/1d217a2/benchmark/inline-trail-assignment/stats_solve-pilot",
+      "sha256": "d1c76aae38bed96b52ccac2d4b75045a670466172afafc4ddd1a9a6dc48e28b9"
+    },
+    "candidate-watch-move-value-df07e94": {
+      "path": "/media/data/proj/nixie/precompile/df07e94/benchmark/watch-move-value-reuse/stats_solve-pilot",
+      "sha256": "86e663f2a85b894a382119bcf3d5951e1fe2b5c31209fd8c3a827102b1840ef4"
+    },
+    "baseline-72720d9": {
+      "path": "/media/data/proj/nixie/precompile/72720d9/stats_solve-perf",
+      "sha256": "693d1ce2ab890d07803834f9ca2bf2577b3dbcaa90dfd0a948af6db5e658b429"
+    },
+    "candidate-df07e94": {
+      "path": "/media/data/proj/nixie/precompile/df07e94/benchmark/eager-watch-confirmation/stats_solve-perf-pilot",
+      "sha256": "0f653e8bf0ed2314faa3458078856b22a88ad0af385f1cfae2012336c0b1fd52"
+    },
+    "candidate-eager-final-219bed6": {
+      "path": "/media/data/proj/nixie/precompile/219bed6/benchmark/eager-watch-final/stats_solve-final",
+      "sha256": "76a883a819c437d1e8dd4c43828975b860212027b13554219f4b8f5cde119332"
+    },
+    "baseline-parent-219bed6": {
+      "path": "/media/data/proj/nixie/precompile/219bed6/stats_solve-perf",
+      "sha256": "2f49a3edef446978147fdd8e866023d181a6db4eb765ffa3622135d3fce5f298"
+    }
+  },
+  "inputs": {
+    "break_unsat_06_07": "8c94b7be135467462330cd4819c1d2acdbabd2c7f9290a6c53409186021a4bbf",
+    "crn_11_99_u": "301a5351b7cec4bbc27bf066df769db2870c1e3f3948d6c2ff0b7a9f6bab52eb",
+    "noL_11_14": "04fa242c31eb4b487c776adb647f03cc2486afbc7a4bbdc902b227ba96dc8b68",
+    "si2-b03m": "8e24efbf17294a0fe9a2f7681d5cbb615f7f3417cc04258debb6c2ee498192ee",
+    "j3037": "7672cb34e4b32cf83292630f1155b7e564bdcf4b2eedd60f7f25cf59b4b5bcc7",
+    "circuit_48in64out": "d3338c04e29f5c8b7e75686fa30fd9927babb7b34b9f7c87785397662f59d8e2"
+  },
+  "component_caveat": "Exclusive cycle estimates from periodic sampling, not exact function counters. First throttled baseline excluded; no accepted run throttled or lost samples.",
+  "verification": [
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "build",
+        "--all-features"
+      ],
+      "returncode": 0,
+      "elapsed_s": 15.241588172037154
+    },
+    {
+      "name": "nextest",
+      "command": [
+        "cargo",
+        "nextest",
+        "run",
+        "--workspace",
+        "--all-features"
+      ],
+      "returncode": 0,
+      "elapsed_s": 331.90930324501824
+    },
+    {
+      "name": "doctests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--all-features",
+        "--doc"
+      ],
+      "returncode": 0,
+      "elapsed_s": 17.961236278992146
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-features",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "returncode": 0,
+      "elapsed_s": 27.862825608928688
+    },
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "returncode": 0,
+      "elapsed_s": 3.7722974830539897
+    },
+    {
+      "name": "docs",
+      "command": [
+        "cargo",
+        "doc",
+        "--no-deps",
+        "--all-features"
+      ],
+      "returncode": 0,
+      "elapsed_s": 20.24176584999077
+    },
+    {
+      "name": "sat-differential",
+      "command": [
+        "cargo",
+        "run",
+        "--release",
+        "-p",
+        "nixie-sat",
+        "--example",
+        "diff_equiv",
+        "--",
+        "100000"
+      ],
+      "returncode": 0,
+      "elapsed_s": 28.743200763012283
+    },
+    {
+      "name": "parity",
+      "command": [
+        "./bench/z3_parity/run_parity.sh"
+      ],
+      "returncode": 0,
+      "elapsed_s": 231.0387242269935
+    }
+  ],
+  "verification_notes": {
+    "workspace_tests_passed": 10623,
+    "workspace_tests_skipped": 12,
+    "doctests_passed": 111,
+    "doctests_ignored": 29,
+    "sat_differential_cases": 100000,
+    "sat_differential_mismatches": 0,
+    "sat_differential_invalid_models": 0,
+    "z3_version": "4.16.0",
+    "parity_agreements": 169,
+    "parity_disagreements": 0,
+    "parity_inconclusive": 1,
+    "rustdoc_flags": "-D warnings",
+    "final_release_rebuild_matches_measured_binary": true,
+    "final_release_sha256": "76a883a819c437d1e8dd4c43828975b860212027b13554219f4b8f5cde119332",
+    "final_source_comment_only_after_full_suite": true,
+    "additional_main_commit_e6daf1d": "documentation only; no solver source changes since verification"
+  },
+  "final_release_confirmation": [
+    {
+      "name": "crn_11_99_u",
+      "seed": 3,
+      "instructions": 0.9886240271355591,
+      "cycles": 0.9732044789044123,
+      "branch_misses": 0.8819977924069462
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 1,
+      "instructions": 0.9871461800083557,
+      "cycles": 0.7636254867579597,
+      "branch_misses": 0.8519182851748219
+    },
+    {
+      "name": "crn_11_99_u",
+      "seed": 2,
+      "instructions": 0.9883293918162201,
+      "cycles": 1.0346365086275975,
+      "branch_misses": 0.8869982047568461
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 1,
+      "instructions": 0.9935189868505725,
+      "cycles": 0.9048938524552642,
+      "branch_misses": 0.9395153785322278
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 1,
+      "instructions": 0.9878761010021344,
+      "cycles": 0.8993929174362768,
+      "branch_misses": 0.8638514987970151
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 3,
+      "instructions": 0.9934357428106984,
+      "cycles": 1.315282885088112,
+      "branch_misses": 0.9366250447973021
+    },
+    {
+      "name": "si2-b03m",
+      "seed": 2,
+      "instructions": 0.9931368275542294,
+      "cycles": 0.9206437231059875,
+      "branch_misses": 0.9453462861106015
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 2,
+      "instructions": 0.9856766100345888,
+      "cycles": 0.9085397136397295,
+      "branch_misses": 0.8547500489491787
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 3,
+      "instructions": 0.988024178209182,
+      "cycles": 1.0557795756583501,
+      "branch_misses": 0.8671847638516601
+    },
+    {
+      "name": "crn_11_99_u",
+      "seed": 1,
+      "instructions": 0.9880749806876995,
+      "cycles": 0.8591446828523764,
+      "branch_misses": 0.8648838631651716
+    },
+    {
+      "name": "break_unsat_06_07",
+      "seed": 3,
+      "instructions": 0.9859775075036327,
+      "cycles": 1.1447674215618584,
+      "branch_misses": 0.8842916191391936
+    },
+    {
+      "name": "circuit_48in64out",
+      "seed": 2,
+      "instructions": 0.9880222821621698,
+      "cycles": 1.0073077935214128,
+      "branch_misses": 0.8667997323018698
+    }
+  ],
+  "final_release_geomean": {
+    "instructions": 0.9889833065776962,
+    "cycles": 0.9730072870654979,
+    "branch_misses": 0.8864261471427008
+  },
+  "matched_parent_component": [
+    {
+      "seed": 4,
+      "baseline_samples": 1083,
+      "candidate_samples": 927,
+      "estimated_cycles_ratio": 0.8559556786703602,
+      "baseline_record_id": "ebdc8152b9c7057a",
+      "candidate_record_id": "5e2785d4c99d1d5c"
+    },
+    {
+      "seed": 5,
+      "baseline_samples": 588,
+      "candidate_samples": 474,
+      "estimated_cycles_ratio": 0.8061224489795918,
+      "baseline_record_id": "814d3147cc164121",
+      "candidate_record_id": "41e110f6aff598a4"
+    },
+    {
+      "seed": 6,
+      "baseline_samples": 1058,
+      "candidate_samples": 933,
+      "estimated_cycles_ratio": 0.8818525519848771,
+      "baseline_record_id": "9ccbbca40a18dea1",
+      "candidate_record_id": "9f5e9b4e0fa7bfc7"
+    }
+  ],
+  "matched_parent_component_geomean": 0.8473888717788417,
+  "source_identity_note": "Early release pilot and its 0263862 baseline predate 1804de8. The final release and perf candidate include that default-off restart option. The parent component baseline at 219bed6 matches the candidate production source except eager watch normalization."
+}

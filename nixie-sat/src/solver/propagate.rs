@@ -207,15 +207,19 @@ impl Solver {
                 if bcp_stats {
                     crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
                 }
-                if clause[0] == lit.negate() {
-                    if bcp_stats {
-                        crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
-                    }
-                    clause.swap(0, 1);
+                let false_lit = lit.negate();
+                debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
+                if bcp_stats && clause[0] == false_lit {
+                    crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
                 }
+                // XOR cancels the false watch, independent of its position.
+                // Store the normalized pair even on satisfied exits: literal
+                // order is observable by later inprocessing tie-breaks.
+                let first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
+                clause[0] = first;
+                clause[1] = false_lit;
 
                 // If first watch is true, clause is satisfied
-                let first = clause[0];
                 if self.trail.lit_val_hot(first) > 0 {
                     if bcp_stats {
                         crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
@@ -272,7 +276,7 @@ impl Solver {
                     }
                     if v == 0 {
                         // Unassigned replacement: move the watch (the
-                        // conditional swap above already normalized
+                        // eager normalization above already set
                         // `lits[0]` to the non-false watch).
                         clause.swap(1, j);
                         if bcp_stats {
@@ -559,4 +563,101 @@ impl Solver {
     }
     #[cfg(not(feature = "std"))]
     pub(super) fn count_reason_origin(&mut self, _cid: crate::clause::ClauseId) {}
+}
+
+#[cfg(test)]
+mod normalization_tests {
+    use super::*;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Exit {
+        SatisfiedFirst,
+        SatisfiedReplacement,
+        MovedReplacement,
+        Unit,
+        Conflict,
+    }
+
+    #[test]
+    fn watched_pair_order_is_preserved_on_every_miss_exit() {
+        for signs in 0..16 {
+            let lits = core::array::from_fn::<_, 4, _>(|i| {
+                Lit::from_code(2 * i as u32 + ((signs >> i) & 1))
+            });
+            for orientation in 0..2 {
+                for exit in [
+                    Exit::SatisfiedFirst,
+                    Exit::SatisfiedReplacement,
+                    Exit::MovedReplacement,
+                    Exit::Unit,
+                    Exit::Conflict,
+                ] {
+                    let mut solver = Solver::new();
+                    for _ in 0..4 {
+                        solver.new_var();
+                    }
+                    let cid = solver.clauses.add_original(lits);
+                    solver.attach_watchers(cid, lits[0], lits[1]);
+                    let false_lit = lits[orientation];
+                    let first = lits[1 - orientation];
+                    let trigger = false_lit.negate();
+                    // A blocker can be any clause literal. Force a miss even
+                    // when the other watch is true, as happens with an older
+                    // cached blocker, so that exit's stored order is tested.
+                    for watcher in solver.watches.get_mut(trigger) {
+                        watcher.blocker = false_lit;
+                    }
+                    let values = match exit {
+                        Exit::SatisfiedFirst => [1, 0, 0],
+                        Exit::SatisfiedReplacement => [0, -1, 1],
+                        Exit::MovedReplacement => [0, -1, 0],
+                        Exit::Unit => [0, -1, -1],
+                        Exit::Conflict => [-1, -1, -1],
+                    };
+                    solver.trail.new_decision_level();
+                    for (lit, value) in [first, lits[2], lits[3]].into_iter().zip(values) {
+                        match value {
+                            1 => solver.trail.assign_decision(lit),
+                            -1 => solver.trail.assign_decision(lit.negate()),
+                            0 => {}
+                            _ => unreachable!(),
+                        }
+                    }
+                    // Construct the state immediately before this trigger's
+                    // watch visit; earlier queued assignments are outside
+                    // this isolated visit test.
+                    while solver.trail.next_to_propagate().is_some() {}
+                    solver.trail.assign_decision(trigger);
+                    let conflict = solver.propagate();
+                    assert_eq!(conflict, matches!(exit, Exit::Conflict).then_some(cid));
+
+                    let expected = if matches!(exit, Exit::MovedReplacement) {
+                        [first, lits[3], lits[2], false_lit]
+                    } else {
+                        [first, false_lit, lits[2], lits[3]]
+                    };
+                    let Some(clause) = solver.clauses.get(cid) else {
+                        panic!("live test clause missing");
+                    };
+                    assert_eq!(clause.lits, expected, "{exit:?}, orientation {orientation}");
+                    let (key, blocker) = match exit {
+                        Exit::MovedReplacement => (lits[3].negate(), first),
+                        Exit::SatisfiedReplacement => (trigger, lits[3]),
+                        Exit::SatisfiedFirst | Exit::Unit | Exit::Conflict => (trigger, first),
+                    };
+                    let watch = solver.watches.get(key);
+                    assert_eq!(watch.len(), 1);
+                    assert_eq!(watch[0].clause, cid);
+                    assert_eq!(watch[0].blocker, blocker);
+                    if matches!(exit, Exit::MovedReplacement) {
+                        assert!(solver.watches.get(trigger).is_empty());
+                    }
+                    if matches!(exit, Exit::Unit) {
+                        assert_eq!(solver.trail.lit_val(first), 1);
+                        assert_eq!(solver.trail.reason(first.var()), Reason::Propagation(cid));
+                    }
+                }
+            }
+        }
+    }
 }
