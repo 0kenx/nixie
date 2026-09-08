@@ -410,3 +410,37 @@ cells answer different questions.)
 Landed-binary identity: 6/6 sampled `sweep400` cells bit-identical
 between the screen binary (97cf2b9, env override) and the landed
 default (c9cfe71).
+
+## Part 3 addendum: the effort axis closes bimodal (no flip to 1600 ‰)
+
+Diagnostic (round traces on 6s167 at the landed default): discovery is
+**budget-limited, not application-limited** — round 1 exhausts 400 k
+kitten ticks after sweeping 131 of 4 548 candidates (~3 k
+ticks/variable, ~7 kitten solves each); 94 equivalences from 2 013
+swept variables, ~2 600 never swept. The references fold ~580 variables
+on this file.
+
+Effort extension with the delay in place (deterministic counters,
+3 seeds each):
+
+| file | sweep@400 ‰+delay (landed) | sweep@1600 ‰+delay | ratio |
+|---|---|---|---|
+| 6s167-opt | gm 34.0 k, eq ~94 | gm 31.7 k, **eq 225** | **0.93×** |
+| constraints_17 | gm 48.8 k | gm 15.2 k | **0.31×** |
+| FmlaEquivChain | gm 334 k | gm 563 k | **1.69×** |
+
+1600 ‰ reaches kissat-parity *equivalence counts* (225 ≈ kissat's 162)
+and wins two anchors — but loses FmlaEquivChain 1.7×, the exact
+per-family bimodality every other axis of this mechanism showed
+(placement, gating, ranking, now budget). 800 ‰ measures
+chaotic-in-between (38.2 k on 6s167 — worse than both neighbors).
+Per the pre-registered discipline this does not justify the flip
+screen: the anchor gate is not met, and the box's current load
+(12–34 from a concurrent run) would contaminate a 60 s-cap screen —
+the Part-1 lesson. **A 1600 ‰ standing screen is queued for a quiet
+window**; until then 400 ‰+delay stands.
+
+The mechanism-class conclusion is now four-for-four: *every* knob of
+equivalence substitution on this corpus is per-file bimodal with no
+corpus-dominant setting — the conversion path for the remaining spread
+is per-class configuration, as the 2026-09-07 campaign concluded.
