@@ -116,6 +116,12 @@ fn main() {
     if let Some(n) = env_u64("MAXC") {
         solver.set_max_conflicts(Some(n));
     }
+    // Per-invocation seed (parity with `cnf_solve`; needed for seeded
+    // conflicts-to-verdict screens — see the 2026-09-07 campaign's
+    // replica-seed lesson).
+    if let Some(seed) = env_u64("SEED") {
+        solver.set_random_seed(seed);
+    }
     if let Err(e) = parser.parse_file(&path, &mut solver) {
         eprintln!("parse error: {e}");
         std::process::exit(2);
@@ -150,6 +156,22 @@ fn main() {
         mpp = s.propagations as f64 / dt.max(1e-9) / 1e6,
         dt = dt,
     );
+    // Sweep-port counters (kitten sweep A/B; see solver/sweep.rs).
+    if s.kitten_solved > 0 || s.sweep_rounds > 0 {
+        eprintln!(
+            "sweep rounds={} swept={} solved={} kitten_solved={} ticks={} eq={} units={} \
+             merged-vars(env)={} lemmas_dropped={}",
+            s.sweep_rounds,
+            s.sweep_swept,
+            s.sweep_solved,
+            s.kitten_solved,
+            s.kitten_ticks,
+            s.sweep_equivalences,
+            s.sweep_units,
+            s.sweep_variables,
+            s.sweep_lemmas_dropped,
+        );
+    }
     match res {
         SolverResult::Sat => println!("s SATISFIABLE"),
         SolverResult::Unsat => println!("s UNSATISFIABLE"),
