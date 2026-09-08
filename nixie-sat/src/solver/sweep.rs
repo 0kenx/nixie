@@ -84,10 +84,15 @@
 //! * kissat's `BUMP_DELAY(sweep)` schedule knob is not ported; the
 //!   inprocessing round interval governs cadence.
 //! * The occurrence-ranking key counts live original clauses over the
-//!   BIG (binaries) + the round's **dense occurrence lists** (large
-//!   clauses, every literal — built per round exactly like kissat's
-//!   `kissat_connect_irredundant_large_clauses` in dense mode),
-//!   filtered the same way the environment build filters.
+//!   BIG + the propagation watch lists (kissat counts one dense
+//!   occurrence list; ours is BIG-authoritative). Dense-mode occurrence
+//!   lists were ported and **reverted** by the 2026-09-09 screen: at
+//!   the calibrated 400-per-mille round budget the clause-denser
+//!   environments swept 4x fewer variables per round and cost −7
+//!   solved cells corpus-wide (see
+//!   `docs/studies/2026-09-09-kitten-sweep-audit-closure.md`); the
+//!   yield gap vs kissat stands until an effort-scale study pairs dense
+//!   environments with a kissat-scale budget.
 //! * The per-solve tick cap is re-armed after every per-variable
 //!   `kitten.clear()` (kissat `clear_sweeper` → `set_kitten_ticks_limit`):
 //!   a single environment solve can never blow the round budget.
@@ -99,7 +104,6 @@
 use super::*;
 use crate::kitten::{INVALID, Kitten, KittenResult};
 use crate::literal::LBool;
-use crate::occurrence::OccurrenceList;
 use core::sync::atomic::Ordering;
 use smallvec::SmallVec;
 
@@ -129,13 +133,6 @@ struct Sweeper {
     /// `depths[var]` = 1 + cone depth when the var is in the current
     /// environment (0 = not in it).
     depths: Vec<u32>,
-    /// Dense per-literal occurrence lists of live original **large**
-    /// clauses, built once per round (kissat's dense-mode
-    /// `kissat_connect_irredundant_large_clauses` connects every literal
-    /// of every such clause; our propagation watch lists only hold two
-    /// literals per clause and would silently miss the rest). Binaries
-    /// are covered by the BIG and deliberately excluded.
-    occurrences: OccurrenceList,
     /// `reprs[lit_code]` = representative literal code of the equivalence
     /// class proved so far this round (identity when none).
     reprs: Vec<u32>,
@@ -412,9 +409,9 @@ impl Solver {
     /// limit. Counts live original clauses over the BIG (binaries — an
     /// edge under key `k` is the clause `(¬k ∨ target)`, i.e. contains
     /// `¬k`, so occurrences of literal `l` live under `¬l`) plus the
-    /// round's dense large-clause lists. Returns the total occurrence
-    /// count (the ranking key).
-    fn sweep_occurrences(&self, sweeper: &Sweeper, idx: u32, max_occ: u64) -> Option<u64> {
+    /// sparse watch lists. Returns the total occurrence count (the
+    /// ranking key).
+    fn sweep_occurrences(&self, _sweeper: &Sweeper, idx: u32, max_occ: u64) -> Option<u64> {
         let count = |l: Lit| -> u64 {
             let mut n = 0u64;
             // BIG: clauses containing `l` sit under key `¬l`.
@@ -427,12 +424,10 @@ impl Solver {
                     n += 1;
                 }
             }
-            // Dense lists: built at round start over then-live original
-            // large clauses; recheck liveness for late deletions.
-            for &cid in sweeper.occurrences.get(l) {
+            for w in self.watches.get(l) {
                 if self
                     .clauses
-                    .get(cid)
+                    .get(w.clause)
                     .is_some_and(|c| !c.deleted && !c.learned)
                 {
                     n += 1;
@@ -1249,16 +1244,22 @@ impl Solver {
                         break 'environment;
                     }
                 }
-                // Large original clauses containing `lit`: the round's
-                // **dense** occurrence lists — every literal of every
-                // live original large clause (kissat's dense-mode
-                // `WATCHES(lit)`), not the two-per-clause propagation
-                // watch lists, which would silently miss clauses where
-                // `lit` sits un-watched and shrink the environment.
-                // Liveness is re-checked inside `sweep_reference` for
-                // clauses retired since the lists were built.
-                let large: Vec<ClauseId> = sweeper.occurrences.get(Lit::from_code(lit)).to_vec();
-                for cid in large {
+                // Large original clauses containing `lit`.
+                //
+                // NOTE (2026-09-09 screen): kissat's dense-mode occurrence
+                // lists (every literal of every large clause) were ported
+                // here and REVERTED — at our calibrated 400-per-mille
+                // round budget the ~5x clause-dense environments cut the
+                // variables swept per round from 144 to 55 on si2-class
+                // files and cost -7 solved cells corpus-wide (screen data
+                // in docs/studies/2026-09-09-kitten-sweep-audit-closure.md).
+                // The two-per-clause propagation watch lists are a sound
+                // (strictly smaller) environment source; the yield gap vs
+                // kissat stands until an effort-scale study pairs dense
+                // environments with a kissat-scale budget.
+                let watchers: Vec<ClauseId> =
+                    self.watches.get(key).iter().map(|w| w.clause).collect();
+                for cid in watchers {
                     self.sweep_reference(sweeper, depth, cid);
                     if sweeper.vars.len() as u64 >= sweeper.limit.vars {
                         // environment variable limit reached
@@ -1432,29 +1433,8 @@ impl Sweeper {
             kitten.set_termination(flag);
         }
 
-        // Dense occurrence lists over live original large clauses
-        // (built once per round — kissat's `enter_dense_mode` +
-        // `kissat_connect_irredundant_large_clauses` analog). Binaries
-        // stay BIG-authoritative. Satisfied clauses are *not* filtered
-        // here: `sweep_reference` retires them on first sight, exactly
-        // as kissat's lazy `mark_clause_as_garbage` during the walk.
-        let mut occurrences = OccurrenceList::new();
-        occurrences.resize(num_vars);
-        for cid in solver.clauses.iter_ids() {
-            let Some(view) = solver.clauses.get(cid) else {
-                continue;
-            };
-            if view.deleted || view.learned || view.lits.len() < 3 {
-                continue;
-            }
-            for &lit in view.lits {
-                occurrences.add(lit, cid);
-            }
-        }
-
         Self {
             depths: vec![0; num_vars],
-            occurrences,
             reprs,
             next: vec![INVALID; num_vars],
             prev: vec![INVALID; num_vars],
@@ -1647,39 +1627,6 @@ mod tests {
         let sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
         let occ = s.sweep_occurrences(&sweeper, 0, 1024);
         assert_eq!(occ, Some(2));
-    }
-
-    /// The dense occurrence lists must cover **every** literal position
-    /// of a large clause — the audit found the environment previously
-    /// walked the two-per-clause propagation watch lists, silently
-    /// missing clauses where the swept variable sat un-watched (kissat
-    /// sweeps over full dense-mode occurrence lists).
-    #[test]
-    fn sweep_dense_occurrences_cover_all_clause_positions() {
-        let mut s = Solver::new();
-        for _ in 0..4 {
-            let _ = s.new_var();
-        }
-        s.add_clause_dimacs(&[1, 2, 3, 4]);
-        let sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
-        for var in 0u32..4 {
-            for sign in 0u32..2 {
-                let lit = Lit::from_code(2 * var + sign);
-                let expect = if sign == 0 { 1 } else { 0 };
-                assert_eq!(
-                    sweeper.occurrences.get(lit).len(),
-                    expect,
-                    "dense list for x{}{} must contain the 4-clause",
-                    var + 1,
-                    if sign == 0 { "" } else { " (negated)" }
-                );
-            }
-        }
-        // And the var-2/3/4 occurrences (possibly un-watched positions)
-        // still make the variable schedulable through the dense count:
-        // var 2 occurs positively in the 4-clause only — negated side is
-        // empty, so it is *not* schedulable; the count reflects that.
-        assert_eq!(s.sweep_occurrences(&sweeper, 1, 1024), None);
     }
 
     /// The per-solve tick cap must be re-armed after the per-variable

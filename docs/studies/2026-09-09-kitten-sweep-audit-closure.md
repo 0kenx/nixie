@@ -265,3 +265,63 @@ repetition round so load drift hits all arms equally:
   bug (report + fix before anything else, AGENTS.md); S1 solved-at-cap
   more than ~3 files below base = the fixes regressed the default →
   investigate the flip list before keeping them default-on.
+
+## Screen results (S1/S2/S3) and the dense-environment verdict
+
+Standing corpus, 54 files × seeds 1–5 × 60 s cap (`stats_solve`,
+`SEED=N` seeds the solver PRNG — verified to fire: 33 804 vs 34 613
+conflicts on 6s167-opt s1/s2), cores 10–19 under normal box load, arms
+interleaved per seed round. Raw cells: `precompile/825f24e/benchmark/
+audit_screen/cells.jsonl` (base/treat/sparse) + `decomp/cells.jsonl`.
+
+| arm | solved-at-cap (270) | verdict disagreements | conflicts geomean vs base |
+|---|---|---|---|
+| base = `66166ed` (pre-audit) | 173 | — | 1.000 |
+| treat = `825f24e` (all fixes) | 166 | **0** | 0.960 |
+| sparse = treat minus dense envs | **177** | **0** | 1.062 |
+
+**S1 failed for treat** (−7 cells, past the ±3 bar) and the flip list
+is structural, not load: `si2-b03m-m800-03` 5/5→2/5 (base solves in
+5–9 s), `constraints_17` 4/5→1/5, `FmlaEquivChain` 5/5→2/5. Trace
+(`NIXIE_SWEEP_TRACE=1`, si2 seed 1) pins the mechanism: dense
+environments are ~5× clause-denser → 767 vs 391 kitten ticks/solve and
+a 4.5× larger schedule (9 912 vs 2 221 scheduled — dense counting makes
+far more variables schedulable), so the fixed 400 k-tick round budget
+swept 55 vs 144 variables and proved ~103 vs ~179 equivalences in five
+rounds. kissat's dense-mode construction is paired with kissat-scale
+budgets; at our calibrated 400 ‰ it buys less sweep per tick.
+
+A decomposition screen (6 files: the three regressed + mrpp/summle/
+mdp, 0 disagreements) showed reverting only the dense change recovers
+`si2` (5/5) and `constraints_17` (5/5, ≥ base) while `FmlaEquivChain`/
+`summle` stay down 2 cells — within reshuffle scale for a
+distribution-identical change (the bit-parity `randomize_phases` fix
+redraws every witness; the 2026-09-08 null moved ±9 cells on this
+corpus). The full-corpus sparse screen then passed S1: **+4 solved,
+0 disagreements**, flips spread over 11 files (no file worse than −2,
+gains on g2-slp/circuits/j3037/worker/af-synthesis — the sweep's
+classes). Cost 1.062 vs base is marginally above the ±5 % band;
+reported as such — no cost claim in either direction, the flip list
+decides (§11.1: cheap-to-score are different objectives).
+
+**Verdict**: dense-mode occurrence environments are **reverted** on
+main (environments and occurrence counting walk the sparse propagation
+watch lists + BIG again — a strictly smaller, sound environment
+source). Everything else from the audit closure stands: per-solve tick
+re-arm, cold-start backtracking, termination wiring, overflow/contract
+hardening, bit-exact randomness, API entries, perf compaction — and
+the landed tree was verified **bit-identical** to the screened `sparse`
+binary (same conflicts at same seeds on two anchors). The dense yield
+gap vs kissat is recorded as **open, budget-bound**: a follow-up
+effort-scale study (dense environments × a kissat-scale absolute
+budget) is the live path, in the footsteps of the 2026-09-09 effort
+study that found 1600 ‰ reaches kissat-parity equivalence counts but
+splits the anchors.
+
+**S3 (definitions arm)**: 0 disagreements vs treat and base, and
+solved-at-cap **176 vs treat's 166** (+10 cells) at cost 1.017
+(neutral band) — but per the pre-registration no enablement follows
+from a screen: an extract-and-discard matched null is required before
+any merit language, and the flip list (summle swings ±4.5× both ways)
+is the known bimodal class. `NIXIE_DEFINITIONS` stays default-off with
+this positive screen recorded.
