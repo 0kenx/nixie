@@ -1,7 +1,7 @@
 //! Family registry: parameter sets per size, deterministic corpus assembly.
 
 use crate::stress::{self, StressCfg};
-use crate::{Instance, Rng, boundary, capacity, gap, memory, parity, reconverge};
+use crate::{Instance, Rng, boundary, capacity, fpboundary, gap, memory, parity, reconverge};
 
 pub const FAMILIES: &[&str] = &[
     "parity",
@@ -10,6 +10,7 @@ pub const FAMILIES: &[&str] = &[
     "reconverge",
     "memory",
     "boundary",
+    "fpboundary",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -130,6 +131,22 @@ pub fn generate_family(
                 Size::Large => 20,
             };
             boundary::generate(seed, &boundary::Params { facts: f }, &suffix)?
+        }
+        "fpboundary" => {
+            let (folds, chains, incremental) = match size {
+                Size::Small => (3, false, false),
+                Size::Medium => (6, true, true),
+                Size::Large => (10, true, true),
+            };
+            fpboundary::generate(
+                seed,
+                &fpboundary::Params {
+                    folds,
+                    chains,
+                    incremental,
+                },
+                &suffix,
+            )?
         }
         _ => unreachable!("checked above"),
     };

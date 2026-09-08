@@ -20,6 +20,7 @@ Problem := ObligationProduction × TheoryRealization × RepresentationStress × 
 | `reconverge`| Two provably equivalent computations with different structure asserted to differ (Shannon tree vs ANF; extract/concat permutation round-trips). | Exhaustive 2^k-input check / permutation composition; near-miss variants flip exactly one point (needle SAT). |
 | `memory`    | Alias-ambiguous array write histories (storecomm-shaped); distinctness asserted, implied by arithmetic, or aliased. | Permutation invariance of non-overlapping writes (simulated); alias simulation for the SAT variant. |
 | `boundary`  | Exact Euclidean div/mod distinctions that truncating rewrites erase. | Algebraic identities + exhaustive numeric verification in the generator. |
+| `fpboundary`| IEEE-754 semantic boundaries: `=` datum identity on floats, directed-mode gradual underflow, halfway ties per rounding mode, SMT-LIB `fp.min`/`fp.max` NaN-and-zero rules, oracle-folded arithmetic. | Exact std-only u128/i128 oracle (mantissa-exact products/aligned sums, grid rounding per mode) — no f64 arithmetic in any expected answer; validated 1221/1221 against z3 across sizes and seeds. |
 
 ## Theory realizations
 
@@ -190,6 +191,26 @@ with the certificate:
    them by unit propagation at descent start: conflicts −37..−47 %,
    decisions −52..−71 % on the alias/incremental larges, zero verdict
    changes anywhere (see the study's census + guard-clause sections).
+
+**Final (2026-09-08, night): the `fpboundary` family.**  The z3
+differential battery that validated the FP constant-semantics landing
+(`docs/studies/2026-09-08-fp-const-folding.md`) is now a standing family:
+datum-identity pairs (direct and variable-mediated), NaN datum collapse,
+directed-underflow corners (both polarities), per-mode halfway ties at
+1.0, `fp.min`/`fp.max` zero-tie and NaN rules, predicate folds, exact
+oracle-driven `add/sub/mul/div` folds (sat + 1-ulp-perturbed unsat
+twins), transitive chains, and a push/pop retraction instance.  The
+expected answers come from a first-principles u128/i128 oracle (its
+construction caught four rounding-model subtleties of its own:
+absolute subnormal-grid scaling, exact-value no-round under RNA,
+far-underflow shift overflow, and directed-mode overflow saturation).
+Oracle-vs-z3: **1221/1221** across sizes and seed groups; nixie
+(cf6e214): **501/501** across small/medium/large plus 141/141 under
+representation stress, zero bad/unknown/timeout — the FP semantics
+landing holds on the standing surface.  Division plants power-of-two
+divisors (exact exponent shift; std-only policy keeps bignum long
+division out of scope); `((_ to_fp e s) x)` application-form parsing
+remains the scoped follow-up that would widen the conversion shapes.
 
 ## What this is not
 

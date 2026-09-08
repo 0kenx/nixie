@@ -44,6 +44,7 @@
 
 pub mod boundary;
 pub mod capacity;
+pub mod fpboundary;
 pub mod gap;
 pub mod memory;
 pub mod parity;

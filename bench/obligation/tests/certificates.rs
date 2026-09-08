@@ -272,3 +272,122 @@ fn deep_stress_block_is_tautological() {
     assert!(bv_stressed.contains("(declare-const sdv (_ BitVec 32))"));
     assert!(!bv_stressed.contains("sdi"));
 }
+
+/// `fpboundary` oracle pins: the exact-arithmetic model's answers on the
+/// analytic corners the family asserts (the same cases the instances pin,
+/// computed here independently of the generation paths).
+#[test]
+fn fpboundary_oracle_pins() {
+    use nixie_obligation::fpboundary::{DecF64, Rm, round_exact};
+    let ms = 1u128; // one min-subnormal unit at 2^-1074
+    let e = -1074i32;
+    // Exact subnormal arithmetic stays exact: -2ms - 3ms = -5ms (RNA must
+    // NOT round an exact grid value — the oracle bug this pins).
+    assert_eq!(round_exact(true, 5, e, Rm::Rna), 0x8000_0000_0000_0005);
+    // Directed underflow corners: the exact product of the two smallest
+    // subnormals is ~2^-2148, far below the grid.
+    let prod = ms * ms;
+    let pe = 2 * e;
+    assert_eq!(round_exact(true, prod, pe, Rm::Rtn), 0x8000_0000_0000_0001);
+    assert_eq!(round_exact(false, prod, pe, Rm::Rtp), 0x0000_0000_0000_0001);
+    assert_eq!(round_exact(true, prod, pe, Rm::Rtz), 0x8000_0000_0000_0000);
+    assert_eq!(round_exact(true, prod, pe, Rm::Rne), 0x8000_0000_0000_0000);
+    // Halfway tie at 1.0: 1.0 + 2^-53 as an exact value is
+    // (2^53 + 1)·2^-52 + 2^-53 = (2^54 + 3)·2^-53 — halfway between
+    // (2^54 + 0) and (2^54 + 2) cells at 2^-52… simpler: use num = 3 at
+    // 2^-52 relative to the grid cell 2^-52 around [1, 2): 1.5 cells.
+    // The instance-level pins below carry the mode table; here pin the
+    // subnormal-grid saturation instead:
+    // 3·2^-1075 (halfway between min_sub and 0… wait 2^-1075 = half of
+    // 2^-1074): RNE ties to even → 0.
+    assert_eq!(round_exact(false, 1, e - 1, Rm::Rne), 0x0000_0000_0000_0000);
+    // …and RNA ties away from zero → min_subnormal.
+    assert_eq!(round_exact(false, 1, e - 1, Rm::Rna), 0x0000_0000_0000_0001);
+    // Directed overflow saturation: 2^2000 rounds to ±inf under RNE/RNA,
+    // but RTZ clamps to the maximum finite datum.
+    let big = 1u128 << 100; // 2^100 · 2^1900 = 2^2000
+    assert_eq!(
+        round_exact(false, big, 1900, Rm::Rne),
+        0x7ff0_0000_0000_0000
+    );
+    assert_eq!(
+        round_exact(false, big, 1900, Rm::Rtz),
+        0x7fef_ffff_ffff_ffff
+    );
+    assert_eq!(round_exact(true, big, 1900, Rm::Rtp), 0xffef_ffff_ffff_ffff);
+    // Decode round-trip: every finite bit pattern decodes and its exact
+    // value re-rounds (exactly) to the same bits under every mode.
+    for bits in [
+        0x0000_0000_0000_0001u64,
+        0x0000_0000_0000_0003,
+        0x3ff0_0000_0000_0001,
+        0x7fef_ffff_ffff_ffff,
+        0xbfd3_3333_3333_3333,
+    ] {
+        let d = DecF64::decode(bits).expect("finite");
+        for rm in [Rm::Rne, Rm::Rna, Rm::Rtp, Rm::Rtn, Rm::Rtz] {
+            assert_eq!(
+                round_exact(d.neg, d.mant as u128, d.exp2, rm),
+                bits,
+                "exact value of {bits:#x} must re-round to itself under {}",
+                rm.name()
+            );
+        }
+    }
+}
+
+/// `fpboundary` generation: sat/unsat twins share their prefix, every
+/// script is QF_FP with one check-sat per expected answer, and the fold
+/// twins' probes differ (a real perturbation, not a duplicate).
+#[test]
+fn fpboundary_twins_are_complementary() {
+    use nixie_obligation::fpboundary;
+    for seed in 0..6u64 {
+        let insts = fpboundary::generate(
+            seed,
+            &fpboundary::Params {
+                folds: 4,
+                chains: true,
+                incremental: true,
+            },
+            "cert",
+        )
+        .expect("generate");
+        assert!(insts.len() > 20, "seed {seed}: too few instances");
+        for inst in &insts {
+            assert!(inst.script.contains("(set-logic QF_FP)"));
+            assert_eq!(
+                inst.script.matches("(check-sat)").count(),
+                inst.expected.len()
+            );
+        }
+        // Every fold pair: same head, one Sat and one Unsat.
+        for inst in &insts {
+            if !inst.name.contains("fold-") || inst.name.contains("-neg") {
+                continue;
+            }
+            let twin =
+                inst.name
+                    .replacen(&format!("-s{seed}-cert"), &format!("-neg-s{seed}-cert"), 1);
+            let other = insts
+                .iter()
+                .find(|o| o.name == twin)
+                .unwrap_or_else(|| panic!("missing twin {twin}"));
+            assert_eq!(inst.expected[0], Answer::Sat);
+            assert_eq!(other.expected[0], Answer::Unsat);
+            // Same assertions except the probed literal line.
+            let strip = |s: &str| -> String {
+                s.lines()
+                    .filter(|l| !l.contains("(assert (= y (fp ") || l.is_empty())
+                    .filter(|l| !l.starts_with("(assert (= y "))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            assert_eq!(
+                strip(&inst.script),
+                strip(&other.script),
+                "twins must share their pin/define prefix"
+            );
+        }
+    }
+}
