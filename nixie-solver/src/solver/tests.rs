@@ -2166,6 +2166,41 @@ fn structural_assertion_encoding_mints_no_root_variable() {
     assert_eq!(solver.check(&mut manager), SolverResult::Unsat);
 }
 
+/// The dispatch's `Sat` gate must be a **certificate**, not a veto
+/// (`model_certifies_assertions` vs `model_refutes_assertions`): the
+/// historic ring-elimination false-`sat` survived because the refutation
+/// gate fails open on `Undetermined` while the eliminated variable's
+/// self-referential definition made every assertion unevaluatable under
+/// the incomplete model.  An assertion that cannot be re-derived from the
+/// model's values must be refuted by *neither* gate (nothing evaluates to
+/// `false`) but certified by *neither* – the dispatch then declines to
+/// the general path instead of printing a self-violating model.
+#[test]
+fn certificate_gate_rejects_unevaluatable_models() {
+    use crate::solver::Model;
+    use nixie_core::ast::TermManager;
+
+    let mut manager = TermManager::new();
+    let mut solver = super::Solver::new();
+    let bv8 = manager.sorts.bitvec(8);
+    let x = manager.mk_var("x", bv8);
+    let five = manager.mk_bitvec(5u32, 8);
+    let eq = manager.mk_eq(x, five);
+    // Install the assertion WITHOUT encoding or solving anything: the
+    // state a model hole leaves behind is "asserted, no bits, no model
+    // value" – exactly the eliminated-variable shape of the false-`sat`
+    // chain (nothing was ever blasted for a variable the preprocessor
+    // rewrote away).
+    solver.assertions.push(eq);
+    solver.model = Some(Model::new());
+    // Neither gate sees a *false* assertion (fail-open refutation stays
+    // quiet, by design for the general path's blocking) ...
+    assert!(!solver.model_refutes_assertions(&manager));
+    // ... but the certificate must fail: "cannot verify" is not
+    // "satisfied".
+    assert!(!solver.model_certifies_assertions(&manager));
+}
+
 /// A theory-equality atom inside the flattened skeleton keeps its theory
 /// constraint (the watch-based propagation and EUF conflict paths depend on
 /// `Constraint::Eq` being recorded for it).

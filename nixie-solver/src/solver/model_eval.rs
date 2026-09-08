@@ -638,6 +638,52 @@ impl Solver {
         self.refuted_negated_equality(manager).is_some()
     }
 
+    /// **Certificate** gate: every assertion evaluates to `true` under the
+    /// current model, concretely.
+    ///
+    /// This is the dispatch's Sat contract, and it differs from
+    /// [`Self::model_refutes_assertions`] in exactly the direction the
+    /// ring-elimination false-`sat` exposed: the refutation gate **fails
+    /// open** on `Undetermined` (an assertion it cannot evaluate passes),
+    /// which is correct for the general path's best-effort model blocking
+    /// but violated the repo's own rule – "a model you cannot concretely
+    /// verify yields `Unknown`, never `Sat`" – wherever the gate was the
+    /// *sole* decider.  In the measured chain, the preprocessor's
+    /// self-referential elimination definition left the eliminated
+    /// variable unreconstructible, every assertion evaluated
+    /// `Undetermined` under the incomplete model, the fail-open gate
+    /// passed them all, and a formula z3 proves `unsat` was answered
+    /// `sat` with a model violating its own assertions (reproduced with
+    /// `NIXIE_GATE_TRACE` in the stage-4 study).  A certificate, not a
+    /// veto: `false` here means "cannot honestly report `Sat` from this
+    /// model", and the dispatch declines to the general path.
+    pub(super) fn model_certifies_assertions(&self, manager: &TermManager) -> bool {
+        let Some(model) = self.model.as_ref() else {
+            return false;
+        };
+        // Value-only derivation, sharing the refutation gate's `And`-spine
+        // flattening but *never* the SAT core's committed polarity: that
+        // shortcut trusts the core's atom decisions, and a certificate
+        // that trusts the thing it is supposed to double-check is no
+        // certificate (it is exactly how a holed model still passed in the
+        // general path's variant of this gate).
+        let mut conjuncts: Vec<TermId> = Vec::new();
+        for &assertion in &self.assertions {
+            conjuncts.clear();
+            match manager.get(assertion).map(|t| &t.kind) {
+                Some(TermKind::And(args)) => conjuncts.extend_from_slice(args),
+                _ => conjuncts.push(assertion),
+            }
+            for &conj in &conjuncts {
+                match self.eval_in_model_outcome(conj, model, manager, 0) {
+                    EvalOutcome::Value(EvalVal::Bool(true)) => {}
+                    _ => return false,
+                }
+            }
+        }
+        true
+    }
+
     /// Whether the current model gives two same-function applications
     /// equal-valued arguments but divergent results.  Argument values fold
     /// from the tableau (`ArithSolver::value`, plus a linear walk for

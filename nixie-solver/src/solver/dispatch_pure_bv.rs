@@ -37,7 +37,7 @@
 //!   assertion set (the preprocessing pass is equivalence-preserving by
 //!   construction).
 //! * `Sat` is only reported after a concrete model built from the embedded
-//!   solver's satisfying assignment passes [`Solver::model_refutes_assertions`]
+//!   solver's satisfying assignment passes [`Solver::model_certifies_assertions`]
 //!   (every assertion evaluates to true under it); otherwise the dispatch
 //!   defers to the general path.
 //! * Certified mode and proof production keep using the general pipeline (the
@@ -298,7 +298,12 @@ impl crate::solver::Solver {
             // general path's full re-solve.
             Self::bv_reconstruct_eliminations(&mut model, &eliminations, manager);
             self.model = Some(model);
-            if self.model_refutes_assertions(manager) {
+            // Certificate gate (see `model_certifies_assertions`): the
+            // dispatch is the *sole* decider of this `Sat`, so an assertion
+            // it cannot evaluate concretely must decline the verdict – the
+            // refutation gate's fail-open on `Undetermined` is what let the
+            // ring-elimination bug reach users as a false `sat`.
+            if !self.model_certifies_assertions(manager) {
                 // The satisfying assignment does not evaluate to `true`
                 // under every assertion: do not trust it. Hand the goal
                 // to the general path rather than answer `Unknown`

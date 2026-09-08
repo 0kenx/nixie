@@ -211,6 +211,27 @@ fn bit2bool_folds_one_bit_world() {
     assert_eq!(run(script), "unsat");
 }
 
+/// End to end: the parity-obstruction family (see
+/// `ring_elimination_respects_nonlinear_occurrences`) through the eager
+/// dispatch must never answer `sat` – the fixed preprocessor refutes it,
+/// and should any future preprocessing defect leave a model hole instead,
+/// the certificate gate declines to the general path rather than printing
+/// a self-violating model.
+#[test]
+fn obstruction_family_never_answers_sat_on_any_path() {
+    let out = run(r#"
+        (set-logic QF_BV)
+        (declare-fun n () (_ BitVec 8))
+        (declare-fun y () (_ BitVec 8))
+        (declare-fun z () (_ BitVec 8))
+        (assert (= (bvadd z y) (bvadd (_ bv7 8) (bvmul (_ bv3 8) n n) (bvmul (_ bv9 8) n))))
+        (assert (= (bvadd (bvmul (_ bv3 8) n) (bvmul (_ bv3 8) n n) (_ bv1 8)) y))
+        (assert (= y (_ bv4 8)))
+        (check-sat)
+    "#);
+    assert_eq!(out, "unsat");
+}
+
 /// Ring elimination must refuse *nonlinear* occurrences: solving
 /// `3n + 3n² = 3` for `n` yields the self-referential
 /// `n = 3⁻¹·(3 − 3n²)`; dropping the equation on that "definition"
