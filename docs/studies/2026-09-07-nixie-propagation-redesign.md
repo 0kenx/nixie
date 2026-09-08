@@ -137,11 +137,13 @@ Do not implement a broad compiler when coverage alone rules out a material win.
 ## 3. Learned-clause usefulness relative to propagation cost
 
 The [per-clause cost and later-use census](2026-09-08-learned-clause-traffic.md)
-is registered with two new observation runs and cached trajectory controls.
-It measures complete events for sampled clause identities over conflict
-epochs, so prior cost can be compared with later direct use without treating
-a missing future observation as an unused clause. No retention policy or
-default change is part of this census.
+completed two new runs with exact cached trajectory controls. The registered
+breadth gate fails: prior cost predicts expensive, zero-direct-use future
+traffic in 4/8 complete epoch pairs on j3037 but 0/8 on circuit. Over each
+whole observed prefix, only 5.77–6.01% of learned work belongs to clauses
+without any observed direct use. No active-set policy or default change
+follows. The evidence favors making useful clauses cheaper to process;
+ternary-only specialization covers just 0.74–3.03% of this learned work.
 
 The [region traffic census](2026-09-07-structured-region-traffic.md) measured
 learned clauses at 89.90% / 55.29% / 87.55% of sampled visits on break / circuit /
