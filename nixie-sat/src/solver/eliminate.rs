@@ -1155,13 +1155,15 @@ impl Solver {
 
         // The marked prefix length, captured right after the c-scan: the
         // marked literals are exactly `res_resolvent[0..marked_n]` (the
-        // d-scan only appends below it and never writes marks). Zero when
-        // the c-scan broke before marking anything (missing/satisfied).
-        let mut marked_n = 0usize;
+        // d-scan only appends below it and never writes marks). Capture it
+        // even when a satisfied c-side stops after a partially marked
+        // prefix: no later resolution may inherit those marks.
+        let marked_n;
         // ---- pure marking phase (immutable arena borrows only) ----
         'phases: {
             let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) else {
                 missing = true;
+                marked_n = 0;
                 break 'phases;
             };
             for &lit in c.lits.iter() {
@@ -1173,7 +1175,7 @@ impl Solver {
                     1 => {
                         // Antecedent satisfied: retire it.
                         retire = Some(cid);
-                        break 'phases;
+                        break;
                     }
                     -1 => continue, // falsified: dropped from the resolvent
                     _ => {
@@ -1186,6 +1188,9 @@ impl Solver {
                 }
             }
             marked_n = ctx.res_resolvent.len();
+            if retire.is_some() {
+                break 'phases;
+            }
 
             let Some(d) = self.clauses.get(nid).filter(|c| !c.deleted) else {
                 missing = true;
@@ -1876,6 +1881,10 @@ impl Solver {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "eliminate_mark_tests.rs"]
+mod eliminate_mark_tests;
 
 #[cfg(test)]
 mod round_occs_tests {

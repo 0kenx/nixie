@@ -1,5 +1,11 @@
 # Eliminate resolvent-marking vector removal: pre-registration (2026-09-01)
 
+**2026-09-08 correctness follow-up:** the prefix-length capture missed a
+satisfied first parent that stopped after setting some marks. The
+[cleanup repair and regressions](2026-09-08-elimination-mark-cleanup.md)
+restore that exit's invariant while retaining the single scratch vector.
+The performance and corpus checks below did not expose this helper defect.
+
 Next slice after the chunk-summary landing (`36e72b4`). Fresh profile on
 g2-slp (`/tmp/sc24f`, `MAXC=20000`, no-LTO symbols build): `eliminate_phase`
 **59.7 %** of instructions, and inside it the inclusive tree is
