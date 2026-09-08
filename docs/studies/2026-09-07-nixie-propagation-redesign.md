@@ -31,6 +31,15 @@ must eliminate per-entry traversal and maintenance costs, rather than add
 cached groups around the existing flat vectors. The registration and earlier
 opportunity evidence below remain as historical context.
 
+The follow-up [native packed-run kernel](2026-09-08-packed-blocker-runs.md)
+also failed its four-run screen. Against an identical-order scalar grouped
+control, it removed 5.86% of instructions in geometric mean but did not reduce
+cycles/conflict (ratio 1.0497; circuit 1.0758). The grouped arms' transcripts
+match exactly. This demonstrates removable repeated work on circuit, not an
+ordinary-solver speedup: grouping changes search and the new representation
+still has substantial scalar-iteration costs. The kernel was removed; no
+threshold tuning or repeated cells followed.
+
 Within a trigger's watch list, group clauses sharing a blocking literal. If
 that literal is true, one check can establish satisfaction for the whole
 group. Unlike the rejected four-watcher prefix experiment, the proposed
