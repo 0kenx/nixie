@@ -1625,6 +1625,19 @@ impl Solver {
             return SolverResult::Unknown;
         }
 
+        // FP constant folding through EUF class pins: guarded *valid* lemmas
+        // `(a = lit1) ∧ (b = lit2) → (fp.op(rm,a,b) = fold(lit1,lit2))` (and
+        // the predicate / real-conversion forms) for every ground operation
+        // whose operands pin.  Closes the unsat direction the pattern checks
+        // miss (`x = c ∧ y = fp.add x x ∧ y = c2`), one round per check; see
+        // `solver/fp_fold.rs`.  Runs BEFORE `instantiate_arith_axioms`: the
+        // `RealToFp` fold's guard atoms mention `div`-bearing real
+        // expressions, and minting them after the ar pass would leave the
+        // terms axiom-less — the arith honesty gate and the
+        // `arith_defs_incomplete` downgrade then turn every would-be verdict
+        // into `Unknown`.
+        self.fp_fold_pending = self.instantiate_fp_folds(manager);
+
         // Supply the defining axioms of every internalised `div` / `mod` /
         // numeric-`ite` term before any stage inspects the arithmetic atoms:
         // without them those terms are free variables and both the honesty gate
@@ -1652,14 +1665,6 @@ impl Solver {
         if self.check_fp_constraints(manager) {
             return SolverResult::Unsat;
         }
-
-        // FP constant folding through EUF class pins: guarded *valid* lemmas
-        // `(a = lit1) ∧ (b = lit2) → (fp.op(rm,a,b) = fold(lit1,lit2))` (and
-        // the predicate forms) for every ground operation whose operands'
-        // classes are pinned to literals.  Closes the unsat direction the
-        // pattern checks miss (`x = c ∧ y = fp.add x x ∧ y = c2`), one
-        // round per check; see `solver/fp_fold.rs`.
-        self.fp_fold_pending = self.instantiate_fp_folds(manager);
 
         // Check datatype constraints for early conflict detection
         if self.check_dt_constraints(manager) {

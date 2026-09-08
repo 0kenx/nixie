@@ -109,6 +109,10 @@ enum Task<Op> {
 /// A deferred `Real`-arithmetic operator awaiting its operand values
 /// (`eval_real_core`).  N-ary operand lists are copied out of the term so the
 /// combine step never has to re-fetch and re-match the term kind.
+/// Kept alive by the unit tests (`eval_real` wrapper) even though the
+/// production `RealToFp` path now evaluates exact rationals instead
+/// (`fp_fold::eval_rational`).
+#[allow(dead_code)]
 enum RealOp {
     Neg(TermId),
     Sub(TermId, TermId),
@@ -298,6 +302,10 @@ impl<'a> FpModelFinder<'a> {
     /// "Recursion and memoization" section.  Purely a function of the term
     /// (no engine, no `values`), so `TermId`-keyed memoization is trivially
     /// exact.
+    /// Kept alive by the unit tests (the `eval_real` wrapper) even though
+    /// the production `RealToFp` path now evaluates exact rationals
+    /// (`fp_fold::eval_rational`).
+    #[cfg_attr(not(test), allow(dead_code))]
     fn eval_real_core(
         &self,
         root: TermId,
@@ -403,17 +411,6 @@ impl<'a> FpModelFinder<'a> {
         memoed(memo, root)
     }
 
-    /// Round an `f64` value to `format` under rounding mode `rm`, producing a
-    /// concrete [`FpValue`]. The `f64` is treated as an exact dyadic rational,
-    /// so the conversion is a single correctly-rounded step for `Float64` (and
-    /// nearest-then-round for narrower targets, matching the RNE conversions
-    /// used by these benchmarks).
-    fn real_to_fp(&mut self, value: f64, format: FpFormat, rm: FpRoundingMode) -> FpValue {
-        self.engine.set_rounding_mode(rm);
-        let as_f64 = FpValue::from_f64(value);
-        convert_format(&mut self.engine, &as_f64, format)
-    }
-
     /// Evaluate an FP-sorted term to a concrete [`FpValue`], if all of its
     /// leaves are already pinned. Returns `None` when any input is unknown or
     /// the operation is not (yet) supported by concrete evaluation.
@@ -453,7 +450,7 @@ impl<'a> FpModelFinder<'a> {
         &mut self,
         root: TermId,
         fp_memo: &mut FxHashMap<TermId, Option<FpValue>>,
-        real_memo: &mut FxHashMap<TermId, Option<f64>>,
+        _real_memo: &mut FxHashMap<TermId, Option<f64>>,
     ) -> Option<FpValue> {
         let mut stack: Vec<Task<FpOp>> = vec![Task::Visit(root)];
         while let Some(task) = stack.pop() {
@@ -567,10 +564,20 @@ impl<'a> FpModelFinder<'a> {
                             stack.push(Task::Visit(*arg));
                         }
                         TermKind::RealToFp { rm, arg, eb, sb } => {
+                            // EXACT rational conversion: the previous path
+                            // evaluated the real expression as an `f64`
+                            // first — itself an RNE rounding — and then
+                            // converted, which silently disabled every
+                            // directed mode on the already-rounded value
+                            // (`RTZ` of `1 + 2^-52 + 2^-53` pinned the RNE
+                            // value, a false-`sat` on the wrong-datum
+                            // probe).  The rounding step now sees the exact
+                            // rational (see `fp_fold::rational_to_fp`);
+                            // a real expression outside the exact-rational
+                            // fragment declines honestly (None).
                             let (rm, arg, eb, sb) = (*rm, *arg, *eb, *sb);
-                            let value = self.eval_real_core(arg, real_memo).map(|v| {
-                                self.real_to_fp(v, FpFormat::new(eb, sb), Self::engine_rm(rm))
-                            });
+                            let value = super::fp_fold::eval_rational(arg, self.manager)
+                                .map(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
                             fp_memo.insert(term, value);
                         }
                         // An FP-sorted `ite`. `needs_ite_elimination` leaves

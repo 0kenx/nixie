@@ -180,6 +180,10 @@ enum FpOpShape {
     Fma(RoundingMode, TermId, TermId, TermId),
     Unary(TermId, UnOp),
     ToFp(RoundingMode, u32, u32, TermId),
+    /// `((_ to_fp eb sb) rm real)`: the operand is a REAL-sorted term whose
+    /// exact rational value the fold rounds itself (it never pins through
+    /// the FP machinery).
+    FromReal(RoundingMode, u32, u32, TermId),
     Pred(TermId, TermId, PredOp),
     Classify(TermId, ClassOp),
 }
@@ -231,7 +235,7 @@ impl FpOpShape {
             Self::Binary(_, a, b, _) => smallvec::smallvec![a, b],
             Self::Fma(_, a, b, c) => smallvec::smallvec![a, b, c],
             Self::Unary(a, _) => smallvec::smallvec![a],
-            Self::ToFp(_, _, _, a) => smallvec::smallvec![a],
+            Self::ToFp(_, _, _, a) | Self::FromReal(_, _, _, a) => smallvec::smallvec![a],
             Self::Pred(a, b, _) => smallvec::smallvec![a, b],
             Self::Classify(a, _) => smallvec::smallvec![a],
         }
@@ -240,6 +244,10 @@ impl FpOpShape {
     /// The exact value/truth of the operation at concrete operand values.
     fn evaluate(&self, engine: &mut Ieee754Engine, vals: &[FpValue]) -> FpValueOrBool {
         match *self {
+            // Intercepted in `fold_one` before evaluation (the operand is
+            // Real-sorted; `vals` never carries it).  The placeholder keeps
+            // this match exhaustive without a partial arm.
+            Self::FromReal(_, _, _, _) => FpValueOrBool::Bool(false),
             Self::Binary(rm, _, _, op) => {
                 engine.set_rounding_mode(engine_rm(rm));
                 let value = match op {
@@ -338,6 +346,7 @@ fn fp_op_shape(kind: &TermKind) -> Option<FpOpShape> {
         TermKind::FpNeg(a) => Some(FpOpShape::Unary(*a, UnOp::Neg)),
         TermKind::FpSqrt(rm, a) => Some(FpOpShape::Binary(*rm, *a, *a, BinOp::Sqrt)),
         TermKind::FpToFp { rm, eb, sb, arg } => Some(FpOpShape::ToFp(*rm, *eb, *sb, *arg)),
+        TermKind::RealToFp { rm, eb, sb, arg } => Some(FpOpShape::FromReal(*rm, *eb, *sb, *arg)),
         TermKind::FpEq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Eq)),
         TermKind::FpLt(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Lt)),
         TermKind::FpLeq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Leq)),
@@ -530,6 +539,59 @@ impl Solver {
             let td = manager.get(op)?;
             fp_op_shape(&td.kind)?
         };
+        // `RealToFp` folds on the operand's exact RATIONAL value — the FP
+        // pin machinery never sees its (Real-sorted) operand.  The guard is
+        // the atom `(operand = literal-of-value)` when the operand is a
+        // compound expression (a literal operand is its own witness).
+        if let FpOpShape::FromReal(rm, eb, sb, arg) = shape {
+            let rational = eval_rational(arg, manager)?;
+            let value = rational_to_fp(&rational, eb, sb, rm);
+            let mut guards: Vec<TermId> = Vec::new();
+            let is_literal = manager.get(arg).is_some_and(|td| {
+                matches!(td.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
+            });
+            if !is_literal {
+                let Some(r64) = rat64(&rational) else {
+                    // Compound operand whose value cannot be spelled as a
+                    // `Rational64` literal: no valid guard atom exists, and
+                    // a guardless clause would be conditional on nothing —
+                    // skip (the model builder still decides the sat side
+                    // exactly).
+                    return None;
+                };
+                if !real_term_arith_clean(arg, manager) {
+                    // The guard atom `(operand = literal)` would mention a
+                    // `div`/`mod`/numeric-`ite` sub-term, and those carry
+                    // defining axioms only in integer mode (real-mode `/`
+                    // is deliberately axiom-less — see
+                    // `instantiate_arith_axioms`); an axiom-bearing-less
+                    // atom trips `arith_defs_incomplete` and downgrades the
+                    // whole verdict to `Unknown`.  Skip the fold; the sat
+                    // side stays with the model builder's exact path.
+                    return None;
+                }
+                let lit_real = manager.mk_real(r64);
+                guards.push(manager.mk_eq(arg, lit_real));
+            }
+            let lit = mint_fp_lit(&value, manager);
+            self.euf.declare_fp_const(lit, fp_const_key(&value));
+            let conclusion = manager.mk_eq(op, lit);
+            let lemma = build_fold_lemma(&guards, conclusion, manager);
+            let added = self.fp_fold_lemmas.insert(lemma);
+            if added {
+                self.trail
+                    .push(super::trail::TrailOp::FpFoldLemmaAdded { term: lemma });
+                self.assert_ground_lemma(lemma, manager);
+            }
+            return Some((
+                Some(FpPin {
+                    value,
+                    witness: lit,
+                    guards,
+                }),
+                added,
+            ));
+        }
         // Resolve every operand to a concrete pin; the fold's guard set is
         // the union of the operands' justification atoms (deduplicated,
         // order-stable).  Literal operands contribute none.
@@ -660,5 +722,395 @@ fn engine_rm(rm: RoundingMode) -> FpRoundingMode {
         RoundingMode::RTP => FpRoundingMode::RoundTowardPositive,
         RoundingMode::RTN => FpRoundingMode::RoundTowardNegative,
         RoundingMode::RTZ => FpRoundingMode::RoundTowardZero,
+    }
+}
+
+// ===========================================================================
+// Exact rational → IEEE-754 conversion (the `RealToFp` semantics)
+// ===========================================================================
+//
+// `((_ to_fp eb sb) RM real-expr)` must round the *exact rational* value of
+// `real-expr` to the target grid under `RM` — a single rounding step.  The
+// concrete model builder previously evaluated the real expression as an
+// `f64` first (an RNE rounding of its own!) and then converted, which makes
+// every directed mode a no-op on the already-rounded value: `RTZ` of
+// `1 + 2^-52 + 2^-53` pinned `1 + 2·2^-52` (the RNE value) instead of the
+// true truncation `1 + 2^-52` — a **false-`sat`** on the wrong-datum probe
+// (z3: `unsat`).  Everything below is exact `BigInt`/`BigRational`
+// arithmetic; no `f64` participates in any converted value.
+
+use num_rational::BigRational;
+use num_traits::{Signed, Zero};
+
+/// The exact rational value of an Int/Real-sorted ground term: numeric
+/// literals and the exact arithmetic connectives.  `None` for anything else
+/// (variables, `div`/`mod`, quantifiers, …) — the callers fold/refine
+/// honestly without it.  Iterative post-order walk (the explicit-stack rule
+/// over user-controlled DAG depth), memoized on `TermId`.  The combine step
+/// re-derives its operand ids from the term kind and reads their values
+/// back from the memo, so no values travel through the stack.
+pub(super) fn eval_rational(root: TermId, manager: &TermManager) -> Option<BigRational> {
+    enum Step {
+        Open(TermId),
+        Combine(TermId),
+    }
+    let mut memo: FxHashMap<TermId, Option<BigRational>> = FxHashMap::default();
+    let mut stack = vec![Step::Open(root)];
+    while let Some(step) = stack.pop() {
+        let term = match step {
+            Step::Open(term) => {
+                if memo.contains_key(&term) {
+                    continue;
+                }
+                let Some(td) = manager.get(term) else {
+                    memo.insert(term, None);
+                    continue;
+                };
+                // Collect the operand ids for the combinators; everything
+                // else is either a literal (emitted) or unsupported (None).
+                let operands: Option<SmallVec<[TermId; 4]>> = match &td.kind {
+                    TermKind::IntConst(n) => {
+                        memo.insert(term, Some(BigRational::from(n.clone())));
+                        None
+                    }
+                    TermKind::RealConst(r) => {
+                        memo.insert(
+                            term,
+                            Some(BigRational::new(
+                                num_bigint::BigInt::from(*r.numer()),
+                                num_bigint::BigInt::from(*r.denom()),
+                            )),
+                        );
+                        None
+                    }
+                    TermKind::Neg(a) => Some(smallvec::smallvec![*a]),
+                    TermKind::Sub(a, b) => Some(smallvec::smallvec![*a, *b]),
+                    TermKind::Div(a, b) => Some(smallvec::smallvec![*a, *b]),
+                    TermKind::Add(args) => Some(args.iter().copied().collect()),
+                    TermKind::Mul(args) => Some(args.iter().copied().collect()),
+                    _ => {
+                        memo.insert(term, None);
+                        None
+                    }
+                };
+                if let Some(ops) = operands {
+                    stack.push(Step::Combine(term));
+                    for &op in ops.iter().rev() {
+                        stack.push(Step::Open(op));
+                    }
+                }
+                continue;
+            }
+            Step::Combine(term) => term,
+        };
+        // Combine: pull the operands' values from the memo.  A child that
+        // could not be evaluated poisons this term (None), never a default.
+        let Some(td) = manager.get(term) else {
+            memo.insert(term, None);
+            continue;
+        };
+        let value: Option<BigRational> = match &td.kind {
+            TermKind::Neg(a) => memo.get(a).cloned().flatten().map(|v| -v),
+            TermKind::Sub(a, b) => match (
+                memo.get(a).cloned().flatten(),
+                memo.get(b).cloned().flatten(),
+            ) {
+                (Some(x), Some(y)) => Some(x - y),
+                _ => None,
+            },
+            TermKind::Div(a, b) => match (
+                memo.get(a).cloned().flatten(),
+                memo.get(b).cloned().flatten(),
+            ) {
+                (Some(x), Some(y)) if !y.is_zero() => Some(x / y),
+                _ => None,
+            },
+            TermKind::Add(args) => {
+                let mut acc = BigRational::zero();
+                for &a in args {
+                    match memo.get(&a).cloned().flatten() {
+                        Some(v) => acc += v,
+                        None => {
+                            acc = BigRational::zero();
+                            break;
+                        }
+                    }
+                }
+                // Distinguish "all-zero sum" from "poisoned": use the same
+                // Option flow as the other arms via a flag.
+                let poisoned = args
+                    .iter()
+                    .any(|a| memo.get(a).cloned().flatten().is_none());
+                if poisoned { None } else { Some(acc) }
+            }
+            TermKind::Mul(args) => {
+                let mut acc = BigRational::from(BigInt::from(1));
+                let mut poisoned = false;
+                for &a in args {
+                    match memo.get(&a).cloned().flatten() {
+                        Some(v) => acc *= v,
+                        None => {
+                            poisoned = true;
+                            break;
+                        }
+                    }
+                }
+                if poisoned { None } else { Some(acc) }
+            }
+            _ => None,
+        };
+        memo.insert(term, value);
+    }
+    memo.get(&root).cloned().flatten()
+}
+
+/// The `Rational64` view of an exact rational, when both parts fit — used
+/// only to MINT guard atoms (`mk_real` takes a `Rational64`); the rounding
+/// itself always stays on `BigRational`.
+fn rat64(r: &BigRational) -> Option<num_rational::Rational64> {
+    let n = r.numer().to_i64()?;
+    let d = r.denom().to_i64()?;
+    Some(num_rational::Rational64::new(n, d))
+}
+
+/// Round the exact rational `r` to the IEEE-754 `(eb, sb)` grid under `rm`
+/// — a single correctly-rounded step, from first principles (the exact
+/// `BigInt` analogue of the generator-side oracle in `bench/obligation`'s
+/// `fpboundary` family).  Total: every rational has a correctly-rounded
+/// image, including the overflow (per-mode ±inf / max-finite) and
+/// underflow (subnormal grid, per-mode ±0 / ±min-subnormal) corners.
+pub(super) fn rational_to_fp(r: &BigRational, eb: u32, sb: u32, rm: RoundingMode) -> FpValue {
+    use nixie_theories::fp::ieee754_full::FpClass;
+    let _ = FpClass::QuietNaN; // (format-class imports kept for readers)
+    let format = FpFormat::new(eb, sb);
+    if r.is_zero() {
+        // The exact zero converts to +0 (the real 0 has no sign; z3 agrees).
+        return FpValue::pos_zero(format);
+    }
+    let neg = r.is_negative();
+    let n = r.numer().abs();
+    let d = r.denom();
+
+    // bias and exponent bounds of the target format
+    let bias: i64 = (1i64 << (eb - 1)) - 1;
+    let p: i64 = sb as i64; // significand bits incl. implicit
+    let e_min_unit: i64 = 1 - bias - (p - 1); // binary exp of the subnormal LSB
+    let e_max: i64 = bias; // max normal binary exponent
+
+    // floor(log2(n/d)) via bit lengths, corrected by one comparison.
+    let bits = |x: &BigInt| (x.bits() as i64) - 1; // floor(log2 x) for x>0
+    let mut bin_exp = bits(&n) - bits(d);
+    // Compare n/d against 2^bin_exp: n ? d << bin_exp (or n << -bin_exp).
+    if bin_exp >= 0 {
+        if n < (d.clone() << bin_exp) {
+            bin_exp -= 1;
+        }
+    } else if (n.clone() << (-bin_exp)) < d.clone() {
+        bin_exp -= 1;
+    }
+
+    // Far overflow: beyond max normal + 1 full exponent step — no rounding
+    // can come back inside more than one ulp, so saturate per mode.
+    if bin_exp > e_max + 1 {
+        return saturate_overflow(neg, rm, format);
+    }
+    // Grid: the normal grid's LSB sits at bin_exp - (p-1), but never below
+    // the subnormal unit.
+    let unit_exp = (bin_exp - (p - 1)).max(e_min_unit);
+    // cell = floor(|r| / 2^unit_exp) and the exact remainder, via BigInt
+    // division: |r| = n/d; cell = floor(n / (d·2^unit_exp)) when unit_exp ≥ 0,
+    // else floor(n·2^-unit_exp / d).
+    let (cell, rem_num, rem_den) = if unit_exp >= 0 {
+        let den = d.clone() << unit_exp;
+        let q = &n / &den;
+        let rem = &n - &q * &den;
+        (q, rem, den)
+    } else {
+        let num = n.clone() << (-unit_exp);
+        let q = &num / d;
+        let rem = &num - &q * d;
+        (q, rem, d.clone())
+    };
+    let inexact = !rem_num.is_zero();
+    // The halfway mark: |r| - cell·2^unit_exp vs 2^(unit_exp-1) ⟺
+    // rem/den vs 1/2 ⟺ 2·rem vs den.
+    let twice_rem = rem_num << 1;
+    let (above_half, at_half) = if inexact {
+        (twice_rem > rem_den, twice_rem == rem_den)
+    } else {
+        (false, false)
+    };
+    let lsb = (&cell & BigInt::from(1)) == BigInt::from(1);
+    let round_away = match rm {
+        RoundingMode::RNE => above_half || (at_half && lsb),
+        RoundingMode::RNA => above_half || at_half,
+        RoundingMode::RTP => !neg && inexact,
+        RoundingMode::RTN => neg && inexact,
+        RoundingMode::RTZ => false,
+    };
+    let mut cell = cell;
+    if round_away {
+        cell += 1u32;
+    }
+    // Assemble.  Subnormal grid: cells are the significand field (≤ 2^(p-1)-1,
+    // a carry reaching 2^(p-1) is the smallest normal).
+    let subnormal_grid = bin_exp - (p - 1) < e_min_unit;
+    if subnormal_grid {
+        let smallest_normal = BigInt::from(1u8) << (p - 1);
+        if cell >= smallest_normal {
+            return FpValue {
+                sign: neg,
+                exponent: 1,
+                significand: 0,
+                format,
+            };
+        }
+        return FpValue {
+            sign: neg,
+            exponent: 0,
+            // p-1 = sb-1 ≤ 63 for every real format; checked for safety.
+            significand: cell.to_u64_saturating(),
+            format,
+        };
+    }
+    let normal_max = BigInt::from(1u8) << p;
+    if cell >= normal_max {
+        // Carry out of the normal grid: one exponent up (possibly overflow).
+        let bin_exp_after = unit_exp + (p - 1) + 1;
+        if bin_exp_after > e_max {
+            return saturate_overflow(neg, rm, format);
+        }
+        return FpValue {
+            sign: neg,
+            exponent: bin_exp_after as u64,
+            significand: 0,
+            format,
+        };
+    }
+    let bin_exp_final = unit_exp + (p - 1);
+    if bin_exp_final > e_max {
+        // Rounding carried into the overflow range from below.
+        return saturate_overflow(neg, rm, format);
+    }
+    let biased = bin_exp_final + bias;
+    let implicit = BigInt::from(1u8) << (p - 1);
+    let frac = cell - implicit;
+    FpValue {
+        sign: neg,
+        exponent: biased as u64,
+        significand: frac.to_u64_saturating(),
+        format,
+    }
+}
+
+/// Saturate a beyond-range value per mode (the exact analogue of the
+/// engine's `overflow_result`).
+fn saturate_overflow(neg: bool, rm: RoundingMode, format: FpFormat) -> FpValue {
+    match rm {
+        RoundingMode::RTP if neg => FpValue {
+            sign: neg,
+            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            significand: (1u64 << (format.significand_bits - 1)) - 1,
+            format,
+        },
+        RoundingMode::RTN if !neg => FpValue {
+            sign: neg,
+            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            significand: (1u64 << (format.significand_bits - 1)) - 1,
+            format,
+        },
+        RoundingMode::RTZ => FpValue {
+            sign: neg,
+            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            significand: (1u64 << (format.significand_bits - 1)) - 1,
+            format,
+        },
+        _ => {
+            if neg {
+                FpValue::neg_infinity(format)
+            } else {
+                FpValue::pos_infinity(format)
+            }
+        }
+    }
+}
+
+/// Checked `u64` extraction that saturates rather than truncates (the
+/// significand fields of every real format fit `u64`; a hypothetical wider
+/// format saturates to its all-ones field, which is the closest the value
+/// type can express).
+trait ToU64Saturating {
+    fn to_u64_saturating(self) -> u64;
+}
+
+impl ToU64Saturating for BigInt {
+    fn to_u64_saturating(self) -> u64 {
+        use num_traits::ToPrimitive;
+        self.to_u64().unwrap_or(u64::MAX)
+    }
+}
+
+/// Whether a Real/Int-sorted ground term contains no `div` / `mod` /
+/// numeric-`ite` sub-term — the kinds whose defining axioms exist only in
+/// integer mode.  Iterative structural scan.
+fn real_term_arith_clean(root: TermId, manager: &TermManager) -> bool {
+    let mut stack = vec![root];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(term) = stack.pop() {
+        if !visited.insert(term) {
+            continue;
+        }
+        let Some(td) = manager.get(term) else {
+            continue;
+        };
+        match &td.kind {
+            TermKind::Div(..) | TermKind::Mod(..) => return false,
+            TermKind::Ite(..) => {
+                // Only NUMERIC ites are axiom-bearing kinds; a Bool ite
+                // (e.g. a rounding-mode case split) is harmless, but
+                // distinguishing needs the sort — treat any ite under a
+                // real term as numeric (the conservative, honest choice).
+                return false;
+            }
+            _ => {}
+        }
+        super::term_walk::collect_structural_children(&td.kind, &mut stack);
+    }
+    true
+}
+
+#[cfg(test)]
+mod conv_tests {
+    use super::*;
+
+    fn rt(v: i64, eb: u32, sb: u32, rm: RoundingMode) -> u64 {
+        let r = BigRational::new(BigInt::from(v), BigInt::from(1));
+        let out = rational_to_fp(&r, eb, sb, rm);
+        ((out.sign as u64) << 63) | (out.exponent << (sb as u64 - 1)) | out.significand
+    }
+
+    #[test]
+    fn integer_values_convert_to_their_f64_bits() {
+        for v in [
+            1i64,
+            2,
+            3,
+            89524,
+            10296802,
+            -377501520,
+            15662990103417,
+            (1 << 53) - 1,
+        ] {
+            let bits = rt(v, 11, 53, RoundingMode::RNE);
+            let expected = v as f64;
+            let eb = (bits >> 52) & 0x7ff;
+            let frac = bits & ((1u64 << 52) - 1);
+            let _ = (eb, frac, expected);
+            assert_eq!(
+                bits,
+                expected.to_bits(),
+                "conversion of {v} produced wrong bits"
+            );
+        }
     }
 }

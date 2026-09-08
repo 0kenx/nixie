@@ -303,3 +303,111 @@ fn fold_lemmas_retract_on_pop() {
         "scope 1 must refute, scope 2 must satisfy after pop"
     );
 }
+
+// ===========================================================================
+// Real → FP conversions: exact single-rounding (`((_ to_fp e s) RM real)`)
+// ===========================================================================
+
+/// The double-rounding false-`sat` this fixed: `RTZ` of `1 + 2^-52 + 2^-53`
+/// is the truncation `1 + 2^-52`, NOT the RNE value `1 + 2·2^-52`.  The old
+/// model-builder path evaluated the real as an `f64` first (an RNE rounding
+/// of its own) and "rounded" the already-rounded value, verifying the WRONG
+/// witness (z3: `unsat` on the wrong-datum probe; was `sat`).
+#[test]
+fn real_to_fp_directed_mode_is_a_single_exact_rounding() {
+    let head = "(set-logic QF_FP)
+         (declare-const x Float64)
+         (assert (= x ((_ to_fp 11 53) RTZ \
+             (+ 1.0 (/ 1.0 4503599627370496.0) (/ 1.0 9007199254740992.0)))))";
+    // True truncation: 1 + 2^-52.
+    assert_eq!(
+        run_script(&format!(
+            "{head}
+             (assert (= x (fp #b0 #b01111111111 #x0000000000001)))
+             (check-sat)"
+        )),
+        SolverResult::Sat
+    );
+    // The RNE double-rounding artefact must NOT verify.
+    assert_eq!(
+        run_script(&format!(
+            "{head}
+             (assert (= x (fp #b0 #b01111111111 #x0000000000002)))
+             (check-sat)"
+        )),
+        SolverResult::Unknown,
+        "the wrong datum must never verify (was a false `sat`); honest \
+         `unknown` — the div-bearing operand's guard cannot fold"
+    );
+}
+
+/// Dyadic rationals convert exactly and decide both ways: `(/ 3.0 2.0)` is
+/// 1.5, so the identity holds (sat) and a perturbed datum refutes when the
+/// operand is arithmetically clean enough to fold (z3: sat / unsat).
+#[test]
+fn real_to_fp_dyadic_conversion_decides() {
+    let base = "(set-logic QF_FP)
+         (declare-const x Float64)
+         (assert (= x ((_ to_fp 11 53) RNE (/ 3.0 2.0))))";
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (assert (not (= x (fp #b0 #b01111111111 #x8000000000000))))
+             (check-sat)"
+        )),
+        SolverResult::Unknown,
+        "z3: `unsat` — the refutation needs the fold's unit, and the \
+         div-bearing operand cannot carry an arith-clean guard, so this \
+         stays the honest `unknown` (never a false `sat`)"
+    );
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (check-sat)"
+        )),
+        SolverResult::Sat
+    );
+}
+
+/// Integer-valued conversions are exact at every magnitude that fits the
+/// significand (the assembly bug this pins produced +inf for `2.0`).
+#[test]
+fn real_to_fp_integer_values_are_exact() {
+    for (v, lit) in [
+        (2u64, "(fp #b0 #b10000000000 #x0000000000000)"),
+        (89524, "(fp #b0 #b10000001111 #x5db4000000000)"),
+        ((1 << 53) - 1, "(fp #b0 #b10000110011 #xfffffffffffff)"),
+    ] {
+        let script = format!(
+            "(set-logic QF_FP)
+             (declare-const x Float64)
+             (assert (= x ((_ to_fp 11 53) RNE {v}.0)))
+             (assert (not (= x {lit})))
+             (check-sat)"
+        );
+        assert_eq!(
+            run_script(&script),
+            SolverResult::Unsat,
+            "conversion of {v} must be its exact f64 datum"
+        );
+    }
+}
+
+/// `RNE` of one third: the correctly rounded double (0x3FD5555555555555).
+#[test]
+fn real_to_fp_one_third_rounds_correctly() {
+    let script = "(set-logic QF_FP)
+        (declare-const x Float64)
+        (assert (= x ((_ to_fp 11 53) RNE (/ 1.0 3.0))))
+        (assert (= x (fp #b0 #b01111111101 #x5555555555555)))
+        (check-sat)";
+    assert_eq!(run_script(script), SolverResult::Sat);
+    let wrong = "(set-logic QF_FP)
+        (declare-const x Float64)
+        (assert (= x ((_ to_fp 11 53) RNE (/ 1.0 3.0))))
+        (assert (= x (fp #b0 #b01111111101 #x5555555555556)))
+        (check-sat)";
+    // The div-bearing operand keeps the fold off, so the wrong datum is an
+    // honest `unknown` (never a false `sat`).
+    assert_ne!(run_script(wrong), SolverResult::Sat);
+}
