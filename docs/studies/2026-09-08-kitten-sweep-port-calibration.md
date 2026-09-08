@@ -391,3 +391,22 @@ for the bigger budgets (wall 0.908× on both-solved cells).
 **Landed:** default effort 100 → 400 ‰ (enablement rule: solved count
 better at every comparison, 0 disagreements; `NIXIE_SWEEP_EFFORT`
 restores any other value).
+
+## Part 3 anchor table (from the store, seeds 1–10)
+
+| anchor | base | sweep@100 ‰ | sweep@400 ‰+delay |
+|---|---|---|---|
+| 6s167-opt | 10/10, 65 873 gm | 10/10, 40 967 | 10/10, **33 561** |
+| FmlaEquivChain | 2/10 | 7/10 | **8/10** |
+| x9-09054 | 0/10 | 0/10 | 0/10 (cap-boundary) |
+| stable-300 | 6/10, 130 403 | 6/10, 130 403 | **7/10**, 164 289 |
+| constraints_17 | 6/10, 14 114 | **9/10**, 17 786 | 9/10, 20 037 |
+
+(The stable-300 / constraints_17 cost upticks with more solved cells are
+the §11 shape: the newly-solved seeds are the expensive tail cells that
+previously capped out — solved-at-cap and cost-geomean over both-solved
+cells answer different questions.)
+
+Landed-binary identity: 6/6 sampled `sweep400` cells bit-identical
+between the screen binary (97cf2b9, env override) and the landed
+default (c9cfe71).
