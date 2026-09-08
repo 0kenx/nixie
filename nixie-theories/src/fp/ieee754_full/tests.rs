@@ -617,3 +617,96 @@ fn test_division_directed_rounding_brackets_rne() {
     assert!(rtp_f >= rtn_f, "RTP must be >= RTN for positive operands");
     assert!(rtp_f > 3.333 && rtn_f < 3.334);
 }
+
+// ---------------------------------------------------------------------------
+// SMT-LIB `fp.min` / `fp.max` semantics (NaN yields the other operand; a tie
+// prefers the negative zero for min / the positive zero for max).  The
+// previous `Ordering::Equal => a` made `fp.min(+0,-0)` the wrong datum.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn min_max_mixed_zero_ties_follow_smtlib() {
+    let mut engine = Ieee754Engine::new();
+    let pz = FpValue::pos_zero(FpFormat::FLOAT64);
+    let nz = FpValue::neg_zero(FpFormat::FLOAT64);
+    let m1 = engine.min(&pz, &nz);
+    assert_eq!((m1.sign, m1.is_zero()), (true, true), "fp.min(+0,-0) = -0");
+    let m2 = engine.min(&nz, &pz);
+    assert_eq!((m2.sign, m2.is_zero()), (true, true), "fp.min(-0,+0) = -0");
+    let m3 = engine.max(&pz, &nz);
+    assert_eq!((m3.sign, m3.is_zero()), (false, true), "fp.max(+0,-0) = +0");
+    let m4 = engine.max(&nz, &pz);
+    assert_eq!((m4.sign, m4.is_zero()), (false, true), "fp.max(-0,+0) = +0");
+}
+
+#[test]
+fn min_max_nan_yields_the_other_operand() {
+    let mut engine = Ieee754Engine::new();
+    let nan = FpValue::nan(FpFormat::FLOAT64);
+    let one = FpValue::from_f64(1.0);
+    assert_eq!(engine.min(&nan, &one).to_f64(), Some(1.0));
+    assert_eq!(engine.min(&one, &nan).to_f64(), Some(1.0));
+    assert_eq!(engine.max(&nan, &one).to_f64(), Some(1.0));
+    assert_eq!(engine.max(&one, &nan).to_f64(), Some(1.0));
+}
+
+// ---------------------------------------------------------------------------
+// Directed-mode gradual underflow: the rounding decision for a result below
+// the normal range belongs on the SUBNORMAL grid.  `(-min_sub) * (+min_sub)`
+// underflows far below the smallest subnormal; RTN must round the negative
+// result to -min_subnormal (toward -inf), RTP the positive one to
+// +min_subnormal, while RNE/RTZ give zero.  The previous underflow path
+// truncated with the dropped bits never consulted and returned ±0
+// unconditionally (false-`sat` on the `= -0` refutation; z3: `unsat`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn directed_rounding_underflow_rounds_on_the_subnormal_grid() {
+    let f = FpFormat::FLOAT64;
+    let min_sub_p = FpValue {
+        sign: false,
+        exponent: 0,
+        significand: 1,
+        format: f,
+    };
+    let min_sub_n = FpValue {
+        sign: true,
+        exponent: 0,
+        significand: 1,
+        format: f,
+    };
+    let is_zero_with_sign =
+        |v: &FpValue, sign: bool| v.exponent == 0 && v.significand == 0 && v.sign == sign;
+    let is_min_sub =
+        |v: &FpValue, sign: bool| v.exponent == 0 && v.significand == 1 && v.sign == sign;
+
+    let mut engine = Ieee754Engine::new();
+    engine.set_rounding_mode(FpRoundingMode::RoundTowardNegative);
+    let r = engine.mul(&min_sub_n, &min_sub_p);
+    assert!(
+        is_min_sub(&r, true),
+        "RTN of a negative far-underflow must be -min_subnormal"
+    );
+
+    engine.set_rounding_mode(FpRoundingMode::RoundTowardPositive);
+    let r = engine.mul(&min_sub_n, &min_sub_p);
+    assert!(
+        is_zero_with_sign(&r, true),
+        "RTP of a negative far-underflow must be -0"
+    );
+
+    engine.set_rounding_mode(FpRoundingMode::RoundTowardPositive);
+    let r = engine.mul(&min_sub_p, &min_sub_p);
+    assert!(
+        is_min_sub(&r, false),
+        "RTP of a positive far-underflow must be +min_subnormal"
+    );
+
+    engine.set_rounding_mode(FpRoundingMode::RoundTowardZero);
+    let r = engine.mul(&min_sub_n, &min_sub_p);
+    assert!(is_zero_with_sign(&r, true), "RTZ underflow must be -0");
+
+    engine.set_rounding_mode(FpRoundingMode::RoundNearestTiesToEven);
+    let r = engine.mul(&min_sub_n, &min_sub_p);
+    assert!(is_zero_with_sign(&r, true), "RNE far-underflow must be -0");
+}

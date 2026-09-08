@@ -19,6 +19,7 @@ pub(super) mod dt_axioms;
 pub(super) mod encode;
 pub(super) mod encode_guards;
 pub(super) mod equality_graph;
+pub(super) mod fp_fold;
 pub(super) mod int_case_split;
 pub(super) mod ite_table;
 pub(crate) mod logic_contract;
@@ -310,6 +311,17 @@ pub struct Solver {
     /// the trail (`TrailOp::ParityLemmaAdded`) in lockstep with the SAT
     /// clauses `pop` retracts.
     pub(super) parity_lemmas: FxHashSet<TermId>,
+    /// Ground FP fold lemmas already emitted (hash-consed term ids), scoped
+    /// by the trail (`TrailOp::FpFoldLemmaAdded`) in lockstep with the SAT
+    /// clauses `pop` retracts (see `solver/fp_fold.rs`).
+    pub(super) fp_fold_lemmas: FxHashSet<TermId>,
+    /// Per-`check` flags for the FP fold fall-through (see the FP honesty
+    /// gate in `check_core`): fold clauses were asserted this check, so the
+    /// gate defers to the search (`fp_fold_pending`) and any `Sat` the
+    /// search returns must first survive `try_fp_model_sat`
+    /// (`fp_fold_verify`).  Both reset at `check_core` entry.
+    pub(super) fp_fold_pending: bool,
+    pub(super) fp_fold_verify: bool,
     /// Function symbols that appear inside an asserted quantifier (the body or
     /// a trigger of a `forall`/`exists`). `purify_numeric_uf_args` skips
     /// abstracting the numeric arguments of any function in this set, so a
@@ -856,6 +868,9 @@ impl Solver {
             parity_rows: Vec::new(),
             parity_watermark: 0,
             parity_lemmas: FxHashSet::default(),
+            fp_fold_lemmas: FxHashSet::default(),
+            fp_fold_pending: false,
+            fp_fold_verify: false,
             quantifier_uf_funcs: FxHashSet::default(),
             numarg_proxies: FxHashMap::default(),
             quant_uf_const_pins: FxHashMap::default(),
@@ -1493,6 +1508,8 @@ impl Solver {
         self.array_axioms_saturated = false;
         self.array_witness_mints = 0;
         self.array_witness_budget_exhausted = false;
+        self.fp_fold_pending = false;
+        self.fp_fold_verify = false;
         // Per-goal theory-lemma log (certified mode reads it after the
         // search; see `solver/certification.rs`).
         self.derived_reasons.clear_theory_lemmas();
@@ -1618,6 +1635,14 @@ impl Solver {
             return SolverResult::Unsat;
         }
 
+        // FP constant folding through EUF class pins: guarded *valid* lemmas
+        // `(a = lit1) ∧ (b = lit2) → (fp.op(rm,a,b) = fold(lit1,lit2))` (and
+        // the predicate forms) for every ground operation whose operands'
+        // classes are pinned to literals.  Closes the unsat direction the
+        // pattern checks miss (`x = c ∧ y = fp.add x x ∧ y = c2`), one
+        // round per check; see `solver/fp_fold.rs`.
+        self.fp_fold_pending = self.instantiate_fp_folds(manager);
+
         // Check datatype constraints for early conflict detection
         if self.check_dt_constraints(manager) {
             return SolverResult::Unsat;
@@ -1722,7 +1747,18 @@ impl Solver {
             return SolverResult::Unknown;
         }
         if self.fp_atoms_need_theory(manager) {
-            return SolverResult::Unknown;
+            // Fold clauses were asserted this check: the formula may be
+            // refutable through them (the value-mark conflicts live in the
+            // CDCL(T) search's EUF layer, not in this early phase), so the
+            // early `Unknown` would abandon a decidable goal.  Fall through
+            // to the search; any `Sat` it returns must first survive
+            // `try_fp_model_sat` (see the `SatResult::Sat` arm) — the
+            // free-Boolean fp atoms mean a raw search `Sat` proves nothing.
+            if self.fp_fold_pending {
+                self.fp_fold_verify = true;
+            } else {
+                return SolverResult::Unknown;
+            }
         }
 
         // Honesty gate (soundness): an arithmetic comparison / equality atom that
@@ -2175,6 +2211,21 @@ impl Solver {
                     if resource_exhausted {
                         // A real theory conflict was dropped at the conflict
                         // limit; never fabricate Sat over a suppressed conflict.
+                        self.unsat_core = None;
+                        return SolverResult::Unknown;
+                    }
+                    // FP fold fall-through (see the FP honesty gate in
+                    // `check_core`): the search ran with fp atoms as free
+                    // Booleans, so its `Sat` is only a candidate.  Accept it
+                    // exclusively through a verified concrete model — the
+                    // same bit-exact witness the early path uses — and keep
+                    // the honest `Unknown` otherwise.  Runs before the
+                    // refinement loops so every round's `Sat` is gated.
+                    if self.fp_fold_verify
+                        && (!self.try_fp_model_sat(manager)
+                            || self.downgrade_if_injective_model_dishonest(manager))
+                    {
+                        self.model = None;
                         self.unsat_core = None;
                         return SolverResult::Unknown;
                     }
@@ -3650,6 +3701,13 @@ impl Solver {
                             // SAT scope; forget the dedup entry so a later
                             // scope re-emits the lemma if it still holds.
                             self.parity_lemmas.remove(&term);
+                        }
+                        TrailOp::FpFoldLemmaAdded { term } => {
+                            // Same contract as the parity lemmas: the fold
+                            // clause is retracted with the popped SAT scope;
+                            // forget the dedup entry so a later scope can
+                            // re-emit the (still valid) lemma.
+                            self.fp_fold_lemmas.remove(&term);
                         }
                         TrailOp::ArithConstAxiomAdded { term, const_val } => {
                             // The triangle clauses for this `(term, const)` pair

@@ -646,6 +646,95 @@ impl Ieee754Engine {
             self.inexact_flag = true;
         }
 
+        // ======== gradual underflow: round on the SUBNORMAL grid ========
+        //
+        // When the exact result lands at or below the smallest normal
+        // exponent, the representable grid is coarser than the normal
+        // significand grid, so rounding must be decided at the *subnormal*
+        // ulp — re-extracting guard/round/sticky at that position (plus every
+        // bit below the 128-bit window as sticky).  Deciding on the normal
+        // grid first and then truncating (the previous code: `significand >>=
+        // shift_amount` with the dropped bits never consulted) rounded every
+        // mode toward zero, and the `shift_amount >= precision` arm returned
+        // ±0 unconditionally — so `fp.mul RTN (-min_subnormal) (+min_subnormal)`
+        // produced -0 where IEEE requires -min_subnormal (round toward -inf),
+        // a false-`sat` on the `= -0` refutation (z3: unsat).
+        let biased_exp_pre = exponent + format.bias();
+        if biased_exp_pre <= 0 {
+            self.underflow_flag = true;
+            if needs_rounding {
+                self.inexact_flag = true;
+            }
+            // Grid: floor = significand >> shift, remainder = the bits that
+            // shift drops (plus guard/round/sticky below the 128-bit window).
+            let raw_shift = 1 - biased_exp_pre; // >= 1
+            let shift = u32::try_from(raw_shift).unwrap_or(u32::MAX);
+            let floor_sig: u128 = if shift >= 128 {
+                0
+            } else {
+                significand >> shift
+            };
+            // Guard/round/sticky of the coarse shift, in `should_round_up`'s
+            // terms; every bit that cannot influence the guard position
+            // collapses into sticky.
+            let (guard2, round2, sticky2) = if shift >= 128 {
+                (0, 0, (significand != 0) as u128)
+            } else {
+                let g2 = if shift > 0 {
+                    (significand >> (shift - 1)) & 1
+                } else {
+                    0
+                };
+                let r2 = if shift > 1 {
+                    (significand >> (shift - 2)) & 1
+                } else {
+                    0
+                };
+                let low_mask = if shift > 2 {
+                    (1u128 << (shift - 2)).wrapping_sub(1)
+                } else {
+                    0
+                };
+                let low_nonzero = (significand & low_mask) != 0;
+                let s2 = (low_nonzero || sticky != 0 || round != 0) as u128;
+                (g2, r2, s2)
+            };
+            // Below the 128-bit window the original guard bit also carries
+            // magnitude information: fold it into the sticky of the coarse
+            // grid (guard2/round2 already sit above it only when the coarse
+            // shift re-extracts them from the window; when the window's own
+            // bits shift out entirely, the original guard must not vanish).
+            let sticky_all = sticky2 | ((guard != 0) as u128);
+            let lsb2 = floor_sig & 1;
+            let round_up_sub =
+                self.should_round_up(unpacked.sign, guard2, round2, sticky_all, lsb2);
+            let rounded = floor_sig.wrapping_add(u128::from(round_up_sub));
+            let subnormal_mask = (1u128 << (precision - 1)) - 1;
+            if rounded == 0 {
+                return if unpacked.sign {
+                    FpValue::neg_zero(format)
+                } else {
+                    FpValue::pos_zero(format)
+                };
+            }
+            if rounded <= subnormal_mask {
+                return FpValue {
+                    sign: unpacked.sign,
+                    exponent: 0,
+                    significand: rounded as u64,
+                    format,
+                };
+            }
+            // rounded == 2^(precision-1): the carry crosses into the smallest
+            // NORMAL (biased exponent 1, empty fraction).
+            return FpValue {
+                sign: unpacked.sign,
+                exponent: 1,
+                significand: 0,
+                format,
+            };
+        }
+
         // Apply rounding based on mode
         let pre_round_lsb = significand & 1;
         let round_up = self.should_round_up(unpacked.sign, guard, round, sticky, pre_round_lsb);
@@ -693,29 +782,6 @@ impl Ieee754Engine {
                         FpValue::pos_infinity(format)
                     }
                 }
-            };
-        }
-
-        // Handle underflow (subnormal or zero)
-        if biased_exp <= 0 {
-            self.underflow_flag = true;
-            // Gradual underflow to subnormal
-            let shift_amount = 1 - biased_exp;
-            if shift_amount >= precision as i32 {
-                // Too small, becomes zero
-                return if unpacked.sign {
-                    FpValue::neg_zero(format)
-                } else {
-                    FpValue::pos_zero(format)
-                };
-            }
-            // Shift to create subnormal
-            significand >>= shift_amount;
-            return FpValue {
-                sign: unpacked.sign,
-                exponent: 0,
-                significand: (significand & ((1u128 << (precision - 1)) - 1)) as u64,
-                format,
             };
         }
 
@@ -1405,43 +1471,70 @@ impl Ieee754Engine {
         self.round_exact_to_fp(sign_r, &mag, e, false, format)
     }
 
-    /// Minimum of two values (IEEE 754 semantics)
+    /// Minimum of two values (SMT-LIB `fp.min` semantics).
+    ///
+    /// The SMT-LIB FloatingPoint theory defines
+    /// `fp.min(x,y) = ite(fp.lt x y, x, ite(fp.lt y x, y, ite(isNaN x, y,
+    /// ite(isNaN y, x, ite(isNegative x, x, y)))))` — NOT IEEE 754 `minNum`:
+    /// a NaN operand yields the *other* operand, and a tie (equal values or
+    /// mixed-sign zeros) prefers the negative one, so `fp.min(+0,-0) = -0`
+    /// (z3 agreement).  The previous `Ordering::Equal => a` returned the
+    /// first operand, making `fp.min(+0,-0)` the wrong datum and refuting
+    /// its own definition.
     pub fn min(&mut self, a: &FpValue, b: &FpValue) -> FpValue {
         let ua = self.unpack(a);
         let ub = self.unpack(b);
 
-        // NaN propagation
+        // NaN yields the other operand (both NaN: y, per the ite chain).
         if ua.is_nan() {
-            return *a;
+            return *b;
         }
         if ub.is_nan() {
-            return *b;
+            return *a;
         }
 
         // Compare
         match self.compare_internal(&ua, &ub) {
-            Ordering::Less | Ordering::Equal => *a,
+            Ordering::Less => *a,
             Ordering::Greater => *b,
+            // Tie (equal values or ±0): prefer the negative operand.
+            Ordering::Equal => {
+                if ua.sign {
+                    *a
+                } else {
+                    *b
+                }
+            }
         }
     }
 
-    /// Maximum of two values (IEEE 754 semantics)
+    /// Maximum of two values (SMT-LIB `fp.max` semantics — the dual of
+    /// [`Self::min`]): a NaN operand yields the *other* operand, and a tie
+    /// prefers the positive one, so `fp.max(-0,+0) = +0` (z3 agreement).
     pub fn max(&mut self, a: &FpValue, b: &FpValue) -> FpValue {
         let ua = self.unpack(a);
         let ub = self.unpack(b);
 
-        // NaN propagation
+        // NaN yields the other operand (both NaN: y, per the ite chain).
         if ua.is_nan() {
-            return *a;
+            return *b;
         }
         if ub.is_nan() {
-            return *b;
+            return *a;
         }
 
         // Compare
         match self.compare_internal(&ua, &ub) {
-            Ordering::Greater | Ordering::Equal => *a,
+            Ordering::Greater => *a,
             Ordering::Less => *b,
+            // Tie (equal values or ±0): prefer the positive operand.
+            Ordering::Equal => {
+                if ua.sign {
+                    *b
+                } else {
+                    *a
+                }
+            }
         }
     }
 

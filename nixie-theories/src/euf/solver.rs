@@ -418,6 +418,11 @@ pub struct EufSolver {
     /// for a different constant across rebuilds (see
     /// [`Self::declare_value_const`]).
     next_value_id: u32,
+    /// Bit-pattern key → shared distinctness id for floating-point literals
+    /// (see [`Self::declare_fp_const`]).  Symbol-level like
+    /// [`Self::value_consts`]: survives `reset()`/`pop()` untrailed; sound
+    /// because ids issue from the monotone counter above.
+    fp_value_ids: FxHashMap<(u32, u32, bool, u64, u64), u32>,
     /// Fingerprint table: maps fingerprint -> list of node indices with that fingerprint.
     /// Used as a fast pre-filter before full signature comparison in congruence checks.
     ///
@@ -556,6 +561,7 @@ impl EufSolver {
             value_summary_trail_limits: Vec::new(),
             value_consts: FxHashMap::default(),
             next_value_id: 0,
+            fp_value_ids: FxHashMap::default(),
             fingerprint_table: FxHashMap::default(),
             context_stack: Vec::new(),
             proof_forest: Vec::new(),
@@ -635,6 +641,53 @@ impl EufSolver {
     /// `nixie-solver/src/solver/encode.rs`.
     pub fn declare_value_const(&mut self, term: TermId, value: u32) {
         self.value_consts.entry(term).or_insert(value);
+    }
+
+    /// Declare `term` (a floating-point literal) as a distinguished-value
+    /// constant keyed by its **bit pattern** — the SMT-LIB `=` on floats is
+    /// datum identity: `(_ +zero e s) ≠ (_ -zero e s)` (z3: `unsat` when they
+    /// are asserted equal), two NaN spellings with different payloads are
+    /// distinct datums, and the sole `(_ NaN e s)` literal is one datum equal
+    /// to itself.
+    ///
+    /// All spellings of one bit pattern — `FpLit` with those bits, the
+    /// dedicated `FpPlusZero` / `FpMinusZero` / … kinds, and a literal minted
+    /// later by the fp fold pass — share ONE value id, so same-value literals
+    /// merge without conflict while any two different values can never land
+    /// in one class.  The key map is symbol-level like the value-consts
+    /// registry (`value_consts`):
+    /// it survives `reset()` and `pop()` untrailed, which is collision-safe
+    /// because the ids come from the monotone value-id counter
+    /// (`next_value_id`)
+    /// that never rewinds within the solver's lifetime.
+    ///
+    /// The mark applies when the term is (re-)interned; a term already interned
+    /// without a mark keeps its current class summary — callers that need the
+    /// mark must declare before the first intern (the constant-interning leaf
+    /// path and the fp fold pass both do).
+    pub fn declare_fp_const(&mut self, term: TermId, key: (u32, u32, bool, u64, u64)) {
+        let id = match self.fp_value_ids.get(&key) {
+            Some(&id) => id,
+            None => {
+                let id = self.fresh_value_id();
+                self.fp_value_ids.insert(key, id);
+                id
+            }
+        };
+        self.declare_value_const(term, id);
+    }
+
+    /// The term of the distinguished-value member of `term`'s equivalence
+    /// class, if the class carries one — i.e. "the concrete constant this
+    /// term's class is pinned to".  The witness term (not `term` itself) so
+    /// callers can decode the constant's value; any member of the class
+    /// denotes the same constant.  `None` when `term` is not interned or its
+    /// class carries no distinguished value.
+    pub fn class_const_witness(&self, term: TermId) -> Option<TermId> {
+        let node = self.term_to_node(term)?;
+        let root = self.uf.find_no_compress(node);
+        let (_, witness) = self.class_value.get(root as usize).copied().flatten()?;
+        self.node_term(witness)
     }
 
     /// Mint a fresh distinctness id (monotone, never reused across rebuilds).

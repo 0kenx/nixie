@@ -2979,6 +2979,24 @@ impl<'a> TheoryManager<'a> {
     /// constants get **no** disequality edges (see the caller's docs).
     fn intern_leaf_for_congruence(&mut self, term: TermId, manager: &TermManager) -> u32 {
         if let Some(t) = manager.get(term) {
+            // Floating-point literals: mark as distinguished-value constants
+            // keyed by bit pattern BEFORE the intern so the node is born
+            // marked (the mirror of the BV arm below).  SMT-LIB `=` on floats
+            // is datum identity — `(_ +zero e s) ≠ (_ -zero e s)`, two
+            // different payloads of NaN are distinct datums — so merging two
+            // different bit patterns must raise a value conflict instead of
+            // silently succeeding (the false-`sat` class: `(assert (= c1
+            // c2))` over distinct fp literals used to answer `sat`).  All
+            // spellings of one datum share one id, so same-value spellings
+            // (`FpLit` bits, the dedicated zero/inf/NaN kinds, fold-minted
+            // literals) merge without conflict.  See
+            // [`EufSolver::declare_fp_const`] and the fp fold pass
+            // (`solver/fp_fold.rs`).
+            if let Some(value) = super::fp_fold::fp_const_value(term, manager) {
+                self.euf
+                    .declare_fp_const(term, super::fp_fold::fp_const_key(&value));
+                return self.euf.intern(term);
+            }
             if let TermKind::BitVecConst { value, width } = &t.kind {
                 // Register the BV constant as an EUF node and maintain pairwise
                 // disequalities between *distinct* same-width constant values.

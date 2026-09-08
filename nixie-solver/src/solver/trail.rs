@@ -87,6 +87,10 @@ pub(crate) enum TrailOp {
     /// is retracted with the scope, so the dedup entry must go too or a
     /// later scope would never re-emit the (still valid) lemma.
     ParityLemmaAdded { term: TermId },
+    /// A ground FP fold lemma (see [`super::Solver::instantiate_fp_folds`])
+    /// was asserted to the SAT core.  The dedup entry is retracted with the
+    /// scope so a later one re-emits the still-valid clause.
+    FpFoldLemmaAdded { term: TermId },
     /// A z3-style triangle axiom `(t = c) ⟺ (t ≤ c ∧ t ≥ c)` was asserted for
     /// the `(term, const)` pair (see `axiomatize_arith_constant_equalities`).
     ArithConstAxiomAdded { term: TermId, const_val: i64 },
@@ -371,9 +375,16 @@ impl super::Solver {
             arrangement_rounds: _,           // PER-SEARCH: mirrors `case_split_rounds`;
             // the internalized atoms are SAT-scoped (retracted by `pop`), so
             // the round counter must not outlive them.
-            last_features: _, // SNAPSHOT: recomputed in `check_core`; dropped
-                              // wholesale by `invalidate_results` on any stack move, so a value
-                              // left by a popped scope is stale and overwritten before reuse.
+            // FP fold state: the dedup set is SAT-scoped (each entry is
+            // journalled by `TrailOp::FpFoldLemmaAdded` and retracted with
+            // its clause); the two per-check flags are recomputed at every
+            // `check_core` entry before anything can read them.
+            fp_fold_lemmas: _,  // TRAIL: FpFoldLemmaAdded
+            fp_fold_pending: _, // PER-CHECK: reset in `check_core`
+            fp_fold_verify: _,  // PER-CHECK: set in the FP honesty gate
+            last_features: _,   // SNAPSHOT: recomputed in `check_core`; dropped
+                                // wholesale by `invalidate_results` on any stack move, so a value
+                                // left by a popped scope is stale and overwritten before reuse.
         } = self;
 
         debug_assert_eq!(self.trail.len(), state.trail_position);
