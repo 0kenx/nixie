@@ -25,6 +25,14 @@ fewer instructions and 2.34% fewer measured cycles/conflict, below its 5% bar.
 The candidate is archived. The [arena initialization repair](2026-09-08-arena-initialization.md)
 found during that review is independently verified and remains on main.
 
+The [whole-list satisfaction persistence census](2026-09-08-watch-list-reuse.md)
+also rejects a cross-visit reuse cache: unchanged lists with surviving blocker
+assignments cover only 0.23% / 0.53% of sampled watcher visits on si2 / circuit
+at the registered minimum size. Even the all-size ceilings are below 0.6%.
+No reuse kernel follows. [Exact sparse-word subsumption](2026-09-08-sparse-word-subsumption.md)
+likewise failed its two-run cost gate; fewer branch misses did not produce
+a qualifying whole-solve gain.
+
 ## 1. Shared satisfaction across watcher groups — first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
