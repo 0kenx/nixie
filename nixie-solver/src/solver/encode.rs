@@ -3303,7 +3303,12 @@ impl Solver {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
-            // Floating-point predicates
+            // Floating-point predicates: theory atoms, AND EUF-tracked
+            // (`Constraint::BoolApp`) so a positive assignment reaches the
+            // same-argument refutation in `process_constraint`
+            // (`fp.lt x x` / `fp.gt x x` are false for EVERY `x`, NaN
+            // included, so a positive assignment whose operand classes
+            // merge is a conflict carrying the merge's explanation).
             TermKind::FpLeq(_, _)
             | TermKind::FpLt(_, _)
             | TermKind::FpGeq(_, _)
@@ -3316,8 +3321,8 @@ impl Solver {
             | TermKind::FpIsNaN(_)
             | TermKind::FpIsNegative(_)
             | TermKind::FpIsPositive(_) => {
-                // FP predicates - theory atoms that return bool
                 let var = self.get_or_create_var(term);
+                self.record_constraint(var, Constraint::BoolApp(term));
                 Lit::pos(var)
             }
             // Floating-point conversions

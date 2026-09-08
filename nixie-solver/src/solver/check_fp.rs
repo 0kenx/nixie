@@ -1215,50 +1215,6 @@ impl Solver {
         }
     }
 
-    /// Returns `true` if `kind` is a floating-point theory atom (predicate,
-    /// arithmetic operation, or conversion) whose truth value / result the
-    /// current incomplete FP reasoning cannot soundly certify.
-    ///
-    /// Bare FP constants and FP-sorted variables are intentionally excluded:
-    /// they only participate through structural equality, which the EUF core
-    /// handles soundly.
-    fn is_fp_theory_atom(kind: &TermKind) -> bool {
-        matches!(
-            kind,
-            TermKind::FpAbs(_)
-                | TermKind::FpNeg(_)
-                | TermKind::FpSqrt(_, _)
-                | TermKind::FpRoundToIntegral(_, _)
-                | TermKind::FpAdd(_, _, _)
-                | TermKind::FpSub(_, _, _)
-                | TermKind::FpMul(_, _, _)
-                | TermKind::FpDiv(_, _, _)
-                | TermKind::FpRem(_, _)
-                | TermKind::FpMin(_, _)
-                | TermKind::FpMax(_, _)
-                | TermKind::FpFma(_, _, _, _)
-                | TermKind::FpLeq(_, _)
-                | TermKind::FpLt(_, _)
-                | TermKind::FpGeq(_, _)
-                | TermKind::FpGt(_, _)
-                | TermKind::FpEq(_, _)
-                | TermKind::FpIsNormal(_)
-                | TermKind::FpIsSubnormal(_)
-                | TermKind::FpIsZero(_)
-                | TermKind::FpIsInfinite(_)
-                | TermKind::FpIsNaN(_)
-                | TermKind::FpIsNegative(_)
-                | TermKind::FpIsPositive(_)
-                | TermKind::FpToFp { .. }
-                | TermKind::FpToSBV { .. }
-                | TermKind::FpToUBV { .. }
-                | TermKind::FpToReal(_)
-                | TermKind::RealToFp { .. }
-                | TermKind::SBVToFp { .. }
-                | TermKind::UBVToFp { .. }
-        )
-    }
-
     /// Returns `true` when the current assertion set contains any FP theory
     /// atom that the (incomplete) FP conflict checks above cannot decide.
     ///
@@ -1266,6 +1222,31 @@ impl Solver {
     /// answer `Unknown` rather than let the SAT core treat the atom as a free
     /// Boolean – the latter would report `Sat` for formulas such as
     /// `fp.lt x y ∧ fp.lt y x`, which are unsatisfiable.
+    /// Whether an IEEE ORDERING predicate (`fp.lt`/`fp.gt`) appears with
+    /// syntactically different operand terms: a same-class refutation
+    /// candidate — congruence may merge the operands in-search, and the
+    /// strict comparison is then false for every value (NaN included).
+    /// Syntactically identical operands are folded by the constant layer.
+    pub(super) fn fp_predicates_have_congruence_candidates(&self, manager: &TermManager) -> bool {
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        let mut stack: Vec<TermId> = self.assertions.clone();
+        while let Some(term) = stack.pop() {
+            if !visited.insert(term) {
+                continue;
+            }
+            let Some(td) = manager.get(term) else {
+                continue;
+            };
+            if let TermKind::FpLt(a, b) | TermKind::FpGt(a, b) = &td.kind
+                && a != b
+            {
+                return true;
+            }
+            super::term_walk::collect_structural_children(&td.kind, &mut stack);
+        }
+        false
+    }
+
     pub(super) fn fp_atoms_need_theory(&self, manager: &TermManager) -> bool {
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
         let mut stack: Vec<TermId> = self.assertions.clone();
@@ -1276,7 +1257,42 @@ impl Solver {
             let Some(term_data) = manager.get(term) else {
                 continue;
             };
-            if Self::is_fp_theory_atom(&term_data.kind) {
+            // Only atoms the EUF layer does NOT own gate.  The fp
+            // ARITHMETIC operations (`add/sub/mul/div/rem/min/max/fma/
+            // abs/neg/sqrt/roundToIntegral`) are congruence applications
+            // since `intern_operands` learned them: equalities between
+            // them are decided by congruence + the value marks, so gating
+            // on them would refuse decidable goals.  Everything else fp
+            // still needs real theory semantics and stays gated: the IEEE
+            // ordering/class predicates (free Booleans) and every
+            // CONVERSION in either direction (`RealToFp`/`FpToFp`/
+            // `SBV/UBVToFp`/`FpToReal`/`FpToSBV/UBV`) — conversions are
+            // NOT congruence applications (their value is not determined
+            // by operand equality), and un-gating them re-opens the
+            // free-atom false-`sat` the d-series regression pins.
+            let gates = matches!(
+                &term_data.kind,
+                TermKind::FpLeq(_, _)
+                    | TermKind::FpLt(_, _)
+                    | TermKind::FpGeq(_, _)
+                    | TermKind::FpGt(_, _)
+                    | TermKind::FpEq(_, _)
+                    | TermKind::FpIsNormal(_)
+                    | TermKind::FpIsSubnormal(_)
+                    | TermKind::FpIsZero(_)
+                    | TermKind::FpIsInfinite(_)
+                    | TermKind::FpIsNaN(_)
+                    | TermKind::FpIsNegative(_)
+                    | TermKind::FpIsPositive(_)
+                    | TermKind::FpToFp { .. }
+                    | TermKind::RealToFp { .. }
+                    | TermKind::SBVToFp { .. }
+                    | TermKind::UBVToFp { .. }
+                    | TermKind::FpToReal(_)
+                    | TermKind::FpToSBV { .. }
+                    | TermKind::FpToUBV { .. }
+            );
+            if gates {
                 return true;
             }
             super::term_walk::collect_structural_children(&term_data.kind, &mut stack);

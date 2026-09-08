@@ -585,3 +585,94 @@ fn fp_to_bv_overflow_is_free_not_fabricated() {
         );
     }
 }
+
+// ===========================================================================
+// FP congruence: operand merges propagate through fp operations
+// ===========================================================================
+
+/// `(= a b) → (= (fp.abs a) (fp.abs b))` — congruence through fp ops (z3:
+/// unsat; was an honest `unknown` when fp ops were opaque EUF leaves).
+#[test]
+fn fp_ops_are_congruence_applications() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (not (= (fp.abs a) (fp.abs b))))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+    // Binary op under the same merge.
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (not (= (fp.add RNE a a) (fp.add RNE b b))))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+    // `distinct` over congruent applications (z3 times this one out).
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (distinct (fp.mul RNA a a) (fp.mul RNA b b)))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `fp.lt x x` / `fp.gt x x` are false for EVERY x (NaN included): a
+/// positive atom whose operand classes merge conflicts with the merge's
+/// own explanation (z3: unsat).
+#[test]
+fn strict_comparisons_over_congruent_operands_refute() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (fp.lt (fp.abs a) (fp.abs b)))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (fp.gt (fp.add RNE a a) (fp.add RNE b b)))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// The rounding mode is part of the function symbol: same operands under
+/// different modes are NOT forced equal (both solvers: sat).
+#[test]
+fn congruence_respects_the_rounding_mode() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const a Float64)
+             (declare-const b Float64)
+             (assert (= a b))
+             (assert (not (= (fp.add RNE a a) (fp.add RTZ a a))))
+             (check-sat)"
+        ),
+        SolverResult::Sat
+    );
+}

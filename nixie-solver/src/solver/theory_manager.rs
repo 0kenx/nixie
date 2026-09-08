@@ -2,7 +2,7 @@
 
 #[allow(unused_imports)]
 use crate::prelude::*;
-use nixie_core::ast::{TermId, TermKind, TermManager};
+use nixie_core::ast::{RoundingMode, TermId, TermKind, TermManager};
 use nixie_sat::{Lit, TheoryCallback, TheoryCheckResult, Var};
 use nixie_theories::arithmetic::ArithSolver;
 use nixie_theories::bv::BvSolver;
@@ -2865,6 +2865,16 @@ impl<'a> TheoryManager<'a> {
     /// `select(a, x) = select(a, y)` whenever `x = y` is merged.
     const SELECT_FUNC_ID: u32 = 0;
 
+    /// Sentinel base for floating-point operation congruence: each
+    /// `(fp-op, rounding-mode)` pair gets its own function symbol
+    /// (`FP_FUNC_BASE + op_index * 5 + rm_index`), so EUF congruence derives
+    /// `fp.op(rm, x, …) = fp.op(rm, y, …)` whenever the operand classes
+    /// merge — e.g. `(= a b) → (= (fp.abs a) (fp.abs b))`, which z3 derives
+    /// through its `fpa` theory and the opaque-leaf treatment could only
+    /// decline.  The base sits far above the interner's per-script `Spur`
+    /// range and the mapping is injective, so it cannot collide.
+    const FP_FUNC_BASE: u32 = 1_000_000;
+
     /// Intern a term into EUF, using `intern_app` for Apply terms and
     /// `TermKind::Select` terms so that congruence closure works correctly.
     ///
@@ -2900,8 +2910,67 @@ impl<'a> TheoryManager<'a> {
                 Self::SELECT_FUNC_ID,
                 SmallVec::from_slice(&[*array, *index]),
             )),
+            // Floating-point operations as congruence applications: the
+            // function symbol encodes (op, rounding mode) so that
+            // operand-class merges propagate through every fp operation,
+            // exactly like `f(x) = f(y)` for uninterpreted `f`.
+            Some(TermKind::FpAbs(a)) => Some((Self::fp_func_id(0, 0), SmallVec::from_slice(&[*a]))),
+            Some(TermKind::FpNeg(a)) => Some((Self::fp_func_id(1, 0), SmallVec::from_slice(&[*a]))),
+            Some(TermKind::FpSqrt(rm, a)) => Some((
+                Self::fp_func_id(2, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a]),
+            )),
+            Some(TermKind::FpRoundToIntegral(rm, a)) => Some((
+                Self::fp_func_id(3, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a]),
+            )),
+            Some(TermKind::FpAdd(rm, a, b)) => Some((
+                Self::fp_func_id(4, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a, *b]),
+            )),
+            Some(TermKind::FpSub(rm, a, b)) => Some((
+                Self::fp_func_id(5, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a, *b]),
+            )),
+            Some(TermKind::FpMul(rm, a, b)) => Some((
+                Self::fp_func_id(6, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a, *b]),
+            )),
+            Some(TermKind::FpDiv(rm, a, b)) => Some((
+                Self::fp_func_id(7, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a, *b]),
+            )),
+            Some(TermKind::FpRem(a, b)) => {
+                Some((Self::fp_func_id(8, 0), SmallVec::from_slice(&[*a, *b])))
+            }
+            Some(TermKind::FpMin(a, b)) => {
+                Some((Self::fp_func_id(9, 0), SmallVec::from_slice(&[*a, *b])))
+            }
+            Some(TermKind::FpMax(a, b)) => {
+                Some((Self::fp_func_id(10, 0), SmallVec::from_slice(&[*a, *b])))
+            }
+            Some(TermKind::FpFma(rm, a, b, c)) => Some((
+                Self::fp_func_id(11, Self::rm_idx(*rm)),
+                SmallVec::from_slice(&[*a, *b, *c]),
+            )),
             _ => None,
         }
+    }
+
+    /// Rounding-mode slot of an FP congruence function id.
+    fn rm_idx(rm: RoundingMode) -> u32 {
+        match rm {
+            RoundingMode::RNE => 0,
+            RoundingMode::RNA => 1,
+            RoundingMode::RTP => 2,
+            RoundingMode::RTN => 3,
+            RoundingMode::RTZ => 4,
+        }
+    }
+
+    /// The (op, rm) congruence function symbol.
+    fn fp_func_id(op: u32, rm: u32) -> u32 {
+        Self::FP_FUNC_BASE + op * 5 + rm
     }
 
     /// Intern a term into EUF for congruence closure, using `intern_app` for
@@ -3760,6 +3829,34 @@ impl<'a> TheoryManager<'a> {
                 // Intern the application in EUF so that congruence closure
                 // can fire.  Then merge its EUF node with the canonical
                 // true or false node depending on the SAT assignment.
+                //
+                // IEEE strict comparisons whose operand classes have merged
+                // are refutable on the spot: `fp.lt x x` and `fp.gt x x`
+                // are FALSE for every `x` (NaN included), so a POSITIVE
+                // assignment with same-class operands conflicts, carrying
+                // the merge's own explanation as the justification core.
+                if is_positive
+                    && let Some(td) = manager.get(app_term)
+                    && matches!(td.kind, TermKind::FpLt(_, _) | TermKind::FpGt(_, _))
+                {
+                    let (a, b) = match &td.kind {
+                        TermKind::FpLt(a, b) | TermKind::FpGt(a, b) => (*a, *b),
+                        _ => unreachable!("matched just above"),
+                    };
+                    // Intern the ARGUMENT TERMS (not just their leaf nodes):
+                    // the operands are typically fp applications whose
+                    // congruence merges (`fp.abs a` ≡ `fp.abs b` under
+                    // `a ≡ b`) fire during the interning walk itself.
+                    let (na, nb) = (
+                        self.intern_term_for_congruence(a, manager),
+                        self.intern_term_for_congruence(b, manager),
+                    );
+                    if self.euf.are_equal(na, nb) {
+                        let mut core = self.euf.explain_eq(na, nb);
+                        core.push(app_term);
+                        return self.conflict_from_terms(&core);
+                    }
+                }
                 let app_node = self.intern_term_for_congruence(app_term, manager);
                 let (true_node, false_node) = self.ensure_bool_nodes();
                 let merge_target = if is_positive { true_node } else { false_node };

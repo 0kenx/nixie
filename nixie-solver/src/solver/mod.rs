@@ -1773,11 +1773,15 @@ impl Solver {
             // Fold clauses were asserted this check: the formula may be
             // refutable through them (the value-mark conflicts live in the
             // CDCL(T) search's EUF layer, not in this early phase), so the
-            // early `Unknown` would abandon a decidable goal.  Fall through
-            // to the search; any `Sat` it returns must first survive
-            // `try_fp_model_sat` (see the `SatResult::Sat` arm) — the
-            // free-Boolean fp atoms mean a raw search `Sat` proves nothing.
-            if self.fp_fold_pending {
+            // early `Unknown` would abandon a decidable goal.  The same
+            // holds for predicates with a SAME-CLASS refutation candidate
+            // (`fp.lt (fp.abs a) (fp.abs b)` under `(= a b)` — congruence
+            // merges the operands in-search and the strict comparison
+            // conflicts).  Fall through to the search; any `Sat` it returns
+            // must first survive `try_fp_model_sat` (see the
+            // `SatResult::Sat` arm) — the free-Boolean fp atoms mean a raw
+            // search `Sat` proves nothing.
+            if self.fp_fold_pending || self.fp_predicates_have_congruence_candidates(manager) {
                 self.fp_fold_verify = true;
             } else {
                 return SolverResult::Unknown;
