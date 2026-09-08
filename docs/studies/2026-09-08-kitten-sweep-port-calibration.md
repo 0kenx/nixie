@@ -197,3 +197,79 @@ unchanged). Default trajectory untouched (inert unless armed).
 - Cells: 54 files × seeds 1–10 × {base, sweep, null}, 60 s cap, cores
   10–19, recorded once in the benchstore under
   `precompile/19692a2/benchmark/`.
+
+## Results (1620 cells, quiet machine, cores 10-19, recorded in the
+benchstore under `precompile/19692a2/benchmark/runs/sc24f-sweepchar/`)
+
+**Null-fires:** 245/540 (file, seed) cells have kitten activity in the
+armed arms (21/54 files prove ≥ 1 equivalence); base has zero kitten
+activity in every cell.
+
+**Solved-at-cap (540 cells/arm):**
+
+| arm | solved | vs base |
+|---|---|---|
+| base | 316 | — |
+| sweep (treatment) | **351** | **+35** |
+| null (scrambled ranking) | **355** | +39 |
+
+Per-seed: sweep ≥ base on 8/10 seeds (null 9/10) — not a seed-mix
+artifact. Gains concentrate exactly where the mechanism predicts
+(equivalence-structured families: summle ×3 files, circuit ×3, FmlaEquivChain
+2→7, constraints 6→9, qwh 4→7, mrpp 9→10); losses are few (mdp-28 2→0,
+worker_550 4→3). **Zero verdict disagreements** in 1620 cells.
+
+**Conflicts-to-verdict (paired geomean, both-solved):**
+
+| ratio | geomean | n | verdict |
+|---|---|---|---|
+| sweep/null | **1.017** | 201 | **neutral** — inside the ±5 % band; the pre-registered go bar (≤ 0.95) FAILED: the cone-ranking carries no corpus-level signal |
+| sweep/base | 0.949 | 172 | content (present in both armed arms) is worth ~5 % |
+| null/base | 0.937 | 179 | — |
+
+Per-family sweep/null is bimodal exactly as at 5 seeds: null better on
+6s167 1.137 / summle 1.281 / mrpp 1.123; treatment better on constraints
+0.818 / ITC2021 0.877 / crn 0.929 / si2 0.952. SAT split 1.006, UNSAT
+1.043.
+
+**Price:**
+
+- Instructions (full solves, `perf stat`, P-cores): 6s167 13.64 G →
+  9.79 G (**0.72×**), FmlaEquivChain 390.0 G → 195.9 G (**0.50×**),
+  inert stable-300 31.26 G → 31.97 G (**+2.3 %** — the pure cost of the
+  pass finding nothing).
+- kitten ticks (sampled re-measure, 18 cells): 0.1–2.6 M ticks on files
+  where it proves nothing (bounded by the 100 k/round budget); on 6s167
+  22 kitten-ticks per search conflict vs kissat's own 184 on the same
+  file — well inside the reference envelope.
+- Wall-clock sanity (both-solved cells): sweep/base geomean **0.728** —
+  consistent with (larger than) the conflicts proxy; folding also
+  cheapens propagation.
+
+**Correction to Part 1:** the 5-seed screen's corpus-negative verdict
+(159 vs 161) does not reproduce. Same seeds 1–5 on the quiet machine:
+base 160 (reproduces 161), sweep **169**. The Part-1 screen ran
+concurrently with the parity suite's unpinned cargo build; the armed
+arm pays the extra ~2 % instructions and loses borderline 60 s cells
+disproportionately under load. Corpus sign at 10 seeds, quiet: **+35
+solved**.
+
+## Landing decision (enablement rule, §3 BENCHMARKING.md)
+
+The Part-2 pre-registration governed the *ranking* question; it came
+back **neutral** (1.017). The *content* question is governed by the
+enablement rule instead: (a) soundness is structural (level 0 / base
+scope / no proof / theory-freeze gates; every derived unit rides the
+normal level-0 assign+propagate; kitten is Unknown-bounded), and (b)
+the paired 10-seed differential shows **solved count not worse
+(+35)** with **0 verdict disagreements**. Default flip: **ON**
+(`NIXIE_SWEEP=0` restores the old default; the null arm remains
+`NIXIE_SWEEP_NULL=1`). Ships with a fresh full Z3 parity at the new
+default — a SAT-core change is an SMT-path change wherever the embedded
+CDCL(T) core executes the schedule (most SMT logics gate the sweep off
+via the real-theory freeze; the differential covers the rest).
+
+The ranking question (faithful cone-order vs scramble, both defensible:
+treatment wins constraints/ITC, null wins 6s167/summle) stays open as
+the recorded follow-up; landing a scramble as the default would destroy
+the null instrument for every future study.
