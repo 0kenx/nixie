@@ -1,4 +1,10 @@
-# Elimination first-parent preparation: registered census and cost screen
+# Elimination first-parent preparation: census below the registered gate
+
+**Verdict:** stop after the single registered observation. Reusable
+first-parent inspections were **48.29%**, below the required **50%**.
+The independent model check and scalar-output identity passed. No throughput
+prototype or cost comparison was run; this is not a measured speedup or
+regression. The registration below is unchanged.
 
 The [mark-cleanup repair](2026-09-08-elimination-mark-cleanup.md) is on main
 as `e15d0bf`. The remaining hypothesis is that consecutive resolution pairs
@@ -68,3 +74,69 @@ existing cells if any exact identity already exists. A successful screen
 still needs broader qualification and every workspace/soundness gate before
 a production landing. Archive a rejected implementation and commit its
 finding to main. The goal remains the mode-matched Kissat throughput gap.
+
+## Observation result: do not advance
+
+Observer source commit `ba5602f800fd532152807669bc19eac540973363` is based
+on the registration commit `691b53b` and contains only the feature-gated
+census, its tests and the one-cell runner. The ordinary solver remains the
+fixed scalar implementation from `e15d0bf`. The observer binary SHA-256 is
+`e82ef09034b06beeb3d901c629d676bbb5f8e4279a192c7f7702bc5b54b9abd7`;
+rebuilding from the clean committed source produced the identical binary.
+
+The sole measurement is si2, seed 0, the registered 40,000-conflict cap and
+CPU 10, with sweep disabled. It returned SAT after **39,246 conflicts**,
+182,307 decisions and 960,337 propagations. Every original CNF clause was
+checked against its emitted model. Complete stdout matches the cached
+`490756d` output byte for byte, with SHA-256
+`c25ba0a9a391a198ca92943e0e5f07eab463efa505980699e3245d712173d30f`.
+This uses the cached output only as a correctness/trajectory oracle.
+
+The ten elimination rounds reported:
+
+| Observation | Count |
+|---|---:|
+| First-parent rows | 25,576 |
+| Resolution calls | 558,406 |
+| First-parent literal inspections | 4,202,661 |
+| Second-parent literal inspections | 2,871,855 |
+| First-parent marked literals | 3,642,829 |
+| Second-parent resolvent appends | 2,030,174 |
+| Tautological pairs | 255,845 |
+| Same-parent pairs following a tautology in the same row | 250,787 |
+| Reusable first-parent inspections | 2,029,374 |
+| Reusable first-parent marks | 1,782,621 |
+
+Reusable inspections are **48.2878%** of first-parent inspections and
+**28.6857%** of all 7,074,516 resolution literal inspections. The total-work
+fraction clears its 25% gate; the first-parent fraction misses its 50% gate.
+All round-level resolution-call accounting checks and every credited
+preparation's inspection/prefix agreement check passed.
+
+The conservative scope loses reuse after all 302,561 non-tautological
+outcomes, as registered, even where an ordinary collected resolvent has no
+immediate effect. That boundary leaves too little observed reuse to pass
+the agreed gate. Do not lower the threshold, select later rounds, or try
+another seed to rescue this result. Broader reuse across non-tautological
+outcomes would be a different design with additional mutation/proof lifetime
+obligations; this observation does not qualify it. It also does not estimate
+the whole-solve instruction or cycle saving from this literal-scan fraction.
+
+The observer passed all **1,003 SAT tests** (one existing skip), including
+seven new accounting/coverage tests and the 19,683-case resolution
+truth-table regression. SAT all-feature/all-target Clippy with warnings
+denied, workspace formatting, and the ordinary release observer build also
+passed. The observer is archived rather than added to production; no solving
+code changes land with this result, and no full-workspace qualification is
+claimed for it.
+
+Record **`22045fa22e9f7331`**, configuration hash `721f929960f13064`, lives
+under `precompile/ba5602f/benchmark/runs/elimination-parent-reuse/`.
+`precompile/ba5602f/benchmark/elimination-parent-reuse/` preserves the raw
+stdout/stderr, started/completed markers, manifest, summary, qualification
+logs and source/binary identity. The captured nextest pass listing is
+partially truncated; its successful final summary is retained. The adjacent
+`source.bundle` and `source.patch` preserve the complete observer and runner;
+the verified bundle requires `691b53b`. The unused experiment worktree and
+branch are removed after recording this result. Stage B's four cost cells
+were not run.
