@@ -201,3 +201,17 @@ The separate observation build and the verification pipeline's observation
 build produced the same binary hash. Verification logs, ordinary and
 instrumented parity records, and compiler-source fingerprints are retained
 under `precompile/27e79fc/benchmark/clause-traffic-verification/`.
+
+### Integration verification
+
+The concurrent `19692a2` sweep-cadence change was integrated as `4591094`
+before landing. The full build/nextest/doctest/clippy/fmt/doc gates were
+repeated successfully on that combined source: 10,696 tests, 111 doctests,
+and four analysis tests pass. Ordinary and instrumented Z3 parity again
+each give 169 correct, zero disagreements and one inconclusive case.
+The subsequent main update was documentation-only; source fingerprints
+confirm every Rust file and Cargo manifest is unchanged from those checks.
+Integration binaries and logs are cached under `precompile/4591094/`, with
+logs in `benchmark/clause-traffic-integration/`. The two observations remain
+at their recorded `27e79fc` source; no measurement was repeated during
+integration. The measured revisions have sweeping default-off.
