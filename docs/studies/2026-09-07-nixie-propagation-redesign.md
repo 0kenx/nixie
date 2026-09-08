@@ -29,7 +29,12 @@ The [whole-list satisfaction persistence census](2026-09-08-watch-list-reuse.md)
 also rejects a cross-visit reuse cache: unchanged lists with surviving blocker
 assignments cover only 0.23% / 0.53% of sampled watcher visits on si2 / circuit
 at the registered minimum size. Even the all-size ceilings are below 0.6%.
-No reuse kernel follows. [Exact sparse-word subsumption](2026-09-08-sparse-word-subsumption.md)
+No reuse kernel follows. The subsequent
+[individual-entry census](2026-09-09-watch-entry-reuse.md) finds substantially
+more persistence (35.91% / 20.28% of sampled visits), but only 0.899 / 0.296
+reused visits per new certificate. It fails its coverage and renewal gates;
+no entry-deactivation representation follows. These are logical-event counts,
+not measured cycle savings. [Exact sparse-word subsumption](2026-09-08-sparse-word-subsumption.md)
 likewise failed its two-run cost gate; fewer branch misses did not produce
 a qualifying whole-solve gain.
 

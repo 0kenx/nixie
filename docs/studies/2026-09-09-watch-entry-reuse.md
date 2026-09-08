@@ -67,3 +67,87 @@ and LRAT proofs; all SAT tests, clippy, formatting and committed release build.
 Archive a rejected observer and land its finding. Production source landing
 requires the full workspace verification gates and fresh installed-Z3 4.16.0
 parity. The throughput objective remains open.
+
+## Result: entries survive, but renewal pressure fails the gate
+
+Exactly two observer runs completed from clean committed source
+**`d3aee8cf341b2fc75b877f49eb8a4f3062592bc1`**, a direct descendant of
+registration **`059afd6`**. Binary SHA-256:
+`ccff3dccb24252b31e859974e098d539705d6f9d2420f97101397a1184e846b3`.
+Rust 1.96.0 / LLVM 22.1.2, portable release with `bcp-entry-reuse`, lockfile
+`3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`.
+No new control or reference run, timing comparison, threshold adjustment or
+additional seed followed.
+
+| sampled observation | si2-b03m | circuit_48in |
+|---|---:|---:|
+| actual watcher visits | 2,501,701 | 1,853,673 |
+| independently reusable visits | 898,452 | 375,892 |
+| reusable fraction, all epochs | **35.91%** | **20.28%** |
+| reusable fraction after conflict 16,384 | **37.18%** | **18.18%** |
+| visits in reusable runs of at least four | 882,986 (35.30%) | 274,395 (14.80%) |
+| newly established certificates | 999,900 | 1,271,773 |
+| reusable visits / new certificate | **0.899** | **0.296** |
+
+Neither input reaches 40% overall or late coverage. Circuit also misses the
+25% run-coverage gate. Both are far below four reused visits per new
+certificate. **No entry-deactivation representation is built.** The coarse
+whole-list result understated individual persistence, but the finer protocol
+still does not qualify its expected bookkeeping burden. These are sampled
+logical events, not instructions, cycle savings or measured implementation
+costs. In particular, do not describe the 35.91% fraction as a speedup.
+
+The census records 878,720 / 233,858 visits with no matching prior tuple, and
+724,529 / 1,243,923 visits whose matching tuple lost its assignment identity
+(si2 / circuit). Thus assignment expiration alone accounts for 67.11% of
+sampled circuit visits. The renewal counts measure new certificates needed
+at completed-scan boundaries; they do not charge every intervening watch
+mutation or cost a production invalidation/indexing mechanism. Conversely,
+not retaining certificates across conflict scans omits some potential reuse.
+The result rejects the registered completed-scan protocol, not all possible
+entry lifetimes or a universal performance ceiling. Do not tune this same
+protocol on these observations.
+
+There are zero capacity omissions and zero non-positive blockers at completed
+sampled scans. Si2 / circuit cover 11,882 / 45,981 selected-key list visits;
+all-key actual watcher totals are 161,699,940 / 100,167,701. The observer also
+reproduces the archived whole-list census exactly: 6,383 / 10,318 reusable
+whole-list visits, the same sampled denominators and all-key visit totals.
+This provides a cross-version consistency check of sampling and prefix accounting.
+
+## Verification and disposition
+
+Si2 completes SAT at **39,246 conflicts**, with its model independently checked
+against every original clause. Circuit returns budget **Unknown at 40,000
+conflicts**; it is an unsolved prefix, not a verified verdict. Complete stdout,
+including every printed counter and model, matches the registered cached
+controls byte-for-byte. Solved-at-cap stays 1/1 and 0/1 respectively.
+Canonical record IDs: **`b25d66da2b831af0`** and **`96bb00cb50b177b8`**.
+
+All **1,017 SAT tests passed**, with one existing skip, after the final lifecycle
+changes. Eight focused tests cover one-to-one matching of duplicate tuples,
+independent survival under list churn, every tuple field, reassignment identity,
+conflict-prefix run truncation, omitted-visit accounting, capacity bounds,
+chronological retention, clear/resize, stamp saturation, and solve/push/pop/reset
+boundaries. Twenty paired formulas use exhaustive truth-table classification,
+explicit clause payload/metadata and trail/watch/stat/model equality, identical
+LRAT transcripts, independent SAT-model checks and independent UNSAT LRAT checks.
+During every observed real visit, an assertion checks that a claimed reusable
+entry actually takes the ordinary blocker-hit path.
+
+The audit confirmed that production SAT code does not clone and restore old
+`Trail` snapshots, which could otherwise rewind an observer serial. Both trail
+assignment entry points stamp assignments, and all unassignment paths invalidate
+queries through the literal values. Full solver reset explicitly clears history
+before clause IDs restart. This closes the lifecycle assumptions separately
+from the per-entry matcher tests.
+
+Strict all-target/all-feature SAT clippy, formatting and the committed release
+build passed. The observer is archived, not landed in production; no full
+workspace or SMT parity qualification is claimed. Main receives this finding.
+Source bundle/patch (including the runner), binary identity, manifest, raw
+reports/stdout/stderr, canonical schema records, validation summary and all
+build/test logs are retained under
+`precompile/d3aee8c/benchmark/watch-entry-reuse/` and
+`precompile/d3aee8c/benchmark/runs/watch-entry-reuse/`. The temporary checkout and
+its branches are removed after this document lands. The Kissat gap remains open.
