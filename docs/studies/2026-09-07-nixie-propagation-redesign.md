@@ -40,6 +40,13 @@ ordinary-solver speedup: grouping changes search and the new representation
 still has substantial scalar-iteration costs. The kernel was removed; no
 threshold tuning or repeated cells followed.
 
+The [direct-loop follow-up](2026-09-08-packed-direct-loops.md) then removed
+27.45% of the native prototype's instructions and 32.16% of its cycles/conflict
+with exact search identity, using only two new runs and cached controls.
+It still exceeded ordinary cached instruction totals on both inputs, failing
+its explicit advancement constraint. That follow-up is also rejected. Pause
+this grouping line; the measured iterator correction is not a solver win.
+
 Within a trigger's watch list, group clauses sharing a blocking literal. If
 that literal is true, one check can establish satisfaction for the whole
 group. Unlike the rejected four-watcher prefix experiment, the proposed
