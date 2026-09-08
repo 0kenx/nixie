@@ -690,6 +690,27 @@ impl BvSolver {
         self.term_to_bv.get(&term)
     }
 
+    /// Whether any bit-blasting exists in the current generation (any
+    /// `term_to_bv` entry).  The unified link pass gates its
+    /// Bool-selector-only sweep on this: a goal with no circuits anywhere
+    /// (pure propositional) must not open build windows at all.
+    #[must_use]
+    pub fn has_circuits(&self) -> bool {
+        !self.term_to_bv.is_empty()
+    }
+
+    /// The truth variable a previous circuit build minted for the
+    /// Bool-sorted `term` (read-only: never allocates).  The unified link
+    /// pass uses this to tie an `ite` selector's circuit var to the leaf's
+    /// main-core var *after* the operand blast created it – calling
+    /// `encode_bool_node` instead would allocate a fresh var for every Bool
+    /// leaf of a pure-propositional goal, minting vars the structural
+    /// encoder deliberately never created.
+    #[must_use]
+    pub fn bool_node_var(&self, term: TermId) -> Option<Var> {
+        self.bool_node.get(&term).copied()
+    }
+
     /// The bit variables of `term`'s bit-vector (LSB first), for callers
     /// that build further circuits over an existing blasting (the
     /// order-encoding network's input wires).
@@ -3033,6 +3054,16 @@ impl BvSolver {
         let Some(bv) = self.term_to_bv.get(&term) else {
             return false;
         };
+        // In a unified generation the bits belong to the caller's core;
+        // only the adopted main-core snapshot assigns them (the embedded
+        // trail and its `last_sat_model` know nothing about them).
+        if self.unified {
+            return bv.bits.iter().all(|&v| {
+                self.adopted_model
+                    .get(v.index())
+                    .is_some_and(|l| l.is_defined())
+            });
+        }
         bv.bits.iter().all(|&v| {
             self.last_sat_model
                 .get(v.index())

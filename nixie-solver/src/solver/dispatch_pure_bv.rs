@@ -84,8 +84,12 @@ impl crate::solver::Solver {
         // assertions stay the recorded constraint terms (unsat cores keep
         // naming the user's input) and remain the fallback if any rewritten
         // assertion leaves the blastable fragment.
-        let (preprocessed, eliminations, preprocessed_origins) =
-            self.bv_preprocess_assertions(manager);
+        let super::bv_preprocess::PreprocessOutcome {
+            rewritten: preprocessed,
+            eliminations,
+            origins: preprocessed_origins,
+            ..
+        } = self.bv_preprocess_assertions(manager);
         let blastable = preprocessed
             .iter()
             .all(|&a| term_in_blastable_fragment(a, manager));
@@ -311,6 +315,15 @@ impl crate::solver::Solver {
     /// can own any atom).
     fn goal_is_pure_bv(&self, manager: &TermManager) -> bool {
         if self.has_quantifiers {
+            return false;
+        }
+        // Stage-4 routing (`bv_dispatch_unified`): pure goals without wide
+        // multipliers decline the dispatch and solve through the unified
+        // main core (the general path's link pass owns their circuits).
+        // Wide-`bvmul` goals keep the dispatch for its CEGAR machinery, and
+        // ring-dominated goals keep their existing general-path routing (the
+        // checks below).
+        if Self::bv_dispatch_unified() && !self.has_bv_wide_mul {
             return false;
         }
         // No BV content: nothing to blast eagerly; the plain Boolean path in

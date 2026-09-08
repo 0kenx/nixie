@@ -1251,6 +1251,21 @@ fn bool_const(term: &TermId, manager: &TermManager) -> Option<bool> {
     }
 }
 
+/// Result of [`Self::bv_preprocess_assertions`].
+pub(super) struct PreprocessOutcome {
+    /// The rewritten assertion list (equivalence- or
+    /// equisatisfiability-preserving per `used_ring_elimination`).
+    pub rewritten: Vec<TermId>,
+    /// Eliminated-variable definitions (model reconstruction replay).
+    pub eliminations: Vec<(TermId, TermId)>,
+    /// Each surviving assertion's original term (unsat-core naming).
+    pub origins: Vec<TermId>,
+    /// Whether the ring pass rewrote anything: its output is only
+    /// equisatisfiable (division by non-units over `Z/2^w`), never
+    /// implied by the originals.
+    pub used_ring_elimination: bool,
+}
+
 impl Solver {
     /// Preprocess the pure QF_BV goal: eliminate variable definitions
     /// (Z3 `solve-eqs`), then rewrite every assertion through the
@@ -1264,10 +1279,16 @@ impl Solver {
     /// variable, so the dispatch reconstructs each variable's value by
     /// evaluating its definition under the model before validating the
     /// model against the *original* assertions.
+    /// The fourth component reports whether the **ring-elimination** pass
+    /// rewrote anything (see the call sites: the dispatch may consume any
+    /// equisatisfiable rewrite, while the stage-4 preprocessing-parity pass
+    /// asserts the rewrite *alongside* the originals and therefore needs it
+    /// to be implication-preserving – ring elimination over `Z/2^w` divides
+    /// by non-units, so its result is only equisatisfiable, not implied).
     pub(super) fn bv_preprocess_assertions(
         &mut self,
         manager: &mut TermManager,
-    ) -> (Vec<TermId>, Vec<(TermId, TermId)>, Vec<TermId>) {
+    ) -> PreprocessOutcome {
         // (assertion, origin) pairs: preprocessing may split an assertion
         // (a top-level `and` of equations) or drop solved ones, and the
         // dispatch needs each surviving assertion's *original* for its
@@ -1284,6 +1305,7 @@ impl Solver {
         // *after* the ring list, in its forward (Kahn) order.  The dispatch
         // additionally retries unresolved definitions to a fixpoint.
         let mut ring = solve_ring_equations(&mut pairs, manager);
+        let used_ring_elimination = !ring.is_empty();
         ring.reverse();
         let eliminations: Vec<(TermId, TermId)> = ring.into_iter().chain(plain).collect();
         let mut preprocessor = BvPreprocessor::new();
@@ -1292,7 +1314,12 @@ impl Solver {
             .map(|&(a, _)| preprocessor.rewrite(a, manager))
             .collect();
         let origins = pairs.iter().map(|&(_, o)| o).collect();
-        (rewritten, eliminations, origins)
+        PreprocessOutcome {
+            rewritten,
+            eliminations,
+            origins,
+            used_ring_elimination,
+        }
     }
 
     /// Reconstruct the model values of preprocess-eliminated variables by
@@ -1632,6 +1659,21 @@ fn solve_ring_equations(
                     continue;
                 }
                 if !is_free_bv_var(*v, manager) {
+                    continue;
+                }
+                // **Linearity of the equation in `v`**: no *other* monomial
+                // of the equation may mention `v`.  Solving
+                // `3n + 3n² = 3` for `n` produces the self-referential
+                // `n = 3⁻¹·(3 − 3n²)`; dropping the equation on that
+                // "definition" silently discards the very constraint that
+                // ties `n` to `n²`, collapsing formulas to `true` – a
+                // measured false `sat` on the parity-obstruction family
+                // (`3n(n+1)+1 = 4` is unsatisfiable, `n(n+1)` being always
+                // even, yet the eliminated rewrite called it `sat`).
+                if poly
+                    .iter()
+                    .any(|m2| m2.factors != m.factors && m2.factors.contains(v))
+                {
                     continue;
                 }
                 let other = occurrences.get(v).copied().unwrap_or(1).saturating_sub(1);

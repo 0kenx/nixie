@@ -179,6 +179,10 @@ impl super::Solver {
             bv: _,              // SCOPED: reset by `rebase_theory_state`
             has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
             // `true` after pop only keeps the lazy route.
+            bv_preprocess_at_count: _, // NOT trailed: a stale value only
+            // re-runs an idempotent (implied-clause) pass.
+            has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
+            // conservative direction (keeps the dispatch).
             has_bv_result_uf: _, // NOT trailed: monotone routing input; same
             // conservative direction as the flag above.
             bv_unified: _, // NOT trailed: `push` ends the generation, and

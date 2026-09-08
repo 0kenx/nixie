@@ -1819,7 +1819,7 @@ impl Solver {
         blast_bv_term(&mut self.bv, term, manager, &mut encoded);
     }
 
-    fn emit_assertion_clauses(&mut self, term: TermId, manager: &mut TermManager) {
+    pub(super) fn emit_assertion_clauses(&mut self, term: TermId, manager: &mut TermManager) {
         /// Mark the assertion set inconsistent (mirrors the pre-encode
         /// `False` handling at the top of `assert`).
         fn note_false(solver: &mut Solver) {
@@ -3059,11 +3059,27 @@ impl Solver {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
-            TermKind::BvAdd(_, _) | TermKind::BvSub(_, _) | TermKind::BvMul(_, _) => {
+            TermKind::BvAdd(_, _) | TermKind::BvSub(_, _) => {
                 // Ring operations: recorded for the unified-blasting routing
                 // gate (`bv_unified::bv_unified_window_open` – ring-dominated
                 // formulas with the arith relaxation active stay lazy).
                 self.has_bv_ring_ops = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
+            TermKind::BvMul(lhs, _) => {
+                self.has_bv_ring_ops = true;
+                // Wide multipliers keep the dispatch under stage-4 routing
+                // (CEGAR preservation; over-approximates the abstraction's
+                // non-constant-operand condition).
+                if manager
+                    .get(*lhs)
+                    .and_then(|t| manager.sorts.get(t.sort))
+                    .and_then(|s| s.bitvec_width())
+                    .is_some_and(|w| w >= 32)
+                {
+                    self.has_bv_wide_mul = true;
+                }
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }

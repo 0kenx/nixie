@@ -220,6 +220,14 @@ pub struct Solver {
     /// encoder also relaxed into the arithmetic solver keep the lazy path,
     /// mirroring the eager dispatch's routing (see `dispatch_pure_bv`).
     pub(super) has_bv_ring_ops: bool,
+    /// Whether the formula contains a `bvmul` at or above the CEGAR
+    /// abstraction width (32) – those goals keep the eager dispatch under
+    /// stage-4 routing (`bv_dispatch_unified`), because its
+    /// abstraction/refinement machinery has no unified-path equivalent.
+    pub(super) has_bv_wide_mul: bool,
+    /// Assertion count at which the stage-4 preprocessing-parity pass last
+    /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
+    pub(super) bv_preprocess_at_count: usize,
     /// Whether a UF application returning a bit-vector (including datatype
     /// selectors over BV carriers) has been seen.  Sticky input to the
     /// unified-blasting gate: congruence merges of such applications cannot
@@ -831,6 +839,8 @@ impl Solver {
             statistics: Statistics::new(),
             bv_terms: FxHashSet::default(),
             has_bv_ring_ops: false,
+            has_bv_wide_mul: false,
+            bv_preprocess_at_count: usize::MAX,
             has_bv_result_uf: false,
             bv_unified: false,
             bv_order_specs: Vec::new(),
@@ -1736,6 +1746,46 @@ impl Solver {
         // through to the general CDCL(T) loop.
         if let Some(result) = self.dispatch_pure_bv_solve(manager) {
             return result;
+        }
+
+        // Stage-4 routing (`bv_dispatch_unified`): the goal above was
+        // declined *because of the routing*, so the unified general path
+        // owns it – but the dispatch's equivalence-preserving preprocessor
+        // (solve-eqs, ring elimination, SOM/poly-identity rewriting) has no
+        // unified equivalent, and without it whole families become
+        // search-hard (multiplier-verification identities: the wienand
+        // distributivity shape timed out).  The rewrite of the assertion
+        // set is *implied by* the originals (the dispatch's own `Unsat`
+        // verdicts rest on that), so asserting it alongside is sound in
+        // both directions: implied units can only strengthen refutation,
+        // and every model of the originals satisfies the rewrites.  E.g.
+        // the wienand identity folds to `false` and refutes on the spot.
+        if Self::bv_dispatch_unified()
+            && !self.has_bv_wide_mul
+            && !self.bv_terms.is_empty()
+            && self.all_assertions_bv_fragment
+            && self.bv_preprocess_at_count != self.assertions.len()
+            && std::env::var("NIXIE_BV_NO_PARITY").is_err()
+        {
+            self.bv_preprocess_at_count = self.assertions.len();
+            let pp = self.bv_preprocess_assertions(manager);
+            // Ring elimination divides by non-units over `Z/2^w`: its
+            // rewrite is equisatisfiable but NOT implied by the originals
+            // (the dispatch consumes it standalone, so this is invisible
+            // there).  Asserting a non-implied rewrite alongside the
+            // originals refutes satisfiable goals – measured as a false
+            // `unsat` on the ring solve-eqs family – so the parity pass
+            // takes only implication-preserving rewrites.
+            if !pp.used_ring_elimination {
+                for &r in &pp.rewritten {
+                    self.emit_assertion_clauses(r, manager);
+                    self.link_or_blast_bv_circuits(r, manager);
+                }
+            }
+            if self.has_false_assertion {
+                self.build_unsat_core_trivial_false();
+                return SolverResult::Unsat;
+            }
         }
 
         // Check resource limits before starting
@@ -3761,6 +3811,7 @@ impl Solver {
         // the theory side; the solver-side flag follows here.
         self.bv.reset();
         self.bv_unified = false;
+        self.bv_preprocess_at_count = usize::MAX;
         self.bv_order_specs.clear();
         self.distinct_guard_clauses.clear();
         self.bv_order_built.clear();

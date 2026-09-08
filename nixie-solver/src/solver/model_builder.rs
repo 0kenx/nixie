@@ -320,6 +320,31 @@ impl Solver {
         // `String`-sorted variables are still unassigned at this point; recover
         // them from the ground string decision procedure, which hands back only
         // assignments it has verified against every assertion.
+        // Unified BV generation: pull every *fully determined* blasted term
+        // into the model, not just the `bv_terms` leaves.  The dispatch's
+        // model builder does the same via `model_bv_values`; without it a
+        // compound like `(bvurem x #x7)` has no model entry and `get-value`
+        // echoes the term instead of folding it (the adopted main-core
+        // snapshot is the value source – see `BvSolver::read_model_bit`).
+        if self.bv.is_unified() {
+            for (term, value) in self.bv.model_bv_values() {
+                if model.get(term).is_some() {
+                    continue;
+                }
+                let Some(width) = manager
+                    .get(term)
+                    .and_then(|t| manager.sorts.get(t.sort))
+                    .and_then(|s| s.bitvec_width())
+                else {
+                    continue;
+                };
+                let value_term = manager.mk_bitvec(
+                    nixie_core::ast::bv_wrap_unsigned(&num_bigint::BigInt::from(value), width),
+                    width,
+                );
+                model.set(term, value_term);
+            }
+        }
         self.extract_string_model(&mut model, manager);
 
         // Datatype values.  Must run last: the reconstruction reads the tester

@@ -111,6 +111,24 @@ impl Solver {
         }
     }
 
+    /// Whether pure QF_BV goals route through the unified main core instead
+    /// of the eager embedded dispatch (`NIXIE_BV_DISPATCH_UNIFIED=0` restores
+    /// the dispatch; default on – stage 4 of the campaign, flipped by the
+    /// pre-registered corpus measurement: geomean 1.36× over the committed
+    /// 300-file sample, zero verdict mismatches, +10/−5 timeouts at 30 s;
+    /// see `docs/studies/2026-09-07-bv-dispatch-unification.md`).
+    ///
+    /// Routing declines the dispatch for goals the unified window can own
+    /// (see [`Self::bv_unified_window_open`]); ring-dominated goals keep
+    /// their existing general-path routing, and wide-`bvmul` goals keep the
+    /// dispatch (its CEGAR machinery has no unified-path equivalent).
+    pub(crate) fn bv_dispatch_unified() -> bool {
+        match std::env::var("NIXIE_BV_DISPATCH_UNIFIED") {
+            Ok(v) => !(v == "0" || v.is_empty()),
+            Err(_) => true,
+        }
+    }
+
     /// Whether a unified build window may open **right now** (assertion
     /// time).  Every gate here is a generation-breaking condition when it
     /// flips false later; see the module docs for why failure *ends* the
@@ -127,8 +145,9 @@ impl Solver {
             && !self.has_bv_result_uf
             // The eager dispatch owns the all-blastable fragment (its
             // single-shot embedded solve is the better architecture there;
-            // unification would blast every file twice).
-            && !self.all_assertions_bv_fragment
+            // unification would blast every file twice) – unless stage 4's
+            // routing mode hands the fragment to the unified core.
+            && (Self::bv_dispatch_unified() || !self.all_assertions_bv_fragment)
             // Ring-dominated + relaxation active: the arith relaxation is
             // the better procedure (the dispatch applies the same routing);
             // eager circuits would only bloat the main core.
@@ -148,12 +167,28 @@ impl Solver {
         // ---- Pass 1 (no SAT access): collect the shapes, abort on breakers.
         let mut bv_sorted: Vec<TermId> = Vec::new();
         let mut bv_atoms: Vec<BvAtomToLink> = Vec::new();
-        if !self.collect_unified_bv_terms(root, manager, &mut bv_sorted, &mut bv_atoms) {
+        let mut bool_leaves: Vec<TermId> = Vec::new();
+        if !self.collect_unified_bv_terms(
+            root,
+            manager,
+            &mut bv_sorted,
+            &mut bv_atoms,
+            &mut bool_leaves,
+        ) {
             self.end_bv_unified_generation();
             return;
         }
         self.collect_unified_constraint_atoms(manager, &mut bv_sorted, &mut bv_atoms);
-        if bv_atoms.is_empty() && bv_sorted.is_empty() {
+        // A Bool-selector-only sweep (no BV atoms or operands in *this*
+        // assertion) is worth a window only when the generation already
+        // blasted circuits – a later `(not c)` must tie the selector of an
+        // *earlier* assertion's `ite` to the main core.  A goal with no
+        // circuits anywhere (pure propositional) never opens a window, so
+        // the structural encoder's var-count contract holds untouched.
+        if bv_atoms.is_empty()
+            && bv_sorted.is_empty()
+            && (bool_leaves.is_empty() || !self.bv.has_circuits())
+        {
             return;
         }
         // The budget also bounds the *link* set: a large `distinct`'s C(n,2)
@@ -206,6 +241,21 @@ impl Solver {
                 }
                 bv.note_unified_atom(atom.term);
                 linked_atoms += 1;
+            }
+            for &leaf in &bool_leaves {
+                // Tie the circuit's selector var to the main-core var of
+                // the same Bool leaf, when the leaf has one (a selector
+                // under no other constraint keeps its fresh var – free, as
+                // the lazy path would leave it).
+                if let Some(&main_var) = term_to_var.get(&leaf)
+                    && let Some(circuit_var) = bv.bool_node_var(leaf)
+                {
+                    #[cfg(feature = "std")]
+                    if std::env::var("NIXIE_BV_UNIFIED_TRACE").is_ok() {
+                        eprintln!("[bv-unified] bool leaf {leaf:?}: main={main_var:?} circuit={circuit_var:?}");
+                    }
+                    bv.link_bool_vars(main_var, circuit_var);
+                }
             }
         });
         self.build_order_specs_in_window(manager);
@@ -325,6 +375,7 @@ impl Solver {
         manager: &TermManager,
         bv_sorted: &mut Vec<TermId>,
         bv_atoms: &mut Vec<BvAtomToLink>,
+        bool_leaves: &mut Vec<TermId>,
     ) -> bool {
         let bool_sort = manager.sorts.bool_sort;
         let mut visited: FxHashSet<TermId> = FxHashSet::default();
@@ -379,6 +430,17 @@ impl Solver {
             }
             if is_bv_sort {
                 bv_sorted.push(tid);
+            }
+            // Bool-sorted free variables matter as `ite` selectors: the
+            // circuit builder mints its own var for such a leaf, and the
+            // outer search's assignment only reaches the mux if that var
+            // is tied to the leaf's main-core var (the unified analogue of
+            // the lazy path's `assert_bool_value` echo).  The tie is made
+            // only when a circuit var already exists (a selector no later
+            // assertion ever uses keeps its fresh var – free, exactly as
+            // the lazy path would leave it), so no var is ever minted here.
+            if term.sort == bool_sort && matches!(term.kind, TermKind::Var(_)) {
+                bool_leaves.push(tid);
             }
             // Descend: the walk must see every sub-term (children of every
             // kind, including the atoms' operands).
@@ -492,7 +554,7 @@ impl Solver {
             && !self.has_bv_result_uf
             && self.proof.is_none()
             && self.config.certification_mode == CertificationMode::Uncertified
-            && !self.all_assertions_bv_fragment)
+            && (Self::bv_dispatch_unified() || !self.all_assertions_bv_fragment))
         {
             return false;
         }

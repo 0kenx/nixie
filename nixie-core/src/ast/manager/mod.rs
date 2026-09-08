@@ -167,7 +167,8 @@ impl TermManager {
     }
 
     /// Lookup the interned id of `(kind, sort)` WITHOUT interning: `None`
-    /// when no such term exists.  The read-only half of `Self::intern`
+    /// when no such term exists.  The read-only half of the interning
+    /// write path (`Self::intern`, private)
     /// for callers that must not mint terms (e.g. probing whether an
     /// equality atom between two terms already exists — creating it would
     /// be exactly the quadratic blowup the probe exists to avoid).
