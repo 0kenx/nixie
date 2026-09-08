@@ -115,14 +115,14 @@ removed again, with committed source and measurements archived.
   formatting/diff checks and the release build passed.
 - The 32 ten-variable truth-table cases now compare all four combinations:
   old/direct loop and scalar/bulk skipping. Results, internal trail/watch/
-  clause/stats/tick state and LRAT transcripts agree. The original seven SAT
+  clause-count/stats/tick state and LRAT transcripts agree. The original seven SAT
   model checks and 25 independent UNSAT proof checks remain in the test.
 - Every miss exit across literal polarities, conflict/requeue and backtrack
   compares direct bulk against the old bulk implementation as well as direct
   scalar against direct bulk.
 - A new test forces each of **101 conflict-prefix boundaries** in a list with
   two packed groups and scalar entries, including changed-blocker suffixes.
-  It compares exact state before and after snapshot restoration, real arena
+  It compares the checked state fields before and after snapshot restoration, real arena
   compaction, backtracking and another propagation.
 - Enabled group, region and learned-clause collectors agree between old bulk
   and direct bulk. Storage removal, relocation and packing-growth tests pass.
@@ -143,3 +143,15 @@ The result closes the proposed iterator-overhead follow-up. It does not
 establish a benefit for native grouping on ordinary Nixie. Further work should
 address costs in the ordinary core or use separately justified structural
 compression, rather than continue refining this rejected grouped trajectory.
+
+## Evidence correction (2026-09-08)
+
+The registration requested full state equality, but the implemented helper
+compared `ClauseDatabase` using its custom `Debug` output. That output contains
+counts, not individual clause literals or metadata. Trail, watch lists,
+statistics, ticks and LRAT transcripts were compared; per-clause contents were
+not directly compared by that helper. Earlier descriptions of these checks as
+"full internal state" overstated their coverage. Independent model/proof checks
+and the performance rejection remain valid; this correction does not establish
+a propagation defect. Future representation experiments must compare every
+clause's literal order and metadata explicitly, including activity bits.

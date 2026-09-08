@@ -42,7 +42,13 @@
 //!   redundant literals). Shrinking keeps the `ClauseRef` stable, which
 //!   watchers and reasons require. (Compaction later re-tightens shrunk
 //!   slots to their current length, reclaiming that padding.)
-//! * Offsets are `u32`; [`ClauseRef::NULL`] (`u32::MAX`) is reserved.
+//! * Every byte exposed by the backing `Vec<u64>` is initialized, including
+//!   alignment padding. Allocation and tombstone creation clear the last
+//!   word before writing the header/literals and increasing the vector length.
+//!   Shrink retains initialized bytes; compaction only moves initialized data.
+//! * Offsets are `u32`; [`ClauseRef::NULL`] (`u32::MAX`) is reserved. Allocation
+//!   validates the whole extent, including room for a compaction tombstone,
+//!   before writing. Address-space exhaustion raises an error, never a null ref.
 //!
 //! # Deleted-flag reads
 //!
@@ -82,9 +88,10 @@ impl ClauseRef {
     }
 
     /// Construct from a raw byte offset (crate-internal). Returns `None` for
-    /// offsets that collide with the null encoding or cannot be addressed.
+    /// offsets that collide with the null encoding, cannot be addressed, or
+    /// are not aligned to a slot boundary.
     pub(super) fn from_byte_offset(off: usize) -> Option<Self> {
-        if off >= u32::MAX as usize {
+        if off > MAX_ARENA_BYTES - HEADER_BYTES || !off.is_multiple_of(ALIGN) {
             return None;
         }
         Some(Self(off as u32))
@@ -95,7 +102,7 @@ const FLAG_DELETED: u8 = 1 << 0;
 const FLAG_LEARNED: u8 = 1 << 1;
 const TIER_SHIFT: u8 = 4;
 
-/// Per-clause header, exactly 16 bytes, immediately followed by the literal
+/// Per-clause header, exactly 12 bytes, immediately followed by the literal
 /// array (so the array starts 4-aligned – `Lit` is `#[repr(transparent)]`
 /// over `u32`).
 ///
@@ -173,6 +180,34 @@ impl ClauseHeader {
 /// Slot geometry: header size and 8-byte slot stride rounding.
 const HEADER_BYTES: usize = core::mem::size_of::<ClauseHeader>();
 const ALIGN: usize = 8;
+// A byte-offset ref and a Rust allocation must both represent the extent.
+const MAX_ARENA_BYTES: usize = if usize::BITS > 32 {
+    (u32::MAX as usize / ALIGN) * ALIGN
+} else {
+    (isize::MAX as usize / ALIGN) * ALIGN
+};
+// The header has no internal padding: raw typed writes initialize all bytes.
+const _: () = assert!(HEADER_BYTES == 12);
+
+/// Validate before reserving or writing. Keep room for the permanent tombstone
+/// even when an entirely live arena is compacted. No narrowing conversion may
+/// turn an allocation failure into a null ref or a truncated literal array.
+#[inline]
+fn allocation_extent(start: usize, len: usize) -> Option<(ClauseRef, usize)> {
+    let r = ClauseRef::from_byte_offset(start)?;
+    if len > u32::MAX as usize {
+        return None;
+    }
+    let payload = len
+        .checked_mul(core::mem::size_of::<Lit>())?
+        .checked_add(HEADER_BYTES)?;
+    let size = payload.checked_add(ALIGN - 1)? / ALIGN * ALIGN;
+    let end = start.checked_add(size)?;
+    if end > MAX_ARENA_BYTES - slot_size(0) {
+        return None;
+    }
+    Some((r, end))
+}
 
 /// Compaction gate: minimum unreachable bytes before a compaction can pay
 /// for itself (smaller arenas never reach the [`ClauseArena::should_compact`]
@@ -375,30 +410,32 @@ impl ClauseArena {
     ///
     /// The reference is fresh – slots are never reused (see module docs) –
     /// so a returned `ClauseRef` names this clause until the arena is
-    /// dropped.
+    /// dropped or compacted (compaction rewrites the owning refs table).
+    ///
+    /// # Panics
+    /// Panics before mutation if the arena's address space is exhausted.
     pub fn alloc(&mut self, lits: &[Lit], learned: bool) -> ClauseRef {
         if lits.is_empty() {
             #[cfg(feature = "std")]
             eprintln!("ARENA-FORENSIC: alloc(empty) called");
             debug_assert!(false, "alloc of empty");
         }
-        let size = slot_size(lits.len());
         let start = self.pos;
-        let end = start + size;
-        debug_assert_eq!(start % ALIGN, 0);
-        debug_assert!(
-            ClauseRef::from_byte_offset(start).is_some(),
-            "arena overflow"
-        );
+        let Some((r, end)) = allocation_extent(start, lits.len()) else {
+            panic!("clause arena address space exhausted or invalid allocation extent");
+        };
         self.ensure_capacity(end);
 
         let header = ClauseHeader::new(lits.len() as u32, learned);
         // SAFETY: `ensure_capacity` reserved room for [start, end); writing
-        // the header and literals initialises exactly that range, after
-        // which `set_len` exposes it. No element of `buffer` outside the
-        // written range is ever read before being overwritten by a later
-        // `alloc` (each `alloc` extends `pos` by a whole slot).
+        // the header and literals initializes the payload. Clearing the last
+        // aligned word first also initializes any trailing slot padding:
+        // exposing partially initialized u64s via `set_len` would be UB,
+        // including when the derived Clone reads the whole buffer. The
+        // padding-free header and transparent-u32 literals cover every other
+        // byte. Each allocation extends `pos` by a whole aligned slot.
         unsafe {
+            self.buffer.as_mut_ptr().add(end / ALIGN - 1).write(0);
             let base = self.buffer.as_mut_ptr().cast::<u8>().add(start);
             (base as *mut ClauseHeader).write(header);
             core::ptr::copy_nonoverlapping(
@@ -411,7 +448,7 @@ impl ClauseArena {
 
         self.pos = end;
         self.num_clauses += 1;
-        ClauseRef::from_byte_offset(start).unwrap_or(ClauseRef::NULL)
+        r
     }
 
     /// Mark the clause at `r` deleted (idempotent). The slot is *not*
@@ -462,12 +499,12 @@ impl ClauseArena {
         off: usize,
         arena_end: usize,
     ) -> Option<ClauseHeader> {
-        if off + HEADER_BYTES > arena_end {
+        if !off.is_multiple_of(ALIGN) || off > arena_end || HEADER_BYTES > arena_end - off {
             return None;
         }
         // SAFETY: caller contract; reading by value holds no borrow.
         let h = unsafe { core::ptr::read(base.add(off).cast::<ClauseHeader>()) };
-        if HEADER_BYTES + h.len as usize * core::mem::size_of::<Lit>() > arena_end - off {
+        if h.len as usize > (arena_end - off - HEADER_BYTES) / core::mem::size_of::<Lit>() {
             return None;
         }
         Some(h)
@@ -542,9 +579,9 @@ impl ClauseArena {
     ///   allocation while `shrink` lowers `len` (the stride-desync bug
     ///   documented on [`Self::scale_activity`]).
     /// * On return `slots[i]` holds the clause's **new** ref if it was
-    ///   live, or the tombstone ref if it was deleted (or failed
-    ///   validation – an impossible state that must never fabricate a
-    ///   relocation). The caller then rewrites every other ref holder from
+    ///   live, or the tombstone ref if it was deleted. Invalid refs and
+    ///   unsorted/overlapping live slots panic during preflight, before
+    ///   relocation. The caller then rewrites every other ref holder from
     ///   this table (`WatchLists::relocate_refs`).
     ///
     /// The compacted region ends with a permanent **tombstone slot** (a
@@ -574,9 +611,9 @@ impl ClauseArena {
         // lengths). Validation is the same bound every arena read uses
         // (`get`/`read_header`: header inside the live region, declared
         // literal array fitting between the header and `pos`) – a `slots`
-        // entry that fails it, or whose header is deleted (a slot deleted
-        // since the last compaction, or a previous compaction's tombstone
-        // offset), is tombstoned rather than copied.
+        // entry that fails it raises an error before any mutation. Deleted
+        // headers (including a previous compaction's tombstone) relocate to
+        // the new tombstone rather than being copied.
         //
         // Debug invariant carried through this scan: the **live** entries'
         // offsets are strictly ascending in id order (ids are handed out in
@@ -585,7 +622,7 @@ impl ClauseArena {
         let mut live_bytes = 0usize;
         let mut live_count = 0usize;
         let mut tombstoned = 0usize;
-        let mut prev_live_off: Option<usize> = None;
+        let mut prev_live_end = 0usize;
         // SAFETY: `self.buffer` holds every real slot listed in `slots`;
         // reads only, before any in-place write.
         let base = self.buffer.as_ptr().cast::<u8>();
@@ -593,15 +630,20 @@ impl ClauseArena {
             let off = slot.byte_offset();
             match unsafe { Self::header_in_extent(base, off, old_pos) } {
                 Some(h) if !h.deleted() => {
-                    debug_assert!(
-                        prev_live_off.is_none_or(|p| p < off),
-                        "live slot offsets must be strictly ascending in id order"
+                    assert!(
+                        prev_live_end <= off,
+                        "live slots must be ordered and nonoverlapping"
                     );
-                    prev_live_off = Some(off);
-                    live_bytes += slot_size(h.len as usize);
+                    prev_live_end = off + slot_size(h.len as usize);
+                    let Some(end) = live_bytes.checked_add(slot_size(h.len as usize)) else {
+                        panic!("compacted clause arena size overflow");
+                    };
+                    assert!(end <= old_pos, "compaction cannot enlarge the live region");
+                    live_bytes = end;
                     live_count += 1;
                 }
-                _ => tombstoned += 1,
+                Some(_) => tombstoned += 1,
+                None => panic!("invalid clause reference during arena compaction"),
             }
         }
 
@@ -611,7 +653,18 @@ impl ClauseArena {
         // downward `memmove` inside the existing buffer, so the peak
         // footprint is never exceeded.
         let tomb_off = live_bytes;
-        let tomb = ClauseRef::from_byte_offset(tomb_off).unwrap_or(ClauseRef::NULL);
+        let Some(tomb) = ClauseRef::from_byte_offset(tomb_off) else {
+            panic!("clause arena tombstone offset is not representable");
+        };
+        let Some(new_pos) = tomb_off.checked_add(tombstone_bytes) else {
+            panic!("clause arena tombstone extent overflow");
+        };
+        assert!(
+            new_pos <= MAX_ARENA_BYTES,
+            "clause arena address space exhausted"
+        );
+        // Reserve before relocation, so allocation failure leaves refs intact.
+        self.ensure_capacity(new_pos);
         let mut dst = 0usize;
         // SAFETY: within one call, `base` stays valid (no reallocation).
         // When slot i is processed, the bytes at `[off_i, off_i + bytes)`
@@ -624,40 +677,38 @@ impl ClauseArena {
             for slot in slots.iter_mut() {
                 let off = slot.byte_offset();
                 let Some(hdr) = Self::header_in_extent(base, off, old_pos) else {
-                    // Unreachable through the public API (every `slots`
-                    // entry came from `alloc` or a prior compaction);
-                    // tombstone rather than fabricate a relocation for a
-                    // corrupt slot.
-                    *slot = tomb;
-                    continue;
+                    panic!("validated clause reference became invalid during compaction");
                 };
                 if hdr.deleted() {
                     *slot = tomb;
                     continue;
                 }
                 let bytes = HEADER_BYTES + hdr.len as usize * core::mem::size_of::<Lit>();
+                assert!(
+                    dst <= off && dst <= live_bytes && bytes <= live_bytes - dst,
+                    "clause relocation exceeds its validated extent"
+                );
                 core::ptr::copy(base.add(off).cast::<u8>(), base.add(dst), bytes);
-                *slot = ClauseRef::from_byte_offset(dst).unwrap_or(tomb);
+                let Some(relocated) = ClauseRef::from_byte_offset(dst) else {
+                    panic!("validated clause relocation is not representable");
+                };
+                *slot = relocated;
                 dst += slot_size(hdr.len as usize);
             }
             debug_assert_eq!(dst, live_bytes, "pass-1 measurement must equal the copy");
 
-            // The permanent tombstone at the end of the compacted region.
-            // Room for it exists unless the region is entirely live (only
-            // the ungated test entry can hit that); reserve in that case.
-            if tomb_off + tombstone_bytes > self.buffer.capacity() * ALIGN {
-                self.buffer
-                    .reserve((tomb_off + tombstone_bytes).div_ceil(ALIGN) - self.buffer.len());
-            }
+            // Existing destination bytes (including shrink padding) were
+            // already initialized. The tombstone may extend the Vec into
+            // spare capacity, so clear its last word before the header write.
+            self.buffer.as_mut_ptr().add(new_pos / ALIGN - 1).write(0);
             let base = self.buffer.as_mut_ptr().cast::<u8>();
             let mut h = ClauseHeader::new(0, false);
             h.flags_tier = FLAG_DELETED;
             base.add(tomb_off).cast::<ClauseHeader>().write(h);
-            let new_pos = tomb_off + tombstone_bytes;
-            self.buffer.set_len(new_pos.div_ceil(ALIGN));
+            self.buffer.set_len(new_pos / ALIGN);
         }
 
-        self.pos = tomb_off + tombstone_bytes;
+        self.pos = new_pos;
         // Return the freed tail to the allocator (glibc splits the arena's
         // mmap in place; small brk-backed buffers may keep their capacity,
         // which is irrelevant at those sizes).
@@ -1046,6 +1097,145 @@ impl MemoryStats {
             return 0.0;
         }
         self.wasted_bytes as f64 / self.used_bytes as f64
+    }
+}
+
+#[cfg(test)]
+mod initialization_tests {
+    use super::*;
+
+    fn poisoned_arena() -> ClauseArena {
+        let mut arena = ClauseArena::new(1024);
+        for word in arena.buffer.spare_capacity_mut() {
+            word.write(0xa5a5_a5a5_a5a5_a5a5);
+        }
+        arena
+    }
+
+    fn assert_zero_padding(arena: &ClauseArena, offset: usize, len: usize) {
+        let bytes: Vec<_> = arena.buffer.iter().flat_map(|w| w.to_ne_bytes()).collect();
+        let payload_end = offset + HEADER_BYTES + len * core::mem::size_of::<Lit>();
+        let slot_end = offset + slot_size(len);
+        assert!(
+            bytes[payload_end..slot_end].iter().all(|&b| b == 0),
+            "slot padding was not initialized: {:?}",
+            &bytes[payload_end..slot_end]
+        );
+    }
+
+    #[test]
+    fn arena_alloc_initializes_padding_before_exposing_u64_elements() {
+        let mut arena = poisoned_arena();
+        for len in 1..=12 {
+            let lits: Vec<_> = (0..len).map(|v| Lit::from_code(2 * v as u32)).collect();
+            let r = arena.alloc(&lits, false);
+            assert_zero_padding(&arena, r.byte_offset(), len);
+            let clone = arena.clone();
+            assert_eq!(clone.get(r).unwrap().lits, lits);
+        }
+    }
+
+    #[test]
+    fn arena_compact_initializes_new_tombstone_padding() {
+        let mut arena = poisoned_arena();
+        let summary = arena.compact(&mut []);
+        assert_eq!(summary.live, 0);
+        assert_zero_padding(&arena, 0, 0);
+        assert_eq!(arena.clone().buffer, arena.buffer);
+    }
+
+    #[test]
+    fn allocation_extent_rejects_overflow_and_reserves_tombstone() {
+        let last_end = MAX_ARENA_BYTES - slot_size(0);
+        let start = last_end - slot_size(2);
+        assert_eq!(allocation_extent(start, 2).unwrap().1, last_end);
+        assert!(allocation_extent(start + ALIGN, 2).is_none());
+        assert!(allocation_extent(usize::MAX, 1).is_none());
+        assert!(allocation_extent(0, usize::MAX).is_none());
+        assert!(allocation_extent(0, u32::MAX as usize).is_none());
+        for start in 1..ALIGN {
+            assert!(allocation_extent(start, 1).is_none());
+        }
+        assert!(ClauseRef::from_byte_offset(MAX_ARENA_BYTES - ALIGN).is_none());
+        assert!(ClauseRef::from_byte_offset(u32::MAX as usize).is_none());
+    }
+
+    #[test]
+    fn exhausted_allocation_panics_before_mutation() {
+        let mut arena = poisoned_arena();
+        // Exercise the actual release guard without allocating four GiB.
+        arena.pos = MAX_ARENA_BYTES;
+        let before = arena.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            arena.alloc(&[Lit::from_code(0)], false);
+        }));
+        assert!(result.is_err());
+        assert_eq!(arena.pos, before.pos);
+        assert_eq!(arena.buffer, before.buffer);
+        assert_eq!(arena.num_clauses, before.num_clauses);
+    }
+
+    #[test]
+    fn invalid_compaction_panics_before_rewriting_any_ref() {
+        let mut arena = poisoned_arena();
+        let r = arena.alloc(&[Lit::from_code(0), Lit::from_code(2)], true);
+        for mut refs in [vec![r, ClauseRef::NULL], vec![r, r]] {
+            let before_refs = refs.clone();
+            let before = arena.clone();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                arena.compact(&mut refs);
+            }));
+            assert!(result.is_err());
+            assert_eq!(refs, before_refs);
+            assert_eq!(arena.buffer, before.buffer);
+            assert_eq!(arena.pos, before.pos);
+        }
+    }
+
+    #[test]
+    fn growth_shrink_compaction_and_clone_preserve_clause_contents() {
+        let mut arena = poisoned_arena();
+        let mut refs = Vec::new();
+        let mut expected = Vec::new();
+        for i in 0..256 {
+            let lits: Vec<_> = (0..(i % 12 + 1))
+                .map(|v| Lit::from_code(2 * (v + i)))
+                .collect();
+            let r = arena.alloc(&lits, i % 2 == 0);
+            assert_zero_padding(&arena, r.byte_offset(), lits.len());
+            arena.set_lbd(r, 7);
+            arena.add_activity(r, i as f32 + 0.25);
+            arena.bump_usage(r);
+            refs.push(r);
+            expected.push(lits);
+        }
+        for (i, &r) in refs.iter().enumerate() {
+            if i % 3 == 0 {
+                arena.delete(r);
+            } else {
+                let new_len = 1 + i % expected[i].len();
+                expected[i].truncate(new_len);
+                assert!(arena.shrink(r, &expected[i]));
+            }
+        }
+        for _ in 0..3 {
+            let summary = arena.compact(&mut refs);
+            assert_zero_padding(&arena, summary.tombstone_offset as usize, 0);
+            let clone = arena.clone();
+            assert_eq!(clone.buffer, arena.buffer);
+            for (i, &r) in refs.iter().enumerate() {
+                let clause = clone.get(r).unwrap();
+                if i % 3 == 0 {
+                    assert!(clause.deleted);
+                } else {
+                    assert_eq!(clause.lits, expected[i]);
+                    assert_eq!(clause.learned, i % 2 == 0);
+                    assert_eq!(clause.activity.to_bits(), (i as f32 + 0.25).to_bits());
+                    assert_eq!(clause.usage_count, 1);
+                    assert_eq!(clause.lbd, 7.min((expected[i].len() - 1) as u32));
+                }
+            }
+        }
     }
 }
 

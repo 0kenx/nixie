@@ -143,11 +143,11 @@ Verification before the screen:
   refreshed suffix non-revisitation; exact snapshot/group-threshold rollback;
   failed-pack growth gating; group/scalar deletion and real arena relocation.
 - All miss exits, trigger requeue and backtracking across literal polarities,
-  with 64-member groups; bulk/control trail, watches, clause database, stats
+  with 64-member groups; bulk/control trail, watches, clause database counts, stats
   and ticks agree.
 - 32 independent ten-variable truth tables: seven SAT models checked against
   the input and 25 UNSAT LRAT proofs independently checked. Both arms agree
-  on full internal state and proof transcripts.
+  on the checked state fields and proof transcripts.
 - Enabled watch-group, region and learned-clause observers produce identical
   reports across a unit-then-bulk-skip sequence.
 - SAT all-feature/all-target clippy, ordinary SAT compile check, formatting,
@@ -179,3 +179,15 @@ and retaining the original scalar buffer loop would be a distinct engineering
 hypothesis, requiring exact state identity to this prototype before reusing
 its cells. It is not a measured improvement or a reason to retain this kernel.
 Broader shared-satisfaction claims remain unproved.
+
+## Evidence correction (2026-09-08)
+
+The registration requested full state equality, but the implemented helper
+compared `ClauseDatabase` using its custom `Debug` output. That output contains
+counts, not individual clause literals or metadata. Trail, watch lists,
+statistics, ticks and LRAT transcripts were compared; per-clause contents were
+not directly compared by that helper. Earlier descriptions of these checks as
+"full internal state" overstated their coverage. Independent model/proof checks
+and the performance rejection remain valid; this correction does not establish
+a propagation defect. Future representation experiments must compare every
+clause's literal order and metadata explicitly, including activity bits.

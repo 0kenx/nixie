@@ -19,6 +19,11 @@ These are research hypotheses, not demonstrated speedups or established claims
 of global novelty. Keep pure Rust, exact explanations, scope consistency, and
 the repository's full correctness gates.
 
+The next ordinary-core experiment is [conflict-analysis metadata fusion](2026-09-08-analysis-metadata-fusion.md): combine repeated header lookups while
+preserving exact usage, tier, activity and proof behavior. Its four-cell cost
+screen follows the [arena initialization repair](2026-09-08-arena-initialization.md)
+found during the review. No speedup is claimed before measurement.
+
 ## 1. Shared satisfaction across watcher groups — first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
