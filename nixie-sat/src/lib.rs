@@ -327,7 +327,17 @@ pub fn kitten_sweep_null_enabled() -> bool {
 }
 
 /// Sweep round effort override in per-mille of the round window
-/// (`NIXIE_SWEEP_EFFORT`, kissat `sweepeffort` default 100).
+/// (`NIXIE_SWEEP_EFFORT`). Default **400** — the 2026-09-08 effort
+/// calibration: at kissat's nominal 100 ‰ our sweep was budget-starved
+/// relative to the reference (53 equivalences / 948 k kitten ticks on
+/// 6s167 vs kissat's 162 / 3.5 M — our window currency is propagations,
+/// not ticks). 400 ‰ matches kissat's absolute price where the sweep
+/// finds content, and the yield-delay feedback (kissat `delays.sweep`)
+/// keeps inert files BELOW the 100 ‰ total cost (qwh: 6 firing rounds,
+/// 6.5 M ticks vs 26 rounds / 7.9 M at the old default). Standing
+/// differential at 400+delay: 363/540 solved vs 351 (100 ‰) vs 316
+/// (base), 0 verdict disagreements, conflicts geomean 1.000 vs 100 ‰,
+/// wall 0.908×.
 #[doc(hidden)]
 pub fn kitten_sweep_effort_permille() -> u64 {
     #[cfg(feature = "std")]
@@ -338,13 +348,13 @@ pub fn kitten_sweep_effort_permille() -> u64 {
             std::env::var("NIXIE_SWEEP_EFFORT")
                 .ok()
                 .and_then(|v| v.trim().parse::<u64>().ok())
-                .unwrap_or(100)
+                .unwrap_or(400)
                 .min(10_000)
         })
     }
     #[cfg(not(feature = "std"))]
     {
-        100
+        400
     }
 }
 

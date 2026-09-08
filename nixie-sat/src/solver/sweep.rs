@@ -66,8 +66,11 @@
 //!   under test is candidate selection + proved equivalences; the null
 //!   keeps the cost. (Verify the null actually fires: compare
 //!   `kitten_solved` between arms before trusting any ratio.)
-//! * `NIXIE_SWEEP_EFFORT=<permille>` — round tick budget override
-//!   (default kissat `sweepeffort` = 100‰).
+//! * `NIXIE_SWEEP_EFFORT=<permille>` — round tick budget override.
+//!   Default 400‰ (the 2026-09-08 calibration: kissat's nominal 100‰
+//!   left our sweep budget-starved in our window currency; see
+//!   `kitten_sweep_effort_permille`). The yield-delay feedback below
+//!   amortizes the cost where the sweep finds nothing.
 //! * `NIXIE_SWEEP_TRACE=1` — one telemetry line per round.
 //!
 //! # Port deviations from kissat (recorded)

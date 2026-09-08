@@ -341,3 +341,53 @@ files; on 6s167 the port closed base 62 k → 42 k of the 42 k→16.7 k span
 remaining gap is substitution *depth*, not presence). cadical leads the
 remaining files; kissat trails cadical on this class. No verdict
 disagreements against either reference.
+
+---
+
+# Part 3: Effort calibration + yield-delay feedback (2026-09-08, `97cf2b9`+)
+
+**Observation.** At kissat's nominal `sweepeffort=100 ‰` our sweep was
+budget-starved relative to the reference: on 6s167 it proved 53
+equivalences for 948 k kitten ticks where kissat's own sweep proves 162
+for 3.5 M — our window currency is propagations, not ticks, so the
+per-mille nominal under-prices us ~4×.
+
+**Effort sweep (anchors, deterministic).** Raising the effort buys
+content monotonically on 6s167 (42 003 → 40 375 → **32 602** → 38 998 at
+100/200/400/800 ‰) — but at the nominal cadence the inert files pay the
+raised budget every round (qwh, eq=0 at every effort: 26 rounds, 7.9 M
+ticks at 100 ‰ → 30.7 M at 400 ‰, +30 % wall on a 21 s solve).
+
+**5-seed check** reversed the single-run bimodality read on
+constraints_17 (0.81× *better* at 400 ‰, 4/5 seeds) — the effort axis is
+robustly good where the sweep has content; the only real blocker is the
+inert-file tax.
+
+**Fix: the ported yield-delay feedback** (kissat `delays.sweep`,
+`kimits.c`): a round with yield < 0.001 eliminations per swept variable
+bumps the interval (current += 1) and skips that many firings; a
+productive round halves it. With the delay, qwh fires 6 rounds instead
+of 26: **6.5 M ticks at 400 ‰ — below the old default's 7.9 M at
+100 ‰**. 6s167 at 400+delay: **32 168** conflicts (best measured; the
+handover's half-span target was ~29.7 k).
+
+**Standing differential (540 cells, cores 10–19, benchstore-recorded;
+config `sweep400`, compared paired against the stored 100 ‰ cells):**
+
+| arm | solved-at-cap | conflicts vs base | wall vs sweep100 |
+|---|---|---|---|
+| base (`NIXIE_SWEEP=0`) | 316 | — | — |
+| sweep @100 ‰ (previous default) | 351 | 0.949× | — |
+| **sweep @400 ‰ + delay (new default)** | **363** | **0.934×** | **0.908×** |
+
+Per-file flips 100→400: +13 / −3 (gains: summle_X11112 3→7,
+worker_550 3→5, FmlaEquivChain 7→8, frb65 9→10; losses:
+circuit_seed4 7→5, pb_300 3→1, 64_25 2→1). **Zero verdict
+disagreements** against both arms (540 paired cells). Conflicts geomean
+sweep400/sweep100 = **1.000** (n=204): the raised effort buys *cells*,
+not cost — it converts cap-boundary files while the delay more than pays
+for the bigger budgets (wall 0.908× on both-solved cells).
+
+**Landed:** default effort 100 → 400 ‰ (enablement rule: solved count
+better at every comparison, 0 disagreements; `NIXIE_SWEEP_EFFORT`
+restores any other value).
