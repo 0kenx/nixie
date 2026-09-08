@@ -188,6 +188,11 @@ enum FpOpShape {
     /// operand is a BIT-VECTOR pinned to a constant (itself, or its
     /// e-graph class's distinguished BV constant).
     FromBv(RoundingMode, u32, u32, TermId, bool),
+    /// `((_ fp.to_sbv m) rm x)` / `((_ fp.to_ubv m) rm x)`: the operand is
+    /// FP-sorted (resolved through the pin machinery); the result is the
+    /// exact per-mode integer rounding encoded at the target width.
+    /// `true` = signed (`fp.to_sbv`).
+    ToBv(RoundingMode, u32, TermId, bool),
     Pred(TermId, TermId, PredOp),
     Classify(TermId, ClassOp),
 }
@@ -239,9 +244,10 @@ impl FpOpShape {
             Self::Binary(_, a, b, _) => smallvec::smallvec![a, b],
             Self::Fma(_, a, b, c) => smallvec::smallvec![a, b, c],
             Self::Unary(a, _) => smallvec::smallvec![a],
-            Self::ToFp(_, _, _, a) | Self::FromReal(_, _, _, a) | Self::FromBv(_, _, _, a, _) => {
-                smallvec::smallvec![a]
-            }
+            Self::ToFp(_, _, _, a)
+            | Self::FromReal(_, _, _, a)
+            | Self::FromBv(_, _, _, a, _)
+            | Self::ToBv(_, _, a, _) => smallvec::smallvec![a],
             Self::Pred(a, b, _) => smallvec::smallvec![a, b],
             Self::Classify(a, _) => smallvec::smallvec![a],
         }
@@ -253,7 +259,9 @@ impl FpOpShape {
             // Intercepted in `fold_one` before evaluation (the operand is
             // Real-sorted; `vals` never carries it).  The placeholder keeps
             // this match exhaustive without a partial arm.
-            Self::FromReal(_, _, _, _) | Self::FromBv(_, _, _, _, _) => FpValueOrBool::Bool(false),
+            Self::FromReal(_, _, _, _) | Self::FromBv(_, _, _, _, _) | Self::ToBv(_, _, _, _) => {
+                FpValueOrBool::Bool(false)
+            }
             Self::Binary(rm, _, _, op) => {
                 engine.set_rounding_mode(engine_rm(rm));
                 let value = match op {
@@ -357,6 +365,8 @@ fn fp_op_shape(kind: &TermKind) -> Option<FpOpShape> {
         TermKind::UBVToFp { rm, eb, sb, arg } => {
             Some(FpOpShape::FromBv(*rm, *eb, *sb, *arg, false))
         }
+        TermKind::FpToSBV { rm, arg, width } => Some(FpOpShape::ToBv(*rm, *width, *arg, true)),
+        TermKind::FpToUBV { rm, arg, width } => Some(FpOpShape::ToBv(*rm, *width, *arg, false)),
         TermKind::FpEq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Eq)),
         TermKind::FpLt(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Lt)),
         TermKind::FpLeq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Leq)),
@@ -554,6 +564,44 @@ impl Solver {
             let td = manager.get(op)?;
             fp_op_shape(&td.kind)?
         };
+        // FP → bit-vector: round the pinned operand's exact value to the
+        // INTEGER grid under `rm` and encode at the target width.  The
+        // SMT-LIB semantics are UNDERSPECIFIED when the rounded value does
+        // not fit the width (z3: any probe satisfiable) — out-of-range,
+        // NaN and infinity operands DECLINE, leaving the conversion's atom
+        // free, which is exactly that semantics.
+        if let FpOpShape::ToBv(rm, width, arg, signed) = shape {
+            let pin = self.resolve_fp_operand(arg, pinned, manager)?;
+            let cell = fp_value_rounded_to_integer(&pin.value, rm)?;
+            let fits = if signed {
+                let lo = -(BigInt::from(1) << (width - 1));
+                let hi = BigInt::from(1) << (width - 1);
+                cell >= lo && cell < hi
+            } else {
+                cell >= BigInt::from(0) && cell < (BigInt::from(1) << width)
+            };
+            if !fits {
+                return None;
+            };
+            let encoded = if cell.sign() == num_bigint::Sign::Minus {
+                cell.clone() + (BigInt::from(1) << width)
+            } else {
+                cell.clone()
+            };
+            let lit = manager.mk_bitvec(encoded, width);
+            let guards = pin.guards.clone();
+            let conclusion = manager.mk_eq(op, lit);
+            let lemma = build_fold_lemma(&guards, conclusion, manager);
+            let added = self.fp_fold_lemmas.insert(lemma);
+            if added {
+                self.trail
+                    .push(super::trail::TrailOp::FpFoldLemmaAdded { term: lemma });
+                self.assert_ground_lemma(lemma, manager);
+            }
+            // No value pin: the result is bit-vector-sorted, outside the
+            // FP pin domain.
+            return Some((None, added));
+        }
         // A bit-vector conversion folds on the operand's exact integer
         // value: a literal operand is its own witness (unit clause); a
         // variable operand resolves through its e-graph class's
@@ -1196,6 +1244,65 @@ impl Solver {
         }
         None
     }
+}
+
+/// The exact rational value of a finite `FpValue` (`None` for NaN and the
+/// infinities): `mant · 2^exp2` with the implicit bit in place for normals.
+fn fp_value_rational(v: &FpValue) -> Option<BigRational> {
+    let emax = (1u64 << v.format.exponent_bits) - 1;
+    if v.exponent == emax {
+        return None; // NaN or infinity: underspecified conversions decline
+    }
+    let mant = if v.exponent == 0 {
+        BigRational::from(BigInt::from(v.significand))
+    } else {
+        BigRational::from(BigInt::from(
+            v.significand | (1u64 << (v.format.significand_bits - 1)),
+        ))
+    };
+    let mag = if v.exponent == 0 {
+        // subnormal: mant · 2^E_MIN where the LSB unit is 2^(1-bias-(sb-1))
+        let bias = (1i64 << (v.format.exponent_bits - 1)) - 1;
+        let e_min = 1 - bias - (v.format.significand_bits as i64 - 1);
+        mant * BigRational::new(BigInt::from(1), BigInt::from(1) << e_min)
+    } else {
+        let bias = (1i64 << (v.format.exponent_bits - 1)) - 1;
+        let exp2 = v.exponent as i64 - bias - (v.format.significand_bits as i64 - 1);
+        let scale = if exp2 >= 0 {
+            BigRational::from(BigInt::from(1) << exp2)
+        } else {
+            BigRational::new(BigInt::from(1), BigInt::from(1) << (-exp2))
+        };
+        mant * scale
+    };
+    Some(if v.sign { -mag } else { mag })
+}
+
+/// Round a finite fp value's exact rational to the INTEGER grid under
+/// `rm` — the single rounding step of `fp.to_sbv`/`fp.to_ubv`.
+pub(super) fn fp_value_rounded_to_integer(v: &FpValue, rm: RoundingMode) -> Option<BigInt> {
+    let r = fp_value_rational(v)?;
+    let neg = r.is_negative();
+    let n = r.numer().abs();
+    let d = r.denom();
+    let floor = &n / d;
+    let rem = &n % d;
+    if rem.is_zero() {
+        return Some(if neg { -floor } else { floor });
+    }
+    let round_away = match rm {
+        RoundingMode::RNE => {
+            // nearest, ties to even on the integer grid
+            let twice = &rem << 1;
+            twice > *d || (twice == *d && (&floor & BigInt::from(1)) == BigInt::from(1))
+        }
+        RoundingMode::RNA => (&rem << 1) >= *d,
+        RoundingMode::RTP => !neg,
+        RoundingMode::RTN => neg,
+        RoundingMode::RTZ => false,
+    };
+    let cell = if round_away { floor + 1 } else { floor };
+    Some(if neg { -cell } else { cell })
 }
 
 #[cfg(test)]

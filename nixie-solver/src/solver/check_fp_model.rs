@@ -226,6 +226,89 @@ impl<'a> FpModelFinder<'a> {
         }
     }
 
+    /// Evaluate a bit-vector-sorted ground term to its exact integer value
+    /// (two's-complement semantics NOT applied — the raw unsigned encoding
+    /// of `BitVecConst`, or the per-mode integer rounding of
+    /// `fp.to_sbv`/`fp.to_ubv` over a pinned FP operand, encoded at the
+    /// target width).  `None` for anything else — callers decline honestly.
+    fn eval_bv(&mut self, term: TermId) -> Option<num_bigint::BigInt> {
+        let td = self.manager.get(term)?;
+        match &td.kind {
+            TermKind::BitVecConst { value, .. } => Some(value.clone()),
+            TermKind::FpToSBV { rm, arg, width } | TermKind::FpToUBV { rm, arg, width } => {
+                let signed = matches!(&td.kind, TermKind::FpToSBV { .. });
+                let v = self.eval_fp(*arg)?;
+                let cell = super::fp_fold::fp_value_rounded_to_integer(&v, *rm)?;
+                let fits = if signed {
+                    let lo = -(num_bigint::BigInt::from(1)) << (*width - 1);
+                    let hi = num_bigint::BigInt::from(1) << (*width - 1);
+                    cell >= lo && cell < hi
+                } else {
+                    cell >= num_bigint::BigInt::from(0)
+                        && cell < (num_bigint::BigInt::from(1) << *width)
+                };
+                if !fits {
+                    // Underspecified per SMT-LIB: any encoding acceptable,
+                    // so no concrete value can be *derived* — decline.
+                    return None;
+                }
+                if cell.sign() == num_bigint::Sign::Minus {
+                    Some(cell + (num_bigint::BigInt::from(1) << *width))
+                } else {
+                    Some(cell)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether `(= a b)` is satisfiable through an UNDERSPECIFIED
+    /// conversion on one side: an `fp.to_sbv`/`fp.to_ubv` whose pinned
+    /// operand's per-mode rounded value lies outside the target width
+    /// (SMT-LIB: the result is then free), equated with a concrete
+    /// bit-vector constant on the other side.
+    fn eq_satisfiable_via_underspecified_conv(
+        &mut self,
+        a: TermId,
+        b: TermId,
+        fp_memo: &mut FxHashMap<TermId, Option<FpValue>>,
+    ) -> bool {
+        let mut underspec = |conv: TermId, other: TermId, slf: &mut Self| {
+            let Some(td) = slf.manager.get(conv) else {
+                return false;
+            };
+            let (rm, arg, width, signed) = match &td.kind {
+                TermKind::FpToSBV { rm, arg, width } => (*rm, *arg, *width, true),
+                TermKind::FpToUBV { rm, arg, width } => (*rm, *arg, *width, false),
+                _ => return false,
+            };
+            // The other side must be a concrete constant the free value can
+            // be chosen as.
+            if slf
+                .manager
+                .get(other)
+                .is_none_or(|d| !matches!(d.kind, TermKind::BitVecConst { .. }))
+            {
+                return false;
+            }
+            let Some(v) = slf.eval_fp_core(arg, fp_memo, &mut FxHashMap::default()) else {
+                return false;
+            };
+            let Some(cell) = super::fp_fold::fp_value_rounded_to_integer(&v, rm) else {
+                return true; // NaN: underspecified too
+            };
+            let fits = if signed {
+                let lo = -(num_bigint::BigInt::from(1)) << (width - 1);
+                let hi = num_bigint::BigInt::from(1) << (width - 1);
+                cell >= lo && cell < hi
+            } else {
+                cell >= num_bigint::BigInt::from(0) && cell < (num_bigint::BigInt::from(1) << width)
+            };
+            !fits
+        };
+        underspec(a, b, self) || underspec(b, a, self)
+    }
+
     /// Map the AST rounding mode to the engine's rounding-mode enum.
     fn engine_rm(rm: RoundingMode) -> FpRoundingMode {
         match rm {
@@ -805,6 +888,22 @@ impl<'a> FpModelFinder<'a> {
                             if let (Some(va), Some(vb)) = (va, vb) {
                                 let value = Some(self.fp_structural_eq(&va, &vb));
                                 bool_memo.insert(term, value);
+                            } else if let (Some(ba), Some(bb)) = (self.eval_bv(a), self.eval_bv(b))
+                            {
+                                // Bit-vector equality over exactly
+                                // evaluable operands (BV constants and
+                                // fp.to_sbv/ubv conversions) — needed for
+                                // the FP-fold fall-through's verification.
+                                bool_memo.insert(term, Some(ba == bb));
+                            } else if self.eq_satisfiable_via_underspecified_conv(a, b, fp_memo) {
+                                // An UNDERSPECIFIED conversion (rounded
+                                // value outside the target width — SMT-LIB
+                                // leaves the result free) equated with a
+                                // concrete constant: the free value CAN be
+                                // the constant, so the equality is
+                                // satisfiable and this verification may
+                                // choose it.
+                                bool_memo.insert(term, Some(true));
                             } else {
                                 // Fall back to Boolean equality (e.g.
                                 // `(= (fp.isNaN x) true)`).

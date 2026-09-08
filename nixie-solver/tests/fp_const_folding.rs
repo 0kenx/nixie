@@ -513,3 +513,75 @@ fn oversized_decimals_error_not_garble() {
         );
     } // Err = refused at the script level — equally honest
 }
+
+// ===========================================================================
+// FP → bit-vector conversions (`((_ fp.to_sbv m) RM x)` / `fp.to_ubv`)
+// ===========================================================================
+
+/// In-range conversions round to the integer grid under the mode and encode
+/// exactly — both verdict polarities (z3-verified probes).
+#[test]
+fn fp_to_bv_rounds_and_decides_both_ways() {
+    // 3.7: RTP → 4 (unsigned), RTZ → 3 (signed).
+    let base = "(set-logic QF_FPBV)
+         (declare-const x Float64)
+         (assert (= x ((_ to_fp 11 53) RNE 3.7)))";
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (assert (= ((_ fp.to_ubv 32) RTP x) (_ bv4 32)))
+             (check-sat)"
+        )),
+        SolverResult::Sat
+    );
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (assert (= ((_ fp.to_ubv 32) RTP x) (_ bv5 32)))
+             (check-sat)"
+        )),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (assert (= ((_ fp.to_sbv 32) RTZ x) (_ bv3 32)))
+             (check-sat)"
+        )),
+        SolverResult::Sat
+    );
+}
+
+/// Negative values round with sign (RTN of −3.7 → −4) and encode in
+/// two's complement (z3: sat for `bv4294967292` at width 32).
+#[test]
+fn fp_to_sbv_negative_two_complement() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FPBV)
+             (declare-const x Float64)
+             (assert (= x ((_ to_fp 11 53) RNE (- 3.7))))
+             (assert (= ((_ fp.to_sbv 32) RTN x) (_ bv4294967292 32)))
+             (check-sat)"
+        ),
+        SolverResult::Sat
+    );
+}
+
+/// Underspecified conversions (the rounded value does not fit the width)
+/// leave the atom FREE — any probe stays satisfiable, matching z3's
+/// underspecification semantics; never a fabricated refutation.
+#[test]
+fn fp_to_bv_overflow_is_free_not_fabricated() {
+    for probe in ["(_ bv255 8)", "(_ bv0 8)", "(_ bv42 8)"] {
+        assert_eq!(
+            run_script(&format!(
+                "(set-logic QF_FPBV)
+                 (assert (= ((_ fp.to_ubv 8) RNE ((_ to_fp 11 53) RNE 300.0)) {probe}))
+                 (check-sat)"
+            )),
+            SolverResult::Sat,
+            "underspecified conversion: {probe} must stay satisfiable"
+        );
+    }
+}
