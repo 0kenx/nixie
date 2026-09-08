@@ -177,3 +177,42 @@ selection instead.
 - Corpus: `precompile/corpus-sc24f/` (54-file standing; the anchor files'
   hashes are in the campaign doc), binaries convention in
   `./precompile/<sha>/`, results store `bench/suite/scripts/benchstore.py`.
+
+---
+
+## Status: CLOSED — ported, landed default-on, calibrated (2026-09-08)
+
+Outcome (full record: `docs/studies/2026-09-08-kitten-sweep-port-calibration.md`,
+commits `47d090c`…`c9cfe71`):
+
+- **Port complete**: `kitten.rs` (embedded CDCL, full `kitten.h` API) +
+  `solver/sweep.rs`; application rides the existing ELS substitution
+  round as this handover mandated.
+- **Landed default-on** via the enablement rule. Standing corpus
+  (54 × 10 seeds, 60 s, 0 verdict disagreements at every step):
+  base 316 → sweep@100 ‰ 351 → **sweep@400 ‰ + yield-delay 363**
+  solved-at-cap (final config).
+- **Anchors**: 6s167-opt 65 873 → **33 561** conflicts (10-seed gm; the
+  half-span target ≈ 29.7 k — nearly closed; kissat 19 164, cadical
+  16 654). FmlaEquivChain 2/10 → **8/10** solved (reference parity on
+  cost). x9-09054 remains cap-boundary.
+- **Price**: matched to kissat's absolute envelope where productive
+  (400 ‰ ≈ 2.5–3 M kitten ticks on 6s167 vs kissat's 3.5 M), and
+  *below* the initial default where inert (yield-delay feedback:
+  kissat `delays.sweep` port).
+- **Kill criteria note**: Part 1's "corpus-negative" verdict was a
+  load-biased 5-seed screen (the armed arm pays ~2 % instructions and
+  lost borderline cells under a concurrent build); the quiet 10-seed
+  re-measure reversed the sign. The pre-registered bimodality finding
+  stands: the faithful cone-ranking vs its matched scramble is
+  corpus-neutral (1.017) and per-family bimodal — the ranking-variant
+  question is the recorded open follow-up.
+- **SMT path**: structurally sweep-free (embedded-solver opt-outs +
+  sticky theory gate) after the landing differential caught a real
+  wrong-unsat (pr30) in the first wiring — the fix chain is the
+  addendum in the study doc.
+- **Remaining gap lever**: the one un-ported deviation — kissat's
+  immediate per-equivalence application (`substitute_connected_clauses`)
+  vs our round-end fold. On 6s167 kissat folds 14 % of variables; we
+  prove ~94/round. That is the next mechanism-level lever if the 33 k →
+  19 k span is to close further.
