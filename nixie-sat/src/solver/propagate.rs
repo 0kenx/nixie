@@ -1,6 +1,8 @@
 //! Unit propagation (BCP) and binary implication graph
 
 use super::*;
+#[cfg(feature = "clause-traffic")]
+use crate::clause_traffic as traffic;
 #[cfg(feature = "profiling")]
 use crate::profiling::{ProfilingCategory, ScopedTimer};
 #[cfg(feature = "bcp-regions")]
@@ -133,6 +135,18 @@ impl Solver {
                         crate::diag_bcp::BIG_EDGES.fetch_add(1, Relaxed);
                     }
                     let value = self.trail.lit_val(implied_lit);
+                    #[cfg(feature = "clause-traffic")]
+                    let traffic_event = traffic::visit(
+                        &mut self.clause_traffic,
+                        &self.clauses,
+                        clause_id,
+                        0,
+                        self.stats.conflicts,
+                    );
+                    #[cfg(feature = "clause-traffic")]
+                    if value > 0 {
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::HIT);
+                    }
                     #[cfg(feature = "bcp-regions")]
                     let region_event = regions::visit(
                         &mut self.region_stats,
@@ -147,6 +161,8 @@ impl Solver {
                         regions::record(&mut self.region_stats, region_event, regions::HIT);
                     }
                     if value < 0 {
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::CONFLICT);
                         #[cfg(feature = "bcp-regions")]
                         regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
                         // Conflict in binary clause. `lit`'s remaining implication
@@ -162,6 +178,8 @@ impl Solver {
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
                     } else if value == 0 {
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::UNIT);
                         #[cfg(feature = "bcp-regions")]
                         regions::record(&mut self.region_stats, region_event, regions::UNIT);
                         if bcp_stats {
@@ -240,6 +258,14 @@ impl Solver {
 
             for read in 0..watches.len() {
                 let watcher = watches[read];
+                #[cfg(feature = "clause-traffic")]
+                let traffic_event = traffic::visit(
+                    &mut self.clause_traffic,
+                    &self.clauses,
+                    watcher.clause,
+                    1,
+                    self.stats.conflicts,
+                );
                 #[cfg(feature = "bcp-regions")]
                 let region_event = regions::visit(
                     &mut self.region_stats,
@@ -256,6 +282,8 @@ impl Solver {
                     sample.observe(watcher, blocker_true);
                 }
                 if blocker_true {
+                    #[cfg(feature = "clause-traffic")]
+                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::HIT);
                     #[cfg(feature = "bcp-regions")]
                     regions::record(&mut self.region_stats, region_event, regions::HIT);
                     // Kept watcher. While `write == read` (no watcher dropped
@@ -277,6 +305,8 @@ impl Solver {
                 // like the id-based path.
                 #[cfg(feature = "bcp-regions")]
                 regions::record(&mut self.region_stats, region_event, regions::PAYLOAD);
+                #[cfg(feature = "clause-traffic")]
+                traffic::record(&mut self.clause_traffic, traffic_event, traffic::PAYLOAD);
                 let clause = match self.clauses.live_lits_by_ref(watcher.r) {
                     Some(lits) => lits,
                     None => {
@@ -351,6 +381,8 @@ impl Solver {
                 // parked on satisfied literals kept stale blockers).
                 let mut found = false;
                 for j in 2..clause.len() {
+                    #[cfg(feature = "clause-traffic")]
+                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::SCAN);
                     #[cfg(feature = "bcp-regions")]
                     regions::record(&mut self.region_stats, region_event, regions::SCAN);
                     let l = clause[j];
@@ -401,6 +433,8 @@ impl Solver {
                 watches[write].blocker = first;
 
                 if self.trail.lit_val_hot(first) < 0 {
+                    #[cfg(feature = "clause-traffic")]
+                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::CONFLICT);
                     #[cfg(feature = "bcp-regions")]
                     regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
                     if bcp_stats {
@@ -421,6 +455,8 @@ impl Solver {
                     break;
                 } else {
                     // Unit propagation
+                    #[cfg(feature = "clause-traffic")]
+                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::UNIT);
                     #[cfg(feature = "bcp-regions")]
                     regions::record(&mut self.region_stats, region_event, regions::UNIT);
                     if bcp_stats {
@@ -671,6 +707,94 @@ impl Solver {
     }
     #[cfg(not(feature = "std"))]
     pub(super) fn count_reason_origin(&mut self, _cid: crate::clause::ClauseId) {}
+}
+
+#[cfg(all(test, feature = "clause-traffic"))]
+mod traffic_tests {
+    use super::*;
+
+    #[test]
+    fn clause_census_counts_only_the_binary_or_long_conflict_prefix() {
+        for binary in [false, true] {
+            let mut s = Solver::new();
+            let vars: Vec<_> = (0..5).map(|_| s.new_var()).collect();
+            let t = Lit::pos(vars[0]);
+            let a = Lit::pos(vars[1]);
+            let b = Lit::pos(vars[2]);
+            let mut ids = Vec::new();
+            for tail in [a, Lit::pos(vars[3])] {
+                let mut lits = vec![t.negate(), tail];
+                if !binary {
+                    lits.push(b);
+                }
+                let id = s.clauses.add_learned(lits);
+                s.attach_watchers(id, t.negate(), tail);
+                ids.push(id);
+            }
+            s.enable_clause_traffic(std::num::NonZeroU64::MIN);
+            s.trail.new_decision_level();
+            s.trail.assign_decision(a.negate());
+            s.trail.assign_decision(b.negate());
+            while s.trail.next_to_propagate().is_some() {}
+            s.trail.assign_decision(t);
+            assert_eq!(s.propagate(), Some(ids[0]));
+            let mut out = Vec::new();
+            assert!(s.write_clause_traffic(&mut out).is_ok());
+            let Ok(report) = serde_json::from_slice::<serde_json::Value>(&out) else {
+                panic!("invalid report");
+            };
+            let Some(rows) = report["rows"].as_array() else {
+                panic!("missing rows");
+            };
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0]["id"], ids[0].0);
+            let expected = if binary {
+                [1, 0, 0, 0, 0, 1, 0]
+            } else {
+                [1, 0, 1, 1, 0, 1, 0]
+            };
+            assert_eq!(
+                rows[0]["counts"][usize::from(!binary)],
+                serde_json::json!(expected)
+            );
+            assert_eq!(s.propagate(), Some(ids[0]));
+        }
+    }
+
+    #[test]
+    fn clause_census_observes_a_blocker_becoming_true_in_visit_order() {
+        let mut s = Solver::new();
+        let vars: Vec<_> = (0..3).map(|_| s.new_var()).collect();
+        let [t, b, a] = [Lit::pos(vars[0]), Lit::pos(vars[1]), Lit::pos(vars[2])];
+        let ids: Vec<_> = (0..2)
+            .map(|_| {
+                let id = s.clauses.add_learned([t.negate(), b, a]);
+                s.attach_watchers(id, t.negate(), b);
+                id
+            })
+            .collect();
+        s.enable_clause_traffic(std::num::NonZeroU64::MIN);
+        s.trail.new_decision_level();
+        s.trail.assign_decision(a.negate());
+        while s.trail.next_to_propagate().is_some() {}
+        s.trail.assign_decision(t);
+        assert_eq!(s.propagate(), None);
+        let mut out = Vec::new();
+        assert!(s.write_clause_traffic(&mut out).is_ok());
+        let Ok(report) = serde_json::from_slice::<serde_json::Value>(&out) else {
+            panic!("invalid report");
+        };
+        assert_eq!(report["rows"][0]["id"], ids[0].0);
+        assert_eq!(report["rows"][1]["id"], ids[1].0);
+        assert_eq!(
+            report["rows"][0]["counts"][1],
+            serde_json::json!([1, 0, 1, 1, 1, 0, 0])
+        );
+        assert_eq!(
+            report["rows"][1]["counts"][1],
+            serde_json::json!([1, 1, 0, 0, 0, 0, 0])
+        );
+    }
 }
 
 #[cfg(test)]

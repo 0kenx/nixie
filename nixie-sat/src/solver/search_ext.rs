@@ -34,6 +34,8 @@ impl Solver {
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        #[cfg(feature = "clause-traffic")]
+        let _traffic_session = self.begin_clause_traffic_session();
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
         // LRAT: solve-entry deferred parse-unit flush (see `Solver::solve`).

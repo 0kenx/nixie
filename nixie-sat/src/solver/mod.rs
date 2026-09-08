@@ -1283,6 +1283,8 @@ pub struct Solver {
     pub(crate) watch_group_stats: Option<Box<crate::watch_groups::Collector>>,
     #[cfg(feature = "bcp-regions")]
     pub(crate) region_stats: Option<Box<crate::region_stats::Collector>>,
+    #[cfg(feature = "clause-traffic")]
+    pub(crate) clause_traffic: Option<Box<crate::clause_traffic::Collector>>,
 
     /// VSIDS branching heuristic
     pub(super) vsids: VSIDS,
@@ -1997,6 +1999,8 @@ impl Solver {
             watch_group_stats: None,
             #[cfg(feature = "bcp-regions")]
             region_stats: crate::region_stats::parity_collector(),
+            #[cfg(feature = "clause-traffic")]
+            clause_traffic: crate::clause_traffic::parity_collector(),
             vsids: VSIDS::new(0),
             domain_priority: Vec::new(),
             vmtf: VMTF::new(0),
@@ -3518,6 +3522,8 @@ impl Solver {
 
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
+        #[cfg(feature = "clause-traffic")]
+        let _traffic_session = self.begin_clause_traffic_session();
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
         // Defensive deferral flush: a bulk loader that aborted between
@@ -3923,6 +3929,8 @@ impl Solver {
         &mut self,
         assumptions: &[Lit],
     ) -> (SolverResult, Option<Vec<Lit>>) {
+        #[cfg(feature = "clause-traffic")]
+        let _traffic_session = self.begin_clause_traffic_session();
         // Defensive deferral flush (see `Solver::solve`).
         self.finish_deferred_big();
         // Gatekeeper (SK-1): refuse to answer once a BVE-eliminated variable
@@ -4466,6 +4474,8 @@ impl Solver {
     /// can be removed with pop(). Automatically backtracks to decision level 0
     /// to ensure a clean state for adding new constraints.
     pub fn push(&mut self) {
+        #[cfg(feature = "clause-traffic")]
+        self.clear_clause_traffic();
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
         self.ever_pushed = true;
@@ -4481,6 +4491,8 @@ impl Solver {
 
     /// Pop to previous assertion level
     pub fn pop(&mut self) {
+        #[cfg(feature = "clause-traffic")]
+        self.clear_clause_traffic();
         #[cfg(feature = "bcp-groups")]
         self.clear_watch_group_history();
         if self.assertion_levels.len() > 1 {
@@ -4606,6 +4618,10 @@ impl Solver {
 
     /// Reset the solver
     pub fn reset(&mut self) {
+        #[cfg(feature = "clause-traffic")]
+        if let Some(stats) = &mut self.clause_traffic {
+            stats.clear(0);
+        }
         // Clause and variable IDs restart at zero below. A census snapshot
         // belongs to the old database and must never classify reused IDs.
         #[cfg(feature = "bcp-regions")]

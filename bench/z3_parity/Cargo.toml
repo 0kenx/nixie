@@ -9,6 +9,7 @@ publish = false
 
 [features]
 bcp-regions = ["dep:nixie-sat", "nixie-sat/bcp-regions"]
+clause-traffic = ["dep:nixie-sat", "nixie-sat/clause-traffic"]
 
 [dependencies]
 nixie-sat = { path = "../../nixie-sat", optional = true }

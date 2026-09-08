@@ -61,3 +61,48 @@ Before landing the observer: targeted count, tail, lifecycle, capacity and
 exact proof/search-identity tests; full workspace build, nextest, doctests,
 clippy, formatting and strict docs; fresh available-Z3 parity. Retain the
 source, toolchain and all evidence in the binary/result cache.
+
+## Observation interface
+
+Build `stats_solve` with `--features clause-traffic` and set
+`NIXIE_CLAUSE_TRAFFIC=16`. Library callers use
+`Solver::enable_clause_traffic(NonZeroU64)` and
+`Solver::write_clause_traffic(writer)`. The JSON schema is
+`nixie-clause-traffic/1`; each row identifies one clause in one epoch. Its
+`counts[channel][metric]` uses binary/long channels and metrics visits,
+immediate blocker hits, payload accesses, tail inspections, unit assignments,
+conflicts, and main first-UIP expansions. The initial conflict clause also
+counts as one first-UIP expansion when that loop reads it. Consequently these
+are event counts, not counts of distinct semantic uses.
+
+Length/glue/tier are observed at the row's first event, not necessarily at
+learning or the epoch boundary. Tier values are Local=0, Mid=1, Core=2.
+`final_status` is the clause's status when the report is written, not a
+retirement timestamp. Original and deleted clauses have separate aggregate
+counters. Literal order, strengthening and arena relocation cannot alias
+IDs; a promoted original stops adding learned rows. Reset clears records
+before IDs restart.
+
+The storage cap is 250,000 clause/epoch rows; the ID index cannot exceed the
+row count. Exceeding it reports omitted events by channel/metric. Counter
+overflow is also explicit. Neither failure influences solving. The analysis
+script refuses either kind of incomplete census. A shared diagnostic session
+guard prevents nested public solve calls from clearing outer preprocessing
+counts; all early returns release it, and it preserves Solver's Send/Sync
+traits. The observer remains enabled after push/pop/reset but starts with
+empty records. Re-enabling explicitly also starts a fresh session.
+
+`bench/suite/scripts/clause_traffic_probe.py` checks the exact cached control
+stdout and applies the registered analysis. Top-quarter selection uses the
+prior epoch only, descending work with clause-ID tie breaks, taking
+`max(1, floor(prior_rows / 4))` clauses. Its future-work denominator includes
+all learned rows in the next epoch, including newly observed clauses.
+Missing future rows remain censored even if the clause is deleted at report
+time. Four independent Python tests cover hindsight selection, partial
+epochs, missing future rows, direct uses, and invalid observation reports.
+
+The standalone parity harness has a `clause-traffic` feature.
+`NIXIE_CLAUSE_TRAFFIC_PARITY=1` explicitly activates stride-one collection in
+every constructed SAT solver, including Context's private cores. This is
+only available in instrumented builds and is cleared for ordinary parity
+and benchmark runs.

@@ -435,6 +435,13 @@ impl Solver {
         let mut reason_clause = conflict;
 
         'resolve: while let Some(clause) = self.clauses.get(reason_clause) {
+            #[cfg(feature = "clause-traffic")]
+            crate::clause_traffic::analyze(
+                &mut self.clause_traffic,
+                &self.clauses,
+                reason_clause,
+                self.stats.conflicts,
+            );
             // Process reason clause (must exist, as it's either conflict or a propagation reason)
             let is_learned = clause.learned;
 

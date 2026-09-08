@@ -27,6 +27,8 @@
 //!   NIXIE_REGION_STATS=N sample every Nth nonempty propagation trigger;
 //!                       requires `--features bcp-regions`; JSON on stderr
 //!   NO_STAB=1           disable stable/focused alternation
+//!   NIXIE_CLAUSE_TRAFFIC=N sample clause IDs (positive stride N; requires
+//!                       --features clause-traffic); epoch census on stderr
 //!   STAB_BASE=N         override `stabilize_base`
 //! Study arms (`NIXIE_CADICAL_REDUCE`, `NIXIE_STAB_FAITHFUL`, ...) are read
 //! directly by the solver; see their docs in `lib.rs`.
@@ -140,6 +142,24 @@ fn main() {
         cfg.stabilize_base = n;
     }
     let mut solver = Solver::with_config(cfg);
+    #[cfg(feature = "clause-traffic")]
+    let observe_traffic = match std::env::var("NIXIE_CLAUSE_TRAFFIC") {
+        Ok(value) => match value.parse::<std::num::NonZeroU64>() {
+            Ok(stride) => {
+                solver.enable_clause_traffic(stride);
+                true
+            }
+            Err(error) => {
+                eprintln!("invalid NIXIE_CLAUSE_TRAFFIC: {error}");
+                std::process::exit(2);
+            }
+        },
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => {
+            eprintln!("invalid NIXIE_CLAUSE_TRAFFIC: {error}");
+            std::process::exit(2);
+        }
+    };
     #[cfg(feature = "bcp-groups")]
     let observe_groups = match std::env::var("NIXIE_WATCH_GROUPS") {
         Ok(value) => match value.parse::<std::num::NonZeroU64>() {
@@ -253,6 +273,11 @@ fn main() {
         }
     }
     let r = solver.solve();
+    #[cfg(feature = "clause-traffic")]
+    if observe_traffic && let Err(error) = solver.write_clause_traffic(std::io::stderr().lock()) {
+        eprintln!("writing clause traffic failed: {error}");
+        std::process::exit(2);
+    }
     #[cfg(feature = "bcp-regions")]
     if observe_regions && let Err(error) = solver.write_region_report(std::io::stderr().lock()) {
         eprintln!("writing region observations failed: {error}");

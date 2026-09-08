@@ -132,6 +132,8 @@ mod clause;
 mod clause_maintenance;
 pub mod clause_pool;
 mod clause_size_manager;
+#[cfg(feature = "clause-traffic")]
+mod clause_traffic;
 mod community;
 mod community_partition;
 mod config_presets;

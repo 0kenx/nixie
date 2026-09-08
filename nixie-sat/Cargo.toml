@@ -27,6 +27,8 @@ bcp-stats = []
 bcp-groups = ["std"]
 # Read-only sampled traffic through certified AND/XOR clause groups.
 bcp-regions = ["std"]
+# Per-clause cost/use census; no counters or branches in ordinary builds.
+clause-traffic = ["std"]
 
 [dependencies]
 nixie-core = { workspace = true, default-features = false }
