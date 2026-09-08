@@ -44,6 +44,12 @@ cycles/conflict rose 12.12% with identical search output at 40,000 conflicts.
 The candidate is archived, and the second input was not run. This closes
 the fixed sixteen-entry gather experiment without a width or dispatch sweep.
 
+The [fixed-trail watcher kernel](2026-09-09-fixed-trail-watch-kernel.md) also
+failed its two-cell circuit screen. Separating the scan from assignment/proof/HBR
+mutations preserved complete output at 40,000 conflicts, but removed only 0.91%
+of instructions and 1.48% of measured cycles/conflict. The second input did not
+run. The source is archived; the scanner boundary alone did not meet its 5% bar.
+
 ## 1. Shared satisfaction across watcher groups — first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
