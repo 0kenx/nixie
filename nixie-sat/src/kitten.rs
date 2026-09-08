@@ -240,10 +240,11 @@ fn next_random64(generator: &mut u64) -> u64 {
 
 /// kissat `kissat_pick_random`: uniform pick in `[l, r)`. Used by
 /// [`Kitten::shuffle_clauses`] (itself part of the ported API surface;
-/// exercised by the kitten unit tests).
+/// exercised by the kitten unit tests) and by the sweeper's optional
+/// randomized frontier (`NIXIE_SWEEP_RAND`, kissat `sweeprand`).
 #[allow(dead_code)]
 #[inline]
-fn pick_random(generator: &mut u64, l: u32, r: u32) -> u32 {
+pub(crate) fn pick_random(generator: &mut u64, l: u32, r: u32) -> u32 {
     debug_assert!(l <= r);
     if l == r {
         return l;

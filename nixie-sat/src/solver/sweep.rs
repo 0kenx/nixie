@@ -164,6 +164,9 @@ struct Sweeper {
     save: usize,
     /// Clauses encoded into kitten for the current environment.
     encoded: u32,
+    /// Frontier-randomization generator (kissat `sweeprand`; per-round
+    /// LCG seeded 0 — kissat draws from the persistent solver generator).
+    frontier_rng: u64,
     kitten: Kitten,
     limit: SweepLimits,
 }
@@ -1207,6 +1210,20 @@ impl Solver {
                 }
                 depth += 1;
             }
+            // kissat `sweeprand` (default off): randomly swap the frontier
+            // head with a later frontier variable before expanding it.
+            // kissat draws from the main solver's generator; the sweeper
+            // keeps a per-round LCG seeded 0 (deterministic, default-off —
+            // identical to the reference's default behavior).
+            if crate::kitten_sweep_rand_enabled() {
+                let choices = (next - expand) as u32;
+                if choices > 1 {
+                    let swap = crate::kitten::pick_random(&mut sweeper.frontier_rng, 0, choices);
+                    if swap != 0 {
+                        sweeper.vars.swap(expand, expand + swap as usize);
+                    }
+                }
+            }
             let vidx = sweeper.vars[expand];
             expand += 1;
             for sign in 0..2u32 {
@@ -1452,6 +1469,7 @@ impl Sweeper {
             core: [Vec::new(), Vec::new()],
             save: 0,
             encoded: 0,
+            frontier_rng: 0,
             kitten,
             limit: SweepLimits {
                 ticks: budget,

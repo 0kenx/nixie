@@ -300,6 +300,54 @@ pub fn kitten_sweep_enabled() -> bool {
     }
 }
 
+/// kissat `sweeprand` (default 0 → off): randomize the sweep's frontier
+/// expansion order (`NIXIE_SWEEP_RAND=1`).
+#[doc(hidden)]
+pub fn kitten_sweep_rand_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_SWEEP_RAND").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// Whether kitten-based definition extraction arms the eliminator
+/// (`NIXIE_DEFINITIONS=1`) — kissat's `definitions` option, port of
+/// `definition.c` (`kissat_find_definition`). kissat defaults this on;
+/// nixie defaults **off** until the arm clears the benchmarking
+/// discipline (`docs/BENCHMARKING.md`) — the structural gate detectors
+/// (equivalences/ands/if-then-else) that front-run the kitten in kissat
+/// are not ported, so every candidate pays one bounded kitten solve
+/// (≤ `definitionticks` = 1e6 ticks, ≤ 64 M ticks per elimination phase).
+#[doc(hidden)]
+pub fn definitions_enabled() -> bool {
+    #[cfg(test)]
+    {
+        if let Some(v) = crate::test_knobs::definitions_override() {
+            return v;
+        }
+    }
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_DEFINITIONS").is_ok_and(|v| !v.is_empty() && v != "0")
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// Matched null for the sweep's candidate ranking (`NIXIE_SWEEP_NULL=1`):
 /// identical machinery, budgets and candidate *set*, with the ranking
 /// scrambled by a deterministic hash of the variable index. Report
@@ -387,10 +435,19 @@ pub(crate) mod test_knobs {
     thread_local! {
         static SWEEP: Cell<Option<bool>> = const { Cell::new(None) };
         static SWEEP_NULL: Cell<Option<bool>> = const { Cell::new(None) };
+        static DEFINITIONS: Cell<Option<bool>> = const { Cell::new(None) };
     }
 
     pub(crate) fn set_kitten_sweep(v: Option<bool>) {
         SWEEP.with(|c| c.set(v));
+    }
+
+    pub(crate) fn set_definitions(v: Option<bool>) {
+        DEFINITIONS.with(|c| c.set(v));
+    }
+
+    pub(crate) fn definitions_override() -> Option<bool> {
+        DEFINITIONS.with(Cell::get)
     }
 
     pub(crate) fn kitten_sweep_override() -> Option<bool> {

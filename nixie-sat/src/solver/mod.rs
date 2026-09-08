@@ -954,6 +954,18 @@ pub struct SolverStats {
     pub sweep_swept: u64,
     /// Equivalences proved by the sweep (kissat `sweep_equivalences`).
     pub sweep_equivalences: u64,
+    /// Definition-extraction attempts in the eliminator
+    /// (kissat `definitions_checked`).
+    pub definitions_checked: u64,
+    /// Functional definitions proved by the embedded sub-solver
+    /// (kissat `definitions_extracted`).
+    pub definitions_extracted: u64,
+    /// One-sided definition cores that yielded a forced unit
+    /// (kissat `definition_units`).
+    pub definition_units: u64,
+    /// Variables eliminated through a proved definition (gate-aware
+    /// resolvents instead of the full cross product).
+    pub definition_eliminated: u64,
     /// Backbone units assigned by the sweep (kissat `sweep_units`).
     pub sweep_units: u64,
     /// kitten assumption solves under the sweep (kissat `sweep_solved`).

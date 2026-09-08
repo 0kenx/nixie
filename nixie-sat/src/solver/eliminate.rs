@@ -344,6 +344,9 @@ struct Eliminator {
     res_resolvent: Vec<Lit>,
     /// Variables eliminated this round.
     eliminated: usize,
+    /// Kitten ticks spent by definition extraction this phase
+    /// (against [`DEFINITION_PHASE_TICKS`]).
+    def_ticks: u64,
     /// Whether anything structurally changed (clause added/removed/shrunk),
     /// so the phase epilogue must rebuild watches.
     dirty: bool,
@@ -370,6 +373,7 @@ impl Eliminator {
             units: SmallVec::new(),
             resolutions: 0,
             eliminated: 0,
+            def_ticks: 0,
             dirty: false,
             bw_lits: Vec::new(),
             bw_marked: Vec::new(),
@@ -934,6 +938,51 @@ impl Solver {
         }
         if ctx.lit_val(pivot) != 0 {
             return;
+        }
+
+        // kissat `kissat_find_gates`' final catch-all: prove a functional
+        // definition of the pivot with the embedded sub-solver and, when
+        // one exists, eliminate gate-aware (g×a + g×g resolvents only —
+        // the a×a cross product is entailed by the gate). Runs before the
+        // bounded cross product; armed via `NIXIE_DEFINITIONS` (default
+        // off until characterized) and proof-free runs only: the core's
+        // resolution proof has no cheap LRAT provenance here, so under an
+        // attached proof the path stays off (weaker, sound — same policy
+        // as the sweep).
+        if crate::definitions_enabled() && self.proof.is_none() && !self.lrat {
+            match self.elim_find_definition(ctx, pivot) {
+                DefOutcome::Unit(u) => {
+                    self.stats.definition_units = self.stats.definition_units.saturating_add(1);
+                    // kissat resolve.c: a definition-produced unit clears
+                    // the gates and the variable is left to propagation.
+                    self.elim_assign_unit(ctx, u);
+                    self.elim_backward_clauses(ctx);
+                    return;
+                }
+                DefOutcome::Defined { gates0, gates1 } => {
+                    let mut collected: Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)> = Vec::new();
+                    let bound = (pos + neg) as i64 + self.elim_bound;
+                    if self.elim_definition_resolvents_bounded(
+                        ctx,
+                        pivot,
+                        &gates0,
+                        &gates1,
+                        bound,
+                        &mut collected,
+                    ) {
+                        self.elim_add_resolvents(ctx, &collected);
+                        self.elim_retire_pivot_clauses(ctx, pivot);
+                        self.elim_var_flag[pivot.var().index()] = true;
+                        ctx.eliminated += 1;
+                        self.stats.definition_eliminated =
+                            self.stats.definition_eliminated.saturating_add(1);
+                        ctx.dirty = true;
+                    }
+                    self.elim_backward_clauses(ctx);
+                    return;
+                }
+                DefOutcome::None => {}
+            }
         }
 
         let mut collected: Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)> = Vec::new();
@@ -1992,6 +2041,400 @@ mod round_occs_tests {
                 }
                 assert_views(&occs, &ref_occs, &log);
             }
+        }
+    }
+}
+
+// ======== kitten-based definition extraction (kissat definition.c) ========
+//
+// The final catch-all of kissat's `kissat_find_gates`: prove with the
+// embedded sub-solver that the pivot literal is *functionally defined* by
+// its neighborhood, then eliminate it with gate-aware resolution (g×a and
+// g×g products only — the a×a cross product is entailed by the gate, see
+// the completeness argument below). The structural gate detectors
+// (equivalences/ands/if-then-else) run first in kissat; nixie ports the
+// definition path only, which subsumes them semantically at the cost of
+// one bounded kitten solve.
+//
+// Completeness of the three products (why skipping a0×a1 is sound):
+// the kitten formula is (all pivot-side clauses minus pivot) ∧ (all
+// ¬pivot-side clauses minus ¬pivot); UNSAT means for every assignment Y
+// of the other variables some gate clause fires (forces the pivot one
+// way). If Y falsifies a0−pivot AND a1−¬pivot (the pair whose resolvent
+// we skip), then every resolvent Res(g0,a1) is falsified at Y *because
+// the a1 part alone is false* — so Y is excluded by the g×a resolvents
+// regardless of the gate. The g0×g1 product excludes the both-sides-fire
+// assignments. Hence the resolvent set + non-pivot clauses is equivalent
+// to ∃pivot.(original), and the SatELite model-reconstruction invariant
+// (never both a stripped positive and negative clause falsified) holds,
+// so the existing `bve_def` extension machinery applies unchanged.
+
+/// kissat `definitionticks` (1e6): kitten tick budget per extraction.
+const DEFINITION_TICKS: u64 = 1_000_000;
+/// kissat `definitioncores` (2): the loop `for i in 2..=definitioncores`
+/// runs one shrinking round (`shrink → shuffle → re-solve → re-core`).
+const DEFINITION_CORES: u32 = 2;
+/// nixie safety valve (no kissat analog): total kitten ticks the
+/// definition path may spend per elimination phase. kissat has no
+/// aggregate cap because its structural gates run before the kitten and
+/// the search's conflict limits bound the phase; this port pays a kitten
+/// solve per candidate, so a finite phase cap keeps a 100k-candidate
+/// round from burning 100k × 1e6 ticks.
+const DEFINITION_PHASE_TICKS: u64 = 64_000_000;
+
+/// Outcome of [`Solver::elim_find_definition`].
+#[derive(Debug)]
+enum DefOutcome {
+    /// No definition proved (budget, SAT environment, or aborted shrink).
+    None,
+    /// One-sided core: the gate clauses alone force this unit
+    /// (kissat `definition_units` / `kissat_learned_unit`).
+    Unit(Lit),
+    /// Two-sided definition: `gates0` contain the pivot, `gates1` ¬pivot.
+    Defined {
+        gates0: Vec<ClauseId>,
+        gates1: Vec<ClauseId>,
+    },
+}
+
+impl Solver {
+    /// Prove (or refute) a functional definition of `pivot` with the
+    /// embedded sub-solver — kissat `kissat_find_definition` (definition.c).
+    /// Exports both polarity occurrence clauses with the pivot-polarity
+    /// occurrence erased, solves under `definitionticks`, and on UNSAT
+    /// extracts (and shrinks) the core; core ids map back to clauses
+    /// through the export table (kissat maps them to dense watch
+    /// positions — the occurrence lists play that role here).
+    fn elim_find_definition(&mut self, ctx: &mut Eliminator, pivot: Lit) -> DefOutcome {
+        if ctx.def_ticks >= DEFINITION_PHASE_TICKS {
+            return DefOutcome::None;
+        }
+        self.stats.definitions_checked = self.stats.definitions_checked.saturating_add(1);
+
+        let mut kitten = crate::kitten::Kitten::new();
+        kitten.track_antecedents();
+        // Export table: id → (clause, side); side 0 = contains pivot,
+        // side 1 = contains ¬pivot (kissat's `watches[sign]`).
+        let mut table: Vec<(ClauseId, bool)> = Vec::new();
+        for side in [pivot, pivot.negate()] {
+            let ids: Vec<ClauseId> = ctx.occs.combined(side.code() as usize);
+            for cid in ids {
+                let Some(view) = self.clauses.get(cid) else {
+                    continue;
+                };
+                if view.deleted || view.learned || view.lits.len() < 2 {
+                    continue;
+                }
+                let lits: SmallVec<[Lit; 8]> = view.lits.iter().copied().collect();
+                if !lits.contains(&side) {
+                    continue;
+                }
+                let elits: Vec<u32> = lits.iter().map(|l| l.code()).collect();
+                kitten.clause_with_id_and_exception(table.len() as u32, &elits, side.code());
+                table.push((cid, side == pivot));
+            }
+        }
+
+        kitten.set_ticks_limit_delta(DEFINITION_TICKS);
+        let mut result = DefOutcome::None;
+        if let crate::kitten::KittenResult::Inconsistent = kitten.solve() {
+            let mut learned = 0u64;
+            let _reduced = kitten.compute_clausal_core(&mut learned);
+            // Shrinking rounds (kissat: `for i in 2..=definitioncores`) —
+            // keep only the core, shuffle, re-prove UNSAT, re-extract. An
+            // Unknown re-solve aborts the *whole* extraction (kissat
+            // `ABORT`); a Satisfied re-solve is structurally impossible
+            // (the kept core clauses alone are unsat) and is treated the
+            // same honest way.
+            let mut aborted = false;
+            for _ in 2..=DEFINITION_CORES {
+                kitten.shrink_to_clausal_core();
+                kitten.shuffle_clauses();
+                kitten.set_ticks_limit_delta(10 * DEFINITION_TICKS);
+                match kitten.solve() {
+                    crate::kitten::KittenResult::Inconsistent => {
+                        let _ = kitten.compute_clausal_core(&mut learned);
+                    }
+                    _ => {
+                        debug_assert!(
+                            false,
+                            "shrunken core must re-prove UNSAT (core clauses alone are unsat)"
+                        );
+                        aborted = true;
+                        break;
+                    }
+                }
+            }
+            if !aborted {
+                self.stats.definitions_extracted =
+                    self.stats.definitions_extracted.saturating_add(1);
+                let mut gates0: Vec<ClauseId> = Vec::new();
+                let mut gates1: Vec<ClauseId> = Vec::new();
+                kitten.traverse_core_ids(|id| {
+                    if let Some(&(cid, side0)) = table.get(id as usize)
+                        && self.clauses.get(cid).is_some_and(|c| !c.deleted)
+                    {
+                        if side0 {
+                            gates0.push(cid);
+                        } else {
+                            gates1.push(cid);
+                        }
+                    }
+                });
+                match (gates0.is_empty(), gates1.is_empty()) {
+                    // Both sides empty: no original clauses in the core —
+                    // no usable definition (kissat asserts this away).
+                    (true, true) => {}
+                    // One-sided core: the gate clauses force this unit.
+                    (true, false) => result = DefOutcome::Unit(pivot.negate()),
+                    (false, true) => result = DefOutcome::Unit(pivot),
+                    (false, false) => {
+                        result = DefOutcome::Defined { gates0, gates1 };
+                    }
+                }
+            }
+        }
+        ctx.def_ticks = ctx.def_ticks.saturating_add(kitten.stats.ticks);
+        result
+    }
+
+    /// Gate-aware resolvent generation (kissat resolve.c's `gates` branch
+    /// of `eliminate_variable`): products gates0×a1, a0×gates1 and
+    /// gates0×gates1 under the same bound as the full cross product —
+    /// `pos + neg + elim_bound`. The antecedent×antecedent product is
+    /// skipped (entailed by the proved definition, see the module-level
+    /// completeness argument). Returns `true` when all resolvents fit and
+    /// the pivot may be eliminated.
+    fn elim_definition_resolvents_bounded(
+        &mut self,
+        ctx: &mut Eliminator,
+        pivot: Lit,
+        gates0: &[ClauseId],
+        gates1: &[ClauseId],
+        bound: i64,
+        collected: &mut Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)>,
+    ) -> bool {
+        let live = |slf: &Self, cid: ClauseId| slf.clauses.get(cid).is_some_and(|c| !c.deleted);
+        let a0: Vec<ClauseId> = ctx
+            .occs
+            .combined(pivot.code() as usize)
+            .into_iter()
+            .filter(|cid| live(self, *cid) && !gates0.contains(cid))
+            .collect();
+        let a1: Vec<ClauseId> = ctx
+            .occs
+            .combined(pivot.negate().code() as usize)
+            .into_iter()
+            .filter(|cid| live(self, *cid) && !gates1.contains(cid))
+            .collect();
+
+        let mut resolvents: i64 = 0;
+        // (left contains pivot, right contains ¬pivot) products.
+        for (left, right) in [
+            (gates0, a1.as_slice()),
+            (a0.as_slice(), gates1),
+            (gates0, gates1),
+        ] {
+            for &cid in left {
+                if self.trivially_unsat {
+                    return false;
+                }
+                if !live(self, cid) {
+                    continue;
+                }
+                for &nid in right {
+                    if !live(self, nid) {
+                        continue;
+                    }
+                    ctx.resolutions += 1;
+                    match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
+                        ElimResolve::Skip => {}
+                        ElimResolve::Unit(u) => {
+                            self.elim_assign_unit(ctx, u);
+                            if self.trivially_unsat {
+                                return false;
+                            }
+                        }
+                        ElimResolve::Resolvent(r) => {
+                            resolvents += 1;
+                            if r.len() > ELIM_CLS_LIMIT || resolvents > bound {
+                                return false;
+                            }
+                            collected.push((r, cid, nid));
+                        }
+                    }
+                    if ctx.lit_val(pivot) != 0 {
+                        return false;
+                    }
+                    if self.trivially_unsat {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Definition-extraction tests (kissat `definition.c` port): the gate
+/// path eliminates a variable the full cross product cannot (resolvent
+/// bound), one-sided cores force units, and a seeded differential keeps
+/// the arm verdict-identical to the base.
+#[cfg(test)]
+mod definition_tests {
+    use super::*;
+
+    /// x ≡ y gate plus 10+10 antecedent occurrences of both x and y: the
+    /// full cross product needs 100 resolvents against a bound of ~38, so
+    /// only the gate-aware products (10+10+tautologies ≈ 20) fit. With
+    /// the knob off the variables survive the phase; with it on at least
+    /// one is eliminated through a proved definition.
+    #[test]
+    fn definition_gate_elimination_beats_cross_product() {
+        let formula = |s: &mut Solver| {
+            for _ in 0..12 {
+                s.new_var();
+            }
+            // gate: x(1) ≡ y(2)
+            s.add_clause_dimacs(&[-1, 2]);
+            s.add_clause_dimacs(&[1, -2]);
+            for i in 3..=12 {
+                s.add_clause_dimacs(&[1, i]); // x ∨ a_i
+                s.add_clause_dimacs(&[-1, i]); // ¬x ∨ a_i
+                s.add_clause_dimacs(&[2, i]); // y ∨ a_i
+                s.add_clause_dimacs(&[-2, i]); // ¬y ∨ a_i
+            }
+        };
+
+        // Knob off: the path must be inert (checked counter zero).
+        crate::test_knobs::set_definitions(Some(false));
+        let mut base = Solver::new();
+        formula(&mut base);
+        let _ = base.eliminate_phase();
+        assert_eq!(base.stats.definitions_checked, 0);
+        assert_eq!(base.stats.definition_eliminated, 0);
+
+        // Knob on: at least one of x/y falls to a proved definition and
+        // the formula still solves SAT (all a_i are free).
+        crate::test_knobs::set_definitions(Some(true));
+        let mut armed = Solver::new();
+        formula(&mut armed);
+        let _ = armed.eliminate_phase();
+        assert!(
+            armed.stats.definitions_extracted >= 1,
+            "the x≡y gate must be provable: checked={}",
+            armed.stats.definitions_checked
+        );
+        assert!(armed.stats.definition_eliminated >= 1);
+        let eliminated_var = (0..2).find(|&i| armed.var_eliminated(Var::new(i)));
+        assert!(
+            eliminated_var.is_some(),
+            "x or y must be gate-eliminated, not merely definition-checked"
+        );
+        crate::test_knobs::set_definitions(None);
+
+        assert_eq!(armed.solve(), crate::SolverResult::Sat);
+        // The eliminated partner reconstructs from its definition: x and y
+        // must take the same value in the model.
+        let v = eliminated_var.unwrap();
+        let x = crate::literal::Lit::pos(Var::new(0));
+        let y = crate::literal::Lit::pos(Var::new(1));
+        let _ = v;
+        assert_eq!(
+            armed.trail.lit_value(x),
+            armed.trail.lit_value(y),
+            "x and y must reconstruct equal (x ≡ y)"
+        );
+    }
+
+    /// A one-sided core (the ¬x-side clauses alone are contradictory
+    /// without ¬x) proves ¬x is forced — kissat's `definition_units`.
+    /// The helper `a` is protected with 10+10 non-eliminable occurrences
+    /// so the cheap-first schedule reaches `x` (rank 3) before `a` could
+    /// be resolution-eliminated (which would derive the same unit through
+    /// the normal path and mask the definition mechanism).
+    #[test]
+    fn one_sided_definition_forces_unit() {
+        crate::test_knobs::set_definitions(Some(true));
+        let mut s = Solver::new();
+        for _ in 0..13 {
+            s.new_var();
+        }
+        s.add_clause_dimacs(&[1, 3]); // x ∨ b   (x side)
+        s.add_clause_dimacs(&[-1, 2]); // ¬x ∨ a
+        s.add_clause_dimacs(&[-1, -2]); // ¬x ∨ ¬a  (¬x side alone: x→a, x→¬a)
+        for i in 4..=13 {
+            s.add_clause_dimacs(&[2, i]); // a ∨ d_i
+            s.add_clause_dimacs(&[-2, i]); // ¬a ∨ d_i
+        }
+        let _ = s.eliminate_phase();
+        crate::test_knobs::set_definitions(None);
+        assert!(
+            s.stats.definition_units >= 1,
+            "checked={} extracted={}",
+            s.stats.definitions_checked,
+            s.stats.definitions_extracted
+        );
+        assert_eq!(s.solve(), crate::SolverResult::Sat);
+        let x = crate::literal::Lit::pos(Var::new(0));
+        assert_eq!(
+            s.trail.lit_value(x),
+            crate::literal::LBool::False,
+            "x must be forced false"
+        );
+    }
+
+    /// Seeded differential: definitions armed vs base must agree on every
+    /// verdict over random 3-CNF fragments (the soundness canary for the
+    /// gate-aware resolvent set).
+    #[test]
+    fn definitions_verdict_differential() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _case in 0..150 {
+            let n_vars = 4 + (next() % 5) as usize;
+            let n_clauses = 3 + (next() % 30) as usize;
+            let mut clauses: Vec<Vec<i32>> = Vec::new();
+            for _ in 0..n_clauses {
+                let len = 2 + (next() % 2) as usize;
+                let mut c: Vec<i32> = Vec::new();
+                for _ in 0..len {
+                    let var = 1 + (next() % n_vars as u64) as i32;
+                    let lit = if next() & 1 == 0 { var } else { -var };
+                    c.push(lit);
+                }
+                clauses.push(c);
+            }
+
+            crate::test_knobs::set_definitions(Some(false));
+            let mut base = Solver::new();
+            for _ in 0..n_vars {
+                base.new_var();
+            }
+            for c in &clauses {
+                base.add_clause_dimacs(c);
+            }
+            let base_res = base.solve();
+            crate::test_knobs::set_definitions(Some(true));
+            let mut armed = Solver::new();
+            for _ in 0..n_vars {
+                armed.new_var();
+            }
+            for c in &clauses {
+                armed.add_clause_dimacs(c);
+            }
+            let armed_res = armed.solve();
+            crate::test_knobs::set_definitions(None);
+            assert_eq!(
+                base_res, armed_res,
+                "verdict divergence on {clauses:?} (definitions {} extracted)",
+                armed.stats.definitions_extracted
+            );
         }
     }
 }

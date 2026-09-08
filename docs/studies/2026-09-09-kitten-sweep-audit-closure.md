@@ -180,3 +180,52 @@ sentinel protocol); `clear`. Sweep-side: scheduling ring, limit schedule
 loops, refine functions, the two-implication equivalence protocol with
 both cores, repr path compression, incomplete/completed bookkeeping,
 yield-delay analog, effort budget analog (400‰ calibrated default).
+
+## Follow-up increment (same day): the `definition.c` consumer ported
+
+The largest "remains open" item — definition-based elimination — is now
+ported too, closing the audit's finding-4 consumer gap end to end:
+
+- **`elim_find_definition`** (`solver/eliminate.rs`, kissat
+  `kissat_find_definition`): exports both polarity occurrence clauses of
+  an elimination candidate into a fresh kitten with the pivot-polarity
+  occurrence erased (`clause_with_id_and_exception`, ids = export
+  indices), solves under `definitionticks` = 1e6; on UNSAT extracts the
+  core, runs the `definitioncores = 2` shrink round
+  (`shrink_to_clausal_core` + `shuffle_clauses` + re-solve, Unknown
+  aborts the extraction exactly like kissat's `ABORT`), and maps core
+  ids back to clauses via the export table (`traverse_core_ids`).
+- **Gate-aware elimination** (kissat resolve.c's `gates` branch): on a
+  two-sided definition the pivot is eliminated with the three products
+  gates0×a1, a0×gates1, gates0×gates1 under the usual
+  `pos + neg + elimbound` bound — the antecedent×antecedent cross
+  product is skipped (entailed by the proved definition; the
+  completeness argument is recorded in the source). One-sided cores
+  force a unit (`definition_units`, assigned through the hardened
+  `elim_assign_unit`). Retirement + SatELite model reconstruction ride
+  the existing `elim_retire_pivot_clauses`/`bve_def` machinery
+  unchanged (the reconstruction invariant holds for gate resolvents).
+- **Gating**: `NIXIE_DEFINITIONS` (kissat `definitions`, default 1
+  there) — nixie default **off** until characterized per
+  `docs/BENCHMARKING.md`; proof-attached runs keep it off (the core's
+  resolution proof has no cheap LRAT provenance here — weaker, sound).
+  Per-phase safety valve of 64 M kitten ticks (no kissat analog;
+  documented) since the structural gate detectors that front-run the
+  kitten in kissat are not ported.
+- **`sweeprand`** (kissat option, default 0) is now ported as
+  `NIXIE_SWEEP_RAND` — randomized frontier swap in the sweep's
+  environment loop (per-round LCG seeded 0; kissat draws from the
+  persistent solver generator).
+
+Tests: `definition_gate_elimination_beats_cross_product` (a variable the
+full cross product cannot eliminate falls to the gate products),
+`one_sided_definition_forces_unit`, and a 150-case seeded verdict
+differential (armed vs base). Gate: 10 749 workspace tests, clippy/fmt/
+doc clean, z3 parity 169/170 decisive-matched, 0 disagreements.
+
+**Still open by design**: the structural gate detectors
+(`equivalences.c`/`ands.c`/`ifthenelse.c`) that run before the kitten in
+kissat — the definition path subsumes them semantically at one bounded
+kitten solve per candidate; porting them is a pure speed optimization.
+And the standing note: a performance claim for either the sweep fixes or
+definitions needs the matched-null protocol, not correctness gates.
