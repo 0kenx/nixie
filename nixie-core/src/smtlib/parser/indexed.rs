@@ -64,6 +64,52 @@ impl Parser<'_> {
             Ok(args[0])
         };
 
+        // `(_ bvN W)`: the standard indexed bit-vector literal (the
+        // FloatingPoint/FixedPoint theories and most benchmarks spell wide
+        // constants this way; `#x`/`#b` only reach 64-bit-friendly widths
+        // comfortably).  The value must fit the declared width — SMT-LIB
+        // defines the literal as the width-`W` encoding of `N`.
+        if let Some(digits) = name.strip_prefix("bv")
+            && !digits.is_empty()
+            && digits.chars().all(|c| c.is_ascii_digit())
+        {
+            let [width_raw] = index_parts else {
+                return Err(NixieError::ParseError {
+                    position: 0,
+                    message: format!(
+                        "(_ bvN W) requires exactly 1 index (the width), got {}",
+                        index_parts.len()
+                    ),
+                });
+            };
+            let width: u32 = width_raw.parse().map_err(|_| NixieError::ParseError {
+                position: 0,
+                message: format!("invalid width index for (_ bvN W): {width_raw}"),
+            })?;
+            let value: num_bigint::BigInt = digits.parse().map_err(|_| NixieError::ParseError {
+                position: 0,
+                message: format!("invalid bit-vector literal: (_ bv{digits} {width})"),
+            })?;
+            if value.bits() > u64::from(width) {
+                return Err(NixieError::ParseError {
+                    position: 0,
+                    message: format!(
+                        "(_ bv{digits} {width}): value does not fit the declared width"
+                    ),
+                });
+            }
+            if args.is_empty() {
+                return Ok(Some(self.manager.mk_bitvec(value, width)));
+            }
+            return Err(NixieError::ParseError {
+                position: 0,
+                message: format!(
+                    "(_ bvN W) is a constant and takes no arguments, got {}",
+                    args.len()
+                ),
+            });
+        }
+
         match name {
             // `((_ extract i j) x)` – the standard SMT-LIB spelling, where the
             // indexed identifier is its own S-expression.  Without this arm it
@@ -370,6 +416,12 @@ impl Parser<'_> {
                     .map(|s| s.kind.clone());
                 match arg_kind {
                     Some(SortKind::Real) => Ok(self.manager.mk_real_to_fp(rm, arg, eb, sb)),
+                    // SMT-LIB `Int` is a subset of `Real`: an Int-sorted
+                    // operand (literal or term) converts with exactly the
+                    // real-conversion semantics (z3 coerces; the solver's
+                    // exact-rational path evaluates `IntConst` operands
+                    // directly).
+                    Some(SortKind::Int) => Ok(self.manager.mk_real_to_fp(rm, arg, eb, sb)),
                     Some(SortKind::FloatingPoint { .. }) => {
                         Ok(self.manager.mk_fp_to_fp(rm, arg, eb, sb))
                     }

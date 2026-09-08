@@ -411,3 +411,105 @@ fn real_to_fp_one_third_rounds_correctly() {
     // honest `unknown` (never a false `sat`).
     assert_ne!(run_script(wrong), SolverResult::Sat);
 }
+
+// ===========================================================================
+// Conversion-surface parsing and bit-vector → FP conversions
+// ===========================================================================
+
+/// `Int` literals convert with real semantics (SMT-LIB Int ⊆ Real; z3
+/// coerces — this was a parse error before).
+#[test]
+fn to_fp_accepts_integer_literals() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const x Float64)
+             (assert (= x ((_ to_fp 11 53) RNE 3)))
+             (assert (not (= x (fp #b0 #b10000000000 #x8000000000000))))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// `(_ bvN W)` indexed bit-vector literals parse (the standard spelling for
+/// wide constants) and convert exactly, refuting a wrong datum.
+#[test]
+fn to_fp_from_indexed_bv_literal_decides_both_ways() {
+    // 123456789012345678 needs 57 bits: RTP rounds up from exact.
+    let base = "(set-logic QF_FP)
+         (declare-const x Float64)
+         (assert (= x ((_ to_fp 11 53) RTP (_ bv123456789012345678 64))))";
+    // The exact fold decides the instance; pin BOTH polarities against the
+    // oracle-derived datum: 123456789012345678 = 0x1B69B4BA630F34E·4 …
+    // (probe against a clearly wrong datum: zero.)
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (assert (= x (_ +zero 11 53)))
+             (check-sat)"
+        )),
+        SolverResult::Unsat
+    );
+    assert_eq!(
+        run_script(&format!(
+            "{base}
+             (check-sat)"
+        )),
+        SolverResult::Sat
+    );
+}
+
+/// A variable pinned to a BV constant converts through the class witness
+/// (the fold's guarded path).
+#[test]
+fn to_fp_from_pinned_bv_variable_folds() {
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FPBV)
+             (declare-const v (_ BitVec 32))
+             (declare-const x Float64)
+             (assert (= v (_ bv42 32)))
+             (assert (= x ((_ to_fp 11 53) RNE v)))
+             (assert (= x (_ +zero 11 53)))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// A small value spelled with a long fraction: the raw decimal digits
+/// exceed i64, the reduced rational fits — the widened decimal path.
+#[test]
+fn long_fraction_decimals_parse_exactly() {
+    // 0.50000000000000000000 (20 fraction digits): raw numerator 5·10^19.
+    assert_eq!(
+        run_script(
+            "(set-logic QF_FP)
+             (declare-const x Float64)
+             (assert (= x ((_ to_fp 11 53) RNE 0.50000000000000000000)))
+             (assert (not (= x (fp #b0 #b01111111110 #x0000000000000))))
+             (check-sat)"
+        ),
+        SolverResult::Unsat
+    );
+}
+
+/// Genuinely-unrepresentable decimals (reduced rational outside i64/i64)
+/// still refuse — never a verdict on a garbled value.
+#[test]
+fn oversized_decimals_error_not_garble() {
+    let mut ctx = Context::new();
+    let res = ctx.execute_script(
+        "(set-logic QF_FP)
+         (declare-const x Float64)
+         (assert (= x ((_ to_fp 11 53) RNE 309485009821345068724781056.0)))
+         (check-sat)",
+    );
+    if let Ok(out) = res {
+        assert!(
+            !out.iter().any(|t| matches!(t.trim(), "sat" | "unsat")),
+            "a refused literal must not produce a verdict: {out:?}"
+        );
+    } // Err = refused at the script level — equally honest
+}

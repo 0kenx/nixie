@@ -428,43 +428,53 @@ pub(super) fn parse_decimal_to_rational(s: &str) -> Result<Rational64> {
     let integer_part = parts[0];
     let fractional_part = parts[1];
 
-    // Parse integer part (can be empty for decimals like ".5")
-    let integer_value: i64 = if integer_part.is_empty() {
-        0
-    } else {
-        integer_part.parse().map_err(|_| NixieError::ParseError {
+    if !integer_part.chars().all(|c| c.is_ascii_digit())
+        || !fractional_part.chars().all(|c| c.is_ascii_digit())
+    {
+        return Err(NixieError::ParseError {
             position: 0,
-            message: format!("invalid integer part in decimal: {integer_part}"),
+            message: format!("invalid decimal format: {s}"),
+        });
+    }
+
+    // Exact arbitrary-precision reduction: the decimal denotes
+    // (integer_digits ++ fractional_digits) / 10^k, and only the *reduced*
+    // rational has to fit the term language's `Rational64` real literals
+    // (e.g. `2_000_000_000_000_000_000.0` reduces to 2·10^18/10^1 → an
+    // i64-representable pair even though the raw numerator is not).  The
+    // previous i64-first parse rejected every literal whose raw digits
+    // overflowed, regardless of the reduced value.
+    use num_bigint::BigInt;
+    let digits = format!("{integer_part}{fractional_part}");
+    let numerator_big: BigInt = if digits.is_empty() {
+        BigInt::from(0)
+    } else {
+        digits.parse().map_err(|_| NixieError::ParseError {
+            position: 0,
+            message: format!("invalid decimal format: {s}"),
         })?
     };
-
-    // Parse fractional part
-    let fractional_digits = fractional_part.len();
-    let fractional_value: i64 = fractional_part
-        .parse()
-        .map_err(|_| NixieError::ParseError {
-            position: 0,
-            message: format!("invalid fractional part in decimal: {fractional_part}"),
-        })?;
-
-    // Convert to rational: integer_part + fractional_part / 10^fractional_digits
-    let denominator = 10_i64
-        .checked_pow(fractional_digits as u32)
-        .ok_or_else(|| NixieError::ParseError {
-            position: 0,
-            message: format!("decimal has too many fractional digits: {s}"),
-        })?;
-
-    // Create rational: (integer_part * denominator + fractional_value) / denominator
-    let numerator = integer_value
-        .checked_mul(denominator)
-        .and_then(|n| n.checked_add(fractional_value))
-        .ok_or_else(|| NixieError::ParseError {
-            position: 0,
-            message: format!("decimal value overflow: {s}"),
-        })?;
-
-    Ok(Rational64::new(numerator, denominator))
+    let denominator_big = BigInt::from(10).pow(fractional_part.len() as u32);
+    let (num_reduced, den_reduced) = {
+        use num_integer::Integer;
+        let g = numerator_big.gcd(&denominator_big);
+        (numerator_big / &g, denominator_big / &g)
+    };
+    use num_traits::ToPrimitive;
+    let (n, d) = match (num_reduced.to_i64(), den_reduced.to_i64()) {
+        (Some(n), Some(d)) if d > 0 => (n, d),
+        _ => {
+            return Err(NixieError::ParseError {
+                position: 0,
+                message: format!(
+                    "decimal {s} reduces to a rational outside the real-literal \
+                     range (i64/i64); spell it as a division of integer \
+                     literals, e.g. (/ m n)"
+                ),
+            });
+        }
+    };
+    Ok(Rational64::new(n, d))
 }
 
 /// Parse a term from a string

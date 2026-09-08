@@ -184,6 +184,10 @@ enum FpOpShape {
     /// exact rational value the fold rounds itself (it never pins through
     /// the FP machinery).
     FromReal(RoundingMode, u32, u32, TermId),
+    /// `((_ to_fp eb sb) rm bv)` / `((_ to_fp_unsigned eb sb) rm bv)`: the
+    /// operand is a BIT-VECTOR pinned to a constant (itself, or its
+    /// e-graph class's distinguished BV constant).
+    FromBv(RoundingMode, u32, u32, TermId, bool),
     Pred(TermId, TermId, PredOp),
     Classify(TermId, ClassOp),
 }
@@ -235,7 +239,9 @@ impl FpOpShape {
             Self::Binary(_, a, b, _) => smallvec::smallvec![a, b],
             Self::Fma(_, a, b, c) => smallvec::smallvec![a, b, c],
             Self::Unary(a, _) => smallvec::smallvec![a],
-            Self::ToFp(_, _, _, a) | Self::FromReal(_, _, _, a) => smallvec::smallvec![a],
+            Self::ToFp(_, _, _, a) | Self::FromReal(_, _, _, a) | Self::FromBv(_, _, _, a, _) => {
+                smallvec::smallvec![a]
+            }
             Self::Pred(a, b, _) => smallvec::smallvec![a, b],
             Self::Classify(a, _) => smallvec::smallvec![a],
         }
@@ -247,7 +253,7 @@ impl FpOpShape {
             // Intercepted in `fold_one` before evaluation (the operand is
             // Real-sorted; `vals` never carries it).  The placeholder keeps
             // this match exhaustive without a partial arm.
-            Self::FromReal(_, _, _, _) => FpValueOrBool::Bool(false),
+            Self::FromReal(_, _, _, _) | Self::FromBv(_, _, _, _, _) => FpValueOrBool::Bool(false),
             Self::Binary(rm, _, _, op) => {
                 engine.set_rounding_mode(engine_rm(rm));
                 let value = match op {
@@ -347,6 +353,10 @@ fn fp_op_shape(kind: &TermKind) -> Option<FpOpShape> {
         TermKind::FpSqrt(rm, a) => Some(FpOpShape::Binary(*rm, *a, *a, BinOp::Sqrt)),
         TermKind::FpToFp { rm, eb, sb, arg } => Some(FpOpShape::ToFp(*rm, *eb, *sb, *arg)),
         TermKind::RealToFp { rm, eb, sb, arg } => Some(FpOpShape::FromReal(*rm, *eb, *sb, *arg)),
+        TermKind::SBVToFp { rm, eb, sb, arg } => Some(FpOpShape::FromBv(*rm, *eb, *sb, *arg, true)),
+        TermKind::UBVToFp { rm, eb, sb, arg } => {
+            Some(FpOpShape::FromBv(*rm, *eb, *sb, *arg, false))
+        }
         TermKind::FpEq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Eq)),
         TermKind::FpLt(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Lt)),
         TermKind::FpLeq(a, b) => Some(FpOpShape::Pred(*a, *b, PredOp::Leq)),
@@ -436,7 +446,12 @@ impl Solver {
                 progress = true;
                 folded_ops += 1;
                 folded.insert(op);
-                added_any |= added;
+                // `added` is false when this check re-derived an
+                // already-emitted (and still live) lemma; the fold
+                // structure exists either way, so the fall-through signal
+                // tracks FIRED, not merely ADDED.
+                added_any = true;
+                let _ = added;
                 if let Some(pin) = pin {
                     pinned.insert(op, pin);
                 }
@@ -539,6 +554,47 @@ impl Solver {
             let td = manager.get(op)?;
             fp_op_shape(&td.kind)?
         };
+        // A bit-vector conversion folds on the operand's exact integer
+        // value: a literal operand is its own witness (unit clause); a
+        // variable operand resolves through its e-graph class's
+        // distinguished BV constant, guarded by `(operand = witness)` — a
+        // bit-vector atom, arithmetically inert (no `div`/`mod` hazard like
+        // the real path).
+        if let FpOpShape::FromBv(rm, eb, sb, arg, signed) = shape {
+            let (rational, witness) = if let Some(r) = bv_term_rational(arg, signed, manager) {
+                (r, arg)
+            } else if let Some(w) = self.bv_pin_witness(arg, manager)
+                && let Some(r) = bv_term_rational(w, signed, manager)
+            {
+                (r, w)
+            } else {
+                return None;
+            };
+            let value = rational_to_fp(&rational, eb, sb, rm);
+            let guards = if witness == arg {
+                Vec::new()
+            } else {
+                vec![manager.mk_eq(arg, witness)]
+            };
+            let lit = mint_fp_lit(&value, manager);
+            self.euf.declare_fp_const(lit, fp_const_key(&value));
+            let conclusion = manager.mk_eq(op, lit);
+            let lemma = build_fold_lemma(&guards, conclusion, manager);
+            let added = self.fp_fold_lemmas.insert(lemma);
+            if added {
+                self.trail
+                    .push(super::trail::TrailOp::FpFoldLemmaAdded { term: lemma });
+                self.assert_ground_lemma(lemma, manager);
+            }
+            return Some((
+                Some(FpPin {
+                    value,
+                    witness: lit,
+                    guards,
+                }),
+                added,
+            ));
+        }
         // `RealToFp` folds on the operand's exact RATIONAL value — the FP
         // pin machinery never sees its (Real-sorted) operand.  The guard is
         // the atom `(operand = literal-of-value)` when the operand is a
@@ -1077,6 +1133,69 @@ fn real_term_arith_clean(root: TermId, manager: &TermManager) -> bool {
         super::term_walk::collect_structural_children(&td.kind, &mut stack);
     }
     true
+}
+
+/// The exact rational value of a `BitVecConst` term under `signed`
+/// (two's-complement) or unsigned interpretation.  `None` for any other
+/// kind.
+pub(super) fn bv_term_rational(
+    term: TermId,
+    signed: bool,
+    manager: &TermManager,
+) -> Option<BigRational> {
+    let td = manager.get(term)?;
+    let (value, width) = match &td.kind {
+        TermKind::BitVecConst { value, width } => (value.clone(), *width),
+        _ => return None,
+    };
+    let value = if signed && width > 0 && value.bits() == u64::from(width) {
+        // MSB set: two's complement value − 2^width
+        value - (num_bigint::BigInt::from(1) << width)
+    } else {
+        value
+    };
+    Some(BigRational::from(value))
+}
+
+impl Solver {
+    /// The `BitVecConst` term a bit-vector operand is pinned to: its
+    /// e-graph class's distinguished BV constant (on re-checks, after a
+    /// search has merged the assertions), or — at `check_core` entry,
+    /// before any propagation — a definitional `(= operand const)` conjunct
+    /// of the assertions at positive polarity.
+    fn bv_pin_witness(&self, term: TermId, manager: &TermManager) -> Option<TermId> {
+        if let Some(w) = self.euf.class_const_witness(term) {
+            return Some(w);
+        }
+        let is_bv_const = |t: TermId| {
+            manager
+                .get(t)
+                .is_some_and(|d| matches!(d.kind, TermKind::BitVecConst { .. }))
+        };
+        let mut stack: Vec<TermId> = self.assertions.clone();
+        let mut visited: FxHashSet<TermId> = FxHashSet::default();
+        while let Some(t) = stack.pop() {
+            if !visited.insert(t) {
+                continue;
+            }
+            let Some(td) = manager.get(t) else {
+                continue;
+            };
+            match &td.kind {
+                TermKind::And(args) => stack.extend(args.iter().copied()),
+                TermKind::Eq(l, r) => {
+                    if *l == term && is_bv_const(*r) {
+                        return Some(*r);
+                    }
+                    if *r == term && is_bv_const(*l) {
+                        return Some(*l);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]

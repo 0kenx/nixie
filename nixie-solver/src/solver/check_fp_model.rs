@@ -563,6 +563,21 @@ impl<'a> FpModelFinder<'a> {
                             stack.push(Task::Apply(term, FpOp::Convert(*rm, *arg, *eb, *sb)));
                             stack.push(Task::Visit(*arg));
                         }
+                        TermKind::SBVToFp { rm, arg, eb, sb }
+                        | TermKind::UBVToFp { rm, arg, eb, sb } => {
+                            // Exact bit-vector → rational → grid conversion
+                            // (signed two's complement for SBV).  The
+                            // operand must be pinned to a `BitVecConst`
+                            // (directly or through its e-graph class).
+                            let (rm, arg, eb, sb) = (*rm, *arg, *eb, *sb);
+                            let signed = matches!(
+                                self.manager.get(term).map(|d| &d.kind),
+                                Some(TermKind::SBVToFp { .. })
+                            );
+                            let value = super::fp_fold::bv_term_rational(arg, signed, self.manager)
+                                .map(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
+                            fp_memo.insert(term, value);
+                        }
                         TermKind::RealToFp { rm, arg, eb, sb } => {
                             // EXACT rational conversion: the previous path
                             // evaluated the real expression as an `f64`
