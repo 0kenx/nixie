@@ -1,4 +1,11 @@
-# Elimination first-parent preparation: census below the registered gate
+# Elimination first-parent preparation: measured cost screen
+
+**Cost-screen result:** si2 showed **7.13% fewer cycles/conflict**; circuit
+showed **0.43% more**. The geometric mean was **3.43% fewer cycles/conflict**
+and **0.72% fewer instructions**, with identical scalar/candidate stdout.
+The user-directed prototype therefore misses the retained 5% aggregate
+cycle gate. Preserve the mixed result and archive the prototype; no
+production optimization is landed from this screen.
 
 **Stage A verdict:** the single registered observation missed its gate. Reusable
 first-parent inspections were **48.29%**, below the required **50%**.
@@ -139,8 +146,8 @@ logs and source/binary identity. The captured nextest pass listing is
 partially truncated; its successful final summary is retained. The adjacent
 `source.bundle` and `source.patch` preserve the complete observer and runner;
 the verified bundle requires `691b53b`. The unused experiment worktree and
-branch are removed after recording this result. Stage B's four cost cells
-were not run.
+branch are removed after recording this result. At that point, Stage B's
+four cost cells had not been run.
 
 ## User-directed continuation, before cost measurements
 
@@ -161,3 +168,85 @@ base, with ordinary release optimization and no observation counters.
 The existing Stage B order and gates remain in force: si2 scalar then
 candidate, followed by circuit candidate then scalar only if the si2 pair
 passes. This adds at most four cost cells, with no extra Kissat reruns.
+
+## Stage B result: si2 improves, aggregate remains below the cost gate
+
+Prototype `f58c392f1880755d0c46f56300269559cdd03780` implements the
+registered conservative scope on the exact `e15d0bf` source base. A
+`ResolutionRow` owns the prepared first-parent prefix and clears its marks
+when the row is dropped, including early bounded-resolution returns.
+Obtaining mutable access to the context first invalidates the preparation.
+Every non-tautological helper outcome also clears its marks before any
+effect or caller action. The retained state stores both the marked prefix
+length and the original first-parent live-literal count; later resolution
+does not infer that count from an assumed pivot position or presence.
+
+The first-parent clause and literal order, occurrence-list snapshots,
+resolution counts and all proof events are preserved. The scalar helper
+remains a test oracle with its original per-call cleanup contract. There
+are no observation counters or runtime mode switches in the measured build.
+
+The prototype passed **1,000 SAT tests** with one existing skip. Its four
+new tests include 19,683 comparisons of small parent/root-assignment
+patterns, exercising more than 10,000 retained preparations. Additional
+cases compare both bounded loops' clauses, occurrence lists/counts,
+assignments, schedules, collected resolvents, scratch state and LRAT
+transcripts through both strengthening directions, refused proof-time
+strengthening, satisfied/deleted/missing parents, units, contradictions,
+row changes and both bound exits. Two resulting UNSAT proofs are also
+checked independently by the LRAT checker. The earlier independent
+resolution truth-table test remains in the SAT suite.
+
+SAT all-feature/all-target Clippy with warnings denied, formatting and
+the ordinary release build passed. A clean committed rebuild produced the
+same binary. Full-workspace/SMT qualification was not run for this archived
+prototype; its pilot checks do not qualify a production landing.
+
+The four cost cells ran once in the registered order: si2 scalar, si2
+candidate, circuit candidate, circuit scalar. Both arms used seed 0,
+CPU 10, MAXC=40000, sweep disabled and model output enabled. All measured
+events used **cpu_atom**, with **100.00%** scheduling coverage; cpu_core
+events were inactive.
+
+| Instance | Arm | User instructions | Cycles/conflict | Wall seconds | Record |
+|---|---|---:|---:|---:|---|
+| si2 | scalar | 27,417,481,430 | 257,852.86 | 2.4751 | `e505880508a8115a` |
+| si2 | reuse | 27,318,515,301 | 239,457.08 | 2.2201 | `fc6ae9b00b6eea87` |
+| circuit | scalar | 12,075,202,287 | 127,870.68 | 1.1682 | `d9efc6203ff711eb` |
+| circuit | reuse | 11,945,138,243 | 128,420.06 | 1.1674 | `27b207750b4d5964` |
+
+si2 returned SAT at **39,246 conflicts** in both arms, with each emitted
+model independently checked against all original clauses. Circuit reached
+the **40,000-conflict cap** with Unknown in both arms. These circuit costs
+describe the capped prefix, not a completed solve. Complete stdout is
+byte-identical within both pairs, including all printed search statistics.
+
+| Instance | Instruction ratio | Cycles/conflict ratio |
+|---|---:|---:|
+| si2 | 0.9963904004 | 0.9286578307 |
+| circuit | 0.9892288310 | 1.0042963739 |
+| Geometric mean | **0.9928031583** | **0.9657368648** |
+
+The si2 pair passed its first gate and justified the conditional circuit
+pair. The final cycle ratio exceeds 0.95, so the prototype does not advance
+under the retained Stage B rule. Instructions decreased on both inputs,
+but the cycle result is uneven and comes from one seed per instance. The
+larger si2 cycle decrease relative to its 0.36% instruction decrease is not
+enough evidence to claim a sustained or general throughput gain. Do not
+repeat these cells, select si2 alone as an aggregate result, or report the
+original literal-reuse fraction as whole-solve savings.
+
+The cached scalar binary SHA-256 is
+`87e0cb0fac833aee8297bf43307810fbb277b9bdbb7b26351d5f2c09066ae839`;
+the candidate is
+`7783be67814f5f4f114cf0ded064c1c48667e7348a64de133b50487952c9737e`.
+Raw records are under each commit's
+`benchmark/runs/elimination-parent-reuse-cost/`; raw stdout/stderr, perf
+output and completion markers are under
+`benchmark/elimination-parent-reuse-cost/`.
+`precompile/f58c392/benchmark/elimination-parent-reuse-cost/` also retains
+the manifest, summary, independently verified aggregate analysis,
+qualification logs, source/binary identities, complete source patch and
+verified source bundle requiring `e15d0bf`. The prototype worktree and its
+temporary branches are removed after this documentation lands. The whole
+study consumed one census and four cost cells, with no Kissat reruns.
