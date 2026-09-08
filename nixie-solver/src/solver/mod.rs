@@ -801,7 +801,25 @@ impl Solver {
 
         Self {
             config,
-            sat: SatSolver::with_config(sat_config),
+            sat: {
+                let mut s = SatSolver::with_config(sat_config);
+                // The CDCL(T) layer owns this SAT solver's encoding
+                // lifecycle: MBQI/instantiation rounds grow and re-encode
+                // the Boolean problem across checks, a lifecycle destructive
+                // Boolean folding cannot be validated against (the same
+                // reason every SMT preset keeps `enable_equiv_substitution`
+                // off). The kitten sweep's fold step is exactly that class
+                // — measured directly on 2026-09-08:
+                // pr30::test_bv_index_quantified_array_certifies_sat folds
+                // a Boolean-entailed complementary equivalence in a
+                // pre-theory round and the grown problem later returns a
+                // wrong `unsat` (binaries/units alone were bisected sound).
+                // The SAT-side corpora drive their own solvers and keep
+                // the full mechanism; this is the SMT path's structural
+                // opt-out.
+                s.set_sweep_enabled(false);
+                s
+            },
             branch_priority,
             euf: EufSolver::new(),
             arith: ArithSolver::lra(),

@@ -53,6 +53,14 @@ impl Solver {
         // flag.
         let saved_theory_attached = self.real_theory_attached;
         self.real_theory_attached = theory.is_real_theory();
+        // Sticky theory marker for the sweep's soundness gate
+        // (`sweep_allowed`): once a real theory has driven this solver,
+        // destructive equivalence folding is off for the solver's life —
+        // later no-theory inner solves (the quantifier path alternates
+        // them) must not re-arm it.
+        if self.real_theory_attached {
+            self.theory_ever_attached = true;
+        }
         let result = self.solve_with_theory_inner(theory);
         self.real_theory_attached = saved_theory_attached;
         result

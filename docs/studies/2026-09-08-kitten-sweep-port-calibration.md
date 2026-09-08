@@ -273,3 +273,48 @@ The ranking question (faithful cone-order vs scramble, both defensible:
 treatment wins constraints/ITC, null wins 6s167/summle) stays open as
 the recorded follow-up; landing a scramble as the default would destroy
 the null instrument for every future study.
+
+## Addendum: the default-flip SMT differential caught a real desync
+(fixed before landing)
+
+The enablement rule's "fresh SMT differential at the new default" fired
+for real: `pr30::test_bv_index_quantified_array_certifies_sat` flipped
+**sat → wrong unsat** with the sweep on. Bisected chain:
+
+1. The corruption is the **fold** (`substitute_equivalent_literals_round`),
+   not the sweep's own answers: with the entailed binaries + backbone
+   units applied but the fold skipped (`NIXIE_SWEEP_NOFOLD` debug arm),
+   the verdict was correct. The folded equivalence itself was verified
+   real (kissat-checked against a dump of the solver's own problem).
+2. The sweeping instance was **not** the CDCL(T) Context's solver but
+   `BvSolver`'s **embedded bit-blaster SAT solver** — created with
+   `enable_inprocessing: false` and driven incrementally by hundreds of
+   `solve()` calls per check. Two wiring defects made the sweep fire
+   there: (a) the sweep-only conflict cadence keyed on exactly
+   `!enable_inprocessing` (conflating "SAT-only workload" with "embedded
+   solver"), and (b) the pre-search sweep slot had **no latch**, so every
+   re-`solve` of the incremental protocol re-swept, folding variables
+   between two solves of a caller-owned encoding.
+
+Structural fixes (all landed with the flip):
+
+- **Sweep-only cadence removed** — `!enable_inprocessing` is not a
+  top-level-SAT discriminator. The sweep's homes are the inprocessing
+  rounds (every inprocessing preset) plus one latched pre-search pass;
+  `PRESET=default` (inprocessing off) keeps the pre-search pass only.
+- **Pre-search slot latched** to once per solver instance (kissat
+  `probe_initially` is a once-per-formula concept).
+- **`BvSolver`'s embedded solver opts out** via `set_sweep_enabled(false)`
+  (embedded incremental protocols do not admit destructive Boolean
+  folding between solves — the same policy that keeps
+  `enable_equiv_substitution` off in every SMT preset, now stated for
+  the sweep), and the CDCL(T) Context's own solver opts out the same way.
+- Defense in depth: a **sticky `theory_ever_attached`** flag keeps the
+  sweep off any solver that has ever run a real-theory solve, including
+  from later no-theory inner solves (the quantifier path alternates them).
+
+Post-fix verification: pr30 sat/sat both arms; 10 712 workspace tests
+green; the default-on trajectory on the standing corpus is **bit-identical
+to the characterized treatment arm** (6s167-opt: 42 003 conflicts, 10
+rounds, 8 964 kitten solves — the stored cells), and `NIXIE_SWEEP=0`
+restores the base trajectory exactly (62 241). The Part-2 numbers stand.

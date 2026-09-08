@@ -272,6 +272,9 @@ fn test_external_branching_receives_conflict_calls() {
         ..SolverConfig::default()
     };
     let mut solver = Solver::with_config(config);
+    // The sweep (default on) pre-solves PHP(3,2) via backbone units;
+    // this test requires genuine conflict analysis.
+    solver.set_sweep_enabled(false);
 
     // PHP(3,2): variables p_ij = pigeon i in hole j
     // p11=0, p12=1, p21=2, p22=3, p31=4, p32=5

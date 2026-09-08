@@ -1568,6 +1568,19 @@ pub struct Solver {
     /// per-round environment limits (`sweepvars`/`sweepclauses` <<
     /// completed, `sweepdepth` + completed, each capped).
     pub(super) sweep_completed: u32,
+    /// Per-instance sweep kill-switch (`Solver::set_sweep_enabled`):
+    /// when true, `sweep_round` is a no-op regardless of the env
+    /// default. For tests/A-B harnesses in separate crates (the env
+    /// knob is a process-wide `OnceLock`).
+    pub(super) sweep_disabled: bool,
+    /// Sticky: a real theory has driven at least one solve of this
+    /// instance. Gates the sweep off for the solver's life (see
+    /// `sweep_allowed`).
+    pub(super) theory_ever_attached: bool,
+    /// The pre-search sweep slot has fired for this instance (kissat
+    /// `probe_initially` is once-per-formula; embedded incremental
+    /// solvers re-enter `solve` hundreds of times and must not re-sweep).
+    pub(super) sweep_presearch_done: bool,
 
     /// `stats.propagations` at the end of the last mid-search round.  The
     /// search-work window for the next round's effort-relative budgets is
@@ -2083,6 +2096,9 @@ impl Solver {
             sweep_incomplete_flags: Vec::new(),
             sweep_incomplete: false,
             sweep_completed: 0,
+            sweep_disabled: false,
+            theory_ever_attached: false,
+            sweep_presearch_done: false,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
             inproc_round_props_total: 0,
@@ -3877,10 +3893,20 @@ impl Solver {
         // Effort: kissat's `SET_EFFORT_LIMIT` reference at preprocess time
         // is its `mineffort` floor, so the window here is 0 and the budget
         // floors at `SWEEP_MIN_EFFORT` × `sweepeffort`‰ inside the round.
+        //
+        // LATCHED to the first solve of the instance (kissat
+        // `probe_initially` is a once-per-formula concept). Without the
+        // latch, incrementally-driven embedded solvers (the BV bit-blaster
+        // solves hundreds of times per check) re-swept on every solve,
+        // and a fold between two solves of a caller-owned protocol
+        // desynced it (the pr30 wrong-unsat, 2026-09-08).
         // Inert unless `NIXIE_SWEEP=1` (one cached bool load).
-        if crate::kitten_sweep_enabled() && self.sweep_round(0) == sweep::SweepOutcome::Unsat {
-            self.drat_emit_empty(None);
-            return SolverResult::Unsat;
+        if !self.sweep_presearch_done {
+            self.sweep_presearch_done = true;
+            if crate::kitten_sweep_enabled() && self.sweep_round(0) == sweep::SweepOutcome::Unsat {
+                self.drat_emit_empty(None);
+                return SolverResult::Unsat;
+            }
         }
         if self.trivially_unsat {
             self.drat_emit_empty(None);

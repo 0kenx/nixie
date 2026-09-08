@@ -88,6 +88,10 @@ fn to_cnf(nvars: usize, clauses: &[Vec<i32>]) -> String {
 
 fn solve(cfg: SolverConfig, cnf: &str) -> (SolverResult, Vec<u8>, usize, u64) {
     let mut s = Solver::with_config(cfg);
+    // The BVA/AND-gate passes are what these tests exercise; the sweep
+    // (default on) can fold the generated gate structure away before
+    // the pass sees it, which starves the pair-introduction generator.
+    s.set_sweep_enabled(false);
     let mut p = DimacsParser::new();
     p.parse_reader(Cursor::new(cnf.as_bytes()), &mut s)
         .expect("parse fuzz cnf");

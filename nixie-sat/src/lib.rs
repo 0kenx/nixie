@@ -272,10 +272,12 @@ pub fn root_sweep_strip_enabled() -> bool {
 /// The kitten SAT-sweeping port (`nixie-sat/src/kitten.rs` +
 /// `solver/sweep.rs`, kissat `kitten.c`/`sweep.c`): proves equivalences
 /// and backbone units with an embedded sub-solver over bounded cone
-/// environments. **Default OFF** (`NIXIE_SWEEP=1` arms it) pending the
-/// standing-corpus A/B gates; see the module documentation in
-/// `solver/sweep.rs` and the handover
-/// `docs/handovers/2026-09-07-kitten-sweep-port.md`.
+/// environments. **Default ON** since the 2026-09-08 characterization
+/// (10-seed paired differential: +35 solved at cap, 0 verdict
+/// disagreements, conflicts 0.949x, wall 0.728x; ranking measured
+/// neutral vs its matched null - see
+/// `docs/studies/2026-09-08-kitten-sweep-port-calibration.md`).
+/// `NIXIE_SWEEP=0` restores the pre-port default for A/B.
 #[doc(hidden)]
 pub fn kitten_sweep_enabled() -> bool {
     // Test override (thread-local so parallel tests can arm the pass
@@ -290,11 +292,11 @@ pub fn kitten_sweep_enabled() -> bool {
     {
         use std::sync::OnceLock;
         static FLAG: OnceLock<bool> = OnceLock::new();
-        *FLAG.get_or_init(|| std::env::var("NIXIE_SWEEP").is_ok_and(|v| !v.is_empty() && v != "0"))
+        *FLAG.get_or_init(|| std::env::var("NIXIE_SWEEP").map_or(true, |v| v != "0"))
     }
     #[cfg(not(feature = "std"))]
     {
-        false
+        true
     }
 }
 

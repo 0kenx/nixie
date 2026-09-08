@@ -1825,31 +1825,6 @@ impl Solver {
             }
         }
 
-        // Sweep-only cadence: kissat runs its sweep inside the probe/inprocess
-        // cycle REGARDLESS of the other inprocessing toggles.  When the sweep
-        // is armed (`NIXIE_SWEEP=1`) but the inprocessing bundle is disabled,
-        // the sweep runs as a first-class scheduled component here on the
-        // same conflict interval and effort-window bookkeeping — so the arm
-        // is meaningful on every preset, not just the inprocessing ones.
-        // Inert unless armed (one cached bool load; no other effect on the
-        // default trajectory).
-        if !self.config.enable_inprocessing
-            && crate::kitten_sweep_enabled()
-            && self.conflicts_since_inprocessing >= self.inproc_interval_now()
-        {
-            if self.trail.decision_level() > 0 {
-                self.backtrack_with_phase_saving(0);
-            }
-            let window = self
-                .stats
-                .propagations
-                .saturating_sub(self.inproc_search_props_mark);
-            let _ = self.sweep_round(window);
-            self.conflicts_since_inprocessing = 0;
-            self.inproc_rounds_done += 1;
-            self.inproc_search_props_mark = self.stats.propagations;
-        }
-
         // Scheduled probing (cadical `inprobing` → `inprobe ()`): one
         // budgeted round of failed-literal probing over binary-implication
         // roots with hyper-binary derivation, before elimination in the

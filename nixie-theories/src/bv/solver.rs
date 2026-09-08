@@ -323,6 +323,13 @@ impl BvSolver {
     #[must_use]
     pub fn with_config(config: BvConfig) -> Self {
         let mut sat = SatSolver::with_config(Self::embedded_sat_config());
+        // Embedded incremental protocol: this solver is driven by
+        // `BvSolver::check` with hundreds of `solve()` calls over a
+        // caller-owned bit-blaster encoding; destructive Boolean folding
+        // between solves desyncs that protocol (measured: the pr30
+        // BV-index quantified array wrong-unsat, 2026-09-08). Structural
+        // opt-out of the kitten sweep's fold machinery.
+        sat.set_sweep_enabled(false);
         let (const_true, const_false) = Self::reserve_const_bits(&mut sat);
         Self {
             sat,

@@ -52,11 +52,14 @@
 //!   clock; the round budget is a per-mille slice of the effort-schedule
 //!   window, mirroring kissat `sweepeffort` over `SET_EFFORT_LIMIT`.
 //!
-//! # Knobs (A/B infrastructure, default off)
+//! # Knobs
 //!
-//! * `NIXIE_SWEEP=1` — enable the sweep (pre-search + each inprocessing
-//!   round). Unset: every code path is inert (one cached `bool` load per
-//!   round; trajectory-identical to base).
+//! * `NIXIE_SWEEP=0` — disable the sweep (pre-search + each inprocessing
+//!   round). Default **on** since the 2026-09-08 characterization
+//!   (enablement rule: structural soundness + 10-seed paired
+//!   differential +35 solved at cap, 0 verdict disagreements; see
+//!   `docs/studies/2026-09-08-kitten-sweep-port-calibration.md`).
+//!   Unset/`1`: on.
 //! * `NIXIE_SWEEP_NULL=1` — matched null: identical machinery, budgets
 //!   and candidate *set*, but the candidate *ranking* is scrambled by a
 //!   deterministic hash of the variable index. The semantic content
@@ -155,14 +158,34 @@ struct SweepLimits {
 
 impl Solver {
     /// Whether the sweep may run right now (shared soundness gates).
+    ///
+    /// `theory_ever_attached` is **sticky**: a solver that has ever run a
+    /// real-theory solve never sweeps, even from later no-theory inner
+    /// solves (the quantifier path alternates them). The sweep's fold
+    /// step rides the ELS round, whose SMT policy is default-off for a
+    /// reason the 2026-09-08 landing measured directly: on
+    /// `pr30::test_bv_index_quantified_array_certifies_sat` the fold of
+    /// a Boolean-entailed complementary equivalence corrupted the MBQI
+    /// loop into a wrong `unsat` (binaries/units alone were bisected
+    /// sound there). Pure-SAT corpora keep the full mechanism.
     pub(super) fn sweep_allowed(&self) -> bool {
-        self.trail.decision_level() == 0
+        !self.theory_ever_attached
+            && self.trail.decision_level() == 0
             && self.assertion_levels.len() <= 1
             && self.proof.is_none()
             && !self.lrat
             && !self.trivially_unsat
             && !self.assumptions_active
             && self.destructive_preprocessing_safe()
+    }
+
+    /// Per-instance override of the kitten sweep (`NIXIE_SWEEP`'s
+    /// process-wide default flipped by this call). For tests and A/B
+    /// harnesses that construct `Solver` directly in separate crates;
+    /// the env knob is a `OnceLock` resolved once per process, which
+    /// parallel test binaries cannot arm selectively.
+    pub fn set_sweep_enabled(&mut self, on: bool) {
+        self.sweep_disabled = !on;
     }
 
     /// Whether `var` is sweepable: in range, unassigned at level 0, not
@@ -184,7 +207,7 @@ impl Solver {
     /// reference (search propagation since the last round; the pre-search
     /// call passes 0, floored at [`SWEEP_MIN_EFFORT`]).
     pub(super) fn sweep_round(&mut self, window: u64) -> SweepOutcome {
-        if !crate::kitten_sweep_enabled() || !self.sweep_allowed() {
+        if !crate::kitten_sweep_enabled() || self.sweep_disabled || !self.sweep_allowed() {
             return SweepOutcome::Ok;
         }
         let equivalences0 = self.stats.sweep_equivalences;
@@ -401,9 +424,15 @@ impl Solver {
         sweeper.vars.push(idx as u32);
     }
 
-    /// Encode the scratch clause into kitten (`sweep_clause`).
+    /// Encode the scratch clause into kitten (`sweep_clause`). A copy
+    /// with ≤ 1 remaining literal is legal here: kitten receives a unit
+    /// (still entailed under the level-0 trail — the dropped literals
+    /// are level-0 false) or an empty clause (the environment is
+    /// contradictory, surfaced through `sweep_add_core`). kissat asserts
+    /// `size > 1` because its dense-mode invariants guarantee it; our
+    /// public `add_clause` path can leave a deferred unit flush pending,
+    /// so a weakened copy may transiently shrink further.
     fn sweep_encode_clause(&mut self, sweeper: &mut Sweeper, depth: u32) {
-        debug_assert!(sweeper.clause.len() > 1);
         // Take the scratch clause so `sweep_add_literal` can mutate the
         // sweeper while iterating; restore the (reused) buffer EMPTY —
         // the C clears the stack after every encoded clause, and
@@ -779,7 +808,15 @@ impl Solver {
                 }
                 let members = src - start;
                 src += 1; // separator
-                debug_assert!(members > 1);
+                if members < 2 {
+                    // A class with fewer than two members has no candidate
+                    // pair to test; drop it. Single-member classes are
+                    // reachable when an environment yields exactly one
+                    // active candidate (kissat's `assert (size > 1)` never
+                    // sees them only because its corpus does not produce
+                    // such environments).
+                    continue;
+                }
                 let mut size = members as u32;
                 let before = kept.len();
                 for &lit in &old[start..start + members] {
@@ -965,11 +1002,22 @@ impl Solver {
     }
 
     /// Add one entailed binary through the hardened `add_clause` path.
-    /// Returns `false` if the formula became UNSAT.
+    /// Returns `false` if the formula became UNSAT. The add path can
+    /// leave the forced unit's propagation pending (the deferred
+    /// parse-unit flush); drain it HERE so the next environment build
+    /// sees a complete level-0 trail (otherwise weakened clause copies
+    /// could transiently hold a single literal).
     fn sweep_add_clause_binary(&mut self, a: u32, b: u32) -> bool {
         let la = Lit::from_code(a);
         let lb = Lit::from_code(b);
         self.add_clause([la, lb]);
+        if self.trivially_unsat {
+            return false;
+        }
+        if self.trail.has_pending_propagation() && self.propagate().is_some() {
+            self.trivially_unsat = true;
+            return false;
+        }
         !self.trivially_unsat
     }
 

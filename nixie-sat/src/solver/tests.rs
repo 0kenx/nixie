@@ -142,6 +142,9 @@ fn test_lbd_computation() {
         enable_lucky: false,
         ..SolverConfig::default()
     });
+    // Sweep off for the same reason as lucky above: it can pre-solve
+    // small pigeonhole formulas through backbone units.
+    solver.set_sweep_enabled(false);
 
     for _ in 0..20 {
         solver.new_var();
@@ -2543,10 +2546,11 @@ mod sweep_tests {
         );
     }
 
-    /// Default-off identity: with the override explicitly off, no sweep
-    /// state may be touched even on an equivalence chain.
+    /// Knob-off identity: with the sweep explicitly disabled, no sweep
+    /// state may be touched even on an equivalence chain (the
+    /// `NIXIE_SWEEP=0` opt-out must be a faithful pre-port trajectory).
     #[test]
-    fn sweep_default_off_is_inert() {
+    fn sweep_disabled_is_inert() {
         crate::test_knobs::set_kitten_sweep(Some(false));
         let mut s = sweep_solver();
         const N: i32 = 32;

@@ -2886,6 +2886,9 @@ mod tests {
             ..SolverConfig::default()
         };
         let mut solver = Solver::with_config(config);
+        // The sweep (default on) pre-solves PHP(3,2) via backbone units,
+        // defeating this test's purpose (conflicts must happen).
+        solver.set_sweep_enabled(false);
 
         // PHP(3,2): 6 variables
         for _ in 0..6 {
@@ -2968,6 +2971,9 @@ mod tests {
             ..SolverConfig::default()
         };
         let mut solver = Solver::with_config(config);
+        // The sweep (default on) pre-solves PHP(3,2) via backbone units,
+        // defeating this test's purpose (conflicts must happen).
+        solver.set_sweep_enabled(false);
 
         // PHP(3,2): 6 variables, UNSAT, produces multi-level conflicts.
         for _ in 0..6 {
