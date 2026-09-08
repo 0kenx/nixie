@@ -33,6 +33,12 @@ No reuse kernel follows. [Exact sparse-word subsumption](2026-09-08-sparse-word-
 likewise failed its two-run cost gate; fewer branch misses did not produce
 a qualifying whole-solve gain.
 
+[Runtime AVX2 blocker certificates](2026-09-08-avx2-blocker-certificates.md)
+also failed after two circuit cells: instructions fell 3.36%, but measured
+cycles/conflict rose 12.12% with identical search output at 40,000 conflicts.
+The candidate is archived, and the second input was not run. This closes
+the fixed sixteen-entry gather experiment without a width or dispatch sweep.
+
 ## 1. Shared satisfaction across watcher groups — first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
