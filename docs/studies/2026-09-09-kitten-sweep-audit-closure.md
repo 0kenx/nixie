@@ -229,3 +229,39 @@ kissat — the definition path subsumes them semantically at one bounded
 kitten solve per candidate; porting them is a pure speed optimization.
 And the standing note: a performance claim for either the sweep fixes or
 definitions needs the matched-null protocol, not correctness gates.
+
+## Pre-registered screen (written before the runs)
+
+The audit fixes changed the **default-on** sweep path (dense
+environments, per-solve tick caps, cold-start solves). Per the
+enablement rule (`docs/BENCHMARKING.md` §3), a default-path change
+ships with a differential screen at the new default; the definitions
+arm gets its first cost/verdict measurement. Standing corpus
+(`precompile/corpus-sc24f/`, 54 files), 60 s cap, 5 repetitions per
+cell (the solver is deterministic — repetitions sample the load margin
+at the wall cap only), cores 10–19, arms interleaved within each
+repetition round so load drift hits all arms equally:
+
+| arm | binary | env |
+|---|---|---|
+| base | `precompile/66166ed` (pre-audit parent) | — |
+| treat | `precompile/825f24e` (current default) | — |
+| defs | `precompile/825f24e` | `NIXIE_DEFINITIONS=1` |
+
+- **S1 (default screen, treat vs base)**: verdict agreement on every
+  both-decided cell must be **100% (0 disagreements)**, and treat
+  solved-at-cap **not lower** than base. Within ±3 files is a reshuffle
+  (§11.1) — judged on the flip list vs the mechanism, not the count.
+- **S2 (cost)**: paired conflicts-to-verdict geomean, treat vs base,
+  both-decided cells only. [0.95, 1.05] = neutral. No win language
+  without a matched null — this screen cannot produce one.
+- **S3 (defs arm)**: verdicts must agree with treat on both-decided
+  cells (soundness of the gate path under real corpora); solved-at-cap
+  and cost reported descriptively. **No enablement decision from this
+  screen**: a merit claim needs an extract-and-discard matched null
+  first (§2); if S3 shows any disagreement or a corpus-negative
+  solved-at-cap, the arm stays default-off with that recorded verdict.
+- **Falsification**: a single S1 verdict disagreement is a soundness
+  bug (report + fix before anything else, AGENTS.md); S1 solved-at-cap
+  more than ~3 files below base = the fixes regressed the default →
+  investigate the flip list before keeping them default-on.
