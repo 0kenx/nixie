@@ -1,10 +1,11 @@
 # Elimination first-parent preparation: census below the registered gate
 
-**Verdict:** stop after the single registered observation. Reusable
+**Stage A verdict:** the single registered observation missed its gate. Reusable
 first-parent inspections were **48.29%**, below the required **50%**.
-The independent model check and scalar-output identity passed. No throughput
-prototype or cost comparison was run; this is not a measured speedup or
-regression. The registration below is unchanged.
+The independent model check and scalar-output identity passed. The user
+subsequently authorized Stage B because the observation is close to 50%.
+See the continuation record below; the original observation and cost gates
+are preserved.
 
 The [mark-cleanup repair](2026-09-08-elimination-mark-cleanup.md) is on main
 as `e15d0bf`. The remaining hypothesis is that consecutive resolution pairs
@@ -140,3 +141,23 @@ partially truncated; its successful final summary is retained. The adjacent
 the verified bundle requires `691b53b`. The unused experiment worktree and
 branch are removed after recording this result. Stage B's four cost cells
 were not run.
+
+## User-directed continuation, before cost measurements
+
+The user explicitly requested testing the prototype despite the 48.29%
+observation: “it's close to 50% so worth testing”. Proceed to Stage B under
+that authorization and retain Stage A's failed-gate classification. Do not
+repeat the census or select another seed/round subset.
+
+Implement the same conservative mechanism: retain the first-parent prefix
+only after a tautological pair, within one row. Use a row-scoped owner to
+clear retained marks on every exit and before any mutating operation.
+The scalar helper continues to clear its marks on every call. Compare the
+two paths' clauses, occurrence lists, assignments, collected resolvents and
+proof output, including early exits and both strengthening directions.
+
+Use the cached scalar `e15d0bf` and build the candidate from that same source
+base, with ordinary release optimization and no observation counters.
+The existing Stage B order and gates remain in force: si2 scalar then
+candidate, followed by circuit candidate then scalar only if the si2 pair
+passes. This adds at most four cost cells, with no extra Kissat reruns.
