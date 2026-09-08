@@ -137,8 +137,8 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **Branching** | VSIDS, LRB, VMTF, CHB, phase saving |
 | **Restarts** | Luby, geometric, Glucose-style dynamic restarts |
 | **Clause Management** | 3-tier system (Core/Mid/Local), LBD-based deletion |
-| **Preprocessing** | Variable elimination, subsumption, BCE, BVE, failed literal probing |
-| **Inprocessing** | Vivification, distillation, clause strengthening |
+| **Preprocessing** | Variable elimination, subsumption, BCE, BVE, failed literal probing, SAT sweeping (kitten) |
+| **Inprocessing** | Vivification, distillation, clause strengthening, effort-scheduled SAT sweeping (equivalence/backbone via embedded sub-solver) |
 | **Local Search** | WalkSAT, ProbSAT integration |
 | **Parallelism** | Cube-and-conquer, portfolio with clause sharing |
 | **ML Integration** | Online learning for branching/restart decisions |

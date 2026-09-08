@@ -318,3 +318,26 @@ green; the default-on trajectory on the standing corpus is **bit-identical
 to the characterized treatment arm** (6s167-opt: 42 003 conflicts, 10
 rounds, 8 964 kitten solves — the stored cells), and `NIXIE_SWEEP=0`
 restores the base trajectory exactly (62 241). The Part-2 numbers stand.
+
+## Reference arms (§12 obligation) — nixie / kissat / cadical on the
+sweep-class files (deterministic, single run each, recorded in the
+benchstore under `bd1d759`)
+
+| file | nixie base | nixie sweep | kissat | cadical |
+|---|---|---|---|---|
+| 6s167-opt (unsat) | 62 241 | 42 003 | 19 164 | **16 654** |
+| FmlaEquivChain (unsat) | 525 810 gm | **415 665 gm** | 377 701 | 373 747 |
+| x9-09054 (sat) | ~709 k, 1/5 cap | ~709 k, 1/5 cap | 579 744 | **292 566** |
+| stable-300 (sat) | 239 350 | 239 350 (inert) | 761 400 | **210 042** |
+| constraints_17 (sat) | — | 8.9 k (seed 8) | 38 725 | **7 075** |
+| qwh (sat) | — | 46 k-class | 62 866 | **24 182** |
+| mrpp (unsat) | — | ~191 k | 179 485 | **138 035** |
+
+Reading: the sweep takes nixie to **reference parity on the
+equivalence-chain class** (FmlaEquivChain 416 k vs 374–378 k; the base
+was 526 k and 2× the wall) and keeps it mid-pack on the other sweep-class
+files; on 6s167 the port closed base 62 k → 42 k of the 42 k→16.7 k span
+(kissat's own sweep substitutes 14 % of the variables there — the
+remaining gap is substitution *depth*, not presence). cadical leads the
+remaining files; kissat trails cadical on this class. No verdict
+disagreements against either reference.
