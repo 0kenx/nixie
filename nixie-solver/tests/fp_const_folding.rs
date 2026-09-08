@@ -335,9 +335,8 @@ fn real_to_fp_directed_mode_is_a_single_exact_rounding() {
              (assert (= x (fp #b0 #b01111111111 #x0000000000002)))
              (check-sat)"
         )),
-        SolverResult::Unknown,
-        "the wrong datum must never verify (was a false `sat`); honest \
-         `unknown` — the div-bearing operand's guard cannot fold"
+        SolverResult::Unsat,
+        "the hybrid's exact rational conversion refutes the wrong datum"
     );
 }
 
@@ -355,10 +354,8 @@ fn real_to_fp_dyadic_conversion_decides() {
              (assert (not (= x (fp #b0 #b01111111111 #x8000000000000))))
              (check-sat)"
         )),
-        SolverResult::Unknown,
-        "z3: `unsat` — the refutation needs the fold's unit, and the \
-         div-bearing operand cannot carry an arith-clean guard, so this \
-         stays the honest `unknown` (never a false `sat`)"
+        SolverResult::Unsat,
+        "the hybrid folds the exact rational operand and refutes the disequality"
     );
     assert_eq!(
         run_script(&format!(

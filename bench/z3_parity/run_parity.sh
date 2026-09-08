@@ -15,11 +15,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Z3 release the recorded baseline was measured against. Z3 verdicts (and its
-# unknown/timeout behaviour) change between releases, so comparing Nixie against
-# a different Z3 than the baseline makes any disagreement unattributable: it is
-# impossible to tell whether Nixie moved or Z3 did.
-Z3_BASELINE_VERSION="4.15.4"
+# Current comparator. Historical 4.15.4 snapshots retain their original version;
+# differences between comparator versions require remeasurement to attribute.
+Z3_BASELINE_VERSION="4.16.0"
 Z3_RELEASE_URL="https://github.com/Z3Prover/z3/releases/tag/z3-${Z3_BASELINE_VERSION}"
 
 echo -e "${GREEN}=== Nixie Z3 Parity Test Suite ===${NC}\n"
@@ -27,9 +25,8 @@ echo -e "${GREEN}=== Nixie Z3 Parity Test Suite ===${NC}\n"
 # Check if Z3 is installed
 if ! command -v z3 &> /dev/null; then
     echo -e "${RED}ERROR: Z3 not found!${NC}"
-    echo "Please install Z3 ${Z3_BASELINE_VERSION} - the release the recorded baseline"
-    echo "was measured against. Any other version makes a disagreement unattributable,"
-    echo "because Z3's own verdicts move between releases."
+    echo "Please install Z3 ${Z3_BASELINE_VERSION}, the current verification comparator."
+    echo "Always record the actual version; Z3's verdicts can move between releases."
     echo "  Pinned release (all platforms): ${Z3_RELEASE_URL}"
     echo "    Linux x86_64:  z3-${Z3_BASELINE_VERSION}-x64-glibc-2.39.zip"
     echo "    Linux aarch64: z3-${Z3_BASELINE_VERSION}-arm64-glibc-2.34.zip"

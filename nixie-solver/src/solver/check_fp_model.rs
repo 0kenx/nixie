@@ -658,7 +658,7 @@ impl<'a> FpModelFinder<'a> {
                                 Some(TermKind::SBVToFp { .. })
                             );
                             let value = super::fp_fold::bv_term_rational(arg, signed, self.manager)
-                                .map(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
+                                .and_then(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
                             fp_memo.insert(term, value);
                         }
                         TermKind::RealToFp { rm, arg, eb, sb } => {
@@ -675,7 +675,7 @@ impl<'a> FpModelFinder<'a> {
                             // fragment declines honestly (None).
                             let (rm, arg, eb, sb) = (*rm, *arg, *eb, *sb);
                             let value = super::fp_fold::eval_rational(arg, self.manager)
-                                .map(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
+                                .and_then(|r| super::fp_fold::rational_to_fp(&r, eb, sb, rm));
                             fp_memo.insert(term, value);
                         }
                         // An FP-sorted `ite`. `needs_ite_elimination` leaves

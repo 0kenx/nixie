@@ -618,7 +618,7 @@ impl Solver {
             } else {
                 return None;
             };
-            let value = rational_to_fp(&rational, eb, sb, rm);
+            let value = rational_to_fp(&rational, eb, sb, rm)?;
             let guards = if witness == arg {
                 Vec::new()
             } else {
@@ -649,7 +649,7 @@ impl Solver {
         // compound expression (a literal operand is its own witness).
         if let FpOpShape::FromReal(rm, eb, sb, arg) = shape {
             let rational = eval_rational(arg, manager)?;
-            let value = rational_to_fp(&rational, eb, sb, rm);
+            let value = rational_to_fp(&rational, eb, sb, rm)?;
             let mut guards: Vec<TermId> = Vec::new();
             let is_literal = manager.get(arg).is_some_and(|td| {
                 matches!(td.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
@@ -980,16 +980,23 @@ fn rat64(r: &BigRational) -> Option<num_rational::Rational64> {
 /// Round the exact rational `r` to the IEEE-754 `(eb, sb)` grid under `rm`
 /// — a single correctly-rounded step, from first principles (the exact
 /// `BigInt` analogue of the generator-side oracle in `bench/obligation`'s
-/// `fpboundary` family).  Total: every rational has a correctly-rounded
-/// image, including the overflow (per-mode ±inf / max-finite) and
-/// underflow (subnormal grid, per-mode ±0 / ±min-subnormal) corners.
-pub(super) fn rational_to_fp(r: &BigRational, eb: u32, sb: u32, rm: RoundingMode) -> FpValue {
-    use nixie_theories::fp::ieee754_full::FpClass;
-    let _ = FpClass::QuietNaN; // (format-class imports kept for readers)
+/// `fpboundary` family). Every rational has a correctly-rounded image for
+/// supported formats (2–15 exponent bits, 2–64 significand bits), including
+/// overflow (per-mode ±inf / max-finite) and underflow (subnormal grid,
+/// per-mode ±0 / ±min-subnormal). Unsupported formats return `None`.
+pub(super) fn rational_to_fp(
+    r: &BigRational,
+    eb: u32,
+    sb: u32,
+    rm: RoundingMode,
+) -> Option<FpValue> {
+    if !(2..=15).contains(&eb) || !(2..=64).contains(&sb) {
+        return None;
+    }
     let format = FpFormat::new(eb, sb);
     if r.is_zero() {
         // The exact zero converts to +0 (the real 0 has no sign; z3 agrees).
-        return FpValue::pos_zero(format);
+        return Some(FpValue::pos_zero(format));
     }
     let neg = r.is_negative();
     let n = r.numer().abs();
@@ -1016,7 +1023,7 @@ pub(super) fn rational_to_fp(r: &BigRational, eb: u32, sb: u32, rm: RoundingMode
     // Far overflow: beyond max normal + 1 full exponent step — no rounding
     // can come back inside more than one ulp, so saturate per mode.
     if bin_exp > e_max + 1 {
-        return saturate_overflow(neg, rm, format);
+        return Some(saturate_overflow(neg, rm, format));
     }
     // Grid: the normal grid's LSB sits at bin_exp - (p-1), but never below
     // the subnormal unit.
@@ -1062,49 +1069,49 @@ pub(super) fn rational_to_fp(r: &BigRational, eb: u32, sb: u32, rm: RoundingMode
     if subnormal_grid {
         let smallest_normal = BigInt::from(1u8) << (p - 1);
         if cell >= smallest_normal {
-            return FpValue {
+            return Some(FpValue {
                 sign: neg,
                 exponent: 1,
                 significand: 0,
                 format,
-            };
+            });
         }
-        return FpValue {
+        return Some(FpValue {
             sign: neg,
             exponent: 0,
             // p-1 = sb-1 ≤ 63 for every real format; checked for safety.
-            significand: cell.to_u64_saturating(),
+            significand: cell.to_u64()?,
             format,
-        };
+        });
     }
     let normal_max = BigInt::from(1u8) << p;
     if cell >= normal_max {
         // Carry out of the normal grid: one exponent up (possibly overflow).
         let bin_exp_after = unit_exp + (p - 1) + 1;
         if bin_exp_after > e_max {
-            return saturate_overflow(neg, rm, format);
+            return Some(saturate_overflow(neg, rm, format));
         }
-        return FpValue {
+        return Some(FpValue {
             sign: neg,
-            exponent: bin_exp_after as u64,
+            exponent: u64::try_from(bin_exp_after + bias).ok()?,
             significand: 0,
             format,
-        };
+        });
     }
     let bin_exp_final = unit_exp + (p - 1);
     if bin_exp_final > e_max {
         // Rounding carried into the overflow range from below.
-        return saturate_overflow(neg, rm, format);
+        return Some(saturate_overflow(neg, rm, format));
     }
     let biased = bin_exp_final + bias;
     let implicit = BigInt::from(1u8) << (p - 1);
     let frac = cell - implicit;
-    FpValue {
+    Some(FpValue {
         sign: neg,
-        exponent: biased as u64,
-        significand: frac.to_u64_saturating(),
+        exponent: u64::try_from(biased).ok()?,
+        significand: frac.to_u64()?,
         format,
-    }
+    })
 }
 
 /// Saturate a beyond-range value per mode (the exact analogue of the
@@ -1113,19 +1120,19 @@ fn saturate_overflow(neg: bool, rm: RoundingMode, format: FpFormat) -> FpValue {
     match rm {
         RoundingMode::RTP if neg => FpValue {
             sign: neg,
-            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            exponent: (1u64 << format.exponent_bits) - 2,
             significand: (1u64 << (format.significand_bits - 1)) - 1,
             format,
         },
         RoundingMode::RTN if !neg => FpValue {
             sign: neg,
-            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            exponent: (1u64 << format.exponent_bits) - 2,
             significand: (1u64 << (format.significand_bits - 1)) - 1,
             format,
         },
         RoundingMode::RTZ => FpValue {
             sign: neg,
-            exponent: (1u64 << (format.exponent_bits - 1)) - 2,
+            exponent: (1u64 << format.exponent_bits) - 2,
             significand: (1u64 << (format.significand_bits - 1)) - 1,
             format,
         },
@@ -1136,21 +1143,6 @@ fn saturate_overflow(neg: bool, rm: RoundingMode, format: FpFormat) -> FpValue {
                 FpValue::pos_infinity(format)
             }
         }
-    }
-}
-
-/// Checked `u64` extraction that saturates rather than truncates (the
-/// significand fields of every real format fit `u64`; a hypothetical wider
-/// format saturates to its all-ones field, which is the closest the value
-/// type can express).
-trait ToU64Saturating {
-    fn to_u64_saturating(self) -> u64;
-}
-
-impl ToU64Saturating for BigInt {
-    fn to_u64_saturating(self) -> u64 {
-        use num_traits::ToPrimitive;
-        self.to_u64().unwrap_or(u64::MAX)
     }
 }
 
@@ -1248,34 +1240,170 @@ impl Solver {
 
 /// The exact rational value of a finite `FpValue` (`None` for NaN and the
 /// infinities): `mant · 2^exp2` with the implicit bit in place for normals.
-fn fp_value_rational(v: &FpValue) -> Option<BigRational> {
-    let emax = (1u64 << v.format.exponent_bits) - 1;
-    if v.exponent == emax {
-        return None; // NaN or infinity: underspecified conversions decline
+pub(super) fn fp_value_rational(v: &FpValue) -> Option<BigRational> {
+    let f = v.format;
+    if !(2..=15).contains(&f.exponent_bits) || !(2..=64).contains(&f.significand_bits) {
+        return None;
     }
-    let mant = if v.exponent == 0 {
-        BigRational::from(BigInt::from(v.significand))
+    let emax = (1u64 << f.exponent_bits) - 1;
+    let hidden = 1u64 << (f.significand_bits - 1);
+    if v.exponent >= emax || v.significand >= hidden {
+        return None;
+    }
+    let mant = BigInt::from(if v.exponent == 0 {
+        v.significand
     } else {
-        BigRational::from(BigInt::from(
-            v.significand | (1u64 << (v.format.significand_bits - 1)),
-        ))
-    };
-    let mag = if v.exponent == 0 {
-        // subnormal: mant · 2^E_MIN where the LSB unit is 2^(1-bias-(sb-1))
-        let bias = (1i64 << (v.format.exponent_bits - 1)) - 1;
-        let e_min = 1 - bias - (v.format.significand_bits as i64 - 1);
-        mant * BigRational::new(BigInt::from(1), BigInt::from(1) << e_min)
+        v.significand | hidden
+    });
+    let bias = (1i64 << (f.exponent_bits - 1)) - 1;
+    // Subnormal and zero encodings use the minimum normal exponent, with
+    // no hidden bit. Scale by 2^exp2, not its reciprocal.
+    let exp2 = v.exponent.max(1) as i64 - bias - (i64::from(f.significand_bits) - 1);
+    let mag = if exp2 >= 0 {
+        BigRational::from(mant << exp2)
     } else {
-        let bias = (1i64 << (v.format.exponent_bits - 1)) - 1;
-        let exp2 = v.exponent as i64 - bias - (v.format.significand_bits as i64 - 1);
-        let scale = if exp2 >= 0 {
-            BigRational::from(BigInt::from(1) << exp2)
-        } else {
-            BigRational::new(BigInt::from(1), BigInt::from(1) << (-exp2))
-        };
-        mant * scale
+        BigRational::new(mant, BigInt::from(1) << (-exp2))
     };
     Some(if v.sign { -mag } else { mag })
+}
+
+#[cfg(test)]
+mod rational_value_tests {
+    use super::*;
+
+    #[test]
+    fn rounding_carry_rebiases_the_exponent() {
+        let r = BigRational::new(BigInt::from(31), BigInt::from(16));
+        let value = rational_to_fp(&r, 3, 4, RoundingMode::RNE).expect("supported");
+        assert_eq!(
+            value,
+            FpValue {
+                sign: false,
+                exponent: 4,
+                significand: 0,
+                format: FpFormat::new(3, 4)
+            }
+        );
+        // Carry into an exponent below zero must still produce a positive
+        // biased exponent field, rather than wrapping the signed exponent.
+        let r = r / BigRational::from(BigInt::from(16));
+        let value = rational_to_fp(&r, 5, 4, RoundingMode::RNE).expect("supported");
+        assert_eq!(value.exponent, 12);
+        assert_eq!(value.significand, 0);
+    }
+
+    #[test]
+    fn overflow_saturation_uses_the_full_exponent_field() {
+        let f = FpFormat::new(3, 4);
+        for negative in [false, true] {
+            for rm in RoundingMode::ALL {
+                let r = BigRational::from(BigInt::from(if negative { -16 } else { 16 }));
+                let value = rational_to_fp(&r, 3, 4, rm).expect("supported");
+                let inward = rm == RoundingMode::RTZ
+                    || (negative && rm == RoundingMode::RTP)
+                    || (!negative && rm == RoundingMode::RTN);
+                let expected = if inward {
+                    FpValue {
+                        sign: negative,
+                        exponent: 6,
+                        significand: 7,
+                        format: f,
+                    }
+                } else {
+                    FpValue {
+                        sign: negative,
+                        exponent: 7,
+                        significand: 0,
+                        format: f,
+                    }
+                };
+                assert_eq!(value, expected, "{rm:?} sign {negative}");
+            }
+        }
+    }
+
+    #[test]
+    fn rational_rounding_rejects_unrepresentable_formats() {
+        let r = BigRational::from(BigInt::from(1));
+        for (e, p) in [(0, 0), (1, 53), (11, 1), (15, 113), (64, 64)] {
+            assert!(rational_to_fp(&r, e, p, RoundingMode::RNE).is_none());
+        }
+    }
+
+    #[test]
+    fn subnormal_scale_and_signed_zero_are_exact() {
+        let f = FpFormat::FLOAT64;
+        let v = FpValue {
+            sign: false,
+            exponent: 0,
+            significand: 1,
+            format: f,
+        };
+        let unit = BigRational::new(BigInt::from(1), BigInt::from(1) << 1074usize);
+        assert_eq!(fp_value_rational(&v), Some(unit.clone()));
+        assert_eq!(fp_value_rational(&FpValue { sign: true, ..v }), Some(-unit));
+        assert_eq!(
+            fp_value_rational(&FpValue::pos_zero(f)),
+            Some(BigRational::zero())
+        );
+        assert_eq!(
+            fp_value_rational(&FpValue::neg_zero(f)),
+            Some(BigRational::zero())
+        );
+    }
+
+    #[test]
+    fn subnormal_integer_rounding_checks_every_mode_and_sign() {
+        let v = FpValue {
+            sign: false,
+            exponent: 0,
+            significand: 1,
+            format: FpFormat::FLOAT64,
+        };
+        for rm in RoundingMode::ALL {
+            assert_eq!(
+                fp_value_rounded_to_integer(&v, rm),
+                Some(BigInt::from(u8::from(rm == RoundingMode::RTP)))
+            );
+            let n = FpValue { sign: true, ..v };
+            assert_eq!(
+                fp_value_rounded_to_integer(&n, rm),
+                Some(BigInt::from(-i8::from(rm == RoundingMode::RTN)))
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_fields_and_nonfinite_values_decline() {
+        assert!(fp_value_rational(&FpValue::nan(FpFormat::FLOAT64)).is_none());
+        assert!(
+            fp_value_rational(&FpValue {
+                sign: false,
+                exponent: 0,
+                significand: 8,
+                format: FpFormat::new(3, 4)
+            })
+            .is_none()
+        );
+        assert!(
+            fp_value_rational(&FpValue {
+                sign: false,
+                exponent: 8,
+                significand: 0,
+                format: FpFormat::new(3, 4)
+            })
+            .is_none()
+        );
+        assert!(
+            fp_value_rational(&FpValue {
+                sign: false,
+                exponent: 0,
+                significand: 0,
+                format: FpFormat::new(0, 0)
+            })
+            .is_none()
+        );
+    }
 }
 
 /// Round a finite fp value's exact rational to the INTEGER grid under
@@ -1311,7 +1439,7 @@ mod conv_tests {
 
     fn rt(v: i64, eb: u32, sb: u32, rm: RoundingMode) -> u64 {
         let r = BigRational::new(BigInt::from(v), BigInt::from(1));
-        let out = rational_to_fp(&r, eb, sb, rm);
+        let out = rational_to_fp(&r, eb, sb, rm).expect("supported format");
         ((out.sign as u64) << 63) | (out.exponent << (sb as u64 - 1)) | out.significand
     }
 

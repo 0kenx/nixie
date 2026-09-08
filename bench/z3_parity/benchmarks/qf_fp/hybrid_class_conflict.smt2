@@ -1,0 +1,8 @@
+(set-logic QF_FP)
+(set-info :status unsat)
+(declare-const x Float64)
+(declare-const y Float64)
+(assert (fp.isZero x))
+(assert (fp.isNormal y))
+(assert (fp.isNormal (fp.mul RNE x y)))
+(check-sat)

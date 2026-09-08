@@ -198,6 +198,11 @@ impl LinearForm {
 }
 
 impl StaticFeatures {
+    /// Whether the assertion DAG contains FP or rounding-mode terms.
+    pub(super) fn has_fp_terms(&self) -> bool {
+        self.has_fp
+    }
+
     /// Collect features from `assertions`, mirroring
     /// `static_features::collect(num_formulas, formulas)`.
     #[must_use]

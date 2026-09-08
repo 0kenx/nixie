@@ -1,0 +1,8 @@
+(set-logic QF_FP)
+(set-info :status sat)
+(declare-const rm RoundingMode)
+(declare-const x (_ FloatingPoint 3 4))
+(assert (distinct rm RNE RNA RTP RTN))
+(assert (= (fp.add rm x x) (fp #b0 #b100 #b100)))
+(assert (fp.isNormal x))
+(check-sat)

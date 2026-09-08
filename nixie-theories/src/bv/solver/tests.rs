@@ -4,6 +4,44 @@
 
 use super::*;
 
+#[test]
+fn deep_asserted_negations_use_a_polarity_stack() {
+    use nixie_core::ast::{TermKind, TermManager};
+    let mut m = TermManager::new();
+    let mut root = m.true_id;
+    for _ in 0..20_000 {
+        root = m.intern_term(TermKind::Not(root), m.sorts.bool_sort);
+    }
+    let mut even = BvSolver::new();
+    assert!(even.assert_formula_true(root, &m));
+    assert!(matches!(
+        even.check().expect("even check"),
+        TheoryResult::Sat
+    ));
+    root = m.intern_term(TermKind::Not(root), m.sorts.bool_sort);
+    let mut odd = BvSolver::new();
+    assert!(odd.assert_formula_true(root, &m));
+    assert!(matches!(
+        odd.check().expect("odd check"),
+        TheoryResult::Unsat(_)
+    ));
+}
+
+#[test]
+fn assertion_visit_memo_distinguishes_polarities() {
+    use nixie_core::ast::TermManager;
+    let mut m = TermManager::new();
+    let x = m.mk_var("x", m.sorts.bool_sort);
+    let nx = m.mk_not(x);
+    let both = m.mk_and(vec![x, nx]);
+    let mut solver = BvSolver::new();
+    assert!(solver.assert_formula_true(both, &m));
+    assert!(matches!(
+        solver.check().expect("check"),
+        TheoryResult::Unsat(_)
+    ));
+}
+
 /// Regression (theories-bv, 811-line solver.rs refactor): a genuinely
 /// satisfiable 8-bit multiplication + disjunction pattern must not return
 /// a false `Unsat` after an earlier probe has run on the same solver.

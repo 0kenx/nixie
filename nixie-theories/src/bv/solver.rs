@@ -1428,15 +1428,27 @@ impl BvSolver {
         use nixie_core::ast::TermKind;
         // Explicit work stack: assertion DAGs from real inputs nest `and`
         // hundreds deep, and this walk must not recurse natively.
-        let mut stack = vec![term];
+        let mut stack = vec![(term, true)];
         let mut visited = rustc_hash::FxHashSet::default();
-        while let Some(tid) = stack.pop() {
-            if !visited.insert(tid) {
+        while let Some((tid, positive)) = stack.pop() {
+            if !visited.insert((tid, positive)) {
                 continue;
             }
             let Some(data) = manager.get(tid) else {
                 return false;
             };
+            // Keep polarity on the heap. Delegating Not to the opposite
+            // assertion function made long negation chains mutually recurse.
+            if let TermKind::Not(inner) = data.kind {
+                stack.push((inner, !positive));
+                continue;
+            }
+            if !positive {
+                if !self.assert_formula_false(tid, manager) {
+                    return false;
+                }
+                continue;
+            }
             match &data.kind {
                 TermKind::True => {}
                 TermKind::False => {
@@ -1444,12 +1456,7 @@ impl BvSolver {
                 }
                 TermKind::And(args) => {
                     for &a in args.iter().rev() {
-                        stack.push(a);
-                    }
-                }
-                TermKind::Not(inner) => {
-                    if !self.assert_formula_false(*inner, manager) {
-                        return false;
+                        stack.push((a, true));
                     }
                 }
                 // Order-encoding handoff (dispatch side): an eligible
@@ -1512,7 +1519,8 @@ impl BvSolver {
                 let _ = self.sat.add_clause([]);
                 true
             }
-            TermKind::Not(inner) => self.assert_formula_true(*inner, manager),
+            // The caller strips negations using its explicit polarity stack.
+            TermKind::Not(_) => false,
             // a != b  (BV): the disequality assertion.
             TermKind::Eq(l, r) if self.both_bv_blasted(*l, *r) => self.assert_neq(*l, *r),
             // !(a <u b)  ==  b <=u a, and symmetrically for the rest.

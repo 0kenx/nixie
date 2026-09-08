@@ -1,0 +1,11 @@
+{
+  "z3_version": "Z3 version 4.16.0 - 64 bit",
+  "seed": 20260908,
+  "count": 300,
+  "input_sha256": "12fca7e41810956a5587b8937b12484fcddef4e19cba6053bb212ae7d8d9c63e",
+  "verdict_pairs": {
+    "unsat/unsat": 131,
+    "sat/sat": 169
+  },
+  "wrong": []
+}

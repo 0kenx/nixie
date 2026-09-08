@@ -632,13 +632,21 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_binary_term(w, "bvsle", *lhs, *rhs, indent, depth, false);
             }
             // Floating-point literals and constants
-            TermKind::FpLit { sign, exp, sig, .. } => {
+            TermKind::FpLit {
+                sign,
+                exp,
+                sig,
+                eb,
+                sb,
+            } => {
                 let _ = write!(
                     w,
-                    "(fp #b{} #b{} #b{})",
+                    "(fp #b{} #b{:0>ew$b} #b{:0>sw$b})",
                     if *sign { "1" } else { "0" },
                     exp,
-                    sig
+                    sig,
+                    ew = *eb as usize,
+                    sw = sb.saturating_sub(1) as usize,
                 );
             }
             TermKind::FpPlusInfinity { eb, sb } => {

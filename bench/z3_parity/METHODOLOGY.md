@@ -170,12 +170,12 @@ been measured at run time.
 
 #### The z3 version is part of the evidence
 
-`metadata.z3_version` is not decoration. The recorded baseline is **z3 4.15.4**; Ubuntu's `apt`
-currently ships **4.13.3**, which is a different solver for evidence purposes. If two snapshots
+`metadata.z3_version` is not decoration. Current verification uses the installed
+**z3 4.16.0**. Historical **4.15.4** snapshots retain that attribution; there is no
+need to download the older comparator for a current verification run. If two snapshots
 disagree on a verdict and were produced against different z3 versions, the disagreement is
 *unattributable*: nothing in it can be pinned on Nixie or on z3 until both sides are re-measured
-against the same z3 binary. Prefer an upstream release matching the baseline over the distro
-package, and always record the `z3 --version` you actually ran.
+against the same z3 binary. Always record the `z3 --version` you actually ran.
 
 ### Interpreting Results
 

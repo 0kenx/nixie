@@ -9,6 +9,8 @@ use crate::prelude::*;
 
 mod basic;
 mod config;
+#[cfg(test)]
+mod fp_tests;
 mod model;
 mod pretty;
 mod proof;

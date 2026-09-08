@@ -1568,6 +1568,16 @@ impl Solver {
         // `smt_setup.cpp`.  The `Copy` predicates are read inside a block so
         // the `&mut` borrow of `self.last_features` ends before
         // `apply_feature_routing` takes `&mut self`.
+        // Reuse the feature walk so non-FP goals pay no additional DAG scan.
+        // Supported FP goals are decided before legacy pattern checks.
+        let has_fp = self
+            .last_features
+            .get_or_insert_with(|| StaticFeatures::collect(manager, &self.assertions))
+            .has_fp_terms();
+        if has_fp && let Some(result) = self.dispatch_fp_hybrid(manager) {
+            return result;
+        }
+
         let ufidl_shape = {
             let features = self
                 .last_features
@@ -3992,6 +4002,7 @@ pub(crate) fn freeze_collapse_enabled() -> bool {
 mod branch_priority;
 mod bv_preprocess;
 mod dispatch_pure_bv;
+mod fp_hybrid;
 #[cfg(test)]
 mod scope_rebase_tests;
 #[cfg(test)]

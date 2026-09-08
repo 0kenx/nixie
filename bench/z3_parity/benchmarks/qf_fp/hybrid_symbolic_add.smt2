@@ -1,0 +1,7 @@
+(set-logic QF_FP)
+(set-info :status sat)
+(declare-const x Float64)
+(assert (= (fp.add RNE x x) ((_ to_fp 11 53) RNE 3.0)))
+(assert (fp.gt x ((_ to_fp 11 53) RNE 1.0)))
+(assert (fp.lt x ((_ to_fp 11 53) RNE 2.0)))
+(check-sat)

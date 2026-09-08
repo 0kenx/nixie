@@ -1,0 +1,5 @@
+(set-logic QF_FP)
+(set-info :status unsat)
+(declare-const x (_ FloatingPoint 3 4))
+(assert (= (fp.mul RNE x x) (fp #b1 #b011 #b000)))
+(check-sat)
