@@ -210,6 +210,16 @@ impl Solver {
         if !crate::kitten_sweep_enabled() || self.sweep_disabled || !self.sweep_allowed() {
             return SweepOutcome::Ok;
         }
+        // Yield-delay feedback (kissat `DELAYING(sweep)`): an
+        // unproductive round grows the interval by one and skips that
+        // many subsequent firings; a productive one halves it. Without
+        // this, files where the sweep finds nothing pay the full
+        // per-round budget every round — measured +30 % wall on qwh at
+        // the raised effort.
+        if self.sweep_delay_count > 0 {
+            self.sweep_delay_count -= 1;
+            return SweepOutcome::Ok;
+        }
         let equivalences0 = self.stats.sweep_equivalences;
         let units0 = self.stats.sweep_units;
 
@@ -266,6 +276,18 @@ impl Solver {
 
         if self.trivially_unsat {
             return SweepOutcome::Unsat;
+        }
+
+        // `kissat_average (eliminated, swept) < 0.001` → BUMP, else
+        // REDUCE (kissat `kissat_sweep` exit). A round that swept
+        // nothing counts as average 0 (unproductive).
+        let eliminated = equivalences + units;
+        if (eliminated as f64) < 0.001 * (swept as f64) {
+            self.sweep_delay_current = self.sweep_delay_current.saturating_add(1);
+            self.sweep_delay_count = self.sweep_delay_current;
+        } else if self.sweep_delay_current > 0 {
+            self.sweep_delay_current /= 2;
+            self.sweep_delay_count = self.sweep_delay_current;
         }
 
         // Apply the proved equivalences through the existing hardened

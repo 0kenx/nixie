@@ -1581,6 +1581,12 @@ pub struct Solver {
     /// `probe_initially` is once-per-formula; embedded incremental
     /// solvers re-enter `solve` hundreds of times and must not re-sweep).
     pub(super) sweep_presearch_done: bool,
+    /// Sweep yield-delay feedback (kissat `delays.sweep`): rounds left to
+    /// skip before the sweep may fire again.
+    pub(super) sweep_delay_count: u32,
+    /// Current sweep delay interval (kissat `delay.current`): grows by 1
+    /// per unproductive round, halves per productive one.
+    pub(super) sweep_delay_current: u32,
 
     /// `stats.propagations` at the end of the last mid-search round.  The
     /// search-work window for the next round's effort-relative budgets is
@@ -2099,6 +2105,8 @@ impl Solver {
             sweep_disabled: false,
             theory_ever_attached: false,
             sweep_presearch_done: false,
+            sweep_delay_count: 0,
+            sweep_delay_current: 0,
             inproc_search_props_mark: 0,
             inproc_window_ring: [0, 0],
             inproc_round_props_total: 0,
@@ -4730,6 +4738,8 @@ impl Solver {
         self.sweep_incomplete_flags.clear();
         self.sweep_incomplete = false;
         self.sweep_completed = 0;
+        self.sweep_delay_count = 0;
+        self.sweep_delay_current = 0;
         self.inproc_search_props_mark = 0;
         self.inproc_window_ring = [0, 0];
         self.inproc_round_props_total = 0;
