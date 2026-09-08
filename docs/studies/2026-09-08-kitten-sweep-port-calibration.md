@@ -166,3 +166,34 @@ handover anticipated.
   one non-match is Z3-side Unknown → inconclusive, not a disagreement;
   z3 on PATH is 4.16.0 vs the 4.15.4 baseline snapshot — recorded in
   the run metadata, per the suite's caveat).
+
+---
+
+# Part 2: Main-loop wiring + performance characterization (2026-09-08)
+
+**Wiring completed** (`19692a2`): the armed sweep now runs as a first-class
+conflict-scheduled component on every preset — when the inprocessing
+bundle is off, the conflict handler runs `sweep_round` on the shared
+interval + effort-window bookkeeping (19 rounds on 6s167-opt under
+`PRESET=default`; SMT path fires it too: QF_AUFBV 12 rounds, verdicts
+unchanged). Default trajectory untouched (inert unless armed).
+
+## Pre-registration (written before the runs)
+
+- **P1 (price)**: corpus-wide sweep cost at the port budget (100 ‰):
+  kitten ticks per run, and the end-to-end instruction delta
+  (`perf stat`, pinned, 3 anchor files, treatment vs base).
+- **P2 (content)**: paired conflicts-to-verdict, treatment vs matched
+  null (scrambled ranking — same machinery, budget, candidate set),
+  CRN pairing, 10 seeds, per family and SAT/UNSAT split.
+- **Go bar**: treatment/null geomean ≤ **0.95** AND sweep solved-at-cap ≥
+  null solved-at-cap. [0.95, 1.05] = neutral (no corpus-level ranking
+  signal). > 1.05 = the faithful ranking is corpus-harmful.
+- **Falsification**: if the null's +9 solved-at-cap lead (5 seeds) holds
+  at 10 seeds, the cone-occurrence ranking is corpus-harmful and the
+  ranking-variant follow-up is the only live path to a default.
+- **Null-fires check**: `kitten_solved(base)=0`; treatment and null both
+  `kitten_solved>0` on the same files.
+- Cells: 54 files × seeds 1–10 × {base, sweep, null}, 60 s cap, cores
+  10–19, recorded once in the benchstore under
+  `precompile/19692a2/benchmark/`.
