@@ -84,13 +84,23 @@
 //! * kissat's `BUMP_DELAY(sweep)` schedule knob is not ported; the
 //!   inprocessing round interval governs cadence.
 //! * The occurrence-ranking key counts live original clauses over the
-//!   BIG + watch lists (kissat counts one dense watch list; ours is
-//!   BIG-authoritative), filtered the same way the environment build
-//!   filters.
+//!   BIG (binaries) + the round's **dense occurrence lists** (large
+//!   clauses, every literal — built per round exactly like kissat's
+//!   `kissat_connect_irredundant_large_clauses` in dense mode),
+//!   filtered the same way the environment build filters.
+//! * The per-solve tick cap is re-armed after every per-variable
+//!   `kitten.clear()` (kissat `clear_sweeper` → `set_kitten_ticks_limit`):
+//!   a single environment solve can never blow the round budget.
+//! * The solver's cooperative interrupt flag reaches both the sweep
+//!   loops (kissat `TERMINATED(sweep_terminated_*)`) and the kitten
+//!   itself (`TERMINATED(kitten_terminated_1)` in `decide`) — a
+//!   cancelled solve aborts mid-round, not after it.
 
 use super::*;
 use crate::kitten::{INVALID, Kitten, KittenResult};
 use crate::literal::LBool;
+use crate::occurrence::OccurrenceList;
+use core::sync::atomic::Ordering;
 use smallvec::SmallVec;
 
 /// kissat option defaults (`options.h`).
@@ -119,6 +129,13 @@ struct Sweeper {
     /// `depths[var]` = 1 + cone depth when the var is in the current
     /// environment (0 = not in it).
     depths: Vec<u32>,
+    /// Dense per-literal occurrence lists of live original **large**
+    /// clauses, built once per round (kissat's dense-mode
+    /// `kissat_connect_irredundant_large_clauses` connects every literal
+    /// of every such clause; our propagation watch lists only hold two
+    /// literals per clause and would silently miss the rest). Binaries
+    /// are covered by the BIG and deliberately excluded.
+    occurrences: OccurrenceList,
     /// `reprs[lit_code]` = representative literal code of the equivalence
     /// class proved so far this round (identity when none).
     reprs: Vec<u32>,
@@ -209,8 +226,22 @@ impl Solver {
     /// through the substitution round. `window` is the effort-schedule
     /// reference (search propagation since the last round; the pre-search
     /// call passes 0, floored at [`SWEEP_MIN_EFFORT`]).
+    /// Whether the cooperative interrupt flag is raised (kissat's
+    /// `TERMINATED` callback analog for the sweep loops).
+    #[inline]
+    fn sweep_interrupted(&self) -> bool {
+        self.interrupt
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+    }
+
     pub(super) fn sweep_round(&mut self, window: u64) -> SweepOutcome {
         if !crate::kitten_sweep_enabled() || self.sweep_disabled || !self.sweep_allowed() {
+            return SweepOutcome::Ok;
+        }
+        // Cooperative cancellation (kissat `TERMINATED
+        // (sweep_terminated_7)` before entering the round).
+        if self.sweep_interrupted() {
             return SweepOutcome::Ok;
         }
         // Yield-delay feedback (kissat `DELAYING(sweep)`): an
@@ -231,6 +262,10 @@ impl Solver {
         let mut swept: u64 = 0;
         loop {
             if self.trivially_unsat {
+                break;
+            }
+            // `TERMINATED (sweep_terminated_8)` at the round loop head.
+            if self.sweep_interrupted() {
                 break;
             }
             if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
@@ -371,12 +406,16 @@ impl Solver {
 
     /// Occurrence check for schedulability (kissat `scheduable_variable`):
     /// both polarities must occur, each within the environment clause
-    /// limit. Counts only live original clauses. Returns the total
-    /// occurrence count (the ranking key).
-    fn sweep_occurrences(&self, idx: u32, max_occ: u64) -> Option<u64> {
+    /// limit. Counts live original clauses over the BIG (binaries — an
+    /// edge under key `k` is the clause `(¬k ∨ target)`, i.e. contains
+    /// `¬k`, so occurrences of literal `l` live under `¬l`) plus the
+    /// round's dense large-clause lists. Returns the total occurrence
+    /// count (the ranking key).
+    fn sweep_occurrences(&self, sweeper: &Sweeper, idx: u32, max_occ: u64) -> Option<u64> {
         let count = |l: Lit| -> u64 {
             let mut n = 0u64;
-            for (_, cid) in self.binary_graph.get(l).iter() {
+            // BIG: clauses containing `l` sit under key `¬l`.
+            for (_, cid) in self.binary_graph.get(l.negate()).iter() {
                 if self
                     .clauses
                     .get(*cid)
@@ -385,10 +424,12 @@ impl Solver {
                     n += 1;
                 }
             }
-            for w in self.watches.get(l) {
+            // Dense lists: built at round start over then-live original
+            // large clauses; recheck liveness for late deletions.
+            for &cid in sweeper.occurrences.get(l) {
                 if self
                     .clauses
-                    .get(w.clause)
+                    .get(cid)
                     .is_some_and(|c| !c.deleted && !c.learned)
                 {
                     n += 1;
@@ -803,7 +844,7 @@ impl Solver {
                 }
             }
             sweeper.backbone = kept;
-            if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+            if self.sweep_interrupted() || sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
                 break;
             }
             if flipped == 0 || round >= SWEEP_FLIP_ROUNDS {
@@ -864,7 +905,7 @@ impl Solver {
                 }
             }
             sweeper.partition = kept;
-            if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+            if self.sweep_interrupted() || sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
                 break;
             }
             if flipped == 0 || round >= SWEEP_FLIP_ROUNDS {
@@ -1191,10 +1232,16 @@ impl Solver {
                         break 'environment;
                     }
                 }
-                // Large original clauses containing `lit`.
-                let watchers: Vec<ClauseId> =
-                    self.watches.get(key).iter().map(|w| w.clause).collect();
-                for cid in watchers {
+                // Large original clauses containing `lit`: the round's
+                // **dense** occurrence lists — every literal of every
+                // live original large clause (kissat's dense-mode
+                // `WATCHES(lit)`), not the two-per-clause propagation
+                // watch lists, which would silently miss clauses where
+                // `lit` sits un-watched and shrink the environment.
+                // Liveness is re-checked inside `sweep_reference` for
+                // clauses retired since the lists were built.
+                let large: Vec<ClauseId> = sweeper.occurrences.get(Lit::from_code(lit)).to_vec();
+                for cid in large {
                     self.sweep_reference(sweeper, depth, cid);
                     if sweeper.vars.len() as u64 >= sweeper.limit.vars {
                         // environment variable limit reached
@@ -1218,11 +1265,15 @@ impl Solver {
                 self.sweep_init_candidates(sweeper);
                 // ======== backbone loop ========
                 while !sweeper.backbone.is_empty() {
-                    if self.trivially_unsat || sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+                    if self.trivially_unsat
+                        || self.sweep_interrupted()
+                        || sweeper.kitten.stats.ticks >= sweeper.limit.ticks
+                    {
                         break;
                     }
                     self.sweep_flip_backbone(sweeper);
-                    if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+                    if self.sweep_interrupted() || sweeper.kitten.stats.ticks >= sweeper.limit.ticks
+                    {
                         break;
                     }
                     let Some(lit) = sweeper.backbone.pop() else {
@@ -1238,11 +1289,13 @@ impl Solver {
                 }
                 // ======== partition loop ========
                 while !sweeper.partition.is_empty() && !self.trivially_unsat {
-                    if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+                    if self.sweep_interrupted() || sweeper.kitten.stats.ticks >= sweeper.limit.ticks
+                    {
                         break;
                     }
                     self.sweep_flip_partition(sweeper);
-                    if sweeper.kitten.stats.ticks >= sweeper.limit.ticks {
+                    if self.sweep_interrupted() || sweeper.kitten.stats.ticks >= sweeper.limit.ticks
+                    {
                         break;
                     }
                     if sweeper.partition.is_empty() {
@@ -1268,6 +1321,18 @@ impl Solver {
         // ======== per-variable cleanup (`clear_sweeper`) ========
         sweeper.kitten.clear();
         sweeper.kitten.track_antecedents();
+        // Re-arm the remaining round budget on the sub-solver (kissat
+        // `clear_sweeper` → `set_kitten_ticks_limit`): `clear` resets
+        // kitten's internal limit to "unlimited" (kitten.c
+        // `initialize_kitten`), and without this re-arm every solve from
+        // the *second* swept variable on ran unbounded — a single hard
+        // environment solve could blow the round budget arbitrarily,
+        // since the round checks only fire between solves.
+        let remaining = sweeper
+            .limit
+            .ticks
+            .saturating_sub(sweeper.kitten.stats.ticks);
+        sweeper.kitten.set_ticks_limit_delta(remaining);
         for &vidx in sweeper.vars.iter() {
             sweeper.depths[vidx as usize] = 0;
         }
@@ -1342,9 +1407,37 @@ impl Sweeper {
         let mut kitten = Kitten::new();
         kitten.track_antecedents();
         kitten.set_ticks_limit_delta(budget);
+        // Share the solver's cooperative cancellation flag with the
+        // sub-solver (kissat's embedded kitten checks the main solver's
+        // termination in `decide`): an external interrupt aborts even a
+        // single kitten solve, not just the round around it.
+        if let Some(flag) = solver.interrupt.clone() {
+            kitten.set_termination(flag);
+        }
+
+        // Dense occurrence lists over live original large clauses
+        // (built once per round — kissat's `enter_dense_mode` +
+        // `kissat_connect_irredundant_large_clauses` analog). Binaries
+        // stay BIG-authoritative. Satisfied clauses are *not* filtered
+        // here: `sweep_reference` retires them on first sight, exactly
+        // as kissat's lazy `mark_clause_as_garbage` during the walk.
+        let mut occurrences = OccurrenceList::new();
+        occurrences.resize(num_vars);
+        for cid in solver.clauses.iter_ids() {
+            let Some(view) = solver.clauses.get(cid) else {
+                continue;
+            };
+            if view.deleted || view.learned || view.lits.len() < 3 {
+                continue;
+            }
+            for &lit in view.lits {
+                occurrences.add(lit, cid);
+            }
+        }
 
         Self {
             depths: vec![0; num_vars],
+            occurrences,
             reprs,
             next: vec![INVALID; num_vars],
             prev: vec![INVALID; num_vars],
@@ -1418,7 +1511,7 @@ impl Sweeper {
             if solver.sweep_scheduled(self, idx) {
                 continue;
             }
-            match solver.sweep_occurrences(idx, self.limit.clauses) {
+            match solver.sweep_occurrences(self, idx, self.limit.clauses) {
                 Some(_) => {
                     solver.sweep_schedule_inner(self, idx);
                     rescheduled += 1;
@@ -1448,7 +1541,7 @@ impl Sweeper {
             if solver.sweep_scheduled(self, idx) {
                 continue;
             }
-            match solver.sweep_occurrences(idx, self.limit.clauses) {
+            match solver.sweep_occurrences(self, idx, self.limit.clauses) {
                 Some(occ) => fresh.push((occ, idx)),
                 None => {
                     if (idx as usize) < solver.sweep_incomplete_flags.len() {
@@ -1533,7 +1626,100 @@ mod tests {
         }
         s.add_clause_dimacs(&[-1, 2]);
         s.add_clause_dimacs(&[1, -2]);
-        let occ = s.sweep_occurrences(0, 1024);
+        let sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
+        let occ = s.sweep_occurrences(&sweeper, 0, 1024);
         assert_eq!(occ, Some(2));
+    }
+
+    /// The dense occurrence lists must cover **every** literal position
+    /// of a large clause — the audit found the environment previously
+    /// walked the two-per-clause propagation watch lists, silently
+    /// missing clauses where the swept variable sat un-watched (kissat
+    /// sweeps over full dense-mode occurrence lists).
+    #[test]
+    fn sweep_dense_occurrences_cover_all_clause_positions() {
+        let mut s = Solver::new();
+        for _ in 0..4 {
+            let _ = s.new_var();
+        }
+        s.add_clause_dimacs(&[1, 2, 3, 4]);
+        let sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
+        for var in 0u32..4 {
+            for sign in 0u32..2 {
+                let lit = Lit::from_code(2 * var + sign);
+                let expect = if sign == 0 { 1 } else { 0 };
+                assert_eq!(
+                    sweeper.occurrences.get(lit).len(),
+                    expect,
+                    "dense list for x{}{} must contain the 4-clause",
+                    var + 1,
+                    if sign == 0 { "" } else { " (negated)" }
+                );
+            }
+        }
+        // And the var-2/3/4 occurrences (possibly un-watched positions)
+        // still make the variable schedulable through the dense count:
+        // var 2 occurs positively in the 4-clause only — negated side is
+        // empty, so it is *not* schedulable; the count reflects that.
+        assert_eq!(s.sweep_occurrences(&sweeper, 1, 1024), None);
+    }
+
+    /// The per-solve tick cap must be re-armed after the per-variable
+    /// `kitten.clear()` (kissat `clear_sweeper` → `set_kitten_ticks_limit`).
+    /// Without it, `clear` left the sub-solver unlimited and any solve
+    /// from the second swept variable on could blow the round budget.
+    #[test]
+    fn sweep_ticks_limit_rearmed_after_clear() {
+        let mut s = Solver::new();
+        for _ in 0..4 {
+            let _ = s.new_var();
+        }
+        s.add_clause_dimacs(&[-1, 2]);
+        s.add_clause_dimacs(&[1, -2]);
+        let mut sweeper = Sweeper::new(&s, SWEEP_MIN_EFFORT);
+        assert_eq!(sweeper.kitten.ticks_limit(), sweeper.limit.ticks);
+        s.sweep_one_variable(&mut sweeper, 0);
+        // Budget re-armed to the full remaining round budget — never
+        // left at the "unlimited" reset value.
+        assert_ne!(sweeper.kitten.ticks_limit(), u64::MAX);
+        assert!(
+            sweeper.kitten.stats.ticks <= sweeper.limit.ticks,
+            "one variable's solves stay inside the round budget"
+        );
+        assert_eq!(
+            sweeper.kitten.ticks_limit(),
+            sweeper.limit.ticks,
+            "re-arm restores the absolute round limit (current + remaining)"
+        );
+    }
+
+    /// A raised interrupt flag prevents the round from starting and
+    /// reaches the loops mid-round (kissat `TERMINATED(sweep_terminated_*)`).
+    #[test]
+    fn sweep_respects_interrupt() {
+        use core::sync::atomic::AtomicBool;
+        let mut s = Solver::new();
+        for _ in 0..4 {
+            let _ = s.new_var();
+        }
+        s.add_clause_dimacs(&[-1, 2]);
+        s.add_clause_dimacs(&[1, -2]);
+        s.add_clause_dimacs(&[-2, 3]);
+        s.add_clause_dimacs(&[2, -3]);
+        let flag = Arc::new(AtomicBool::new(false));
+        s.set_interrupt(flag.clone());
+        flag.store(true, Ordering::Relaxed);
+        assert_eq!(s.sweep_round(0), SweepOutcome::Ok);
+        assert_eq!(
+            s.stats.sweep_rounds, 0,
+            "interrupted before the round starts"
+        );
+        // Not interrupted: the round runs (and counts) again after the
+        // delay-latch reset — sweep_rounds advances.
+        flag.store(false, Ordering::Relaxed);
+        s.sweep_delay_count = 0;
+        s.sweep_presearch_done = true;
+        assert_eq!(s.sweep_round(0), SweepOutcome::Ok);
+        assert!(s.stats.sweep_rounds >= 1);
     }
 }

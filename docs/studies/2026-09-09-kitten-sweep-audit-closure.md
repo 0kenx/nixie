@@ -1,0 +1,182 @@
+# Kitten/Sweep Audit — Gaps Found and Closed (2026-09-09)
+
+A line-by-line audit of the kissat `kitten.c`/`kitten.h` port
+(`nixie-sat/src/kitten.rs`) and its sweeper consumer
+(`nixie-sat/src/solver/sweep.rs`, kissat `sweep.c`) against the reference
+sources in `../temp/kissat/src/`. This document records every gap found
+and the fix that closed it, so the next reader can verify the port's
+claims without re-deriving them.
+
+**Verification gate for this landing**: full workspace suite
+(10 743 tests), clippy `-D warnings`, fmt, doc, and the Z3 differential
+parity suite — **169/170 decisive-matched, 0 disagreements** (the single
+unresolved cell is a Z3 `Unknown`, inconclusive by methodology).
+
+## Gaps closed
+
+### 1. Per-solve tick budget disarmed after the first swept variable (budget overrun)
+
+`kitten.clear()` resets `ticks_limit` to unlimited (kitten.c
+`initialize_kitten` — same in both). kissat's `clear_sweeper` re-arms it
+to the *remaining* round budget (`set_kitten_ticks_limit`, sweep.c:196);
+the port called `set_ticks_limit_delta` exactly once per round
+(`Sweeper::new`), so **from the second swept variable on, every kitten
+solve ran unbounded** — one hard environment (up to 8 192 vars /
+32 768 clauses) could blow the round budget arbitrarily inside a single
+solve, since round checks only fire *between* solves.
+
+**Fix**: re-arm after each per-variable `kitten.clear()` in
+`sweep_one_variable` (`set_ticks_limit_delta(limit.ticks − kitten.ticks)`),
+restoring the absolute round limit exactly like the reference.
+Regression: `sweep::tests::sweep_ticks_limit_rearmed_after_clear`.
+
+### 2. Environments walked sparse watch lists, not dense occurrence lists (yield gap)
+
+kissat enters dense mode and connects **every literal** of every live
+irredundant large clause (`kissat_connect_irredundant_large_clauses`,
+watch.c:169 + `kissat_inlined_connect_clause`); its environment builder
+iterates those full occurrence lists. The port walked its **propagation**
+watch lists (two literals per clause), silently missing every clause
+where the swept literal sat un-watched: smaller environments (fewer
+equivalences provable), a truncated depth-cone, divergent
+"cone fully copied"/`sweep_completed` accounting, and occurrence-ranking
+counts that could exclude variables kissat sweeps.
+
+**Fix**: the sweeper now builds a per-round `OccurrenceList` (dense,
+every literal of every live original clause with ≥ 3 literals — binaries
+stay BIG-authoritative, exactly the dense-mode split) in `Sweeper::new`;
+the environment walk and `sweep_occurrences` (scheduling rank + both-
+polarity filter) read it. Liveness is re-checked on visit
+(`sweep_reference` retires satisfied clauses lazily, kissat's
+`mark_clause_as_garbage` analog). This also corrected an inverted
+polarity label in the BIG counting (occurrences of `l` live under key
+`¬l`; the old code queried `l` under a "pos" name — totals identical,
+labels wrong).
+Regression: `sweep::tests::sweep_dense_occurrences_cover_all_clause_positions`.
+
+### 3. `completely_backtrack_to_root_level` omitted the units-unassign loop
+
+kissat's `flush_trail` (in `decide`) empties the root trail **keeping
+values assigned**; root facts then live only in `values[]` + the `units`
+list (every level-0 assignment — unit or wrapped propagation — has its
+unit klause there). The C's complete-backtrack unassigns those units
+after draining the trail (kitten.c:1272-1282); the port drained only the
+trail, so **root-level values persisted across solves within a round**
+(a hot start, where kissat cold-starts every solve). Sound — klauses are
+monotone between clears — but every post-first candidate solve took a
+different trajectory and tick profile than the reference, and the
+`Kitten` contract quietly differed for any incremental caller.
+
+**Fix**: port the loop verbatim (unassign every unit whose literal is
+still true). Regression: `kitten::audit_tests::completely_backtrack_clears_flushed_root_units`.
+
+### 4. Missing API entries: `traverse_core_ids`, `shrink_to_clausal_core`
+
+The port lacked both entries; their only kissat consumer is
+`definition.c` (gate/definition extraction feeding definition-based
+elimination — itself unported; `eliminate.c` keeps a persistent embedded
+kitten for it). The port now carries both, so a future `definition.c`
+port has its full `kitten.h` surface:
+
+- `traverse_core_ids` — original core klauses' caller-tagged ids, in
+  arena order (the id↔gate-watch mapping the definition extractor uses);
+- `shrink_to_clausal_core` — compact the arena to core originals,
+  rebuild units/watches at new offsets, reset to unsolved (the
+  standalone `-O` shrinking round). Port note: the C's
+  `if (!kitten->inconsistent)` sentinel test is an upstream quirk
+  (true only for ref 0); the port uses the intended `== INVALID`
+  semantics and no-ops honestly when no `inconsistent` ref exists.
+Regression: `kitten::audit_tests::core_ids_and_shrink_to_clausal_core_round`.
+
+### 5. No interrupt/termination path
+
+kissat checks `TERMINATED(sweep_terminated_*)` at 8 sweep points and —
+crucially — **inside kitten's `decide`** (`TERMINATED(kitten_terminated_1)`),
+so even a single sub-solve is cancellable. The port's `sweep_round`
+never looked at the solver's cooperative `interrupt` flag and `Kitten`
+had no hook: a Ctrl-C during a long round was ignored (compounded by
+gap 1).
+
+**Fix**: `Kitten::set_termination(Arc<AtomicBool>)` checked in `decide`
+at the reference's granularity (between decisions, not propagations);
+the sweeper shares the solver's flag; `sweep_round`, the round loop, the
+backbone/partition loops and both flip loops check
+`sweep_interrupted()` at the kissat `TERMINATED` positions.
+Regressions: `kitten::audit_tests::termination_flag_aborts_solve_as_unknown`,
+`sweep::tests::sweep_respects_interrupt`.
+
+### 6. Randomness parity (bit-exactness with kissat)
+
+- `randomize_phases` assigned `phase[i] = bit i` of each 64-bit draw;
+  the C's word trick writes `phase[64k + 8m + j] = bit_k(k + 8j)` — an
+  8×8 transposition. Same generator stream, same uniform distribution,
+  but not bit-identical. **Fix**: exact transposed mapping.
+  Regressions: `kitten::audit_tests::randomize_phases_*` (golden, replaying
+  the LCG).
+- `shuffle_clauses` drew `j ∈ [0, i]` (Fisher–Yates); the C's
+  `pick_random(0, i)` is **exclusive** (`j ∈ [0, i−1]`, no-op only at
+  `i == 0`) — a different shuffle *and* draw mapping. **Fix**: exclusive
+  draws. Regression: `kitten::audit_tests::shuffle_clauses_matches_kissat_draws`
+  (full draw-sequence replay).
+
+### 7. Robustness hardening (release-mode honesty)
+
+- `new_reference` now latches an `exhausted` flag at `≥ INVALID` arena
+  words instead of silently wrapping refs (kissat fatals). Producers
+  refuse: original klauses are dropped (a *weaker* environment — sound,
+  kitten clauses are entailed restrictions), learned klauses return
+  `INVALID` and `analyze`/`failing`/`register_inconsistent` bail with
+  the solve reported `Unknown` — never a fabricated answer; the
+  level-0 wrap in `assign` is skipped (loses a core hop, not soundness);
+  `register_inconsistent` falls back to the root conflict klause (still
+  a true UNSAT). `clear` resets the flag.
+  Regression: `kitten::audit_tests::exhausted_ref_space_is_unknown_until_clear`.
+- All `REQUIRE_STATUS`/`INVALID_API_USAGE` aborts (`value`, `failed`,
+  `flip_literal`, `compute_clausal_core`, `track_antecedents`,
+  `shuffle_clauses`, traversals, shrink) are now `debug_assert!` plus an
+  honest neutral result (0 / false / no-op) in release — the C aborts;
+  a library must neither abort the process nor fabricate.
+  Regression: `kitten::audit_tests::contract_guards_are_honest_noops_in_release`.
+
+### 8. Performance divergences (semantics equal)
+
+- `propagate_literal`/`flip_internal` used `Vec::remove` per moved watch
+  (O(n²) worst case); now the C's in-place two-pointer compaction
+  (O(n)), with the conflicting watch kept and the tail flushed exactly
+  like the reference.
+- `analyze`/`failing`/`register_inconsistent`/`assign` allocated
+  `klause_lits(reason).to_vec()` per reason clause; now direct index
+  reads (no allocation on the conflict path).
+
+## What remains open (recorded, not gaps in the port)
+
+- **`definition.c` (definition-based elimination) is unported** — the
+  only consumer of the two API entries added in gap 4. Porting it is a
+  feature decision (persistent elimination-phase kitten, gate
+  extraction via core ids), not a port defect.
+- **Deferred equivalence application** (end-of-round ELS fold instead of
+  per-equivalence `substitute_connected_clauses`) — deliberate,
+  documented in `sweep.rs`, rides the soundness-hardened rewrite.
+- **`sweeprand`** (randomized frontier) unported; kissat default 0.
+- **Trajectory evaluation**: dense environments + per-solve caps change
+  search paths. Correctness is gated (tests + parity, above); a
+  performance claim would need the matched-null protocol
+  (`NIXIE_SWEEP_NULL=1`, ≥ 10 seeds) per `docs/BENCHMARKING.md` — not
+  attempted here; no performance claim is made for this landing.
+
+## Audit-verified-equal core (no action needed)
+
+Import/export mapping; klause arena layout & flags; VMTF stamped ring
+incl. `search` maintenance; `assign` incl. level-0 learned-unit wrapping
+with antecedents; `propagate` (tick formula `len/16+1`, blit refresh,
+replacement scan, binary shortcut); 1UIP `analyze` incl. jump/swap-at-1;
+`failing` (unit/clashing/first-failed priority, two-phase BFS, core
+reuse); `register_inconsistent`; `propagate_units`; `decide`
+(assumption walk, pseudo-levels, `unassigned == 0 → SAT` before the
+tick check); `solve`/status lifecycle & resets; `value`/`fixed`/
+`failed`; `flip_literal`; `compute_clausal_core` (post-order DFS,
+sentinel protocol); `clear`. Sweep-side: scheduling ring, limit schedule
+(256/1024/2 doubling with `sweep_completed ≤ 32`), backbone & partition
+loops, refine functions, the two-implication equivalence protocol with
+both cores, repr path compression, incomplete/completed bookkeeping,
+yield-delay analog, effort budget analog (400‰ calibrated default).
