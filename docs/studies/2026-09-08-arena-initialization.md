@@ -82,3 +82,14 @@ The next performance candidate combines repeated learned-clause metadata
 updates during conflict analysis. It must preserve usage saturation, exact
 activity arithmetic, tier transitions, LRAT order, clause literals and search
 counters. Its cost screen will use committed sources and a small fixed panel.
+
+## Integration verification
+
+The initial repair is `2fd5b8b`. Its integration with the concurrently landed
+sweep/SMT changes was verified as `02afce4`: every required gate was repeated,
+again yielding 10,718 passing tests, 111 passing doc tests, and Z3 parity
+169 Correct / 0 Disagree / 1 Inconclusive. Logs and binaries are cached under
+`precompile/02afce4/benchmark/arena-initialization-verification/` and its parent
+directory. Main subsequently replayed the sweep change as `b69017b`; the Rust
+and Cargo source at main `cf9c4d1` is identical to the verified `02afce4` source.
+The latter remains the pinned control for the rejected metadata-fusion screen.

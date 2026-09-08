@@ -19,10 +19,11 @@ These are research hypotheses, not demonstrated speedups or established claims
 of global novelty. Keep pure Rust, exact explanations, scope consistency, and
 the repository's full correctness gates.
 
-The next ordinary-core experiment is [conflict-analysis metadata fusion](2026-09-08-analysis-metadata-fusion.md): combine repeated header lookups while
-preserving exact usage, tier, activity and proof behavior. Its four-cell cost
-screen follows the [arena initialization repair](2026-09-08-arena-initialization.md)
-found during the review. No speedup is claimed before measurement.
+The ordinary-core [conflict-analysis metadata fusion](2026-09-08-analysis-metadata-fusion.md)
+follow-up is also rejected: four identical-trajectory cells showed only 0.12%
+fewer instructions and 2.34% fewer measured cycles/conflict, below its 5% bar.
+The candidate is archived. The [arena initialization repair](2026-09-08-arena-initialization.md)
+found during that review is independently verified and remains on main.
 
 ## 1. Shared satisfaction across watcher groups — first experiment
 
