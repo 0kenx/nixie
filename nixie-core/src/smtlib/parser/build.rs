@@ -160,6 +160,125 @@ impl Parser<'_> {
         }
     }
 
+    /// SMT-LIB rendering of a sort for sort-mismatch diagnostics
+    /// (`(_ BitVec 8)`, `Bool`, `Int`, `(Array D R)`, …).
+    fn sort_display(&self, sort: Option<crate::sort::SortId>) -> String {
+        let Some(id) = sort else {
+            return "unknown".to_string();
+        };
+        let Some(sort) = self.manager.sorts.get(id) else {
+            return "unknown".to_string();
+        };
+        use crate::sort::SortKind;
+        match &sort.kind {
+            SortKind::Bool => "Bool".into(),
+            SortKind::Int => "Int".into(),
+            SortKind::Real => "Real".into(),
+            SortKind::String => "String".into(),
+            SortKind::BitVec(w) => format!("(_ BitVec {w})"),
+            SortKind::FloatingPoint { eb, sb } => format!("FloatingPoint({eb}, {sb})"),
+            SortKind::Array { domain, range } => {
+                format!(
+                    "(Array {} {})",
+                    self.sort_display(Some(*domain)),
+                    self.sort_display(Some(*range))
+                )
+            }
+            _ => "Sort".into(),
+        }
+    }
+
+    /// Sort check for `ite`: the condition is `Bool` and both branches
+    /// share one sort (see the call site for the rationale).
+    fn check_ite_sorts(
+        &self,
+        op: &str,
+        cond: TermId,
+        then_b: TermId,
+        else_b: TermId,
+    ) -> Result<()> {
+        let bool_sort = self.manager.sorts.bool_sort;
+        let cond_sort = self.manager.get(cond).map(|t| t.sort);
+        if cond_sort != Some(bool_sort) {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "Sort mismatch at argument #1 for function {op}: \
+                     condition must be Bool, supplied sort is {}",
+                    self.sort_display(cond_sort)
+                ),
+            });
+        }
+        let (then_sort, else_sort) = (
+            self.manager.get(then_b).map(|t| t.sort),
+            self.manager.get(else_b).map(|t| t.sort),
+        );
+        if then_sort.is_some() && else_sort.is_some() && then_sort != else_sort {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "Sort mismatch at argument #2/#3 for function {op}: \
+                     branches have different sorts ({} vs {})",
+                    self.sort_display(then_sort),
+                    self.sort_display(else_sort)
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Sort check shared by the chainable equality/comparison operators and
+    /// `distinct`: every operand must carry the same sort (Z3: "Sorts A and
+    /// B are incompatible").  `=` between different bit-vector widths is the
+    /// sighting that motivated this — the term interns with the first
+    /// operand's sort and no theory can honestly encode the comparison.
+    fn check_chainable_sorts(&self, op: &str, args: &[TermId]) -> Result<()> {
+        let mut expected: Option<crate::sort::SortId> = None;
+        for &a in args {
+            let Some(data) = self.manager.get(a) else {
+                continue;
+            };
+            let sort = data.sort;
+            // `Int` and `Real` form one compatibility class: SMT-LIB
+            // numerals are polymorphic (`0` reads as Real next to a Real
+            // operand — `(> x 0)` with `x : Real` is well-typed), and
+            // nixie embeds `to_real n` as the Int-sorted variable itself,
+            // so a well-typed script can mix the two sorts internally.
+            // Everything else (Bool, `(_ BitVec w)`, FP, arrays, …) must
+            // match exactly — the mixed-width `(_ BitVec 1)` vs
+            // `(_ BitVec 128)` equality is the sighting this check exists
+            // for.
+            let mixed_arith = |x: crate::sort::SortId, y: crate::sort::SortId| {
+                let kind = |id| self.manager.sorts.get(id).map(|s| s.kind.clone());
+                matches!(
+                    (kind(x), kind(y)),
+                    (
+                        Some(crate::sort::SortKind::Int),
+                        Some(crate::sort::SortKind::Real)
+                    ) | (
+                        Some(crate::sort::SortKind::Real),
+                        Some(crate::sort::SortKind::Int)
+                    )
+                )
+            };
+            match expected {
+                None => expected = Some(sort),
+                Some(exp_sort) if exp_sort != sort && !mixed_arith(exp_sort, sort) => {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!(
+                            "Sorts {} and {} are incompatible (operator {op})",
+                            self.sort_display(Some(exp_sort)),
+                            self.sort_display(Some(sort))
+                        ),
+                    });
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Build the conjunction of the boolean atoms produced by a chainable
     /// operator (`=`, `<`, `<=`, `>`, `>=`). SMT-LIB defines these operators as
     /// *chainable*: `(op a b c)` means `(and (op a b) (op b c))`. When there is
@@ -406,7 +525,17 @@ impl Parser<'_> {
         z: TermId,
     ) -> Result<TermId> {
         let term = match op {
-            "ite" => self.manager.mk_ite(x, y, z),
+            // SMT-LIB sort check: the condition must be `Bool` and the two
+            // branches must share one sort (Z3: "Sort mismatch at argument
+            // #1 for function (declare-fun ite (Bool T T) T)").  Accepting
+            // a bit-vector condition (the benchmarks' width-1 encodings are
+            // the tempting shape) interns a term whose condition position no
+            // encoder expects, and answering on it fabricates a verdict for
+            // a script the standard rejects.
+            "ite" => {
+                self.check_ite_sorts(op, x, y, z)?;
+                self.manager.mk_ite(x, y, z)
+            }
             "store" => self.manager.mk_store(x, y, z),
             // Floating-point bit-triple literal constructor: (fp sign exp sig).
             "fp" => self.build_fp_lit(x, y, z)?,
@@ -550,7 +679,10 @@ impl Parser<'_> {
             }
             "and" => self.manager.mk_and(args.iter().copied()),
             "or" => self.manager.mk_or(args.iter().copied()),
-            "distinct" => self.manager.mk_distinct(args.iter().copied()),
+            "distinct" => {
+                self.check_chainable_sorts(op, args)?;
+                self.manager.mk_distinct(args.iter().copied())
+            }
             "+" => self.manager.mk_add(args.iter().copied()),
             "*" => self.manager.mk_mul(args.iter().copied()),
             "re.++" => self.manager.mk_re_concat(args.iter().copied()),
@@ -596,6 +728,7 @@ impl Parser<'_> {
                 if args.len() < 2 {
                     return Err(self.min_arity_err(op, 2, args.len()));
                 }
+                self.check_chainable_sorts(op, args)?;
                 let mut atoms = Vec::with_capacity(args.len() - 1);
                 for pair in args.windows(2) {
                     let (a, b) = (pair[0], pair[1]);

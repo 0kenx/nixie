@@ -76,9 +76,16 @@ fn float64_alias_disequality_against_folded_sum_decides_sat() {
         (set-logic QF_FP)
         (declare-const x Float64)
         (declare-const y Float64)
-        (assert (= x (fp #b0 #x3ff #x8000000000000)))
+        ;; Binary spellings throughout: a Float64 exponent is 11 bits, and
+        ;; hex literals are 4 bits per digit, so the original `#x3ff` /
+        ;; `#x401` spellings were 12-bit exponents (FloatingPoint 12 53) —
+        ;; ill-typed against Float64, rejected by Z3, and the old `sat`
+        ;; verdict here was an artifact of accepting that equality.
+        (assert (= x (fp #b0 #b01111111111 #b1000000000000000000000000000000000000000000000000000)))
         (assert (= y (fp.add RNE x x)))
-        (assert (not (= y (fp #b0 #x401 #x0000000000000))))
+        ;; 4.0 (exponent 1024, zero significand): distinct from the folded
+        ;; sum 3.0.
+        (assert (not (= y (fp #b0 #b10000000000 #b0000000000000000000000000000000000000000000000000000))))
         (check-sat)
     "#;
     assert_eq!(run_script(script), SolverResult::Sat);

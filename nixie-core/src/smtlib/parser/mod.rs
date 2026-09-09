@@ -513,6 +513,110 @@ pub fn parse_script(input: &str, manager: &mut TermManager) -> Result<Vec<Comman
 mod tests {
     use super::*;
 
+    /// A bit-vector term as an `ite` condition is ill-typed SMT-LIB (Z3:
+    /// "Sort mismatch at argument #1 for function ite"); the parser must
+    /// reject it instead of interning a term whose condition position no
+    /// encoder expects (the width-1 encodings are the tempting shape).
+    #[test]
+    fn ite_condition_must_be_bool() {
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-fun b () (_ BitVec 1))
+            (declare-fun x () (_ BitVec 8))
+            (declare-fun y () (_ BitVec 8))
+            (assert (ite b x y))
+        "#;
+        let err =
+            parse_script(script, &mut manager).expect_err("BV ite condition must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("condition must be Bool") && msg.contains("(_ BitVec 1)"),
+            "{msg}"
+        );
+    }
+
+    /// `ite` branches of different sorts are ill-typed (here: BV8 vs Bool).
+    #[test]
+    fn ite_branches_must_share_a_sort() {
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-fun p () Bool)
+            (declare-fun x () (_ BitVec 8))
+            (assert (ite p x true))
+        "#;
+        let err = parse_script(script, &mut manager)
+            .expect_err("mismatched ite branches must be rejected");
+        assert!(
+            err.to_string().contains("branches have different sorts"),
+            "{err}"
+        );
+    }
+
+    /// `=` between different bit-vector widths is ill-typed (Z3: "Sorts
+    /// (_ BitVec 1) and (_ BitVec 128) are incompatible") — the sighting
+    /// that motivated the check: the term interned with the first
+    /// operand's sort and no theory could honestly encode the comparison.
+    #[test]
+    fn equality_requires_compatible_sorts() {
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-fun a () (_ BitVec 1))
+            (declare-fun b () (_ BitVec 128))
+            (assert (= a b))
+        "#;
+        let err = parse_script(script, &mut manager).expect_err("mixed-width = must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("(_ BitVec 1)")
+                && msg.contains("(_ BitVec 128)")
+                && msg.contains("incompatible"),
+            "{msg}"
+        );
+    }
+
+    /// `distinct` carries the same same-sort requirement.
+    #[test]
+    fn distinct_requires_compatible_sorts() {
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic QF_BV)
+            (declare-fun a () (_ BitVec 8))
+            (declare-fun b () (_ BitVec 9))
+            (assert (distinct a b))
+        "#;
+        let err =
+            parse_script(script, &mut manager).expect_err("mixed-width distinct must be rejected");
+        assert!(err.to_string().contains("incompatible"), "{err}");
+    }
+
+    /// The compatible cases must keep parsing: Bool conditions, same-width
+    /// chains, integer numerals next to Real operands (SMT-LIB numerals
+    /// are polymorphic — `(> x 0)` with `x : Real`), and `to_real`-embedded
+    /// Int variables (nixie represents `to_real n` as the Int-sorted
+    /// variable itself, so a well-typed script mixes Int and Real sorts
+    /// internally).
+    #[test]
+    fn compatible_sorts_still_parse() {
+        let mut manager = TermManager::new();
+        let script = r#"
+            (set-logic ALL)
+            (declare-fun p () Bool)
+            (declare-fun x () (_ BitVec 8))
+            (declare-fun r () Real)
+            (declare-fun n () Int)
+            (assert (ite p x x))
+            (assert (= x (_ bv7 8)))
+            (assert (> r 0))
+            (assert (< (to_real n) 2.5))
+            (assert (distinct x (_ bv9 8)))
+        "#;
+        let commands = parse_script(script, &mut manager).expect("well-typed script must parse");
+        assert_eq!(commands.len(), 10);
+    }
+
     #[test]
     fn test_parse_nary_left_associative_bv_operators() {
         // SMT-LIB 2.6 declares `bvadd`/`bvmul`/`concat`/… `:left-associative`,
@@ -529,7 +633,10 @@ mod tests {
             (declare-fun y () (_ BitVec 8))
             (assert (= y (bvadd (_ bv7 8) a (bvmul (_ bv9 8) a))))
             (assert (= y (bvadd a)))
-            (assert (= y (concat a b c)))
+            ;; n-ary concat parses; the 24-bit result is compared against a
+            ;; 24-bit literal (`(= y ..)` here would be ill-typed — y is
+            ;; 8-bit — and is now rejected at parse time, as in Z3).
+            (assert (= (concat a b c) (_ bv0 24)))
             (assert (= y (bvand a b c)))
             (assert (= y (bvudiv a b c)))
             (assert (let ((_cse0 (bvmul (_ bv3 8) a)))
