@@ -91,3 +91,24 @@ Allow at most one measured repair only if the profile/code identifies a
 specific removable term and its design is recorded before measurement; no
 second profile or repeated cost. Archive all rejected source/findings on main,
 retain the result store and remove owned idle worktrees/temporary files.
+
+## Initial codegen and the one preflight repair
+
+The initial implementation passes its three focused native and strict-provenance
+Miri tests (18.70 s under Miri). Rust 1.96.0 perf assembly has a 3454-byte
+engine at `0x63e20`, but a 264-byte local frame, exceeding the registered
+248-byte ceiling. Queue assignment has no capacity check/grow call. LLVM
+unrolled the two spans into separate edge loops; satisfied edges branch
+before loading the reason. However, `BinaryImplicationGraph::get` has no
+inline annotation and became a call at `0x63f0e` on every dequeued literal.
+Its 32-byte returned view occupies stack space and the call forces base
+reloads. Queue length is held in a register with stores to the view's local
+initialized field for exit/unwind publication; the external Vec length is
+only updated at exit. No performance cell was run.
+
+Use the single registered source-directed preflight repair: mark this small
+existing accessor `#[inline]`, like `span_of` and `edge_at` alongside it.
+Inspect whether this removes the call and its returned-view stack storage
+while meeting the original stack/text gates. No layout, unsafe contract,
+search order or bounds-check change. If it misses the gate, archive both
+versions without a cost run; do not try another annotation or rearrangement.
