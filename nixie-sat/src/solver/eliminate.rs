@@ -7,7 +7,7 @@
 //! * occurrence-list driven over *original* clauses, with per-literal
 //!   occurrence counts maintained incrementally during the round;
 //! * a work-list schedule ordered by elimination score; variables are
-//!   *re-entered* whenever one of their clauses is removed or shrunk
+//!   re-armed for a later round whenever a clause is removed or shrunk
 //!   (on-the-fly self-subsumption, backward subsumption, eager unit
 //!   propagation);
 //! * the SatELite bound is `resolvents <= pos + neg + elimbound` with a
@@ -25,8 +25,9 @@
 //!   (cadical `ineliminating`), not just once pre-search.
 //!
 //! Soundness gates (all checked in [`Solver::eliminate_phase`]):
-//! decision level 0, base assertion scope, no real theory attached, no proof
-//! logging (DRAT/LRAT), no assumptions in flight, not already UNSAT.
+//! decision level 0, base assertion scope, safe destructive preprocessing,
+//! frozen theory variables, no assumptions in flight, not already UNSAT.
+//! Ordinary elimination supports proofs; definition extraction refuses them.
 //! Model reconstruction reuses the well-tested `bve_def`/`bve_order`
 //! extension machinery (see `save_model`): for every eliminated variable the
 //! *positive* clauses are snapshotted with the pivot stripped at elimination
@@ -313,6 +314,10 @@ struct Eliminator {
     units: SmallVec<[Lit; 32]>,
     /// Resolution steps consumed this round (cadical `stats.elimres`).
     resolutions: u64,
+    /// Remaining round work is checked at each pair, before any mutation.
+    resolution_limit: u64,
+    /// A refused pair leaves its pivot and the pending schedule unfinished.
+    resolution_aborted: bool,
     /// Scratch buffers reused across backward-subsumption candidates (the
     /// per-candidate allocations dominated the phase cost: 67 % of profile
     /// time on `6s167-opt` was SmallVec collect/push inside
@@ -353,6 +358,15 @@ struct Eliminator {
 }
 
 impl Eliminator {
+    fn charge_resolution(&mut self) -> bool {
+        if self.resolutions >= self.resolution_limit {
+            self.resolution_aborted = true;
+            return false;
+        }
+        self.resolutions += 1;
+        true
+    }
+
     fn new(num_vars: usize, trail: &Trail) -> Self {
         let n = 2 * num_vars.max(1);
         let mut val = vec![0i8; n];
@@ -372,6 +386,8 @@ impl Eliminator {
             bw_head: 0,
             units: SmallVec::new(),
             resolutions: 0,
+            resolution_limit: u64::MAX,
+            resolution_aborted: false,
             eliminated: 0,
             def_ticks: 0,
             dirty: false,
@@ -413,12 +429,10 @@ impl Solver {
             // propagation on the pair conflicts), deletions are emitted as
             // deletion lines (which need no justification in LRAT), and
             // in-place strengthens reuse `proof_strengthen_clause` when the
-            // dropped literals are falsified on the *real* trail. The one
-            // BVE effect that has no cheap provenance — unit and empty
-            // resolvents, whose justifications depend on elimination-local
-            // assignments — aborts the pivot under an attached proof
-            // instead (see `elim_resolvents_bounded` / `elim_shrink_clause`),
-            // so the round stays strictly weaker, never unprovable.
+            // dropped literals have proof-backed root units. Unit/empty
+            // resolvents carry their parents and root-unit hints; an
+            // unprovable strengthening is refused. Definition extraction
+            // remains disabled under proofs (see `elim_try_variable`).
             && !self.trivially_unsat
             // Assumption solving routes through the limited restart handler
             // and never reaches the inprocessing schedule, but stay
@@ -546,8 +560,9 @@ impl Solver {
         // cadical backtracks and propagates first; we are already at level 0
         // and propagated (the schedule only runs post-conflict at the root or
         // pre-search), but re-propagating is cheap and rules out staleness.
-        if self.propagate().is_some() {
+        if let Some(conflict) = self.propagate() {
             self.trivially_unsat = true;
+            self.drat_emit_empty(Some(conflict));
             return SubstOutcome::Unsat;
         }
 
@@ -582,9 +597,10 @@ impl Solver {
         let mut round = 1usize;
         let mut eliminated_total = 0usize;
         let mut dirty = subsumed > 0 || strengthened > 0;
+        let mut definition_ticks = 0;
 
         loop {
-            let (eliminated, complete, round_dirty, units) = self.elim_round();
+            let (eliminated, complete, round_dirty, units) = self.elim_round(&mut definition_ticks);
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_LOG_ELIM").is_ok() {
                 eprintln!(
@@ -616,9 +632,9 @@ impl Solver {
                     LBool::Undef => self.trail.assign_decision(lit),
                 }
             }
-            let confl = self.propagate().is_some();
-            if confl {
+            if let Some(conflict) = self.propagate() {
                 self.trivially_unsat = true;
+                self.drat_emit_empty(Some(conflict));
                 return SubstOutcome::Unsat;
             }
 
@@ -710,17 +726,28 @@ impl Solver {
     /// One elimination round (cadical `elim_round`). Returns
     /// `(eliminated, completed, dirty, units)`; `completed` is true when the
     /// schedule was fully drained (the resolution budget was not hit).
-    fn elim_round(&mut self) -> (usize, bool, bool, SmallVec<[Lit; 32]>) {
+    fn elim_round(
+        &mut self,
+        definition_ticks: &mut u64,
+    ) -> (usize, bool, bool, SmallVec<[Lit; 32]>) {
         // Budget (cadical `elimlimited`): delta = search ticks × 1.0 clamped
         // to [1e7, 2e9] resolutions. Generous: elimination that completes is
         // almost always a net win; the budget only guards the pathological
         // case of a huge unproductive schedule.
-        let ticks = self.ticks_focused + self.ticks_stable;
+        let ticks = self.ticks_focused.saturating_add(self.ticks_stable);
         let delta = ticks.clamp(ELIM_MIN_EFFORT, ELIM_MAX_EFFORT);
-        let resolution_limit = self.elim_resolutions_total.saturating_add(delta);
+        self.elim_round_with_budget(delta, definition_ticks)
+    }
 
+    fn elim_round_with_budget(
+        &mut self,
+        delta: u64,
+        definition_ticks: &mut u64,
+    ) -> (usize, bool, bool, SmallVec<[Lit; 32]>) {
         let num_vars = self.num_vars;
         let mut ctx = Eliminator::new(num_vars, &self.trail);
+        ctx.resolution_limit = delta;
+        ctx.def_ticks = *definition_ticks;
 
         // Connect original clauses and count occurrences in ONE pass.
         // Satisfied clauses are retired immediately (before their literals
@@ -841,13 +868,30 @@ impl Solver {
         self.elim_mark_count = 0;
 
         while let Some(std::cmp::Reverse((_, v))) = ctx.schedule.pop() {
-            if self.trivially_unsat || self.elim_resolutions_total >= resolution_limit {
+            if self.trivially_unsat {
+                break;
+            }
+            if ctx.resolutions >= ctx.resolution_limit {
+                ctx.resolution_aborted = true;
+                self.mark_elim_one(Var::new(v));
                 break;
             }
             self.elim_try_variable(&mut ctx, Var::new(v));
+            if ctx.resolution_aborted {
+                self.mark_elim_one(Var::new(v));
+                break;
+            }
         }
 
-        let completed = ctx.schedule.is_empty() && !self.trivially_unsat;
+        let completed = ctx.schedule.is_empty() && !ctx.resolution_aborted && !self.trivially_unsat;
+        // A budget stop must retain the unfinished work for the next phase,
+        // including a pivot interrupted inside its pair product. Otherwise
+        // draining the round-local heap loses the only scheduling marks.
+        if ctx.resolution_aborted {
+            for std::cmp::Reverse((_, v)) in ctx.schedule.drain() {
+                self.mark_elim_one(Var::new(v));
+            }
+        }
         let eliminated = ctx.eliminated;
         let dirty = ctx.dirty;
         let units = ctx.units;
@@ -886,13 +930,14 @@ impl Solver {
                 .retain(|&cid| self.clauses.get(cid).is_some_and(|c| !c.deleted));
         }
 
-        self.elim_resolutions_total += ctx.resolutions;
+        self.elim_resolutions_total = self.elim_resolutions_total.saturating_add(ctx.resolutions);
+        *definition_ticks = ctx.def_ticks;
         (eliminated, completed, dirty, units)
     }
 
     /// cadical `try_to_eliminate_variable`.
     fn elim_try_variable(&mut self, ctx: &mut Eliminator, v: Var) {
-        if self.trail.is_assigned(v) || self.var_eliminated(v) {
+        if self.trail.is_assigned(v) || self.var_eliminated(v) || self.frozen_vars.contains(&v) {
             return;
         }
         let mut pivot = Lit::pos(v);
@@ -1073,7 +1118,9 @@ impl Solver {
                 if self.clauses.get(nid).is_none_or(|c| c.deleted) {
                     continue;
                 }
-                ctx.resolutions += 1;
+                if !ctx.charge_resolution() {
+                    return false;
+                }
                 match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
                     ElimResolve::Skip => {}
                     ElimResolve::Unit(u) => {
@@ -1936,6 +1983,14 @@ impl Solver {
 mod eliminate_mark_tests;
 
 #[cfg(test)]
+#[path = "eliminate_budget_tests.rs"]
+mod eliminate_budget_tests;
+
+#[cfg(test)]
+#[path = "eliminate_safety_tests.rs"]
+mod eliminate_safety_tests;
+
+#[cfg(test)]
 mod round_occs_tests {
     use super::*;
 
@@ -2075,7 +2130,9 @@ const DEFINITION_TICKS: u64 = 1_000_000;
 /// runs one shrinking round (`shrink → shuffle → re-solve → re-core`).
 const DEFINITION_CORES: u32 = 2;
 /// nixie safety valve (no kissat analog): total kitten ticks the
-/// definition path may spend per elimination phase. kissat has no
+/// definition path may spend before starting another extraction this phase.
+/// The last extraction can overshoot by its bounded core-shrink work.
+/// Kissat has no
 /// aggregate cap because its structural gates run before the kitten and
 /// the search's conflict limits bound the phase; this port pays a kitten
 /// solve per candidate, so a finite phase cap keeps a 100k-candidate
@@ -2246,7 +2303,9 @@ impl Solver {
                     if !live(self, nid) {
                         continue;
                     }
-                    ctx.resolutions += 1;
+                    if !ctx.charge_resolution() {
+                        return false;
+                    }
                     match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
                         ElimResolve::Skip => {}
                         ElimResolve::Unit(u) => {
