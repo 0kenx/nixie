@@ -87,3 +87,36 @@ the bundle only when they remove a named remaining cost or share work with
 an existing slice. Actual combined cost is measured against current ordinary
 Nixie; if it fails, retain a candidate flamegraph and explain the remaining
 cost before choosing a repair or stopping.
+
+## First measured combination
+
+The [two-phase fixed-trail kernel](2026-09-09-two-phase-watch-kernel.md)
+passes its registered two-input engineering screen: identical trajectories,
+5.13% fewer instructions and 17.21% fewer measured cycles/conflict. The
+cycle figure is less secure because host interference was substantial.
+This supports the combined implementation, not an inferred interaction term
+from incomparable older runs. Its own qualified flamegraph retains the
+remaining prefix/suffix/driver costs and identifies the next representation
+obligations. Full source qualification passed, including 10809 workspace tests and fresh
+Z3 4.16.0 parity with zero verdict disagreements; the kernel lands on main.
+
+The follow-up lifetime audit narrows the identity problem. All four production
+watch-detachment sites in `learn.rs` first obtain a live clause, then detach
+its two current watches before deletion or replacement. This permits a
+reference-based detach contract; it does not establish the rest of the
+representation. `watched` is a private module. Lucky's packed snapshot stores
+watch entries and separately saves clause IDs/literals; its propagation can
+append HBR binaries, so rollback must be audited together with that growth.
+
+Two possible tombstone strategies deserve explicit cost accounting before
+choosing one. Keeping a separate header for every still-watched deleted ID
+preserves identity but adds dead-header storage and GC marking. Alternatively,
+observer builds could retain a separate identity word while ordinary entries
+use `(reference, blocker)` and a shared tombstone, **only if** every ordinary
+reader is proved not to need a deleted watcher's identity. That includes
+detach, relocation validation, snapshots and every `Watcher` consumer, not
+just the hot scan. Both feature layouts would need real default-build tests;
+a wide all-features fallback cannot qualify the compact path. Neither design
+may eagerly purge ghost hits or change their tick contribution. Moving activity
+aside also retains storage indexed by historical, unreused clause IDs: include
+that memory and reduction cost, not only the saved watcher bytes.

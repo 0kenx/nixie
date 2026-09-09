@@ -136,3 +136,13 @@ directory also preserves the manifest, runner, source patch and verified source
 bundle (requiring the registration commit), compiler/lock/binary identity,
 qualification logs and independently recomputed record/PMU/output/ratio checks.
 The experimental worktree and temporary branches were removed after archival.
+
+## Cost-driven follow-up
+
+The [two-phase stable-filter kernel](2026-09-09-two-phase-watch-kernel.md)
+reuses this borrowing boundary and state oracle, but changes the filtering
+algorithm so the prefix/suffix invariants remove repeated compaction tests.
+That combined implementation passes its separate two-input cost screen.
+Its candidate flamegraph and generated-code analysis account for the remaining
+costs. This does not change the failed gate above or isolate the original
+kernel's contribution; the implementations were measured on different cells.
