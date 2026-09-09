@@ -113,3 +113,87 @@ API, eager normalization, stable filtering and yield boundaries. This
 changes the control flow that carries the state, rather than selecting a
 new distance or adding more prediction. Inspect assembly and rerun the
 affected correctness checks before using the one registered repair cell.
+
+## Consecutive-miss repair: also rejected
+
+The final repair is `f24cf17e4044d8b9f12a64e806d6f8b848942850`. Before
+timing, assembly exposed another problem: checking `is_live` and then
+consuming the header retained a redundant current-state check. The final
+API takes the current metadata once, then invokes an inlined callback to
+prepare the next entry. Deleted entries never invoke that callback. This
+keeps metadata private and avoids an impossible-state panic in the kernel.
+The intermediate assembly was retained but that intermediate binary was
+never timed.
+
+Default library tests again pass (782); all-feature nextest passes all
+1046 SAT tests, one existing skip; strict SAT Clippy and format pass.
+The three arena Miri tests pass again with strict provenance. The final
+assembly has the ordinary prefix hit loop at `0x64061..0x64078`: blocker
+load/value test and cursor advance, without a pending-state test or clause
+reference load. The next header is still loaded before current literals.
+Prefix/suffix bodies are 1328/1527 bytes, local stack 104/120 bytes, six
+saved registers. More miss-loop continuation and range checks remain;
+removing hit dispatch did not make the entire scanner smaller or cheaper.
+
+| j3037 repair, same full work | Control | Repair | Repair/control |
+|---|---:|---:|---:|
+| Wall | 36.13 s | 38.75 s | 1.07252 |
+| User cycles | 164287697694 | 176591934047 | 1.07489 |
+| User instructions | 254596496994 | 269859257057 | 1.05995 |
+| Cycles/conflict | 496990.60 | 534212.44 | 1.07489 |
+
+Repair record `29febe52bb5ffd47` has 100% PMU coverage, zero major faults,
+0.310% off-CPU time and 228 involuntary switches. Full stdout matches the
+same retained control byte for byte, including all 330565 conflicts and
+323390316 propagations. Versus the first implementation, instructions fall
+**6.97%**, but wall is 2.13% higher. Neither implementation passes the
+registered advancement gate. Different measurement windows still limit
+precise attribution of wall/cycle deltas; neither wall number establishes
+a gain. Repair/Kissat wall is 2.1481 on this one input, not a suite geomean.
+
+### Remaining cost and limits of the conclusion
+
+The final [flamegraph](assets/2026-09-10-miss-header-lookahead-repair.svg)
+comes from `428603197ee69bc4`: 15946 samples, 100% counter coverage, no
+loss/throttle, two kernel-labelled samples and 0.01254% unresolved self
+weight. Scan self samples total 49.97%, driver 21.40%. Hot sites include
+the ordinary blocker-value read (4.93% at `0x64069`), current-header
+deletion branch (4.00% at `0x64098`), next-header deletion branch (3.36%
+at `0x63c0e`), and destination capacity/store instructions (3.01%/2.85%
+at `0x63d03`/`0x63d11`). These are sampled locations, not additive,
+independently removable latency estimates. Complete memory geometry is
+unchanged. Profile output matches the cost run after its registered
+terminal memory line is removed.
+
+There is a deeper limitation than enum dispatch. `prepare` classifies the
+next header immediately: its deleted-flag branch precedes current pair
+loads. Thus early loading alone does not establish useful overlap; the
+generated path also inserts next-entry dependent control flow before
+current work. Speculation may overlap some reads, but the result does not
+measure how much. The current preflight established ordering and reuse,
+not latency hiding. The repair removed real instruction overhead while
+retaining this issue, pending metadata, extra continuations, and all
+destination appends.
+
+Do not repeat either implementation with different lookahead distances or
+infer a gain by combining its profile percentages with the compact-buffer
+result. A distinct follow-up would have to carry an **unclassified raw
+header** inside the same exclusive arena scope, delaying its liveness
+decision until the actual visit. Its code-generation gate would need to
+show both the early load and absence of a next-header-dependent branch
+before current work, plus bounded state/spill cost. It must retain the
+null/deleted, duplicate-reference, yield and relocation invariants. This
+is an unimplemented hypothesis, not a speedup claim or authorization to
+expand this completed experiment.
+
+Exactly **five performance invocations** ran: one control, two candidate
+cost cells and their two diagnostics. No si2 cell, new Kissat cell, seed
+sweep, repeat or full-workspace qualification was added. Production SAT
+source remains unchanged; the prototypes are archived rather than landed.
+Source bundles, lockfiles, binaries, measurement scripts and raw evidence
+remain in `precompile/72427b3/` and `precompile/f24cf17/`. A concurrent
+external rebase changed main's commit IDs during the experiment; binaries
+and records retain their actual original source identities. Both bundles
+include the old registration/control ancestry back to still-reachable
+`f0031009`, so cleanup does not strand their prerequisites. The owned
+worktree, branch and temporary files are removed after recording the study.

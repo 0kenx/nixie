@@ -302,3 +302,22 @@ of production. Future combinations need shared preparation or fewer visits
 or appends, rather than another relocation of the same work. The existing
 direct relation mode remains the measured structural route on this input;
 its remaining gap to Kissat still needs substantive work.
+
+## Miss-only header lookahead: dispatch repair did not rescue wall
+
+The [completed header-lookahead experiment](2026-09-10-miss-header-lookahead.md)
+combined the fixed-trail boundary with one-entry preparation on live misses.
+Its first mixed loop added pending-state dispatch to cheap hits: j3037
+37.94 s versus qualified control 36.13 s, with 13.93% more instructions.
+The flamegraph and assembly justified one repair: isolate consecutive misses,
+consume prepared hits directly, and combine liveness/consumption in the arena
+API. That removed 6.97% of the prototype's instructions but still used 6.00%
+more than control and took 38.75 s. Both complete trajectories match control.
+
+The deeper cost is not just enum representation. Next-header preparation
+still classifies deletion before current literal work, adding dependent
+control flow instead of merely issuing an independent read. Destination
+appends and their memory accesses remain. Two audited flamegraphs and both
+source bundles are retained; five performance invocations sufficed to reject
+these implementations. The remaining raw-header/deferred-classification
+hypothesis needs a stricter code-generation gate before any new measurement.
