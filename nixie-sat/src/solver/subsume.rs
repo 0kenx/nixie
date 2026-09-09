@@ -4,8 +4,8 @@
 //! *connected* clause `d` (smaller or equal size) whose literals all occur in
 //! `c` – then `c` is subsumed and deleted – or that occur in `c` except for
 //! exactly one complementary literal – then that literal is removed from `c`
-//! (self-subsuming resolution).  After a clause has been checked (and neither
-//! subsumed nor strengthened) it is *connected* into the one-watched
+//! (self-subsuming resolution). A surviving clause, including after
+//! strengthening, is *connected* into the one-watched
 //! occurrence list of its least-occurring literal, so later (larger)
 //! candidates can find it as a subsumer.
 //!
@@ -170,8 +170,94 @@ pub(super) fn subsume_round_trace_enabled() -> bool {
 #[derive(Default, Clone, Debug)]
 pub(crate) struct SubsumeScratch {
     pub(super) schedule: Vec<(u32, ClauseId)>,
-    pub(super) occs: Vec<SmallVec<[ClauseId; 4]>>,
+    pub(super) occs: Vec<SmallVec<[Connection; 4]>>,
     pub(super) mark: Vec<i8>,
+    payloads: ConnectedPayloads,
+}
+
+/// Offset into this round's immutable payload store. Only `connect` creates
+/// production offsets. The database oracle interprets its own entries as IDs.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Connection(u32);
+
+/// Clauses already processed by the forward schedule cannot be strengthened
+/// or retired again during this round. Later candidates can only promote a
+/// connected subsumer's metadata. Copy its post-strengthening literals once,
+/// retaining the stable database ID for promotion and current proof-ID lookup.
+///
+/// The connection literal is omitted: the occurrence-list key supplies its
+/// signed mark once per candidate bucket. Records are
+/// `[residual_length, database_id, residual_literal_codes...]`. All accesses use
+/// checked slices; no arena pointer, stale proof ID or unsafe cast is stored.
+#[derive(Default, Clone, Debug)]
+struct ConnectedPayloads {
+    words: Vec<u32>,
+}
+
+impl ConnectedPayloads {
+    fn connect(&mut self, id: ClauseId, lits: &[Lit], key: Lit) -> Connection {
+        let omitted = lits
+            .iter()
+            .position(|lit| *lit == key)
+            .unwrap_or_else(|| panic!("subsumption connection literal is absent"));
+        let offset = u32::try_from(self.words.len())
+            .unwrap_or_else(|_| panic!("subsumption payload address space exhausted"));
+        let len = u32::try_from(lits.len() - 1)
+            .unwrap_or_else(|_| panic!("subsumption payload length overflow"));
+        self.words.reserve(
+            lits.len()
+                .checked_add(1)
+                .unwrap_or_else(|| panic!("subsumption payload capacity overflow")),
+        );
+        self.words.push(len);
+        self.words.push(id.0);
+        self.words
+            .extend(lits[..omitted].iter().map(|lit| lit.code()));
+        self.words
+            .extend(lits[omitted + 1..].iter().map(|lit| lit.code()));
+        Connection(offset)
+    }
+
+    #[inline]
+    fn get(&self, connection: Connection) -> (ClauseId, &[u32]) {
+        let (header, tail) = self.words[connection.0 as usize..].split_at(2);
+        (ClauseId::new(header[1]), &tail[..header[0] as usize])
+    }
+}
+
+/// The signed-mark test is shared with the database-backed test oracle.
+/// Residual order is preserved. Successful SSR selects the same unique
+/// complemented literal; rejected checks may stop earlier after key seeding.
+#[inline]
+fn check_connected(
+    lits: impl Iterator<Item = Lit>,
+    mark: &[i8],
+    mut flipped: Option<Lit>,
+) -> ConnectedCheck {
+    for lit in lits {
+        let m = mark[lit.code() as usize];
+        if m == 0 {
+            return ConnectedCheck::Mismatch;
+        }
+        if m > 0 {
+            continue;
+        }
+        if flipped.is_some() {
+            return ConnectedCheck::Mismatch;
+        }
+        flipped = Some(lit);
+    }
+    match flipped {
+        None => ConnectedCheck::Subsumed,
+        Some(lit) => ConnectedCheck::Strengthen(lit.negate()),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ConnectedCheck {
+    Mismatch,
+    Subsumed,
+    Strengthen(Lit),
 }
 
 /// Outcome of one subsumption check of candidate `c` against connected `d`.
@@ -198,6 +284,14 @@ impl Solver {
     /// every `subsumer` literal except the flipped one is false, so the
     /// subsumer is unit on it, propagating it and falsifying `c`).
     pub(super) fn subsume_round(&mut self) -> (usize, usize) {
+        #[cfg(test)]
+        if self.subsume_database_oracle {
+            return self.subsume_round_impl::<false>();
+        }
+        self.subsume_round_impl::<true>()
+    }
+
+    fn subsume_round_impl<const CACHED: bool>(&mut self) -> (usize, usize) {
         if self.trail.decision_level() != 0 || self.trivially_unsat {
             return (0, 0);
         }
@@ -225,6 +319,9 @@ impl Solver {
         let mut sched = std::mem::take(&mut self.subsume_scratch.schedule);
         let mut occs = std::mem::take(&mut self.subsume_scratch.occs);
         let mut mark = std::mem::take(&mut self.subsume_scratch.mark);
+        let mut payloads = std::mem::take(&mut self.subsume_scratch.payloads);
+        // No connection is evidence across rounds, scopes or arena collection.
+        payloads.words.clear();
         sched.clear();
         self.subsume_rounds_done = self.subsume_rounds_done.wrapping_add(1);
         let mode = subsume2_mode();
@@ -238,9 +335,7 @@ impl Solver {
             self.subsume_dirty.resize(num_lits, false);
         }
         if occs.len() == num_lits {
-            for e in occs.iter_mut() {
-                e.clear();
-            }
+            debug_assert!(occs.iter().all(|entry| entry.is_empty()));
         } else {
             occs.clear();
             occs.resize_with(num_lits, SmallVec::new);
@@ -300,6 +395,7 @@ impl Solver {
             self.subsume_scratch.schedule = sched;
             self.subsume_scratch.occs = occs;
             self.subsume_scratch.mark = mark;
+            self.subsume_scratch.payloads = payloads;
             return (0, 0);
         }
         if dirty && subsume_round_trace_enabled() {
@@ -378,46 +474,68 @@ impl Solver {
                     }
                 }
 
-                // Longer connected clauses.
-                for &did in occs[l.code() as usize].iter() {
-                    let Some(d) = self.clauses.get(did) else {
-                        continue;
-                    };
-                    if d.deleted {
-                        continue;
-                    }
-                    subchecks = subchecks.saturating_add(1);
-                    let mut flipped: Option<Lit> = None;
-                    let mut failed = false;
-                    for &dl in d.lits.iter() {
-                        let m = mark[dl.code() as usize];
-                        if m == 0 {
-                            failed = true;
-                            break;
+                // A scheduled ID is processed once, then connected. The only
+                // clause mutated below is the current candidate; promotion of
+                // a previous subsumer does not change its copied literals.
+                let key_mark = mark[l.code() as usize];
+                let key_flipped = (key_mark < 0).then_some(l);
+                for &connection in occs[l.code() as usize].iter() {
+                    let (did, check) = if CACHED {
+                        let (did, codes) = payloads.get(connection);
+                        #[cfg(debug_assertions)]
+                        {
+                            let d = self
+                                .clauses
+                                .get(did)
+                                .unwrap_or_else(|| panic!("connected subsumer disappeared"));
+                            assert!(!d.deleted, "connected subsumer was retired");
+                            let omitted = d
+                                .lits
+                                .iter()
+                                .position(|lit| *lit == l)
+                                .unwrap_or_else(|| panic!("connected key disappeared"));
+                            assert!(
+                                d.lits[..omitted]
+                                    .iter()
+                                    .chain(&d.lits[omitted + 1..])
+                                    .map(|lit| lit.code())
+                                    .eq(codes.iter().copied()),
+                                "connected subsumer changed after being processed"
+                            );
                         }
-                        if m > 0 {
+                        subchecks = subchecks.saturating_add(1);
+                        (
+                            did,
+                            if key_mark == 0 {
+                                ConnectedCheck::Mismatch
+                            } else {
+                                check_connected(
+                                    codes.iter().copied().map(Lit::from_code),
+                                    &mark,
+                                    key_flipped,
+                                )
+                            },
+                        )
+                    } else {
+                        let did = ClauseId::new(connection.0);
+                        let Some(d) = self.clauses.get(did) else {
+                            continue;
+                        };
+                        if d.deleted {
                             continue;
                         }
-                        // Complemented occurrence: allow exactly one.
-                        if flipped.is_some() {
-                            failed = true;
-                            break;
-                        }
-                        flipped = Some(dl);
-                    }
-                    if failed {
-                        continue;
-                    }
-                    match flipped {
-                        None => {
+                        subchecks = subchecks.saturating_add(1);
+                        (did, check_connected(d.lits.iter().copied(), &mark, None))
+                    };
+                    match check {
+                        ConnectedCheck::Mismatch => continue,
+                        ConnectedCheck::Subsumed => {
                             outcome = Some(SubCheck::Subsumed { subsumer: did });
                             break 'candidate;
                         }
-                        // `dl ∉ c` but `¬dl ∈ c`: strengthen by removing
-                        // `¬dl` from the candidate.
-                        Some(dl) => {
+                        ConnectedCheck::Strengthen(remove) => {
                             outcome = Some(SubCheck::Strengthen {
-                                remove: dl.negate(),
+                                remove,
                                 subsumer: did,
                             });
                             break 'candidate;
@@ -556,7 +674,14 @@ impl Solver {
             }
             // Do not connect a clause through an over-long list.
             if minsize <= 100 && do_connect {
-                occs[connect_lit.code() as usize].push(cid);
+                // Copy only after strengthening, proof handling and watch
+                // reordering, and only if the existing policy connects it.
+                let connection = if CACHED {
+                    payloads.connect(cid, &cur, connect_lit)
+                } else {
+                    Connection(cid.0)
+                };
+                occs[connect_lit.code() as usize].push(connection);
             }
         }
 
@@ -591,6 +716,22 @@ impl Solver {
             }
         }
 
+        if CACHED {
+            // The old normal exit dropped these buffers. Retain capacity for
+            // both the occurrence lists and their new compact payloads. Every
+            // candidate is unmarked before any normal or budget exit.
+            // Only empty buffers escape the round. This also prevents idle
+            // connections from surviving a scope change or collection.
+            sched.clear();
+            for entry in &mut occs {
+                entry.clear();
+            }
+            payloads.words.clear();
+            self.subsume_scratch.schedule = sched;
+            self.subsume_scratch.occs = occs;
+            self.subsume_scratch.mark = mark;
+            self.subsume_scratch.payloads = payloads;
+        }
         (subsumed, strengthened)
     }
 
@@ -627,3 +768,7 @@ impl Solver {
         // double the phantom tick count.
     }
 }
+
+#[cfg(test)]
+#[path = "subsume_payload_tests.rs"]
+mod payload_tests;

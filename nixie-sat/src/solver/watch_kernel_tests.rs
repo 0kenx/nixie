@@ -304,6 +304,7 @@ fn pair(
     let mut a = Solver::new();
     let mut b = Solver::new();
     b.propagate_legacy_oracle = true;
+    b.subsume_database_oracle = true;
     a.ensure_vars(nvars);
     b.ensure_vars(nvars);
     let pa = proof.then(|| a.enable_lrat_transcript());

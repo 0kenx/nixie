@@ -1549,6 +1549,9 @@ pub struct Solver {
     /// ~90 MB alloc/free per round on big-DB instances — the dominant round
     /// wall cost).  Contents are cleared per round; capacity persists.
     pub(super) subsume_scratch: SubsumeScratch,
+    /// Compare the compact round index with the original database lookups.
+    #[cfg(test)]
+    pub(super) subsume_database_oracle: bool,
 
     /// kissat `flags(lit).factor` (set wherever `kissat_mark_added_literal`
     /// runs — our `mark_subsume_lit` sites): literal codes whose clause set
@@ -2107,6 +2110,8 @@ impl Solver {
             inproc_diag_props: [0; 5],
             inproc_diag_wall: [0; 5],
             subsume_scratch: SubsumeScratch::default(),
+            #[cfg(test)]
+            subsume_database_oracle: false,
             subsume_dirty: Vec::new(),
             factor_dirty: Vec::new(),
             factor_marked_total: 0,
