@@ -112,3 +112,97 @@ Inspect whether this removes the call and its returned-view stack storage
 while meeting the original stack/text gates. No layout, unsafe contract,
 search order or bounds-check change. If it misses the gate, archive both
 versions without a cost run; do not try another annotation or rearrangement.
+
+## Verdict: stopped at the code-generation gate
+
+The one repair (`5f6e52307dd332858eed452d6bc9ed314fa5ba50`) removes the
+accessor call, but its frame remains **264 bytes**, above the registered
+248-byte maximum. Text is 3707 bytes at `0x63d70`, below the 4096-byte
+ceiling but larger than the first engine's 3615 bytes. No cost cell, profile,
+new control/Kissat run or si2 confirmation was launched. This is a failed
+engineering preflight, **not measured evidence of a slowdown**. No wall,
+cycle, instruction or suite-geomean improvement is claimed. Production SAT
+source remains unchanged.
+
+The useful transformations did compile:
+
+- The primary and overflow scans are separate loops. Their satisfied exits
+  (`0x63f77`, `0x64026`) precede reason loads (`0x63f79`, `0x64028`).
+  No storage selection or edge bounds check occurs per edge. The checked
+  span construction remains once per dequeued literal.
+- Queue appends at `0x63fdc`, `0x6408c`, `0x642f6`, `0x646b4` and
+  `0x64974` have no capacity comparison or grow call. Remaining `grow_one`
+  calls belong to destination watch buffers.
+- Local length/head stay in registers through the fixpoint, with writes to
+  the view fields. External Vec length/head publish at `0x64aa7` and
+  `0x64aaf`; the loop no longer reloads external Vec length to dequeue.
+
+However, the accessor call was only one cause of live-state pressure.
+Inlining removes the returned-view scratch space but brings all the graph
+base/length fields into the driver, with a 264-byte frame again. The fixed
+queue pointer reloads from stack at every append (`0x63fd7`, `0x64087`,
+`0x642f1`, `0x646af`, `0x6496f`). Each append also writes the view's local
+initialized field, even in this panic-abort build. The driver retains value
+and metadata lengths for checked assignment stores and compiles three long
+scan bodies (prefix plus two suffix contexts). Removing queue growth did
+not eliminate that shared state or the suffix duplication. Assembly shows
+the operations; without a dynamic run it cannot rank their actual costs or
+predict whether the removed work would outweigh them.
+
+Do not repeat the accessor annotation experiment or relax the frame ceiling
+after observing this output. A further complete-engine design needs an
+explicit reduction in state kept across binary/long scans and in per-unit
+publication, with a new safety argument and preflight. Merely putting a raw
+queue behind the existing checked views is insufficient to obtain the
+registered machine-code shape. The conservative queue-capacity contract
+and focused tests are reusable results, independent of this cost verdict.
+
+## Safety evidence and archive
+
+The reservation proof does not assume uniqueness of the existing prefix.
+Only undefined variables can append within the view, and nothing within it
+can unassign or grow the domain. The two unsafe call sites are reached only
+after proving an in-domain literal's value is zero. Allocation/reservation
+precedes pointer creation; no backing-slice reference or queue reallocation
+occurs while it is used. The initialized count advances after the raw write;
+Drop publishes only that prefix and the consumed head. An empty queue never
+dereferences its dangling empty-allocation pointer. No pointer is stored in
+Solver, shared with a worker, or given a custom Send/Sync implementation.
+
+The scalar oracle compares queue/values/reasons/levels/indices, clauses,
+watches, binary graph, propagation statistics, ticks and conflict-prefix
+state. Focused regressions exercise duplicate initial entries, empty queues,
+new implications consumed in the same pass, growth between borrows,
+backtracking, unwind publication, and first conflicts in both binary spans
+without touching unvisited overflow. The existing owner test moves solvers
+before variable growth, arena compaction and propagation/requeue, both
+locally and through a native Rayon pool. Optional mutating/bounded modes
+retain the prior complete-engine gate and scalar fallback.
+
+Verification completed:
+
+- Initial default SAT nextest: **1019 passed**, one existing skip.
+- Repaired all-feature SAT nextest: **1046 passed**, one existing skip,
+  including the exhaustive small-state oracle and native Rayon ownership.
+- Strict-provenance Miri, seed 42: **three queue/span tests passed**
+  (18.70 s); **one moved-owner/compaction/requeue test passed** (75.95 s).
+  Miri 0.1.0 / Rust 1.98.0-nightly-2026-06-11; native/perf compiler remains
+  Rust 1.96.0 (`ac68faa20`), LLVM 22.1.2.
+- Strict SAT all-feature/all-target Clippy and workspace format check passed.
+- Full workspace build/tests/doc-tests/docs and fresh Z3 parity were not
+  run: no solver code is being landed after this preflight rejection.
+
+The [archived source patch](assets/2026-09-10-fixed-propagation-queue.patch)
+applies to reachable registration `e3c85e7f`; it contains the complete
+repaired prototype, including tests. Removing only the added `#[inline]`
+on `BinaryImplicationGraph::get` reconstructs initial `7e68b78f`. This is
+archival source, not a production patch recommendation.
+
+`precompile/7e68b78/` and `precompile/5f6e523/` retain both verified source
+bundles, patches, perf binaries, lock, compiler/binary identities and
+preflight logs/disassembly. Both bundles require reachable `e3c85e7f`.
+Lock SHA-256 is
+`3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`.
+The repaired bundle also contains the initial commit. The experimental
+worktree, branch, owned corpus links and temporary logs are removed after
+archiving. There were **zero new performance invocations**.

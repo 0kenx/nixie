@@ -398,3 +398,21 @@ one cost plus one diagnostic invocation. This closes the one-entry pipeline
 under the complete ownership boundary too. Further work needs an explicit
 reduction in dependency/work or live state, not another revival of the same
 lookahead bookkeeping.
+
+## Fixed queue plus separate binary spans: preflight rejection
+
+The [fixed-queue experiment](2026-09-10-fixed-propagation-queue.md) combines
+a domain-bounded raw append queue with the original complete engine and
+separate primary/overflow binary loops. Safety tests, scalar-state checks,
+strict Miri and native Rayon ownership pass. Assembly removes queue-growth
+checks, per-edge storage selection and satisfied-edge reason loads.
+
+The first version introduces a per-literal binary-view accessor call; one
+registered inline repair removes it. Both versions still have a 264-byte
+frame versus the registered 248-byte maximum. The repaired driver spills
+the fixed queue pointer at each append, publishes local initialized length
+per unit and keeps the checked-view lengths plus duplicated suffix bodies.
+This closes at code generation with **zero performance invocations**; it
+does not demonstrate a wall regression or a speedup. The source and capacity
+proof are archived. Do not retry the same annotation or change the gate
+post hoc; further work must reduce the state carried by the whole engine.
