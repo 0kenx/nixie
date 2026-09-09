@@ -1081,6 +1081,11 @@ impl Solver {
             CLASSIFY_CALLS.fetch_add(1, Relaxed);
         }
         const MINIMIZE_DEPTH_LIMIT: u32 = 100;
+        // Level 0 and cached flags justify only the TRUE form of a literal.
+        // An unassigned antecedent also has level 0; it is not a root fact.
+        if self.trail.lit_val(lit) <= 0 {
+            return Err(false);
+        }
         let var = lit.var();
         let f = self.mf_get(var);
         let level = self.trail.level(var);
@@ -1149,7 +1154,24 @@ impl Solver {
         let Reason::Propagation(cid) = reason else {
             return Err(false);
         };
+        if self.minimize_reason_lits(lit, cid).is_none() {
+            return Err(false);
+        }
         Ok(cid)
+    }
+
+    /// A reason usable by the optional minimization/shrink proof search.
+    /// A missing or retired reason is a failed removal attempt, never an
+    /// empty dependency list. The positive head must actually occur in the
+    /// clause; each visited tail literal is checked false by the classifier
+    /// or `shrink_literal` before its flags or level can justify an early exit.
+    /// This retains the original learned literal when a proof is unavailable.
+    fn minimize_reason_lits(&self, head: Lit, cid: ClauseId) -> Option<&[Lit]> {
+        let clause = self.clauses.get(cid)?;
+        if clause.deleted || !clause.lits.contains(&head) {
+            return None;
+        }
+        Some(clause.lits)
     }
 
     /// Removable check, **iterative** (explicit heap stack per the repo's
@@ -1165,8 +1187,8 @@ impl Solver {
     /// are never classified) and poisons it. Frames keep `(var, reason id,
     /// cursor)` and re-read literals from the arena on demand – the clause
     /// set is not mutated during analysis, so this equals the recursive
-    /// form's per-node snapshot. A missing reason clause reads as "no
-    /// children" (removable), matching the old `unwrap_or_default`.
+    /// form's per-node snapshot. Every frame starts with a live reason
+    /// containing its true head; unavailable reasons fail the removal attempt.
     fn minimize_literal_plain(&mut self, lit: Lit, depth: u32) -> bool {
         let root_cid = match self.minimize_classify(lit, depth) {
             Err(res) => return res,
@@ -1174,7 +1196,7 @@ impl Solver {
         };
 
         struct Frame {
-            var: Var,
+            lit: Lit,
             cid: ClauseId,
             next: usize,
             depth: u32,
@@ -1182,7 +1204,7 @@ impl Solver {
         }
         let mut stack: SmallVec<[Frame; 32]> = SmallVec::new();
         stack.push(Frame {
-            var: lit.var(),
+            lit,
             cid: root_cid,
             next: 0,
             depth,
@@ -1195,8 +1217,8 @@ impl Solver {
             // classified, exactly like the recursive form's `break`).
             if stack.last().is_some_and(|f| f.failed) {
                 if let Some(frame) = stack.pop() {
-                    self.mf_set(frame.var, MF_POISON);
-                    self.lrat_minimized.push(frame.var.index() as i32);
+                    self.mf_set(frame.lit.var(), MF_POISON);
+                    self.lrat_minimized.push(frame.lit.var().index() as i32);
                 }
                 if let Some(parent) = stack.last_mut() {
                     parent.failed = true;
@@ -1204,30 +1226,28 @@ impl Solver {
                 continue;
             }
             // Next child: the next reason literal after `next` that is not
-            // the frame's own variable (the recursive form skipped the
-            // resolved-out literal BY VALUE, not position).
+            // the frame's own literal. Skip the exact signed head, not its
+            // opposite polarity or a fixed watched position.
             let (child, child_depth) = {
                 let Some(frame) = stack.last_mut() else {
                     break;
                 };
                 let depth = frame.depth + 1;
                 let mut child: Option<Lit> = None;
-                if let Some(clause) = self.clauses.get(frame.cid) {
-                    let mut i = frame.next;
-                    while i < clause.lits.len() {
-                        let l = clause.lits[i];
-                        i += 1;
-                        if l.var() != frame.var {
-                            child = Some(l);
-                            break;
-                        }
+                let Some(clause) = self.clauses.get(frame.cid).filter(|c| !c.deleted) else {
+                    frame.failed = true;
+                    continue;
+                };
+                let mut i = frame.next;
+                while i < clause.lits.len() {
+                    let l = clause.lits[i];
+                    i += 1;
+                    if l != frame.lit {
+                        child = Some(l);
+                        break;
                     }
-                    frame.next = i;
-                } else {
-                    // Missing reason clause: no children (removable), like
-                    // the recursive form's `unwrap_or_default`.
-                    frame.next = usize::MAX;
                 }
+                frame.next = i;
                 (child, depth)
             };
             #[cfg(feature = "bcp-stats")]
@@ -1239,8 +1259,8 @@ impl Solver {
             let Some(child_lit) = child else {
                 // Children exhausted without failure: removable.
                 if let Some(frame) = stack.pop() {
-                    self.mf_set(frame.var, MF_REMOVABLE);
-                    self.lrat_minimized.push(frame.var.index() as i32);
+                    self.mf_set(frame.lit.var(), MF_REMOVABLE);
+                    self.lrat_minimized.push(frame.lit.var().index() as i32);
                 }
                 continue;
             };
@@ -1252,7 +1272,7 @@ impl Solver {
                     }
                 }
                 Ok(cid) => stack.push(Frame {
-                    var: child_lit.var(),
+                    lit: child_lit.negate(),
                     cid,
                     next: 0,
                     depth: child_depth,
@@ -1273,6 +1293,9 @@ impl Solver {
     /// and records the var for cleanup. Depth-limited to bound the stack.
     fn minimize_literal_lrat(&mut self, lit: Lit, depth: u32) -> bool {
         const MINIMIZE_DEPTH_LIMIT: u32 = 100;
+        if self.trail.lit_val(lit) <= 0 {
+            return false;
+        }
         let var = lit.var();
         let f = self.mf_get(var);
         let level = self.trail.level(var);
@@ -1308,17 +1331,11 @@ impl Solver {
         };
         // Snapshot the reason clause's literals (release the borrow) before
         // recursing through `&mut self`.
-        let others: SmallVec<[Lit; 8]> = self
-            .clauses
-            .get(cid)
-            .map(|c| {
-                c.lits
-                    .iter()
-                    .filter(|&&l| l.var() != var)
-                    .copied()
-                    .collect()
-            })
-            .unwrap_or_default();
+        let Some(reason_lits) = self.minimize_reason_lits(lit, cid) else {
+            return false;
+        };
+        let others: SmallVec<[Lit; 8]> =
+            reason_lits.iter().filter(|&&l| l != lit).copied().collect();
         let mut res = true;
         for other in others {
             if !self.minimize_literal_lrat(other.negate(), depth + 1) {
@@ -1933,22 +1950,26 @@ impl Solver {
                 failed = true;
                 break;
             };
-            let reason_lits: SmallVec<[Lit; 8]> = self
-                .clauses
-                .get(cid)
-                .map(|c| {
-                    c.lits
-                        .iter()
-                        .filter(|&&l| l.var() != uip_lit.var())
-                        .copied()
-                        .collect()
-                })
-                .unwrap_or_default();
+            let Some(reason) = self.minimize_reason_lits(uip_lit, cid) else {
+                failed = true;
+                break;
+            };
+            let reason_lits: SmallVec<[Lit; 8]> =
+                reason.iter().filter(|&&l| l != uip_lit).copied().collect();
             if reason_lits.is_empty() {
                 failed = true;
                 break;
             }
             for &lit in &reason_lits {
+                // Reasons depend on earlier trail assignments, including
+                // after chronological backtracking's stable compaction.
+                // Without this guard a self/cyclic reason can hit an already
+                // SHRINKABLE variable, decrement `open` without resolving it,
+                // and silently discard that dependency from the learned clause.
+                if self.trail.trail_index(lit.var()) as usize >= pos {
+                    failed = true;
+                    break;
+                }
                 match self.shrink_literal(lit, blevel) {
                     ShrinkStep::Fail => {
                         failed = true;
@@ -2066,6 +2087,9 @@ impl Solver {
     /// removable; `Fail` aborts the block walk (a lower-level antecedent that
     /// is not removable).
     fn shrink_literal(&mut self, lit: Lit, blevel: u32) -> ShrinkStep {
+        if self.trail.lit_val(lit) >= 0 {
+            return ShrinkStep::Fail;
+        }
         let var = lit.var();
         let level = self.trail.level(var);
         if level == 0 {
@@ -2724,6 +2748,10 @@ impl Solver {
         if min_level == u32::MAX { 0 } else { min_level }
     }
 }
+
+#[cfg(test)]
+#[path = "minimize_reason_tests.rs"]
+mod minimize_reason_tests;
 
 #[cfg(test)]
 mod tests {
