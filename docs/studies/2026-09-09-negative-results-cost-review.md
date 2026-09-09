@@ -378,3 +378,23 @@ the old per-unit callback, it could retain immutable preparation across
 assignments. That is a distinct, untested interaction, with freshness and
 register-pressure costs to establish first. The study records its obligations;
 another current-header syntax or owner-layout sweep is not the next step.
+
+## Complete engine with persistent header preparation
+
+The [persistent-header experiment](2026-09-10-persistent-engine-headers.md)
+implements the previously untested interaction: retain immutable preparation
+through assignments inside the complete engine. Refreshing a pending blocker
+by comparing it with the single newly assigned literal is exact and avoids a
+second value lookup. A phase-local ownership repair reduces its stack frame
+from 312 to 264 bytes and removes exit writebacks before any cost run.
+
+The combined implementation still adds **7.49% whole-process instructions**
+against the first engine on identical j3037 output, with observed wall
+52.31 versus 36.72 seconds. The candidate profile exposes preparation-load
+and spill sites, a value-base reload inside tail loops and larger duplicated
+suffix code. Host interference prevents assigning the entire wall delta to
+those costs. No production change, si2 confirmation or measured repair;
+one cost plus one diagnostic invocation. This closes the one-entry pipeline
+under the complete ownership boundary too. Further work needs an explicit
+reduction in dependency/work or live state, not another revival of the same
+lookahead bookkeeping.
