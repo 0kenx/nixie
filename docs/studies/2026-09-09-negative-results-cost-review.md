@@ -243,3 +243,32 @@ process or add a cursor merely because learned clauses are long. The next
 core cost question remains the serial watch/blocker/payload path; another
 batching or certificate mechanism must remove an identified consumer or
 renewal cost from its failed predecessor, not just add it to this mode.
+
+## Fifth combination: delayed moves simplify code but retain the work
+
+The [delayed destination-write screen](2026-09-09-delayed-watch-moves.md)
+combines the old flat-arena experiment's queue with today's direct compact
+watches and fixed-trail two-phase scan. It preserves the current Vec lists
+and flushes before every unit/conflict/done return. The generated scan bodies
+shrink by roughly 14%, with 16 fewer local stack bytes each, but the complete
+original-circuit run is **8.88 s versus retained 8.81 s**. Its output and model
+match; the wall gate fails, so the si2 guard is skipped and no source lands.
+
+The required candidate flamegraph identifies the cost left behind. Queue
+preparation/store regions receive **2.124%** of total sampled cycles, the
+separate flush **3.015%**, and the watch scan bodies still **51.284%**.
+The flush still appends every watcher individually. Destination stores and
+loop control receive 1.521%; target indexing/capacity 0.944%. Its growth-call
+block receives no samples, so reserve-size tuning has no demonstrated margin.
+These are IP attributions, not precise region timings or a causal explanation
+of the small different-window wall delta.
+
+Adjacent equal-destination batching is an algorithmic way to remove some
+append operations, but this profile does not establish its reuse frequency
+and the entire flush is a small ceiling. Grouping/index preparation must be
+priced before adopting it. The old eager-normalization comparison also rules
+out presenting conditional pair-store elision as an untried repair. A more
+promising core audit is whether the scan's cursor/span invariants can remove
+repeated compaction bookkeeping and copies; merely moving the same work
+between functions has now been priced. The failed prototype, checked states,
+assembly and complete profile remain reproducible from the binary cache.

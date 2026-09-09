@@ -95,3 +95,117 @@ Current main's inherited inactive relation-mode check remains present in the
 candidate. A negative/neutral outcome must examine the queue's introduced
 cost and remaining dependencies using its profile and generated code before
 selecting a repair. Do not revive flat storage or masks by assumption.
+
+## Result: no demonstrated wall gain; source not promoted
+
+The committed prototype is `7e244e644333977dd4cc2adf213c39194e2a31a3`.
+Release SHA-256 is
+`11c1c8d361cb4765d4d8e7886724f918a72185efc6f6774d1b92632f1363c6eb`;
+perf SHA-256 is
+`85d40f8ad7c0a2a076370f30317ef46b84992809694e0a5468cf52109d60deab`.
+The registered compiler, lockfile and portable settings match. The queue
+record is 12 bytes in ordinary builds, 16 with observer identity fields.
+
+The pre-measurement assembly gate passes. The suffix shrinks from 1120 to
+959 bytes and the prefix from 938 to 813; both local stack reservations
+shrink from 88 to 72 bytes, with six saved registers still pushed. The
+separate flush body is 257 bytes with 40 local stack bytes. Neither scan
+indexes or grows a destination list. The new fast move path instead performs
+three sequential 32-bit stores plus a length update and a queue-capacity
+check. Queue growth remains an out-of-line call. The flush uses a 12-byte
+input stride and an eight-byte watcher load/store, with destination bounds,
+resize and target-capacity checks. A smaller scan has not removed that work.
+
+| Original circuit, seed 1 / CPU 15 | Wall | Conflicts | Wall/conflict |
+|---|---:|---:|---:|
+| Retained qualified ordinary Nixie | 8.81 s | 186114 | 47.34 us |
+| Delayed-move candidate | **8.88 s** | 186114 | **47.71 us** |
+| Retained requested mode-matched Kissat 4.0.4 | 1.88 s | 167929 | 11.20 us |
+
+Candidate/control is **1.00795**, candidate/Kissat **4.72340**. The 5%
+advancement gate fails. This is no demonstrated improvement, not evidence
+of a precise 0.8% source regression: the controls are retained from another
+window. Complete Nixie output is byte-identical, its SAT model independently
+checks against the original CNF, and the timing-quality gate passes. User
+time is 8.83 s, system 0.02 s, off CPU 0.338%; 49 involuntary switches,
+one voluntary switch and zero major faults. Peak RSS is 36460 KiB versus
+retained control 37512 KiB; this whole-process figure does not separately
+measure the queue allocation. Only circuit wall and its registered profile
+ran: **two performance invocations**, no repeated cells, no new controls and
+no si2 run.
+
+## Candidate cost diagnosis
+
+The [interactive flamegraph](assets/delayed-watch-moves.svg) retains all
+sampled cycle weight, with truncated caller chains labelled. The profile
+passes its registered thresholds: **3814 samples**, all on CPU 15, zero
+loss/read-loss/throttle/unthrottle and 100% scheduling coverage. There are
+3813 user-mode samples and one kernel-labelled sample; unresolved self cost
+is 0.0262%, below the 0.1% limit. There are 492 nontrivial LBR caller chains.
+The sampled prefix ends at 39.944 G cycles / 67.716 G instructions; these
+are diagnostic prefix counters, not complete-solve costs or a control ratio.
+The profiled search/model matches the wall solve after removing only the
+registered terminal memory line.
+
+| Candidate self attribution | Cycles | Instructions attributed by sample deltas |
+|---|---:|---:|
+| Watch suffix | 33.062% | 28.345% |
+| Watch prefix | 18.222% | 15.904% |
+| Move flush | 3.015% | 2.615% |
+| Subsumption | 13.450% | 18.083% |
+| Search body | 5.375% | 4.741% |
+| Propagation driver | 4.012% | 3.534% |
+
+The queue preparation/store address regions inside the scans receive
+**2.124% of whole-profile cycle attribution** (suffix 1.914%, prefix 0.210%).
+The separate flush receives 3.015%: destination store/loop 1.521%, target
+index/capacity 0.944%, entry/exit 0.446%, queue read 0.079% and destination
+extent 0.026%. Its growth-call block receives no samples; this is not proof
+of zero allocations, and out-of-line allocator bodies are separate. The
+ordinary destination append still occurs once per move, with an extra queue
+write/read and boundary flush around it. This explains the unresolved cost
+term that scan text-size savings alone ignored. It does not assign the tiny
+historical-window wall difference to a specific instruction.
+
+Larger reserve capacity is therefore not the supported repair. Fusing
+adjacent equal-destination moves could reduce target-header work while
+preserving per-list order, but the whole flush is only 3.015% here, its
+index/capacity region 0.944%, and this profile does not record run lengths.
+Do not add grouping, sorting or a second index without demonstrating that
+enough append operations disappear to pay for it. Removing a reason-header
+validation is also a small local opportunity: the recorded reason-validation
+regions total about 0.787% of whole cycles. Neither fact licenses a new
+benchmark or predicts a 5% full-run saving.
+
+The larger unresolved cost remains the 51.284% scan bodies. Even after
+destination indexing leaves them, each visit retains dependent blocker,
+header and value reads, compaction bookkeeping and short scans. Several hot
+sampled PCs follow deleted-header loads or test the compaction write index;
+they are not measurements of branch misses or removable safety-check cost.
+The old eager-normalization study already tested conditional pair stores:
+reverting its landed branchless normalization is not a fresh idea. A next
+core rewrite must remove repeated work or make cursor/span invariants visible
+to the compiler while preserving their proof, and price introduced checks,
+copies and call boundaries. Repeating delayed appends or mask construction
+around the unchanged consumer has no demonstrated margin.
+
+## Verification, evidence and disposition
+
+The prototype passes **1005 default SAT tests** and **1032 all-feature SAT
+tests**, one skipped in each configuration, plus their doc tests and strict
+SAT Clippy. New tests cover 97-move bursts ending at each scan exit, existing
+and repeated destinations, unvisited tails, queue growth/reuse, clone and
+packed snapshots, arena compaction and push/pop. The existing exact-state
+legacy oracle, exhaustive small-state/budget cases, independently checked
+models and LRAT transcripts remain in those suites. No new unsafe code is
+introduced. Full workspace/parity qualification was not run for this failed
+prototype and is not claimed; its production code does not land.
+
+Canonical records are **`da44e9229488e460`** (wall) and
+**`e78ab4f5ba678547`** (profile), under `precompile/7e244e6/benchmark/runs/`.
+Adjacent `delayed-watch-moves-wall/` and `delayed-watch-moves-profile/`
+retain once-only runners, starts/completions, thread affinities, full outputs,
+profile data, audit/attribution JSON and weighted stacks. The build identity,
+binaries, source bundle/patch, test logs and assembly are cached; source
+inspection is under `delayed-watch-moves/preflight/`. The temporary worktree,
+branch and scratch logs are removed after recording this result on main.
