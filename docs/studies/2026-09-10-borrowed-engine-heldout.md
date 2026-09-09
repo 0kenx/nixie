@@ -111,3 +111,23 @@ This allocates an unused execution resource for an unstarted panel; it does
 not change the candidate, inputs, order, thresholds or four-cell budget,
 supersede the invalid j3037 result, or permit a timing retry. No foreign
 process is moved or stopped. Full-machine isolation remains unestablished.
+
+### Launch feasibility amendment, still before any cost observation
+
+The all-Atom preflight also failed: four cores were continuously occupied
+and all remaining Atom cores had 66–81% idle time, with CPU pressure only
+0.14%. No solver has run. The preliminary 95% idle requirement is too
+restrictive to launch this bounded screen on the currently shared workstation.
+Change **only the launch idle threshold to 70%**, keeping the same core
+selection/locking rule, <=1% pressure and <=12 load requirements. Retain
+the original runner and all failed preflights. This amendment precedes every
+candidate/control observation and makes no inference about their costs.
+
+The actual acceptance gates are unchanged: both completed arms need <=5%
+off-CPU time, >=99.9% PMU coverage, zero major faults, unchanged constrained
+worker runtime and exact stdout. All four cells still run at most once.
+Call this a comparison under moderate shared load, not isolated timing.
+Even a passing screen retains the limitation that shared cache/frequency
+effects are not separated. If the actual timing gates fail, archive the
+instruction evidence with missing usable wall qualification; no retry or
+post-result threshold amendment follows.
