@@ -1872,6 +1872,46 @@ impl ArithSolver {
     /// scope is currently open on top of the simplex scope stack; the scope
     /// and the frame are pushed and popped together, so
     /// `simplex scopes open == stack.len()` holds at every node body.
+    /// Depth-first integral dive for the B&B root (see the call site).
+    ///
+    /// At each level, pin the first fractional integer variable to its
+    /// floor (then ceil) via scoped equal bounds and recurse; accept the
+    /// first feasible fully-integral leaf as the model.  Equalities cannot
+    /// drift, so recursion depth is bounded by `int_vars.len()`; the node
+    /// cap bounds the worst case (2^depth) and merely falls back to the
+    /// ordinary search.
+    fn integral_dive(&mut self, int_vars: &[VarId], nodes: &mut usize) -> bool {
+        /// Probe budget: beyond this the dive declines (the ordinary
+        /// branch-and-bound takes over); the dive is a heuristic repair for
+        /// the free-nonbasic divergence, not a decision procedure.
+        const MAX_DIVE_NODES: usize = 512;
+        if *nodes >= MAX_DIVE_NODES {
+            return false;
+        }
+        *nodes += 1;
+
+        let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
+            // Fully integral and feasible: record the model.  The caller
+            // keeps its own snapshot semantics, so snapshot here.
+            self.snapshot_lia_model(int_vars);
+            return true;
+        };
+        for k in [value.floor(), value.ceil()] {
+            self.simplex.push();
+            self.simplex.set_lower(var, k, BRANCH_REASON);
+            self.simplex.set_upper(var, k, BRANCH_REASON);
+            let feasible =
+                matches!(self.simplex.check(), Ok(())) && !self.simplex.resource_limit_reached();
+
+            if feasible && self.integral_dive(int_vars, nodes) {
+                self.simplex.pop();
+                return true;
+            }
+            self.simplex.pop();
+        }
+        false
+    }
+
     fn bnb_search(&mut self, int_vars: &[VarId], nodes: &mut usize) -> Result<TheoryResult> {
         struct Node {
             var: VarId,
@@ -1916,6 +1956,26 @@ impl ArithSolver {
         let mut stack: Vec<Node> = Vec::new();
         loop {
             // ===== one node body =====
+            if stack.is_empty() {
+                // Integral dive (once per bnb_search, at the root).  The
+                // LP's fractional vertex sits on rays whose endpoints are
+                // integers of the fractional variables: free nonbasic
+                // integer variables rest at arbitrary values (the crash
+                // basis defaults them to zero), which makes Gomory cuts
+                // inapplicable (their derivation assumes bound-resting
+                // nonbasics) and plain inequality branching divergent – the
+                // LP re-optimizes to the next half-integral point forever
+                // (`y = 2a + 1` walked a := -1/2, -3/2, -5/2 … to the depth
+                // cap; the jain/Ultimate `unknown`s).  Pinning each
+                // fractional variable to `floor`/`ceil` *equalities* under
+                // scoped bounds cannot drift, so the dive is at most
+                // #int-vars deep; a leaf that is feasible and fully
+                // integral is a *found model*, accepted only as such.
+                let mut dive_nodes = 0usize;
+                if self.integral_dive(int_vars, &mut dive_nodes) {
+                    return Ok(TheoryResult::Sat);
+                }
+            }
             if stack.len() > Self::LIA_MAX_DEPTH || *nodes > Self::LIA_MAX_NODES {
                 for _ in 0..stack.len() {
                     self.simplex.pop();

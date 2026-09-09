@@ -808,7 +808,6 @@ impl CounterExampleGenerator {
             // the floor/ceil boundary points for inequality atoms.
             let rhs = manager.mk_sub(lb, la);
             let evaluated = self.evaluate_under_model(rhs, model, manager);
-            let mut pushed = false;
             if let Some(node) = manager.get(evaluated)
                 && let TermKind::IntConst(num) = &node.kind
                 && !num_traits::Zero::is_zero(&a)
@@ -821,16 +820,20 @@ impl CounterExampleGenerator {
                     let witness = manager.mk_int(q);
                     if !out.contains(&witness) {
                         out.push(witness);
-                        pushed = true;
                     }
                 }
             }
-            if !pushed {
-                let a_term = manager.mk_int(a.clone());
-                let witness = manager.mk_div(rhs, a_term);
-                if !out.contains(&witness) {
-                    out.push(witness);
-                }
+            // Always also emit the *symbolic* solved point: its instance is
+            // the durable lemma `not (a*((R-L) div a) + L OP R)` – when the
+            // residual is a sum of Skolem rows (`y = 2s0+2s1+2s2+2s3+1`, the
+            // jain shape) the concrete witness only kills this round's
+            // model value and `y` hops forever, while the symbolic instance
+            // conflicts with the defining rows outright.  Both are ordinary
+            // candidates: whichever fails to falsify is simply dropped.
+            let a_term = manager.mk_int(a.clone());
+            let witness = manager.mk_div(rhs, a_term);
+            if !out.contains(&witness) {
+                out.push(witness);
             }
             if out.len() >= 8 {
                 break; // a handful of solved points is plenty

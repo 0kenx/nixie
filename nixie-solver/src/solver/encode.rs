@@ -1677,6 +1677,14 @@ impl Solver {
     /// still sees `has_quantifiers`, so it answers `Unknown` rather than
     /// guessing.
     fn register_asserted_quantifiers(&mut self, term: TermId, manager: &mut TermManager) {
+        // The Skolem symbols this assertion's rewrites minted (a spine
+        // `(exists a. ...)` conjunct becomes `... sk!0 ...`, the nested
+        // `forall x. exists y. ...` becomes `... skf!0(x) ...`) are prime
+        // instantiation candidates: the witness constant often IS the
+        // refuting instance for a sibling quantifier (the jain/Ultimate
+        // `not (exists v. 2v+1 = y)` class).  Collecting here covers every
+        // rewrite, not just the nested shape.
+        self.collect_skolem_candidates(term, manager);
         // Three-valued visit purpose: quantifiers reachable down the
         // unconditionally-asserted spine get *registered* (or rewritten away
         // before this walk ever sees them); quantifiers anywhere else are

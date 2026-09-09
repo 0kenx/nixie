@@ -147,6 +147,27 @@ impl Solver {
                     }
                 }
 
+                // Nullary Skolem constants are minted as `Var` terms
+                // (`mk_skolem_constant` builds `sk!N` with `mk_var`), not
+                // applications, so the `Apply` arm above never sees them –
+                // and the witness constant of an asserted existential
+                // (`exists a. 2a+1 = y` rewritten to `2·sk!0+1 = y`) then
+                // never entered the candidate pool.  That starved exactly
+                // the refutation the pool exists for: instantiating the
+                // derived universal of `not (exists v. 2v+1 = y)` with
+                // `sk!0` conflicts with its own defining row (the jain /
+                // Ultimate `unknown`s: MBQI hopped `y` from odd value to
+                // odd value until its rounds ran out).  The name prefix is
+                // solver-minted and fresh (`sk!`), so unlike a bound
+                // variable of a pattern this Var is ground in every context
+                // it can appear in.
+                TermKind::Var(name) => {
+                    let vname = manager.resolve_str(*name);
+                    if vname.starts_with("sk!") {
+                        self.mbqi.add_candidate(term, t.sort);
+                    }
+                }
+
                 // Quantifiers: `body` only -- see "Quantifier patterns" above.
                 TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
                     stack.push(*body);
@@ -341,7 +362,7 @@ impl Solver {
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
-                | TermKind::Var(_)
+                // `Var` has its own arm above (nullary `sk!N` constants).
                 | TermKind::StringLit(_)
                 | TermKind::FpLit { .. }
                 | TermKind::FpPlusInfinity { .. }
