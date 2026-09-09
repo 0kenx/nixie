@@ -131,3 +131,53 @@ Even a passing screen retains the limitation that shared cache/frequency
 effects are not separated. If the actual timing gates fail, archive the
 instruction evidence with missing usable wall qualification; no retry or
 post-result threshold amendment follows.
+
+## Four-cell result: executed work falls, wall does not improve
+
+CPU 15 was selected and retained. Both pairs meet the **unchanged actual
+measurement-quality gates**, with 100% PMU coverage, no major faults,
+0.57–1.36% off CPU and no runtime increase on constrained sleeping workers.
+Foreign solver sweeps remained active on other cores; shared-cache/frequency
+effects remain an attribution limit. Both full stdout comparisons are exact;
+both summle SAT models satisfy every clause of the original input. Crn's raw
+UNSAT is unverified without a checked proof and remains Unknown in the store.
+
+| Input / arm | Instructions | User cycles | Wall | Conflicts |
+| --- | ---: | ---: | ---: | ---: |
+| crn production | 11003252708 | 6547224939 | 1.44 s | 87939 |
+| crn candidate | 10072242765 | 6589315626 | 1.47 s | 87939 |
+| summle candidate | 21903374032 | 23782329275 | 5.29 s | 19333 |
+| summle production | 26021361201 | 22139139371 | 4.97 s | 19333 |
+
+Instructions fall **8.46% on crn and 15.83% on summle**. Wall ratios are
+1.02083 and 1.06439; the two-input geometric means are 0.8778 instructions,
+1.0398 cycles and 1.0424 wall (candidate/production, rounded). This fails
+the wall-improvement gate and summle's <=1.03 individual guard. Crn stays
+inside the wall neutrality band; summle is slower in this paired observation.
+Do not promote these two fixed trajectories to a population regression claim.
+
+Canonical records, in execution order: `0840cab28aa276cb`,
+`80bc043f011d740c`, `e2d317ccc921704d`, `02d916e9af5fe4da`.
+Crn has 3817687 propagations and summle 32793359 in both arms. No new
+Kissat cells follow the failed advancement gate. Existing reference records
+were audited; none exactly matched this protocol/core/seed combination.
+
+The 19.93% j3037 instruction reduction now has independent-input support,
+but fewer instructions again do not demonstrate progress on wall. The old
+j3037 timing remains invalid; these new records do not repair it.
+
+## One summle diagnostic, before execution
+
+Use the already permitted summle LBR diagnostic to resolve the different
+workload's remaining cost. Reuse the exact cached candidate perf binary;
+no rebuild, repair or additional control. Same core, input, seed and solver
+flags, with terminal memory reporting and grouped user cycles/instructions.
+Use a fixed **1048576-cycle sampling period** to obtain enough samples from
+this shorter solve; LBR caller stacks, 128 mmap pages and sample-read counters.
+Require at least 1000 samples, no lost/throttled records, >=99.9% PMU/user
+coverage and <=0.1% unresolved self cycles. Preserve a quality failure without
+retrying. Compare output after removing exactly the terminal memory line and
+independently check its model. Diagnostic elapsed time is never cost evidence.
+Inspect hot addresses against the unchanged perf assembly, including the
+borrowed-reason setup/read sites, binary spans and long-watch access chain.
+No measured repair or extra profile follows this four-cell screen.
