@@ -18,6 +18,8 @@
 //!                       factor.c port; the worker_550 lever).  Sub-knobs
 //!                       read by the solver itself: NIXIE_FACTOR_SCHED
 //!                       (back|front|leave), NIXIE_FACTOR_BUDGET (ticks).
+//!   NIXIE_RELATION_FACTOR=1 apply the checked offline relation transform
+//!                       in memory and validate SAT on the original CNF
 //!   NIXIE_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
 //!   NIXIE_BCP_STATS=1   print the BCP anatomy counters (requires a build
@@ -38,6 +40,11 @@
 //! ```
 
 use nixie_sat::{ConfigPreset, DimacsParser, Solver};
+
+#[path = "support/relation_input.rs"]
+mod relation_input;
+#[path = "support/relation_solve.rs"]
+mod relation_solve;
 fn main() {
     let path = std::env::args().nth(1).expect("path");
     let mut parser = DimacsParser::new();
@@ -186,7 +193,37 @@ fn main() {
     if let Ok(sd) = std::env::var("SEED") {
         solver.set_random_seed(sd.parse::<u64>().unwrap_or(0));
     }
-    parser.parse_file(&path, &mut solver).expect("parse ok");
+    let use_relations = match std::env::var("NIXIE_RELATION_FACTOR") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Err(std::env::VarError::NotPresent) => false,
+        Ok(_) | Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("NIXIE_RELATION_FACTOR must be 0 or 1");
+            std::process::exit(2);
+        }
+    };
+    let original_for_validation = if use_relations {
+        match relation_solve::load_file(&path, &mut solver) {
+            Ok(prepared) => {
+                eprintln!(
+                    "relation_factor: groups={} fallback={} input_clauses={} clauses={} literals={}",
+                    prepared.groups,
+                    prepared.fallback,
+                    prepared.original_clauses(),
+                    prepared.clauses,
+                    prepared.literals
+                );
+                Some(prepared)
+            }
+            Err(error) => {
+                eprintln!("relation factorization failed: {error}");
+                std::process::exit(2);
+            }
+        }
+    } else {
+        parser.parse_file(&path, &mut solver).expect("parse ok");
+        None
+    };
     #[cfg(feature = "bcp-regions")]
     let observe_regions = match std::env::var("NIXIE_REGION_STATS") {
         Ok(value) => match value.parse::<std::num::NonZeroU64>() {
@@ -273,6 +310,13 @@ fn main() {
         }
     }
     let r = solver.solve();
+    if let Some(original) = original_for_validation
+        && r == nixie_sat::SolverResult::Sat
+        && let Err(error) = original.verify_model(&solver.model())
+    {
+        eprintln!("{error}");
+        std::process::exit(2);
+    }
     #[cfg(feature = "clause-traffic")]
     if observe_traffic && let Err(error) = solver.write_clause_traffic(std::io::stderr().lock()) {
         eprintln!("writing clause traffic failed: {error}");
