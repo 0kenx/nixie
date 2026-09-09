@@ -3081,6 +3081,34 @@ impl Solver {
                         .map(|m| m.assignments().clone())
                         .unwrap_or_default();
 
+                    // Refresh boundary-quantifier activity: a guard the SAT
+                    // core committed FALSE makes the quantifier vacuously
+                    // satisfied in this candidate model, so the round skips
+                    // its counterexample search (its guarded instances are
+                    // inert under `!q` anyway).
+                    {
+                        let mut inactive: FxHashSet<TermId> = FxHashSet::default();
+                        for idx in 0..self.mbqi.num_quantifiers() {
+                            if let Some(q) = self.mbqi.quantifier_at(idx)
+                                && let Some(g) = q.guard
+                            {
+                                // The guard literal is committed FALSE when
+                                // the variable's value contradicts the
+                                // literal's sign.
+                                let var_value = self.sat.model_value(g.var());
+                                let lit_true = if g.is_pos() {
+                                    var_value == nixie_sat::LBool::True
+                                } else {
+                                    var_value == nixie_sat::LBool::False
+                                };
+                                if !lit_true {
+                                    inactive.insert(q.term);
+                                }
+                            }
+                        }
+                        self.mbqi.sync_guard_commitments(&inactive);
+                    }
+
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
@@ -3189,7 +3217,16 @@ impl Solver {
                                     &mut ph_diseqs,
                                 );
                                 let lit = self.encode(inst.result, manager);
-                                let ok = self.sat.add_clause([lit]);
+                                // A *boundary* quantifier's instance is only
+                                // valid under its own meaning: `q -> body[t]`
+                                // for `q = forall x. body`.  Emit the guarded
+                                // clause; spine-registered quantifiers have
+                                // no guard and keep the unit clause.
+                                let clause: Vec<Lit> = match self.mbqi.guard_of(inst.quantifier) {
+                                    Some(g) => vec![g.negate(), lit],
+                                    None => vec![lit],
+                                };
+                                let ok = self.sat.add_clause(clause);
                                 let _ = ok;
                                 self.add_arith_diseq_split(inst.result, manager);
                                 self.add_arith_eq_trichotomy(inst.result, manager);
@@ -3255,7 +3292,12 @@ impl Solver {
                                         &mut ph_diseqs,
                                     );
                                     let lit = self.encode(inst.result, manager);
-                                    let _ = self.sat.add_clause([lit]);
+                                    let clause: Vec<Lit> = match self.mbqi.guard_of(inst.quantifier)
+                                    {
+                                        Some(g) => vec![g.negate(), lit],
+                                        None => vec![lit],
+                                    };
+                                    let _ = self.sat.add_clause(clause);
                                     self.add_arith_diseq_split(inst.result, manager);
                                     self.add_arith_eq_trichotomy(inst.result, manager);
                                     self.add_int_domain_clauses(inst.result, manager);

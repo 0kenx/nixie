@@ -175,6 +175,59 @@ impl MBQIIntegration {
         }
     }
 
+    /// Register a **boundary** universal with its propositional guard: the
+    /// quantifier is not unconditionally asserted (it sits behind a
+    /// disjunction, an `ite` arm, ...), so its instances are only valid as
+    /// guarded clauses `(!q | body[t])` – which is still valid in every
+    /// model, because `q`'s meaning *is* the quantified formula.
+    pub fn add_guarded_quantifier(
+        &mut self,
+        term: TermId,
+        guard: nixie_sat::Lit,
+        manager: &TermManager,
+    ) {
+        let Some(t) = manager.get(term) else {
+            return;
+        };
+        if let nixie_core::ast::TermKind::Forall { vars, body, .. } = &t.kind {
+            // A quantifier that is also spine-registered keeps its stronger
+            // unguarded registration; do not track it twice.
+            if self.quantifiers.iter().any(|q| q.term == term) {
+                return;
+            }
+            let bound_vars: SmallVec<[(Spur, SortId); 4]> = vars.iter().copied().collect();
+            let mut qf = QuantifiedFormula::new(term, bound_vars, *body, true);
+            qf.guard = Some(guard);
+            self.quantifiers.push(qf);
+            self.stats.num_quantifiers += 1;
+        }
+    }
+
+    /// Record which boundary quantifiers' branches the SAT core currently
+    /// commits FALSE (vacuously satisfied) — refreshed by the solver before
+    /// each MBQI round.  An inactive guard makes the round skip the
+    /// quantifier's counterexample search entirely: its guarded instances
+    /// are inert under `!q`, and searching them would only starve the loop
+    /// toward `unknown`.
+    pub fn sync_guard_commitments(&mut self, inactive: &FxHashSet<TermId>) {
+        for q in &mut self.quantifiers {
+            q.guard_inactive = q.guard.is_some() && inactive.contains(&q.term);
+        }
+    }
+
+    /// The tracked quantifier at `idx`, if in range.
+    pub fn quantifier_at(&self, idx: usize) -> Option<&QuantifiedFormula> {
+        self.quantifiers.get(idx)
+    }
+
+    /// The propositional guard of a tracked quantifier, if any.
+    pub fn guard_of(&self, term: TermId) -> Option<nixie_sat::Lit> {
+        self.quantifiers
+            .iter()
+            .find(|q| q.term == term)
+            .and_then(|q| q.guard)
+    }
+
     /// Run MBQI with a partial model implementing the Ge & de Moura (2009) algorithm.
     ///
     /// The loop:
@@ -365,6 +418,13 @@ impl MBQIIntegration {
 
         for quantifier in &quantifiers {
             if !quantifier.can_instantiate() {
+                continue;
+            }
+            // A boundary quantifier whose branch the SAT core committed
+            // FALSE is vacuously satisfied in the candidate model: no
+            // counterexample search (its guarded instances are inert under
+            // `!q` anyway, and searching would only starve the loop).
+            if quantifier.guard_inactive {
                 continue;
             }
 

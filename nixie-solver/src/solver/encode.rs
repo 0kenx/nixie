@@ -1728,8 +1728,19 @@ impl Solver {
                         // `skolemize_asserted_existentials` rewrites exactly the
                         // `(not <quantifier>)`-headed conjuncts away before this
                         // walk runs, so reaching here means a shape it does not
-                        // own: no engine owns this quantifier.
-                        unowned_candidates.insert(current);
+                        // own.  A `Forall` still gets the guarded registration
+                        // (its instances are valid under its own meaning); an
+                        // `Exists` stays unowned and gates `sat`.
+                        if matches!(kind, TermKind::Forall { .. }) {
+                            let var = self.get_or_create_var(current);
+                            self.mbqi.add_guarded_quantifier(
+                                current,
+                                nixie_sat::Lit::pos(var),
+                                manager,
+                            );
+                        } else {
+                            unowned_candidates.insert(current);
+                        }
                     }
                     for child in super::term_walk::asserted_children(&kind, positive) {
                         stack.push(Visit::Register(child.0, child.1));
@@ -1749,15 +1760,51 @@ impl Solver {
                     let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
                         continue;
                     };
-                    if matches!(kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
-                        unowned_candidates.insert(current);
-                        // Do not descend into the quantifier's body: the
-                        // quantifier itself is the unowned obligation; its
-                        // body is that obligation's internal structure.
-                        continue;
-                    }
-                    for child in nixie_core::ast::get_children(&kind) {
-                        stack.push(Visit::Notice(child));
+                    match kind {
+                        TermKind::Forall { .. } => {
+                            // A boundary *universal* is still instantiable
+                            // soundly: for `q = forall x. phi` the clause
+                            // `(!q | phi[t])` is valid in every model, so it
+                            // is registered with its propositional guard and
+                            // its instances activate only when the branch `q`
+                            // is committed.  It is not `unowned`.
+                            let var = self.get_or_create_var(current);
+                            self.mbqi.add_guarded_quantifier(
+                                current,
+                                nixie_sat::Lit::pos(var),
+                                manager,
+                            );
+                        }
+                        TermKind::Exists { vars, body, .. } => {
+                            // A boundary existential still has a sound
+                            // *refutation* direction: `not (exists x. D)`
+                            // is `forall x. not D`, so the derived universal
+                            // is registered with guard `!q_e` (the clause
+                            // `q_e | not D[t]` is valid in every model).  The
+                            // existential *witness* direction stays unowned
+                            // and gates `sat`.
+                            let var = self.get_or_create_var(current);
+                            let var_names: Vec<(String, nixie_core::sort::SortId)> = vars
+                                .iter()
+                                .map(|(name, sort)| (manager.resolve_str(*name).to_string(), *sort))
+                                .collect();
+                            let neg_body = manager.mk_not(body);
+                            let derived = manager.mk_forall(
+                                var_names.iter().map(|(n, s)| (n.as_str(), *s)),
+                                neg_body,
+                            );
+                            self.mbqi.add_guarded_quantifier(
+                                derived,
+                                nixie_sat::Lit::neg(var),
+                                manager,
+                            );
+                            unowned_candidates.insert(current);
+                        }
+                        _ => {
+                            for child in nixie_core::ast::get_children(&kind) {
+                                stack.push(Visit::Notice(child));
+                            }
+                        }
                     }
                 }
             }
