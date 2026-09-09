@@ -416,3 +416,33 @@ This closes at code generation with **zero performance invocations**; it
 does not demonstrate a wall regression or a speedup. The source and capacity
 proof are archived. Do not retry the same annotation or change the gate
 post hoc; further work must reduce the state carried by the whole engine.
+
+## Borrowed reasons and fixed assignments: less work, timing unqualified
+
+The [borrowed-reason experiment](2026-09-10-borrowed-propagation-reasons.md)
+changes the access contracts that kept the fixed-queue engine's state large.
+An in-domain undefined assignment uses focused unchecked stores, while a
+live clause carries disjoint payload and stable-identity borrows. This
+removes repeated reason validation and assignment bounds branches, reduces
+the local frame to 216 bytes and passes the original code-generation gate.
+Scoped tests, strict-provenance Miri and native Rayon ownership pass.
+
+On identical complete j3037 output, whole-process instructions fall
+**19.93% against qualified production and 5.20% against the first engine**.
+This is a successful instruction-level combination with the fixed queue.
+Its wall measurement is unusable: 34.866% off CPU, almost 20000 involuntary
+context switches, and heavy concurrent foreign builds and solver sweeps.
+Do not label this a demonstrated wall regression, claim a wall gain, or
+replace the failed-quality cell with a rerun. No si2 confirmation follows.
+
+The one qualified diagnostic puts 72.90% of sampled self cycles in the
+engine. Selected borrowed-identity setup/read IPs account for only 0.247%;
+blocker comparisons, deleted-header tests and overflow metadata remain
+prominent. These are skid-sensitive address attributions under contention,
+not causal time budgets. No introduced dominant cost justifies the optional
+measured repair, and changing pointer syntax again would not remove the
+remaining dependent access chain. Exactly one cost and one profile were
+spent. Source, safety evidence and profile are archived on main; production
+promotion remains unqualified pending a separately registered, uncontended
+wall comparison. This is an instruction-positive result with missing usable
+timing, not another measured negative implementation result.
