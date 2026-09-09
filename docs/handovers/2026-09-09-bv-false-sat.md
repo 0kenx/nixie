@@ -160,3 +160,26 @@ site — the env-gated corpus test is the canary.
 **Also fixed this session**: `NIXIE_DUMP_CNF_AT_SAT` (dump the formula
 at the sat return — search-added clauses included) landed alongside the
 fix for future blast-vs-core splits.
+
+## Post-landing correction (final numbers)
+
+The 509-cell re-screen first ran with a stale worktree binary (another
+agent rebuilt the shared `target/` mid-session — the binary at a fixed
+path changed md5 three times). Final, verified numbers with the
+**committed** `ac13904` binary (`md5 64e6c14…`, built in an isolated
+`CARGO_TARGET_DIR`, `unsat` on nlzbs128 ×3):
+
+- **266 of 509 solved** (pre-fix 213, z3 281) — gap 68 → 15;
+- **0 verdict disagreements vs z3** (the one recorded nlzbs128 `sat` was
+  the stale binary; corrected cell banked in
+  `precompile/ac13904/benchmark/bv_gap/fixed_cells.jsonl`).
+
+Remaining gap families (next perf targets): brummayerbiere4 (0 vs 10),
+Sydr (5 vs 9), bmc-bv-svcomp14 (5 vs 9), UltimateAutomizer-2023 (2 vs
+5), plus one-file losses scattered. The 256-bit nlz variants are honest
+timeouts (z3 solves them — wide-width blasting cost).
+
+Measurement lesson (twice in one session): **verify the binary md5 in
+the same shell block as any verdict**, and never source a benchmark
+binary from a shared, concurrently-rebuilt `target/` — the precompile
+cache exists precisely to freeze one artifact per commit.
