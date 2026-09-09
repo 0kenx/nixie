@@ -141,3 +141,23 @@ local stack. Run default/all-feature SAT and focused strict-Miri coverage of
 the changed access paths, strict Clippy and format. Keep the original cost
 and confirmation gates. No second profile, ablation, distance search or cost
 retry. A passing combined result would not isolate either component's effect.
+
+### Repair preflight: narrow the directory borrow representation
+
+The safe two-slice implementation removes owner transfer and reads one header
+word at `0x6423c` / `0x644b5`, with length reused from its low word. However,
+its engine grows to 4022 bytes and 264 local stack bytes, failing the 248-byte
+preflight bound. No cost cell was spent. It retains both destination slice
+bases/lengths and selects/rebases the target on every move.
+
+Refine the same disjoint-borrow operation to a checked directory view with
+one excluded row: retain a raw base, total length and excluded index, plus
+an exclusive lifetime marker. Derive the base before creating the current
+row reference, never form a slice covering that row, and reject out-of-range
+or excluded targets before creating a mutable destination reference. This
+requires two small unsafe blocks for reference creation; no unchecked public
+API or Send/Sync assertion. The view never leaves ordinary propagation.
+This removes the second base/length and target rebasing while preserving the
+same ownership rule. Re-run strict Miri on simultaneous current/destination
+borrows, growth on both sides, repeated directory borrows and rejection paths,
+plus native Rayon/exact-state tests. The original assembly/cost gates stand.
