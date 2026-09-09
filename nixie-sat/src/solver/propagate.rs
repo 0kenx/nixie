@@ -55,6 +55,10 @@ mod region_tests {
 }
 use core::sync::atomic::Ordering::Relaxed;
 
+#[path = "watch_kernel.rs"]
+mod watch_kernel;
+use watch_kernel::{Cursor, Step};
+
 impl Solver {
     /// Unit propagation using two-watched literals
     ///
@@ -71,6 +75,7 @@ impl Solver {
         let bcp_stats = crate::diag_bcp::enabled();
         #[cfg(not(feature = "bcp-stats"))]
         let bcp_stats = false;
+        let use_kernel = self.use_watch_kernel(bcp_stats);
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
             if bcp_stats {
@@ -256,231 +261,236 @@ impl Solver {
                 .as_mut()
                 .and_then(|stats| stats.begin(lit, &watches, &self.trail, self.stats.conflicts));
 
-            for read in 0..watches.len() {
-                let watcher = watches[read];
-                #[cfg(feature = "clause-traffic")]
-                let traffic_event = traffic::visit(
-                    &mut self.clause_traffic,
-                    &self.clauses,
-                    watcher.clause,
-                    1,
-                    self.stats.conflicts,
-                );
-                #[cfg(feature = "bcp-regions")]
-                let region_event = regions::visit(
-                    &mut self.region_stats,
-                    region_sample,
-                    &self.clauses,
-                    watcher.clause,
-                    1,
-                    self.stats.conflicts,
-                );
-
-                let blocker_true = self.trail.lit_val_hot(watcher.blocker) > 0;
-                #[cfg(feature = "bcp-groups")]
-                if let Some(sample) = &mut group_sample {
-                    sample.observe(watcher, blocker_true);
-                }
-                if blocker_true {
+            if use_kernel {
+                (write, conflict_found) = self.scan_watch_list(lit, &mut watches);
+            } else {
+                for read in 0..watches.len() {
+                    let watcher = watches[read];
                     #[cfg(feature = "clause-traffic")]
-                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::HIT);
+                    let traffic_event = traffic::visit(
+                        &mut self.clause_traffic,
+                        &self.clauses,
+                        watcher.clause,
+                        1,
+                        self.stats.conflicts,
+                    );
                     #[cfg(feature = "bcp-regions")]
-                    regions::record(&mut self.region_stats, region_event, regions::HIT);
-                    // Kept watcher. While `write == read` (no watcher dropped
-                    // yet in this scan) the write-back would be a pure
-                    // self-write — skip it; the compaction copy is only
-                    // needed once the pointers have split.
-                    if write != read {
-                        watches[write] = watcher;
-                    }
-                    write += 1;
-                    continue;
-                }
+                    let region_event = regions::visit(
+                        &mut self.region_stats,
+                        region_sample,
+                        &self.clauses,
+                        watcher.clause,
+                        1,
+                        self.stats.conflicts,
+                    );
 
-                // Direct arena addressing: the watcher carries the clause's
-                // slot (`Watcher::r`), so a visit costs one dependent load
-                // (the clause itself) instead of two (refs table, then
-                // clause). Validation is unchanged: bounds + deleted flag,
-                // with deleted/invalid slots reading as "no clause" exactly
-                // like the id-based path.
-                #[cfg(feature = "bcp-regions")]
-                regions::record(&mut self.region_stats, region_event, regions::PAYLOAD);
-                #[cfg(feature = "clause-traffic")]
-                traffic::record(&mut self.clause_traffic, traffic_event, traffic::PAYLOAD);
-                let clause = match self.clauses.live_lits_by_ref(watcher.r) {
-                    Some(lits) => lits,
-                    None => {
-                        // Deleted clause – drop (don't advance write).
-                        if bcp_stats {
-                            crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
-                        }
-                        continue;
+                    let blocker_true = self.trail.lit_val_hot(watcher.blocker) > 0;
+                    #[cfg(feature = "bcp-groups")]
+                    if let Some(sample) = &mut group_sample {
+                        sample.observe(watcher, blocker_true);
                     }
-                };
-
-                // Make sure the false literal is at position 1. The
-                // normalization is kept UNCONDITIONAL (not on-demand): a
-                // pilot that left the watched pair in visit order on the
-                // satisfied/satrepl paths diverged 34/54 corpus trajectories
-                // — stored order is observable beyond direct `lits[0]`
-                // readers (watch-rank tie-breaks, first-wins scans in
-                // vivify/probe/els), so the two arena stores stay on every
-                // miss visit. See
-                // `studies/2026-09-propagate-write-elision.md` (slice a,
-                // reverted).
-                if bcp_stats {
-                    crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
-                }
-                let false_lit = lit.negate();
-                debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
-                if bcp_stats && clause[0] == false_lit {
-                    crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
-                }
-                // XOR cancels the false watch, independent of its position.
-                // Store the normalized pair even on satisfied exits: literal
-                // order is observable by later inprocessing tie-breaks.
-                let first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
-                clause[0] = first;
-                clause[1] = false_lit;
-
-                // If first watch is true, clause is satisfied
-                if self.trail.lit_val_hot(first) > 0 {
-                    if bcp_stats {
-                        crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
-                    }
-                    if write != read {
-                        watches[write] = watcher;
-                    }
-                    // Refresh only the blocker word (the other two words are
-                    // unchanged; while `write == read` a full write-back
-                    // would be a pure self-write).
-                    watches[write].blocker = first;
-                    write += 1;
-                    continue;
-                }
-
-                // Look for a replacement watch, separating the satisfied
-                // case from the unassigned case (cadical `propagate.cpp`'s
-                // `if (v > 0) j[-1].blit = r` / `else if (!v) ...` pair):
-                //
-                // * a **satisfied** replacement literal means the clause
-                //   cannot become unit or conflict before a backtrack —
-                //   the watcher STAYS on this list and only its blocker is
-                //   refreshed. No clause write, no watch-list move; the
-                //   next visit short-circuits on the blocker byte instead
-                //   of re-scanning the clause.
-                // * only an **unassigned** replacement moves the watch to
-                //   the new literal's list (the watch must track a
-                //   non-false literal to preserve the two-watch
-                //   invariant).
-                //
-                // The previous `>= 0` branch moved the watch in both cases,
-                // paying a clause swap plus a cross-list push for every
-                // satisfied replacement — the larger half of the blocker
-                // gap measured against cadical (55% hit rate: watchers
-                // parked on satisfied literals kept stale blockers).
-                let mut found = false;
-                for j in 2..clause.len() {
-                    #[cfg(feature = "clause-traffic")]
-                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::SCAN);
-                    #[cfg(feature = "bcp-regions")]
-                    regions::record(&mut self.region_stats, region_event, regions::SCAN);
-                    let l = clause[j];
-                    let v = self.trail.lit_val_hot(l);
-                    if v > 0 {
-                        // Satisfied replacement: keep the watcher here,
-                        // refresh the blocker to the satisfied literal
-                        // (blocker word only).
+                    if blocker_true {
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::HIT);
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::HIT);
+                        // Kept watcher. While `write == read` (no watcher dropped
+                        // yet in this scan) the write-back would be a pure
+                        // self-write — skip it; the compaction copy is only
+                        // needed once the pointers have split.
                         if write != read {
                             watches[write] = watcher;
                         }
-                        watches[write].blocker = l;
                         write += 1;
-                        if bcp_stats {
-                            crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
-                        }
-                        found = true;
-                        break;
+                        continue;
                     }
-                    if v == 0 {
-                        // Unassigned replacement: move the watch (the
-                        // eager normalization above already set
-                        // `lits[0]` to the non-false watch).
-                        clause.swap(1, j);
-                        if bcp_stats {
-                            crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
-                        }
-                        self.watches.add(
-                            clause[1].negate(),
-                            Watcher {
-                                blocker: first,
-                                ..watcher
-                            },
-                        );
-                        found = true;
-                        break;
-                    }
-                }
 
-                if found {
-                    continue; // handled: parked-with-fresh-blocker or moved
-                }
-
-                // No new watch found - clause is unit or conflicting
-                if write != read {
-                    watches[write] = watcher;
-                }
-                watches[write].blocker = first;
-
-                if self.trail.lit_val_hot(first) < 0 {
-                    #[cfg(feature = "clause-traffic")]
-                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::CONFLICT);
+                    // Direct arena addressing: the watcher carries the clause's
+                    // slot (`Watcher::r`), so a visit costs one dependent load
+                    // (the clause itself) instead of two (refs table, then
+                    // clause). Validation is unchanged: bounds + deleted flag,
+                    // with deleted/invalid slots reading as "no clause" exactly
+                    // like the id-based path.
                     #[cfg(feature = "bcp-regions")]
-                    regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
+                    regions::record(&mut self.region_stats, region_event, regions::PAYLOAD);
+                    #[cfg(feature = "clause-traffic")]
+                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::PAYLOAD);
+                    let clause = match self.clauses.live_lits_by_ref(watcher.r) {
+                        Some(lits) => lits,
+                        None => {
+                            // Deleted clause – drop (don't advance write).
+                            if bcp_stats {
+                                crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Make sure the false literal is at position 1. The
+                    // normalization is kept UNCONDITIONAL (not on-demand): a
+                    // pilot that left the watched pair in visit order on the
+                    // satisfied/satrepl paths diverged 34/54 corpus trajectories
+                    // — stored order is observable beyond direct `lits[0]`
+                    // readers (watch-rank tie-breaks, first-wins scans in
+                    // vivify/probe/els), so the two arena stores stay on every
+                    // miss visit. See
+                    // `studies/2026-09-propagate-write-elision.md` (slice a,
+                    // reverted).
                     if bcp_stats {
-                        crate::diag_bcp::CONFLICTS.fetch_add(1, Relaxed);
-                        // Entries after the conflicting one were never
-                        // visited (the len-based count above overcounts by
-                        // exactly this tail).
-                        crate::diag_bcp::VISITS
-                            .fetch_sub((watches.len() - read - 1) as u64, Relaxed);
+                        crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
                     }
-                    conflict_found = Some(watcher.clause);
-                    write += 1; // keep the conflicting watcher
-                    // Copy remaining watchers to preserve them
-                    for rest in read + 1..watches.len() {
-                        watches[write] = watches[rest];
+                    let false_lit = lit.negate();
+                    debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
+                    if bcp_stats && clause[0] == false_lit {
+                        crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
+                    }
+                    // XOR cancels the false watch, independent of its position.
+                    // Store the normalized pair even on satisfied exits: literal
+                    // order is observable by later inprocessing tie-breaks.
+                    let first =
+                        Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
+                    clause[0] = first;
+                    clause[1] = false_lit;
+
+                    // If first watch is true, clause is satisfied
+                    if self.trail.lit_val_hot(first) > 0 {
+                        if bcp_stats {
+                            crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
+                        }
+                        if write != read {
+                            watches[write] = watcher;
+                        }
+                        // Refresh only the blocker word (the other two words are
+                        // unchanged; while `write == read` a full write-back
+                        // would be a pure self-write).
+                        watches[write].blocker = first;
+                        write += 1;
+                        continue;
+                    }
+
+                    // Look for a replacement watch, separating the satisfied
+                    // case from the unassigned case (cadical `propagate.cpp`'s
+                    // `if (v > 0) j[-1].blit = r` / `else if (!v) ...` pair):
+                    //
+                    // * a **satisfied** replacement literal means the clause
+                    //   cannot become unit or conflict before a backtrack —
+                    //   the watcher STAYS on this list and only its blocker is
+                    //   refreshed. No clause write, no watch-list move; the
+                    //   next visit short-circuits on the blocker byte instead
+                    //   of re-scanning the clause.
+                    // * only an **unassigned** replacement moves the watch to
+                    //   the new literal's list (the watch must track a
+                    //   non-false literal to preserve the two-watch
+                    //   invariant).
+                    //
+                    // The previous `>= 0` branch moved the watch in both cases,
+                    // paying a clause swap plus a cross-list push for every
+                    // satisfied replacement — the larger half of the blocker
+                    // gap measured against cadical (55% hit rate: watchers
+                    // parked on satisfied literals kept stale blockers).
+                    let mut found = false;
+                    for j in 2..clause.len() {
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::SCAN);
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::SCAN);
+                        let l = clause[j];
+                        let v = self.trail.lit_val_hot(l);
+                        if v > 0 {
+                            // Satisfied replacement: keep the watcher here,
+                            // refresh the blocker to the satisfied literal
+                            // (blocker word only).
+                            if write != read {
+                                watches[write] = watcher;
+                            }
+                            watches[write].blocker = l;
+                            write += 1;
+                            if bcp_stats {
+                                crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
+                            }
+                            found = true;
+                            break;
+                        }
+                        if v == 0 {
+                            // Unassigned replacement: move the watch (the
+                            // eager normalization above already set
+                            // `lits[0]` to the non-false watch).
+                            clause.swap(1, j);
+                            if bcp_stats {
+                                crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
+                            }
+                            self.watches.add(
+                                clause[1].negate(),
+                                Watcher {
+                                    blocker: first,
+                                    ..watcher
+                                },
+                            );
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if found {
+                        continue; // handled: parked-with-fresh-blocker or moved
+                    }
+
+                    // No new watch found - clause is unit or conflicting
+                    if write != read {
+                        watches[write] = watcher;
+                    }
+                    watches[write].blocker = first;
+
+                    if self.trail.lit_val_hot(first) < 0 {
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::CONFLICT);
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::CONFLICT);
+                        if bcp_stats {
+                            crate::diag_bcp::CONFLICTS.fetch_add(1, Relaxed);
+                            // Entries after the conflicting one were never
+                            // visited (the len-based count above overcounts by
+                            // exactly this tail).
+                            crate::diag_bcp::VISITS
+                                .fetch_sub((watches.len() - read - 1) as u64, Relaxed);
+                        }
+                        conflict_found = Some(watcher.clause);
+                        write += 1; // keep the conflicting watcher
+                        // Copy remaining watchers to preserve them
+                        for rest in read + 1..watches.len() {
+                            watches[write] = watches[rest];
+                            write += 1;
+                        }
+                        break;
+                    } else {
+                        // Unit propagation
+                        #[cfg(feature = "clause-traffic")]
+                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::UNIT);
+                        #[cfg(feature = "bcp-regions")]
+                        regions::record(&mut self.region_stats, region_event, regions::UNIT);
+                        if bcp_stats {
+                            crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
+                        }
+                        self.trail.assign_propagation(first, watcher.clause);
+                        // Diagnostic (`NIXIE_REASON_STATS`): classify each BCP
+                        // propagation by whether its reason clause was learned.
+                        // Cold: one extra clause-header read per assignment, only
+                        // when the env gate is set (search-shape studies).
+                        if Self::reason_stats_enabled() && !watcher.clause.is_null() {
+                            self.count_reason_origin(watcher.clause);
+                        }
+                        // LRAT: flush level-0 propagations to explicit derived units.
+                        if self.lrat && self.trail.decision_level() == 0 {
+                            self.flush_level0_unit(first, watcher.clause);
+                        }
+
+                        // Lazy hyper-binary resolution
+                        if self.config.enable_lazy_hyper_binary {
+                            self.check_hyper_binary_resolution(lit, first, watcher.clause);
+                        }
+
                         write += 1;
                     }
-                    break;
-                } else {
-                    // Unit propagation
-                    #[cfg(feature = "clause-traffic")]
-                    traffic::record(&mut self.clause_traffic, traffic_event, traffic::UNIT);
-                    #[cfg(feature = "bcp-regions")]
-                    regions::record(&mut self.region_stats, region_event, regions::UNIT);
-                    if bcp_stats {
-                        crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
-                    }
-                    self.trail.assign_propagation(first, watcher.clause);
-                    // Diagnostic (`NIXIE_REASON_STATS`): classify each BCP
-                    // propagation by whether its reason clause was learned.
-                    // Cold: one extra clause-header read per assignment, only
-                    // when the env gate is set (search-shape studies).
-                    if Self::reason_stats_enabled() && !watcher.clause.is_null() {
-                        self.count_reason_origin(watcher.clause);
-                    }
-                    // LRAT: flush level-0 propagations to explicit derived units.
-                    if self.lrat && self.trail.decision_level() == 0 {
-                        self.flush_level0_unit(first, watcher.clause);
-                    }
-
-                    // Lazy hyper-binary resolution
-                    if self.config.enable_lazy_hyper_binary {
-                        self.check_hyper_binary_resolution(lit, first, watcher.clause);
-                    }
-
-                    write += 1;
                 }
             }
 
@@ -516,6 +526,62 @@ impl Solver {
         }
 
         None
+    }
+
+    #[inline]
+    fn use_watch_kernel(&self, bcp_stats: bool) -> bool {
+        if bcp_stats {
+            return false;
+        }
+        #[cfg(test)]
+        if self.propagate_legacy_oracle {
+            return false;
+        }
+        #[cfg(feature = "bcp-groups")]
+        if self.watch_group_stats.is_some() {
+            return false;
+        }
+        #[cfg(feature = "bcp-regions")]
+        if self.region_stats.is_some() {
+            return false;
+        }
+        #[cfg(feature = "clause-traffic")]
+        if self.clause_traffic.is_some() {
+            return false;
+        }
+        true
+    }
+
+    /// Each scanner call borrows a fixed trail. The borrow ends before any
+    /// assignment, proof work or HBR can mutate or grow the solver stores.
+    #[inline]
+    fn scan_watch_list(&mut self, lit: Lit, watches: &mut [Watcher]) -> (usize, Option<ClauseId>) {
+        let mut cursor = Cursor::default();
+        while cursor.read < watches.len() {
+            match cursor.advance(
+                watches,
+                lit.negate(),
+                &self.trail,
+                &mut self.clauses,
+                &mut self.watches,
+            ) {
+                Step::Done => break,
+                Step::Conflict(reason) => return (cursor.write, Some(reason)),
+                Step::Unit { literal, reason } => {
+                    self.trail.assign_propagation(literal, reason);
+                    if Self::reason_stats_enabled() && !reason.is_null() {
+                        self.count_reason_origin(reason);
+                    }
+                    if self.lrat && self.trail.decision_level() == 0 {
+                        self.flush_level0_unit(literal, reason);
+                    }
+                    if self.config.enable_lazy_hyper_binary {
+                        self.check_hyper_binary_resolution(lit, literal, reason);
+                    }
+                }
+            }
+        }
+        (cursor.write, None)
     }
 
     /// cadical's conflict-side update of `no_conflict_until`: the trail
@@ -893,3 +959,7 @@ mod normalization_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "watch_kernel_tests.rs"]
+mod kernel_tests;

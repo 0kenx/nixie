@@ -1290,6 +1290,8 @@ pub struct Solver {
     pub(super) trail: Trail,
     /// Watch lists
     pub(super) watches: WatchLists,
+    #[cfg(test)]
+    propagate_legacy_oracle: bool,
     /// Read-only observations; never consulted by search or propagation.
     #[cfg(feature = "bcp-groups")]
     pub(crate) watch_group_stats: Option<Box<crate::watch_groups::Collector>>,
@@ -2026,6 +2028,8 @@ impl Solver {
             clauses: ClauseDatabase::new(),
             trail: Trail::new(0),
             watches: WatchLists::new(0),
+            #[cfg(test)]
+            propagate_legacy_oracle: false,
             #[cfg(feature = "bcp-groups")]
             watch_group_stats: None,
             #[cfg(feature = "bcp-regions")]
