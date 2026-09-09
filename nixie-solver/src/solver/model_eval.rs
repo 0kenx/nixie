@@ -1551,16 +1551,6 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
 ///
 /// The walk is an explicit-stack post-order traversal (see the module doc on
 /// why nothing here recursurses on the native stack).
-/// Debug mirror of [`eval_bv_value`] for the elim-uncnstr trace path.
-pub(super) fn eval_bv_value_for_debug(
-    solver: &Solver,
-    root: TermId,
-    model: &Model,
-    manager: &TermManager,
-) -> Option<num_bigint::BigUint> {
-    eval_bv_value(solver, root, model, manager)
-}
-
 fn eval_bv_value(
     solver: &Solver,
     root: TermId,

@@ -197,7 +197,11 @@ fn deep_definition_chain_reconstructs() {
     // x0 = t + 1, x1 = x0 + 1, … each xi used exactly once.
     let n = 12;
     for i in 0..n {
-        let lhs = if i == 0 { "t".to_string() } else { format!("x{}", i - 1) };
+        let lhs = if i == 0 {
+            "t".to_string()
+        } else {
+            format!("x{}", i - 1)
+        };
         script.push_str(&format!(
             "(declare-const x{i} (_ BitVec 32))\n(assert (= x{i} (bvadd {lhs} (_ bv1 32))))\n"
         ));
