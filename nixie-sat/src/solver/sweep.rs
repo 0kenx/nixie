@@ -427,7 +427,7 @@ impl Solver {
             for w in self.watches.get(l) {
                 if self
                     .clauses
-                    .get(w.clause)
+                    .get_by_ref(w.r)
                     .is_some_and(|c| !c.deleted && !c.learned)
                 {
                     n += 1;
@@ -1257,10 +1257,24 @@ impl Solver {
                 // (strictly smaller) environment source; the yield gap vs
                 // kissat stands until an effort-scale study pairs dense
                 // environments with a kissat-scale budget.
-                let watchers: Vec<ClauseId> =
-                    self.watches.get(key).iter().map(|w| w.clause).collect();
+                let watchers: Vec<Option<ClauseId>> = self
+                    .watches
+                    .get(key)
+                    .iter()
+                    .map(|w| {
+                        self.clauses
+                            .get_by_ref(w.r)
+                            .filter(|c| !c.deleted)
+                            .map(|_| self.clauses.live_identity(w.r))
+                    })
+                    .collect();
                 for cid in watchers {
-                    self.sweep_reference(sweeper, depth, cid);
+                    // Retain deleted positions as None so the environment
+                    // limit check stays at the same point. Only stable IDs
+                    // survive calls that can mutate the clause database.
+                    if let Some(cid) = cid {
+                        self.sweep_reference(sweeper, depth, cid);
+                    }
                     if sweeper.vars.len() as u64 >= sweeper.limit.vars {
                         // environment variable limit reached
                         break 'environment;

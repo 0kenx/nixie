@@ -130,7 +130,7 @@ impl Cursor {
                 }
                 self.read = watches.len();
                 self.write = next_write + watches.len() - read - 1;
-                return Step::Conflict(watcher.clause);
+                return Step::Conflict(watcher.reason(clauses));
             }
             // Resume only after the caller assigns this literal. No pointer
             // into the trail or clause arena survives this return.
@@ -138,7 +138,7 @@ impl Cursor {
             self.write = next_write;
             return Step::Unit {
                 literal: first,
-                reason: watcher.clause,
+                reason: watcher.reason(clauses),
             };
         }
         self.read = watches.len();

@@ -92,15 +92,7 @@ pub(crate) fn check_all_sat_invariants(solver: &Solver) -> Result<(), String> {
 /// standing debug net so any future `ClauseRef` holder regression is caught
 /// in debug builds.
 pub(crate) fn check_watcher_ref_consistency(solver: &Solver) -> Result<(), String> {
-    let refs: Vec<crate::memory::ClauseRef> = (0..solver.clauses.num_slots())
-        .map(|i| {
-            solver
-                .clauses
-                .ref_of(crate::clause::ClauseId::new(i as u32))
-        })
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| "num_slots advertised an id without a slot".to_string())?;
-    solver.watches.check_ref_consistency(&refs)
+    solver.clauses.check_watch_ref_consistency(&solver.watches)
 }
 
 /// Structural (context-free) registration check for every live clause,
@@ -127,7 +119,7 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
                 .watches
                 .get(w0.negate())
                 .iter()
-                .any(|w| w.clause == id)
+                .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
                     "clause {id:?} treats {w0:?} as a watched literal, but it is not registered \
@@ -138,7 +130,7 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
                 .watches
                 .get(w1.negate())
                 .iter()
-                .any(|w| w.clause == id)
+                .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
                     "clause {id:?} treats {w1:?} as a watched literal, but it is not registered \
@@ -159,12 +151,12 @@ pub(crate) fn check_binary_registration(solver: &Solver) -> Result<(), String> {
                 .watches
                 .get(w0.negate())
                 .iter()
-                .any(|w| w.clause == id)
+                .any(|w| Some(w.r) == solver.clauses.ref_of(id))
                 || solver
                     .watches
                     .get(w1.negate())
                     .iter()
-                    .any(|w| w.clause == id)
+                    .any(|w| Some(w.r) == solver.clauses.ref_of(id))
             {
                 return Err(format!(
                     "binary clause {id:?} carries watch-list entries; binaries are \

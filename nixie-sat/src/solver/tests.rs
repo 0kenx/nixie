@@ -1406,12 +1406,12 @@ fn big_authoritative_binaries_have_no_watch_entries() {
                     .watches
                     .get(a.negate())
                     .iter()
-                    .any(|w| w.clause == cid)
+                    .any(|w| Some(w.r) == solver.clauses.ref_of(cid))
                     && !solver
                         .watches
                         .get(b.negate())
                         .iter()
-                        .any(|w| w.clause == cid),
+                        .any(|w| Some(w.r) == solver.clauses.ref_of(cid)),
                 "binary clause {cid:?} carries watch entries"
             );
         }

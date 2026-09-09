@@ -414,6 +414,21 @@ impl ClauseDatabase {
         self.arena.live_lits_hot(r)
     }
 
+    /// Metadata by direct slot, including deleted headers for lazy consumers.
+    pub(crate) fn get_by_ref(&self, r: ClauseRef) -> Option<ClauseView<'_>> {
+        self.arena.get(r)
+    }
+
+    /// Stable identity of a slot already established to be live.
+    #[inline]
+    pub(crate) fn live_identity(&self, r: ClauseRef) -> ClauseId {
+        self.arena.live_identity(r)
+    }
+
+    pub(crate) fn check_watch_ref_consistency(&self, watches: &WatchLists) -> Result<(), String> {
+        watches.check_ref_consistency(&self.refs, &self.arena)
+    }
+
     /// Get a read-only view of the clause by ID (deleted clauses are still
     /// returned, flagged – callers filter on `deleted`, exactly as with the
     /// previous `Option<&Clause>`).
@@ -648,7 +663,12 @@ impl ClauseDatabase {
         let lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
         self.update_stats_add_fields(learned, lits.len());
         let r = self.arena.alloc(&lits, learned);
-        let id = ClauseId::new(self.refs.len() as u32);
+        let id = self.arena.live_identity(r);
+        assert_eq!(
+            id.index(),
+            self.refs.len(),
+            "arena and database identities must grow together"
+        );
         self.refs.push(r);
         if learned {
             self.num_learned += 1;
@@ -697,10 +717,10 @@ impl ClauseDatabase {
         self.arena.stats()
     }
 
-    /// Reclaim clause-arena memory: relocate every live clause into a fresh
-    /// exact-capacity buffer (deleted slots and shrink padding dropped),
-    /// rewrite the `refs` table, then rewrite each watcher's arena slot in
-    /// place through `WatchLists::relocate_refs`. Ids are untouched – a
+    /// Reclaim clause-arena memory in place (deleted slots and shrink padding
+    /// dropped). Prepare destinations, rewrite each watcher while its old
+    /// header is readable, then move clauses and the `refs` table together.
+    /// Ids are untouched – a
     /// `ClauseId` keeps naming the same clause – and deleted ids relocate to
     /// the permanent tombstone, so trail reasons, LRAT tables and the BIG
     /// (all id-addressed) are unaffected.
@@ -726,10 +746,11 @@ impl ClauseDatabase {
     /// [`Self::compact_arena`] without the amortization gate (tests and
     /// forced reclamation; production code goes through the gated entry).
     pub fn compact_arena_forced(&mut self, watches: &mut WatchLists) -> bool {
-        self.arena.compact(&mut self.refs);
-        watches.relocate_refs(&self.refs);
+        let plan = self.arena.prepare_compaction(&self.refs);
+        watches.relocate_refs(&self.arena, &self.refs, &plan);
+        self.arena.apply_compaction(&mut self.refs, plan);
         debug_assert!(
-            watches.check_ref_consistency(&self.refs).is_ok(),
+            self.check_watch_ref_consistency(watches).is_ok(),
             "watcher refs must agree with the relocated refs table"
         );
         true
@@ -926,7 +947,7 @@ mod tests {
                 Some(wl.get(db.get(cid).expect("live").lits[0].negate())[0].r)
             );
         }
-        assert!(wl.check_ref_consistency(&db_refs(&db)).is_ok());
+        assert!(db.check_watch_ref_consistency(&wl).is_ok());
 
         // Counters unchanged by compaction.
         assert_eq!(db.num_original(), 2);
@@ -942,11 +963,78 @@ mod tests {
         assert!(!db.get(c3).expect("fresh").deleted);
     }
 
-    /// Test-only view of the refs table for consistency checks.
-    fn db_refs(db: &ClauseDatabase) -> Vec<ClauseRef> {
-        (0..db.num_slots())
-            .map(|i| db.ref_of(ClauseId::new(i as u32)).expect("slot"))
-            .collect()
+    #[test]
+    fn direct_watch_identity_activity_and_ghosts_survive_repeated_compaction() {
+        use crate::watched::Watcher;
+        let mut db = ClauseDatabase::new();
+        let mut watches = WatchLists::new(3);
+        let lits = [Lit::from_code(0), Lit::from_code(2), Lit::from_code(4)];
+        let mut ids = Vec::new();
+        for round in 0..8 {
+            let id = db.add_learned(lits);
+            assert_eq!(id.index(), round);
+            ids.push(id);
+            db.bump_activity(id, round as f32 + 0.25);
+            let r = db.ref_of(id).expect("slot");
+            watches.add(!lits[0], Watcher::new(id, r, lits[1]));
+            if round > 1 {
+                db.mark_deleted_raw(ids[round - 2]);
+            }
+            db.compact_arena_forced(&mut watches);
+            assert_eq!(
+                watches.get(!lits[0]).len(),
+                round + 1,
+                "ghost positions retained"
+            );
+            for (index, (w, id)) in watches.get(!lits[0]).iter().zip(&ids).enumerate() {
+                let clause = db.get(*id).expect("stable id");
+                assert_eq!(Some(w.r), db.ref_of(*id));
+                if !clause.deleted {
+                    assert_eq!(w.reason(&db), *id);
+                    assert_eq!(clause.lits, lits);
+                    assert_eq!(clause.activity.to_bits(), (index as f32 + 0.25).to_bits());
+                }
+            }
+            let snapshot = watches.packed_snapshot();
+            let newest = db.ref_of(id).expect("live");
+            watches.remove_clause(!lits[0], newest);
+            assert_eq!(watches.get(!lits[0]).len(), round);
+            watches.restore(snapshot);
+            assert!(db.check_watch_ref_consistency(&watches).is_ok());
+        }
+        assert!(db.arena_stats().activity_bytes >= ids.len() * 4);
+    }
+
+    #[test]
+    fn invalid_watch_ref_aborts_collection_before_any_relocation() {
+        use crate::watched::Watcher;
+        let mut db = ClauseDatabase::new();
+        let mut watches = WatchLists::new(3);
+        let lits = [Lit::from_code(0), Lit::from_code(2), Lit::from_code(4)];
+        let dead = db.add_original(lits);
+        let live = db.add_original(lits);
+        db.remove(dead);
+        watches.add(
+            !lits[0],
+            Watcher::new(live, db.ref_of(live).expect("live"), lits[1]),
+        );
+        let mut other = ClauseArena::default();
+        for _ in 0..8 {
+            other.alloc(&lits, false);
+        }
+        let invalid = other.alloc(&lits, false);
+        watches.add(!lits[0], Watcher::new(live, invalid, lits[1]));
+        let old_refs = db.refs.clone();
+        let old_watches = format!("{watches:?}");
+        let old_bytes = db.arena_stats().used_bytes;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            db.compact_arena_forced(&mut watches);
+        }));
+        assert!(outcome.is_err());
+        assert_eq!(db.refs, old_refs);
+        assert_eq!(format!("{watches:?}"), old_watches);
+        assert_eq!(db.arena_stats().used_bytes, old_bytes);
+        assert_eq!(db.get(live).expect("live").lits, lits);
     }
 
     #[test]

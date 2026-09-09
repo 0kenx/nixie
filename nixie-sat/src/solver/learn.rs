@@ -1117,8 +1117,18 @@ impl Solver {
             {
                 let w0 = c.lits[0];
                 let w1 = c.lits[1];
-                self.watches.remove_clause(w0.negate(), cid);
-                self.watches.remove_clause(w1.negate(), cid);
+                self.watches.remove_clause(
+                    w0.negate(),
+                    self.clauses
+                        .ref_of(cid)
+                        .unwrap_or_else(|| panic!("live clause has no arena reference")),
+                );
+                self.watches.remove_clause(
+                    w1.negate(),
+                    self.clauses
+                        .ref_of(cid)
+                        .unwrap_or_else(|| panic!("live clause has no arena reference")),
+                );
             }
             self.drat_delete(cid);
             self.clauses.remove(cid);
@@ -1256,8 +1266,20 @@ impl Solver {
             if let Some(c) = solver.clauses.get(cid).filter(|c| !c.deleted) {
                 let w0 = c.lits[0];
                 let w1 = c.lits[1];
-                solver.watches.remove_clause(w0.negate(), cid);
-                solver.watches.remove_clause(w1.negate(), cid);
+                solver.watches.remove_clause(
+                    w0.negate(),
+                    solver
+                        .clauses
+                        .ref_of(cid)
+                        .unwrap_or_else(|| panic!("live clause has no arena reference")),
+                );
+                solver.watches.remove_clause(
+                    w1.negate(),
+                    solver
+                        .clauses
+                        .ref_of(cid)
+                        .unwrap_or_else(|| panic!("live clause has no arena reference")),
+                );
             }
         };
 
@@ -2271,8 +2293,18 @@ impl Solver {
         // Detach the existing watches (keyed on the current positions 0 and 1).
         let old_w0 = lits[0];
         let old_w1 = lits[1];
-        self.watches.remove_clause(old_w0.negate(), clause_id);
-        self.watches.remove_clause(old_w1.negate(), clause_id);
+        self.watches.remove_clause(
+            old_w0.negate(),
+            self.clauses
+                .ref_of(clause_id)
+                .unwrap_or_else(|| panic!("live clause has no arena reference")),
+        );
+        self.watches.remove_clause(
+            old_w1.negate(),
+            self.clauses
+                .ref_of(clause_id)
+                .unwrap_or_else(|| panic!("live clause has no arena reference")),
+        );
 
         // Remove the redundant literal.
         lits.remove(idx);
@@ -2657,8 +2689,18 @@ impl Solver {
             Some(c) if !c.deleted && c.lits.len() >= 2 => (c.lits[0], c.lits[1]),
             _ => return,
         };
-        self.watches.remove_clause(old_w0.negate(), cid);
-        self.watches.remove_clause(old_w1.negate(), cid);
+        self.watches.remove_clause(
+            old_w0.negate(),
+            self.clauses
+                .ref_of(cid)
+                .unwrap_or_else(|| panic!("live clause has no arena reference")),
+        );
+        self.watches.remove_clause(
+            old_w1.negate(),
+            self.clauses
+                .ref_of(cid)
+                .unwrap_or_else(|| panic!("live clause has no arena reference")),
+        );
 
         // Pick the two best watch literals (prefer satisfied, then unassigned).
         let mut idxs: SmallVec<[usize; 8]> = (0..new_lits.len()).collect();

@@ -101,11 +101,13 @@ fn resumption_sees_units_and_preserves_the_unvisited_conflict_tail() {
             assert!(a.trail.lit_val(Lit::from_code(code)) > 0);
         }
         let list = a.watches.get(Lit::from_code(0));
-        assert_eq!(list.last().map(|w| w.clause), Some(ids[5]));
+        assert_eq!(list.last().map(|w| w.r), a.clauses.ref_of(ids[5]));
         // The second clause sees the first unit and parks with its new true
         // blocker. A scanner that continued with stale values would move it.
         assert_eq!(
-            list.iter().find(|w| w.clause == ids[1]).map(|w| w.blocker),
+            list.iter()
+                .find(|w| Some(w.r) == a.clauses.ref_of(ids[1]))
+                .map(|w| w.blocker),
             Some(Lit::from_code(2))
         );
     }
@@ -171,10 +173,11 @@ fn first_hole_selects_compaction_and_units_preserve_the_phase() {
             assert_eq!((cursor.read, cursor.write), (14, 13));
             watches.truncate(cursor.write);
             assert_eq!(
-                watches.iter().map(|w| w.clause).collect::<Vec<_>>(),
+                watches.iter().map(|w| w.r).collect::<Vec<_>>(),
                 ids.iter()
                     .enumerate()
-                    .filter_map(|(i, id)| (i != 6).then_some(*id))
+                    .filter(|(i, _)| *i != 6)
+                    .map(|(_, id)| s.clauses.ref_of(*id).expect("slot"))
                     .collect::<Vec<_>>()
             );
             assert_eq!(watches[12].blocker, no, "unvisited tail is untouched");

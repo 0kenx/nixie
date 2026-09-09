@@ -543,7 +543,6 @@ impl Preprocessor {
             let watch_list = watches.get(lit);
 
             for &watcher in watch_list {
-                let clause_id = watcher.clause;
                 let blocker = watcher.blocker;
 
                 // Check blocker literal
@@ -551,7 +550,7 @@ impl Preprocessor {
                     continue;
                 }
 
-                let clause = match clauses.get(clause_id) {
+                let clause = match clauses.get_by_ref(watcher.r) {
                     Some(c) if !c.deleted => c,
                     _ => continue,
                 };
@@ -582,7 +581,7 @@ impl Preprocessor {
 
                     // Unit propagation
                     if !trail.is_assigned(first.var()) {
-                        trail.assign_propagation(first, clause_id);
+                        trail.assign_propagation(first, watcher.reason(clauses));
                     }
                 }
             }

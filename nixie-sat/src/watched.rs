@@ -2,7 +2,7 @@
 
 use crate::clause::ClauseId;
 use crate::literal::Lit;
-use crate::memory::ClauseRef;
+use crate::memory::{ClauseArena, ClauseRef, CompactionPlan};
 #[allow(unused_imports)]
 use crate::prelude::*;
 #[allow(unused_imports)]
@@ -10,18 +10,18 @@ use smallvec::SmallVec;
 
 /// A watcher entry
 ///
-/// 12 bytes: the clause is addressed both by id (stable handle for reasons,
-/// reduction, subsumption – everything outside BCP) and by arena slot, so a
-/// propagation visit dereferences the clause **directly** instead of paying
-/// the `refs[id]` table indirection (a second dependent load per visited
-/// watcher). Slots are never reused, and arena compaction rewrites `.r`
-/// in place from the id table ([`WatchLists::relocate_refs`]) so the slot
-/// keeps naming exactly the clause the id does for the watcher's whole
-/// life; deletion relocates to a tombstone slot that reads as a deleted
-/// clause, which is what makes stale watchers safe.
+/// Ordinary entries occupy eight bytes: a direct arena reference and a blocker.
+/// A stable identity is fetched from the clause header only for a live reason.
+/// Observers retain an identity word because they classify deleted blocker hits
+/// even after garbage collection has coalesced deleted headers.
 #[derive(Debug, Clone, Copy)]
 pub struct Watcher {
     /// The clause being watched
+    #[cfg(any(
+        feature = "bcp-groups",
+        feature = "bcp-regions",
+        feature = "clause-traffic"
+    ))]
     pub clause: ClauseId,
     /// The clause's arena slot (byte offset) – direct-addressing fast path.
     pub r: ClauseRef,
@@ -33,9 +33,42 @@ impl Watcher {
     /// Create a new watcher for a clause whose arena slot is `r`.
     #[must_use]
     pub const fn new(clause: ClauseId, r: ClauseRef, blocker: Lit) -> Self {
-        Self { clause, r, blocker }
+        #[cfg(not(any(
+            feature = "bcp-groups",
+            feature = "bcp-regions",
+            feature = "clause-traffic"
+        )))]
+        let _ = clause;
+        Self {
+            #[cfg(any(
+                feature = "bcp-groups",
+                feature = "bcp-regions",
+                feature = "clause-traffic"
+            ))]
+            clause,
+            r,
+            blocker,
+        }
+    }
+    /// Identity for a clause already established to be live by the scan.
+    #[inline]
+    pub(crate) fn reason(self, clauses: &crate::clause::ClauseDatabase) -> ClauseId {
+        clauses.live_identity(self.r)
     }
 }
+
+#[cfg(not(any(
+    feature = "bcp-groups",
+    feature = "bcp-regions",
+    feature = "clause-traffic"
+)))]
+const _: () = assert!(core::mem::size_of::<Watcher>() == 8);
+#[cfg(any(
+    feature = "bcp-groups",
+    feature = "bcp-regions",
+    feature = "clause-traffic"
+))]
+const _: () = assert!(core::mem::size_of::<Watcher>() == 12);
 
 /// Watch lists for the two-watched literal scheme
 ///
@@ -150,10 +183,10 @@ impl WatchLists {
 
     /// Remove all watchers for a clause from a literal's watch list
     #[allow(dead_code)]
-    pub fn remove_clause(&mut self, lit: Lit, clause: ClauseId) {
+    pub fn remove_clause(&mut self, lit: Lit, r: ClauseRef) {
         let idx = lit.index();
         if idx < self.watches.len() {
-            self.watches[idx].retain(|w| w.clause != clause);
+            self.watches[idx].retain(|w| w.r != r);
         }
     }
 
@@ -235,56 +268,64 @@ impl WatchLists {
         self.watches.get(lit.index()).map_or(0, |w| w.len())
     }
 
-    /// Rewrite every watcher's arena slot `.r` **in place** from the
-    /// already-rewritten id→ref table of a just-finished
-    /// [`crate::memory::ClauseArena::compact`].
-    ///
-    /// This is the second half of arena compaction (the first rewrote the
-    /// database's `refs`); watchers are the only `ClauseRef` holders outside
-    /// the database. In-place mutation keeps each list's visit order – and
-    /// therefore the propagation trajectory – exactly as it was: only the
-    /// byte offsets change. A watcher whose clause was deleted (or whose id
-    /// is out of range, impossible through the solver's construction)
-    /// relocates to the permanent tombstone, which reads as a deleted clause
-    /// – identical semantics to the pre-compaction deleted-flagged slot.
-    /// Null slots (test-construction only) stay null.
-    pub fn relocate_refs(&mut self, refs: &[ClauseRef]) {
+    /// Validate all references before either the arena or a watcher changes.
+    /// Deleted hits remain present and map to the shared tombstone, preserving
+    /// blocker visits, list order and tick accounting.
+    pub(crate) fn relocate_refs(
+        &mut self,
+        arena: &ClauseArena,
+        refs: &[ClauseRef],
+        plan: &CompactionPlan,
+    ) {
+        assert_eq!(refs.len(), plan.relocated().len());
+        assert!(
+            self.check_ref_consistency(refs, arena).is_ok(),
+            "invalid watcher before relocation"
+        );
         for list in &mut self.watches {
-            for w in list.iter_mut() {
+            for w in list {
                 if w.r.is_null() {
                     continue;
                 }
-                // An out-of-range id is impossible through the solver's
-                // construction; map it to NULL (reads as "no clause")
-                // rather than fabricating a slot.
-                w.r = refs
-                    .get(w.clause.index())
-                    .copied()
-                    .unwrap_or(ClauseRef::null());
+                w.r = if arena.is_deleted(w.r) {
+                    plan.tombstone()
+                } else {
+                    plan.relocated()[arena.live_identity(w.r).index()]
+                };
             }
         }
     }
 
-    /// Debug audit of [`Self::relocate_refs`]: every non-null watcher slot
-    /// must agree with the id→ref table (live clauses at their live ref,
-    /// deleted clauses at the tombstone). Returns a description of the first
-    /// inconsistency, so a future `ClauseRef` holder that survives
-    /// compaction unrewritten is caught in debug builds instead of reading
-    /// freed memory.
-    pub(crate) fn check_ref_consistency(&self, refs: &[ClauseRef]) -> Result<(), String> {
+    pub(crate) fn check_ref_consistency(
+        &self,
+        refs: &[ClauseRef],
+        arena: &ClauseArena,
+    ) -> Result<(), String> {
         for (lit_idx, list) in self.watches.iter().enumerate() {
             for w in list {
                 if w.r.is_null() {
                     continue;
                 }
-                let expect = refs.get(w.clause.index()).copied();
-                if expect != Some(w.r) {
+                let Some(clause) = arena.get(w.r) else {
+                    return Err(format!("invalid watcher reference under literal {lit_idx}"));
+                };
+                #[cfg(any(
+                    feature = "bcp-groups",
+                    feature = "bcp-regions",
+                    feature = "clause-traffic"
+                ))]
+                if refs.get(w.clause.index()).copied() != Some(w.r) {
                     return Err(format!(
-                        "watcher of clause {:?} under literal index {lit_idx} holds arena \
-                         slot {:?} but the refs table says {expect:?} (stale ref across an \
-                         arena compaction?)",
-                        w.clause, w.r
+                        "observer identity disagrees with watcher reference under literal {lit_idx}"
                     ));
+                }
+                if !clause.deleted {
+                    let id = arena.live_identity(w.r);
+                    if refs.get(id.index()).copied() != Some(w.r) {
+                        return Err(format!(
+                            "live identity disagrees with watcher reference under literal {lit_idx}"
+                        ));
+                    }
                 }
             }
         }
@@ -430,6 +471,11 @@ mod tests {
         wl.add(lit, Watcher::new(clause, ClauseRef::null(), blocker));
 
         assert_eq!(wl.get(lit).len(), 1);
+        #[cfg(any(
+            feature = "bcp-groups",
+            feature = "bcp-regions",
+            feature = "clause-traffic"
+        ))]
         assert_eq!(wl.get(lit)[0].clause, clause);
         assert_eq!(wl.get(lit)[0].blocker, blocker);
     }

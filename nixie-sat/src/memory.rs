@@ -27,8 +27,9 @@
 //!   deletions, and they must never come to name a *different* clause.
 //!   [`ClauseArena::compact`] is the single exception to append-only: it
 //!   relocates every live clause downward **in place** and **synchronously
-//!   rewrites every outstanding ref holder** (the database's `refs` table,
-//!   then each watcher's `.r` via `WatchLists::relocate_refs`)
+//!   rewrites every outstanding ref holder** (watchers are rewritten from
+//!   a validated relocation plan while their old headers are readable,
+//!   then the database's `refs` table and arena move together)
 //!   – an audit confirmed watchers are the only `ClauseRef` holders outside
 //!   the database (`ClauseRef`'s inner offset is private to this module, so
 //!   the audit is enforced by the type system). Deleted ids relocate to a
@@ -59,7 +60,7 @@
 
 #![allow(unsafe_code)]
 
-use crate::clause::ClauseTier;
+use crate::clause::{ClauseId, ClauseTier};
 use crate::literal::Lit;
 
 /// Clause reference: byte offset of the clause's slot in the arena.
@@ -117,15 +118,12 @@ const TIER_SHIFT: u8 = 4;
 /// * `usage: u8` saturating – the tier-promotion consumers fire at 3 and 10
 ///   uses; saturation at 255 cannot change any decision those consumers
 ///   make.
-/// * `activity: f32` at offset 8 of a 12-byte header – clause-activity is
-///   only the `reduce_clause_database` sort key (relative ordering of
-///   clauses), and the saturating rescale policy below keeps every stored
-///   value far from `f32`'s range limits. f32 halves the header and is what
-///   lets a 3-literal clause slot be 24 bytes (two per cache line) and a
-///   5-literal clause slot be 32 bytes (half a line).
+/// * `identity: u32` at offset 8 is the stable allocation ID. Activity is
+///   stored in a cold side table under that ID, leaving the 12-byte geometry
+///   unchanged (3 literals occupy 24 bytes, 5 literals occupy 32 bytes).
 ///
 /// Alignment: `align(4)` is the whole header's requirement (largest member
-/// is a u32/f32); slots still start at multiples of 8 (the buffer is
+/// is a u32); slots still start at multiples of 8 (the buffer is
 /// `Vec<u64>` and the stride rounds to 8), so headers are over-aligned in
 /// practice and the literal array at `header + 12` is 4-aligned as `Lit`
 /// requires.
@@ -136,7 +134,7 @@ struct ClauseHeader {
     lbd: u16,
     flags_tier: u8,
     usage: u8,
-    activity: f32,
+    identity: u32,
 }
 
 impl ClauseHeader {
@@ -146,7 +144,7 @@ impl ClauseHeader {
             lbd: 0,
             flags_tier: if learned { FLAG_LEARNED } else { 0 },
             usage: 0,
-            activity: 0.0,
+            identity: u32::MAX,
         }
     }
 
@@ -291,6 +289,10 @@ pub struct ClauseArena {
     /// alignment; all offsets are byte offsets into this buffer and every
     /// slot starts at a multiple of 8.
     buffer: Vec<u64>,
+    /// Activity is cold and indexed by the stable allocation identity.
+    activities: Vec<f32>,
+    /// All compacted deleted slots share this value, just as the old header did.
+    tombstone_activity: f32,
     /// Write position, in bytes (always a multiple of 8). Decreases only in
     /// [`Self::compact`], which synchronously rewrites every outstanding
     /// ref holder.
@@ -303,6 +305,26 @@ pub struct ClauseArena {
     num_deleted: usize,
     /// Compactions performed (see [`Self::compact`]).
     compactions: u64,
+}
+
+/// All allocation and address checks precede any reference mutation.
+pub(crate) struct CompactionPlan {
+    relocated: Vec<ClauseRef>,
+    tomb: ClauseRef,
+    old_pos: usize,
+    live_bytes: usize,
+    live_count: usize,
+    tombstoned: usize,
+    new_pos: usize,
+}
+
+impl CompactionPlan {
+    pub(crate) fn relocated(&self) -> &[ClauseRef] {
+        &self.relocated
+    }
+    pub(crate) fn tombstone(&self) -> ClauseRef {
+        self.tomb
+    }
 }
 
 impl Default for ClauseArena {
@@ -318,6 +340,8 @@ impl ClauseArena {
     pub fn new(initial_capacity: usize) -> Self {
         Self {
             buffer: Vec::with_capacity(initial_capacity / ALIGN),
+            activities: Vec::new(),
+            tombstone_activity: 0.0,
             pos: 0,
             wasted_bytes: 0,
             num_clauses: 0,
@@ -402,7 +426,7 @@ impl ClauseArena {
             deleted: h.deleted(),
             tier: ClauseTier::from_u32(h.tier()),
             usage_count: u32::from(h.usage),
-            activity: h.activity,
+            activity: self.activity_at(h.identity)?,
         })
     }
 
@@ -424,9 +448,16 @@ impl ClauseArena {
         let Some((r, end)) = allocation_extent(start, lits.len()) else {
             panic!("clause arena address space exhausted or invalid allocation extent");
         };
+        assert!(
+            self.activities.len() < u32::MAX as usize,
+            "clause identity space exhausted"
+        );
         self.ensure_capacity(end);
+        self.activities.reserve(1);
 
-        let header = ClauseHeader::new(lits.len() as u32, learned);
+        let mut header = ClauseHeader::new(lits.len() as u32, learned);
+        header.identity = self.activities.len() as u32;
+        self.activities.push(0.0);
         // SAFETY: `ensure_capacity` reserved room for [start, end); writing
         // the header and literals initializes the payload. Clearing the last
         // aligned word first also initializes any trailing slot padding:
@@ -581,8 +612,8 @@ impl ClauseArena {
     /// * On return `slots[i]` holds the clause's **new** ref if it was
     ///   live, or the tombstone ref if it was deleted. Invalid refs and
     ///   unsorted/overlapping live slots panic during preflight, before
-    ///   relocation. The caller then rewrites every other ref holder from
-    ///   this table (`WatchLists::relocate_refs`).
+    ///   relocation. The database uses prepare/apply so watchers can be
+    ///   rewritten through the plan before their old headers are overwritten.
     ///
     /// The compacted region ends with a permanent **tombstone slot** (a
     /// `len == 0`, deleted-flagged header) so a stale ref always lands on a
@@ -596,13 +627,17 @@ impl ClauseArena {
     /// pointers): placing the tombstone at the *end* makes every live
     /// clause's new offset ≤ its old offset (deleted bytes only ever
     /// precede it), so clauses are `memmove`d down within the existing
-    /// buffer – **peak RSS never exceeds the pre-compaction footprint**
-    /// (a fresh-buffer copy would transiently hold old + new, which showed
-    /// up as a +25 % peak on si2-b03m before this was rewritten). The tail
-    /// is then returned via
-    /// `shrink_to_fit` (glibc splits the arena's mmap in place), and no
-    /// remap table is needed: the rewritten `slots` array *is* the map.
+    /// buffer. A temporary 4-byte destination per historical slot allows
+    /// watchers to relocate before their old headers disappear; there is no
+    /// duplicate clause arena. Its allocation is completed before mutation.
+    /// The arena tail is returned with `shrink_to_fit`; cold activities remain
+    /// indexed by stable historical IDs and are included in memory statistics.
     pub fn compact(&mut self, slots: &mut [ClauseRef]) -> CompactSummary {
+        let plan = self.prepare_compaction(slots);
+        self.apply_compaction(slots, plan)
+    }
+
+    pub(crate) fn prepare_compaction(&mut self, slots: &[ClauseRef]) -> CompactionPlan {
         let old_pos = self.pos;
         let tombstone_bytes = slot_size(0);
 
@@ -623,6 +658,7 @@ impl ClauseArena {
         let mut live_count = 0usize;
         let mut tombstoned = 0usize;
         let mut prev_live_end = 0usize;
+        let mut relocated = Vec::with_capacity(slots.len());
         // SAFETY: `self.buffer` holds every real slot listed in `slots`;
         // reads only, before any in-place write.
         let base = self.buffer.as_ptr().cast::<u8>();
@@ -639,10 +675,17 @@ impl ClauseArena {
                         panic!("compacted clause arena size overflow");
                     };
                     assert!(end <= old_pos, "compaction cannot enlarge the live region");
+                    let Some(r) = ClauseRef::from_byte_offset(live_bytes) else {
+                        panic!("invalid planned relocation");
+                    };
+                    relocated.push(r);
                     live_bytes = end;
                     live_count += 1;
                 }
-                Some(_) => tombstoned += 1,
+                Some(_) => {
+                    tombstoned += 1;
+                    relocated.push(ClauseRef::null());
+                }
                 None => panic!("invalid clause reference during arena compaction"),
             }
         }
@@ -665,6 +708,40 @@ impl ClauseArena {
         );
         // Reserve before relocation, so allocation failure leaves refs intact.
         self.ensure_capacity(new_pos);
+        for r in &mut relocated {
+            if r.is_null() {
+                *r = tomb;
+            }
+        }
+        CompactionPlan {
+            relocated,
+            old_pos,
+            live_bytes,
+            live_count,
+            tombstoned,
+            new_pos,
+            tomb,
+        }
+    }
+
+    /// Apply a validated plan after all external references have been rewritten.
+    /// Preparation performed all allocation and checked the source extents.
+    pub(crate) fn apply_compaction(
+        &mut self,
+        slots: &mut [ClauseRef],
+        plan: CompactionPlan,
+    ) -> CompactSummary {
+        let CompactionPlan {
+            relocated,
+            old_pos,
+            live_bytes,
+            live_count,
+            tombstoned,
+            new_pos,
+            tomb,
+        } = plan;
+        let tomb_off = tomb.byte_offset();
+        let tombstone_bytes = slot_size(0);
         let mut dst = 0usize;
         // SAFETY: within one call, `base` stays valid (no reallocation).
         // When slot i is processed, the bytes at `[off_i, off_i + bytes)`
@@ -674,15 +751,15 @@ impl ClauseArena {
         // `[off, off+bytes)` when the gap is smaller than the slot.
         let base = self.buffer.as_mut_ptr().cast::<u8>();
         unsafe {
-            for slot in slots.iter_mut() {
+            for (slot, destination) in slots.iter_mut().zip(relocated) {
+                if destination == tomb {
+                    *slot = tomb;
+                    continue;
+                }
                 let off = slot.byte_offset();
                 let Some(hdr) = Self::header_in_extent(base, off, old_pos) else {
                     panic!("validated clause reference became invalid during compaction");
                 };
-                if hdr.deleted() {
-                    *slot = tomb;
-                    continue;
-                }
                 let bytes = HEADER_BYTES + hdr.len as usize * core::mem::size_of::<Lit>();
                 assert!(
                     dst <= off && dst <= live_bytes && bytes <= live_bytes - dst,
@@ -709,6 +786,7 @@ impl ClauseArena {
         }
 
         self.pos = new_pos;
+        self.tombstone_activity = 0.0;
         // Return the freed tail to the allocator (glibc splits the arena's
         // mmap in place; small brk-backed buffers may keep their capacity,
         // which is irrelevant at those sizes).
@@ -728,13 +806,8 @@ impl ClauseArena {
         }
     }
 
-    /// Rewrite the clause at `r` with `new_lits`, in place.
-    ///
-    /// Returns `true` on success. Fails (returning `false`, leaving the
-    /// clause untouched) if `r` is invalid, the clause is deleted, or
-    /// `new_lits.len() > current len` – an arena slot cannot grow, and
-    /// relocating would invalidate the `ClauseRef` held by watchers and
-    /// trail reasons. Callers only ever shrink (drop redundant literals).
+    /// Rewrite a live clause with a shorter or equal literal array in place.
+    /// References remain valid. Growth, invalid or deleted slots are refused.
     pub fn shrink(&mut self, r: ClauseRef, new_lits: &[Lit]) -> bool {
         let Some(h) = self.read_header(r) else {
             return false;
@@ -840,13 +913,42 @@ impl ClauseArena {
         }
     }
 
+    /// Resolve a live slot's stable allocation identity. Only propagation
+    /// reasons need this load; blocker hits and watch movement do not.
+    #[inline]
+    pub(crate) fn live_identity(&self, r: ClauseRef) -> ClauseId {
+        match self.read_header(r) {
+            Some(h) if !h.deleted() && (h.identity as usize) < self.activities.len() => {
+                ClauseId::new(h.identity)
+            }
+            _ => panic!("a propagation reason must name a live arena clause"),
+        }
+    }
+
+    #[inline]
+    fn activity_at(&self, identity: u32) -> Option<f32> {
+        if identity == u32::MAX {
+            Some(self.tombstone_activity)
+        } else {
+            // A foreign or malformed reference is refused, as in get's
+            // existing null/extent validation. Never index it unchecked.
+            self.activities.get(identity as usize).copied()
+        }
+    }
+
+    fn activity_mut(&mut self, r: ClauseRef) -> Option<&mut f32> {
+        let identity = self.read_header(r)?.identity;
+        if identity == u32::MAX {
+            Some(&mut self.tombstone_activity)
+        } else {
+            self.activities.get_mut(identity as usize)
+        }
+    }
+
     /// Set the activity of the clause at `r`.
     pub fn set_activity(&mut self, r: ClauseRef, activity: f32) {
-        if self.read_header(r).is_some() {
-            // SAFETY: `r` validated by `get`.
-            unsafe {
-                (*self.header_ptr_mut(r)).activity = activity;
-            }
+        if let Some(value) = self.activity_mut(r) {
+            *value = activity;
         }
     }
 
@@ -978,13 +1080,10 @@ impl ClauseArena {
         self.read_header(r).is_some_and(|h| h.deleted())
     }
 
-    /// `activity += inc` in one header write.
+    /// Bump the clause's cold activity score, preserving f32 rounding.
     pub fn add_activity(&mut self, r: ClauseRef, inc: f32) {
-        if self.read_header(r).is_some() {
-            // SAFETY: `r` validated by `read_header`.
-            unsafe {
-                (*self.header_ptr_mut(r)).activity += inc;
-            }
+        if let Some(value) = self.activity_mut(r) {
+            *value += inc;
         }
     }
 
@@ -1009,9 +1108,8 @@ impl ClauseArena {
         if h.deleted() {
             return;
         }
-        // SAFETY: `r` validated by `read_header`; activity field write.
-        unsafe {
-            (*self.header_ptr_mut(r)).activity *= factor;
+        if let Some(value) = self.activities.get_mut(h.identity as usize) {
+            *value *= factor;
         }
     }
 
@@ -1019,7 +1117,8 @@ impl ClauseArena {
     #[must_use]
     pub fn stats(&self) -> MemoryStats {
         MemoryStats {
-            total_bytes: self.buffer.capacity() * ALIGN,
+            total_bytes: self.buffer.capacity() * ALIGN + self.activities.capacity() * 4,
+            activity_bytes: self.activities.capacity() * 4,
             used_bytes: self.pos,
             wasted_bytes: self.wasted_bytes,
             num_clauses: self.num_clauses,
@@ -1050,8 +1149,10 @@ const _: () = assert!(core::mem::size_of::<ClauseHeader>() == 12);
 /// Memory usage statistics.
 #[derive(Debug, Clone)]
 pub struct MemoryStats {
-    /// Total allocated bytes.
+    /// Total allocated bytes, including cold activity storage.
     pub total_bytes: usize,
+    /// Allocation retained by the stable-ID activity side table.
+    pub activity_bytes: usize,
     /// Bytes currently in use.
     pub used_bytes: usize,
     /// Bytes wasted by deleted clauses.
@@ -1392,7 +1493,14 @@ mod tests {
         // A mid-slot offset (header of r is 12B; +8 is its middle) is
         // rejected by the length sanity check rather than trusted.
         let mid = ClauseRef::from_byte_offset(r.byte_offset() + 8).expect("constructible");
-        assert!(a.get(mid).is_none() || a.get(r).is_some());
+        assert!(
+            a.get(mid).is_none(),
+            "interior header has an invalid activity identity"
+        );
+        a.add_activity(mid, 100.0);
+        a.set_activity(mid, 100.0);
+        a.scale_activity(mid, 100.0);
+        assert_eq!(a.get(r).expect("real clause survives").activity, 0.0);
     }
 
     #[test]

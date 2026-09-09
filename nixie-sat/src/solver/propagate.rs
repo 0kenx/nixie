@@ -228,7 +228,8 @@ impl Solver {
             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
             //
             // NOTE: deliberately counts 8 bytes/watcher even though our
-            // `Watcher` is 12 (id + arena slot + blocker). The tick counters
+            // observer `Watcher` is 12 (id + arena slot + blocker), while
+            // ordinary entries are now 8 (arena slot + blocker). The counters
             // drive restart/mode-switch schedules – changing the accounting
             // changes the search trajectory, which makes every before/after
             // measurement a different-search comparison. Any correction here
@@ -440,6 +441,7 @@ impl Solver {
                         watches[write] = watcher;
                     }
                     watches[write].blocker = first;
+                    let reason = watcher.reason(&self.clauses);
 
                     if self.trail.lit_val_hot(first) < 0 {
                         #[cfg(feature = "clause-traffic")]
@@ -454,7 +456,7 @@ impl Solver {
                             crate::diag_bcp::VISITS
                                 .fetch_sub((watches.len() - read - 1) as u64, Relaxed);
                         }
-                        conflict_found = Some(watcher.clause);
+                        conflict_found = Some(reason);
                         write += 1; // keep the conflicting watcher
                         // Copy remaining watchers to preserve them
                         for rest in read + 1..watches.len() {
@@ -471,22 +473,22 @@ impl Solver {
                         if bcp_stats {
                             crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
                         }
-                        self.trail.assign_propagation(first, watcher.clause);
+                        self.trail.assign_propagation(first, reason);
                         // Diagnostic (`NIXIE_REASON_STATS`): classify each BCP
                         // propagation by whether its reason clause was learned.
                         // Cold: one extra clause-header read per assignment, only
                         // when the env gate is set (search-shape studies).
-                        if Self::reason_stats_enabled() && !watcher.clause.is_null() {
-                            self.count_reason_origin(watcher.clause);
+                        if Self::reason_stats_enabled() && !reason.is_null() {
+                            self.count_reason_origin(reason);
                         }
                         // LRAT: flush level-0 propagations to explicit derived units.
                         if self.lrat && self.trail.decision_level() == 0 {
-                            self.flush_level0_unit(first, watcher.clause);
+                            self.flush_level0_unit(first, reason);
                         }
 
                         // Lazy hyper-binary resolution
                         if self.config.enable_lazy_hyper_binary {
-                            self.check_hyper_binary_resolution(lit, first, watcher.clause);
+                            self.check_hyper_binary_resolution(lit, first, reason);
                         }
 
                         write += 1;
@@ -945,7 +947,7 @@ mod normalization_tests {
                     };
                     let watch = solver.watches.get(key);
                     assert_eq!(watch.len(), 1);
-                    assert_eq!(watch[0].clause, cid);
+                    assert_eq!(Some(watch[0].r), solver.clauses.ref_of(cid));
                     assert_eq!(watch[0].blocker, blocker);
                     if matches!(exit, Exit::MovedReplacement) {
                         assert!(solver.watches.get(trigger).is_empty());
