@@ -97,3 +97,23 @@ This enforces the registered discard boundary in the ownership structure.
 Keep the distance, blocker rule, scan algorithm and all cost/assembly gates.
 Recheck focused strict Miri after the borrow change. No inlining/distance or
 parameter search is added.
+
+### Repaired assembly passes, with a real remaining code cost
+
+Making the preparation phase-local removes its exit writebacks. Local stack
+falls **312 -> 264 bytes**; the engine shrinks **5923 -> 5296 bytes**. The
+264-byte frame passes the 280-byte bound, but text is still 1681 bytes larger
+than the first complete engine. LLVM emits two suffix bodies for different
+first-hole transfers; do not count source-level specialization as smaller
+machine code without inspecting it.
+
+Next-header loads at `0x6426b`, `0x6464f`, `0x64b00` precede current payload
+loads at `0x6429e`, `0x64682`, `0x64b36`. Their contents are not classified
+before that work. Consumption uses the saved stack words; unit continuations
+retain them, with code-equality blocker refresh (prefix `0x64479`). There is
+no scanner/assignment call or ordinary-hit pending dispatch. Remaining calls
+are growth, conflict-tail copies, owner restoration/deallocation and panics.
+The three focused strict-Miri tests pass again; strict SAT Clippy and format
+pass. Complete default/all-feature SAT preflight is required before the one
+candidate cost cell. The cost gate prices the extra state, branches and text;
+assembly establishes the transformation, not its benefit.
