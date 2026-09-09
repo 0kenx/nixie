@@ -192,6 +192,95 @@ pub struct CexGenerationResult {
 }
 
 /// Counter-example generator
+/// Linear form of `term` in the bound variable named `var`:
+/// `(coefficient of var, residual term)`, or `None` when `term` is not
+/// linear in `var` (or mentions it nonlinearly).
+///
+/// Iterative with an explicit work stack; the term shape is user input.
+fn linear_form_in(
+    term: TermId,
+    var: Spur,
+    manager: &mut TermManager,
+) -> Option<(num_bigint::BigInt, TermId)> {
+    enum Frame {
+        Eval(TermId, num_bigint::BigInt),
+    }
+    let mut coeff = num_bigint::BigInt::ZERO;
+    let mut residual: Option<TermId> = None;
+    let mut stack = vec![Frame::Eval(term, num_bigint::BigInt::from(1))];
+
+    let push_residual = |residual: &mut Option<TermId>, t: TermId, manager: &mut TermManager| {
+        *residual = Some(match *residual {
+            None => t,
+            Some(prev) => manager.mk_add([prev, t]),
+        });
+    };
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Eval(id, scale) => {
+                let node = manager.get(id)?;
+                match &node.kind {
+                    TermKind::Var(name) if *name == var => {
+                        coeff += scale;
+                    }
+                    TermKind::Var(_) => {
+                        push_residual(&mut residual, id, manager);
+                    }
+                    TermKind::IntConst(n) => {
+                        if !num_traits::Zero::is_zero(n) {
+                            let scaled = manager.mk_int(scale * n);
+                            push_residual(&mut residual, scaled, manager);
+                        }
+                    }
+                    TermKind::Add(args) => {
+                        for &a in args.iter().rev() {
+                            stack.push(Frame::Eval(a, scale.clone()));
+                        }
+                    }
+                    TermKind::Neg(inner) => {
+                        stack.push(Frame::Eval(*inner, -scale));
+                    }
+                    TermKind::Sub(l, r) => {
+                        stack.push(Frame::Eval(*l, scale.clone()));
+                        stack.push(Frame::Eval(*r, -scale));
+                    }
+                    TermKind::Mul(args) => {
+                        // Linear iff at most one factor is non-numeric; that
+                        // factor then carries the whole (constant) product as
+                        // its scale.  Two or more non-numeric factors are
+                        // nonlinear in anything they mention.
+                        let mut const_prod = num_bigint::BigInt::from(1);
+                        let mut non_const: Vec<TermId> = Vec::new();
+                        for &f in args.iter() {
+                            let n = manager.get(f)?;
+                            match &n.kind {
+                                TermKind::IntConst(v) => const_prod *= v,
+                                _ => non_const.push(f),
+                            }
+                        }
+                        match non_const.len() {
+                            0 => {
+                                let v = manager.mk_int(scale * const_prod);
+                                push_residual(&mut residual, v, manager);
+                            }
+                            1 => stack.push(Frame::Eval(non_const[0], scale * const_prod)),
+                            _ => return None,
+                        }
+                    }
+                    _ => {
+                        // Opaque ground sub-term (function application,
+                        // div/mod, ...): a legitimate residual.
+                        push_residual(&mut residual, id, manager);
+                    }
+                }
+            }
+        }
+    }
+    let residual = residual.unwrap_or_else(|| manager.mk_int(num_bigint::BigInt::ZERO));
+    Some((coeff, residual))
+}
+
 #[derive(Debug)]
 pub struct CounterExampleGenerator {
     /// Maximum number of counterexamples to generate per quantifier
@@ -324,6 +413,46 @@ impl CounterExampleGenerator {
                 cex.calculate_quality(manager);
                 counterexamples.push(cex);
                 self.stats.num_counterexamples_found += 1;
+            }
+        }
+
+        // Linear witness solving: when candidate substitution found no
+        // counterexample but the quantifier binds exactly one integer
+        // variable, try to *solve* the body's linear atoms for that
+        // variable and evaluate the solved points.  Pure-arithmetic
+        // existentials (`exists v. 2v+1 = y`, the Ultimate/jain encodings)
+        // have their falsifier at a compound term no candidate pool
+        // contains; isolation finds it.  Every solved point still goes
+        // through the same substitute/evaluate/check pipeline, so a wrong
+        // solve is merely a candidate that fails – never a fabricated
+        // counterexample.
+        if counterexamples.len() < self.max_cex_per_quantifier
+            && let Some(var) = quantifier.var_name(0)
+            && quantifier.bound_vars.len() == 1
+            && quantifier.var_sort(0) == Some(manager.sorts.int_sort)
+            && counterexamples.is_empty()
+        {
+            let extra = self.solve_linear_witnesses(quantifier.body, var, model, manager);
+            for witness in extra {
+                if counterexamples.len() >= self.max_cex_per_quantifier {
+                    break;
+                }
+                let mut assignment = FxHashMap::default();
+                assignment.insert(var, witness);
+                let substituted = self.apply_substitution(quantifier.body, &assignment, manager);
+                let evaluated = self.evaluate_under_model(substituted, model, manager);
+                if !self.is_ground_boolean(evaluated, manager) {
+                    all_ground = false;
+                }
+                if self.is_counterexample(evaluated, quantifier.is_universal, manager) {
+                    let combo = vec![witness];
+                    let mut cex =
+                        CounterExample::new(quantifier.term, assignment, combo, model.generation);
+                    cex.body_value = Some(evaluated);
+                    cex.calculate_quality(manager);
+                    counterexamples.push(cex);
+                    self.stats.num_counterexamples_found += 1;
+                }
             }
         }
 
@@ -626,6 +755,90 @@ impl CounterExampleGenerator {
     /// explicit heap stack rather than native recursion.
     ///
     /// [`TermManager::substitute`]: nixie_core::ast::TermManager::substitute
+    /// Solved-witness candidates for the single bound variable `var`, from
+    /// isolating it out of the body's linear comparison atoms.
+    ///
+    /// For an atom `(a*v + L) OP (R)` the equality-solving point is
+    /// `(R - L) div a`; inequality atoms contribute their boundary points the
+    /// same way.  Only *integer* linear arithmetic is handled (the candidate
+    /// is a `div` term, evaluated under the model like any other candidate).
+    fn solve_linear_witnesses(
+        &self,
+        body: TermId,
+        var: Spur,
+        model: &CompletedModel,
+        manager: &mut TermManager,
+    ) -> Vec<TermId> {
+        let mut out = Vec::new();
+        let mut seen_atoms: FxHashSet<TermId> = FxHashSet::default();
+        for sub in nixie_core::ast::traversal::collect_subterms(body, manager) {
+            if !seen_atoms.insert(sub) {
+                continue;
+            }
+            let Some(node) = manager.get(sub) else {
+                continue;
+            };
+            let (l, r) = match &node.kind {
+                TermKind::Eq(a, b)
+                | TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b) => (*a, *b),
+                _ => continue,
+            };
+            // Linear forms of both sides in `var`: (coefficient, residual term).
+            let Some((ca, la)) = linear_form_in(l, var, manager) else {
+                continue;
+            };
+            let Some((cb, lb)) = linear_form_in(r, var, manager) else {
+                continue;
+            };
+            let a = ca - cb;
+            if num_traits::Zero::is_zero(&a) {
+                continue; // variable cancelled: atom does not constrain it
+            }
+            // (a*v + L) OP R  =>  v = (R - L) div a.  Prefer the *concrete*
+            // witness: evaluate R - L under the candidate model and, when the
+            // quotient is exact, substitute `mk_int(value)` – a ground
+            // constant whose instance conflicts directly at the SAT level
+            // (the symbolic `div` term instead drags Euclidean axioms and a
+            // branch-and-bound obligation into the ground solver, which can
+            // stall exactly the goals this exists to solve).  Non-exact or
+            // non-literal residuals keep the symbolic `div` fallback plus
+            // the floor/ceil boundary points for inequality atoms.
+            let rhs = manager.mk_sub(lb, la);
+            let evaluated = self.evaluate_under_model(rhs, model, manager);
+            let mut pushed = false;
+            if let Some(node) = manager.get(evaluated)
+                && let TermKind::IntConst(num) = &node.kind
+                && !num_traits::Zero::is_zero(&a)
+            {
+                // Euclidean division: exact quotient only when the
+                // remainder is zero (sign-independent for our purpose —
+                // a non-exact point still gets the symbolic fallback).
+                let (q, r) = (num / &a, num % &a);
+                if num_traits::Zero::is_zero(&r) {
+                    let witness = manager.mk_int(q);
+                    if !out.contains(&witness) {
+                        out.push(witness);
+                        pushed = true;
+                    }
+                }
+            }
+            if !pushed {
+                let a_term = manager.mk_int(a.clone());
+                let witness = manager.mk_div(rhs, a_term);
+                if !out.contains(&witness) {
+                    out.push(witness);
+                }
+            }
+            if out.len() >= 8 {
+                break; // a handful of solved points is plenty
+            }
+        }
+        out
+    }
+
     fn apply_substitution(
         &self,
         term: TermId,
