@@ -1321,8 +1321,9 @@ impl Solver {
             TermKind::BvSle(a, b) => {
                 Opened::Done(bv_cmp_outcome(self, *a, *b, model, manager, BvCmp::Sle))
             }
-            // `distinct` is deliberately INCONCLUSIVE for the gate.  A model in
-            // which two operands share a value does NOT reliably indicate a real
+            // `distinct` is deliberately INCONCLUSIVE for the gate when its
+            // operands live in the arithmetic model.  A model in which two
+            // operands share a value does NOT reliably indicate a real
             // violation: the linear-arithmetic solver enforces disequalities by
             // case-splitting, not by pinning distinct witnesses in its LP model,
             // so `arith.value` routinely reports colliding integer values for a
@@ -1330,7 +1331,46 @@ impl Solver {
             // correct `Sat`s into spurious `Unknown`s; the gate targets violated
             // POSITIVE structure (a falsified equality or an all-false clause)
             // instead, which the arithmetic model represents faithfully.
-            TermKind::Distinct(_) => Opened::Done(EvalOutcome::UNDETERMINED),
+            //
+            // Bit-vector operands are the exception: their model values are
+            // exact (bit assignments or the dispatch's reconstructed
+            // definitions), the same trust level the BV equality/comparison
+            // arms above rely on, so a fully-assigned BV `distinct` is decided
+            // concretely.  Without this arm the elim-uncnstr dispatch's
+            // certification could never settle the `spear` family's width-1
+            // `(= … (distinct …))` encodings (`sat` degraded to `unknown`).
+            TermKind::Distinct(args) => {
+                let all_bv = args.iter().all(|&a| {
+                    manager
+                        .get(a)
+                        .is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()))
+                });
+                if !all_bv {
+                    Opened::Done(EvalOutcome::UNDETERMINED)
+                } else {
+                    let mut values: Vec<num_bigint::BigUint> = Vec::with_capacity(args.len());
+                    let mut complete = true;
+                    for &a in args.iter() {
+                        match eval_bv_value(self, a, model, manager) {
+                            Some(v) => values.push(v),
+                            None => {
+                                complete = false;
+                                break;
+                            }
+                        }
+                    }
+                    if !complete {
+                        Opened::Done(EvalOutcome::UNDETERMINED)
+                    } else {
+                        let distinct = {
+                            let mut sorted = values.clone();
+                            sorted.sort();
+                            sorted.windows(2).all(|w| w[0] != w[1])
+                        };
+                        Opened::Done(EvalOutcome::boolean(distinct))
+                    }
+                }
+            }
             TermKind::Add(args) => Opened::Frame(Frame::new(
                 Op::Arith {
                     operands: args.clone(),
@@ -1511,6 +1551,16 @@ fn parse_value_term(term: TermId, manager: &TermManager) -> EvalOutcome {
 ///
 /// The walk is an explicit-stack post-order traversal (see the module doc on
 /// why nothing here recursurses on the native stack).
+/// Debug mirror of [`eval_bv_value`] for the elim-uncnstr trace path.
+pub(super) fn eval_bv_value_for_debug(
+    solver: &Solver,
+    root: TermId,
+    model: &Model,
+    manager: &TermManager,
+) -> Option<num_bigint::BigUint> {
+    eval_bv_value(solver, root, model, manager)
+}
+
 fn eval_bv_value(
     solver: &Solver,
     root: TermId,
@@ -1602,10 +1652,27 @@ fn eval_bv_value(
                 // the search).  When the bits are undetermined the leaf is
                 // inconclusive, so an unconstrained bit-vector can never turn a
                 // correct `Sat` into a spurious `Unknown`.
+                //
+                // Second chance before conceding: the model's *explicit*
+                // assignment (a bit-blasted value, a preprocess-reconstructed
+                // definition, or the dispatch's deliberate completion of an
+                // unconstrained variable) is a record, not a readback default,
+                // and the certification gate above judges exactly this
+                // evaluation — so a leaf the model pins is determined.  This is
+                // what lets eliminated variables (never bit-blasted at all:
+                // deferred circuits, elim-uncnstr rewrites) certify `Sat`
+                // verdicts instead of degrading them to `Unknown`.
                 let val = if solver.bv.bits_all_determined(tid) {
                     solver.bv.get_value_big(tid)
                 } else {
-                    None
+                    model.get(tid).and_then(|value_term| {
+                        match manager.get(value_term).map(|td| &td.kind) {
+                            Some(TermKind::BitVecConst { value, width }) => {
+                                value.to_biguint().map(|v| mask(v, *width))
+                            }
+                            _ => None,
+                        }
+                    })
                 };
                 done.insert(tid, val);
                 stack.pop();

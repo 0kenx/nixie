@@ -196,6 +196,10 @@ impl super::Solver {
             // re-runs an idempotent (implied-clause) pass.
             has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
             // conservative direction (keeps the dispatch).
+            bv_elim_var_occurrences: _, // NOT trailed: routing hint only;
+            // stale high counts keep the default eager blast.
+            bv_elim_deferred: _, // NOT trailed: routing bookkeeping; a stale
+            // entry is re-linked eagerly on the next dispatch decline.
             has_bv_result_uf: _, // NOT trailed: monotone routing input; same
             // conservative direction as the flag above.
             bv_unified: _, // NOT trailed: `push` ends the generation, and

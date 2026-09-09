@@ -1339,7 +1339,15 @@ impl Solver {
         manager: &mut TermManager,
     ) {
         let mut rewriter = BvPreprocessor::new();
-        for _round in 0..4 {
+        // A definition resolves once every variable in its body is assigned
+        // (model bit-values, defaults, or an already-reconstructed
+        // definition); each resolving round assigns at least one more
+        // variable, so `eliminations.len()` rounds is a complete fixpoint
+        // bound.  (The previous fixed 4-round cap silently left chains
+        // deeper than 4 unresolved — measured as failed certifications on
+        // `spear` goals with ~400 definition eliminations, flipping `sat`
+        // verdicts to `unknown`.)
+        for _round in 0..=eliminations.len() {
             let assignments: rustc_hash::FxHashMap<TermId, TermId> =
                 model.assignments().iter().map(|(&t, &v)| (t, v)).collect();
             let mut changed = false;

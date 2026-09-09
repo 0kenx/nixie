@@ -242,6 +242,18 @@ pub struct Solver {
     /// stage-4 routing (`bv_dispatch_unified`), because its
     /// abstraction/refinement machinery has no unified-path equivalent.
     pub(super) has_bv_wide_mul: bool,
+    /// Free-variable occurrence counts for the elim-uncnstr *deferral*
+    /// pre-scan (see `bv_elim_defer_eager_blast`): routing hint only, never
+    /// trailed (stale high counts can only disable the deferral, i.e. keep
+    /// the default eager blast – the conservative direction, same stance
+    /// as `has_bv_wide_mul`).
+    pub(super) bv_elim_var_occurrences: rustc_hash::FxHashMap<TermId, u32>,
+    /// Assertions whose eager circuit linking was deferred by the
+    /// elim-uncnstr deferral bet (see `bv_elim_defer_eager_blast`): paid
+    /// back by `bv_restore_deferred_circuits` when the dispatch declines.
+    /// Routing bookkeeping only, not trailed (a stale entry after `pop` is
+    /// re-linked at the next decline — always sound, merely eager).
+    pub(super) bv_elim_deferred: Vec<TermId>,
     /// Assertion count at which the stage-4 preprocessing-parity pass last
     /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
     pub(super) bv_preprocess_at_count: usize,
@@ -907,6 +919,8 @@ impl Solver {
             bv_terms: FxHashSet::default(),
             has_bv_ring_ops: false,
             has_bv_wide_mul: false,
+            bv_elim_var_occurrences: rustc_hash::FxHashMap::default(),
+            bv_elim_deferred: Vec::new(),
             bv_preprocess_at_count: usize::MAX,
             has_bv_result_uf: false,
             bv_unified: false,
@@ -4205,6 +4219,7 @@ pub(crate) fn freeze_collapse_enabled() -> bool {
 }
 
 mod branch_priority;
+mod bv_elim_uncnstr;
 mod bv_preprocess;
 mod dispatch_pure_bv;
 mod fp_hybrid;

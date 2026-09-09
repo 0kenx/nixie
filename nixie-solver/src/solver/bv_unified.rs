@@ -285,6 +285,27 @@ impl Solver {
         if !super::dispatch_pure_bv::assertion_in_bv_fragment(term, manager) {
             self.all_assertions_bv_fragment = false;
         }
+        // elim-uncnstr deferral: when the check-time unconstrained-variable
+        // elimination is predicted to *delete* this assertion's expensive
+        // circuits outright, skip building them now (Z3's `qfbv` pipeline
+        // eliminates before bit-blasting; eagerly building a 1024-bit
+        // divider network that the rewrite removes burns the whole budget
+        // before the check ever starts).  Deferred atoms stay unlinked and
+        // are owned by the check-time decision: the eager dispatch's
+        // elimination pass if it fires (see `bv_elim_uncnstr`), otherwise
+        // `bv_restore_deferred_circuits` pays the bet back before the
+        // general path runs.
+        if self.bv_elim_defer_eager_blast(term, manager) {
+            self.bv_elim_deferred.push(term);
+            return;
+        }
+        self.link_or_blast_bv_circuits_inner(term, manager);
+    }
+
+    /// The eager link/blast itself, separated from the deferral decision so
+    /// [`Solver::bv_restore_deferred_circuits`] can replay it without
+    /// re-triggering the deferral scan.
+    fn link_or_blast_bv_circuits_inner(&mut self, term: TermId, manager: &TermManager) {
         if self.bv_unified_window_open() {
             if !self.bv_unified {
                 self.bv.enter_unified();
@@ -299,6 +320,152 @@ impl Solver {
             self.end_bv_unified_generation();
             self.blast_bv_circuits_at_base_scope(term, manager);
         }
+    }
+
+    /// Pay back the elim-uncnstr deferral bet: eagerly link/blast every
+    /// deferred assertion (the exact work the deferral skipped at assert
+    /// time), so the general path proceeds with the circuits it would have
+    /// had without the deferral.  Called whenever the eager dispatch
+    /// declines a goal — the only situation where the deferred circuits are
+    /// still wanted.
+    pub(super) fn bv_restore_deferred_circuits(&mut self, manager: &TermManager) {
+        if self.bv_elim_deferred.is_empty() {
+            return;
+        }
+        let deferred = std::mem::take(&mut self.bv_elim_deferred);
+        for term in deferred {
+            self.link_or_blast_bv_circuits_inner(term, manager);
+        }
+    }
+
+    /// Whether to **defer** this assertion's eager circuit linking because
+    /// the check-time elim-uncnstr pass is predicted to remove the
+    /// assertion's expensive circuits outright (see the call site).
+    ///
+    /// Prediction, from one iterative walk of the assertion's DAG:
+    ///
+    /// * **Candidate**: some free variable's *total* occurrence count
+    ///   across all assertions seen so far is exactly one, and its direct
+    ///   parent application is one of the operators the elimination rules
+    ///   handle (`bvadd`/`bvmul`/`bvudiv`/`bvand`/`bvor`/`bvnot`/
+    ///   `concat`/`extract`/comparisons/`eq`/`ite`/Bool connectives …).
+    /// * **Expensive**: the assertion contains a division/remainder at
+    ///   width ≥ 64 or a non-constant multiply at width ≥ 64 — the node
+    ///   kinds whose circuits dominate a wide blast.
+    ///
+    /// Deferral requires both.  A candidate alone is true of most ordinary
+    /// files (some variable occurs once under an add); losing their eager
+    /// blast is a measured negative (the stage-4 study), so the deferral
+    /// stays off everything whose blast is cheap.  When the prediction is
+    /// wrong at check time (a later assertion re-used the candidate
+    /// variable), the elimination recount finds nothing and the general
+    /// path links the deferred atoms lazily — slower than eager, never
+    /// wrong.
+    ///
+    /// The occurrence counts in [`Solver::bv_elim_var_occurrences`] are
+    /// updated on *every* call (deferred or not), so later assertions
+    /// invalidate stale candidates.  They are a routing hint only and are
+    /// not trailed on `push`/`pop`: a stale high count can only *disable*
+    /// the deferral (keeping the default eager blast), never enable it
+    /// spuriously across a scope boundary.
+    pub(super) fn bv_elim_defer_eager_blast(
+        &mut self,
+        term: TermId,
+        manager: &TermManager,
+    ) -> bool {
+        /// Width at which a division/remainder/non-constant multiply makes
+        /// the blast expensive enough to be worth deferring.
+        const EXPENSIVE_WIDTH: u32 = 64;
+
+        let mut expensive = false;
+        let mut candidate = false;
+        let mut visited: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        // (node, parent application kind) — the parent decides whether a
+        // first-occurrence variable is an elimination candidate.
+        let mut stack: Vec<(TermId, Option<&TermKind>)> = vec![(term, None)];
+        while let Some((tid, parent)) = stack.pop() {
+            let is_var = manager
+                .get(tid)
+                .is_some_and(|data| matches!(data.kind, TermKind::Var(_)));
+            // Variables are counted on every pop (hash-consing: one pop per
+            // occurrence site — see `collect_unconstrained`); compound terms
+            // are walked once.
+            if is_var {
+                let count = self.bv_elim_var_occurrences.entry(tid).or_insert(0);
+                *count += 1;
+                if *count == 1 && parent.is_some_and(Self::parent_is_elim_eligible) {
+                    candidate = true;
+                }
+                continue;
+            }
+            if !visited.insert(tid) {
+                continue;
+            }
+            let Some(data) = manager.get(tid) else {
+                continue;
+            };
+            let kind = &data.kind;
+            // Expensive-node detection (width from the node's own sort).
+            let width = manager
+                .sorts
+                .get(data.sort)
+                .and_then(|s| s.bitvec_width())
+                .unwrap_or(0);
+            match kind {
+                TermKind::BvUdiv(_, _)
+                | TermKind::BvSdiv(_, _)
+                | TermKind::BvUrem(_, _)
+                | TermKind::BvSrem(_, _) => {
+                    if width >= EXPENSIVE_WIDTH {
+                        expensive = true;
+                    }
+                }
+                TermKind::BvMul(a, b) if width >= EXPENSIVE_WIDTH => {
+                    let const_a = manager
+                        .get(*a)
+                        .is_some_and(|t| matches!(t.kind, TermKind::BitVecConst { .. }));
+                    let const_b = manager
+                        .get(*b)
+                        .is_some_and(|t| matches!(t.kind, TermKind::BitVecConst { .. }));
+                    if !const_a && !const_b {
+                        expensive = true;
+                    }
+                }
+                _ => {}
+            }
+            let parent_ref: Option<&TermKind> = Some(kind);
+            for child in get_children(kind).into_iter().rev() {
+                stack.push((child, parent_ref));
+            }
+        }
+        expensive && candidate
+    }
+
+    /// Whether `parent` is an operator the elim-uncnstr rules can rewrite
+    /// when an unconstrained variable is its direct operand
+    /// (see `bv_elim_uncnstr::try_elim` for the rule table).
+    fn parent_is_elim_eligible(parent: &TermKind) -> bool {
+        matches!(
+            parent,
+            TermKind::Eq(_, _)
+                | TermKind::Ite(_, _, _)
+                | TermKind::Not(_)
+                | TermKind::And(_)
+                | TermKind::Or(_)
+                | TermKind::BvAdd(_, _)
+                | TermKind::BvSub(_, _)
+                | TermKind::BvMul(_, _)
+                | TermKind::BvUdiv(_, _)
+                | TermKind::BvSdiv(_, _)
+                | TermKind::BvAnd(_, _)
+                | TermKind::BvOr(_, _)
+                | TermKind::BvXor(_, _)
+                | TermKind::BvNot(_)
+                | TermKind::BvConcat(_, _)
+                | TermKind::BvExtract { .. }
+                | TermKind::BvUle(_, _)
+                | TermKind::BvSle(_, _)
+        )
     }
 
     /// Link the late-minted (unlinked) BV atoms recorded by the theory

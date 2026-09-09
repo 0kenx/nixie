@@ -60,8 +60,92 @@ impl crate::solver::Solver {
         &mut self,
         manager: &mut TermManager,
     ) -> Option<SolverResult> {
+        let result = self.dispatch_pure_bv_impl(manager, true);
+        if result.is_none() {
+            // The dispatch declined a goal some of whose assertions were
+            // *deferred* at assert time (the elim-uncnstr deferral bet that
+            // the rewrite would remove their circuits).  Pay the bet back:
+            // eagerly link/blast the deferred assertions now so the general
+            // path keeps exactly the circuits it would have had without the
+            // deferral (measured regressions otherwise: deferral false
+            // positives flipped solved `sat` goals to `unknown`).
+            self.bv_restore_deferred_circuits(manager);
+        }
+        result
+    }
+
+    /// The dispatch body; `allow_elim` gates the elim-uncnstr trial (kept
+    /// separate so a rerun keeps every other behavior identical).
+    fn dispatch_pure_bv_impl(
+        &mut self,
+        manager: &mut TermManager,
+        allow_elim: bool,
+    ) -> Option<SolverResult> {
+        if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+            eprintln!(
+                "[elim-uncnstr] dispatch entered: quant={} wide_mul={} bv_terms={} arith={}",
+                self.has_quantifiers,
+                self.has_bv_wide_mul,
+                self.bv_terms.len(),
+                self.arith_terms.len()
+            );
+        }
         if !self.goal_is_pure_bv(manager) {
+            if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                eprintln!("[elim-uncnstr] dispatch declined at fragment gate");
+            }
             return None;
+        }
+
+        // Stage-4 routing (`bv_dispatch_unified`): pure goals without wide
+        // multipliers are owned by the unified general path — unless the
+        // unconstrained-variable elimination fires, in which case the
+        // eager dispatch takes the goal over (Z3's `qfbv` pipeline runs
+        // `elim-uncnstr` after `solve-eqs` and before bit-blasting; goals
+        // like `brummayerbiere4/unconstrained*` collapse to free atoms
+        // that the general path would otherwise blast at full width).
+        // The trial below touches only the term manager, not solver
+        // state, so declining leaves the unified path exactly as before.
+        //
+        // `NIXIE_BV_ELIM_UNCNSTR=0` disables the pass (A/B null arm): the
+        // dispatch then keeps its pre-existing behavior for both routes.
+        let elim_enabled =
+            allow_elim && std::env::var("NIXIE_BV_ELIM_UNCNSTR").as_deref() != Ok("0");
+        let mut elim_uncnstr: Option<super::bv_elim_uncnstr::ElimUncnstrOutcome> = None;
+        let mut preprocess_run: Option<super::bv_preprocess::PreprocessOutcome> = None;
+        if Self::bv_dispatch_unified() && !self.has_bv_wide_mul {
+            let pre = self.bv_preprocess_assertions(manager);
+            if elim_enabled {
+                let outcome =
+                    super::bv_elim_uncnstr::elim_uncnstr_assertions(&pre.rewritten, manager);
+                if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                    eprintln!(
+                        "[elim-uncnstr] fresh_vars={} defs={} assertions={}",
+                        outcome.fresh_vars,
+                        outcome.defs.len(),
+                        outcome.assertions.len()
+                    );
+                }
+                let shrunk = super::bv_elim_uncnstr::dag_nodes(&outcome.assertions, manager)
+                    * super::bv_elim_uncnstr::TAKEOVER_SHRINK_DEN
+                    <= super::bv_elim_uncnstr::dag_nodes(&pre.rewritten, manager)
+                        * super::bv_elim_uncnstr::TAKEOVER_SHRINK_NUM;
+                if outcome.fresh_vars == 0 || !shrunk {
+                    // Nothing eliminated, or the rewrite does not meaningfully
+                    // shrink the goal — diverting a goal its existing route
+                    // already solves is a measured regression
+                    // (`tacas07/BBB-32` & friends): the unified general path
+                    // owns this goal (its stage-4 preprocessing-parity pass
+                    // re-runs the preprocessor itself).
+                    return None;
+                }
+                elim_uncnstr = Some(outcome);
+            } else {
+                // A/B null arm: no elimination, unified routing keeps the
+                // goal.
+                return None;
+            }
+            preprocess_run = Some(pre);
         }
 
         // The dispatch drives the BV solver's *embedded* instance; a unified
@@ -77,28 +161,103 @@ impl crate::solver::Solver {
         self.rebase_theory_state();
 
         // Rewrite every assertion through the BV normalizer (Z3's `qfbv`
-        // preamble: solve-eqs + simplify-with-som before bit-blast).  Ring
-        // identities become syntactic here – `distrib16`-style goals collapse
-        // to `true`/`false` with no SAT search, and `X±c` comparisons fold to
-        // bounds.  The pass is equivalence-preserving, so the *original*
-        // assertions stay the recorded constraint terms (unsat cores keep
-        // naming the user's input) and remain the fallback if any rewritten
-        // assertion leaves the blastable fragment.
+        // preamble: solve-eqs + simplify-with-som before bit-blast) —
+        // already computed for the routing trial above, so reuse it.
+        // Ring identities become syntactic here – `distrib16`-style goals
+        // collapse to `true`/`false` with no SAT search, and `X±c`
+        // comparisons fold to bounds.  The pass is equivalence-preserving,
+        // so the *original* assertions stay the recorded constraint terms
+        // (unsat cores keep naming the user's input) and remain the
+        // fallback if any rewritten assertion leaves the blastable
+        // fragment.
         let super::bv_preprocess::PreprocessOutcome {
             rewritten: preprocessed,
             eliminations,
             origins: preprocessed_origins,
             ..
-        } = self.bv_preprocess_assertions(manager);
-        let blastable = preprocessed
-            .iter()
-            .all(|&a| term_in_blastable_fragment(a, manager));
-        let (assertions, origins, eliminations): (Vec<TermId>, Vec<TermId>, Vec<(TermId, TermId)>) =
+        } = match preprocess_run {
+            Some(pre) => pre,
+            None => self.bv_preprocess_assertions(manager),
+        };
+
+        // For goals the dispatch already owns (wide-`bvmul` routing or
+        // `NIXIE_BV_DISPATCH_UNIFIED=0`), run the elimination as well —
+        // Z3's qfbv preamble does so unconditionally, and the wide-mul
+        // unconstrained family (`brummayerbiere4/unconstrained04/05`:
+        // 1024-bit `bvmul`s around unconstrained operands) is unreachable
+        // otherwise.
+        if elim_enabled && elim_uncnstr.is_none() {
+            let pre_nodes = super::bv_elim_uncnstr::dag_nodes(&preprocessed, manager);
+            let outcome = super::bv_elim_uncnstr::elim_uncnstr_assertions(&preprocessed, manager);
+            if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                eprintln!(
+                    "[elim-uncnstr] fresh_vars={} defs={} assertions={}",
+                    outcome.fresh_vars,
+                    outcome.defs.len(),
+                    outcome.assertions.len()
+                );
+            }
+            let shrunk = super::bv_elim_uncnstr::dag_nodes(&outcome.assertions, manager)
+                * super::bv_elim_uncnstr::TAKEOVER_SHRINK_DEN
+                <= pre_nodes * super::bv_elim_uncnstr::TAKEOVER_SHRINK_NUM;
+            if outcome.fresh_vars > 0 && shrunk {
+                elim_uncnstr = Some(outcome);
+            }
+        }
+
+        // Unconstrained-variable rewrite (Z3 `elim-uncnstr` port — see
+        // `bv_elim_uncnstr`): *satisfiability*-preserving, not
+        // implication-preserving.  Sound here because this dispatch
+        // decides the rewritten set alone: `Unsat` is a refutation of an
+        // equisatisfiable rewrite, and `Sat` reconstructs eliminated
+        // variables from the recorded definitions and must still certify
+        // against the *original* assertions below.  Origins stay the
+        // preprocessed ones (the pass never splits or reorders
+        // assertions), so unsat cores keep naming the user's input.
+        /// The dispatch's working set after preprocessing (+ elimination).
+        struct WorkSet {
+            assertions: Vec<TermId>,
+            origins: Vec<TermId>,
+            eliminations: Vec<(TermId, TermId)>,
+            complete_free_vars: bool,
+        }
+        let work_set: WorkSet = if let Some(outcome) = elim_uncnstr
+            && outcome
+                .assertions
+                .iter()
+                .all(|&a| term_in_blastable_fragment(a, manager))
+        {
+            // Definition replay order: the uncnstr defs (dependency
+            // order, newest round first) then the solve-eqs definitions —
+            // the reconstruction fixpoint absorbs any residual order.
+            let mut all_elims = outcome.defs;
+            all_elims.extend(eliminations);
+            WorkSet {
+                assertions: outcome.assertions,
+                origins: preprocessed_origins,
+                eliminations: all_elims,
+                complete_free_vars: true,
+            }
+        } else {
+            let blastable = preprocessed
+                .iter()
+                .all(|&a| term_in_blastable_fragment(a, manager));
             if blastable {
-                (preprocessed, preprocessed_origins, eliminations)
+                WorkSet {
+                    assertions: preprocessed,
+                    origins: preprocessed_origins,
+                    eliminations,
+                    complete_free_vars: false,
+                }
             } else {
-                (self.assertions.clone(), self.assertions.clone(), Vec::new())
-            };
+                WorkSet {
+                    assertions: self.assertions.clone(),
+                    origins: self.assertions.clone(),
+                    eliminations: Vec::new(),
+                    complete_free_vars: false,
+                }
+            }
+        };
 
         // Bit-blast every BV sub-term of every assertion at the embedded
         // solver's base scope, so the circuits survive the whole search
@@ -135,7 +294,7 @@ impl crate::solver::Solver {
         };
         self.bv.set_mul_abstraction_width(cegar_min_width);
         self.bv.set_div_abstraction_width(cegar_div_width);
-        for &assertion in &assertions {
+        for &assertion in &work_set.assertions {
             self.blast_bv_circuits_at_base_scope(assertion, manager);
         }
         let abstracted = self.bv.take_mul_abstractions();
@@ -155,7 +314,7 @@ impl crate::solver::Solver {
         // falling through is sound).  Guard terms stay the *original*
         // assertions so an unsat core names the user's input even when the
         // blasted form is the normalized one.
-        for (&assertion, &original) in assertions.iter().zip(origins.iter()) {
+        for (&assertion, &original) in work_set.assertions.iter().zip(work_set.origins.iter()) {
             self.bv.record_constraint_term(original);
             if !self.bv.assert_formula_true(assertion, manager) {
                 return None;
@@ -289,6 +448,27 @@ impl crate::solver::Solver {
 
         {
             let mut model = self.build_pure_bv_model(manager);
+            // The unconstrained-elimination rewrite ran: complete every
+            // still-unassigned free variable — of the original assertions
+            // and of the recorded definitions — with a chosen default
+            // (an unconstrained variable's model value is chosen, not
+            // searched; the certificate gate below decides whether the
+            // completion works).  Variables that carry an elimination
+            // *definition* are excluded — defaulting them first would
+            // shadow the definition's own value (the reconstruction pass
+            // below skips vars the model already assigns, so a wrong
+            // default would win and the completed model could contradict
+            // the very def chain it is supposed to extend).  Order:
+            // default the definition-free leaves, then reconstruct the
+            // def chain on top of them.
+            if work_set.complete_free_vars {
+                Self::bv_complete_free_vars(
+                    &mut model,
+                    &self.assertions,
+                    &work_set.eliminations,
+                    manager,
+                );
+            }
             // Solve-eqs eliminated variables carry no bits, so the
             // satisfying assignment gives them no value; reconstruct
             // each by evaluating its definition under the model (in
@@ -296,7 +476,7 @@ impl crate::solver::Solver {
             // assertions.  Without this, every `sat` instance that had
             // definitions eliminated paid the eager attempt *and* the
             // general path's full re-solve.
-            Self::bv_reconstruct_eliminations(&mut model, &eliminations, manager);
+            Self::bv_reconstruct_eliminations(&mut model, &work_set.eliminations, manager);
             self.model = Some(model);
             // Certificate gate (see `model_certifies_assertions`): the
             // dispatch is the *sole* decider of this `Sat`, so an assertion
@@ -304,6 +484,104 @@ impl crate::solver::Solver {
             // refutation gate's fail-open on `Undetermined` is what let the
             // ring-elimination bug reach users as a false `sat`.
             if !self.model_certifies_assertions(manager) {
+                if std::env::var("NIXIE_ELIM_UNCNSTR_TRACE").is_ok() {
+                    let Some(model) = self.model.as_ref() else {
+                        eprintln!("[elim-uncnstr] no model at certification");
+                        return None;
+                    };
+                    for &assertion in &self.assertions {
+                        let outcome = self.eval_in_model_outcome(assertion, model, manager, 0);
+                        eprintln!("[elim-uncnstr] assertion {assertion:?} eval={outcome:?}");
+                        if !matches!(outcome, crate::solver::model_eval::EvalOutcome::Value(_)) {
+                            // Descend to the deepest declining sub-term.
+                            let mut cursor = assertion;
+                            for _ in 0..64 {
+                                let undet = |t: nixie_core::ast::TermId| {
+                                    !matches!(
+                                        self.eval_in_model_outcome(t, model, manager, 0),
+                                        crate::solver::model_eval::EvalOutcome::Value(_)
+                                    )
+                                };
+                                let Some(td) = manager.get(cursor) else { break };
+                                let next = nixie_core::ast::traversal::get_children(&td.kind)
+                                    .into_iter()
+                                    .find(|&c| undet(c));
+                                match next {
+                                    Some(child) => cursor = child,
+                                    None => break,
+                                }
+                            }
+                            let root_kind = manager
+                                .get(assertion)
+                                .map(|td| format!("{:?}", td.kind))
+                                .unwrap_or_else(|| "?".into());
+                            let kind = manager
+                                .get(cursor)
+                                .map(|td| format!("{:?}", td.kind))
+                                .unwrap_or_else(|| "?".into());
+                            eprintln!(
+                                "[elim-uncnstr]     assertion kind: {root_kind}; deepest declining term {cursor:?}: {kind}"
+                            );
+                            if let Some(nixie_core::ast::TermKind::Eq(l, r)) =
+                                manager.get(assertion).map(|td| td.kind.clone())
+                            {
+                                let lv = crate::solver::model_eval::eval_bv_value_for_debug(
+                                    self, l, model, manager,
+                                );
+                                let rv = crate::solver::model_eval::eval_bv_value_for_debug(
+                                    self, r, model, manager,
+                                );
+                                let k = |t| {
+                                    manager
+                                        .get(t)
+                                        .map(|td| {
+                                            let base = format!("{:?}", td.kind);
+                                            if base.len() > 90 {
+                                                format!("{}...", &base[..90])
+                                            } else {
+                                                base
+                                            }
+                                        })
+                                        .unwrap_or_else(|| "?".into())
+                                };
+                                eprintln!(
+                                    "[elim-uncnstr]     eq sides: {l:?}={}={lv:?} {r:?}={}={rv:?}",
+                                    k(l),
+                                    k(r)
+                                );
+                            }
+                            if matches!(
+                                manager.get(cursor).map(|td| &td.kind),
+                                Some(nixie_core::ast::TermKind::Var(_))
+                            ) {
+                                let entry = model.get(cursor).map(|v| {
+                                    manager
+                                        .get(v)
+                                        .map(|td| format!("{:?}", td.kind))
+                                        .unwrap_or_else(|| "missing-term".into())
+                                });
+                                let bits = self.bv.debug_bv_terms().any(|(t, _, _)| t == cursor);
+                                eprintln!(
+                                    "[elim-uncnstr]     var detail: model={entry:?} has_bits={bits}"
+                                );
+                            }
+                        }
+                    }
+                    for (&var, &val) in model.assignments().iter() {
+                        let ks = |t: TermId| {
+                            manager
+                                .get(t)
+                                .map(|td| format!("{:?}", td.kind))
+                                .unwrap_or_else(|| "?".into())
+                        };
+                        eprintln!(
+                            "[elim-uncnstr]   model {var:?} ({}) := {val:?} ({})",
+                            ks(var),
+                            ks(val)
+                        );
+                    }
+                    eprintln!("[elim-uncnstr] model failed certification; declining");
+                }
                 // The satisfying assignment does not evaluate to `true`
                 // under every assertion: do not trust it. Hand the goal
                 // to the general path rather than answer `Unknown`
@@ -324,13 +602,14 @@ impl crate::solver::Solver {
         }
         // Stage-4 routing (`bv_dispatch_unified`): pure goals without wide
         // multipliers decline the dispatch and solve through the unified
-        // main core (the general path's link pass owns their circuits).
+        // main core (the general path's link pass owns their circuits) —
+        // with the elim-uncnstr takeover exception decided inside
+        // [`Self::dispatch_pure_bv_solve`] after the trial run.
         // Wide-`bvmul` goals keep the dispatch for its CEGAR machinery, and
         // ring-dominated goals keep their existing general-path routing (the
         // checks below).
-        if Self::bv_dispatch_unified() && !self.has_bv_wide_mul {
-            return false;
-        }
+        // (The unified/wide-mul routing branch lives in the dispatch entry,
+        // which needs a mutable manager for the elimination trial.)
         // No BV content: nothing to blast eagerly; the plain Boolean path in
         // `check_core` handles it.
         if self.bv_terms.is_empty() {
@@ -395,6 +674,72 @@ impl crate::solver::Solver {
     fn term_width(term: TermId, manager: &TermManager) -> Option<u32> {
         let td = manager.get(term)?;
         manager.sorts.get(td.sort)?.bitvec_width()
+    }
+
+    /// Complete a `sat` model with default values for every **definition-free**
+    /// free variable (of the original assertions and of the recorded
+    /// elimination definitions) that the satisfying assignment left
+    /// unassigned.
+    ///
+    /// The unconstrained-elimination rewrite can drop whole sub-DAGs from
+    /// the blasted set (their circuits are never built), so variables the
+    /// *original* assertions mention may have no bits to read.  Their
+    /// values are **chosen** (`0` / `false`), not searched — sound because
+    /// the dispatch's `Sat` is only ever reported after the completed
+    /// model certifies every original assertion
+    /// (`model_certifies_assertions`); a completion that does not satisfy
+    /// the originals declines the verdict instead of fabricating one.
+    ///
+    /// Variables with an elimination definition are deliberately *not*
+    /// defaulted here: `bv_reconstruct_eliminations` skips vars the model
+    /// already assigns, so a default would shadow the definition and could
+    /// contradict it (measured as a failed certification on
+    /// `brummayerbiere4/unconstrained03`, where a defaulted `u6 := 0`
+    /// overrode `u6 := ~u9`).
+    fn bv_complete_free_vars(
+        model: &mut crate::solver::types::Model,
+        assertions: &[TermId],
+        eliminations: &[(TermId, TermId)],
+        manager: &mut TermManager,
+    ) {
+        use nixie_core::ast::TermKind;
+        let defined: rustc_hash::FxHashSet<TermId> =
+            eliminations.iter().map(|&(var, _)| var).collect();
+        // Iterative walk (stack-safety rule) collecting every free
+        // variable of the roots.
+        let mut seen: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let mut stack: Vec<TermId> = assertions.to_vec();
+        stack.extend(eliminations.iter().map(|&(_, def)| def));
+        let mut vars: Vec<TermId> = Vec::new();
+        while let Some(tid) = stack.pop() {
+            if !seen.insert(tid) {
+                continue;
+            }
+            let Some(data) = manager.get(tid) else {
+                continue;
+            };
+            if let TermKind::Var(_) = data.kind {
+                vars.push(tid);
+                continue;
+            }
+            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+        }
+        for v in vars {
+            if model.get(v).is_some() || defined.contains(&v) {
+                continue;
+            }
+            let Some(data) = manager.get(v) else {
+                continue;
+            };
+            let sort_data = manager.sorts.get(data.sort);
+            if sort_data.is_some_and(|s| s.is_bool()) {
+                model.set(v, manager.mk_false());
+            } else if let Some(width) = sort_data.and_then(|s| s.bitvec_width()) {
+                model.set(v, manager.mk_bitvec(0u32, width));
+            }
+            // Other sorts have no default here: the variable stays
+            // unassigned and certification declines rather than guess.
+        }
     }
 }
 
