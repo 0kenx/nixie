@@ -1,0 +1,92 @@
+# Handover: QF_BV gap vs z3 — Tier A landed (elim-uncnstr, cohencu), Tier B next
+
+Written 2026-09-10 (evening), superseding the Tier-A prompt in
+`2026-09-10-qf-bv-gap-tier-a.md`. Everything below is measured and banked.
+
+## Where the campaign stands
+
+509-file stratified `QF_BV` sample, 25 s cap, z3 4.16.0 (banked column):
+
+| state | solved of 509 |
+|---|---|
+| pre-campaign baseline (u64-wrap fix landed) | 266 |
+| **after Tier A (this session)** | **276** |
+| z3 | 281 |
+
+Zero verdict disagreements vs z3 at every step. The remaining net gap of
+~5 files is a set of *load-flaky boundary files* (see below) plus the
+Tier-B search-class losses.
+
+## What landed (all on main, batteries green)
+
+1. **`elim-uncnstr` port** (256bb0e6) — `bv_elim_uncnstr.rs`, z3's
+   operator rules over exactly-once variables, gated take-over routing
+   (rewrite must shrink the goal ≤75 %), assert-time circuit deferral for
+   wide div/mul with candidate variables, model completion + definition
+   reconstruction, `eval_bv_value` model second-chance, BV `distinct`
+   evaluation. **brummayerbiere4/unconstrained01–10: 0/10 → 10/10**
+   (~0.06 s each).
+2. **Ring solve-eqs stage-4 un-gating (literal-only)** (ed50002) — the
+   historical gate rested on a false premise (the ring pass has been
+   odd-pivot/unit-only since birth; the recorded false-sat was the
+   *linearity* bug). Literal ring rewrites are now asserted alongside;
+   non-literal ones stay off (three boundary regressions measured).
+   **cohencu.c_2/3/4 solved** (+ s3_srvr UA2019, uclid catchconv-1568
+   as side effects).
+3. **Parser ill-typed-term rejection** (3016567) — `ite` with a
+   non-Bool condition and `=`/`distinct`/chainables between different
+   sorts are now parse errors, as in z3; `Int`/`Real` stay one
+   compatibility class (numeral polymorphism + nixie's `to_real`
+   embedding). Two in-repo test scripts turned out ill-typed and were
+   corrected (see the commit; the float64 one's old `sat` verdict was an
+   artifact of the very leniency this removes). Verdict-neutral on the
+   509-file corpus (0 parse rejections).
+
+Binaries: `precompile/7ba2f401/nixie` (HEAD; md5 c832538c…),
+`precompile/b4968556/nixie`, `precompile/256bb0e6/nixie`. Cells:
+`precompile/*/benchmark/bv_gap/final_rescreen.jsonl` — the recorded
+7ba2f401 run is the load-settled one (load ≈ 8): **276/509**, 0 verdict
+changes vs the baseline, 0 z3 disagreements. An earlier run under load
+36–43 read 267 with the identical binary — pure contention; always
+check `uptime` before believing a re-screen. Re-screen runner:
+`precompile/ac13904/benchmark/bv_gap/rescreen.py` (509 files, max 4
+concurrent, cores pinned).
+
+## The screened-out item (do not re-try unchanged)
+
+Tier A item 2 (structural concat/extract rewriting for bitrev1024,
+bench_4443, calypto 14/19, BuchwaldFried, maxandminor016) was
+implemented, measured, and **reverted**: zero per-cell differences in a
+matched-null A/B (`NIXIE_BV_STRUCT_RW` on/off, same binary), and a
+deterministic **false `unsat`** on `RWS/Example_1` (reduced to a
+49-assert prefix; only six width-126 `bvlshr`-by-1/2/3 rewrites fire)
+that survived term-level brute-force equivalence tests at widths ≤ 63.
+Full findings + revival path in
+`docs/studies/2026-09-10-bv-structural-rewriting-screen.md`. The
+revival path starts with root-causing that width-126 interaction (prime
+suspect: the bit-blaster's concat/extract encoders, or a >64-bit-width
+assumption in a rule interaction) and moves to n-ary concat piece lists
+— the binary-spine seam splits are what keep bitrev0512+ from closing.
+
+## Tier B (the real remaining gap, ~27 files)
+
+Search-class losses where z3 needs 1–24 s: `Sydr/master/cjpeg`
+predicates (5 — bvmul CEGAR territory), `bmc-bv-svcomp14/s3_clnt*` (4),
+`spear/samba` (2 + more near-misses), `Sydr symbolic_memory`, Wolf
+zipcpu, brummayerbiere2 smulov/umulov wide-mul overflow, nlz 256-bit
+variants. These need measured work on the CEGAR lemma tiers or the
+search — read `docs/BENCHMARKING.md` first; every claim needs the
+matched-null discipline (a bare before/after is not evidence on this
+box, which regularly runs at load 30+).
+
+## Operational cautions (still true)
+
+- Never trust a verdict without the binary's md5 in the same shell block;
+  never source benchmark binaries from a shared `target/`.
+- This box is *shared and often loaded*: boundary-file flips (the five
+  known ones: `countbitsrotate128`, `log-slicing/bvsub_10979`,
+  `pspace/power2sum.6296`, `mcm/54`, `RWS/Example_19` — z3 says unknown
+  on 4 of 5) are load noise, not regressions; always run a serial paired
+  control before believing a flip.
+- Worktrees need the corpus symlinks (`smt-lib`, `satcomp2024/25`,
+  `satlib`); delete them when done.
