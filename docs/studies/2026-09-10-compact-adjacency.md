@@ -178,3 +178,68 @@ gates pass, candidate and missing qualified-control si2 cells. Reuse control
 fc400b6f4984dcfb and both retained Kissat references. All other output, safety,
 quality and two-anchor advancement gates above remain unchanged. This is a
 single repair of observed introduced cost, not an inlining-attribute sweep.
+
+## Repair result: placement improved, advancement still fails
+
+Repair **34c6bebd251cae5dcb381e1702a30f8757fc0fcc** passes the generated-code
+gate: ordinary append is inlined in both scan phases; the separate checked
+reserve and directory-growth bodies are 224 and 120 bytes. The scan bodies
+grow from 836/753 to 1095/905 bytes because they now contain the ordinary
+append. Growth sizes and list contents are unchanged; no extra unsafe block
+was added. All 1048 SAT tests, strict SAT Clippy and fmt pass again.
+
+Release SHA-256 is
+`8d0730e9694319ed1c8cf3cac4bb9a5a82286b76bb6da85722e6f1264e41638d`;
+perf is `c2d3f7c098c688481096b56c236de34f5fd183439eceee7a3c27a5df9df7ff09`.
+The repaired cell **75723a0f98a10705** retains exact complete stdout and costs
+**246749805350 user instructions**, **242344923287 user cycles**, **60.79 s**.
+Instructions are **0.9691** of qualified control and **0.9554** of the first
+prototype. Isolating growth repairs the introduced instruction overhead,
+but the resulting 3.09% saving still misses the registered 5% gate.
+
+Wall/control is 1.4940. This invocation had **7.95% off CPU**, 3166 involuntary
+switches and 55.81 s user time, versus 0.295%, 115 switches and 40.47 s in the
+control. It technically passes the registered <=10% off-CPU bar and has
+100% PMU coverage; that does not make all of its wall/cycle deterioration
+causal evidence against the source. The two constrained idle workers still
+accumulated exactly zero runtime. Broader contention and code-layout/cache
+effects are not separated by these records. Do not retime the cell or promote
+its profile duration to a replacement wall measurement. There is no evidence
+here of the required wall improvement, regardless of that attribution limit.
+
+The [repair flamegraph](assets/2026-09-10-compact-adjacency-repair.svg), record
+**fabbbcca3fbdcaf7**, has 19091 samples, zero loss/throttle, full PMU coverage,
+99.974% user samples and 0.0262% unresolved self. Complete stdout is unchanged
+apart from the registered memory line. Scan self cycles are now **50.80%**,
+propagation-driver self **21.60%**. The out-of-line insertion node disappears;
+its unavoidable destination loads/stores move into the scanner. Hot addresses
+still sit at blocker/clause-header reads, binary span/overflow metadata,
+assignment-value access and destination capacity checks. Sample skid and
+load dependency mean these are locations of cost, not estimates that every
+associated instruction can be removed.
+
+The cost diagnosis supports a narrower conclusion than “unsafe is faster”:
+compact ownership is viable under the tested safety contract, and cold growth
+is needed to avoid introducing append overhead, but neither removes the
+serial watcher → value → clause and destination-memory accesses. A future
+representation experiment needs to reduce those dependencies or eliminate
+real visits, rather than counting saved header bytes as saved wall time.
+The prior negative prefix-sharing and entry-lifetime censuses remain relevant;
+this result is not grounds to revive them without new evidence.
+
+**No production compact buffer, fused binary directory or borrowed-binary
+prototype is landed.** The measured engineering result is below the gate,
+not a population performance claim. Five performance invocations in total
+covered both versions: three cost runs and two profiles; no si2, new Kissat,
+seed sweep or repeated cell. The second version's source bundle/patch, binary
+identities, disassembly, codegen audit, raw results, profiles and validation
+logs are retained under `precompile/34c6beb/`.
+
+The independently demonstrated CSR defects are extracted into the existing
+safe representation: preserve old physical boundaries during bulk compaction,
+reject count/total overflow before layout mutation, and bound fill writes by
+the selected span rather than the entire edge pool. Focused regressions cover
+mixed retirement with an empty middle span and overflow entries, repeated
+compaction, count overflow without mutation, and neighbor-overwrite rejection.
+The fix undergoes the full qualification gate separately from these rejected
+performance prototypes.
