@@ -88,3 +88,26 @@ doc-tests, strict Clippy/fmt/docs and installed-Z3 4.16.0 parity before source
 promotion. Preserve the prior candidate archive, all results and any remaining
 qualification limits. Commit the completed finding on main and remove owned
 temporary artifacts.
+
+## Pre-execution host allocation clarification
+
+Four ten-second CPU-15 preflights failed before any solver invocation.
+Its idle fractions were 12.74%, 85.08%, 85.97% and 84.15%; foreign Rust
+builds and solver sweeps were active. These are host observations, not
+candidate performance results. No cost cell, repair or profile has run.
+
+Permit another **Atom** core before starting the comparison, using only
+host idleness, never solver performance, to allocate it. At a ten-second
+preflight, prefer CPU 15 if it qualifies; otherwise select the lowest-numbered
+Atom CPU with at least 95% idle time and no active constrained userspace
+thread. Keep the same <=1% CPU-pressure and <=12 one-minute-load thresholds.
+Record every core's idle fraction and the selected core, then lock that core
+for both input pairs and any reference cells. If the locked core becomes
+busy, wait or leave the remaining cells pending; do not move a measured pair
+to another core. Preserve all failed CPU-15 observations and explicitly put
+the selected CPU in the manifest and canonical flags before launching.
+
+This allocates an unused execution resource for an unstarted panel; it does
+not change the candidate, inputs, order, thresholds or four-cell budget,
+supersede the invalid j3037 result, or permit a timing retry. No foreign
+process is moved or stopped. Full-machine isolation remains unestablished.
