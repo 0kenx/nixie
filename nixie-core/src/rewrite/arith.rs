@@ -889,7 +889,7 @@ mod tests {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
         let x = manager.mk_var("x", manager.sorts.int_sort);
-        let lt = manager.mk_lt(x, x);
+        let lt = manager.intern(TermKind::Lt(x, x), manager.sorts.bool_sort);
 
         let result = rewriter.rewrite(lt, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
@@ -903,7 +903,10 @@ mod tests {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
         let x = manager.mk_var("x", manager.sorts.int_sort);
-        let le = manager.mk_le(x, x);
+        // `mk_le` itself folds reflexivity now (hash-consed identity, the
+        // same rule `mk_str_le` applies), so build the *unfolded* node to
+        // keep exercising the rewriter's own rule.
+        let le = manager.intern(TermKind::Le(x, x), manager.sorts.bool_sort);
 
         let result = rewriter.rewrite(le, &mut ctx, &mut manager);
         assert!(result.was_rewritten());
