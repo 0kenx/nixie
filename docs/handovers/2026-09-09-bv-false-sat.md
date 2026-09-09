@@ -183,3 +183,48 @@ Measurement lesson (twice in one session): **verify the binary md5 in
 the same shell block as any verdict**, and never source a benchmark
 binary from a shared, concurrently-rebuilt `target/` — the precompile
 cache exists precisely to freeze one artifact per commit.
+
+## Follow-up plan: the remaining 15-net (44 gross) file gap vs z3
+
+Cluster map of the 44 one-sided losses (z3 solves, nixie does not, 25 s
+cap), from `precompile/ac13904/benchmark/bv_gap/`:
+
+### Tier A — preprocessing/rewriting gap (~17 files, z3 < 1 s each)
+
+z3's rewriter solves these **before search**; we blast giant circuits.
+
+1. **`elim-unconstrained` (10 files: `brummayerbiere4/unconstrained01-10`,
+   z3 0.1 s)** — 6×1024-bit vars each occurring **once**; z3's
+   unconstrained-variable propagation replaces the whole goal with a
+   free atom. The tactic is an **empty stub** in nixie
+   (`nixie-core/src/tactic/core/elim_unconstrained.rs` — every method is
+   an `#[allow(dead_code)]` no-op). Port z3's
+   `tactic/core/elim_unconstrained*.cpp` + `elim_unconstrained.cpp`
+   rules (reference in `../temp/z3/`; Brummayer-Biere, MEMICS'09).
+   Soundness notes: satisfiability-preserving only (assert the rewrite
+   alongside, as the stage-4 dispatch preprocessor does, or gate model
+   production); per-operator reachability conditions are load-bearing.
+2. **Bit-hack/structural rewriting (~7 files)** —
+   `maxandminor016`/`bitrev1024`/`calypto problem_14/19`/`sage
+   bench_4443`/`BuchwaldFried counterexample`: concat/extract
+   normalization (extract-of-concat, concat-of-extracts merge),
+   AND/OR/NOT constant push. z3's `bv_rewriter` is the reference.
+3. **Polynomial normalization (3 files: `cohencu.c_2/3/4`, z3 0.1 s)** —
+   32-bit mul/add chains encoding z=3n², y=3n+3n²−1; z3's
+   sum-of-monomials canonicalization substitutes the linear relations
+   and collapses to a univariate quadratic. The dispatch preprocessor's
+   existing SOM/poly-identity pass (stage-4 study) is close — extend or
+   fix its routing (`goal_is_pure_bv` declines these: widths < 32).
+
+### Tier B — search gap (~27 files, z3 1–24 s)
+
+`Sydr/cjpeg` predicates (5, z3 8–24 s — bvmul CEGAR territory),
+`bmc-bv-svcomp14/s3_clnt*` (4), `spear/samba` (2), `Sydr/symbolic_memory`,
+`2019-Wolf zipcpu`, wide-nlz 256-bit variants. These need measured work
+on the CEGAR lemma tiers / search, not rewriting.
+
+### Artifacts
+
+- binaries: `precompile/ac13904/nixie` (md5 64e6c14…, isolated build);
+- cells: `precompile/ac13904/benchmark/bv_gap/{gap_cells,fixed_cells}.jsonl`;
+- reproducer family + audit scripts: `precompile/45e2657/benchmark/bv_gap/`.
