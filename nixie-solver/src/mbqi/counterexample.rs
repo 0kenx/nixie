@@ -19,7 +19,7 @@ use crate::prelude::*;
 use core::fmt;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
-use nixie_core::sort::SortId;
+use nixie_core::sort::{SortId, SortKind};
 #[cfg(feature = "std")]
 use nixie_time::{Duration, Instant};
 use num_bigint::BigInt;
@@ -213,6 +213,17 @@ pub struct CounterExampleGenerator {
     /// values and defaults. Kept separate from `candidate_cache`, which is a
     /// pure per-round memo of computed lists.
     injected_candidates: FxHashMap<SortId, Vec<TermId>>,
+    /// Per sort: `Some(len)` when the list built this round provably contains
+    /// every value the completed model can exhibit for that sort (the
+    /// universe plus every same-sort model value), with `len` the *actual*
+    /// enumerated length; `None` when it does not (pool replaced the
+    /// strategies and truncation cut a required value, or the sort was never
+    /// built).  This is what makes the finite-exhaustion `Satisfied` sound:
+    /// "no counterexample among the enumerated tuples" only proves the
+    /// quantifier holds when the enumeration covered the model's whole
+    /// domain — the CLEARSY/00779 false `sat` enumerated 10 of a 2405-term
+    /// pool while the exhaustion check counted an 8-value universe.
+    exhaustive_candidates: FxHashMap<SortId, Option<usize>>,
 }
 
 impl CounterExampleGenerator {
@@ -227,6 +238,7 @@ impl CounterExampleGenerator {
             stats: CexStats::default(),
             candidate_cache: FxHashMap::default(),
             injected_candidates: FxHashMap::default(),
+            exhaustive_candidates: FxHashMap::default(),
         }
     }
 
@@ -372,25 +384,106 @@ impl CounterExampleGenerator {
             // Strategy 3: Add default values based on sort
             self.add_default_candidates(sort, &mut candidates, manager);
 
-            // Strategy 4: the injected pool (ground terms of the problem,
-            // Skolem applications).  REPLACES the strategies when present —
-            // deliberately: extras are the *relevant* terms and any sort
-            // that already has them had its search trajectory measured on
-            // exactly this pool (merging strategies in perturbed the
-            // enumeration order and regressed a 0.04s `unsat` parity
-            // benchmark to `unknown`).  The strategies above therefore run
-            // only for sorts whose pool was EMPTY — which is precisely the
-            // gap being closed (a sort with neither extras, model values,
-            // nor defaults could instantiate nothing and MBQI exhausted its
-            // rounds answering `unknown` for refutable goals).
-            if let Some(extra) = self.injected_candidates.get(&sort)
+            // Every value a *total* reading of the completed model can
+            // exhibit for this sort: the universe, every same-sort assignment
+            // value, and every same-sort function-table argument and result —
+            // **untruncated**.  This is the candidate domain the
+            // finite-exhaustion `Satisfied` needs covered; the universe alone
+            // is a `MAX_UNIVERSE_SIZE`-truncated *sample* (CLEARSY/00779: an
+            // 8-entry universe over a model with 2270 distinct values), and
+            // the assignments map alone misses values that only occur as
+            // function-table arguments.
+            let mut required: Vec<TermId> = Vec::new();
+            let push_req = |t: TermId, req: &mut Vec<TermId>| {
+                if !req.contains(&t) {
+                    req.push(t);
+                }
+            };
+            if let Some(universe) = model.universe(sort) {
+                for &u in universe {
+                    push_req(u, &mut required);
+                }
+            }
+            for (&term, &value) in &model.assignments {
+                if manager.get(term).is_some_and(|t| t.sort == sort) {
+                    push_req(value, &mut required);
+                }
+                if manager.get(value).is_some_and(|v| v.sort == sort) {
+                    push_req(value, &mut required);
+                }
+            }
+            for interp in model.function_interps.values() {
+                for entry in &interp.entries {
+                    for (i, &arg) in entry.args.iter().enumerate() {
+                        if i < interp.domain.len()
+                            && interp.domain[i] == sort
+                            && manager.get(arg).is_some_and(|a| a.sort == sort)
+                        {
+                            push_req(arg, &mut required);
+                        }
+                    }
+                    if interp.range == sort
+                        && manager.get(entry.result).is_some_and(|r| r.sort == sort)
+                    {
+                        push_req(entry.result, &mut required);
+                    }
+                }
+            }
+
+            // The injected pool (ground terms of the problem, Skolem
+            // applications).  For *sampled* sorts (Int, Real, BitVec, ...)
+            // it REPLACES the computed list, exactly as before: those
+            // sorts' search trajectories were measured on pool order, and
+            // merging defaults in front regressed the UFLIA injectivity
+            // parity benchmark to `unknown`.  For *exhaustion-eligible*
+            // sorts (Bool, uninterpreted) the pool is merged AFTER the
+            // strategies: the required values lead, so truncation may only
+            // ever cut extra pool entries, never a required value — a bare
+            // pool is a syntactic sample, and a truncated sample silently
+            // dropped the falsifying value of the CLEARSY/00779 goal.
+            let finite_by_kind = matches!(
+                manager.sorts.get(sort).map(|s| &s.kind),
+                Some(SortKind::Bool) | Some(SortKind::Uninterpreted(_))
+            );
+            if finite_by_kind {
+                let mut merged: Vec<TermId> = candidates;
+                if let Some(extra) = self.injected_candidates.get(&sort) {
+                    for &t in extra {
+                        if !merged.contains(&t) {
+                            merged.push(t);
+                        }
+                    }
+                }
+                candidates = merged;
+            } else if let Some(extra) = self.injected_candidates.get(&sort)
                 && !extra.is_empty()
             {
                 candidates = extra.clone();
             }
-
-            // Limit candidates
             candidates.truncate(self.max_candidates_per_var);
+
+            // Coverage verdict for the finite-exhaustion gate.  `None` (a
+            // sample, not a domain) when the sort is not finite-by-kind,
+            // the truncated list dropped a required value, or an
+            // uninterpreted sort yielded NO required values — the harvest
+            // could not see the model's domain at all (SMT-LIB domains are
+            // non-empty, so "no values found" is a harvest failure, not an
+            // empty domain; treating it as vacuously covered is the
+            // constants-only false-`sat` shape).
+            let covered = finite_by_kind
+                && required.iter().all(|r| candidates.contains(r))
+                && match manager.sorts.get(sort).map(|s| &s.kind) {
+                    Some(SortKind::Uninterpreted(_)) => !required.is_empty(),
+                    _ => true,
+                };
+            self.exhaustive_candidates.insert(
+                sort,
+                if covered {
+                    Some(candidates.len())
+                } else {
+                    None
+                },
+            );
 
             // Cache for future use
             self.candidate_cache.insert(sort, candidates.clone());
@@ -1859,6 +1952,16 @@ impl CounterExampleGenerator {
     pub fn clear_cache(&mut self) {
         self.candidate_cache.clear();
         self.injected_candidates.clear();
+        self.exhaustive_candidates.clear();
+    }
+
+    /// The actual number of candidates enumerated for `sort` this round, when
+    /// that list provably covers every value the completed model can exhibit
+    /// for the sort (see `build_candidate_lists`).  `None` means the
+    /// enumeration was a sample — sound for *finding* counterexamples, sound
+    /// for nothing else.
+    pub fn exhaustive_candidate_len(&self, sort: SortId) -> Option<usize> {
+        self.exhaustive_candidates.get(&sort).copied().flatten()
     }
 
     /// Get statistics

@@ -639,9 +639,16 @@ impl MBQIIntegration {
     fn all_domains_finitely_exhausted(
         &self,
         quantifiers: &[QuantifiedFormula],
-        model: &CompletedModel,
-        manager: &TermManager,
+        _model: &CompletedModel,
+        _manager: &TermManager,
     ) -> bool {
+        // `model`/`manager` are no longer consulted here: the coverage
+        // verdict lives where the candidate lists are built (see
+        // `CounterExampleGenerator::build_candidate_lists`), because it
+        // is a property of the *enumeration*, and any model-derived
+        // re-estimate would reintroduce exactly the undercount this
+        // gate exists to refuse.
+
         for quantifier in quantifiers {
             if !quantifier.can_instantiate() {
                 continue;
@@ -658,9 +665,15 @@ impl MBQIIntegration {
             // NOT prove satisfaction and we must fall through to `Unknown`.
             let mut product: usize = 1;
             for &(_name, sort) in quantifier.bound_vars.iter() {
-                let Some(count) = self.sort_candidate_count(sort, model, manager) else {
-                    // Infinite (Int/Real/String) or merely-sampled (BitVec, ...)
-                    // domain, or an oversized universe: not exhaustively covered.
+                // The *actual* enumerated list length, not a model-derived
+                // estimate: the generator's list is the ground truth of what
+                // was (and was not) tried, and only a list that provably
+                // covers every value the completed model can exhibit for the
+                // sort turns "no counterexample" into a proof.  `None` covers
+                // infinite domains (Int/Real/String), merely-sampled ones
+                // (BitVec, ...), oversized universes, and – the CLEARSY
+                // false-`sat` – a truncated pool-replaced sample.
+                let Some(count) = self.cex_generator.exhaustive_candidate_len(sort) else {
                     return false;
                 };
                 product = product.saturating_mul(count);
