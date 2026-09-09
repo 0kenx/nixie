@@ -34,6 +34,18 @@ impl Solver {
     /// is already falsified by level-0 facts alone. The instance is `Unsat` and
     /// the caller is handed a model that does not satisfy the formula.
     pub fn solve_with_theory<T: TheoryCallback>(&mut self, theory: &mut T) -> SolverResult {
+        // Debug-only CNF snapshot (worktree instrumentation): see the twin
+        // hook in `Solver::solve` for the contract.
+        #[cfg(feature = "std")]
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static DUMPED: AtomicBool = AtomicBool::new(false);
+            if let Ok(path) = std::env::var("NIXIE_DUMP_CNF")
+                && !DUMPED.swap(true, Ordering::Relaxed)
+            {
+                self.debug_dump_cnf(&path);
+            }
+        }
         #[cfg(feature = "clause-traffic")]
         let _traffic_session = self.begin_clause_traffic_session();
         #[cfg(feature = "bcp-groups")]

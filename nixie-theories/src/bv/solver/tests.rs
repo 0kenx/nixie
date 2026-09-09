@@ -439,3 +439,42 @@ fn extract_reports_out_of_range_instead_of_aborting() {
     assert!(!solver.extract(r, a, 2, 5), "low above high is not a range");
     assert!(solver.extract(r, a, 5, 2));
 }
+
+#[test]
+fn lshr_const64_forces_zero_high_bits() {
+    // nlzbs128 false-sat probe: x free, amount pinned to constant 64,
+    // x pinned to 0 -> every result bit of lshr must be forced FALSE.
+    // A satisfiable forcing of a high result bit = under-constrained blast.
+    for &(w, k) in &[(128u32, 64u32), (128, 96), (64, 32), (96, 48)] {
+        let mut bv = super::BvSolver::new();
+        let x = nixie_core::ast::TermId::new(6);
+        let amt = nixie_core::ast::TermId::new(4);
+        let res = nixie_core::ast::TermId::new(7);
+        bv.new_bv(x, w);
+        bv.new_bv(amt, w);
+        assert!(bv.bv_lshr(res, x, amt));
+        let xb = bv.get_bv(x).unwrap().clone();
+        let ab = bv.get_bv(amt).unwrap().clone();
+        let rb = bv.get_bv(res).unwrap().clone();
+        // pin x = 0 and amount = k (bit i of k)
+        for i in 0..w as usize {
+            bv.pin_for_test(xb.bits[i], false);
+            let bit = i < 32 && (k >> i) & 1 == 1;
+            bv.pin_for_test(ab.bits[i], bit);
+        }
+        for i in 0..w as usize {
+            let expected = i + (k as usize) < w as usize;
+            if !expected {
+                // forcing result bit i true must be UNSAT
+                bv.pin_for_test(rb.bits[i], true);
+                let r = bv.check_embedded_for_test();
+                assert_ne!(
+                    r,
+                    nixie_sat::SolverResult::Sat,
+                    "lshr w={w} k={k}: result bit {i} should be forced 0 but SAT survives"
+                );
+                bv.unpin_for_test(rb.bits[i]);
+            }
+        }
+    }
+}

@@ -1025,6 +1025,89 @@ impl Solver {
     /// checks is kept: the asserted and lemma clauses, the Tseitin memo, the
     /// registered quantifiers, and any candidate registered outside a check.
     pub fn check(&mut self, manager: &mut TermManager) -> SolverResult {
+        // Env-gated term sidecar for the CNF dump: NIXIE_DUMP_TERMS=<path>
+        // writes term -> bits/atom-var mappings (see the NIXIE_DUMP_CNF
+        // hook in nixie-sat; docs/handovers/2026-09-09-bv-false-sat.md).
+        #[cfg(feature = "std")]
+        if let Ok(path) = std::env::var("NIXIE_DUMP_TERMS") {
+            use std::fmt::Write as _;
+            let mut out = String::new();
+            for (term, width, bits) in self.bv.debug_bv_terms() {
+                let _ = write!(out, "bv {term:?} w={width} bits=");
+                for b in bits {
+                    let _ = write!(out, "{},", b.index());
+                }
+                if let Some(t) = manager.get(term) {
+                    let kind = match &t.kind {
+                        nixie_core::ast::TermKind::Var(nm) => format!("var:{nm:?}"),
+                        nixie_core::ast::TermKind::BitVecConst { .. } => "const".into(),
+                        nixie_core::ast::TermKind::Ite(c, a, b) => format!("ite {c:?} {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvAdd(a, b) => format!("bvadd {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvSub(a, b) => format!("bvsub {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvAnd(a, b) => format!("bvand {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvOr(a, b) => format!("bvor {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvXor(a, b) => format!("bvxor {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvNot(a) => format!("bvnot {a:?}"),
+                        nixie_core::ast::TermKind::BvShl(a, b) => format!("bvshl {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvLshr(a, b) => format!("bvlshr {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvConcat(a, b) => format!("concat {a:?} {b:?}"),
+                        nixie_core::ast::TermKind::BvExtract { arg, high, low } => {
+                            format!("extract {arg:?} {high} {low}")
+                        }
+                        nixie_core::ast::TermKind::Eq(a, b) => format!("eq {a:?} {b:?}"),
+                        _ => "other".into(),
+                    };
+                    let _ = write!(out, " # {kind}");
+                }
+                let _ = writeln!(out);
+            }
+            for (term, var) in self.bv.debug_bool_nodes() {
+                let _ = writeln!(out, "bool {term:?} var={}", var.index());
+            }
+            for (term, var) in self.term_to_var.iter() {
+                let _ = writeln!(out, "t2v {term:?} var={}", var.index());
+            }
+            let _ = std::fs::write(&path, out);
+            eprintln!("c [dump-terms] sidecar -> {path}");
+            // Free-bit scan: which blasted bit vars appear in NO clause?
+            // (Names the under-constrained circuits directly.)
+            let mut occurrences = vec![0u32; self.sat.num_vars() + 2];
+            let mut bump = |lits: &[nixie_sat::Lit]| {
+                for l in lits {
+                    let idx = l.var().index();
+                    if idx + 1 < occurrences.len() {
+                        occurrences[idx + 1] += 1;
+                    }
+                }
+            };
+            for cid in self.sat.debug_clause_ids() {
+                if let Some(view) = self.sat.debug_clause_lits(cid) {
+                    bump(view);
+                }
+            }
+            let mut free_terms = 0usize;
+            for (term, width, bits) in self.bv.debug_bv_terms() {
+                let free: Vec<usize> = bits
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, b)| occurrences.get(b.index() + 1).is_none_or(|&c| c == 0))
+                    .map(|(i, _)| i)
+                    .collect();
+                if !free.is_empty() {
+                    let kind = manager
+                        .get(term)
+                        .map(|t| format!("{:?}", t.kind))
+                        .unwrap_or_default();
+                    eprintln!(
+                        "c [free-bits] {term:?} w={width} free={:?} kind={}",
+                        &free[..free.len().min(8)],
+                        kind
+                    );
+                    free_terms += 1;
+                }
+            }
+            eprintln!("c [free-bits] total terms with free bits: {free_terms}");
+        }
         let fingerprint = self.goal_fingerprint();
         if let Some(cached) = self.cached_verdict(&fingerprint) {
             return cached;

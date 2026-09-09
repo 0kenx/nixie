@@ -529,6 +529,44 @@ impl BvSolver {
         self.unified_atoms.insert(term);
     }
 
+    /// Worktree test accessor: pin a circuit bit var to a constant.
+    #[cfg(test)]
+    pub fn pin_for_test(&mut self, var: nixie_sat::Var, value: bool) {
+        let lit = if value {
+            nixie_sat::Lit::pos(var)
+        } else {
+            nixie_sat::Lit::neg(var)
+        };
+        self.sat.add_clause([lit]);
+    }
+
+    /// Worktree test accessor: unpin is a no-op marker (tests re-build).
+    #[cfg(test)]
+    pub fn unpin_for_test(&mut self, _var: nixie_sat::Var) {}
+
+    /// Worktree test accessor: solve the embedded instance.
+    #[cfg(test)]
+    pub fn check_embedded_for_test(&mut self) -> nixie_sat::SolverResult {
+        self.sat.solve()
+    }
+
+    /// Debug-only (worktree instrumentation): iterate `(term, width, bits)`
+    /// for every bit-blasted BV term, plus `(term, var)` for every encoded
+    /// Bool node.  Used by the CNF-dump sidecar to map SAT vars back to
+    /// terms under an external model.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    pub fn debug_bv_terms(&self) -> impl Iterator<Item = (TermId, u32, &[nixie_sat::Var])> + '_ {
+        self.term_to_bv
+            .iter()
+            .map(|(t, v)| (*t, v.width, v.bits.as_slice()))
+    }
+
+    /// Debug-only (worktree instrumentation): Bool nodes with their vars.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    pub fn debug_bool_nodes(&self) -> impl Iterator<Item = (TermId, nixie_sat::Var)> + '_ {
+        self.bool_node.iter().map(|(t, v)| (*t, *v))
+    }
+
     /// Record that the theory manager saw BV atom `term` assigned with no
     /// unified circuit behind it (a late-minted atom).  See
     /// `pending_unlinked`.

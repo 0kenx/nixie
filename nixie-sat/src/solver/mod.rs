@@ -3556,8 +3556,82 @@ impl Solver {
         self.fatal_error.as_ref()
     }
 
+    /// Iterate live clause ids (env-gated CNF-dump tooling).
+    pub fn debug_clause_ids(&self) -> impl Iterator<Item = crate::clause::ClauseId> + '_ {
+        self.clauses.iter_ids()
+    }
+
+    /// Literal slice of a live clause (env-gated CNF-dump tooling).
+    #[allow(clippy::redundant_slicing)] // SmallVec needs the explicit slice
+    pub fn debug_clause_lits(
+        &self,
+        cid: crate::clause::ClauseId,
+    ) -> Option<&[crate::literal::Lit]> {
+        self.clauses.get(cid).map(|v| &v.lits[..])
+    }
+
+    /// Write the current formula as DIMACS — the env-gated blast-vs-search
+    /// split tool (`NIXIE_DUMP_CNF`; see
+    /// `docs/handovers/2026-09-09-bv-false-sat.md`).
+    #[cfg(feature = "std")]
+    fn debug_dump_cnf(&self, path: &str) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut n_clauses = 0usize;
+        let mut body = String::new();
+        // Level-0 trail assignments as units (the solver's committed view).
+        let assignments: Vec<_> = self.trail.assignments().to_vec();
+        for &lit in &assignments {
+            let d = if lit.code() & 1 == 0 {
+                (lit.var().index() as i32) + 1
+            } else {
+                -((lit.var().index() as i32) + 1)
+            };
+            let _ = writeln!(body, "{d} 0");
+            n_clauses += 1;
+        }
+        for cid in self.clauses.iter_ids() {
+            let Some(view) = self.clauses.get(cid) else {
+                continue;
+            };
+            if view.deleted {
+                continue;
+            }
+            for lit in view.lits.iter() {
+                let d = if lit.code() & 1 == 0 {
+                    (lit.var().index() as i32) + 1
+                } else {
+                    -((lit.var().index() as i32) + 1)
+                };
+                let _ = write!(body, "{d} ");
+            }
+            let _ = writeln!(body, "0");
+            n_clauses += 1;
+        }
+        let _ = writeln!(out, "p cnf {} {}", self.num_vars.max(1), n_clauses);
+        out.push_str(&body);
+        let _ = std::fs::write(path, out);
+        eprintln!(
+            "c [dump-cnf] {} vars, {n_clauses} clauses -> {path}",
+            self.num_vars
+        );
+    }
+
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
+        // Env-gated CNF snapshot (blast-vs-search split tool): the first
+        // solve entry writes the current formula — live clauses plus
+        // level-0 trail units — to NIXIE_DUMP_CNF. One-shot per process.
+        #[cfg(feature = "std")]
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static DUMPED: AtomicBool = AtomicBool::new(false);
+            if let Ok(path) = std::env::var("NIXIE_DUMP_CNF")
+                && !DUMPED.swap(true, Ordering::Relaxed)
+            {
+                self.debug_dump_cnf(&path);
+            }
+        }
         #[cfg(feature = "clause-traffic")]
         let _traffic_session = self.begin_clause_traffic_session();
         #[cfg(feature = "bcp-groups")]
