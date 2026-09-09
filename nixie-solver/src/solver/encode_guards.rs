@@ -185,7 +185,13 @@ impl Solver {
                         stack.push(*b);
                     }
                 }
-                TermKind::IntConst(n) if n.to_i64().is_none() => return true,
+                // A too-big `IntConst` is NOT unhandled any more: the linear
+                // parser abstracts it to a shared opaque tableau column
+                // (exact for refutation, gated on `sat` by
+                // `arith_abstracted_big_const`), so it must not veto the
+                // whole goal here.  Wide `BitVecConst`s in arithmetic keep
+                // their honest reject: the BV theory handles them exactly on
+                // its own paths, and this parser cannot.
                 TermKind::BitVecConst { value, .. } if value.to_i64().is_none() => return true,
                 TermKind::Mul(args) => {
                     let mut variable_factors = 0usize;

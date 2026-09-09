@@ -283,6 +283,26 @@ pub struct Solver {
     /// bit-blast every file twice (once into the main core, once into the
     /// dispatch's instance).
     pub(super) all_assertions_bv_fragment: bool,
+    /// Whether some linear constraint was parsed with a too-big `IntConst`
+    /// abstracted to a free tableau column (see
+    /// `Solver::parse_arith_comparison`).  The abstraction is exact for
+    /// refutations and unproven for models, so a `Sat` over it requires the
+    /// full-assertion model certification before it may be printed.
+    ///
+    /// Scope-consistent: snapshotted by `push`, restored by `pop`, cleared
+    /// by `reset` – the same contract as `has_quantifiers`.
+    pub(super) arith_abstracted_big_const: bool,
+    /// The too-big `IntConst` terms abstracted to tableau columns so far
+    /// (parse-structural: grows monotonically, never retracted – the same
+    /// hash-consed constant is the same column whenever it is parsed again).
+    /// [`Solver::emit_big_const_distinctness`] turns pairs of them into
+    /// `c_i ≠ c_j` units.
+    pub(super) arith_big_const_terms: Vec<TermId>,
+    /// How many prefixes of `arith_big_const_terms` already have every pair
+    /// emitted.  Pairs are tautologies in the real semantics (distinct
+    /// `IntConst` terms are distinct values), so losing one to a `pop` costs
+    /// propagation power, never soundness.
+    pub(super) arith_big_const_pair_watermark: usize,
     /// Whether we've seen arithmetic BV operations (division/remainder)
     /// Used to decide when to run eager BV checking
     pub(super) has_bv_arith_ops: bool,
@@ -894,6 +914,9 @@ impl Solver {
             bv_order_built: Vec::new(),
             bv_order_guarded: FxHashSet::default(),
             all_assertions_bv_fragment: true,
+            arith_abstracted_big_const: false,
+            arith_big_const_terms: Vec::new(),
+            arith_big_const_pair_watermark: 0,
             has_bv_arith_ops: false,
             arith_terms: FxHashSet::default(),
             ite_result_terms: FxHashSet::default(),
@@ -1192,6 +1215,26 @@ impl Solver {
             return SolverResult::Unknown;
         }
         if result == SolverResult::Sat && self.arith_defs_incomplete(manager) {
+            self.model = None;
+            self.unsat_core = None;
+            return SolverResult::Unknown;
+        }
+        // Honesty gate (soundness): a linear constraint was parsed with a
+        // too-big `IntConst` abstracted to a free tableau column.  The
+        // abstraction is exact for refutations (a conflict over the column
+        // holds for every value, in particular the constant's true value),
+        // so the `Unsat` verdicts that reach here are sound – but a `Sat`
+        // is only a model of the *abstracted* system, whose column value is
+        // some `Rational64` rather than the constant itself.  Accept it
+        // exclusively through an independently verified concrete model (the
+        // `model_certify` evaluator is `BigInt`-exact); keep the honest
+        // `Unknown` otherwise (the Verus `uHi` pins are why this matters:
+        // without the abstraction the whole goal used to be `unknown`, and
+        // without this gate the abstraction would print unverified models).
+        if result == SolverResult::Sat
+            && self.arith_abstracted_big_const
+            && !self.certify_quantified_sat(manager)
+        {
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -3744,6 +3787,7 @@ impl Solver {
             trail_position: self.trail.len(),
             num_mbqi_quantifiers: self.mbqi.num_quantifiers(),
             unowned_quantifier_seen: self.unowned_quantifier_seen,
+            arith_abstracted_big_const: self.arith_abstracted_big_const,
             num_ematch_quantifiers: self.ematch_engine.num_quantifiers(),
             has_quantifiers: self.has_quantifiers,
             has_bv_arith_ops: self.has_bv_arith_ops,
@@ -3982,6 +4026,7 @@ impl Solver {
                 .truncate_quantifiers(state.num_ematch_quantifiers);
             self.has_quantifiers = state.has_quantifiers;
             self.unowned_quantifier_seen = state.unowned_quantifier_seen;
+            self.arith_abstracted_big_const = state.arith_abstracted_big_const;
 
             // Sticky encoder flags derived from the retracted assertions.
             self.has_bv_arith_ops = state.has_bv_arith_ops;
@@ -4068,6 +4113,9 @@ impl Solver {
         self.bv_order_built.clear();
         self.bv_order_guarded.clear();
         self.all_assertions_bv_fragment = true;
+        self.arith_abstracted_big_const = false;
+        self.arith_big_const_terms.clear();
+        self.arith_big_const_pair_watermark = 0;
         self.has_bv_result_uf = false;
         self.diff.reset();
         self.derived_reasons.clear();

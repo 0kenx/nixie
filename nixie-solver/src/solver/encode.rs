@@ -294,6 +294,30 @@ impl Solver {
         let final_terms: SmallVec<[(TermId, Rational64); 4]> =
             combined.into_iter().filter(|(_, c)| !c.is_zero()).collect();
 
+        // A column that *is* an `IntConst` is the big-constant abstraction of
+        // `extract_linear_terms`: the tableau sees the constant as a free
+        // variable.  Remember it so the `Sat` honesty gate can demand exact
+        // certification before printing a model over the abstraction, and
+        // collect the constant itself so
+        // `Solver::emit_big_const_distinctness` can keep distinct constants
+        // distinct (two different `IntConst` terms are different values by
+        // hash-consing, but two free columns are not).
+        let mut saw_big_const = false;
+        for &(t, _) in final_terms.iter() {
+            if manager.get(t).is_some_and(|node| match &node.kind {
+                TermKind::IntConst(big) => big.to_i64().is_none(),
+                _ => false,
+            }) {
+                saw_big_const = true;
+                if !self.arith_big_const_terms.contains(&t) {
+                    self.arith_big_const_terms.push(t);
+                }
+            }
+        }
+        if saw_big_const {
+            self.arith_abstracted_big_const = true;
+        }
+
         let result = ParsedArithConstraint {
             terms: final_terms,
             constant: -constant, // Move constant to RHS
@@ -401,13 +425,31 @@ impl Solver {
                 Work::Visit(id, sc) => {
                     let term = manager.get(id)?;
                     match &term.kind {
-                        // Integer constant
-                        TermKind::IntConst(n) => {
-                            // BigInt too large for i64 -> not linear (honest
-                            // reject; the atom stays gated).
-                            let val = n.to_i64()?;
-                            cur.constant += sc * Rational64::from_integer(val);
-                        }
+                        // Integer constant.
+                        TermKind::IntConst(n) => match n.to_i64() {
+                            Some(val) => {
+                                cur.constant += sc * Rational64::from_integer(val);
+                            }
+                            None => {
+                                // A BigInt too large for the `Rational64`
+                                // tableau is abstracted to its own opaque
+                                // column: every occurrence of the same
+                                // hash-consed constant shares one column, so
+                                // the parsed system is the original with
+                                // that constant replaced by a fresh free
+                                // variable.  That is exact in the refutation
+                                // direction (an abstracted conflict holds
+                                // for *every* column value, in particular
+                                // the constant's true value) and guarded on
+                                // the `sat` direction (see the
+                                // `arith_abstracted_big_const` honesty gate
+                                // in `check_with_arith_refinement`).
+                                // Replacing this arm's old `?` rejection is
+                                // what kept the Verus `uHi 64 = 2^64`
+                                // family answerable only by `unknown`.
+                                cur.terms.push((id, sc));
+                            }
+                        },
 
                         // Rational constant
                         TermKind::RealConst(r) => {
@@ -899,6 +941,7 @@ impl Solver {
         // memoised Tseitin encoder, so semantics are unchanged.
         self.emit_assertion_clauses(term_to_encode, manager);
         self.link_or_blast_bv_circuits(term_to_encode, manager);
+        self.emit_big_const_distinctness(manager);
 
         // Track unit `(= name body)` from nullary define-fun so table indices
         // that are inlined bodies inherit bounds on `name`.
@@ -1486,6 +1529,7 @@ impl Solver {
         // unnamed `assert` path above (see `emit_assertion_clauses`).
         self.emit_assertion_clauses(term_to_encode, manager);
         self.link_or_blast_bv_circuits(term_to_encode, manager);
+        self.emit_big_const_distinctness(manager);
 
         // Eagerly add arith diseq split for Not(Eq(a,b)) assertions
         self.add_arith_diseq_split(term_to_encode, manager);

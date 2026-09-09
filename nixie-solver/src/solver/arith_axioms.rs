@@ -43,6 +43,9 @@ use num_traits::ToPrimitive;
 
 use super::Solver;
 use super::trail::TrailOp;
+use super::types::ArithConstraintType;
+use super::types::ParsedArithConstraint;
+use num_rational::Rational64;
 
 /// Safety valve on the number of distinct terms that may receive defining
 /// axioms in a single solver run.  Each definition costs a bounded handful of
@@ -173,6 +176,107 @@ impl Solver {
     /// level, and [`Solver::arith_defined_terms`] is journalled on the trail, so
     /// a `pop` retracts the clauses and the "already defined" marks together.
     /// A later scope that needs the same term re-derives its axioms.
+    /// Keep the abstracted too-big `IntConst` columns pairwise distinct.
+    ///
+    /// Two different `IntConst` terms are different values (hash-consing makes
+    /// term equality literal equality), but once the linear parser abstracts
+    /// each to a *free* column the tableau has no reason to keep them apart –
+    /// `(= x 2^64) ∧ (= x (2^64+1))` would happily find the model
+    /// `x := c1 := c2`.
+    ///
+    /// The distinctness cannot be asserted as *terms*: `mk_eq`/`mk_lt` fold
+    /// two distinct integer literals to `false`/`true` before any constraint
+    /// is recorded, and the trichotomy pass declines folded atoms for exactly
+    /// that reason.  So each pair injects a **signed strict row** at the
+    /// constraint level: a fresh internal Boolean atom `!bigord!k` whose SAT
+    /// variable is recorded as `Constraint::Lt(c_a, c_b)` or `Gt` (by the
+    /// constants' true `BigInt` order) and forced true as a unit.  The row is
+    /// exact – it states the true order of the two literals – so it is sound
+    /// in both directions and never blocks a legitimate model.
+    ///
+    /// Capped: beyond [`MAX_BIG_CONST_DISTINCT`] constants the quadratic pass
+    /// declines (completeness only – the `sat` honesty gate still applies).
+    pub(super) fn emit_big_const_distinctness(&mut self, manager: &mut TermManager) {
+        use super::types::Constraint;
+
+        const MAX_BIG_CONST_DISTINCT: usize = 256;
+        let n = self.arith_big_const_terms.len();
+        if n <= self.arith_big_const_pair_watermark || n > MAX_BIG_CONST_DISTINCT {
+            return;
+        }
+        // Only pairs involving a constant collected since the last pass;
+        // oldest first for determinism.
+        let wm = self.arith_big_const_pair_watermark;
+        let mut pairs: Vec<(TermId, TermId)> = Vec::new();
+        for i in wm..n {
+            for j in 0..n {
+                if i != j {
+                    pairs.push((self.arith_big_const_terms[i], self.arith_big_const_terms[j]));
+                }
+            }
+        }
+        pairs.sort_unstable();
+        pairs.dedup();
+
+        for (a, b) in pairs {
+            // The true order of the two literals decides the row's direction;
+            // equal values are impossible (distinct terms of `IntConst`).
+            let value = |t: TermId| {
+                manager
+                    .get(t)
+                    .and_then(|node| match &node.kind {
+                        nixie_core::ast::TermKind::IntConst(v) => Some(v.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default()
+            };
+            let ord = value(a).cmp(&value(b));
+            let constraint = match ord {
+                core::cmp::Ordering::Less => Constraint::Lt(a, b),
+                core::cmp::Ordering::Greater => Constraint::Gt(a, b),
+                core::cmp::Ordering::Equal => continue,
+            };
+            let name = format!("!bigord!{}", self.next_skolem_id);
+            self.next_skolem_id = self.next_skolem_id.wrapping_add(1);
+            let atom = manager.mk_apply(&name, [a, b], manager.sorts.bool_sort);
+            let var = self.get_or_create_var(atom);
+            // The parsed row is what the theory check turns into a tableau
+            // assertion: `c_a - c_b < 0` (or `> 0`).  Building it directly –
+            // rather than through `parse_arith_comparison` on `(< a b)`,
+            // which the constant folder would collapse to a literal before
+            // any constraint existed – keeps both columns in the row.
+            let one = Rational64::from_integer(1);
+            let neg_one = Rational64::from_integer(-1);
+            let parsed = ParsedArithConstraint {
+                terms: smallvec::smallvec![(a, one), (b, neg_one)],
+                constant: Rational64::new(0, 1),
+                constraint_type: match ord {
+                    core::cmp::Ordering::Less => ArithConstraintType::Lt,
+                    core::cmp::Ordering::Greater => ArithConstraintType::Gt,
+                    core::cmp::Ordering::Equal => continue,
+                },
+                reason_term: atom,
+            };
+            // The row mentions both columns: make sure the arithmetic solver
+            // has them interned (the parse already did, this is idempotent).
+            // `register_arith_atom` is encode-private, so intern directly.
+            for &col in &[a, b] {
+                if let Some(node) = manager.get(col)
+                    && (node.sort == manager.sorts.int_sort || node.sort == manager.sorts.real_sort)
+                    && !self.arith_terms.contains(&col)
+                {
+                    self.arith_terms.insert(col);
+                    self.trail.push(TrailOp::ArithTermAdded { term: col });
+                    self.arith.intern(col);
+                }
+            }
+            self.record_constraint(var, constraint);
+            self.var_to_parsed_arith.insert(var, parsed);
+            let _ = self.sat.add_clause([nixie_sat::Lit::pos(var)]);
+        }
+        self.arith_big_const_pair_watermark = n;
+    }
+
     pub(super) fn instantiate_arith_axioms(&mut self, manager: &mut TermManager) {
         if self.arith_terms.is_empty() {
             return;

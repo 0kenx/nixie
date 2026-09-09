@@ -121,7 +121,48 @@ the quantifier body as the lemma `(>= (f 5) 0)`, which resolves the query.
 Without the `:pattern` annotation, Nixie uses heuristic trigger selection
 (`ematching::trigger`) to infer patterns from the quantifier body.
 
+### Quantifier ownership (the honesty model)
+
+Every quantifier in an asserted goal must be **owned** by an engine, or the
+solver may not print `sat` over it:
+
+| Quantifier position | Owner | Mechanism |
+|---------------------|-------|-----------|
+| `∀x. φ` conjunct on the asserted `and`/`not` spine | MBQI + E-matching | registered at assert time |
+| `∃x. φ` conjunct (incl. nested under a registered `∀`) | ground solver | Skolemized (`exists_skolem`, `skolemization`) |
+| `(not (forall x φ))` conjunct | ground solver | NNF `∃x.¬φ` then Skolemized to `¬φ(sk)` – the witness is *searched* |
+| `(not (exists x φ))` conjunct | MBQI + E-matching | NNF `∀x.¬φ`, registered as an asserted universal |
+| any quantifier behind a polarity boundary (`or` disjunct, `ite` arm, Bool `=` operand) | **nobody** | `Solver::unowned_quantifier_seen`; `sat` requires independent model certification (`model_certify`), else `unknown` |
+
+The negated-quantifier rows are the fix for the September 2026 false-`sat`
+class: a boundary quantifier used to be a *free Boolean* whose truth the
+SAT core guessed, and `MBQIResult::Satisfied`/`NoQuantifiers` verified only
+the registered quantifiers – so `∀x. f(x)=0 ∧ ¬∀x,y. …` answered `sat` with
+the negated assertion forgotten (funcprobs/U48). The historical polarity
+trap is guarded by a regression test: `(¬∀x. P(x)) ∧ ¬P(5)` stays `sat`,
+because the Skolemized reading never asserts the universal.
+
 ---
+
+## Big integer constants (linear abstraction)
+
+An `Int` literal outside `i64` (`18446744073709551616` = 2⁶⁴) cannot live in
+the `Rational64` tableau. Instead of rejecting the atom (which used to make
+the *whole goal* `unknown` – every Verus encoding pins `(uHi 64) = 2⁶⁴`), the
+linear parser abstracts it to a **shared opaque column**:
+
+* every occurrence of the same hash-consed constant is one column, so the
+  parsed system is the original with that constant replaced by a fresh free
+  variable;
+* refutation is **exact** (a conflict over the column holds for every value,
+  in particular the constant's true value), so `unsat` is sound;
+* `emit_big_const_distinctness` adds signed strict rows between distinct
+  big constants (`c_i < c_j` by their true `BigInt` order), injected at the
+  constraint level because term-level `(< c_i c_j)` folds to a literal
+  before any constraint exists;
+* a `sat` over the abstraction is only accepted through the `BigInt`-exact
+  `model_certify` evaluation (`arith_abstracted_big_const` gate), otherwise
+  the honest `unknown`.
 
 ## When MBQI Fires vs E-matching
 

@@ -133,6 +133,10 @@ pub(crate) struct ContextState {
     /// once the scope is gone (and a still-unowned one from before the push
     /// must keep gating it).
     pub(crate) unowned_quantifier_seen: bool,
+    /// `arith_abstracted_big_const` flag at the time of push: a too-big
+    /// `IntConst` column abstracted inside the retracted scope must stop
+    /// gating `sat` once the scope is gone.
+    pub(crate) arith_abstracted_big_const: bool,
     /// `has_bv_arith_ops` flag at the time of push
     pub(crate) has_bv_arith_ops: bool,
     /// `has_array_ops` flag at the time of push
@@ -214,26 +218,31 @@ impl super::Solver {
             ematch_engine: _,   // SNAPSHOT: num_ematch_quantifiers
             has_quantifiers: _, // SNAPSHOT
             unowned_quantifier_seen: _, // SNAPSHOT (ContextState)
-            term_to_var: _,     // TRAIL: VarCreated
-            var_to_term: _,     // SNAPSHOT: num_vars
-            var_to_constraint: _, // TRAIL: ConstraintAdded
-            var_to_parsed_arith: _, // TRAIL: ConstraintAdded
-            logic: _,           // INVARIANT: set before any assertion
-            assertions: _,      // SNAPSHOT: num_assertions
-            certificate_assertions: _, // SNAPSHOT: num_assertions
-            named_assertions: _, // TRAIL: NamedAssertionAdded
-            assumption_vars: _, // INVARIANT: never written
-            model: _,           // RESULT: cleared by `invalidate_results`
-            unsat_core: _,      // RESULT: cleared by `invalidate_results`
-            context_stack: _,   // the scope stack itself
-            trail: _,           // the undo journal itself
-            theory_processed_up_to: _, // INVARIANT: never read
-            produce_unsat_cores: _, // INVARIANT: user option
-            has_false_assertion: _, // SNAPSHOT + TRAIL: FalseAssertionSet
-            polarities: _,      // INVARIANT: monotone (see above)
-            polarity_aware: _,  // INVARIANT: user option
-            theory_aware_branching: _, // INVARIANT: user option
-            proof: _,           // RESULT: emptied in place by `invalidate_results` (the
+            arith_abstracted_big_const: _, // SNAPSHOT (ContextState)
+            arith_big_const_terms: _, // NOT trailed: monotone parse-structural
+            // set (same contract as `arith_parse_cache`); the watermark
+            // follows it, and a popped tautology unit only costs propagation.
+            arith_big_const_pair_watermark: _, // NOT trailed: ditto
+            term_to_var: _,                    // TRAIL: VarCreated
+            var_to_term: _,                    // SNAPSHOT: num_vars
+            var_to_constraint: _,              // TRAIL: ConstraintAdded
+            var_to_parsed_arith: _,            // TRAIL: ConstraintAdded
+            logic: _,                          // INVARIANT: set before any assertion
+            assertions: _,                     // SNAPSHOT: num_assertions
+            certificate_assertions: _,         // SNAPSHOT: num_assertions
+            named_assertions: _,               // TRAIL: NamedAssertionAdded
+            assumption_vars: _,                // INVARIANT: never written
+            model: _,                          // RESULT: cleared by `invalidate_results`
+            unsat_core: _,                     // RESULT: cleared by `invalidate_results`
+            context_stack: _,                  // the scope stack itself
+            trail: _,                          // the undo journal itself
+            theory_processed_up_to: _,         // INVARIANT: never read
+            produce_unsat_cores: _,            // INVARIANT: user option
+            has_false_assertion: _,            // SNAPSHOT + TRAIL: FalseAssertionSet
+            polarities: _,                     // INVARIANT: monotone (see above)
+            polarity_aware: _,                 // INVARIANT: user option
+            theory_aware_branching: _,         // INVARIANT: user option
+            proof: _, // RESULT: emptied in place by `invalidate_results` (the
             // `Option` carries the `:produce-proofs` setting, so it is not taken)
             simplifier: _,       // INVARIANT: term -> simplified term
             statistics: _,       // INVARIANT: cumulative counters
