@@ -442,6 +442,14 @@ impl Solver {
                         }
                         self.save_model();
                         self.debug_verify_model_input();
+                        #[cfg(feature = "std")]
+                        if let Ok(path) = std::env::var("NIXIE_DUMP_CNF_AT_SAT") {
+                            // Blast-vs-core split, take two: the formula AS
+                            // THE SOLVER SEES IT at the sat return (search-
+                            // added clauses included). kissat-unsat here =
+                            // a search-side false sat.
+                            self.debug_dump_cnf(&path);
+                        }
                         return SolverResult::Sat;
                     }
                     TheoryCheckResult::Conflict(conflict_lits) => {

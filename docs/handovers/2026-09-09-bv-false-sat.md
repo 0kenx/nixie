@@ -109,3 +109,54 @@ alias into soundness paths; the typechecker should reject.
 worktrees don't carry the gitignored corpora, so 14 corpus-backed tests
 fail there. Symlink them in (`ln -s <main>/smt-lib smt-lib` etc.) or the
 suite is not green in a worktree.
+
+## RESOLUTION (same day, second session): root cause found and fixed
+
+**`encode_add_const` read `(constant >> i) & 1` with `constant: u64` over
+bit positions `i` up to the vector width.** In release, `>>` masks the
+shift amount modulo 64, so position `i ≥ 64` re-read bit `i mod 64` —
+`bvsub` at width ≥ 65 encoded `−b = ~b + 2^64 + 1` instead of `~b + 1`
+(constant 1's bit 0 re-read at position 64). The wrong circuit is still
+*consistently satisfiable*, so the solver completed with a false `sat`
+whose model satisfies the wrong circuit — exactly the width boundary
+(≤ 64 correct, 128 false).
+
+Found via the landed tooling plus one decisive unit-level probe: a debug
+build PANICKED (`attempt to shift right with overflow`) in
+`encode_add_const` where release silently wrapped.
+
+**Fixed sites** (all the `u64`-shift-at-`i≥64` family):
+- `bv/solver.rs encode_add_const` — the soundness bug;
+- `bv/solver.rs get_model` — value grouping keyed `1u64 << i` beyond 64
+  (wide values collided into one group → wrong model merging); wide terms
+  now get singleton groups;
+- `bv/aig.rs constant_bitvector` and `bv/aig_builder.rs` — same wrapped
+  const-bit reads.
+
+**Evidence chain**: pre-fix precompile binary says `sat` on
+nlzbs128/nlzbsdown128; fixed worktree binary says `unsat` (both match
+z3); the new unit test `bvsub_wide_matches_exact_semantics` (width-128
+subtraction, every result bit forced) FAILS pre-fix and PASSES post-fix;
+the corpus-level `audit_nlzbs128_circuits` test (env-gated
+`NIXIE_AUDIT_NLZBS`) asserts Unsat.
+
+**Corpus impact**: the wrong `bvsub` circuit didn't just falsify two
+files — re-screening the 509-file QF_BV sample, the fix flips **50
+verdicts** (mostly `unknown` → decided; `log-slicing/bvsub_*` literally
+names the op) and takes nixie from **213 → 263 solved** (z3: 281). The
+gap shrinks from 68 to 18 files.
+
+**Incident note (measurement discipline)**: during the hunt, verdicts
+appeared to flip between identical binaries. Cause: shell cwd drifted
+between the shared main checkout and the worktree (different binaries),
+and the worktree was briefly touched by another agent (HEAD moved).
+Lesson recorded: always `pwd` + `md5sum` the binary in the same block as
+the verdict when chasing nondeterminism. A residual unexplained
+observation: one intermediate build (all fixes, pre-fmt) still said
+`sat` on nlzbs128; every build since is stably `unsat`. If the false
+sat ever resurfaces build-to-build, suspect a second, layout-sensitive
+site — the env-gated corpus test is the canary.
+
+**Also fixed this session**: `NIXIE_DUMP_CNF_AT_SAT` (dump the formula
+at the sat return — search-added clauses included) landed alongside the
+fix for future blast-vs-core splits.

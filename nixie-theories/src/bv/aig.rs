@@ -607,8 +607,10 @@ impl AigCircuit {
         let mut result = Vec::with_capacity(width);
 
         for i in 0..width {
-            let bit = (value >> i) & 1;
-            let edge = if bit == 1 {
+            // u64 value: positions >= 64 are zero; the raw shift would wrap
+            // in release (shift amount masked mod 64) and re-read a low bit.
+            let bit = i < 64 && ((value >> i) & 1) == 1;
+            let edge = if bit {
                 self.true_edge()
             } else {
                 self.false_edge()

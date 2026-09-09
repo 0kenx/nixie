@@ -1024,6 +1024,36 @@ impl Solver {
     /// entitled to keep across
     /// checks is kept: the asserted and lemma clauses, the Tseitin memo, the
     /// registered quantifiers, and any candidate registered outside a check.
+    /// Audit accessors for the in-process false-sat circuit audit
+    /// (`check_bv::nlz_audit`; see docs/handovers/2026-09-09-bv-false-sat.md).
+    #[cfg(test)]
+    pub(crate) fn trail_lit_value_audit(&self, lit: nixie_sat::Lit) -> nixie_sat::LBool {
+        use nixie_sat::LBool;
+        let v = self.sat.model_value(lit.var());
+        if lit.is_neg() {
+            match v {
+                LBool::True => LBool::False,
+                LBool::False => LBool::True,
+                LBool::Undef => LBool::Undef,
+            }
+        } else {
+            v
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bv_debug_terms_for_audit(
+        &self,
+    ) -> impl Iterator<Item = (TermId, u32, &[nixie_sat::Var])> + '_ {
+        self.bv.debug_bv_terms()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bv_debug_bits_for_audit(&self, term: TermId) -> Option<&[nixie_sat::Var]> {
+        self.bv.debug_bits(term)
+    }
+
+    /// Check satisfiability of the asserted goal set.
     pub fn check(&mut self, manager: &mut TermManager) -> SolverResult {
         // Env-gated term sidecar for the CNF dump: NIXIE_DUMP_TERMS=<path>
         // writes term -> bits/atom-var mappings (see the NIXIE_DUMP_CNF

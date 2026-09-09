@@ -478,3 +478,51 @@ fn lshr_const64_forces_zero_high_bits() {
         }
     }
 }
+
+/// nlzbs128 false-sat regression: `bvsub` at width > 64 must encode
+/// `a − b = a + ~b + 1` **exactly** — the u64 shift wrap in
+/// `encode_add_const` used to add a spurious `2^64`, so wide subtractions
+/// computed a different function (docs/handovers/2026-09-09-bv-false-sat.md).
+#[test]
+fn bvsub_wide_matches_exact_semantics() {
+    // (a, b) samples exercising low/high bit interactions at width 128.
+    let samples: &[(u128, u128)] = &[
+        (0, 1),         // borrow through all bits
+        (u128::MAX, 1), // 0xFF..FE
+        (
+            0x1234_5678_9ABC_DEF0_0000_0000_0000_0001,
+            0xFFFF_FFFF_FFFF_FFFF,
+        ),
+        (1u128 << 100, 1),      // high bit minus low
+        (u128::MAX, u128::MAX), // zero
+    ];
+    for &(av, bv) in samples {
+        let mut solver = super::BvSolver::new();
+        let a = nixie_core::ast::TermId::new(1);
+        let b = nixie_core::ast::TermId::new(2);
+        let r = nixie_core::ast::TermId::new(3);
+        solver.new_bv(a, 128);
+        solver.new_bv(b, 128);
+        assert!(solver.bv_sub(r, a, b));
+        let rb = solver.get_bv(r).unwrap().clone();
+        let ab = solver.get_bv(a).unwrap().clone();
+        let bb = solver.get_bv(b).unwrap().clone();
+        for i in 0..128u32 {
+            solver.pin_for_test(ab.bits[i as usize], (av >> i) & 1 == 1);
+            solver.pin_for_test(bb.bits[i as usize], (bv >> i) & 1 == 1);
+        }
+        let exact = av.wrapping_sub(bv);
+        // Every result bit must be FORCED to its exact value: forcing the
+        // wrong polarity must be UNSAT.
+        for i in 0..128u32 {
+            let want = (exact >> i) & 1 == 1;
+            solver.pin_for_test(rb.bits[i as usize], !want);
+            let res = solver.check_embedded_for_test();
+            assert_ne!(
+                res,
+                nixie_sat::SolverResult::Sat,
+                "bvsub(0x{av:x}, 0x{bv:x}) w=128: bit {i} not forced to {want}"
+            );
+        }
+    }
+}

@@ -166,8 +166,9 @@ impl AigBvBuilder {
 
         if let Some(bits) = self.term_to_bits.get(&term).cloned() {
             for (i, &bit) in bits.iter().enumerate().take(width as usize) {
-                let bit_value = (value >> i) & 1;
-                let constraint = if bit_value == 1 {
+                // u64 value: positions >= 64 are zero (see aig.rs's twin fix).
+                let bit_value = i < 64 && ((value >> i) & 1) == 1;
+                let constraint = if bit_value {
                     bit
                 } else {
                     self.circuit.not(bit)

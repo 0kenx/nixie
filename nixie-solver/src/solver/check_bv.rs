@@ -655,3 +655,297 @@ mod tests {
         assert_eq!(collected.0, vec![(collected.1, collected.2, collected.3)]);
     }
 }
+
+/// False-sat circuit audit (worktree tool, `docs/handovers/2026-09-09-bv-false-sat.md`).
+/// Solves the nlzbs128 reproducer in-process, then walks the blasted term DAG
+/// bottom-up under the solver's OWN model, comparing each term's circuit bits
+/// with the exact function of its (already-verified) children. The first
+/// mismatch is the mis-encoded circuit. Gated behind NIXIE_AUDIT_NLZBS so CI
+/// skips it without the external corpus.
+#[cfg(test)]
+#[allow(clippy::needless_range_loop, clippy::manual_memcpy)]
+mod nlz_audit {
+    use crate::context::Context;
+    use crate::solver::SolverResult;
+    use nixie_core::ast::{TermId, TermKind};
+
+    fn bit_value(solver: &crate::solver::Solver, var: nixie_sat::Var) -> Option<bool> {
+        use nixie_sat::LBool;
+        match solver.trail_lit_value_audit(nixie_sat::Lit::pos(var)) {
+            LBool::True => Some(true),
+            LBool::False => Some(false),
+            LBool::Undef => None,
+        }
+    }
+
+    #[test]
+    fn audit_nlzbs128_circuits() {
+        if std::env::var("NIXIE_AUDIT_NLZBS").is_err() {
+            eprintln!("skipping (set NIXIE_AUDIT_NLZBS=1 with the corpus present)");
+            return;
+        }
+        let script =
+            nixie_testcorpus::read("smt-lib/non-incremental/QF_BV/brummayerbiere/nlzbs128.smt2");
+        let mut ctx = Context::new();
+        ctx.set_timeout_ms(60_000);
+        let outputs = ctx.execute_script(&script).unwrap_or_default();
+        let verdict = outputs
+            .iter()
+            .rev()
+            .find_map(|t| match t.trim() {
+                "sat" => Some(SolverResult::Sat),
+                "unsat" => Some(SolverResult::Unsat),
+                "unknown" => Some(SolverResult::Unknown),
+                _ => None,
+            })
+            .unwrap_or(SolverResult::Unknown);
+        eprintln!("verdict: {verdict:?}");
+        assert_ne!(
+            verdict,
+            SolverResult::Sat,
+            "nlzbs128 false-sat is back (see docs/handovers/2026-09-09-bv-false-sat.md)"
+        );
+        if verdict != SolverResult::Sat {
+            eprintln!("no false sat to audit (fixed)");
+            return;
+        }
+        let solver = ctx.solver();
+        let mgr = &ctx.terms;
+        // collect terms
+        let terms: Vec<(TermId, u32, Vec<nixie_sat::Var>)> = solver
+            .bv_debug_terms_for_audit()
+            .map(|(t, w, bits)| (t, w, bits.to_vec()))
+            .collect();
+        eprintln!("{} blasted terms", terms.len());
+        // topological: process terms whose children are all processed.
+        let mut processed: std::collections::HashMap<TermId, Vec<bool>> =
+            std::collections::HashMap::new();
+        let mut queue: Vec<(TermId, u32, Vec<nixie_sat::Var>)> = terms;
+        let mut mismatches = 0;
+        let mut progress = true;
+        while progress && !queue.is_empty() && mismatches < 8 {
+            progress = false;
+            let mut rest = Vec::new();
+            for (tid, w, bits) in queue {
+                let Some(t) = mgr.get(tid) else {
+                    rest.push((tid, w, bits));
+                    continue;
+                };
+                let children: Vec<TermId> = match &t.kind {
+                    TermKind::Ite(c, a, b) => vec![*c, *a, *b],
+                    TermKind::BvAdd(a, b)
+                    | TermKind::BvSub(a, b)
+                    | TermKind::BvAnd(a, b)
+                    | TermKind::BvOr(a, b)
+                    | TermKind::BvXor(a, b)
+                    | TermKind::BvShl(a, b)
+                    | TermKind::BvLshr(a, b)
+                    | TermKind::BvAshr(a, b)
+                    | TermKind::BvConcat(a, b)
+                    | TermKind::Eq(a, b)
+                    | TermKind::BvUlt(a, b)
+                    | TermKind::BvUle(a, b)
+                    | TermKind::BvSlt(a, b)
+                    | TermKind::BvSle(a, b) => vec![*a, *b],
+                    TermKind::BvNot(a) => vec![*a],
+                    TermKind::BvExtract { arg, .. } => vec![*arg],
+                    TermKind::Var(_) | TermKind::BitVecConst { .. } => vec![],
+                    _ => vec![],
+                };
+                if children.iter().any(|c| {
+                    !processed.contains_key(c)
+                        && mgr.get(*c).is_some_and(|ct| {
+                            !matches!(ct.kind, TermKind::Var(_) | TermKind::BitVecConst { .. })
+                        })
+                }) {
+                    rest.push((tid, w, bits));
+                    continue;
+                }
+                // circuit value of this term's bits
+                let cv: Vec<bool> = bits
+                    .iter()
+                    .map(|&b| bit_value(solver, b).unwrap_or(false))
+                    .collect();
+                // exact value from children (children's circuit values verified already)
+                let child_bits = |c: TermId| -> Option<Vec<bool>> {
+                    if let Some(v) = processed.get(&c) {
+                        return Some(v.clone());
+                    }
+                    // leaf: read its bits from term_to_bv directly
+                    solver.bv_debug_bits_for_audit(c).map(|bs| {
+                        bs.iter()
+                            .map(|&b| bit_value(solver, b).unwrap_or(false))
+                            .collect()
+                    })
+                };
+                let exact: Option<Vec<bool>> = (|| -> Option<Vec<bool>> {
+                    match &t.kind {
+                        TermKind::Var(_) => None, // accept
+                        TermKind::BitVecConst { value, width } => {
+                            let mut v = vec![false; *width as usize];
+                            for (i, b) in v.iter_mut().enumerate() {
+                                *b = value.bit(i as u64);
+                            }
+                            Some(v)
+                        }
+                        TermKind::BvAdd(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            let mut v = vec![false; w as usize];
+                            let mut carry = false;
+                            for i in 0..w as usize {
+                                let s = x.get(i).copied().unwrap_or(false) as u8
+                                    + y.get(i).copied().unwrap_or(false) as u8
+                                    + carry as u8;
+                                v[i] = s & 1 == 1;
+                                carry = s >= 2;
+                            }
+                            Some(v)
+                        }
+                        TermKind::BvSub(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            let mut v = vec![false; w as usize];
+                            let mut borrow = false;
+                            for i in 0..w as usize {
+                                let d = x.get(i).copied().unwrap_or(false) as i8
+                                    - y.get(i).copied().unwrap_or(false) as i8
+                                    - borrow as i8;
+                                v[i] = d & 1 == 1;
+                                borrow = d < 0;
+                            }
+                            Some(v)
+                        }
+                        TermKind::BvAnd(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            Some(
+                                (0..w as usize)
+                                    .map(|i| {
+                                        x.get(i).copied().unwrap_or(false)
+                                            & y.get(i).copied().unwrap_or(false)
+                                    })
+                                    .collect(),
+                            )
+                        }
+                        TermKind::BvOr(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            Some(
+                                (0..w as usize)
+                                    .map(|i| {
+                                        x.get(i).copied().unwrap_or(false)
+                                            | y.get(i).copied().unwrap_or(false)
+                                    })
+                                    .collect(),
+                            )
+                        }
+                        TermKind::BvXor(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            Some(
+                                (0..w as usize)
+                                    .map(|i| {
+                                        x.get(i).copied().unwrap_or(false)
+                                            ^ y.get(i).copied().unwrap_or(false)
+                                    })
+                                    .collect(),
+                            )
+                        }
+                        TermKind::BvNot(a) => {
+                            let x = child_bits(*a)?;
+                            Some(
+                                (0..w as usize)
+                                    .map(|i| !x.get(i).copied().unwrap_or(false))
+                                    .collect(),
+                            )
+                        }
+                        TermKind::BvShl(a, b) | TermKind::BvLshr(a, b) | TermKind::BvAshr(a, b) => {
+                            let x = child_bits(*a)?;
+                            let y = child_bits(*b)?;
+                            let mut amt = 0usize;
+                            for (i, &b) in y.iter().enumerate() {
+                                if b && i < 16 {
+                                    amt |= 1 << i;
+                                }
+                            }
+                            if amt >= w as usize {
+                                let fill = matches!(&t.kind, TermKind::BvAshr(..))
+                                    .then(|| x.last().copied().unwrap_or(false))
+                                    .unwrap_or(false);
+                                Some(vec![fill; w as usize])
+                            } else if matches!(&t.kind, TermKind::BvShl(..)) {
+                                let mut v = vec![false; w as usize];
+                                for i in amt..w as usize {
+                                    v[i] = x[i - amt];
+                                }
+                                Some(v)
+                            } else if matches!(&t.kind, TermKind::BvLshr(..)) {
+                                let mut v = vec![false; w as usize];
+                                for i in 0..(w as usize - amt) {
+                                    v[i] = x[i + amt];
+                                }
+                                Some(v)
+                            } else {
+                                let fill = *x.last().unwrap_or(&false);
+                                let mut v = vec![false; w as usize];
+                                for i in 0..(w as usize - amt) {
+                                    v[i] = x[i + amt];
+                                }
+                                for i in (w as usize - amt)..w as usize {
+                                    v[i] = fill;
+                                }
+                                Some(v)
+                            }
+                        }
+                        TermKind::BvConcat(a, b) => {
+                            let (hi, lo) = (child_bits(*a)?, child_bits(*b)?);
+                            let mut v = lo;
+                            v.extend(hi);
+                            Some(v)
+                        }
+                        TermKind::BvExtract { arg, high, low } => {
+                            let x = child_bits(*arg)?;
+                            let mut v = Vec::new();
+                            for i in *low as usize..=*high as usize {
+                                v.push(x.get(i).copied().unwrap_or(false));
+                            }
+                            Some(v)
+                        }
+                        TermKind::Ite(c, a, b) => {
+                            let cond = child_bits(*c)?;
+                            let cond = cond.first().copied().unwrap_or(false);
+                            if cond { child_bits(*a) } else { child_bits(*b) }
+                        }
+                        TermKind::Eq(a, b) => {
+                            let (x, y) = (child_bits(*a)?, child_bits(*b)?);
+                            let eq =
+                                x.len() == y.len() && x.iter().zip(y.iter()).all(|(p, q)| p == q);
+                            Some(vec![eq])
+                        }
+                        _ => None,
+                    }
+                })();
+                if let Some(exact) = exact {
+                    let diff: Vec<usize> = (0..cv.len())
+                        .filter(|&i| exact.get(i).copied().unwrap_or(false) != cv[i])
+                        .collect();
+                    if !diff.is_empty() {
+                        mismatches += 1;
+                        eprintln!(
+                            "MISMATCH {tid:?} w={w} kind={:?} bits={diff:?} exact={:02x?} circuit={:02x?}",
+                            t.kind,
+                            &exact[..exact.len().min(8)],
+                            &cv[..cv.len().min(8)],
+                        );
+                    }
+                }
+                processed.insert(tid, cv);
+                progress = true;
+            }
+            queue = rest;
+        }
+        eprintln!(
+            "audit complete: {mismatches} mismatches, {} terms processed",
+            processed.len()
+        );
+    }
+
+    #[allow(dead_code)]
+    fn unused(_: Option<u128>) {}
+}

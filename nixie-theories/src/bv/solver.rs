@@ -567,6 +567,12 @@ impl BvSolver {
         self.bool_node.iter().map(|(t, v)| (*t, *v))
     }
 
+    /// Bits of an already-blasted term (audit tooling).
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
+    pub fn debug_bits(&self, term: TermId) -> Option<&[nixie_sat::Var]> {
+        self.term_to_bv.get(&term).map(|v| v.bits.as_slice())
+    }
+
     /// Record that the theory manager saw BV atom `term` assigned with no
     /// unified circuit behind it (a late-minted atom).  See
     /// `pending_unlinked`.
@@ -2733,7 +2739,14 @@ impl BvSolver {
         let mut carry = Sig::False;
 
         for i in 0..width {
-            let const_bit = ((constant >> i) & 1) == 1;
+            // `constant` is u64: bit positions >= 64 are structurally zero.
+            // Reading `(constant >> i)` there overflows in debug and WRAPS
+            // in release (`>> i` masks the shift amount modulo 64), which
+            // re-read bit `i % 64` of the constant — a silent wrong-bit
+            // encode. This was the nlzbs128 false-sat: `bvsub` at width 128
+            // encoded `-b = ~b + 2^64 + 1` instead of `~b + 1`
+            // (docs/handovers/2026-09-09-bv-false-sat.md).
+            let const_bit = i < 64 && ((constant >> i) & 1) == 1;
             // Overflow carry of the top bit is ignored: width-only wrapping.
             let (sum, next_carry) = self.gate_full_adder(
                 self.sig(a[i]),
@@ -3255,22 +3268,35 @@ impl Theory for BvSolver {
         // record its participation in the model.
         let model = self.sat.model();
         let mut value_to_terms: FxHashMap<(u64, u32), Vec<TermId>> = FxHashMap::default();
+        let mut singleton_terms: Vec<TermId> = Vec::new();
 
         for (&term, bv_var) in &self.term_to_bv {
+            // Only widths a u64 can represent are grouped by value: beyond
+            // 64 bits `1u64 << i` wraps (shift amount masked modulo 64),
+            // so distinct values would collide into one group and merge
+            // onto a wrong representative. Wide terms get a singleton
+            // group (self-assignment only) — no unsound merging.
             let mut value = 0u64;
-            for (i, &var) in bv_var.bits.iter().enumerate() {
-                if model.get(var.index()).is_some_and(|v| v.is_true()) {
-                    value |= 1u64 << i;
+            let groupable = bv_var.bits.len() <= u64::BITS as usize;
+            if groupable {
+                for (i, &var) in bv_var.bits.iter().enumerate() {
+                    if model.get(var.index()).is_some_and(|v| v.is_true()) {
+                        value |= 1 << i;
+                    }
                 }
+                value_to_terms
+                    .entry((value, bv_var.width))
+                    .or_default()
+                    .push(term);
+            } else {
+                singleton_terms.push(term);
             }
-            // Key by (value, width) so terms of different widths stay separate
-            value_to_terms
-                .entry((value, bv_var.width))
-                .or_default()
-                .push(term);
         }
 
         let mut assignments = Vec::new();
+        for term in &singleton_terms {
+            assignments.push((*term, *term));
+        }
         for terms in value_to_terms.values() {
             if terms.is_empty() {
                 continue;
