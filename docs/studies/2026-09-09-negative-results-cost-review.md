@@ -272,3 +272,33 @@ promising core audit is whether the scan's cursor/span invariants can remove
 repeated compaction bookkeeping and copies; merely moving the same work
 between functions has now been priced. The failed prototype, checked states,
 assembly and complete profile remain reproducible from the binary cache.
+
+## Sixth combination: kept spans do not remove the consumer
+
+The [kept-span compaction screen](2026-09-09-kept-watch-spans.md) removes
+per-kept-entry copies and output-index checks from the compacting scan's
+common hit path. Refreshes update the source entry, and holes/exits publish
+consecutive kept spans. It preserves exact state and complete output, but
+wall is **9.64 s versus retained ordinary 8.81 s and Kissat 1.88 s**. The
+gate fails; only wall and its registered diagnostic run, with no si2 guard.
+
+The diagnostic also fails its registered quality thresholds: four of 3994
+samples are kernel-labelled/unresolved, leaving 99.89985% user coverage and
+0.100148% unresolved self cycles. Retain its explicitly labelled flamegraph
+as exploratory evidence; do not round these into a pass or retry the cell.
+Span regions plus captured suffix memmove callers receive about 2.18% of
+sampled cycles, while scan bodies still receive 55.38%. The suffix grows
+41.3%, reserves 16 more stack bytes and gains four static memmove call sites.
+This establishes introduced machinery but does not causally explain the
+whole different-window wall delta.
+
+The underlying filter still visits every watcher and retains the dependent
+blocker/header/payload reads. The small observed copy regions do not justify
+another copy-size tuning run. Combining it with delayed moves adds queue
+traffic without removing that consumer or any destination append; no reuse
+measurement supports a grouping benefit, and old/new region shares cannot
+be subtracted as a predicted interaction. Keep both failed prototypes out
+of production. Future combinations need shared preparation or fewer visits
+or appends, rather than another relocation of the same work. The existing
+direct relation mode remains the measured structural route on this input;
+its remaining gap to Kissat still needs substantive work.
