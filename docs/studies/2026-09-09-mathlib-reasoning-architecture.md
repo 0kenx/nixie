@@ -11,6 +11,13 @@ library searchable, but bring only a small, changing set of typed inference plan
 into a solver session. Treat theorem selection, substitution selection, and clause
 admission as three different decisions with separate costs and diagnostics.
 
+Make a small learned **application policy** the central research hypothesis: given
+the current problem and concrete applicable steps, predict which step makes the
+remaining problem cheaper to solve. Library retrieval supplies alternatives; theorem
+relevance alone does not determine the next action. Symbolic retrieval and selection
+remain essential baselines and fallback policies, rather than prerequisites that
+must fail before investigating learned application selection.
+
 Porting individual statements should be generated data work. Do not create a Rust
 function per theorem, scan the library on every solver event, or register the whole
 library as quantified assertions. The engineering investment belongs in shared
@@ -18,9 +25,10 @@ translation, indexing, matching, scheduling, and checking machinery. Supporting
 a new logical encoding or proof rule remains substantive work even when exporting
 another theorem that uses an existing encoding is mechanical.
 
-The main hypothesis is that library knowledge can shorten proofs by supplying
-useful intermediate consequences. The competing hypothesis is that retrieval,
-matching, checking, and added clauses cost more than the search they save.
+The main hypothesis is that learned selection can exploit library knowledge to
+shorten reasoning by recognizing useful transformations in context. The competing
+hypothesis is that retrieval, matching, model inference, checking, and added clauses
+cost more than the search they save. This is a proposal, not a demonstrated gain.
 
 ## Semantic contract: two clients of one service
 
@@ -65,7 +73,13 @@ Query + declaration bindings + solver events
           |
    delta matching / goal-directed application
           |
-   candidate instance -> certificate checker
+   concrete actions + bounded consequence previews
+          |
+   learned application policy / remaining-work estimate
+          |                         |
+   selected action                  continue base solver
+          |
+   certificate checker
           |
    scoped clause admission -> CDCL(T) -> checked result
           |                                  |
@@ -208,11 +222,13 @@ A **premise/conclusion graph** suggests useful inference chains. Loading a theor
 proof closure does not mean asserting every theorem in that closure into CDCL(T).
 Conversely, a useful bridge theorem need not occur in another theorem's source proof.
 
-Start with deterministic symbolic retrieval as the measured baseline. A learned
-ranker is a replaceable addition, outside the trusted base. If enabled inside the
-solver, use a pinned model and deterministic Rust inference, with stable tie breaks
-and accounted inference work. Test whether retaining source names actually helps
-ordinary SMT inputs, whose user symbols often have no meaningful names.
+Use deterministic symbolic retrieval as the measured baseline. Optional learned
+retrieval ranks templates for candidate recall; the application policy below ranks
+concrete actions for their effect on remaining work. These are different learning
+tasks and need separate ablations. Both stay outside the trusted base. Use pinned
+models and deterministic Rust inference, with stable tie breaks and accounted work.
+Test whether retaining source names actually helps ordinary SMT inputs, whose user
+symbols often have no meaningful names.
 
 ## 4. Activate a theorem as a query plan
 
@@ -253,6 +269,7 @@ catalog candidate
   -> active pattern or goal-directed plan
   -> consistent, fully bound substitution
   -> guarded consequence and equality explanations
+  -> bounded action preview and learned application selection
   -> independently checked instance
   -> canonical clause deduplication
   -> scoped SAT/theory admission
@@ -266,7 +283,124 @@ goal-directed premises remain obligations; they never become assumptions asserte
 as true. Witness creation requires a checked conservative extension and separate
 symbol lifetime tracking, rather than the universal-instance path.
 
-## 5. Control saturation and feed useful information back
+## 5. Learn which application makes the problem easier
+
+The motivating analogy is mathematical problem solving: recognize a structure,
+recall a potentially useful theorem, and choose an application that simplifies the
+remaining task in light of the hypotheses. Here **simplification means lower
+remaining reasoning cost**, not fewer expression nodes or a more similar theorem
+statement. A transformation may temporarily expand the expression or introduce an
+intermediate obligation while making the final proof much easier.
+
+For example, over the reals:
+
+```text
+Hypotheses: x^2 = y^2, x + y != 0
+Goal:       x = y
+
+Difference of squares: (x - y) * (x + y) = 0
+No zero divisors and the second hypothesis: x - y = 0
+Linear arithmetic: x = y
+```
+
+The value of factoring depends on the available nonzero hypothesis. This example
+illustrates contextual application selection; it does not claim a performance gap
+in Nixie's existing nonlinear procedures. Every identity and conditional inference
+still needs its ordinary exact justification.
+
+### Action and state representation
+
+An action is a theorem identity, exact type/structure specialization, term
+substitution, permitted direction, application location, and execution mode
+(rewrite, guarded consequence, or goal decomposition). Two applications of the
+same theorem are different actions. The action set also contains `ContinueBase`,
+which gives the existing SMT engine a fixed deterministic work slice. Include
+bounded retrieval-widening or deferred-application actions only with explicit costs.
+
+The policy scores a variable-size set of actions, not a fixed 200,000-way theorem
+classifier. Shared theorem/term representations allow an exported declaration to
+be scored without assigning it a newly trained output class. This permits library
+growth structurally; generalization to new declarations still requires measurement.
+
+Use a compact encoder over the typed term DAG and its relevant neighborhood, plus
+a shared action scorer. Inputs include assertion/goal polarity, justified local
+hypotheses, equality and bound information, remaining obligations, recent work,
+candidate binding structure, predicted join cost, and generated-term growth. A
+bounded preview describes the replacement expression or guarded consequence and
+**all** side conditions introduced by the action. Encode exact constants in a way
+that retains relevant arithmetic structure; compressed learned features never
+replace the exact constants used by the symbolic checker.
+
+For a plain SMT query there may be no distinguished goal. Score changes to the
+active constraint state and its unresolved theory obligations. For library proof
+search, include the entire outstanding obligation set, with local neighborhoods
+as attention inputs. A small local feature window can miss useful global structure;
+evaluate this limitation rather than assuming locality is sufficient.
+
+A plausible first model is a small structural encoder with policy and value heads.
+Its capacity, context budget, and inference frequency are experimental choices.
+Its job is preference prediction; symbolic components supply exact matching,
+instantiation, and proof checking. The 200,000 lemmas remain in the external catalog
+and do not have to be memorized in model weights.
+
+### Objective and execution
+
+The intended action value is:
+
+```text
+Q(s, a) = cost of executing and checking a
+          + expected remaining work from the resulting state
+
+Choose a low-cost action, including ContinueBase.
+```
+
+This is a learning objective, not an available oracle. Charge retrieval, candidate
+construction, previews, neural inference, speculative search, and final certification
+in end-to-end evaluation, even when their already-paid costs are shared across the
+current action choices. Reward reaching a certified terminal result; do not reward
+stopping at `Unknown` or refusing useful work simply because it is inexpensive.
+
+Apply one or a few checked actions, update the state, and rescore. Compare greedy
+selection with a small beam or bounded lookahead so that a useful sequence can
+survive an initially unfavorable step. Case splits and theorem applications can
+create multiple mandatory child obligations: a value estimate must account for
+solving all of them. Alternative derivations are choices, while required subgoals
+are cumulative work; do not score only the easiest child. Shared subproofs and
+cross-obligation constraints also affect the actual cost.
+
+An action preview is speculative data. A selected rewrite may replace an expression
+only with a checked equivalence under explicitly justified conditions. A useful
+one-way consequence normally adds a guarded clause while retaining the original
+constraints. Goal decomposition requires a checked proof-composition rule, and
+transformations used for SMT `sat` require the appropriate model reconstruction.
+The model cannot drop a constraint or a difficult subgoal to improve its score.
+Speculative alternatives use isolated reversible state and the existing scope rules.
+
+### Training data and credit assignment
+
+Existing proof traces can bootstrap legal application prediction and useful
+structural representations. However, human proof length and proof-assistant tactic
+frequency are not labels for Nixie runtime. Fine-tuning must measure Nixie's own
+reasoning costs and obligations.
+
+Capture reproducible solver states. From the same state and matched solver seed,
+try different checked actions, including `ContinueBase`, then execute a specified
+continuation policy under a fixed work budget. Record action/preparation costs,
+all residual obligations, result certification, and total subsequent work. Keep
+the continuation policy fixed within comparisons and version it when changed.
+Sampling the policy's own preferred actions alone biases the data; reserve bounded
+exploration and include plausible, expensive, and unhelpful legal alternatives.
+
+Use pairwise action preferences and a remaining-work value target as initial
+learning tasks. Longer rollouts can train sequence-level credit assignment. A run
+that exhausts its budget supplies a censored cost observation, not its true solve
+cost; compare solved fraction at fixed limits and use explicit timeout/censoring
+handling. A reduction in term count, an immediate propagation, or appearance in a
+final proof can be an auxiliary signal, but cannot substitute for the total-work
+objective. Preserve the seed controls and leakage exclusions in the evaluation
+section for both data generation and held-out assessment.
+
+## 6. Control saturation and feed useful information back
 
 Run the service at deterministic safe points: initial preprocessing, queued
 structural changes, and explicit work-budget milestones. Cheap subscriptions may
@@ -299,7 +433,7 @@ semantic environment. Deduplicate clauses by checked canonical content with full
 equality on hash collisions. Equality-class representatives can accelerate lookup,
 but are neither durable cross-scope identities nor cross-session cache keys.
 
-## 6. Certificates and the actual trust boundary
+## 7. Certificates and the actual trust boundary
 
 The checker accepts an instance only after establishing the source theorem, the
 semantic translation, the specialization, the substitution, and every discharged
@@ -352,7 +486,7 @@ result certification. If a consumed certificate is unsupported or invalid, no
 result may rely on it. Failure before admission can leave ordinary SMT solving
 running; unresolved source semantics or an uncertified result yields `Unknown`.
 
-## 7. Scope, cancellation, and cache lifetimes
+## 8. Scope, cancellation, and cache lifetimes
 
 | State | Required lifetime |
 | --- | --- |
@@ -373,7 +507,7 @@ declarations or terms may not. Logical cache contents cannot depend on other use
 or other sessions' workloads. Cancellation leaves only fully checked, fully admitted
 transactions; partial compilation or checking cannot publish a valid handle.
 
-## 8. Fit into the current codebase
+## 9. Fit into the current codebase
 
 These are integration surfaces, not claims that the complete service already exists:
 
@@ -405,10 +539,12 @@ Proposed module boundaries: a new `nixie-lemmas` crate for immutable packs, temp
 IR, retrieval, and plan compilation; session orchestration under `nixie-solver`;
 matching primitives shared through the selected core/theory implementation; typed
 certificate rules under `nixie-proof`. Keep dependency direction acyclic and do not
-let the catalog depend on solver internals. Add optional learned ranking only after
-the symbolic path is measured. No solver runtime dependency on Lean, C/C++, or FFI.
+let the catalog depend on solver internals. Keep the application policy behind a
+replaceable scorer interface, with symbolic and learned implementations sharing the
+same candidate actions and executor. Training consumes versioned traces outside
+the runtime. No solver runtime dependency on Lean, C/C++, or FFI.
 
-## 9. Evaluation that can reject the architecture
+## 10. Evaluation that can reject the architecture
 
 First distinguish three questions: can the needed facts be represented and checked,
 can retrieval find them, and can execution exploit them profitably? Test each in
@@ -419,12 +555,29 @@ polymorphism, dependency structure, or join behavior.
 Use separate corpora for existing SMT workloads, translated mathlib goals, adversarial
 common-symbol queries, and incremental push/pop sequences. Establish oracle-premise
 experiments using known valid proof dependencies to diagnose retrieval versus search
-limits; these are diagnostic upper-bound experiments, not deployable performance.
+limits; these are diagnostic experiments, not deployable performance or strict
+upper bounds. Sufficient premises do not specify their best application sequence.
+
+The central pilot uses a bounded, representative executable lemma family while
+retrieving against the full real catalog. Compare the base solver, relevance-only
+selection, a symbolic application-cost policy, and the learned application policy.
+Hold candidate generation and execution machinery equal when isolating the policy.
+Evaluate learned retrieval separately; an application policy cannot rescue an
+action that retrieval or bounded matching never produces.
+
+Ablate current-hypothesis inputs, consequence previews, the value head, and
+lookahead. Distinguish gains from recognizing useful actions from gains caused by
+extra search compute: every lookahead treatment needs a control with the same
+branch count and work budget. Replay the same model architecture with permuted
+action scores as a matched-null policy; ranking-only, structure/cost features, and
+full state-conditioned scoring should be separately measurable steps.
 
 Measure:
 
 * Export/encoding/certificate coverage and rejection reasons.
 * Required-premise recall, useful-chain coverage, and executable-instance recall.
+* Application-ranking quality on measured alternatives, value calibration under
+  censoring, and the frequency and utility of choosing `ContinueBase`.
 * Posting visits, type-specialization work, join tuples, matcher instructions,
   new term nodes/bytes, clause count, and proof-checking work.
 * Total deterministic work through the final certificate, solved fraction at fixed
@@ -461,7 +614,7 @@ actual installed version, before shipping solver changes. Also replay admitted
 theorems/instances in Lean where applicable; Z3 parity alone cannot validate a new
 source-language translation.
 
-## 10. Delivery sequence and stop conditions
+## 11. Delivery sequence and stop conditions
 
 1. **Catalog and semantic inventory.** Export and index the whole pinned library,
    retaining unsupported records. Measure sizes, posting skew, dependency closures,
@@ -474,22 +627,32 @@ source-language translation.
    activation, delta joins, and guarded admission for a supported family. Exercise
    the entire catalog for retrieval even while certificate coverage grows. This is
    validation of shared machinery, not a plan to hand-code a small theorem list.
-4. **Incremental solver integration.** Connect solver-owned session state, events,
-   rollback, and final proofs. Verify correctness and compare end-to-end work with
-   matched controls. An independently verified consequence is mandatory at admission.
-5. **Broader proof/encoding coverage.** Extend generic translation and checking
+4. **Application-policy pilot.** Capture reproducible states and concrete actions,
+   including consequence previews and `ContinueBase`. Train a small shared action
+   scorer/value model on a bounded family, using full-catalog retrieval. Test
+   relevance-only, symbolic-cost, learned, and matched-null policies before expanding
+   coverage. Charge preparation, model inference, and all residual obligations.
+5. **Incremental solver integration.** Connect solver-owned session state, events,
+   rollback, policy scheduling, and final proofs. Verify correctness and compare
+   end-to-end work with matched controls. An independently verified consequence is
+   mandatory at admission.
+6. **Broader proof/encoding coverage.** Extend generic translation and checking
    capabilities to unlock more generated declarations. Decide from coverage data
    whether a general Lean-compatible Rust checker is justified; do not hide that
    investment inside a claim of mechanical lemma porting.
-6. **Selection refinement.** Add learned ranking or more elaborate obligation search
-   only where the symbolic baseline demonstrably loses useful instances. Require
-   matched-null wins after charging all inference and checking costs.
+7. **Selection and search refinement.** Extend learned retrieval, context encoding,
+   and bounded multi-step search where diagnostics identify lost opportunities.
+   Require matched-null wins after charging all inference and checking costs.
 
-Stop and record a negative result if oracle-premise selection cannot beat the base
-solver on the target workloads after accounting for execution/checking, or if useful
-coverage requires an unjustified proof-kernel investment. If oracle premises help
-but retrieval does not, focus on selection. If retrieval succeeds but joins explode,
-focus on binding/selectivity and activation. These are different failure modes.
+Record a negative result for the tested configuration if the policy cannot beat its
+matched control after all costs, or useful coverage requires an unjustified
+proof-kernel investment. Failure with known sufficient premises alone does not
+refute application learning: test known useful application sequences where available
+to separate execution benefit from order/substitution mistakes. If supplied useful
+sequences help but the policy does not find them, investigate action recall and
+selection. If even those sequences do not repay their execution/checking cost,
+reconsider that workload. If retrieval succeeds but joins explode, focus on binding
+and activation. These are distinct findings, not claims about all possible models.
 
 ## References and what is borrowed
 
@@ -503,6 +666,10 @@ constituent techniques, not a performance prediction for this repository.
 * [Premise Selection for a Lean Hammer](https://arxiv.org/abs/2506.07477):
   context-aware learned premise selection integrated with translation and proof
   reconstruction. Its reported improvements are not Nixie measurements.
+* [TacticZero: Learning to Prove Theorems from Scratch with Deep Reinforcement Learning](https://arxiv.org/abs/2102.09756):
+  precedent for learning proof actions, subgoal selection, and search/backtracking
+  decisions in HOL4. It motivates application-policy experiments but does not
+  establish their performance or required model size in SMT.
 * [lean-auto](https://github.com/leanprover-community/lean-auto): dependent-type
   monomorphization, explicit translation stages, and reconstruction architecture.
 * [Lean elaboration and compilation](https://lean-lang.org/doc/reference/latest/Elaboration-and-Compilation/)
