@@ -149,7 +149,7 @@ same retained control byte for byte, including all 330565 conflicts and
 **6.97%**, but wall is 2.13% higher. Neither implementation passes the
 registered advancement gate. Different measurement windows still limit
 precise attribution of wall/cycle deltas; neither wall number establishes
-a gain. Repair/Kissat wall is 2.1481 on this one input, not a suite geomean.
+a gain. Repair/Kissat wall is 2.1480 on this one input, not a suite geomean.
 
 ### Remaining cost and limits of the conclusion
 
