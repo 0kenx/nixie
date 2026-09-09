@@ -77,3 +77,23 @@ Use this literal-code equality after assignment instead of rereading the
 value array. Previously true blockers remain true. This is an exact
 consequence of the assignment operation, not a speculative truth cache.
 Cover both the newly true and newly false blocker in the same regression.
+
+## Initial preflight and one lifetime repair
+
+The initial engine compiles to 5923 bytes and 312 local stack bytes, failing
+its 280-byte bound. No cost run. Prefix metadata loads at `0x642b8` precede
+payload loads at `0x642de`; post-assignment refresh is the literal-code
+comparison at `0x644da`. However, pending metadata is written back into the
+outer arena object at phase/list exits (`0x64550..0x64567`,
+`0x64580..0x64597`). Keeping those fields in a fixpoint-wide mutable object
+makes their state flow beyond the intended useful lifetime, with extra
+spills and copies. The ordinary hit loop still has no pending dispatch.
+
+Use the one registered source repair to put pending metadata in a private
+phase-local wrapper borrowing the fixed arena. Assignments remain internal,
+so the preparation still survives units. Prefix/suffix transfer and list
+exit end the wrapper and cannot write its pending fields back to the arena.
+This enforces the registered discard boundary in the ownership structure.
+Keep the distance, blocker rule, scan algorithm and all cost/assembly gates.
+Recheck focused strict Miri after the borrow change. No inlining/distance or
+parameter search is added.
