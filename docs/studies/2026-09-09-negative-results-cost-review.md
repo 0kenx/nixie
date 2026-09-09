@@ -321,3 +321,32 @@ appends and their memory accesses remain. Two audited flamegraphs and both
 source bundles are retained; five performance invocations sufficed to reject
 these implementations. The remaining raw-header/deferred-classification
 hypothesis needs a stricter code-generation gate before any new measurement.
+
+
+## Unified and compact directories: less metadata, too little removed work
+
+The [unified-directory experiment](2026-09-10-propagation-directory.md)
+co-locates binary extents/overflow, long-watch ownership and phantom counts.
+Its driver gets smaller, but the initial 64-byte row expands the destination
+header stride and saves only 0.90% complete instructions. The qualified LBR
+profile still puts 23.43% of self cycles in the driver and 48.33% in scanners,
+including directory accesses, destination append and the unchanged dependent
+blocker/header/value reads. These attributions are not cache-miss counts.
+
+One explicitly registered combination with the prior compact owners reduces
+the row to 48 bytes and keeps ordinary append inlined. Fresh strict-provenance
+Miri, independent directory-model checks and native Rayon tests pass. Yet the
+combined j3037 result saves just 1.47% instructions and takes 36.86 s versus
+the retained qualified control's 36.13 s. Both versions preserve complete
+output. Passing off-CPU/PMU gates still leaves shared-build effects unresolved;
+neither demonstrates the required wall gain. Exactly three performance
+invocations cover both cost cells and one profile, with no si2 or timing retry.
+
+The combination had a real structural interaction: compact ownership reduced
+the new directory's larger stride and transfer footprint. Its actual cost
+still rejects promotion. It removes no watch/edge visits or destination
+appends, and only saves 11.58 amortized instructions per processed literal.
+Both prototypes are archived; no production representation changes land.
+Further progress needs to remove or amortize an actual propagation consumer,
+or reduce work volume through the already documented structural algorithms.
+Another owner-width or row-alignment screen is not justified by this result.

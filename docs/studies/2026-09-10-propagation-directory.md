@@ -162,3 +162,93 @@ profile, replacement cost cell or further repair follows. A passing repair
 may use the originally registered si2 confirmation and full qualification;
 a failing one closes this experiment. No compact/unified production code
 is promoted solely for smaller metadata or a passing ownership test.
+
+## Compact combination result: rejected
+
+Repair `78894d04c924778f6109e84cb22385d01c60646f` passes all preflight gates.
+The row is 48 bytes, both owners are 16 bytes, and indexing uses one base
+plus `literal * 48`. The prefix/suffix bodies are 909/1079 bytes with 72/56
+bytes of local stack; the driver is 3331 bytes with 184 bytes of local
+stack. Ordinary append remains inlined, with checked growth out of line.
+Watch transfer now moves a pointer and two u32 counts. There is no new
+metadata pointer chain. The binary driver and watch filtering algorithms
+are unchanged from the first prototype.
+
+| j3037 repair, seed 0 | Result | Repair / qualified control |
+|---|---:|---:|
+| Whole-process user instructions | 250851301161 | 0.985290 |
+| Whole-process user cycles | 167718521410 | 1.020883 |
+| Wall | 36.86 s | 1.020205 |
+| Conflicts | 330565 | 1.000000 |
+| Propagations | 323390316 | 1.000000 |
+
+Complete stdout is byte-identical to both the qualified control and first
+prototype. Instructions fall **1.471%**, while wall rises **2.020%** and
+cycles **2.088%** against control. Relative to the 64-byte prototype, the
+repair uses 0.57% fewer instructions and 2.85% less wall. Neither comparison
+establishes the required improvement over qualified production. The repair
+fails both advancement paths. No si2 cell or second profile runs.
+
+Cost record **`bc753cbcec20ffa2`** has 100% coverage, 0.353% off CPU,
+36.66 s user / 0.07 s system, zero major faults and 253 involuntary switches.
+Peak RSS is 34560 KiB. Foreign builds were active again; the passing quality
+gate does not make these different-window wall deltas solely source effects.
+Against retained requested-mode Kissat this single input remains **2.043x
+wall**, **2.072x instructions**, and **1.838x cycles/conflict**. These are
+context from existing cells, not a new suite geomean or a paired Kissat run.
+Unchecked UNSAT remains unverified/Unknown in the canonical store.
+
+Default SAT tests pass **788**; all-feature SAT nextest passes **1052**, one
+existing skip. Strict SAT Clippy and format pass. Fresh Miri 0.1.0
+(485ec3fbcc, nightly 2026-06-11), seed 42 with strict provenance, passes the
+five compact-owner cases and all eight non-Rayon directory cases. The latter
+includes mixed operations against independent Vecs after every step, plus
+rollback and binary compaction/overflow guards. Native Rayon buffer and
+prebuilt solver/oracle tests pass in the SAT suites. This does not claim
+strict-Miri coverage of Rayon itself; its previously documented Crossbeam
+limitations are unchanged. The reused wrapper confines unsafe operations
+to allocation ownership, initialized slices and capacity-checked append,
+with Send/Sync bounded by the entry type.
+
+Source bundle/patch, both binaries, compiler/lock hashes, assembly preflight,
+Miri/test/build logs and the complete raw cell are retained under
+`precompile/78894d0/`. Both prototype bundles were verified against main's
+reachable `42c78bd8` prerequisite. The study consumed exactly **three new
+performance invocations**: two candidate cost cells and the first candidate's
+LBR diagnostic. The qualified control and Kissat cells were reused throughout.
+No source is promoted; full workspace qualification and SMT parity are not
+claimed for rejected prototypes.
+
+## Cost conclusion and next scope
+
+This combination tests the interaction requested by the user: compact owners
+reduce the unified directory's introduced stride and owner-transfer footprint.
+It still saves only **11.58 whole-process instructions per processed trail
+literal**, from 787.27 to 775.69. Those are amortized process totals, not
+isolated propagation instructions. Smaller ownership metadata does not
+remove a binary edge visit, blocker lookup, clause-header/literal dependency,
+watch destination append or assignment. The assembly still performs those
+consumers, and the first profile locates substantial cost there. There is
+no second profile establishing which one explains the repair's wall delta.
+
+Close this ordinary/compact unified-directory experiment. Do not repeat it
+with another alignment, field order, owner width or growth factor, and do
+not add its percentages to the old compact-adjacency result. New representation
+work needs a way to remove an actual consumer or amortize it across useful
+work, rather than another metadata-only size reduction.
+
+The larger algorithmic route remains the recorded
+[propagation-work audit](2026-09-09-propagation-work-audit.md): reduce the
+amount of formula/replay work presented to propagation. Its circuit result
+rules out scheduled inprocessing and those exit resets as a sufficient
+explanation, and the [explicit relation-solving mode](2026-09-09-direct-relation-solve.md)
+already gives a substantial measured structural reduction on that input.
+The missing cheap gate/definition preparation before elimination is another
+existing source-audit target; local Kissat `gates.c` tries equivalence, AND
+and ITE recognition before its embedded definition solver, while Nixie's
+`elim_try_variable` goes directly to the optional embedded path after its occurrence
+cutoff. This is not a new discovery, a default-enablement claim, or an
+invitation to flip thresholds. A follow-up must price exact recognition,
+proof/model reconstruction and changes in propagation volume with the
+appropriate matched controls. These targets remain open; this negative
+layout experiment does not close the Kissat gap.
