@@ -61,3 +61,83 @@ removable overhead, with its design recorded before timing. Diagnose why the
 ownership change failed and whether it combines usefully with a prior neutral
 mechanism; do not add historical percentages or launch parameter sweeps.
 Archive rejected source and findings on main and remove idle worktrees.
+
+## First complete-engine result
+
+Prototype `a5854e4301723ba9ce3ed95c1a55e5bddb214973` retains fixed trail,
+watch-directory and arena borrows through ordinary propagation. Its two
+watch phases inline into one 3615-byte engine with 248 bytes of local stack.
+There is no scanner or assignment call in that body; remaining calls handle
+growth, conflict-tail copying, deallocation and panics. Optional modes keep
+the prior path. The engine still takes/restores a Vec owner per literal.
+
+| j3037, seed 0 | Qualified fd01d0b | Complete engine |
+|---|---:|---:|
+| Whole-process user instructions | 254596496994 | 215038292878 |
+| Whole-process user cycles | 164287697694 | 167238370939 |
+| Wall | 36.13 s | 36.72 s |
+| Off CPU | 0.332% | 0.300% |
+| Conflicts | 330565 | 330565 |
+| Propagations | 323390316 | 323390316 |
+
+Complete stdout is byte-identical. Instructions fall **15.54%**, but wall
+rises **1.63%** and cycles **1.80%**, failing the advancement gate. Both
+counters have 100% coverage, zero major faults and 271 involuntary switches.
+Foreign work remains possible; a passing off-CPU gate does not isolate cache
+or frequency interference. These small wall differences are not a reliable
+population regression estimate. Cost record `d368266c5252a0db` retains the
+unchecked UNSAT as unverified. No si2 or new Kissat cell ran.
+
+The [flamegraph](assets/2026-09-10-complete-propagation-engine.svg), record
+`271ea7c983b9e25a`, passes the diagnostic gates: 20801 samples, zero
+loss/throttle, 100% coverage, seven kernel-labelled samples and 0.0337%
+unresolved self weight. The engine has 70.24% self weight. Its prefix blocker
+read (`0x64169`) has 7.59%; prefix/suffix branches following the deletion
+byte tests (`0x64184`, `0x6447b`) have 5.99%/6.98%. Binary overflow metadata
+(`0x63f27`) has 4.13%, destination capacity (`0x64559`) 3.17%, and watch-owner
+transfer (`0x640ad`) 2.05%. Skid prevents interpreting these as cache-miss
+counts or directly removable cost. Assembly does establish a deletion-byte
+load/branch followed by a separate length load on each live payload, and
+three owner-clearing stores plus restoration per dequeued literal. The
+profile's sampled-prefix counters and elapsed time are diagnostic only;
+they do not replace the original cost cell. Terminal storage geometry and
+output are unchanged (apart from the registered terminal memory line).
+
+Preflight: 1016 default SAT tests pass across the original run and a focused
+rerun of the one missing-corpus setup failure; 1043 all-feature SAT tests
+pass, with one existing skip. Strict SAT Clippy and format pass. The native
+oracle includes 1296 generated states and full solved-model/LRAT checks;
+new tests cover mixed primary/overflow chains, growth, compaction, requeue,
+mode gates and prebuilt owners moved into Rayon. The focused ownership test
+passes strict-provenance Miri (75.56 seconds, nightly 2026-06-11). A
+supplementary 1296-case Miri run was stopped after several minutes for cost;
+it is **incomplete, not a pass**. Source bundles, binaries, identities,
+assembly, logs and once-only raw results are cached under `precompile/a5854e4/`.
+
+## One cost-directed combined repair
+
+Keep the complete engine and change two remaining access patterns together.
+First, split the fixed watch directory around the current literal and borrow
+its Vec in place. Moves may append only to the disjoint prefix or suffix:
+their replacement literal is undefined, whereas the current trigger is true,
+so a move back into the current list is impossible. Assert this condition;
+do not silently drop a move. This removes owner take/clear/restore/drop work.
+The old per-unit Solver callback prevented retaining this borrow; the full
+engine makes it possible. Price the extra destination-side branch and any
+additional live pointer state rather than assuming an automatic saving.
+
+Second, read the current header's first eight initialized bytes as one word
+and decode length/deletion from that value. Reuse the native-endian encoding
+from the rejected raw-header pipeline, with offset/alignment assertions and
+decoding tests. There is no future-header preparation, pending watcher or
+distance choice. This combines that representation with the complete engine
+without importing the previous pipeline's bookkeeping. Preserve the actual
+header layout, liveness checks, literal mutation order and reason validation.
+
+Before the one repair cost cell, require no take/restore/deallocation in the
+engine, one current-header word read supplying both length and deletion, no
+second length read after its branch, and no increase beyond 248 bytes of
+local stack. Run default/all-feature SAT and focused strict-Miri coverage of
+the changed access paths, strict Clippy and format. Keep the original cost
+and confirmation gates. No second profile, ablation, distance search or cost
+retry. A passing combined result would not isolate either component's effect.
