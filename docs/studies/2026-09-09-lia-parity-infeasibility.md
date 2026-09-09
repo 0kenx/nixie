@@ -119,3 +119,19 @@ before deriving), raising/deriving a single *total-parity* lemma
 instead of through cuts, or Z3's row-local split refinement (split only
 the nonbasics of the *div row*, not every free var, keeping the leaf
 count at 2^|row| not 2^|all|).
+
+**Fourth-session probe — remainder case enumeration (measured neutral,
+reverted):** asserting `(or (= (mod m n) 0) … (= (mod m n) (|n|-1)))`
+alongside the Euclidean axioms (cap |n| ≤ 16) makes the remainder's
+finite domain visible to CDCL.  Sound, cheap — and flips nothing: with
+`mod (y-1) 2` pinned, the `r = 0` side closes linearly as predicted, but
+the `r = 1` side is precisely the total-parity conflict
+(`2q − 2a − 2b − 2c − 2d + 1 = 0`, all-integer coefficients, odd
+constant), which the enumeration cannot reach.  Classic sample 169 agree
+/ 0 wrong (unchanged), differential 0 disagreements, parity 174/175 —
+so the enumeration was reverted rather than kept as speculative hot-path
+weight.  **The eventual k9 fix should combine it with the total-parity
+lemma** (emit, at div-axiom time for constant divisor n, the conditional
+`(and (= (mod m n) 0) (= (div m n) m/n))` under the guard `n | m` where
+divisibility is read off the tableau row of `m` — the r = 1 side then
+never arises); the enumeration alone is necessary-but-insufficient.
