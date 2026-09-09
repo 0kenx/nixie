@@ -86,3 +86,37 @@ fails its off-CPU gate, instead of spending runs on the remainder of that
 batch. Record process affinity evidence before each batch. No retries or
 selection of the fastest result. This is a specific core-contention repair,
 not permission to repeat noisy cells until a desired outcome appears.
+
+## CPU 15 result: wall improvement remains below the gate
+
+All three circuit cells passed the off-CPU check and returned independently
+checked SAT models. Complete Nixie outputs were byte-identical. No si2 cell
+ran because the registered 5% advancement gate failed.
+
+| Arm | Wall s | User s | System s | Conflicts | Wall µs/conflict |
+|---|---:|---:|---:|---:|---:|
+| Nixie control `6d492a4` | 9.93 | 9.83 | 0.06 | 162529 | 61.10 |
+| Kissat 4.0.4, matched switches | 5.55 | 5.48 | 0.04 | 277061 | 20.03 |
+| Nixie kernel `b9ae745` | 9.58 | 9.21 | 0.24 | 162529 | 58.94 |
+
+Candidate/control wall is **0.96475**, a 3.52% reduction in this single screen,
+below the gate. Candidate/Kissat wall is **1.72613** (control/Kissat 1.78919),
+and candidate/Kissat wall per conflict is **2.94251**. This does not establish
+a general wall gain. Off-CPU fractions were 0.40%, 0.54% and 1.36%; major
+faults were zero. Shared caches/frequency and the candidate's larger system
+time remain possible noise sources. Each arm solved 1/1 at the conflict cap.
+
+Canonical records: rejected CPU 10 control `2a5041b3b8fc2535`; CPU 15 control
+`f6bd31a8cbf98fc4`, reference `dffd0cb6beb45f5f`, candidate
+`0a722720460f919a`. Immediate raw completions, outputs, runner, manifests and
+affinity snapshots are beside each binary under
+`benchmark/kissat-wall-gap[-cpu15]/`. There were **four solver invocations
+in total**, including the rejected one, with no repeats of a configuration.
+
+The existing candidate flamegraph explains the remaining mechanism-level
+cost, not the exact size of this small wall difference: propagation still
+holds both a stable clause ID and a direct arena reference per watch. Suffix
+compaction copies 12 bytes, destination insertion copies 12 bytes, and the
+ID remains live across the miss path. The next representation must remove
+that duplicate metadata while preserving direct addressing, then demonstrate
+an actual wall reduction against this retained comparison.
