@@ -212,3 +212,34 @@ Full source qualification passes on the integrated tree: 10824 workspace
 tests, 111 doc tests, strict build/Clippy/fmt/docs and the required correctness
 canary with zero disagreements. The residual cache and its regressions land
 on main; its measured standalone SAT binaries are reused without retiming.
+
+## Work volume and an explicit representation route
+
+The [propagation-work audit](2026-09-09-propagation-work-audit.md) rejects
+scheduled inprocessing or exhausted elimination rounds as a sufficient
+explanation for the original circuit's propagation volume: 95.31% lies
+outside those scheduled calls, and all 24 elimination rounds complete.
+The existing exact relation representation addresses dense source clauses
+before they encounter the occurrence cutoff. This is already implemented
+in the offline transformer; it is not a newly discovered mechanism.
+
+The [direct relation-solving mode](2026-09-09-direct-relation-solve.md)
+connects that transformer to the current solver without a write/reparse
+pipeline. Its single complete-path run takes **3.61 s**, including parsing,
+checked transformation, search and original-model validation, versus retained
+ordinary Nixie **8.81 s** and requested mode-matched Kissat **1.88 s**.
+The old factored trajectory is preserved exactly. Peak RSS rises to 58176
+KiB because the original formula and certificate preparation cost are real.
+This is a useful explicit route, with different-window and one-seed limits;
+there is no new default policy or established heuristic/null result.
+
+The retained qualified factored traffic observation still rejects a bespoke
+original-five-literal engine: originals contribute at most 23.58% of payloads
+plus scans, learned clauses 76.41%, with only 1.77 scanned literals per
+learned payload. The watch and subsumption changes since that observation
+preserve this recorded search trajectory but are not individually profiled
+by that old capture. Do not transfer old cycle shares onto the new 3.61 s
+process or add a cursor merely because learned clauses are long. The next
+core cost question remains the serial watch/blocker/payload path; another
+batching or certificate mechanism must remove an identified consumer or
+renewal cost from its failed predecessor, not just add it to this mode.

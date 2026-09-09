@@ -65,3 +65,121 @@ factorization as an ordinary default. Passing licenses this explicit mode
 only after all required source checks. A negative result must identify
 where preparation/retention or remaining search consumes its opportunity;
 use the existing profiles before registering more runs.
+
+## Result: explicit whole-path mode passes its operational screen
+
+Exactly one new performance invocation ran, on immutable source
+`5261d303a98429e9941f43a1c621c2df0bbca2b9`. The portable release
+`stats_solve` SHA-256 is
+`ff4dedb52cd11bf1caded91646013bbce18d930e753989929c87081547d55f96`.
+The registered compiler and lockfile match. Qualification later removed
+two redundant model borrows in `7cb6974`; rebuilt release binaries for both
+examples are byte-identical to the measured candidate. No retiming followed.
+
+| Original circuit, CPU 15, seed 1 | Whole invocation wall | Conflicts | Propagations |
+|---|---:|---:|---:|
+| Retained ordinary Nixie `a64b285` | 8.81 s | 186114 | 19391470 |
+| Direct relation mode `5261d30` | **3.61 s** | **91833** | **8369710** |
+| Retained requested mode-matched Kissat 4.0.4 | 1.88 s | 167929 | 6684415 |
+
+The new timer includes original parsing, exact transformation and certificate
+construction/checking, direct loading, search, original-model validation,
+printed output and process teardown. Its 3.55 s user + 0.03 s system time
+give 0.831% off CPU; zero major faults, 29 involuntary switches and one
+voluntary switch were recorded. Peak RSS is **58176 KiB**, versus retained
+ordinary Nixie's 37512 KiB. Keeping the original CNF and constructing the
+certificate has a real memory cost; direct loading does not remove it.
+
+The structural result is exactly **700 groups, 44864 clauses and 224064
+literals**, from 168064 original clauses. Complete stdout is byte-identical
+to the retained offline-transform solve, SHA-256
+`87eb5896119b2e0d389bd7495929722291351a3889509b1c549dab3c593814c4`.
+Independent external checks accept the printed model on both the original
+and retained factored CNFs; internal original-model validation also passes.
+All printed search counters, including 315010 decisions, match the old solve.
+
+Descriptively, full wall is 59.02% below retained ordinary Nixie and remains
+1.92 times retained Kissat. These are different measurement windows, one
+input and one seed. They do not establish a general speedup, a default
+factorization policy or a factorial interaction with the newer watch and
+subsumption implementations. The historical 3.44 s transform/solve pipeline
+used another CPU and instrumentation; this study does not establish the
+isolated speed benefit of removing its write/reparse boundary. It establishes
+that the complete checked route is now usable in one invocation and meets
+the registered operational wall threshold.
+
+Per-conflict cost is still a material gap: whole wall amortized over conflicts
+is **39.31 microseconds** here versus Kissat's **11.20 microseconds**. These
+include preparation and different work per conflict, so they are not isolated
+propagation-kernel timings. Fewer conflicts and less propagated work provide
+much of this route's practical gain; they do not establish that the core's
+per-conflict overhead is solved.
+
+## Usage and validation boundaries
+
+Build with `cargo build --release -p nixie-sat --example stats_solve`, then:
+
+```bash
+NIXIE_RELATION_FACTOR=1 NIXIE_SWEEP=0 SEED=1 MAXC=10000000 PRINT_MODEL=1 \
+  target/release/examples/stats_solve input.cnf
+```
+
+The explicit mode always validates a SAT model against the original CNF,
+including when `PRINT_MODEL` is absent. Its stderr summary reports group
+and clause counts and `fallback=true` on transformation limit refusal.
+Malformed source, invalid option values and transformation/certificate
+errors exit with status 2 before printing a verdict. A resource limit loads
+the untouched original formula. Parsing still retains the full input before
+applying the existing transformation limits; those limits are not a bound
+on input-parser memory. The mode adds no variables and requires no model
+reconstruction beyond the solver's existing model handling.
+
+The ordinary example route and library defaults remain unchanged. For an
+exported proof over the original CNF, use the existing `relation_factor`
+prefix/map pipeline: this direct mode does not compose/export a full UNSAT
+certificate. The library's exact equivalence and resolution checks remain
+in force before any transformed clause reaches the solver.
+
+The new loader tests compare complete solver statistics and models against
+serialized/reparsed output for SAT, UNSAT, original fallback, signed units,
+duplicate binaries, tautologies and empty clauses. Malformed-input tests
+verify that the solver remains empty. A separate model-validation test
+rejects missing, undefined and false witnesses; partial assignments are
+accepted only when every original clause already contains a true literal.
+The shared strict parser is extracted without semantic changes from the
+qualified standalone transformer. Both its retained tests and all four
+new example tests pass under the ordinary build.
+
+## Source qualification
+
+Final source `7cb6974` passes the full required gate: all-features build;
+**10824 workspace tests passed, 12 skipped**; **111 doc tests passed,
+29 ignored**; both example test targets passed all six tests with all
+features; strict Clippy, formatting and warning-free documentation passed.
+The earlier qualification's redundant-borrow lint failure remains recorded,
+alongside the final clean run. The two release example binaries are identical
+across that cleanup, so the measured binary is the qualified executable.
+
+The required correctness-only comparison used installed **Z3 4.16.0**:
+**174 Correct, 0 Wrong, 1 Inconclusive**. `array_unique.smt2` is Nixie
+UNSAT / comparator Unknown, explicitly not an agreement. The actual
+platform result is retained with the final qualification logs. This is a
+soundness gate, not the performance target; all wall comparisons above
+remain against Kissat.
+
+Only documentation changed on main during qualification. Its integration
+does not alter the qualified source. The implementation, usage and measured
+result land together; cached binaries and canonical records survive cleanup
+of the temporary worktree, branch, build tree and scratch logs.
+
+## Retained evidence
+
+Canonical record **`8eca4094036dc24b`** lives under
+`precompile/5261d30/benchmark/runs/direct-relation-solve/`. Adjacent
+`direct-relation-solve/` retains the one-shot runner, thread affinity audit,
+start/completion markers, full stdout/stderr and qualification logs. The
+build identity and both example binaries are cached at `precompile/5261d30/`.
+The retained original Nixie and Kissat records are `ee11cd60c342c2fb` and
+`6295845397e7a242`; neither was executed again. The separate propagation
+diagnostic earlier in this step is recorded in its own study and is not
+an uninstrumented timing control.

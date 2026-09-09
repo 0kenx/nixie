@@ -53,6 +53,22 @@ match solver.solve() {
 }
 ```
 
+## Explicit relation-solving example
+
+For DIMACS inputs containing dense eight-variable functional relations,
+`stats_solve` can apply the existing exact relation transformer in memory:
+
+```bash
+cargo build --release -p nixie-sat --example stats_solve
+NIXIE_RELATION_FACTOR=1 target/release/examples/stats_solve input.cnf
+```
+
+This optional mode checks the transformation before solving and validates
+every SAT model against the original CNF. Transformation limits fall back
+to the original formula. It does not export an UNSAT proof over the original
+input; use the standalone `relation_factor` certificate pipeline when proof
+files are required. See the [implementation and measured whole-path cost](../docs/studies/2026-09-09-direct-relation-solve.md).
+
 ## Modules
 
 ### `literal`
