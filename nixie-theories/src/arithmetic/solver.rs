@@ -144,6 +144,13 @@ pub struct ArithSolver {
     /// which made CDCL learn trivially-true clauses and re-derive the same
     /// refutation thousands of times on conjunction-shaped input (rings).
     bnb_used_reasons: FxHashSet<u32>,
+    /// Whether cuts are being derived *inside* a free-variable split
+    /// scope (see [`Self::close_free_vars_then_bnb`]): there, a nonbasic
+    /// resting at a `BRANCH_REASON` bound is fine – the cut is scoped to
+    /// the branch and dropped with it – so [`Self::gomory_cut`] may use
+    /// such bounds.  At the root (the default) the old refusal stands: a
+    /// cut resting on a case-split bound must never be asserted globally.
+    cuts_in_split_scope: bool,
 }
 
 /// A linear equality over the integers: `sum(coeff_i · var_i) = rhs`.
@@ -271,6 +278,7 @@ impl ArithSolver {
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
+            cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
         }
     }
@@ -1694,7 +1702,142 @@ impl ArithSolver {
         // integral and B&B stops at its first node.
         let int_vars = self.interned_int_vars();
         let mut nodes: usize = 0;
+
+        // Free-variable sign splits (Z3's `constrain_free_vars`,
+        // theory_arith_int.h) – but only when the cut loop actually *failed
+        // because of* free nonbasics: a fractional integer row that still
+        // has unbounded variables keeps `gomory_cut` from firing, and plain
+        // B&B then diverges on the unbounded ray while the integer conflict
+        // is global (k7: `r = 2S - 2q`, `r in [0,1]`, `q < S`).  Z3
+        // internalizes `v >= 0` case-split atoms so the DPLL layer bounds
+        // them; here the split happens inside the theory: branch
+        // `u >= 0` / `u <= -1` per free variable and re-run the whole
+        // cuts-then-B&B inside each side, where the variable rests at its
+        // new bound, the cut machinery applies (see
+        // [`Self::cuts_in_split_scope`]), and the parity conflicts close.
+        // Exhaustive (the two branches cover every integer of `u`), depth
+        // bounded by the free-variable count, capped.
+        let free_vars = self.uncuttable_free_vars();
+        if !free_vars.is_empty() {
+            return self.close_free_vars_then_bnb(&free_vars);
+        }
         self.bnb_search(&int_vars, &mut nodes)
+    }
+
+    /// The free integer variables that keep the cut machinery from firing:
+    /// nonbasics (bounded on neither side) of rows whose integer basic is
+    /// fractional – exactly the rows `gomory_cut` had to refuse – plus free
+    /// fractional integer basics, which plain B&B diverges on and which
+    /// appear in no row (a basic is defined *by* its row, so the row walk
+    /// alone misses them).  Z3's collection is the row-local part; the
+    /// basics are the divergers this exists to stop.  Capped: more free
+    /// variables than the cap falls back to the ordinary search
+    /// (completeness only).
+    fn uncuttable_free_vars(&self) -> Vec<VarId> {
+        /// A handful of sign splits is plenty for the parity shapes this
+        /// exists for; the cap bounds the 2^k recursion.
+        const MAX_FREE_SPLITS: usize = 8;
+        let mut out: Vec<VarId> = Vec::new();
+        let is_free = |v: VarId| {
+            let j = v as usize;
+            self.simplex.bound_lower_at(j).is_none() && self.simplex.bound_upper_at(j).is_none()
+        };
+        for (var, row) in self.simplex.tableau_iter() {
+            let var = *var;
+            if !self.int_vars.contains(&var) || self.simplex.value(var).is_integer() {
+                continue;
+            }
+            if self.simplex.is_basic(var as usize) {
+                if is_free(var) && !out.contains(&var) {
+                    out.push(var);
+                }
+                continue;
+            }
+            for (xj, a_j) in &row.terms {
+                let xj = *xj;
+                let j = xj as usize;
+                if a_j.is_zero()
+                    || !self.int_vars.contains(&xj)
+                    || self.simplex.is_basic(j)
+                    || !is_free(xj)
+                    || out.contains(&xj)
+                {
+                    continue;
+                }
+                out.push(xj);
+                if out.len() >= MAX_FREE_SPLITS {
+                    return out;
+                }
+            }
+        }
+        out
+    }
+
+    /// Z3's `constrain_free_vars` analogue: sign-split each free integer
+    /// variable (`u >= 0` / `u <= -1`) and re-run the full
+    /// cuts-then-branch-and-bound inside each side, where `u` rests at its
+    /// new bound and Gomory cuts apply ([`Self::cuts_in_split_scope`] is
+    /// set for the recursion).  Both branches together cover every integer
+    /// value of `u`, so an all-`Unsat` outcome is a proof; a `Sat` leaf is
+    /// a found model; `Unknown` propagates honestly.
+    fn close_free_vars_then_bnb(&mut self, free_vars: &[VarId]) -> Result<TheoryResult> {
+        let Some((&u, _rest)) = free_vars.split_first() else {
+            // Leaf: every previously-free variable is bounded on one side
+            // now, so nonbasics rest at bounds and the Gomory cut machinery
+            // applies – re-run the whole cuts-then-B&B.  Well-founded: the
+            // free list inside this scope is a strict subset (every split
+            // variable gained a bound), so the re-entry reaches the cut
+            // loop, not another split of the same variables.
+            let saved = self.cuts_in_split_scope;
+            self.cuts_in_split_scope = true;
+            let r = self.lia_cuts_then_bnb();
+            self.cuts_in_split_scope = saved;
+            return r;
+        };
+        let mut saw_unknown = false;
+        for (bound, upper) in [
+            (Rational64::zero(), false),
+            (Rational64::from_integer(-1), true),
+        ] {
+            self.simplex.push();
+            if upper {
+                self.simplex.set_upper(u, bound, BRANCH_REASON);
+            } else {
+                self.simplex.set_lower(u, bound, BRANCH_REASON);
+            }
+            let saved = self.cuts_in_split_scope;
+            self.cuts_in_split_scope = true;
+            let child = match self.simplex.check() {
+                Ok(()) if !self.simplex.resource_limit_reached() => {
+                    let inner_free = self.uncuttable_free_vars();
+                    if inner_free.is_empty() {
+                        self.lia_cuts_then_bnb()
+                    } else {
+                        self.close_free_vars_then_bnb(&inner_free)
+                    }
+                }
+                Ok(()) => {
+                    // Pivot budget exhausted: Unknown, never a fabricated Sat.
+                    Ok(TheoryResult::Unknown)
+                }
+                Err(reasons) => {
+                    self.note_bnb_conflict_reasons(&reasons);
+                    Ok(TheoryResult::Unsat(self.bnb_unsat_core()))
+                }
+            };
+            self.cuts_in_split_scope = saved;
+            self.simplex.pop();
+            match child? {
+                TheoryResult::Sat => return Ok(TheoryResult::Sat),
+                TheoryResult::Unknown => saw_unknown = true,
+                TheoryResult::Unsat(_) | TheoryResult::Propagate(_) => {}
+            }
+        }
+        if saw_unknown {
+            Ok(TheoryResult::Unknown)
+        } else {
+            Ok(TheoryResult::Unsat(self.bnb_unsat_core()))
+        }
     }
 
     /// Generate a Gomory mixed-integer (GMI) cut from the tableau row of the
@@ -1777,13 +1920,21 @@ impl ArithSolver {
             let bound = bound?;
             // Branch bounds carry [`BRANCH_REASON`] (no external
             // justification): a cut using one is only valid inside that
-            // branch, never at the root where cuts are asserted.
-            if bound.reason == BRANCH_REASON {
+            // branch, never at the root where cuts are asserted.  Inside a
+            // free-variable split scope the cut *is* scoped to the branch
+            // (the simplex scope pops with it), so the bound is usable; the
+            // sentinel itself never enters the reason list either way –
+            // `note_bnb_conflict_reasons` filters it before any core is
+            // exported.
+            if bound.reason == BRANCH_REASON && !self.cuts_in_split_scope {
                 return None;
             }
             for r in bound.all_reasons() {
                 if r == BRANCH_REASON {
-                    return None;
+                    if !self.cuts_in_split_scope {
+                        return None;
+                    }
+                    continue;
                 }
                 if !reasons.contains(&r) {
                     reasons.push(r);

@@ -1,8 +1,12 @@
-# LIA parity-infeasibility with unbounded variables (open, the jain_2 root)
+# LIA parity-infeasibility with unbounded variables (k7 closed, k9 open)
 
-**Status: OPEN — arithmetic solver completeness.  This is the last blocker
-on the compound-sum jain class; everything on the quantifier side of that
-chain now works.**
+**Status: PARTIALLY CLOSED (2026-09, third session).  The k7 class —
+two free variables — is fixed by the free-variable sign splits with
+split-scoped Gomory cuts (`close_free_vars_then_bnb` +
+`ArithSolver::cuts_in_split_scope`); the k9 class — four or more free
+variables in the defining sum — remains open.  Everything on the
+quantifier side of the jain chain works; k9 is the last blocker on the
+compound-sum class.**
 
 ## The sharpest repro (k7)
 
@@ -94,13 +98,24 @@ measured on k7:
 * **Reverted** rather than half-landed: 2^k branching in the hot LIA path
   without closing its motivating repro failed the measured-merit bar.
 
-### Resume here
+### Resume here (updated after the third session)
 
-1. Add a scoped flag allowing branch-reason bounds in `gomory_cut` when
-   the cut lives inside a split scope; audit `note_bnb_conflict_reasons`
-   and `bnb_unsat_core` for sentinel handling first.
-2. Re-measure k7 (expect all 14 children Unsat → `unsat`), then the jain
-   compound class, then the full differential gates — the 2^k split needs
-   a matched-null performance check on QF_LIA (the branch factor lands on
-   every LIA check with ≥1 free var, i.e. nearly all of them; Z3 avoids
-   the blowup by splitting only row-local free vars of cut targets).
+The first two resume items are DONE: the sentinel audit passed
+(`note_bnb_conflict_reasons` already filtered `BRANCH_REASON`;
+`bnb_unsat_core` builds only from filtered reasons with a sound
+full-reason fallback), the scoped flag landed as
+`ArithSolver::cuts_in_split_scope`, and k7/k2 now refute — measured with
+no QF differential cost (par2 2177.9 vs 2171-2177 baseline band; the
+split only triggers when a fractional row's cut was refused for free
+nonbasics, which the common path never hits).
+
+**Remaining (k9, four-plus free vars):** the split leaves close some
+branches with real unsat cores but the rest churn — the leaf cut loops
+exhaust `LIA_MAX_CUT_ROUNDS` (24) without closing the four-variable
+parity, then B&B diverges on the still-open sides.  Candidate directions:
+GMI cut *aggregation* across the split scope (sum the defining rows
+before deriving), raising/deriving a single *total-parity* lemma
+(`2a+2b+2c+2d+1` is odd ⇒ `(y-1) div 2 = a+b+c+d`) at the div-axiom site
+instead of through cuts, or Z3's row-local split refinement (split only
+the nonbasics of the *div row*, not every free var, keeping the leaf
+count at 2^|row| not 2^|all|).

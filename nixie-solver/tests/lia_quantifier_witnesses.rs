@@ -119,6 +119,69 @@ fn solved_witness_outside_pool_is_unsat() {
     assert_eq!(last_status(&output), "unsat");
 }
 
+/// The k7 parity-infeasibility shape (two free variables): LP-feasible,
+/// integer-infeasible, unbounded – closed by the free-variable sign splits
+/// (`close_free_vars_then_bnb`, Z3's `constrain_free_vars` analogue) with
+/// split-scoped Gomory cuts.
+#[test]
+fn parity_infeasibility_two_free_vars_is_unsat() {
+    let output = run(r#"
+        (set-logic LIA)
+        (declare-const y Int)
+        (declare-const S Int)
+        (declare-const q Int)
+        (declare-const r Int)
+        (assert (= y (+ (* 2 S) 1)))
+        (assert (= (- y 1) (+ (* 2 q) r)))
+        (assert (>= r 0))
+        (assert (<= r 1))
+        (assert (< (+ (* 2 q) 1) y))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The ground discharge of a single-sum symbolic witness: `y = 2S+1`
+/// forces `(y-1) div 2 = S`, so the negated identity is refutable.  This
+/// is the arithmetic core the MBQI witness instances reduce to.
+#[test]
+fn div_identity_single_sum_is_unsat() {
+    let output = run(r#"
+        (set-logic LIA)
+        (declare-const y Int)
+        (declare-const S Int)
+        (assert (= y (+ (* 2 S) 1)))
+        (assert (not (= (+ (* 2 (div (- y 1) 2)) 1) y)))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The k9 shape (four free variables in the defining sum) still answers
+/// the honest `unknown`: the split leaves' cut loops churn without
+/// closing (see docs/studies/2026-09-09-lia-parity-infeasibility.md).
+/// Pinned to never be a wrong decisive answer.
+#[test]
+fn parity_infeasibility_four_free_vars_is_never_wrong() {
+    let output = run(r#"
+        (set-logic LIA)
+        (declare-const y Int)
+        (declare-const a Int)
+        (declare-const b Int)
+        (declare-const c Int)
+        (declare-const d Int)
+        (declare-const q Int)
+        (declare-const r Int)
+        (assert (= y (+ (* 2 a) (* 2 b) (* 2 c) (* 2 d) 1)))
+        (assert (= (- y 1) (+ (* 2 q) r)))
+        (assert (>= r 0))
+        (assert (<= r 1))
+        (assert (not (= (+ (* 2 q) 1) y)))
+        (check-sat)
+    "#);
+    assert_ne!(last_status(&output), "sat");
+}
+
 /// The jain_2 compound shape: the falsifier is a four-term sum, so the
 /// *symbolic* witness `(y-1) div 2` must conflict with the defining rows
 /// (the concrete quotient alone lets `y` hop between rounds).
