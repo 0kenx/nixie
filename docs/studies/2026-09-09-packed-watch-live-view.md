@@ -1,4 +1,4 @@
-# Packed watch copies and a borrowed live-clause view
+# Whole watch copies, borrowed live views and subsumption scratch
 
 The [direct compact-watch result](2026-09-09-direct-watch-identity.md)
 reduced the observed two-input wall cost, but leaves original circuit and
@@ -85,3 +85,45 @@ A positive source landing also requires the repository's full correctness
 checks; reference parity is a correctness gate only, not the performance
 target. A negative result lands its cost diagnosis and explicit next action
 in documentation, without promoting the unqualified prototype source.
+
+## Pre-measurement repair and combined scope
+
+No solver performance invocation has run. Ordinary SAT tests passed 1002
+cases and observer tests passed 1028 (one skipped in each layout). These
+include exact-state propagation/inprocessing checks, complete models and
+independent LRAT checking.
+
+The literal-u64 prototype `4799685` fails a generated-code obligation.
+Its suffix and prefix shrink from 1120/938 to 937/786 bytes and reason exits
+become single header-ID loads. Suffix unchanged copies and destination
+insertion become single eight-byte operations. However the prefix now loads
+and shifts a complete entry on every blocker hit and combines/stores both
+words on blocker refreshes. This adds work to the no-copy phase. Do not
+benchmark that representation merely because the overall text is smaller.
+Its binaries and assembly are retained under `precompile/4799685/`.
+
+Repair it with typed reference/blocker words and a fixed-size safe slice
+copy only for unchanged entries in the compaction suffix. Retain direct
+blocker field access elsewhere and the borrowed live view. Inspect the new
+assembly before proceeding; no packing-related unsafe access is needed.
+
+The audit also found an actual defect in the old subsumption scratch reuse
+(`03b869d`, still present at `d1290db`): normal rounds take `schedule`,
+`occs` and `mark` out of the solver, then drop them. Only the no-candidate
+return stores them back. Thus the advertised normal-round capacity reuse
+never happens. Restore all three buffers after normal and budget exits.
+The next invocation clears schedule/occurrence contents before consulting
+them; every marked candidate is unmarked before reaching an exit. Test
+warm buffers against a cold-buffer control across complete, zero-budget,
+limited-budget and repeated rounds, including spilled occurrence lists and
+proof/state identity. This prices a concrete lifecycle repair, not the
+previous unrelated analysis-scratch experiment.
+
+Include that repair in the same upcoming candidate, before its first wall
+cell. The existing three-invocation limit, retained controls, quality gates,
+5% combined wall advancement gate and exact-output requirements stand.
+Report performance for the combined implementation only. Keeping buffers
+live may increase later peak memory and clone cost; retain peak RSS and
+inspect allocation/drop work in the candidate profile. No individual or
+superadditive speedup is inferred. Source qualification must cover the
+scratch cleanup invariant as well as the watch representations.
