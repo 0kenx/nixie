@@ -120,3 +120,27 @@ a wide all-features fallback cannot qualify the compact path. Neither design
 may eagerly purge ghost hits or change their tick contribution. Moving activity
 aside also retains storage indexed by historical, unreused clause IDs: include
 that memory and reduction cost, not only the saved watcher bytes.
+
+## Second combination: direct identity pays a different cost
+
+The [direct compact-watch study](2026-09-09-direct-watch-identity.md) passes
+its bounded wall screen: original circuit 9.58 → 7.98 s, si2 2.09 → 2.02 s,
+identical Nixie outputs. Mode-matched Kissat remains faster at 5.55 s and
+1.22 s. The observed two-input geometric mean reduction is 10.27%; the
+retained circuit controls and small panel limit that claim. These are actual
+elapsed measurements, not a conversion from cycle or instruction ratios.
+
+The former 8-byte watcher lost direct addressing. This combination instead
+moves activity out of the header, puts the stable ID in that word, and
+combines direct 8-byte entries with the two-phase scan. Its reverse identity
+read is confined to live reasons; moves keep only reference and blocker.
+That distinction makes the earlier broad closure of the layout family too
+strong. It does not establish a measured factorial interaction term.
+
+Its own qualified original-circuit flamegraph retains the remaining costs:
+49.51% of self cycles in the scan phases, 18.54% in subsumption. Generated
+copies still use two 32-bit operations, and reason recovery repeats header
+validation. The safe cold activity table and GC destination table introduce
+real allocation/lookup work; historical IDs are never reused. Future work
+should target these named terms or subsumption, with the introduced costs
+included, rather than repeating an unmodified historical layout experiment.

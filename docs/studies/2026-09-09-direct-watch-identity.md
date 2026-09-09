@@ -105,3 +105,144 @@ Remove only that diagnostic line when comparing its output to the ordinary
 wall cell; keep full byte identity for the wall comparison itself. This
 adds no search-policy or in-search diagnostic work. Preserve peak RSS in
 the wall cell and the side table's allocation in arena memory accounting.
+
+## Measured result: bounded wall screen passes
+
+Prototype source `02cc03cc10df995f484499e69183b5333439f524` (not yet a
+qualified production landing at the time of measurement) uses the pinned
+lock SHA-256 `3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`.
+Ordinary release binary SHA-256:
+`da75c82761caaa4d58fc8d32b24416c2376ff5d77ac8af09f5a3ed197f23738d`.
+Symbolized perf binary SHA-256:
+`206a7835828b855db1bdf1e16d09ca61ab2b5ab17dccfedf8b998a495063a830`.
+Neither uses native CPU flags or other optimization overrides.
+
+| Input | Kernel `b9ae745` wall s | Compact watches wall s | Kissat wall s | New/kernel | New/Kissat |
+|---|---:|---:|---:|---:|---:|
+| original circuit | 9.58 (retained) | 7.98 | 5.55 (retained) | 0.83299 | 1.43784 |
+| original si2 | 2.09 | 2.02 | 1.22 | 0.96651 | 1.65574 |
+
+The two-input geometric mean new/kernel wall ratio is **0.89727**, an
+observed **10.27% reduction**. The si2 change alone is only 3.35%, inside
+the neutral band. The registered combined gate passes: geometric mean
+<=0.95, si2 <=1.03, identical full Nixie outputs and checked SAT witnesses
+for both arms on both inputs (2/2 solved at cap). Circuit conflicts remain
+162529 versus Kissat's 277061; si2 remains 39246 versus 51823. New wall per
+conflict is 49.10 µs and 51.47 µs, versus Kissat's 20.03 µs and 23.54 µs.
+The Kissat throughput gap therefore remains substantial.
+
+All four new wall cells have zero major faults and off-CPU fractions
+0.38%, 0.50%, 0.82%, 0.48% (circuit candidate; si2 candidate, reference,
+control). Their user/system times are 7.92/0.03 s, 1.91/0.10 s,
+1.03/0.18 s and 1.97/0.11 s. Si2 peak RSS is 156696 KiB for the candidate,
+158228 KiB for the kernel and 111116 KiB for Kissat. Circuit candidate peak
+is 33228 KiB; its retained control did not record RSS.
+
+This is a small engineering screen, **not a population speedup estimate**.
+In particular, circuit controls were retained rather than remeasured in the
+candidate's time window; the off-CPU check cannot eliminate clock/cache or
+other shared-resource differences. Report the per-input observations and
+this limitation with the aggregate. No claim about superadditive interaction
+is supported by these data. Exactly five new solver invocations ran: four
+wall cells and one profile, with no repeated starts.
+
+## Candidate profile and remaining cost
+
+The [interactive flamegraph](assets/direct-watch-identity.svg) is from the
+original circuit. It contains **3468 user-cycle samples**, all on CPU 15,
+with zero lost samples/records, zero throttle/unthrottle records, 100%
+group scheduling coverage and zero unresolved self samples. LBR supplied
+1003 caller stacks; incomplete callers are grouped explicitly. Sample-read
+counters end at 36.320 G cycles and 59.887 G instructions and are **sampled
+prefix diagnostics**, not complete solve counters or a comparable control
+ratio. Do not compare its function shares to the earlier *factored* circuit
+profile as if the workload were identical.
+
+| Self component | Cycle share | Instruction attribution share |
+|---|---:|---:|
+| watch compaction suffix | 29.90% | 25.89% |
+| watch prefix | 19.61% | 17.46% |
+| subsumption round | 18.54% | 21.43% |
+| search body | 4.67% | 4.04% |
+| outer propagation driver | 3.81% | 3.36% |
+
+The generated kernel uses eight-byte strides and preserves direct arena
+loads. The prefix still loads only the blocker on a hit. However, LLVM
+emits **two 32-bit loads/stores**, rather than a single 64-bit entry copy,
+on suffix blocker hits and destination insertion. The reference and blocker
+therefore still consume separate registers. The suffix's hot destination
+blocker store receives 7.04% of its cycle attribution; the first watch-pair
+swap's nearby reload receives 7.52%; the write-bound branch receives 5.79%.
+The deleted-flag branch remains prominent (12.44% of suffix, 16.76% of
+prefix), as do the prefix reference-null compare (13.68%) and blocker-value
+load (8.53%). These are instruction-pointer samples, **not measurements of
+misprediction probability or savings from deleting checks**.
+
+The stable-ID recovery validates the header again at a unit/conflict exit.
+That keeps identity out of blocker hits and watch movement, but adds code:
+the two scan bodies are 1120 and 938 bytes, versus the kernel's 983 and 803;
+`ClauseDatabase::get` grows from 187 to 225 bytes. Inlining a safe accessor
+is not free. A next change must price this recovery and cold metadata path,
+not treat every remaining branch as removable overhead.
+
+Terminal circuit memory also shows the cost side of the combination:
+3977896 arena bytes used, 8685520 total arena/activity capacity, 1342148
+bytes of historical ID references, and 1154232/2606528 watch bytes/capacity;
+13 collections ran. The side table retains historical IDs, and each
+collection prepares a temporary four-byte destination per historical ID.
+Eight-byte watches do not imply lower total memory on every input. Si2's
+measured peak changed little despite narrower entries.
+
+Two concrete follow-ups are suggested by the generated code, without a new
+benchmark registration yet: a safe packed-u64 entry that can make unchanged
+entry copies one operation, and a validated live-clause view that can return
+its reason ID without repeating header validation. Both must preserve full
+32-bit literal/reference encodings, ghost semantics and collection lifetimes.
+Packing must be judged with its decode/bit-update cost included; caching a
+validated view must end before assignment/HBR can grow the arena. Subsumption
+is also now a substantial wall-cost target, independent of those watch
+representations. No additional variant was run in this study.
+
+## Result store
+
+New canonical records: circuit wall `a64df562525fa2df`, circuit profile
+`a85e80129a282bea`, si2 candidate `68494a8004e0cdca`, si2 Kissat
+`c3bb0064cbaa9d2d`, si2 kernel `c504f08be43e25bf`. Retained circuit records
+are `0a722720460f919a` and `dffd0cb6beb45f5f` as registered. Binaries are
+cached under their source commits; each cell's immediate completion, full
+output, model check and timer data is stored beside it. Candidate raw
+artifacts are under `precompile/02cc03c/benchmark/direct-watch-identity*`,
+including the runner, adapted CPU-15 raw perf audit, phase addresses,
+symbol/disassembly files, folded stacks and detailed instruction samples.
+The generated SVG was parsed as XML. Source qualification is recorded below
+when complete; passing this screen alone does not authorize a production
+landing.
+
+## Source qualification and landing
+
+The complete source qualification passed on `02cc03c`, after the two-input
+screen and before the production landing:
+
+- all-features workspace build;
+- workspace nextest: **10811 passed, 12 skipped**;
+- workspace doctests: **111 passed, 29 ignored**;
+- strict all-features/all-targets clippy, formatting and rustdoc;
+- installed **Z3 4.16.0** differential canary: **174 agreements, zero
+  disagreements and one inconclusive result out of 175**. `array_unique`
+  remains Nixie UNSAT / comparator Unknown; it is not counted as agreement.
+
+These are correctness gates, not performance comparisons. Their exact
+commands, source/version metadata, immediate statuses and logs are retained
+under `benchmark/direct-watch-identity/qualification/`. The ignored Linux
+parity snapshot is copied there rather than overwriting another checkout's
+snapshot. The default compact layout also passed its separate 999-test SAT
+suite; the all-features workspace run alone exercises the wider observer
+layout and is not substituted for that test.
+
+All five new canonical measurement records were independently revalidated
+against their content-addressed paths, source/binary identities and output
+hashes. The final commit adds documentation and the flamegraph to the tested
+source; cached ordinary/perf/CLI binaries retain their actual build identity.
+The source change is enabled for ordinary builds and qualifies for landing
+under the registered engineering gate. This closes this experiment, while
+the broader Kissat wall-time gap remains open.
