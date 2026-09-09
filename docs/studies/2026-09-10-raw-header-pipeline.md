@@ -130,3 +130,93 @@ all original raw-header ordering gates must still hold. If these fail,
 record the assembly result and stop without another solver invocation.
 Passing assembly still needs exact-state SAT tests and the original cost
 gate. No additional profile is authorized for this repair.
+
+## Watcher reuse repair: stopped at assembly
+
+Repair `27e73cbbe37e78d02246fa64e00e5293fd61d058` carries the exact watcher
+copy read by preparation. It removes the second reference read and the
+looked-ahead hit's second watcher read. The ordinary prefix hit loop remains
+free of pending dispatch; next-header loads still precede current literals
+without testing the next header's contents. However, prefix local stack
+grows **104 -> 120 bytes**, failing the declared preflight. Suffix stack
+stays 120. Bodies change from 1289/1477 to 1315/1449 bytes: almost no combined
+text reduction. No release cost cell or second profile was run.
+
+The source saves a read but extends the copied watcher's lifetime across
+current-clause work. In the generated prefix the prepared reference is
+spilled at `0x6416e` and recovered at `0x64104`, alongside current reference,
+raw header, next-hit state and both cursor positions. Null/deleted control
+flow also retains extra state moves. This is a register-pressure trade,
+not elimination of the pipeline's bookkeeping. It gives no basis for
+claiming that the saved read is a net improvement. SAT default/all-feature
+tests, strict SAT Clippy and format pass again; the arena API and unsafe
+blocks are unchanged from the five passing Miri cases above.
+
+The failed assembly gate ends this repair. Do not keep changing defaults,
+inlining, pending encodings or distances to obtain another timing cell.
+The raw-header version removed the previously identified early liveness
+branch and still added 6.87% complete instructions. The repair then traded
+a repeated read for more live state. Together these results close this
+one-entry software-lookahead approach under the current scan boundary;
+they do not prove a hardware latency model or rule out every possible
+memory-overlap algorithm.
+
+## Underlying cost to address next
+
+The retained qualified j3037 control and Kissat reference contain **1.478x
+processed trail literals**, **1.153x conflicts**, and **2.103x whole-process
+instructions** for Nixie. Instructions amortized per processed literal are
+therefore 1.423x Kissat's. These are accounting ratios with different phase
+coverage, not isolated propagation-kernel measurements. They reinforce the
+[earlier work-volume audit](2026-09-09-connected-residual-payloads.md#the-wall-gap-also-contains-more-work-per-conflict):
+similar conflict counts do not mean comparable propagation work. Current
+single-input evidence must not be presented as a new suite geomean.
+
+A concrete representation target outside this rejected pipeline is the
+**per-literal propagation directory**. Source and the current diagnostic
+show the driver reading separate binary span/live/overflow arrays, taking
+a long-watch Vec, and reading a separate phantom tick count. Address
+`0x4afbf` maps to binary-span setup, `0x4b014` to overflow metadata and
+`0x4b1fc` to watch-list ownership transfer. The driver's 21.05% self share
+also includes real binary traversal and assignment; it is not all removable
+directory overhead. For example, `0x4b0dc` maps to binary literal-value
+access, not directory setup.
+
+The previous [compact adjacency experiment](2026-09-10-compact-adjacency.md)
+fused binary metadata but retained separate binary and long-watch
+directories. A distinct design would co-locate one literal's binary
+start/live extent, overflow owner, long-watch owner and phantom count,
+and lend their disjoint views to propagation together. With ordinary Vec
+owners this is approximately one 64-byte row on this host, rather than
+several unrelated keyed loads. Preserve binary-before-long order, immediate
+watch moves, exact phantom accounting, primary-span physical boundaries,
+growth, rebuilds and scope snapshots. Do not intermix the edge streams or
+copy Kissat's differing watch-order semantics.
+
+This is an **unimplemented source-audit direction**, not an accepted speedup
+or a registered performance run. Its preflight must price larger destination
+directory strides and cold rebuilds, and establish fewer metadata reloads
+in generated code. Combining it with compact ownership would need an actual
+interaction: compact rows reducing the state/traffic of a unified lookup,
+not adding the old negative experiments' percentages. The reference
+`kissat/src/proplit.h` instead scans binary and long entries in one watch
+stream; it is useful for the ownership/load audit, but directly copying that
+ordering would change Nixie's trajectory and require heuristic controls.
+
+## Closure and artifacts
+
+Exactly **two performance invocations** ran: one candidate cost cell and
+one LBR diagnostic. The repair used zero performance invocations. No fresh
+Kissat/control cell, si2 confirmation, seed sweep, timing retry or full
+workspace qualification was added. **No production solver change is
+landed, and no reduction of the Kissat wall gap is established.** Full
+workspace and Z3 qualification are reserved for a candidate passing the
+advancement gate; these SAT preflights do not substitute for them.
+
+`precompile/3029772/` preserves release/perf binaries, exact source patch
+and bundle, lockfile, identity manifest, tests/Miri/codegen logs, once-only
+measurement harnesses, raw results and profile/address analysis.
+`precompile/27e73cb/` preserves the untimed repair's perf binary, source
+patch/bundle and preflight evidence. Both bundles require the reachable
+registration `ce1c01c04b86bcde7b7cda772b998baac3f3389e`. Experimental
+worktree, branch and temporary files are removed after archival.
