@@ -132,7 +132,9 @@ solver may not print `sat` over it:
 | `∃x. φ` conjunct (incl. nested under a registered `∀`) | ground solver | Skolemized (`exists_skolem`, `skolemization`) |
 | `(not (forall x φ))` conjunct | ground solver | NNF `∃x.¬φ` then Skolemized to `¬φ(sk)` – the witness is *searched* |
 | `(not (exists x φ))` conjunct | MBQI + E-matching | NNF `∀x.¬φ`, registered as an asserted universal |
-| any quantifier behind a polarity boundary (`or` disjunct, `ite` arm, Bool `=` operand) | **nobody** | `Solver::unowned_quantifier_seen`; `sat` requires independent model certification (`model_certify`), else `unknown` |
+| boundary `forall x. φ` (`or` disjunct, `ite` arm, …) | MBQI (guarded) | registered with its propositional guard; instances emit the valid clause `(!q ∨ φ[t])` and activate only when the branch commits |
+| boundary `exists x. D` | MBQI (guarded, refutation side) | the derived universal `∀x.¬D` registers with guard `!q_e` (clause `q_e ∨ ¬D[t]`); the *witness* direction stays **nobody** → `unowned_quantifier_seen` gates `sat` on it |
+| any other unowned quantifier | **nobody** | `Solver::unowned_quantifier_seen`; `sat` requires independent model certification (`model_certify`), else `unknown` |
 
 The negated-quantifier rows are the fix for the September 2026 false-`sat`
 class: a boundary quantifier used to be a *free Boolean* whose truth the
@@ -143,6 +145,23 @@ trap is guarded by a regression test: `(¬∀x. P(x)) ∧ ¬P(5)` stays `sat`,
 because the Skolemized reading never asserts the universal.
 
 ---
+
+## Known quantifier-completeness blockers (2026-09, follow-ups)
+
+* **LIA integer verdict returns `Unknown` mid-search on quantifier-bearing
+  goals** (the jain class): with a spine universal registered, the first
+  theory check can return `TheoryCheckResult::Unknown` (branch-and-bound /
+  integer-equality incumbent gives up) and the whole goal answers `unknown`
+  before MBQI ever runs.  Minimal repro: j5 shape before the reflexivity
+  fold; the surviving shape is `(exists a b. 2a+1=y ∧ 2b+1=x) ∧
+  (not (exists v. 2v+1=y))` — ground part alone is decided instantly.
+  See the `lia_cuts_then_bnb` / `cached_int_eq_verdict` paths in
+  `nixie-theories/src/arithmetic/solver.rs`.
+* **Duplicate instantiations re-emitted on alternating rounds**: MBQI can
+  alternate `NewInstantiations`/`Unknown` with byte-identical instance
+  lists, burning the round budget on no-ops (observed on tautological
+  quantifiers before the reflexivity fold; dedup keys or round accounting
+  need an audit).
 
 ## Big integer constants (linear abstraction)
 

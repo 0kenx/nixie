@@ -175,6 +175,59 @@ impl MBQIIntegration {
         }
     }
 
+    /// Register a **boundary** universal with its propositional guard: the
+    /// quantifier is not unconditionally asserted (it sits behind a
+    /// disjunction, an `ite` arm, ...), so its instances are only valid as
+    /// guarded clauses `(!q | body[t])` – which is still valid in every
+    /// model, because `q`'s meaning *is* the quantified formula.
+    pub fn add_guarded_quantifier(
+        &mut self,
+        term: TermId,
+        guard: nixie_sat::Lit,
+        manager: &TermManager,
+    ) {
+        let Some(t) = manager.get(term) else {
+            return;
+        };
+        if let nixie_core::ast::TermKind::Forall { vars, body, .. } = &t.kind {
+            // A quantifier that is also spine-registered keeps its stronger
+            // unguarded registration; do not track it twice.
+            if self.quantifiers.iter().any(|q| q.term == term) {
+                return;
+            }
+            let bound_vars: SmallVec<[(Spur, SortId); 4]> = vars.iter().copied().collect();
+            let mut qf = QuantifiedFormula::new(term, bound_vars, *body, true);
+            qf.guard = Some(guard);
+            self.quantifiers.push(qf);
+            self.stats.num_quantifiers += 1;
+        }
+    }
+
+    /// Record which boundary quantifiers' branches the SAT core currently
+    /// commits FALSE (vacuously satisfied) — refreshed by the solver before
+    /// each MBQI round.  An inactive guard makes the round skip the
+    /// quantifier's counterexample search entirely: its guarded instances
+    /// are inert under `!q`, and searching them would only starve the loop
+    /// toward `unknown`.
+    pub fn sync_guard_commitments(&mut self, inactive: &FxHashSet<TermId>) {
+        for q in &mut self.quantifiers {
+            q.guard_inactive = q.guard.is_some() && inactive.contains(&q.term);
+        }
+    }
+
+    /// The tracked quantifier at `idx`, if in range.
+    pub fn quantifier_at(&self, idx: usize) -> Option<&QuantifiedFormula> {
+        self.quantifiers.get(idx)
+    }
+
+    /// The propositional guard of a tracked quantifier, if any.
+    pub fn guard_of(&self, term: TermId) -> Option<nixie_sat::Lit> {
+        self.quantifiers
+            .iter()
+            .find(|q| q.term == term)
+            .and_then(|q| q.guard)
+    }
+
     /// Run MBQI with a partial model implementing the Ge & de Moura (2009) algorithm.
     ///
     /// The loop:
@@ -365,6 +418,13 @@ impl MBQIIntegration {
 
         for quantifier in &quantifiers {
             if !quantifier.can_instantiate() {
+                continue;
+            }
+            // A boundary quantifier whose branch the SAT core committed
+            // FALSE is vacuously satisfied in the candidate model: no
+            // counterexample search (its guarded instances are inert under
+            // `!q` anyway, and searching would only starve the loop).
+            if quantifier.guard_inactive {
                 continue;
             }
 
@@ -639,9 +699,16 @@ impl MBQIIntegration {
     fn all_domains_finitely_exhausted(
         &self,
         quantifiers: &[QuantifiedFormula],
-        model: &CompletedModel,
-        manager: &TermManager,
+        _model: &CompletedModel,
+        _manager: &TermManager,
     ) -> bool {
+        // `model`/`manager` are no longer consulted here: the coverage
+        // verdict lives where the candidate lists are built (see
+        // `CounterExampleGenerator::build_candidate_lists`), because it
+        // is a property of the *enumeration*, and any model-derived
+        // re-estimate would reintroduce exactly the undercount this
+        // gate exists to refuse.
+
         for quantifier in quantifiers {
             if !quantifier.can_instantiate() {
                 continue;
@@ -658,9 +725,15 @@ impl MBQIIntegration {
             // NOT prove satisfaction and we must fall through to `Unknown`.
             let mut product: usize = 1;
             for &(_name, sort) in quantifier.bound_vars.iter() {
-                let Some(count) = self.sort_candidate_count(sort, model, manager) else {
-                    // Infinite (Int/Real/String) or merely-sampled (BitVec, ...)
-                    // domain, or an oversized universe: not exhaustively covered.
+                // The *actual* enumerated list length, not a model-derived
+                // estimate: the generator's list is the ground truth of what
+                // was (and was not) tried, and only a list that provably
+                // covers every value the completed model can exhibit for the
+                // sort turns "no counterexample" into a proof.  `None` covers
+                // infinite domains (Int/Real/String), merely-sampled ones
+                // (BitVec, ...), oversized universes, and – the CLEARSY
+                // false-`sat` – a truncated pool-replaced sample.
+                let Some(count) = self.cex_generator.exhaustive_candidate_len(sort) else {
                     return false;
                 };
                 product = product.saturating_mul(count);

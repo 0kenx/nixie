@@ -2587,3 +2587,72 @@ mod sweep_tests {
         assert_eq!(s.solve(), SolverResult::Sat);
     }
 }
+
+/// Retirement leaves physical slack. Bulk compaction must read the old span
+/// boundaries, independently of live lengths and the boundaries it rewrites.
+#[test]
+fn big_compaction_after_individual_retirement_preserves_later_spans() {
+    let mut graph = BinaryImplicationGraph::new(3);
+    for code in [0, 0, 2, 2, 4] {
+        graph.build_count(Lit::from_code(code));
+    }
+    graph.build_layout();
+    for (id, code) in [0, 0, 2, 2, 4].into_iter().enumerate() {
+        graph.build_edge(
+            Lit::from_code(code),
+            Lit::from_code(5),
+            ClauseId::new(id as u32),
+        );
+    }
+    graph.add(Lit::from_code(2), Lit::from_code(1), ClauseId::new(5));
+    graph.add(Lit::from_code(4), Lit::from_code(3), ClauseId::new(6));
+    graph.remove_clause_edges(Lit::from_code(0), ClauseId::new(0));
+    graph.compact_dead(&[false, false, true, false, false, true]);
+    let expected = [
+        (Lit::from_code(0), Lit::from_code(5), ClauseId::new(1)),
+        (Lit::from_code(2), Lit::from_code(5), ClauseId::new(3)),
+        (Lit::from_code(4), Lit::from_code(5), ClauseId::new(4)),
+        (Lit::from_code(4), Lit::from_code(3), ClauseId::new(6)),
+    ];
+    assert_eq!(graph.iter().collect::<Vec<_>>(), expected);
+    graph.remove_clause_edges(Lit::from_code(2), ClauseId::new(3));
+    graph.compact_dead(&[]);
+    assert_eq!(
+        graph.iter().collect::<Vec<_>>(),
+        [expected[0], expected[2], expected[3]]
+    );
+}
+
+#[test]
+fn big_count_overflow_does_not_mutate_layout() {
+    let mut graph = BinaryImplicationGraph::new(1);
+    graph.live[0] = u32::MAX;
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        graph.build_count(Lit::from_code(0));
+    }));
+    assert!(result.is_err());
+    assert_eq!(graph.live, [u32::MAX, 0]);
+    graph.live[1] = 1;
+    graph.span_end = vec![7, 11];
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| graph.build_layout()));
+    assert!(result.is_err());
+    assert_eq!(graph.live, [u32::MAX, 1]);
+    assert_eq!(graph.span_end, [7, 11]);
+    assert!(graph.edges.is_empty());
+}
+
+#[test]
+fn big_overfilling_a_span_cannot_overwrite_its_neighbor() {
+    let mut graph = BinaryImplicationGraph::new(2);
+    graph.build_count(Lit::from_code(0));
+    graph.build_count(Lit::from_code(2));
+    graph.build_layout();
+    graph.build_edge(Lit::from_code(0), Lit::from_code(1), ClauseId::new(1));
+    graph.build_edge(Lit::from_code(2), Lit::from_code(3), ClauseId::new(2));
+    let before = graph.iter().collect::<Vec<_>>();
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        graph.build_edge(Lit::from_code(0), Lit::from_code(0), ClauseId::new(3));
+    }));
+    assert!(result.is_err());
+    assert_eq!(graph.iter().collect::<Vec<_>>(), before);
+}

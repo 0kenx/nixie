@@ -276,16 +276,26 @@ fn test_audit_multivar_product_exceeds_combination_cap_not_exhausted() {
         integration.quantifiers.clone()
     };
 
-    let integration = MBQIIntegration::new();
+    // Exhaustion is a property of the *enumeration*, not of the model alone:
+    // `all_domains_finitely_exhausted` reads the coverage the generator
+    // recorded while building this round's candidate lists (the CLEARSY
+    // false-`sat` taught it to distrust model-derived estimates).  Run the
+    // generator for each quantifier first, exactly as `run()` does.
+    let mut integration = MBQIIntegration::new();
 
     // 2 variables -> 5*5 = 25 <= 100: fully enumerated, may conclude sat.
     let q2 = build(&mut manager, 2);
+    let _ = integration
+        .cex_generator
+        .generate(&q2[0], &model, &mut manager);
     assert!(
         integration.all_domains_finitely_exhausted(&q2, &model, &manager),
         "2 vars over |U|=5 has 25 combinations (<= cap) and IS fully enumerated"
     );
 
     // 3 variables -> 5*5*5 = 125 > 100: truncated, must NOT conclude sat.
+    // (Same sort, so the generator's coverage map is already populated from
+    // the run above; the product arithmetic is what must reject it.)
     let q3 = build(&mut manager, 3);
     assert!(
         !integration.all_domains_finitely_exhausted(&q3, &model, &manager),
@@ -315,10 +325,16 @@ fn test_audit_many_bool_vars_exceed_combination_cap() {
         integration.quantifiers.clone()
     };
 
-    let integration = MBQIIntegration::new();
+    // Exhaustion reads the generator's recorded coverage (see the |U|=5
+    // test above), so the candidate lists must be built first – the Bool
+    // defaults give every Bool variable the full {true, false} domain.
+    let mut integration = MBQIIntegration::new();
 
     // 6 Bool vars -> 2^6 = 64 <= 100: fully enumerated.
     let q6 = build(&mut manager, 6);
+    let _ = integration
+        .cex_generator
+        .generate(&q6[0], &model, &mut manager);
     assert!(
         integration.all_domains_finitely_exhausted(&q6, &model, &manager),
         "2^6 = 64 combinations fit within the cap"

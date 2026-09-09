@@ -19,7 +19,7 @@ use crate::prelude::*;
 use core::fmt;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
-use nixie_core::sort::SortId;
+use nixie_core::sort::{SortId, SortKind};
 #[cfg(feature = "std")]
 use nixie_time::{Duration, Instant};
 use num_bigint::BigInt;
@@ -192,6 +192,95 @@ pub struct CexGenerationResult {
 }
 
 /// Counter-example generator
+/// Linear form of `term` in the bound variable named `var`:
+/// `(coefficient of var, residual term)`, or `None` when `term` is not
+/// linear in `var` (or mentions it nonlinearly).
+///
+/// Iterative with an explicit work stack; the term shape is user input.
+fn linear_form_in(
+    term: TermId,
+    var: Spur,
+    manager: &mut TermManager,
+) -> Option<(num_bigint::BigInt, TermId)> {
+    enum Frame {
+        Eval(TermId, num_bigint::BigInt),
+    }
+    let mut coeff = num_bigint::BigInt::ZERO;
+    let mut residual: Option<TermId> = None;
+    let mut stack = vec![Frame::Eval(term, num_bigint::BigInt::from(1))];
+
+    let push_residual = |residual: &mut Option<TermId>, t: TermId, manager: &mut TermManager| {
+        *residual = Some(match *residual {
+            None => t,
+            Some(prev) => manager.mk_add([prev, t]),
+        });
+    };
+
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Eval(id, scale) => {
+                let node = manager.get(id)?;
+                match &node.kind {
+                    TermKind::Var(name) if *name == var => {
+                        coeff += scale;
+                    }
+                    TermKind::Var(_) => {
+                        push_residual(&mut residual, id, manager);
+                    }
+                    TermKind::IntConst(n) => {
+                        if !num_traits::Zero::is_zero(n) {
+                            let scaled = manager.mk_int(scale * n);
+                            push_residual(&mut residual, scaled, manager);
+                        }
+                    }
+                    TermKind::Add(args) => {
+                        for &a in args.iter().rev() {
+                            stack.push(Frame::Eval(a, scale.clone()));
+                        }
+                    }
+                    TermKind::Neg(inner) => {
+                        stack.push(Frame::Eval(*inner, -scale));
+                    }
+                    TermKind::Sub(l, r) => {
+                        stack.push(Frame::Eval(*l, scale.clone()));
+                        stack.push(Frame::Eval(*r, -scale));
+                    }
+                    TermKind::Mul(args) => {
+                        // Linear iff at most one factor is non-numeric; that
+                        // factor then carries the whole (constant) product as
+                        // its scale.  Two or more non-numeric factors are
+                        // nonlinear in anything they mention.
+                        let mut const_prod = num_bigint::BigInt::from(1);
+                        let mut non_const: Vec<TermId> = Vec::new();
+                        for &f in args.iter() {
+                            let n = manager.get(f)?;
+                            match &n.kind {
+                                TermKind::IntConst(v) => const_prod *= v,
+                                _ => non_const.push(f),
+                            }
+                        }
+                        match non_const.len() {
+                            0 => {
+                                let v = manager.mk_int(scale * const_prod);
+                                push_residual(&mut residual, v, manager);
+                            }
+                            1 => stack.push(Frame::Eval(non_const[0], scale * const_prod)),
+                            _ => return None,
+                        }
+                    }
+                    _ => {
+                        // Opaque ground sub-term (function application,
+                        // div/mod, ...): a legitimate residual.
+                        push_residual(&mut residual, id, manager);
+                    }
+                }
+            }
+        }
+    }
+    let residual = residual.unwrap_or_else(|| manager.mk_int(num_bigint::BigInt::ZERO));
+    Some((coeff, residual))
+}
+
 #[derive(Debug)]
 pub struct CounterExampleGenerator {
     /// Maximum number of counterexamples to generate per quantifier
@@ -213,6 +302,17 @@ pub struct CounterExampleGenerator {
     /// values and defaults. Kept separate from `candidate_cache`, which is a
     /// pure per-round memo of computed lists.
     injected_candidates: FxHashMap<SortId, Vec<TermId>>,
+    /// Per sort: `Some(len)` when the list built this round provably contains
+    /// every value the completed model can exhibit for that sort (the
+    /// universe plus every same-sort model value), with `len` the *actual*
+    /// enumerated length; `None` when it does not (pool replaced the
+    /// strategies and truncation cut a required value, or the sort was never
+    /// built).  This is what makes the finite-exhaustion `Satisfied` sound:
+    /// "no counterexample among the enumerated tuples" only proves the
+    /// quantifier holds when the enumeration covered the model's whole
+    /// domain — the CLEARSY/00779 false `sat` enumerated 10 of a 2405-term
+    /// pool while the exhaustion check counted an 8-value universe.
+    exhaustive_candidates: FxHashMap<SortId, Option<usize>>,
 }
 
 impl CounterExampleGenerator {
@@ -227,6 +327,7 @@ impl CounterExampleGenerator {
             stats: CexStats::default(),
             candidate_cache: FxHashMap::default(),
             injected_candidates: FxHashMap::default(),
+            exhaustive_candidates: FxHashMap::default(),
         }
     }
 
@@ -315,6 +416,46 @@ impl CounterExampleGenerator {
             }
         }
 
+        // Linear witness solving: when candidate substitution found no
+        // counterexample but the quantifier binds exactly one integer
+        // variable, try to *solve* the body's linear atoms for that
+        // variable and evaluate the solved points.  Pure-arithmetic
+        // existentials (`exists v. 2v+1 = y`, the Ultimate/jain encodings)
+        // have their falsifier at a compound term no candidate pool
+        // contains; isolation finds it.  Every solved point still goes
+        // through the same substitute/evaluate/check pipeline, so a wrong
+        // solve is merely a candidate that fails – never a fabricated
+        // counterexample.
+        if counterexamples.len() < self.max_cex_per_quantifier
+            && let Some(var) = quantifier.var_name(0)
+            && quantifier.bound_vars.len() == 1
+            && quantifier.var_sort(0) == Some(manager.sorts.int_sort)
+            && counterexamples.is_empty()
+        {
+            let extra = self.solve_linear_witnesses(quantifier.body, var, model, manager);
+            for witness in extra {
+                if counterexamples.len() >= self.max_cex_per_quantifier {
+                    break;
+                }
+                let mut assignment = FxHashMap::default();
+                assignment.insert(var, witness);
+                let substituted = self.apply_substitution(quantifier.body, &assignment, manager);
+                let evaluated = self.evaluate_under_model(substituted, model, manager);
+                if !self.is_ground_boolean(evaluated, manager) {
+                    all_ground = false;
+                }
+                if self.is_counterexample(evaluated, quantifier.is_universal, manager) {
+                    let combo = vec![witness];
+                    let mut cex =
+                        CounterExample::new(quantifier.term, assignment, combo, model.generation);
+                    cex.body_value = Some(evaluated);
+                    cex.calculate_quality(manager);
+                    counterexamples.push(cex);
+                    self.stats.num_counterexamples_found += 1;
+                }
+            }
+        }
+
         // Sort by quality (best first)
         counterexamples.sort_by(|a, b| {
             b.quality
@@ -372,25 +513,106 @@ impl CounterExampleGenerator {
             // Strategy 3: Add default values based on sort
             self.add_default_candidates(sort, &mut candidates, manager);
 
-            // Strategy 4: the injected pool (ground terms of the problem,
-            // Skolem applications).  REPLACES the strategies when present —
-            // deliberately: extras are the *relevant* terms and any sort
-            // that already has them had its search trajectory measured on
-            // exactly this pool (merging strategies in perturbed the
-            // enumeration order and regressed a 0.04s `unsat` parity
-            // benchmark to `unknown`).  The strategies above therefore run
-            // only for sorts whose pool was EMPTY — which is precisely the
-            // gap being closed (a sort with neither extras, model values,
-            // nor defaults could instantiate nothing and MBQI exhausted its
-            // rounds answering `unknown` for refutable goals).
-            if let Some(extra) = self.injected_candidates.get(&sort)
+            // Every value a *total* reading of the completed model can
+            // exhibit for this sort: the universe, every same-sort assignment
+            // value, and every same-sort function-table argument and result —
+            // **untruncated**.  This is the candidate domain the
+            // finite-exhaustion `Satisfied` needs covered; the universe alone
+            // is a `MAX_UNIVERSE_SIZE`-truncated *sample* (CLEARSY/00779: an
+            // 8-entry universe over a model with 2270 distinct values), and
+            // the assignments map alone misses values that only occur as
+            // function-table arguments.
+            let mut required: Vec<TermId> = Vec::new();
+            let push_req = |t: TermId, req: &mut Vec<TermId>| {
+                if !req.contains(&t) {
+                    req.push(t);
+                }
+            };
+            if let Some(universe) = model.universe(sort) {
+                for &u in universe {
+                    push_req(u, &mut required);
+                }
+            }
+            for (&term, &value) in &model.assignments {
+                if manager.get(term).is_some_and(|t| t.sort == sort) {
+                    push_req(value, &mut required);
+                }
+                if manager.get(value).is_some_and(|v| v.sort == sort) {
+                    push_req(value, &mut required);
+                }
+            }
+            for interp in model.function_interps.values() {
+                for entry in &interp.entries {
+                    for (i, &arg) in entry.args.iter().enumerate() {
+                        if i < interp.domain.len()
+                            && interp.domain[i] == sort
+                            && manager.get(arg).is_some_and(|a| a.sort == sort)
+                        {
+                            push_req(arg, &mut required);
+                        }
+                    }
+                    if interp.range == sort
+                        && manager.get(entry.result).is_some_and(|r| r.sort == sort)
+                    {
+                        push_req(entry.result, &mut required);
+                    }
+                }
+            }
+
+            // The injected pool (ground terms of the problem, Skolem
+            // applications).  For *sampled* sorts (Int, Real, BitVec, ...)
+            // it REPLACES the computed list, exactly as before: those
+            // sorts' search trajectories were measured on pool order, and
+            // merging defaults in front regressed the UFLIA injectivity
+            // parity benchmark to `unknown`.  For *exhaustion-eligible*
+            // sorts (Bool, uninterpreted) the pool is merged AFTER the
+            // strategies: the required values lead, so truncation may only
+            // ever cut extra pool entries, never a required value — a bare
+            // pool is a syntactic sample, and a truncated sample silently
+            // dropped the falsifying value of the CLEARSY/00779 goal.
+            let finite_by_kind = matches!(
+                manager.sorts.get(sort).map(|s| &s.kind),
+                Some(SortKind::Bool) | Some(SortKind::Uninterpreted(_))
+            );
+            if finite_by_kind {
+                let mut merged: Vec<TermId> = candidates;
+                if let Some(extra) = self.injected_candidates.get(&sort) {
+                    for &t in extra {
+                        if !merged.contains(&t) {
+                            merged.push(t);
+                        }
+                    }
+                }
+                candidates = merged;
+            } else if let Some(extra) = self.injected_candidates.get(&sort)
                 && !extra.is_empty()
             {
                 candidates = extra.clone();
             }
-
-            // Limit candidates
             candidates.truncate(self.max_candidates_per_var);
+
+            // Coverage verdict for the finite-exhaustion gate.  `None` (a
+            // sample, not a domain) when the sort is not finite-by-kind,
+            // the truncated list dropped a required value, or an
+            // uninterpreted sort yielded NO required values — the harvest
+            // could not see the model's domain at all (SMT-LIB domains are
+            // non-empty, so "no values found" is a harvest failure, not an
+            // empty domain; treating it as vacuously covered is the
+            // constants-only false-`sat` shape).
+            let covered = finite_by_kind
+                && required.iter().all(|r| candidates.contains(r))
+                && match manager.sorts.get(sort).map(|s| &s.kind) {
+                    Some(SortKind::Uninterpreted(_)) => !required.is_empty(),
+                    _ => true,
+                };
+            self.exhaustive_candidates.insert(
+                sort,
+                if covered {
+                    Some(candidates.len())
+                } else {
+                    None
+                },
+            );
 
             // Cache for future use
             self.candidate_cache.insert(sort, candidates.clone());
@@ -533,6 +755,90 @@ impl CounterExampleGenerator {
     /// explicit heap stack rather than native recursion.
     ///
     /// [`TermManager::substitute`]: nixie_core::ast::TermManager::substitute
+    /// Solved-witness candidates for the single bound variable `var`, from
+    /// isolating it out of the body's linear comparison atoms.
+    ///
+    /// For an atom `(a*v + L) OP (R)` the equality-solving point is
+    /// `(R - L) div a`; inequality atoms contribute their boundary points the
+    /// same way.  Only *integer* linear arithmetic is handled (the candidate
+    /// is a `div` term, evaluated under the model like any other candidate).
+    fn solve_linear_witnesses(
+        &self,
+        body: TermId,
+        var: Spur,
+        model: &CompletedModel,
+        manager: &mut TermManager,
+    ) -> Vec<TermId> {
+        let mut out = Vec::new();
+        let mut seen_atoms: FxHashSet<TermId> = FxHashSet::default();
+        for sub in nixie_core::ast::traversal::collect_subterms(body, manager) {
+            if !seen_atoms.insert(sub) {
+                continue;
+            }
+            let Some(node) = manager.get(sub) else {
+                continue;
+            };
+            let (l, r) = match &node.kind {
+                TermKind::Eq(a, b)
+                | TermKind::Lt(a, b)
+                | TermKind::Le(a, b)
+                | TermKind::Gt(a, b)
+                | TermKind::Ge(a, b) => (*a, *b),
+                _ => continue,
+            };
+            // Linear forms of both sides in `var`: (coefficient, residual term).
+            let Some((ca, la)) = linear_form_in(l, var, manager) else {
+                continue;
+            };
+            let Some((cb, lb)) = linear_form_in(r, var, manager) else {
+                continue;
+            };
+            let a = ca - cb;
+            if num_traits::Zero::is_zero(&a) {
+                continue; // variable cancelled: atom does not constrain it
+            }
+            // (a*v + L) OP R  =>  v = (R - L) div a.  Prefer the *concrete*
+            // witness: evaluate R - L under the candidate model and, when the
+            // quotient is exact, substitute `mk_int(value)` – a ground
+            // constant whose instance conflicts directly at the SAT level
+            // (the symbolic `div` term instead drags Euclidean axioms and a
+            // branch-and-bound obligation into the ground solver, which can
+            // stall exactly the goals this exists to solve).  Non-exact or
+            // non-literal residuals keep the symbolic `div` fallback plus
+            // the floor/ceil boundary points for inequality atoms.
+            let rhs = manager.mk_sub(lb, la);
+            let evaluated = self.evaluate_under_model(rhs, model, manager);
+            let mut pushed = false;
+            if let Some(node) = manager.get(evaluated)
+                && let TermKind::IntConst(num) = &node.kind
+                && !num_traits::Zero::is_zero(&a)
+            {
+                // Euclidean division: exact quotient only when the
+                // remainder is zero (sign-independent for our purpose —
+                // a non-exact point still gets the symbolic fallback).
+                let (q, r) = (num / &a, num % &a);
+                if num_traits::Zero::is_zero(&r) {
+                    let witness = manager.mk_int(q);
+                    if !out.contains(&witness) {
+                        out.push(witness);
+                        pushed = true;
+                    }
+                }
+            }
+            if !pushed {
+                let a_term = manager.mk_int(a.clone());
+                let witness = manager.mk_div(rhs, a_term);
+                if !out.contains(&witness) {
+                    out.push(witness);
+                }
+            }
+            if out.len() >= 8 {
+                break; // a handful of solved points is plenty
+            }
+        }
+        out
+    }
+
     fn apply_substitution(
         &self,
         term: TermId,
@@ -1859,6 +2165,16 @@ impl CounterExampleGenerator {
     pub fn clear_cache(&mut self) {
         self.candidate_cache.clear();
         self.injected_candidates.clear();
+        self.exhaustive_candidates.clear();
+    }
+
+    /// The actual number of candidates enumerated for `sort` this round, when
+    /// that list provably covers every value the completed model can exhibit
+    /// for the sort (see `build_candidate_lists`).  `None` means the
+    /// enumeration was a sample — sound for *finding* counterexamples, sound
+    /// for nothing else.
+    pub fn exhaustive_candidate_len(&self, sort: SortId) -> Option<usize> {
+        self.exhaustive_candidates.get(&sort).copied().flatten()
     }
 
     /// Get statistics

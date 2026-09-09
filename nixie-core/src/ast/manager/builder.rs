@@ -336,24 +336,43 @@ impl TermManager {
 
     /// Create a less-than comparison
     pub fn mk_lt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        // Irreflexivity, on hash-consed identity (the same rule
+        // `mk_str_lt` applies; Z3's `arith_rewriter` folds these too).
+        if lhs == rhs {
+            return self.mk_false();
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::Lt(lhs, rhs), sort)
     }
 
     /// Create a less-than-or-equal comparison
     pub fn mk_le(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        // Reflexivity, on hash-consed identity.
+        if lhs == rhs {
+            return self.mk_true();
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::Le(lhs, rhs), sort)
     }
 
     /// Create a greater-than comparison
     pub fn mk_gt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        // Irreflexivity, on hash-consed identity.
+        if lhs == rhs {
+            return self.mk_false();
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::Gt(lhs, rhs), sort)
     }
 
     /// Create a greater-than-or-equal comparison
     pub fn mk_ge(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        // Reflexivity, on hash-consed identity.  This one decides the
+        // tautological-quantifier class (`forall u. u >= u` used to burn
+        // every MBQI round enumerating no-op instances and end `unknown`).
+        if lhs == rhs {
+            return self.mk_true();
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::Ge(lhs, rhs), sort)
     }

@@ -1,8 +1,19 @@
-# CLEARSY UF false-`sat` on negated existentials over uninterpreted sorts (open)
+# CLEARSY UF false-`sat` on negated existentials over uninterpreted sorts
 
-**Status: OPEN soundness issue, pre-existing (not introduced by the 2026-09
-quantifier-ownership work — the pre-fix binary answers the same wrong `sat`,
-via the free-Boolean hole rather than via model approval).**
+**Status: FIXED (2026-09-09, `fix(mbqi): make finite-exhaustion Satisfied
+prove real domain coverage`).**  The issue was pre-existing (not introduced
+by the 2026-09 quantifier-ownership work — the pre-fix binary answered the
+same wrong `sat` via the free-Boolean hole rather than via model approval).
+
+**Resolution summary:** the file refutes through E-matching depth nixie does
+not yet have, so it now answers the honest `unknown`.  The false `sat` came
+from the finite-exhaustion `Satisfied` path trusting model-derived coverage
+arithmetic (an 8-value truncated universe) while the actual enumeration was
+a pool-replaced, 10-entry truncated sample over a model with 2270 distinct
+`U` values.  Working hypothesis 1 below was closest: the coverage claim and
+the enumeration were computed from different sources.  See
+`mbqi_exhaustion_soundness.rs` for the pinned regressions (including a
+constants-only shape that reaches genuine `unsat` post-fix).
 
 ## Reproducer
 
