@@ -56,3 +56,33 @@ source-preserving Nixie controls separate execution-cost changes from it.
 Store every cell once under `kissat-wall-gap`, with immediate completion
 records and model checks. No new source change, full suite, Z3 run or broad
 benchmark panel is part of this measurement-only follow-up.
+
+## CPU 10 screen aborted: identified competing workloads
+
+Only the first control ran. It returned a checked SAT model at 162529
+conflicts, but took **30.69 s wall, 12.43 s user and 0.11 s system**: 59.14%
+off CPU, with 5635 involuntary context switches. The runner's enclosing
+30.724 s confirms that delayed result-store writes were not the cause.
+A subsequent read-only `/proc` inspection found other Nixie solver processes
+explicitly pinned to CPUs 10–13; two-second per-core counters showed those
+four CPUs at 100% utilization. Parent cgroups had unlimited CPU quotas and
+no throttling. This identifies actual core competition. No other agent's
+process or affinity was changed. The remaining five cells were cancelled.
+The two earlier record-format failures happened during postprocessing this
+same retained completion; **the solver ran once**. The stored primary is
+integer wall milliseconds. Coverage means the timer spans the entire target;
+it does not mean the failed off-CPU quality test passed.
+
+## Replacement protocol: CPU 15, registered before execution
+
+Repair the identified measurement defect by using CPU **15**, another atom
+core (`cpu_atom/cpus = 8-19`), for every arm. The same two-second inspection
+showed 3% utilization on CPU 15 and no solver pinned there. Preserve the
+rejected CPU 10 observation; it is not part of a passing comparison.
+Use a new `direct-wall-ram-output-cpu15-v2` configuration and store under
+`kissat-wall-gap-cpu15`. Keep all binaries, inputs, order, caps, quality gates
+and the conditional second input above. Stop immediately after any cell
+fails its off-CPU gate, instead of spending runs on the remainder of that
+batch. Record process affinity evidence before each batch. No retries or
+selection of the fastest result. This is a specific core-contention repair,
+not permission to repeat noisy cells until a desired outcome appears.
