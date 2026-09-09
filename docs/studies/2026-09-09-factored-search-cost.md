@@ -80,3 +80,78 @@ sound matched null and the seed protocol; a trajectory-preserving prototype
 needs an independently registered cost screen. This step uses at most two
 new solver runs, recorded once in the result store, and lands its diagnosis
 and next target on main.
+
+## Result: measurement rejected; second invocation cancelled
+
+Exactly **one new solver invocation** ran. It returned SAT with **91833
+conflicts**, 315010 decisions and 8369710 propagations. Independent checks
+accepted its model against both the fixed factored CNF and the original CNF.
+Its complete stdout is byte-identical to the retained feasibility solve
+(`87eb5896119b2e0d389bd7495929722291351a3889509b1c549dab3c593814c4`).
+This confirms the observed search counters and witness at the new committed
+source; it does not measure a speedup.
+
+The profile **fails the preregistered quality gate**:
+
+| Check | Observed | Verdict |
+|---|---:|---|
+| At least 10000 cycle samples | 13323 | pass |
+| No lost samples | 589, reported through 207 lost-record chunks | fail |
+| One active PMU in outer stat | nonzero `cpu_atom` and `cpu_core` events | fail |
+| At least 99.9% event scheduling coverage | `cpu_atom` reported 99.00% | fail |
+| Both SAT model checks | accepted | pass |
+
+The raw stream also contains **6562 throttle** and 6563 unthrottle records.
+The host's `perf_event_max_sample_rate` was 2000 when inspected after the
+run. The fixed period of 500003 cycles, an 8192-byte stack per sample and
+the default recording buffer did not produce a complete profile on this
+host. `perf report` shows implausible caller addresses such as `0x1f` and
+does not reconstruct the full solve stack. The binary does contain frame
+description entries covering `main`, `propagate` and `subsume_round`, so
+missing unwind tables alone is not an established explanation. The exact
+cause of the caller reconstruction and outer-PMU contamination remains
+unresolved; neither is evidence that the solver itself migrated CPUs.
+
+For transparency, the surviving samples assign 59.70% self / 59.72%
+inclusive to propagation and 12.31% to `subsume_round`. **These incomplete
+samples do not pass the 50% opportunity gate.** They must not be used to
+select the representation engine or learned-clause path. No traffic observer
+ran, no new implementation target advanced, and no solver source changed.
+This is an inconclusive diagnostic, not a negative result for either engine.
+
+Before another separately registered solver measurement, qualify the
+profiler on a synthetic workload: verify workload and recorder affinity
+separately, avoid treating nested-recorder counters as solver counters,
+respect the actual sampling-rate limit, size the recording buffer, and check
+loss/throttling plus unwind validity. Check the measurement chain before
+consuming another solver cell. Do not rerun this cell or lower its gates.
+
+## Retained evidence and cleanup
+
+Raw evidence lives under
+`precompile/1f3f316/benchmark/factored-search-cost/`: the manifest, one-shot
+runner, build identities/logs, immediate start/completion markers, stdout,
+stderr, outer counters, original `profile.data`, complete flat/inclusive
+reports, raw structural counts, and `profile.rejected.json` /
+`profile-diagnosis.json`. The rejection explicitly records
+`counter_coverage_verified: false`. It is deliberately outside accepted
+`nixie-bench-record/1` records: that schema requires verified counter
+coverage, which this invocation cannot claim. The retained completion
+marker prevents the runner from executing the solver again; the false
+diagnosis gate prevents the conditional traffic invocation. `benchstore
+missing` does not represent rejected cells and must not be used to retry
+this study.
+
+The symbols build is cached as `precompile/1f3f316/stats_solve-perf`
+(`f5d833270d667551f90f0fec7a399302060e0e2c754ae834cf1e669fba89bb19`),
+and the unused traffic build as `stats_solve-traffic`
+(`8509f71c724203c86e918884b735269983d1be77e62f395332a91a13708315d3`).
+Both use Rust 1.96.0 and the committed lockfile; exact settings are in the
+build identity. The temporary build worktree was removed before measurement.
+Interrupted/duplicate offline report dumps and Python cache files were
+removed after retaining the raw data and complete reports.
+
+Validation for this documentation-only result consisted of the two CNF
+model checks, stdout identity, binary/input hashes and the raw profile
+quality audit. No additional solver tests or parity runs were consumed;
+the source remains the fully qualified `1f3f316` repair.
