@@ -53,3 +53,63 @@ permitted only if that profile and assembly identify removable overhead;
 otherwise stop and archive the candidate. No distance/width sweep, seed
 search, rerun or cross-profile counter ratio. These are bounded engineering
 screens, not population estimates or a new Kissat-suite geomean.
+
+## First implementation: rejected
+
+Prototype `72427b39f900b81ef11ce05d56fa2b46bad24391` is archived, not
+production. Its scoped arena stores private pending `(reference, length)`
+metadata; the scanner separately carries `Option<bool>` for the prepared
+blocker result. No additional unsafe Send/Sync assertion is involved.
+
+Default SAT library tests: 782 passed. All-feature SAT tests: 1046 passed,
+one existing ignored; two doctests passed, one ignored. The final corpus
+test initially failed because the worktree lacked the ignored SAT corpus;
+linking the primary corpus and rerunning that test passed. SAT Clippy and
+format passed. Three focused arena tests passed standalone Miri with strict
+provenance (nightly 2026-06-11), including duplicate references and owning
+thread moves. Native Rayon ran prebuilt solver/scalar-oracle pairs. The
+source, harnesses, logs and both binaries are in `precompile/72427b3/`.
+
+The generated next-header reads precede current literal reads and are not
+repeated on consumption. The price is two pending-state discriminants,
+more live values and spills. Prefix/suffix bodies grow from 938/1120 to
+1205/1381 bytes; local stack grows from 88 to 120 bytes, with six saved
+registers unchanged. The assembly reference is cached a64b285, whose
+kernel, arena, trail and watch-list source matches the qualified control.
+
+| j3037, seed 0, CPU 15 | Wall | User cycles | User instructions | Conflicts |
+|---|---:|---:|---:|---:|
+| Qualified fd01d0b control | 36.13 s | 164287697694 | 254596496994 | 330565 |
+| Lookahead 72427b3 | 37.94 s | 172701951302 | 290068669597 | 330565 |
+| Retained mode-matched Kissat | 18.04 s | 79144759362 | 121059163625 | 286784 |
+
+Candidate/control: **1.0501 wall, 1.0512 cycles, 1.1393 instructions**.
+Complete Nixie stdout is byte-identical (323390316 propagations). Both cost
+cells have 100% PMU coverage, zero major faults and under 0.34% off-CPU
+time. Record IDs: control `0ec1f4bfcfe8f5f9`, candidate `497e2be874360640`;
+retained Kissat `45a3c8f2e3057841`. This is a failed bounded screen, not
+evidence of a precise population regression. These raw UNSAT runs lack a
+checked original-CNF proof and remain unverified/Unknown in benchstore.
+
+The one diagnostic profile (`d5410d1afabb8f5a`) passes: 15959 samples,
+100% counter coverage and no loss/throttle. Scan self samples total
+50.96%, driver 21.59%. The prefix's pending-state test at `0x63f7d`,
+immediately after an unconditional reference load, receives 4.59% of total
+sampled cycles; next-header/pending-spill and destination-append regions
+are also visible. Sample skid and preceding loads prevent interpreting a
+single instruction's samples as its removable cost. The
+[flamegraph](assets/2026-09-10-miss-header-lookahead.svg) and address table
+preserve that distinction; profile-prefix counters are not solver-cost
+ratios. Terminal memory geometry and solver stdout match the cost run.
+
+### One justified repair
+
+The ordinary true-blocker path must not dispatch a pending enum or load a
+reference it will not use. Replace the mixed loop with an ordinary hit
+loop and an inner consecutive-miss loop. The latter consumes prepared
+headers directly; when lookahead finds a true blocker, retire that already
+checked entry once and return to the hit loop. Keep the same private arena
+API, eager normalization, stable filtering and yield boundaries. This
+changes the control flow that carries the state, rather than selecting a
+new distance or adding more prediction. Inspect assembly and rerun the
+affected correctness checks before using the one registered repair cell.
