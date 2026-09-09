@@ -426,11 +426,18 @@ impl CounterExampleGenerator {
         // through the same substitute/evaluate/check pipeline, so a wrong
         // solve is merely a candidate that fails – never a fabricated
         // counterexample.
+        // The witness pass runs whether or not the candidate pool already
+        // found counterexamples: a *concrete* solved falsifier (this
+        // round's model value) coexists with the pool's, but the
+        // *symbolic* solved point is the durable instance – gating on
+        // `counterexamples.is_empty()` starved it exactly on the shapes
+        // that need it (the pool refutes each round's value, the model
+        // hops, and the rounds run out before the symbolic instance ever
+        // lands: the jain compound-sum class).
         if counterexamples.len() < self.max_cex_per_quantifier
             && let Some(var) = quantifier.var_name(0)
             && quantifier.bound_vars.len() == 1
             && quantifier.var_sort(0) == Some(manager.sorts.int_sort)
-            && counterexamples.is_empty()
         {
             let extra = self.solve_linear_witnesses(quantifier.body, var, model, manager);
             for witness in extra {

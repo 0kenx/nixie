@@ -158,10 +158,13 @@ because the Skolemized reading never asserts the universal.
   nullary-`sk!N` candidate arm and spine-rewrite candidate collection,
   the j4/j1 shapes now refute.  The **compound-sum jain_2 shape**
   (`y = 2s0+2s1+2s2+2s3+1`, falsifier `s0+s1+s2+s3`) still answers
-  `unknown`: the symbolic `div` witness instance needs the ground solver
-  to discharge `2·((y-1) div 2)+1 = y` against the defining rows through
-  the Euclidean axioms — audit `instantiate_arith_axioms` reachability
-  from MBQI-instanced units.
+  `unknown` — root-caused to the arithmetic layer (see
+  `docs/studies/2026-09-09-lia-parity-infeasibility.md`, the k7 repro):
+  the symbolic `div` witness instance now lands every round, and its
+  ground discharge reduces to an LP-feasible / integer-infeasible parity
+  conflict over unbounded variables that neither branch-and-bound (diverges)
+  nor the Gomory cuts (inapplicable off bounds) close.  Everything on the
+  quantifier side of the chain works; fixing k7 flips the class.
 * **Duplicate instantiations re-emitted on alternating rounds**: MBQI can
   alternate `NewInstantiations`/`Unknown` with byte-identical instance
   lists, burning the round budget on no-ops (observed on tautological
