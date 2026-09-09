@@ -349,6 +349,9 @@ impl BinaryImplicationGraph {
         let mut orig_start = 0usize;
         let mut new_prefix = 0u32;
         for code in 0..n {
+            // Individual retirement can leave slack before the next span.
+            // Preserve its old physical boundary before rewriting span_end.
+            let orig_end = self.span_end[code] as usize;
             let plen = self.live[code] as usize;
             let mut kept = 0usize;
             for i in 0..plen {
@@ -359,7 +362,7 @@ impl BinaryImplicationGraph {
                     kept += 1;
                 }
             }
-            orig_start += plen;
+            orig_start = orig_end;
             self.live[code] = kept as u32;
             new_prefix += kept as u32;
             self.span_end[code] = new_prefix;
@@ -385,17 +388,29 @@ impl BinaryImplicationGraph {
     #[inline]
     fn build_count(&mut self, trigger: Lit) {
         let code = trigger.code() as usize;
-        self.live[code] = self.live[code].saturating_add(1);
+        let Some(count) = self.live[code].checked_add(1) else {
+            panic!("binary span count overflow");
+        };
+        self.live[code] = count;
     }
 
     /// Freeze the layout from the counts: exact span ends, exact-size flat
     /// buffer. `live` is reset to 0 and doubles as the fill cursor.
     fn build_layout(&mut self) {
+        // Reject overflow before modifying any span boundary or fill cursor.
+        let Some(total) = self
+            .live
+            .iter()
+            .try_fold(0u32, |acc, &n| acc.checked_add(n))
+        else {
+            panic!("binary edge extent overflow");
+        };
         let mut acc = 0u32;
         for (end, &count) in self.span_end.iter_mut().zip(self.live.iter()) {
-            acc = acc.saturating_add(count);
+            acc += count;
             *end = acc;
         }
+        debug_assert_eq!(acc, total);
         self.edges.clear();
         self.edges
             .resize(acc as usize, (Lit::pos(Var::new(0)), ClauseId::new(0)));
@@ -410,6 +425,12 @@ impl BinaryImplicationGraph {
     fn build_edge(&mut self, trigger: Lit, implied: Lit, clause_id: ClauseId) {
         let code = trigger.code() as usize;
         let at = big_span_start(&self.span_end, code) + self.live[code] as usize;
+        // Checking the whole edge pool cannot detect an overfilled span:
+        // the next slot may belong to a different literal.
+        assert!(
+            at < self.span_end[code] as usize,
+            "binary count/fill mismatch"
+        );
         self.edges[at] = (implied, clause_id);
         self.live[code] += 1;
     }
