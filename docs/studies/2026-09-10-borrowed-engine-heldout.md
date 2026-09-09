@@ -181,3 +181,73 @@ independently check its model. Diagnostic elapsed time is never cost evidence.
 Inspect hot addresses against the unchanged perf assembly, including the
 borrowed-reason setup/read sites, binary spans and long-watch access chain.
 No measured repair or extra profile follows this four-cell screen.
+
+## Diagnostic result and disposition
+
+Diagnostic record `f8e3ef82291b6312` **fails quality**: 9585 samples,
+4762 throttle and 4762 unthrottle records, and 0.114795% unresolved self
+cycles. There are no lost records and PMU scheduling coverage reports 100%,
+but neither repairs the throttling or the failed unresolved-sample guard.
+The 1048576-cycle period was a configuration mistake: the cost run's
+cycles/user-time rate implies roughly 4400 samples/s, above the kernel's
+observed `perf_event_max_sample_rate=2000`. Future instrumentation preflight
+must check this limit before selecting a period; a larger period is not
+permission to retry this completed diagnostic.
+
+The sampled cycle/instruction reads are incomplete under throttling and
+must not be compared with full cost counters. The 4.974 s diagnostic duration
+is not a replacement wall observation. Output matches the cost run after
+removing exactly one terminal memory line; the model passes the original-CNF
+check. Those checks validate trajectory/model correspondence, not profiling
+quality. The [flamegraph](assets/2026-09-10-borrowed-engine-summle-exploratory.svg)
+is explicitly marked **exploratory / sampling throttled**.
+
+Exploratory hot addresses again include the prefix blocker comparison,
+deleted-header branches, binary overflow lookup and destination bookkeeping.
+The unchanged disassembly independently establishes that the intended
+assignment checks, queue growth and second reason validation are absent.
+It also shows that each dequeued literal still reads/checks primary-span
+boundaries, live length and overflow metadata before scanning. Long-watch
+misses still follow watcher -> blocker value -> header -> watched pair ->
+literal value. The borrowed interface changes lifetime and validation work;
+it does not remove that dependency chain. These observations do not causally
+explain the full summle timing delta, and the failed profile cannot supply a
+reliable new cost ranking or an estimated removable percentage.
+
+Canonical coverage correction: the runner initially marked its incomplete
+sampled-cycle primary as coverage-verified from PMU scheduling alone. Preserve
+that original JSON in `profile.original-record.json`, and make the canonical
+primary the fully audited **4762 throttle-record count** instead. Incomplete
+cycle/instruction reads remain secondary diagnostics, explicitly unusable for
+cost. The record ID and raw capture are unchanged. This prevents the result
+store's required coverage flag from implying verified solver-cost coverage.
+
+**Close this candidate's promotion attempt.** The original combined design
+has now reduced instructions on three distinct unchanged-output trajectories,
+while the only two new usable wall comparisons fail the advancement gate.
+This is stronger evidence than the initial instruction-only encouragement.
+Do not revisit the same engine merely with another CPU, seed, parameter,
+annotation or timing window. A future representation change needs a concrete
+removed dependency or scan, with its own implementation cost and correctness
+argument; another count of saved instructions is insufficient.
+
+No additional source variant, measured repair, Kissat run, full workspace
+qualification or Z3 parity run followed this rejection. **Five solver
+invocations total**: four cost cells and one diagnostic. No cost/profile
+cell was repeated. The pre-launch host-check amendments above remain in the
+record and must not be described as unchanged preflight criteria. The actual
+cost acceptance thresholds were fixed before any solver observation and
+were never weakened afterward.
+
+The candidate source, tests and original verified archive remain in
+[the preceding study](2026-09-10-borrowed-propagation-reasons.md).
+`precompile/d8e7805/benchmark/borrowed-engine-heldout/` retains the manifest,
+both initial and amended host-gated runners, all six failed/successful crn
+host checks plus the summle check, exact binary/input hashes, four cost
+captures, model/output checks, comparisons and aggregate. Canonical control
+records live under `precompile/fd01d0b/benchmark/runs/`; candidate records
+under `precompile/d8e7805/benchmark/runs/`. The sibling
+`borrowed-engine-heldout-profile/` retains raw perf data, audit/parser scripts,
+the failed-quality report, folded stacks and exploratory address attribution.
+No new worktree, branch or `/tmp` artifact was created for this screen;
+production SAT source remains unchanged.

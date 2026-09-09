@@ -253,3 +253,9 @@ all-feature tests, five strict-provenance Miri tests, native Rayon ownership,
 strict SAT Clippy and workspace formatting. Full workspace build/tests,
 doc-tests/docs and fresh Z3 parity were not run because no solver change is
 being promoted. They remain required before any future production landing.
+
+Follow-up: the [independent crn/summle screen](2026-09-10-borrowed-engine-heldout.md)
+confirms instruction reductions on both additional inputs but fails its wall
+gate. That closes this unchanged candidate's promotion attempt. The invalid
+j3037 cost and this study's diagnostic remain historical evidence; neither
+was repeated or superseded.

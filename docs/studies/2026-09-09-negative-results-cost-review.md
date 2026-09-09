@@ -446,3 +446,22 @@ spent. Source, safety evidence and profile are archived on main; production
 promotion remains unqualified pending a separately registered, uncontended
 wall comparison. This is an instruction-positive result with missing usable
 timing, not another measured negative implementation result.
+
+The [independent-input follow-up](2026-09-10-borrowed-engine-heldout.md)
+then supplies usable, adjacent production/candidate timing on crn and
+summle, without repeating j3037. Instructions fall 8.46% and 15.83%, but
+wall ratios are 1.02083 and 1.06439. Both pass the fixed post-run quality
+gates; shared-host cache/frequency effects remain unresolved. The two-input
+wall aggregate is 1.04238, failing advancement, and summle exceeds the
+individual guard. This closes promotion of the unchanged candidate: its
+instruction improvement has breadth, its wall benefit is not demonstrated.
+
+The one summle diagnostic fails due to sampling throttling and excessive
+unresolved self weight. Its fixed 1048576-cycle period implies a sampling
+rate above the host's 2000/s kernel limit; this was an instrumentation
+configuration error, not a solver cost. Retain the explicitly exploratory
+flamegraph, never substitute its duration/counters for a cost run, and do
+not repeat it. Assembly still exposes dependent blocker/header/payload
+accesses and per-literal graph metadata checks. The lifetime/validation
+savings do not remove those accesses. Further work requires a concrete
+removed dependency or scan, not another timing of this same source.
