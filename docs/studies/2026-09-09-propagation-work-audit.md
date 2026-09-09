@@ -56,3 +56,67 @@ counter; leave unmeasured phase/replay costs unassigned. Prefer existing
 source/counter evidence over an additional observation run. The next
 implementation, if justified, needs its own costed registration and
 correctness argument; this trace cannot establish a policy win.
+
+
+## Result: most propagation is outside scheduled inprocessing
+
+The one registered invocation completed with byte-identical stdout and an
+independently checked original-CNF model. Canonical record
+`92ce14f418cbd4ab` is stored under `precompile/f9d6714/benchmark/runs/`;
+raw trace, command, hashes, affinities, starts/completions and reconciled
+analysis are under `benchmark/propagation-work-audit/`. Its elapsed time
+is diagnostic only and is not a new wall benchmark.
+
+| Scheduled work | Processed trail literals |
+|---|---:|
+| Vivification | 895469 |
+| Transitive reduction | 13787 |
+| ELS, BVA, pure/subsumption | 0 |
+| **Sum over 33 scheduled rounds** | **909256 (4.69%)** |
+| **Outside those calls** | **18482214 (95.31%)** |
+
+Every round's five pass deltas sum exactly to its whole-call delta. There
+are 12 elimination phases and 24 rounds; **all 24 rounds complete**, with
+228 variables eliminated and 3501242 total attempted resolutions. Increasing
+the elimination resolution budget does not address an observed exhaustion
+on this run. Round-limit phase completion still follows CaDiCaL's semantics.
+
+The final reset after each of the 33 scheduled calls can replay at most
+33 x 2848 = **93984 existing literals** (0.485% of the aggregate), even if
+the whole variable set were at root each time. This bounds only those exit
+resets, not other rewinds or newly derived consequences. The trace does not
+separate the remaining total into ordinary search, elimination, pre-search
+work and other replay. Do not call the remaining 95.31% pure search or infer
+that every root rewind is negligible. `stats.shrunken` counts literals
+removed from learned-clause analysis, not propagation-head resets.
+
+## Eligibility and the already available representation repair
+
+A read-only recount of the original input gives 64 unit clauses and
+168000 width-eight clauses over 2848 variables. Among its 2834 two-sided
+variables, **zero** have heavier polarity occurrence count <=100; **all
+2834** are <=2000 (maximum 844). This is before root propagation/subsumption,
+not a dynamic rejection count: those passes make some candidates eligible,
+as the 228 observed eliminations demonstrate. The trace's `orig` field is
+also not an independently counted live database size: raw retirement and
+promotion preserve historical ClauseDatabase accounting, so use it only
+with that qualification.
+
+This confirms the relevance of the [existing exact relation transformer](2026-09-08-relation-factorization.md),
+not a new discovery of the relation structure. That implementation already
+recognizes all 700 groups, emits the equivalent 44864-clause formula, checks
+all local assignments and produces a resolution proof prefix. Its historical
+one-seed feasibility result is not a default-enablement result. Reimplementing
+the same recognizer or blindly raising the occurrence threshold would waste
+that work. Missing cheap definition detectors are another option, but a
+high occurrence limit without cheap definition handling can expose a much
+larger cross product.
+
+The next concrete step is an explicit in-memory solving mode using the
+existing exact transformer, with the same clause order and bounded fallback.
+Preserve ordinary defaults, retain the original formula for SAT model
+validation, and include transformation/loading/validation in its wall time.
+This makes the existing algorithm usable in one input-to-verdict invocation;
+it does not establish factorization's general merit or authorize a hidden
+policy flip. Ordinary watch-loop work remains relevant on the transformed
+representation and on inputs without these relations.
