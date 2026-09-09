@@ -263,6 +263,12 @@ single-cell observations, not statistical merit estimates or a new suite
 geomean. Counter coverage was 100% in every arm; off-CPU fractions were
 0.96%, 1.05% and 1.08%, with zero major faults.
 
+The off arm spends about 770,076 instructions/conflict versus 422,127 in
+Kissat: 1.824x. Its cycles/instruction is another 1.196x higher, together
+accounting for the 2.182x cycles/conflict gap. This points primarily to
+removing repeated work, with latency and layout also contributing. It does
+not support treating prefetching or allocator tuning alone as the answer.
+
 The on arm performed 223,813 semantic checks, recognized 306 equivalence
 and 2,543 AND/OR patterns (zero ITEs), and charged 108,035,476 structural
 operations across rounds. Its 12,540 total extracted definitions include
@@ -323,6 +329,26 @@ residual checks and a reason-preserving representation, then price indexing,
 invalidation and fallback as part of the whole solve. This is an unimplemented
 next-lever hypothesis, not a measured gain from this experiment.
 
+One concrete interaction to investigate is **lazy propagation of the
+elimination-generated resolvent families**. The three-product construction
+creates clauses sharing the same gate or antecedent cofactor. Recognition
+supplies that exact structure; keeping those families compact could remove
+the auxiliary search variable without paying for every expanded clause on
+every propagation. This directly addresses the potential cost of the extra
+resolvents. It would need exact reasons, eager-unit/fixpoint behavior,
+backtracking, deletion and original-model/proof validation. Independently
+speeding an unrelated loop would also help the off arm and would not, by
+itself, demonstrate that combining it with this rejected mode is beneficial.
+
+A read-only address drill-down of the same profile also found 4.06% of
+whole sampled cycles at propagation-driver address `0x4b374`, 2.85% at
+`0x4b42c`, and 1.93% at `0x4b54c`. Debug mapping places these around binary
+adjacency access and watch-vector transfer; sampled IPs do not identify
+individual instruction latency. This motivates considering combined literal
+adjacency metadata when redesigning propagation, but not calling a small
+metadata rewrite sufficient for wall parity. The exact address/source map
+is retained as `propagation-driver-sites.json`; no extra solver run was used.
+
 ### Retained identities
 
 Prototype source `54dd3ad` remains in the canonical cache with its source
@@ -344,3 +370,43 @@ Raw files and once-only runners live under
 `precompile/54dd3ad/benchmark/structural-elimination-profile/`.
 The input hash is recorded in each cell; these records must be reused rather
 than rerun. The selected production fix is qualified separately below.
+
+## Production qualification and landing scope
+
+Qualified production source: `26b2872243f3d73e6a1c160607d5a7c8ed39d044`.
+Only the resolution/semantic-phase budget fixes, pending-work resumption,
+frozen-variable protection, conflict-proof provenance and their regressions
+are included. Structural recognition, its expanded occurrence admission,
+statistics and example-mode changes are absent from the production tree.
+No wall-speedup claim is made for the retained fixes.
+
+All required checks passed on that source:
+
+- `cargo build --all-features`.
+- `cargo nextest run --workspace --all-features`: 10,836 passed,
+  13 existing skips.
+- `cargo test --workspace --all-features --doc`: 111 passed,
+  29 existing ignores.
+- `cargo clippy --all-features --all-targets -- -D warnings`.
+- `cargo fmt --all -- --check`.
+- `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features`.
+- `./bench/z3_parity/run_parity.sh`, installed Z3 4.16.0: 174 decisive
+  matches, zero SAT/UNSAT disagreements, one existing inconclusive case
+  (`array_unique.smt2`: Nixie UNSAT, Z3 UNKNOWN). Unknown was not counted
+  as a match; this is correctness-only evidence.
+
+The final fix also passed 773 default SAT-library tests. Qualification used
+four Cargo build jobs and eight nextest test threads, offline/locked Cargo
+commands where supported, Rust 1.96.0 and the recorded lockfile. Exact
+commands, start/completion records, logs and parity snapshots are retained
+under `precompile/26b2872/benchmark/elimination-safety/qualification/`.
+The same-source release examples and CLI are cached there by source commit:
+
+- `stats_solve`: `001c181e9aa2fc910040326e11eedd2ac7228f38fe853976004151eb8ff3fa43`.
+- `nixie`: `127c469d44104c098ffa0844a5ae3d3764c09145f2985ca21a7840aad5bd2723`.
+
+The subsequent integration includes only documentation changes beyond this
+qualified solver source. The rejected prototype is preserved as a cache
+bundle/patch and is not an ancestor of the production fix. Owned worktrees,
+branches and uncached temporary logs are removed after landing; canonical
+binaries and once-only measurement/qualification evidence are retained.
