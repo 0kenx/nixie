@@ -169,3 +169,46 @@ lifetime audit is recorded with the result. Copy/clear/memory costs and
 complete state identity must be checked before another bounded wall screen.
 The failed combined prototype is retained for reproducibility and is not
 a production landing.
+
+
+## Fourth combination: cache the surviving subsumer's residual
+
+The [connected-residual payload screen](2026-09-09-connected-residual-payloads.md)
+turns the previous profile into an algorithmic implementation change. After
+a candidate survives its scheduled mutation, copy its connected payload
+once and omit the connection literal; the query bucket supplies that literal's
+mark. Restore empty scratch buffers at return so subsequent rounds reuse
+the index and pool capacity. Connection order, budgets, proof identity,
+clauses and the complete search trajectory remain unchanged.
+
+The five registered performance invocations produce circuit seed-1 wall
+**9.63 -> 8.81 s**, versus mode-matched Kissat **1.88 s** in the same window.
+The si2 guard is neutral at **2.02 -> 1.99 s**, using retained controls
+(Kissat 1.22 s). The two-input geometric mean **0.94935** narrowly passes its
+0.95 gate. The small panel, historical guard and shared-resource uncertainty
+remain explicit; this is not a broad speedup or a measured interaction term.
+Circuit peak RSS grows from 32972 to 37512 KiB. The valid candidate flamegraph
+and generated-code review include the new copying/bounds/counter costs.
+
+The connection index no longer resolves ID -> arena reference -> live header
+for every query. Its remaining pool iteration/bounds receive 3.12% of total
+sampled cycles, residual membership 3.14%, and per-entry counter updates
+1.08%. Fusing bucket scanning with one exact counter charge is a concrete
+possible repair, but counter elimination alone has a small ceiling. The
+larger watch loops retain 53.68% of sampled cycles. Prior neutral filters
+cannot simply be added back without pricing their preparation and miss paths.
+
+The retained outputs also expose a separate work-volume issue: Nixie
+processes 104.19 trail literals/conflict versus Kissat's 39.80. Whole wall
+amortized over that counter differs 1.615x; together they explain the
+observed 4.228x wall/conflict ratio arithmetically, without asserting equal
+counter phase coverage or isolated kernel timings. Kissat eliminates 1130
+variables versus Nixie's 228 under the requested flags. Audit root/restart
+replay and elimination work before assuming another local instruction
+rewrite alone can close the gap. These observations use existing outputs,
+not another experiment or a justification for an uncontrolled heuristic.
+
+Full source qualification passes on the integrated tree: 10824 workspace
+tests, 111 doc tests, strict build/Clippy/fmt/docs and the required correctness
+canary with zero disagreements. The residual cache and its regressions land
+on main; its measured standalone SAT binaries are reused without retiming.
