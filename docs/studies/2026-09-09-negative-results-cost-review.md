@@ -144,3 +144,28 @@ validation. The safe cold activity table and GC destination table introduce
 real allocation/lookup work; historical IDs are never reused. Future work
 should target these named terms or subsumption, with the introduced costs
 included, rather than repeating an unmodified historical layout experiment.
+
+
+## Third combination: price the miss before the next mechanism
+
+The [whole-watch/live-view/scratch screen](2026-09-09-packed-watch-live-view.md)
+fails: original-circuit wall 9.58 s versus retained compact control 7.98 s
+and Kissat 5.55 s. Two new invocations suffice: one wall result and its
+qualified LBR profile; the conditional si2 cell is skipped. A literal-u64
+preflight was repaired before timing because it added prefix shifts and
+whole-word updates. The repaired kernel has fewer instructions in its
+prefix, but the overall wall criterion still fails. Noncontemporaneous
+controls leave host/cache effects unresolved; do not label the 20% wall
+increase a proven local source regression.
+
+The same audit reproduced a real lifecycle defect: normal subsumption
+rounds drop their supposedly reusable scratch buffers. Returning them
+preserves exact state/proof behavior, but alone does not remove the index
+lookup chain. The profile prices connected-clause lookup/validation at
+36.39% of subsumption self-cycle attribution. The next algorithmic
+combination should examine compact immutable payloads for already-connected
+subsumers plus correctly retained scratch capacity. A first mutation/proof
+lifetime audit is recorded with the result. Copy/clear/memory costs and
+complete state identity must be checked before another bounded wall screen.
+The failed combined prototype is retained for reproducibility and is not
+a production landing.
