@@ -89,3 +89,19 @@ Never use elapsed time as solver policy. A negative result must retain its
 profile/code-cost diagnosis and identify a specific repair or opportunity
 limit before abandoning the mechanism. Do not infer superadditivity without
 matched component data.
+
+Before measurement, the ordinary SAT suite passed **999 tests** and the
+observer layout passed **1026**, each with one explicitly skipped test. The
+first ordinary run caught a malformed interior reference being treated as
+an activity index; checked side-table reads now refuse it. The regression
+also verifies that set/add/scale operations on that reference preserve the
+real clause. A separate initial corpus-path failure was resolved by linking
+the primary checkout's ignored corpora into the isolated worktree. It was
+not a solver verdict failure. The new collection tests cover repeated GC,
+activity bits, ghost order, detach/restore and rejection before relocation.
+
+The single registered profile also prints terminal memory composition.
+Remove only that diagnostic line when comparing its output to the ordinary
+wall cell; keep full byte identity for the wall comparison itself. This
+adds no search-policy or in-search diagnostic work. Preserve peak RSS in
+the wall cell and the side table's allocation in arena memory accounting.
