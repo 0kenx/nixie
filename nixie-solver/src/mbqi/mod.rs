@@ -115,6 +115,23 @@ pub struct QuantifiedFormula {
     pub body: TermId,
     /// Whether this is universal (true) or existential (false)
     pub is_universal: bool,
+    /// Propositional guard for *boundary* quantifiers: the SAT variable of
+    /// the quantifier term itself, when the quantifier is not unconditionally
+    /// asserted (it sits behind a disjunction / polarity boundary).  `None`
+    /// for spine-registered quantifiers, whose instances are valid as unit
+    /// clauses.  For a universal `q = forall x. phi`, the clause
+    /// `(!q | phi[t])` is valid in every model, so guarded instantiation is
+    /// sound at any commitment; the guard only *activates* the instance when
+    /// the disjunctive branch `q` is taken.  The guard is a *literal*: the
+    /// derived universal of a boundary `exists` (`not (exists x. D)` ==
+    /// `forall x. not D`) is guarded by the negation of the existential's
+    /// own variable.
+    pub guard: Option<nixie_sat::Lit>,
+    /// Cached commitment of the guard for this round: `Some(false)` = the
+    /// SAT core has committed the quantifier's branch FALSE, so the
+    /// quantifier is vacuously satisfied in the current candidate model and
+    /// neither its counterexample search nor its instances can help.
+    pub guard_inactive: bool,
     /// Quantifier nesting depth
     pub nesting_depth: u32,
     /// Number of times this quantifier has been instantiated
@@ -146,6 +163,8 @@ impl QuantifiedFormula {
             bound_vars,
             body,
             is_universal,
+            guard: None,
+            guard_inactive: false,
             nesting_depth: 0,
             instantiation_count: 0,
             max_instantiations: 1000,

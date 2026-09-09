@@ -132,7 +132,9 @@ solver may not print `sat` over it:
 | `∃x. φ` conjunct (incl. nested under a registered `∀`) | ground solver | Skolemized (`exists_skolem`, `skolemization`) |
 | `(not (forall x φ))` conjunct | ground solver | NNF `∃x.¬φ` then Skolemized to `¬φ(sk)` – the witness is *searched* |
 | `(not (exists x φ))` conjunct | MBQI + E-matching | NNF `∀x.¬φ`, registered as an asserted universal |
-| any quantifier behind a polarity boundary (`or` disjunct, `ite` arm, Bool `=` operand) | **nobody** | `Solver::unowned_quantifier_seen`; `sat` requires independent model certification (`model_certify`), else `unknown` |
+| boundary `forall x. φ` (`or` disjunct, `ite` arm, …) | MBQI (guarded) | registered with its propositional guard; instances emit the valid clause `(!q ∨ φ[t])` and activate only when the branch commits |
+| boundary `exists x. D` | MBQI (guarded, refutation side) | the derived universal `∀x.¬D` registers with guard `!q_e` (clause `q_e ∨ ¬D[t]`); the *witness* direction stays **nobody** → `unowned_quantifier_seen` gates `sat` on it |
+| any other unowned quantifier | **nobody** | `Solver::unowned_quantifier_seen`; `sat` requires independent model certification (`model_certify`), else `unknown` |
 
 The negated-quantifier rows are the fix for the September 2026 false-`sat`
 class: a boundary quantifier used to be a *free Boolean* whose truth the
