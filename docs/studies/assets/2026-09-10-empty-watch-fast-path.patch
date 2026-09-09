@@ -1,0 +1,114 @@
+diff --git a/nixie-sat/src/solver/propagate.rs b/nixie-sat/src/solver/propagate.rs
+index 3fb98a71..7fc3fc61 100644
+--- a/nixie-sat/src/solver/propagate.rs
++++ b/nixie-sat/src/solver/propagate.rs
+@@ -215,15 +215,15 @@ impl Solver {
+                 }
+             }
+ 
+-            // Take the current watch list, mutate it in place, then move it
+-            // back once propagation for this literal is finished.
+-            let mut watches = core::mem::take(self.watches.get_mut(lit));
++            let phantom_bins = self.watches.phantom_len(lit);
++            let watch_slot = self.watches.get_mut(lit);
++            let watch_len = watch_slot.len();
+             // Visit counting at list granularity (exact: the two-pointer scan
+             // visits every entry of the pre-scan list; the conflict-abort
+             // path below subtracts the tail it never reached). A per-visit
+             // branch measured +5% whole-run instructions when disabled.
+             if bcp_stats {
+-                crate::diag_bcp::VISITS.fetch_add(watches.len() as u64, Relaxed);
++                crate::diag_bcp::VISITS.fetch_add(watch_len as u64, Relaxed);
+             }
+             // cadical tick formula: ticks += 1 + cache_lines(ws.size, sizeof(Watcher)).
+             //
+@@ -241,13 +241,22 @@ impl Solver {
+             // models exactly the binary entries the old scheme scanned
+             // (attach/rebuild bump it; retirement leaves it lingering, as the
+             // old entries lingered) so the schedules stay bit-identical.
+-            let phantom_bins = self.watches.phantom_len(lit);
+-            let ticks = 1u64 + (((watches.len() + phantom_bins) as u64) * 8).div_ceil(128);
++            let ticks = 1u64 + (((watch_len + phantom_bins) as u64) * 8).div_ceil(128);
+             if self.stable {
+                 self.ticks_stable = self.ticks_stable.saturating_add(ticks);
+             } else {
+                 self.ticks_focused = self.ticks_focused.saturating_add(ticks);
+             }
++            // Binary implications and their tick charge are already complete.
++            // An empty long list needs no ownership transfer or restoration.
++            // Observers (and the independent test oracle) retain the old path.
++            if use_kernel && watch_len == 0 {
++                continue;
++            }
++
++            // Take the current watch list, mutate it in place, then move it
++            // back once propagation for this literal is finished.
++            let mut watches = core::mem::take(watch_slot);
+             let mut conflict_found: Option<ClauseId> = None;
+ 
+             // Two-pointer in-place compaction (cadical-style): read pointer
+diff --git a/nixie-sat/src/solver/watch_kernel_tests.rs b/nixie-sat/src/solver/watch_kernel_tests.rs
+index 81b45772..0b2aacff 100644
+--- a/nixie-sat/src/solver/watch_kernel_tests.rs
++++ b/nixie-sat/src/solver/watch_kernel_tests.rs
+@@ -1,6 +1,60 @@
+ use super::*;
+ use nixie_proof::lrat_check::check_lrat_proof;
+ 
++#[test]
++fn empty_long_lists_preserve_binary_work_ticks_budgets_and_requeue() {
++    for stable in [false, true] {
++        for proof in [false, true] {
++            for limit in [None, Some(0), Some(1), Some(3)] {
++                for conflict in [false, true] {
++                    let clauses = vec![vec![-1, 2], vec![-2, 3], vec![-3, 4]];
++                    let (mut a, mut b, pa, pb) = pair(5, &clauses, proof);
++                    let trigger = Lit::from_code(0);
++                    for s in [&mut a, &mut b] {
++                        s.stable = stable;
++                        s.ticks_stable = u64::MAX - 2;
++                        s.ticks_focused = u64::MAX - 2;
++                        // Exercise an allocated empty list and phantom-only
++                        // charge crossing a cache-line boundary.
++                        s.watches.get_mut(trigger).reserve(17);
++                        for _ in 0..17 {
++                            s.watches.phantom_bump(trigger);
++                        }
++                        s.trail.new_decision_level();
++                        if conflict {
++                            s.trail.assign_decision(Lit::from_code(7));
++                        }
++                        s.trail.assign_decision(trigger);
++                        s.propagate_step_limit = limit;
++                    }
++                    let capacity = a.watches.get_mut(trigger).capacity();
++                    assert_eq!(a.propagate(), b.propagate());
++                    assert_state(&a, &b);
++                    assert_eq!(a.watches.get_mut(trigger).capacity(), capacity);
++                    for s in [&mut a, &mut b] {
++                        s.trail.backtrack_to(0);
++                        s.propagate_step_limit = None;
++                        s.propagate_aborted = false;
++                        // A root binary chain exercises LRAT unit flushing.
++                        s.add_clause([trigger]);
++                    }
++                    assert_eq!(a.propagate(), b.propagate());
++                    assert_state(&a, &b);
++                    assert_eq!(a.no_conflict_until, a.trail.size());
++                    for var in 0..4 {
++                        assert!(a.trail.lit_val(Lit::from_code(var * 2)) > 0);
++                    }
++                    if let (Some(pa), Some(pb)) = (pa, pb) {
++                        a.flush_proof();
++                        b.flush_proof();
++                        assert_eq!(pa.snapshot().expect("proof"), pb.snapshot().expect("proof"));
++                    }
++                }
++            }
++        }
++    }
++}
++
+ fn raw_solver(legacy: bool, reverse: bool, hbr: bool) -> (Solver, Vec<ClauseId>) {
+     let mut s = Solver::new();
+     s.ensure_vars(5);

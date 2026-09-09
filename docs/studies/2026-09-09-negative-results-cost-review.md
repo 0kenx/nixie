@@ -465,3 +465,21 @@ not repeat it. Assembly still exposes dependent blocker/header/payload
 accesses and per-literal graph metadata checks. The lifetime/validation
 savings do not remove those accesses. Further work requires a concrete
 removed dependency or scan, not another timing of this same source.
+
+## Empty long lists: real bookkeeping removed, too small a lever
+
+The [empty-list fast path](2026-09-10-empty-watch-fast-path.md) bypasses vector
+extraction/restoration after binary propagation and the unchanged tick charge.
+One new j3037 invocation uses 1.33% fewer instructions; wall is 37.76 s versus
+the retained control's 36.13 s. It fails the advancement bar, so no second input
+or new profile runs. Timing checks pass, but different measurement windows and
+shared resources limit attribution. Complete stdout remains identical.
+
+The retained census bounds eligible empty completions above by 33.94% of
+propagations, while roughly 2.1 billion offered watcher entries remain.
+Assembly confirms that empty ownership work disappears; it also retains a
+redundant length guard on nonempty lists. The old empty path already skipped
+the scanner call. This is a small bookkeeping opportunity, not a third of
+propagation cycles. Its overlap with the complete engine's ownership changes
+does not justify adding their instruction savings or another combined timing.
+The source is archived; production stays unchanged.
