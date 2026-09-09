@@ -161,3 +161,77 @@ This removes the second base/length and target rebasing while preserving the
 same ownership rule. Re-run strict Miri on simultaneous current/destination
 borrows, growth on both sides, repeated directory borrows and rejection paths,
 plus native Rayon/exact-state tests. The original assembly/cost gates stand.
+
+## Combined repair result: no qualified wall gain
+
+Repair `69a9c69cd607c50cca7e3c283e519fea85403d7c` passes the refined
+assembly gate: 3811 bytes, 248 local stack bytes, no owner transfer or
+deallocation in the engine, and current-header word loads at `0x64222` /
+`0x644f6` whose low words supply length after the deletion test. The checked
+excluded-row view removes the second destination base and rebasing. Its
+reference-creation blocks are private and have no custom Send/Sync assertion.
+
+| j3037, seed 0 | Qualified control | First engine | Combined repair |
+|---|---:|---:|---:|
+| User instructions | 254596496994 | 215038292878 | 214928075232 |
+| User cycles | 164287697694 | 167238370939 | 190275468533 |
+| Wall | 36.13 s | 36.72 s | 41.94 s |
+| Off CPU | 0.332% | 0.300% | 0.429% |
+
+Repair output is again byte-identical, with 330565 conflicts and 323390316
+propagations. Both counters have 100% coverage, no major faults, 125
+involuntary switches and 249 voluntary switches. Record `96d9c7beffd5db5c`
+preserves its unverified UNSAT. Instructions fall **15.58%** against control,
+but wall rises **16.08%** and cycles **15.82%**. Against the first engine,
+instructions improve only **0.051%**. This fails the registered gate. No
+si2 confirmation, second profile, ablation or timing retry was run: exactly
+**three performance invocations** cover both costs and the first profile.
+
+The repair removes the identified owner transfers and the second header
+length load, but adds an excluded-target check and word-mask work and retains
+substantial live state. Their combined instruction effect is effectively
+neutral against the first engine. Assembly verifies a shorter current-header
+dependency; it does not establish useful overlap with other clause accesses.
+The original profile still identifies the dependent watcher/blocker/header/
+literal chain and destination append as remaining work. The large observed
+cycle delta has no paired diagnostic separating source effects from other
+host load; passing off-CPU/PMU gates cannot provide that separation. Neither
+the first profile duration nor any later observation replaces a cost cell.
+
+Final repair preflight passes 1023 default and 1050 all-feature SAT tests,
+one existing skip, strict SAT Clippy and format. Strict-provenance Miri passes
+four excluded-directory tests, three complete-engine tests (including moved
+owners, growth, compaction and conflict requeue), and two header tests on the
+unchanged word-decoding implementation. Native Rayon tests pass in both
+watcher layouts. An extra bare `--no-default-features` check stops in the
+unchanged `nixie-math` dependency at its existing `!nixie_time::IS_FROZEN`
+assertion, before compiling the changed SAT code; this configuration remains
+unqualified. Full workspace and fresh Z3 production gates were not run after
+the cost rejection. No production solver change is promoted.
+
+Both source bundles/patches, portable release/perf binaries, lockfile and
+identity manifests remain under `precompile/a5854e4/` and
+`precompile/69a9c69/`, with raw results in their benchmark stores. The latter
+also preserves the first safe-slice repair's patch and assembly. Bundles
+require the reachable registration `3d60ee49`; they retain the implementations
+after the experimental branch and worktree are removed.
+
+### What this establishes for the next engine step
+
+The full-fixpoint ownership change removes about 39.6 billion instructions
+on identical work. This is substantially larger than the earlier directory
+or inline-only changes, but it has not established lower wall/cycles. Keep
+that distinction when reusing the prototype. Repeating owner representations
+or loading the same current header in another syntax has no evidence of a
+large enough remaining benefit.
+
+A distinct combination is now possible: retain read-only future-header
+preparation across internally performed assignments. Earlier lookahead
+discarded preparation at each unit because Solver callbacks could grow or
+mutate the stores; the ordinary complete engine forbids those mutations.
+Only immutable header metadata could survive: blocker truth and clause
+literals must be read after preceding assignments/moves, and duplicate refs,
+compaction boundaries and conflict tails still need explicit protection.
+This remains unimplemented and unregistered. Its additional live state and
+preparation cost must be priced before any new run; the instruction saving
+above cannot be added to an old lookahead percentage as a predicted gain.

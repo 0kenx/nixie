@@ -350,3 +350,31 @@ Both prototypes are archived; no production representation changes land.
 Further progress needs to remove or amortize an actual propagation consumer,
 or reduce work volume through the already documented structural algorithms.
 Another owner-width or row-alignment screen is not justified by this result.
+
+## Complete propagation: large instruction saving, wall still unqualified
+
+The [complete-engine study](2026-09-10-complete-propagation-engine.md) retains
+fixed trail, arena and directory views across all ordinary assignments and
+inlines both watch phases into the fixpoint loop. Exact j3037 output survives,
+and whole-process instructions fall 15.54%, while wall is 36.72 s against
+cached control 36.13 s. Its qualified flamegraph puts 70.24% of self cycles in
+the engine, including blocker reads, header classification, directory access
+and destination append. Fewer executed instructions have not established
+less time on the remaining dependency chain.
+
+One registered combined repair retains watch owners in place and reuses the
+negative raw-header pipeline's word encoding for current-header reads. Safe
+slice splitting first exceeded the stack gate; a checked excluded-row borrow
+passed it, with focused strict-Miri and native Rayon coverage. The repair
+removes the intended transfers and second length loads, but saves only 0.051%
+additional instructions and takes 41.94 s. The extra exclusion checks, header
+mask work and live-state management offset the removed instruction work.
+Source and host effects on cycles remain unseparated; these observations do
+not license a default switch or a claim of a population regression.
+
+Both prototypes are archived. Exactly two cost cells and one profile were
+needed. Their useful new boundary is the full fixpoint's stable arena: unlike
+the old per-unit callback, it could retain immutable preparation across
+assignments. That is a distinct, untested interaction, with freshness and
+register-pressure costs to establish first. The study records its obligations;
+another current-header syntax or owner-layout sweep is not the next step.
