@@ -146,6 +146,23 @@ because the Skolemized reading never asserts the universal.
 
 ---
 
+## Known quantifier-completeness blockers (2026-09, follow-ups)
+
+* **LIA integer verdict returns `Unknown` mid-search on quantifier-bearing
+  goals** (the jain class): with a spine universal registered, the first
+  theory check can return `TheoryCheckResult::Unknown` (branch-and-bound /
+  integer-equality incumbent gives up) and the whole goal answers `unknown`
+  before MBQI ever runs.  Minimal repro: j5 shape before the reflexivity
+  fold; the surviving shape is `(exists a b. 2a+1=y ∧ 2b+1=x) ∧
+  (not (exists v. 2v+1=y))` — ground part alone is decided instantly.
+  See the `lia_cuts_then_bnb` / `cached_int_eq_verdict` paths in
+  `nixie-theories/src/arithmetic/solver.rs`.
+* **Duplicate instantiations re-emitted on alternating rounds**: MBQI can
+  alternate `NewInstantiations`/`Unknown` with byte-identical instance
+  lists, burning the round budget on no-ops (observed on tautological
+  quantifiers before the reflexivity fold; dedup keys or round accounting
+  need an audit).
+
 ## Big integer constants (linear abstraction)
 
 An `Int` literal outside `i64` (`18446744073709551616` = 2⁶⁴) cannot live in
