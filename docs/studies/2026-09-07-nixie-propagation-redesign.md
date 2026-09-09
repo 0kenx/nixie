@@ -50,6 +50,13 @@ mutations preserved complete output at 40,000 conflicts, but removed only 0.91%
 of instructions and 1.48% of measured cycles/conflict. The second input did not
 run. The source is archived; the scanner boundary alone did not meet its 5% bar.
 
+The [watch-trigger prediction screen](2026-09-09-watch-trigger-shadow.md) then
+tested choosing among nearby undefined literals using past trigger counts,
+without changing any actual watch. Two observer runs found 15–16% lower future
+literal-trigger totals than shuffled scores overall, below the registered 25%
+gate on both inputs. This is a prediction proxy, not measured visit/cycle savings;
+the observer is archived and no active watch-selection policy follows.
+
 ## 1. Shared satisfaction across watcher groups — first experiment
 
 **Current status:** the opportunity gate passed, but the subsequent
