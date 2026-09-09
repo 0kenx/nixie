@@ -215,3 +215,63 @@ fn deep_definition_chain_reconstructs() {
     let out = run(&script);
     assert_eq!(out, vec!["sat"]);
 }
+
+/// The `cohencu` shape (UltimateAutomizer 2023, Tier-A polynomial class):
+/// `y = 3n+3n²+1`, `z+y = 7+3n²+9n` (linear isolation of `z`), and the
+/// asserted disequality collapses through the polynomial-identity check
+/// after substitution.  The staged version exercises the double-negated
+/// conflict shape (`cohencu.c_3`), where the ite-condition variable is
+/// defined twice and the ring pass owns the elimination — the stage-4
+/// alongside-assertion of its rewrite is what decides the goal.
+#[test]
+fn cohencu_linear_isolation_decides() {
+    let base = r#"
+        (set-logic QF_BV)
+        (declare-fun n () (_ BitVec 32))
+        (declare-fun y () (_ BitVec 32))
+        (declare-fun z () (_ BitVec 32))
+        (declare-fun cond () (_ BitVec 32))
+        (assert (= cond (ite (= (bvadd (bvneg (bvmul z (_ bv6 32))) (bvneg (bvmul y (_ bv12 32))) (bvmul z z) (_ bv12 32)) (_ bv0 32)) (_ bv1 32) (_ bv0 32))))
+        (assert (and
+            (= (bvadd z y) (bvadd (_ bv7 32) (bvmul (_ bv3 32) (bvmul n n)) (bvmul (_ bv9 32) n)))
+            (= (bvadd (bvmul (_ bv3 32) n) (bvmul (_ bv3 32) (bvmul n n)) (_ bv1 32)) y)))
+    "#;
+    let single = format!("{base}(assert (not (= (_ bv1 32) cond)))\n(check-sat)\n");
+    assert_eq!(run(&single), vec!["unsat"], "cohencu.c_2 shape");
+    let double = format!("{base}(assert (not (not (= cond (_ bv0 32)))))\n(check-sat)\n");
+    assert_eq!(run(&double), vec!["unsat"], "cohencu.c_3 shape");
+}
+
+/// Ring-eliminated but satisfiable: `x + y = 5 ∧ y > 0` isolates `x`
+/// (odd unit pivot) and must stay `sat` — the stage-4 pass now asserts
+/// the ring rewrite *alongside* the originals, and a non-implied rewrite
+/// would refute this.
+#[test]
+fn ring_rewrite_alongside_preserves_sat() {
+    let out = run(r#"
+        (set-logic QF_BV)
+        (declare-const x (_ BitVec 32))
+        (declare-const y (_ BitVec 32))
+        (assert (= (bvadd x y) (_ bv5 32)))
+        (assert (bvugt y (_ bv0 32)))
+        (check-sat)
+    "#);
+    assert_eq!(out, vec!["sat"]);
+}
+
+/// Even-coefficient isolation must NOT fire: `2x + y = 1 ∧ 2x + y' = 2`
+/// with `y = y'` fixed is unsat only if `2x` stays constrained — `2` is a
+/// non-unit, the equation does not determine `x`, and isolating it would
+/// be unsound.
+#[test]
+fn linear_isolation_requires_odd_coefficient() {
+    let out = run(r#"
+        (set-logic QF_BV)
+        (declare-const x (_ BitVec 32))
+        (declare-const y (_ BitVec 32))
+        (assert (= (bvadd (bvmul (_ bv2 32) x) y) (_ bv1 32)))
+        (assert (= (bvadd (bvmul (_ bv2 32) x) y) (_ bv2 32)))
+        (check-sat)
+    "#);
+    assert_eq!(out, vec!["unsat"]);
+}

@@ -1253,16 +1253,24 @@ fn bool_const(term: &TermId, manager: &TermManager) -> Option<bool> {
 
 /// Result of [`Self::bv_preprocess_assertions`].
 pub(super) struct PreprocessOutcome {
-    /// The rewritten assertion list (equivalence- or
-    /// equisatisfiability-preserving per `used_ring_elimination`).
+    /// The rewritten assertion list.  Every rewrite is *implied* by the
+    /// originals (plain solve-eqs substitutes definitions; the ring pass
+    /// isolates variables over odd — unit — coefficients in equations
+    /// linear in them, which determine the variable), so asserting the
+    /// rewrite alongside the originals is sound in both directions.
     pub rewritten: Vec<TermId>,
     /// Eliminated-variable definitions (model reconstruction replay).
     pub eliminations: Vec<(TermId, TermId)>,
     /// Each surviving assertion's original term (unsat-core naming).
     pub origins: Vec<TermId>,
-    /// Whether the ring pass rewrote anything: its output is only
-    /// equisatisfiable (division by non-units over `Z/2^w`), never
-    /// implied by the originals.
+    /// Whether the ring pass rewrote anything.  Its rewrites are
+    /// implication-preserving (odd/unit pivots in linear equations — see
+    /// the struct doc), so asserting them alongside the originals is
+    /// *sound*; the flag exists because asserting the *non-literal* ones
+    /// measurably regressed three 25 s-boundary goals on the 509-file
+    /// re-screen (implied-but-verbose clauses reshape the search
+    /// trajectory), so the stage-4 pass takes literal rewrites only when
+    /// the ring pass participated.
     pub used_ring_elimination: bool,
 }
 
@@ -1279,12 +1287,10 @@ impl Solver {
     /// variable, so the dispatch reconstructs each variable's value by
     /// evaluating its definition under the model before validating the
     /// model against the *original* assertions.
-    /// The fourth component reports whether the **ring-elimination** pass
-    /// rewrote anything (see the call sites: the dispatch may consume any
-    /// equisatisfiable rewrite, while the stage-4 preprocessing-parity pass
-    /// asserts the rewrite *alongside* the originals and therefore needs it
-    /// to be implication-preserving – ring elimination over `Z/2^w` divides
-    /// by non-units, so its result is only equisatisfiable, not implied).
+    /// All rewrites here are implication-preserving (see
+    /// [`PreprocessOutcome`]), so both consumers may use them freely: the
+    /// dispatch decides the rewritten set alone, and the stage-4 pass
+    /// asserts them alongside the originals.
     pub(super) fn bv_preprocess_assertions(
         &mut self,
         manager: &mut TermManager,
@@ -1744,7 +1750,7 @@ fn solve_ring_equations(
 /// Modular inverse of an odd `c` modulo `2ʷ` (Newton iteration: each step
 /// doubles the correct bit count).  Returns 0 for even `c` (not invertible);
 /// callers gate on oddness first.
-fn mod_inverse_odd(c: &BigInt, modulus: &BigInt) -> BigInt {
+pub(super) fn mod_inverse_odd(c: &BigInt, modulus: &BigInt) -> BigInt {
     if !c.is_odd() {
         return BigInt::zero();
     }

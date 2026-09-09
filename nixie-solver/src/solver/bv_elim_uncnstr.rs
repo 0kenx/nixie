@@ -540,8 +540,12 @@ impl Round<'_> {
                     if self.uncnstr(x, manager)
                         && let Some(cval) = const_value(c, manager)
                         && cval.is_odd()
-                        && let Some(inv) = mod_inverse_pow2(&cval, w)
                     {
+                        let modulus = BigInt::one() << w as usize;
+                        let inv = super::bv_preprocess::mod_inverse_odd(&cval, &modulus);
+                        if inv.is_zero() {
+                            continue;
+                        }
                         let (u, is_new) = self.mk_fresh_for_app(app, sort, manager);
                         if is_new {
                             let inv_term = manager.mk_bitvec(inv, w);
@@ -754,21 +758,4 @@ fn const_value(t: TermId, manager: &TermManager) -> Option<BigInt> {
         }
         _ => None,
     }
-}
-
-/// Modular inverse of an odd `c` modulo `2^w` (odd values are exactly the
-/// units), via the extended Euclidean algorithm.
-fn mod_inverse_pow2(c: &BigInt, w: u32) -> Option<BigInt> {
-    let modulus = BigInt::one() << w as usize;
-    let (mut old_r, mut r) = (c.mod_floor(&modulus), modulus.clone());
-    let (mut old_s, mut s) = (BigInt::one(), BigInt::zero());
-    while !r.is_zero() {
-        let q = &old_r / &r;
-        (old_r, r) = (r.clone(), &old_r - &q * &r);
-        (old_s, s) = (s.clone(), &old_s - &q * &s);
-    }
-    if old_r != BigInt::one() {
-        return None; // not a unit (caller gates on odd, so unreachable)
-    }
-    Some(old_s.mod_floor(&modulus))
 }

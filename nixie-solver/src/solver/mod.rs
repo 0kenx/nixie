@@ -2029,18 +2029,37 @@ impl Solver {
         {
             self.bv_preprocess_at_count = self.assertions.len();
             let pp = self.bv_preprocess_assertions(manager);
-            // Ring elimination divides by non-units over `Z/2^w`: its
-            // rewrite is equisatisfiable but NOT implied by the originals
-            // (the dispatch consumes it standalone, so this is invisible
-            // there).  Asserting a non-implied rewrite alongside the
-            // originals refutes satisfiable goals – measured as a false
-            // `unsat` on the ring solve-eqs family – so the parity pass
-            // takes only implication-preserving rewrites.
-            if !pp.used_ring_elimination {
-                for &r in &pp.rewritten {
-                    self.emit_assertion_clauses(r, manager);
-                    self.link_or_blast_bv_circuits(r, manager);
+            // Every rewrite the preprocessor emits is implied by the
+            // originals, so asserting them alongside is sound in both
+            // directions: the plain solve-eqs pass substitutes
+            // definitions, and the ring pass isolates a variable only over
+            // an ODD coefficient (a unit of Z/2^w) in an equation that is
+            // linear in it — the equation then *determines* the variable,
+            // so the substituted assertions are consequences of the
+            // original set.  (The historical full gate on ring rewrites
+            // rested on "ring elimination divides by non-units", which has
+            // been false since the pass was introduced — its pivots were
+            // always odd-only; the false-sat the gate reacted to was the
+            // *linearity* bug, fixed by the no-other-monomial check.
+            // What the full un-gating cost: three 25 s-boundary goals on
+            // the 509-file re-screen regressed to `unknown` — implied but
+            // verbose clauses reshape the search trajectory — so when the
+            // ring pass participated, only its *literal* rewrites are
+            // asserted (a `false` consequence refutes on the spot, which
+            // is exactly the `cohencu` shape; everything else keeps the
+            // pre-ring assertion set and therefore the old trajectory).
+            let ring_participated = pp.used_ring_elimination;
+            for &r in &pp.rewritten {
+                if ring_participated {
+                    let is_literal = manager
+                        .get(r)
+                        .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False));
+                    if !is_literal {
+                        continue;
+                    }
                 }
+                self.emit_assertion_clauses(r, manager);
+                self.link_or_blast_bv_circuits(r, manager);
             }
             if self.has_false_assertion {
                 self.build_unsat_core_trivial_false();
