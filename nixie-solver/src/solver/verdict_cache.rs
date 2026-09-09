@@ -98,6 +98,10 @@ pub(crate) struct GoalFingerprint {
     num_mbqi_candidates: usize,
     /// `Solver::has_false_assertion`
     has_false_assertion: bool,
+    /// `Solver::unowned_quantifier_seen` – flips only alongside an assertion
+    /// add (which the counts above already distinguish), but it changes how a
+    /// verdict is produced, so carrying it by value is free honesty.
+    unowned_quantifier_seen: bool,
     /// `Solver::settings_epoch` – bumped by every setter in `solver::config`.
     ///
     /// This is what covers the settings a fingerprint cannot hold by value: the
@@ -197,6 +201,7 @@ impl Solver {
             num_ematch_quantifiers: self.ematch_engine.num_quantifiers(),
             num_mbqi_candidates: self.mbqi.num_candidates(),
             has_false_assertion: self.has_false_assertion,
+            unowned_quantifier_seen: self.unowned_quantifier_seen,
             settings_epoch: self.settings_epoch,
             config: self.config.clone(),
             produce_unsat_cores: self.produce_unsat_cores,

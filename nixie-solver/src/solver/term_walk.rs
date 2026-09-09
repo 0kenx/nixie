@@ -206,6 +206,29 @@ pub(super) fn asserted_children(kind: &TermKind, positive: bool) -> Vec<(TermId,
     }
 }
 
+/// The immediate sub-terms [`asserted_children`] deliberately does not reach
+/// because their position makes them conditional: the conjuncts of a negated
+/// `and`, the disjuncts of a positive `or`, and *every* child of a polarity
+/// boundary proper (`eq`/`implies`/`xor`/`ite`, and all theory atoms).
+///
+/// This is a *notice* walk's input: nothing below these children is entailed,
+/// so no fact may be registered from them – but a quantifier hiding there still
+/// constrains the goal, and the solver must not later certify a `sat` that
+/// forgot it (see `Solver::unowned_quantifier_seen`).
+pub(super) fn boundary_children(kind: &TermKind, positive: bool) -> Vec<TermId> {
+    match kind {
+        TermKind::And(args) if !positive => args.iter().copied().collect(),
+        TermKind::Or(args) if positive => args.iter().copied().collect(),
+        TermKind::Not(_) => Vec::new(),
+        // Registered (positive) or marked unowned (negative) by the caller;
+        // the body is that quantifier's internal structure, not a boundary.
+        TermKind::Forall { .. } | TermKind::Exists { .. } => Vec::new(),
+        // `asserted_children` already reached every conjunct/disjunct.
+        TermKind::And(_) | TermKind::Or(_) => Vec::new(),
+        _ => nixie_core::ast::get_children(kind).into_iter().collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::asserted_children;

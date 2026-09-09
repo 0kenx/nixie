@@ -128,6 +128,11 @@ pub(crate) struct ContextState {
     pub(crate) num_ematch_quantifiers: usize,
     /// `has_quantifiers` flag at the time of push
     pub(crate) has_quantifiers: bool,
+    /// `unowned_quantifier_seen` flag at the time of push: a quantifier the
+    /// retracted scope left without an owning engine must stop gating `sat`
+    /// once the scope is gone (and a still-unowned one from before the push
+    /// must keep gating it).
+    pub(crate) unowned_quantifier_seen: bool,
     /// `has_bv_arith_ops` flag at the time of push
     pub(crate) has_bv_arith_ops: bool,
     /// `has_array_ops` flag at the time of push
@@ -208,6 +213,7 @@ impl super::Solver {
             mbqi: _,            // SNAPSHOT: num_mbqi_quantifiers
             ematch_engine: _,   // SNAPSHOT: num_ematch_quantifiers
             has_quantifiers: _, // SNAPSHOT
+            unowned_quantifier_seen: _, // SNAPSHOT (ContextState)
             term_to_var: _,     // TRAIL: VarCreated
             var_to_term: _,     // SNAPSHOT: num_vars
             var_to_constraint: _, // TRAIL: ConstraintAdded

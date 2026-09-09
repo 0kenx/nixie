@@ -1633,37 +1633,100 @@ impl Solver {
     /// still sees `has_quantifiers`, so it answers `Unknown` rather than
     /// guessing.
     fn register_asserted_quantifiers(&mut self, term: TermId, manager: &mut TermManager) {
-        let mut stack: Vec<(TermId, bool)> = vec![(term, true)];
+        // Three-valued visit purpose: quantifiers reachable down the
+        // unconditionally-asserted spine get *registered* (or rewritten away
+        // before this walk ever sees them); quantifiers anywhere else are
+        // merely *noticed* – no engine owns them, and the `sat` honesty gates
+        // must refuse to certify a model without an independent check.
+        enum Visit {
+            Register(TermId, bool),
+            Notice(TermId),
+        }
+        let mut stack: Vec<Visit> = vec![Visit::Register(term, true)];
         let mut visited: FxHashSet<(TermId, bool)> = FxHashSet::default();
+        let mut noticed: FxHashSet<TermId> = FxHashSet::default();
+        // Quantifiers found outside the asserted spine.  A candidate is only
+        // *provably* unowned once the walk is complete: the same interned term
+        // can sit on the spine (registered) in one occurrence and behind a
+        // boundary in another, and visit order must not decide ownership.
+        let mut unowned_candidates: FxHashSet<TermId> = FxHashSet::default();
 
-        while let Some((current, positive)) = stack.pop() {
-            if !visited.insert((current, positive)) {
-                continue;
-            }
-            let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
-                continue;
-            };
-            if positive {
-                match &kind {
-                    TermKind::Forall { patterns, body, .. } => {
-                        let triggers: Vec<TermId> =
-                            patterns.iter().flat_map(|p| p.iter().copied()).collect();
-                        self.collect_quantifier_funcs(*body, manager);
-                        self.register_asserted_forall(current, *body, triggers, manager);
+        while let Some(visit) = stack.pop() {
+            match visit {
+                Visit::Register(current, positive) => {
+                    if !visited.insert((current, positive)) {
+                        continue;
                     }
-                    TermKind::Exists { patterns, body, .. } => {
-                        let triggers: Vec<TermId> =
-                            patterns.iter().flat_map(|p| p.iter().copied()).collect();
-                        self.collect_quantifier_funcs(*body, manager);
-                        self.mbqi.add_quantifier(current, manager);
-                        for trigger in triggers {
-                            self.mbqi.collect_ground_terms(trigger, manager);
+                    let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
+                        continue;
+                    };
+                    if positive {
+                        match &kind {
+                            TermKind::Forall { patterns, body, .. } => {
+                                let triggers: Vec<TermId> =
+                                    patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                                self.collect_quantifier_funcs(*body, manager);
+                                self.register_asserted_forall(current, *body, triggers, manager);
+                            }
+                            TermKind::Exists { patterns, body, .. } => {
+                                let triggers: Vec<TermId> =
+                                    patterns.iter().flat_map(|p| p.iter().copied()).collect();
+                                self.collect_quantifier_funcs(*body, manager);
+                                self.mbqi.add_quantifier(current, manager);
+                                for trigger in triggers {
+                                    self.mbqi.collect_ground_terms(trigger, manager);
+                                }
+                            }
+                            _ => {}
                         }
+                    } else if matches!(kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                        // A quantifier on the spine but under a negation.
+                        // `skolemize_asserted_existentials` rewrites exactly the
+                        // `(not <quantifier>)`-headed conjuncts away before this
+                        // walk runs, so reaching here means a shape it does not
+                        // own: no engine owns this quantifier.
+                        unowned_candidates.insert(current);
                     }
-                    _ => {}
+                    for child in super::term_walk::asserted_children(&kind, positive) {
+                        stack.push(Visit::Register(child.0, child.1));
+                    }
+                    // Polarity boundaries: `or` at positive polarity, `and`
+                    // under a negation, `=`/`implies`/`xor`/`ite` at either –
+                    // nothing below is entailed, so nothing below may be
+                    // registered.  Descend only to *notice* quantifiers.
+                    for child in super::term_walk::boundary_children(&kind, positive) {
+                        stack.push(Visit::Notice(child));
+                    }
+                }
+                Visit::Notice(current) => {
+                    if !noticed.insert(current) {
+                        continue;
+                    }
+                    let Some(kind) = manager.get(current).map(|t| t.kind.clone()) else {
+                        continue;
+                    };
+                    if matches!(kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
+                        unowned_candidates.insert(current);
+                        // Do not descend into the quantifier's body: the
+                        // quantifier itself is the unowned obligation; its
+                        // body is that obligation's internal structure.
+                        continue;
+                    }
+                    for child in nixie_core::ast::get_children(&kind) {
+                        stack.push(Visit::Notice(child));
+                    }
                 }
             }
-            stack.extend(super::term_walk::asserted_children(&kind, positive));
+        }
+
+        // Ownership verdict, after the walk: a candidate that was also
+        // registered from the asserted spine (present in `visited` at positive
+        // polarity) is owned; anything else has no engine.
+        if unowned_candidates
+            .iter()
+            .any(|t| !visited.contains(&(*t, true)))
+        {
+            self.unowned_quantifier_seen = true;
         }
     }
 

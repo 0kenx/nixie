@@ -106,6 +106,22 @@ pub struct Solver {
     pub(super) ematch_engine: EmatchingEngine,
     /// Whether the formula contains quantifiers
     pub(super) has_quantifiers: bool,
+    /// Whether some quantifier in the assertion set has **no owning engine**.
+    ///
+    /// A quantifier behind a polarity boundary (an `or` branch, an `ite`
+    /// arm, a Bool `=` operand, or a negation this solver did not rewrite
+    /// away) is neither registered with MBQI/E-matching nor eliminated by
+    /// Skolemization, and the Tseitin encoder binds it to a *free* Boolean.
+    /// Any `sat` verdict that reasons only about the *registered* quantifiers
+    /// would silently drop that assertion's semantics – the funcprobs/U48 and
+    /// `¬∃z. z ≥ 0` false-`sat`s.  The `Satisfied`/`NoQuantifiers` exits must
+    /// consult this flag (and independently certify the candidate model)
+    /// before answering `sat`.
+    ///
+    /// Scope-consistent like `has_quantifiers`: snapshotted by `push`,
+    /// restored by `pop` (see [`ContextState`](super::trail::ContextState)),
+    /// cleared by `reset`.
+    pub(super) unowned_quantifier_seen: bool,
     /// Next unused Skolem symbol id.
     ///
     /// Skolem symbols are named positionally (`sk!N` / `skf!N`) and names are
@@ -830,6 +846,7 @@ impl Solver {
             #[cfg(feature = "nlsat")]
             nlsat: None,
             mbqi: MBQIIntegration::new(),
+            unowned_quantifier_seen: false,
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
             has_quantifiers: false,
             next_skolem_id: 0,
@@ -2918,6 +2935,18 @@ impl Solver {
                             self.debug_check_invariants(
                                 "check_core: before returning sat (no quantifiers)",
                             );
+                            // Honesty gate (soundness): "no quantifiers
+                            // registered" is only "no quantifiers in the
+                            // goal" when nothing was left unowned.  A
+                            // quantifier behind a polarity boundary is a free
+                            // Boolean to the ground layer (the `not exists`
+                            // false-`sat` shape), so an unowned quantifier
+                            // with an empty registry must be independently
+                            // certified before `sat` may be printed.
+                            if self.unowned_quantifier_seen && !self.certify_quantified_sat(manager)
+                            {
+                                return SolverResult::Unknown;
+                            }
                             return SolverResult::Sat;
                         }
                         MBQIResult::Satisfied => {
@@ -2929,6 +2958,18 @@ impl Solver {
                             self.debug_check_invariants(
                                 "check_core: before returning sat (mbqi fixpoint)",
                             );
+                            // Honesty gate (soundness): `Satisfied` certifies
+                            // the *registered* quantifiers only.  A quantifier
+                            // behind a polarity boundary is a free Boolean and
+                            // was never checked, so the whole assertion set
+                            // must be certified against the candidate model
+                            // before `sat` may be printed (funcprobs/U48
+                            // false-`sat`: `f(x)=0` satisfied, `not (forall
+                            // ...)` forgotten).
+                            if self.unowned_quantifier_seen && !self.certify_quantified_sat(manager)
+                            {
+                                return SolverResult::Unknown;
+                            }
                             return SolverResult::Sat;
                         }
                         MBQIResult::InstantiationLimit => {
@@ -3589,6 +3630,7 @@ impl Solver {
             has_false_assertion: self.has_false_assertion,
             trail_position: self.trail.len(),
             num_mbqi_quantifiers: self.mbqi.num_quantifiers(),
+            unowned_quantifier_seen: self.unowned_quantifier_seen,
             num_ematch_quantifiers: self.ematch_engine.num_quantifiers(),
             has_quantifiers: self.has_quantifiers,
             has_bv_arith_ops: self.has_bv_arith_ops,
@@ -3826,6 +3868,7 @@ impl Solver {
             self.ematch_engine
                 .truncate_quantifiers(state.num_ematch_quantifiers);
             self.has_quantifiers = state.has_quantifiers;
+            self.unowned_quantifier_seen = state.unowned_quantifier_seen;
 
             // Sticky encoder flags derived from the retracted assertions.
             self.has_bv_arith_ops = state.has_bv_arith_ops;
@@ -3923,6 +3966,7 @@ impl Solver {
         self.mbqi = MBQIIntegration::new();
         self.ematch_engine = EmatchingEngine::new(EmatchingConfig::default());
         self.has_quantifiers = false;
+        self.unowned_quantifier_seen = false;
         #[cfg(feature = "nlsat")]
         {
             self.nlsat = None;

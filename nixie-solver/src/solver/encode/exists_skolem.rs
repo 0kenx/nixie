@@ -1,4 +1,5 @@
-//! Skolemization of the existentials an assertion states *unconditionally*.
+//! Skolemization of the existentials an assertion states *unconditionally* –
+//! including the ones in disguise as negated universals.
 //!
 //! # Why
 //!
@@ -18,6 +19,34 @@
 //! `sk` as the witness – so the ordinary ground solver now *searches* for the
 //! witness instead of guessing it, and the assertion carries no quantifier at
 //! all when `φ` is quantifier-free.
+//!
+//! # Negated quantifier conjuncts (the false-`sat` shapes)
+//!
+//! A conjunct headed by a *negated* quantifier is the same obligation in
+//! disguise, and before this module owned them they had **no engine at all**:
+//! the Tseitin encoder binds every quantifier term to a free Boolean,
+//! `register_asserted_quantifiers` deliberately refuses quantifiers behind a
+//! polarity boundary (registering `(not (forall ((x Int)) (P x)))` as
+//! `∀x. P(x)` historically turned a satisfiable goal unsatisfiable), and MBQI
+//! only ever consults what was registered.  The result was a fabricated `sat`:
+//! the free Boolean is set to whatever the ground layer likes,
+//! `MBQIResult::Satisfied` / `NoQuantifiers` verify the registered quantifiers
+//! only, and the negated one is forgotten (the funcprobs/U48 and
+//! `¬∃z. z ≥ 0` false-`sat`s, September 2026).
+//!
+//! Both shapes become the cases above after one NNF step, with the negation
+//! *pushed inside* (never dropped):
+//!
+//! * `(not (forall x φ))` ≡ `∃x. ¬φ`   → `¬φ(sk)` – ground, witness searched;
+//! * `(not (exists x φ))` ≡ `∀x. ¬φ` – stays a universal, now sitting at
+//!   *positive* polarity on the asserted spine, where
+//!   [`Solver::register_asserted_quantifiers`](super::super::Solver) registers
+//!   it and MBQI/E-matching own it like any other asserted universal.
+//!
+//! NNF is an equivalence (not merely equisatisfiability) on the Boolean
+//! connectives, and Skolemization of an unconditionally asserted conjunct is
+//! equisatisfiable for the whole conjunction because the fresh symbol occurs
+//! nowhere else.
 //!
 //! # Where the rewrite is legal
 //!
@@ -68,10 +97,7 @@ pub(crate) fn skolemize_asserted_existentials(
     let mut rewritten: Vec<TermId> = Vec::with_capacity(conjuncts.len());
     let mut changed = false;
     for conjunct in conjuncts {
-        let is_exists = manager
-            .get(conjunct)
-            .is_some_and(|t| matches!(t.kind, TermKind::Exists { .. }));
-        if !is_exists {
+        if !head_is_rewritable_quantifier(conjunct, manager) {
             rewritten.push(conjunct);
             continue;
         }
@@ -100,8 +126,24 @@ pub(crate) fn skolemize_asserted_existentials(
     }
 }
 
+/// Whether a conjunct's head is a quantifier obligation this module owns:
+/// a plain `Exists`, or a negated `Forall` / `Exists` (an existential in
+/// disguise, and a polarity-flipped universal, respectively – see the module
+/// docs).
+fn head_is_rewritable_quantifier(term: TermId, manager: &TermManager) -> bool {
+    match manager.get(term).map(|t| &t.kind) {
+        Some(TermKind::Exists { .. }) => true,
+        Some(TermKind::Not(inner)) => matches!(
+            manager.get(*inner).map(|t| &t.kind),
+            Some(TermKind::Forall { .. } | TermKind::Exists { .. })
+        ),
+        _ => false,
+    }
+}
+
 /// Flatten the assertion's top-level `And` spine into its conjuncts, or return
-/// `None` when no conjunct is an existential (nothing to rewrite).
+/// `None` when no conjunct is a rewritable quantifier obligation (nothing to
+/// rewrite).
 ///
 /// Iterative with an explicit heap stack: the spine shape is caller-controlled
 /// input, and a depth cap on a native recursion could only have silently
@@ -111,7 +153,7 @@ pub(crate) fn skolemize_asserted_existentials(
 fn flatten_asserted_conjuncts(term: TermId, manager: &TermManager) -> Option<Vec<TermId>> {
     let mut out: Vec<TermId> = Vec::new();
     let mut stack: Vec<TermId> = vec![term];
-    let mut saw_exists = false;
+    let mut saw_rewritable = false;
 
     while let Some(current) = stack.pop() {
         if out.len() >= MAX_SPINE_CONJUNCTS {
@@ -123,13 +165,13 @@ fn flatten_asserted_conjuncts(term: TermId, manager: &TermManager) -> Option<Vec
                     stack.push(arg);
                 }
             }
-            Some(TermKind::Exists { .. }) => {
-                saw_exists = true;
+            Some(_) if head_is_rewritable_quantifier(current, manager) => {
+                saw_rewritable = true;
                 out.push(current);
             }
             _ => out.push(current),
         }
     }
 
-    if saw_exists { Some(out) } else { None }
+    if saw_rewritable { Some(out) } else { None }
 }
