@@ -51,19 +51,25 @@ byte-identical complete stdout and independently verified models. Require
 at least 1000 sampled clause-epoch rows and complete accounting without
 observer limit/overflow errors. Its instrumented runtime is not a cost
 measurement. Report visits, payload accesses and scanned literals by
-original/learned origin and clause width; the existing 4096-conflict epochs
-give an early/late breakdown.
+original/learned status, and learned-clause width. The existing collector
+aggregates original clauses across widths and epochs; only learned rows
+support a width or early/late breakdown. This capability correction was
+recorded before either solver invocation. Total original work is therefore
+only an upper bound on original five-literal work.
 
 The next implementation target follows these prespecified diagnostic rules:
 
 - If propagation is below 50%, target the largest non-propagation component
   only if its inclusive share is at least 10%; otherwise retain the diffuse
   profile without proposing a small local optimization.
-- If propagation dominates and original five-literal clauses contribute at
-  least 40% of sampled propagation payload accesses plus tail scans, study
-  an engine specialized for the fixed factored representation.
-- If that original-clause gate fails but learned clauses contribute at
-  least 50% of the same work, target the learned-clause path instead.
+- The representation-specific engine needs original five-literal clauses
+  to contribute at least 40% of sampled propagation payload accesses plus
+  tail scans. If even total original work is below 40%, reject that gate.
+  A larger aggregate does not establish a pass; it requires a subsequent
+  width-resolved observation before that engine can advance.
+- If the representation-specific gate fails or remains unestablished but
+  learned clauses contribute at least 50% of the same work, target the
+  learned-clause path instead.
 - Otherwise the representation-specific hypothesis does not advance.
 
 These are opportunity gates, not predicted savings or a default-flip gate.
