@@ -67,3 +67,13 @@ underlying algorithm implications. No measured repair or second profile in
 this registration. If assembly fails after its one repair, stop without a
 cost run. Archive source/evidence and the finding on main and clean idle
 worktrees/artifacts. Do not repeat old lookahead width/distance/inline sweeps.
+
+### Assignment-local blocker refresh
+
+Before code generation or measurement, strengthen the source argument: one
+internal unit makes exactly `first` true, its opposite false, and changes no
+other value. A prepared miss becomes a hit iff its blocker equals `first`.
+Use this literal-code equality after assignment instead of rereading the
+value array. Previously true blockers remain true. This is an exact
+consequence of the assignment operation, not a speculative truth cache.
+Cover both the newly true and newly false blocker in the same regression.
