@@ -67,3 +67,40 @@ the shape `r = a·x + b·y` with small bounded `r`.
 
 Fix k7 and the whole jain/Ultimate compound class flips to `unsat` with
 no further quantifier work.
+
+## Attempt log (2026-09-09, second session): the `constrain_free_vars` port
+
+Z3's actual mechanism was located and confirmed in
+`src/smt/theory_arith_int.h`: **`constrain_free_vars`** internalizes
+`v >= 0` case-split atoms for the free variables of a cut-target row, so
+the DPLL layer bounds them and `is_gomory_cut_target` (all nonbasics at
+bounds) starts holding.  A theory-internal port was implemented and
+measured on k7:
+
+* **Sign-split recursion** (`u >= 0` / `u <= -1`, exhaustive over the
+  integers, depth ≤ free-var count, capped at 8): with the free list
+  collected from fractional rows *and* free fractional basics, and with
+  each leaf re-entering the full cuts-then-B&B, the split closed **6 of
+  14 branch children with real unsat cores** — the mechanism derives the
+  parity conflicts it exists for.
+* **The remaining 8 children diverge** because the leaf's cut re-entry is
+  refused: `gomory_cut` rejects any nonbasic resting at a
+  `BRANCH_REASON` bound ("a cut using one is only valid inside that
+  branch, never at root where cuts are asserted").  Inside a split scope
+  that rejection is over-strict — the cut would be scoped to the branch —
+  but allowing it requires auditing how `BRANCH_REASON` sentinel ids flow
+  through `bnb_unsat_core` and the exported conflict clauses (a sentinel
+  in a SAT-level core would be a soundness hazard).
+* **Reverted** rather than half-landed: 2^k branching in the hot LIA path
+  without closing its motivating repro failed the measured-merit bar.
+
+### Resume here
+
+1. Add a scoped flag allowing branch-reason bounds in `gomory_cut` when
+   the cut lives inside a split scope; audit `note_bnb_conflict_reasons`
+   and `bnb_unsat_core` for sentinel handling first.
+2. Re-measure k7 (expect all 14 children Unsat → `unsat`), then the jain
+   compound class, then the full differential gates — the 2^k split needs
+   a matched-null performance check on QF_LIA (the branch factor lands on
+   every LIA check with ≥1 free var, i.e. nearly all of them; Z3 avoids
+   the blowup by splitting only row-local free vars of cut targets).
