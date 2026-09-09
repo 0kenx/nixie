@@ -4290,6 +4290,14 @@ impl Solver {
     pub fn freeze_theory_vars<I: IntoIterator<Item = Var>>(&mut self, vars: I) {
         for v in vars {
             self.frozen_vars.insert(v);
+            // Assertions and previous preprocessing can have marked this
+            // variable before the caller supplied the theory's freeze set.
+            if let Some(marked) = self.elim_mark.get_mut(v.index())
+                && *marked
+            {
+                *marked = false;
+                self.elim_mark_count -= 1;
+            }
         }
         self.theory_vars_frozen = true;
     }
