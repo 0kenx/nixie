@@ -157,10 +157,28 @@ fn div_identity_single_sum_is_unsat() {
     assert_eq!(last_status(&output), "unsat");
 }
 
-/// The k9 shape (four free variables in the defining sum) still answers
-/// the honest `unknown`: the split leaves' cut loops churn without
-/// closing (see docs/studies/2026-09-09-lia-parity-infeasibility.md).
-/// Pinned to never be a wrong decisive answer.
+/// The k9 compound shape through the real quantifier chain: the MBQI
+/// symbolic witness `(y-1) div 2` lands, its div term is axiomatized in
+/// the same round (with the remainder case enumeration), SAT pins the
+/// remainder, and the HNF Diophantine solver refutes the parity
+/// combination.  `unsat` (z3 agrees).
+#[test]
+fn compound_sum_witness_discharge_is_unsat() {
+    let output = run(r#"
+        (set-logic LIA)
+        (declare-const y Int)
+        (assert (exists ((a Int) (b Int) (c Int) (d Int))
+          (= (+ (* 2 a) (* 2 b) (* 2 c) (* 2 d) 1) y)))
+        (assert (not (exists ((v Int)) (= (+ (* 2 v) 1) y))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The four-free-variable shape with the remainder already eliminated by
+/// hand: still open (split leaves churn without the div-term case
+/// enumeration; the deeper jain unrollings share this shape).  Pinned to
+/// never be a wrong decisive answer.
 #[test]
 fn parity_infeasibility_four_free_vars_is_never_wrong() {
     let output = run(r#"

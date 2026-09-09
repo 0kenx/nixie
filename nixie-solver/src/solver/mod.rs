@@ -3265,6 +3265,19 @@ impl Solver {
                                 self.add_arith_eq_trichotomy(inst.result, manager);
                                 self.add_int_domain_clauses(inst.result, manager);
                             }
+                            // Instantiation results can introduce fresh
+                            // div/mod terms (the symbolic linear-witness
+                            // lemmas build `(R - L) div a`).  Encoding them
+                            // interns the terms, but the defining axioms
+                            // only land when the outer refinement loop
+                            // re-runs `instantiate_arith_axioms` -- which
+                            // may be after the rounds that needed them.
+                            // Axiomatize now: the pass is idempotent
+                            // (already-defined terms are skipped), and the
+                            // div identity rows are what let the equality
+                            // machinery discharge the witness lemma instead
+                            // of churning branch-and-bound on it.
+                            self.instantiate_arith_axioms(manager);
                             // Add pigeonhole exclusion clauses
                             if !ph_diseqs.is_empty() && !ph_domains.is_empty() {
                                 self.add_pigeonhole_exclusions_from(

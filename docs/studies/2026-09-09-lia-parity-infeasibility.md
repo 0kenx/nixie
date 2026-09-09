@@ -1,12 +1,13 @@
-# LIA parity-infeasibility with unbounded variables (k7 closed, k9 open)
+# LIA parity-infeasibility with unbounded variables (k7+k9-div closed)
 
-**Status: PARTIALLY CLOSED (2026-09, third session).  The k7 class —
-two free variables — is fixed by the free-variable sign splits with
-split-scoped Gomory cuts (`close_free_vars_then_bnb` +
-`ArithSolver::cuts_in_split_scope`); the k9 class — four or more free
-variables in the defining sum — remains open.  Everything on the
-quantifier side of the jain chain works; k9 is the last blocker on the
-compound-sum class.**
+**Status: MOSTLY CLOSED (2026-09, fifth session).  k7 (two free vars)
+closes via the free-variable sign splits with split-scoped Gomory cuts;
+the k9 *div-driven* shape closes via the combined fix — MBQI-instance
+div terms axiomatized in-round, remainder case enumeration, and the HNF
+Diophantine solver refuting the pinned-remainder parity combination
+(k1/jain_2 now `unsat`; classic LIA/UFLIA/AUFLIA sample agree 169 → 178,
+0 wrong).  Still open: the hand-written four-free-variable shape without
+a div term (below) and the deeper jain unrollings (larger unprimed sums).**
 
 ## The sharpest repro (k7)
 

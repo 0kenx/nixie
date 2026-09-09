@@ -396,6 +396,35 @@ impl Solver {
             self.assert_ground_lemma(lemma, manager);
         }
 
+        // Remainder case enumeration: `remainder` is an *integer* term with
+        // `0 <= remainder <= |divisor|-1`, so its value is one of finitely
+        // many constants.  Telling the SAT layer that (a disjunction of
+        // equalities) does two things: CDCL gets the case split, and each
+        // committed case lands in `int_equalities` where the HNF
+        // Diophantine solver can refute parity-infeasible combinations
+        // outright (the k9 shape: with `mod (y-1) 2 = 1` pinned, the rows
+        // `y - 1 = 2*quotient + 1` and `y = 2*sum + 1` have `2*(sum -
+        // quotient) = -1` -- an exact-divisibility failure the equality
+        // solver proves in one reduction, where cuts churn and branch and
+        // bound diverges on the unbounded sum).  The disjunction is a
+        // valid consequence of the three axioms plus integrality of the
+        // Int sort, so asserting it loses nothing.
+        //
+        // Capped: a large divisor would mint |divisor| literals for one
+        // term; beyond the cap the ordinary bounds + B&B path handles it
+        // (completeness only).
+        const MAX_REMAINDER_CASES: i64 = 16;
+        if 0 < upper && upper <= MAX_REMAINDER_CASES {
+            let cases: Vec<TermId> = (0..=upper)
+                .map(|k| {
+                    let k_term = manager.mk_int(k);
+                    manager.mk_eq(remainder, k_term)
+                })
+                .collect();
+            let split = manager.mk_or(cases);
+            self.assert_ground_lemma(split, manager);
+        }
+
         // Both halves of the pair are now fully determined.
         self.mark_arith_defined(quotient);
         self.mark_arith_defined(remainder);
