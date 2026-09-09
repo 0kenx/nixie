@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(direct.model(), roundtrip.model());
         if expected == SolverResult::Sat {
             prepared
-                .verify_model(&direct.model())
+                .verify_model(direct.model())
                 .expect("original model");
         }
     }

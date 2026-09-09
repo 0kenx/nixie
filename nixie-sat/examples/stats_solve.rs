@@ -312,7 +312,7 @@ fn main() {
     let r = solver.solve();
     if let Some(original) = original_for_validation
         && r == nixie_sat::SolverResult::Sat
-        && let Err(error) = original.verify_model(&solver.model())
+        && let Err(error) = original.verify_model(solver.model())
     {
         eprintln!("{error}");
         std::process::exit(2);
