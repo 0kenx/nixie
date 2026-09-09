@@ -85,3 +85,53 @@ repair is allowed if it removes a specific introduced cost identified by
 profile/assembly and is recorded before timing. No second profile, ablation
 or repeated cost. Archive rejected source and findings on main, retain the
 result store and remove all owned idle worktrees and temporary artifacts.
+
+## Preflight findings
+
+The initial source achieves the registered shape without a preflight repair.
+The final perf build has a **3098-byte** engine at `0x63cc0`, with **216
+local stack bytes** (six saved registers are additional, as in the previous
+comparisons). The closed fixed-queue prototype was 3707/264 and the first
+complete engine 3615/248. No speedup follows from code size alone.
+
+Binary satisfied exits at `0x63e84` and `0x63f11` precede their reason loads;
+assignments contain no array-length comparison. The long unit path at
+`0x64144` reads the borrowed identity and writes values/metadata/queue with
+no second header or extent validation. No queue-growth call or per-edge span
+selection remains. The queue pointer now stays in a register through the
+binary and long scans; destination-buffer growth may spill it. The view's
+initialized-length publication per unit remains. Later measurement must
+price the whole combined implementation, including conservative reservation.
+
+The new disjoint identity/payload test passes strict-provenance Miri in
+3.83 s; the three fixed-queue tests pass in 18.73 s and the moved-owner,
+compaction/growth/requeue test in 76.12 s (seed 42, nightly 2026-06-11).
+The default SAT suite passes all 1020 tests, one existing skip. Strict SAT
+all-feature/all-target Clippy and workspace format check pass.
+
+Safety audit: Trail construction and general growth allocate both value
+signs together with each variable metadata slot. The unsafe append's
+in-domain/undefined contract therefore covers all three unchecked stores;
+its borrow excludes resize and unassignment. Arena allocation checks extent
+and ID exhaustion before initializing `header.identity` from the cold
+identity-table length. Shrink writes payload/length/glue only. Compaction
+copies the whole initialized header/payload, after preparing relocation;
+ClauseDatabase rewrites watches through that plan before applying movement.
+Live-clause construction excludes NULL/deleted slots before borrowing the
+identity. Its shared four-byte header field and mutable payload beginning
+at byte 12 do not overlap, including when sharing one backing u64. The type
+system excludes arena mutation while those borrows live; Miri exercises
+simultaneous identity reads across payload writes and subsequent relocation.
+General checked arena/reason APIs and minimization guards are unchanged.
+
+The latest baseline-source differences outside this prototype are four
+nixie-core arithmetic/parser files. `stats_solve` uses nixie-sat's DIMACS
+parser directly; these changed SMT-LIB/AST rewrite paths are outside the
+measured invocation. The retained compiler/lock and portable profiles remain
+the same as the qualified cached control.
+
+The all-feature SAT suite also passes **1047 tests**, one existing skip,
+including the exhaustive state oracle and native Rayon owner test. Release
+and final perf builds complete. All owned compilation/test processes finish
+before the cost screen. No preflight repair or performance cell was spent
+while establishing these conditions.
