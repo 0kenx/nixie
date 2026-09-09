@@ -426,11 +426,18 @@ impl CounterExampleGenerator {
         // through the same substitute/evaluate/check pipeline, so a wrong
         // solve is merely a candidate that fails – never a fabricated
         // counterexample.
+        // The witness pass runs whether or not the candidate pool already
+        // found counterexamples: a *concrete* solved falsifier (this
+        // round's model value) coexists with the pool's, but the
+        // *symbolic* solved point is the durable instance – gating on
+        // `counterexamples.is_empty()` starved it exactly on the shapes
+        // that need it (the pool refutes each round's value, the model
+        // hops, and the rounds run out before the symbolic instance ever
+        // lands: the jain compound-sum class).
         if counterexamples.len() < self.max_cex_per_quantifier
             && let Some(var) = quantifier.var_name(0)
             && quantifier.bound_vars.len() == 1
             && quantifier.var_sort(0) == Some(manager.sorts.int_sort)
-            && counterexamples.is_empty()
         {
             let extra = self.solve_linear_witnesses(quantifier.body, var, model, manager);
             for witness in extra {
@@ -808,7 +815,6 @@ impl CounterExampleGenerator {
             // the floor/ceil boundary points for inequality atoms.
             let rhs = manager.mk_sub(lb, la);
             let evaluated = self.evaluate_under_model(rhs, model, manager);
-            let mut pushed = false;
             if let Some(node) = manager.get(evaluated)
                 && let TermKind::IntConst(num) = &node.kind
                 && !num_traits::Zero::is_zero(&a)
@@ -821,16 +827,20 @@ impl CounterExampleGenerator {
                     let witness = manager.mk_int(q);
                     if !out.contains(&witness) {
                         out.push(witness);
-                        pushed = true;
                     }
                 }
             }
-            if !pushed {
-                let a_term = manager.mk_int(a.clone());
-                let witness = manager.mk_div(rhs, a_term);
-                if !out.contains(&witness) {
-                    out.push(witness);
-                }
+            // Always also emit the *symbolic* solved point: its instance is
+            // the durable lemma `not (a*((R-L) div a) + L OP R)` – when the
+            // residual is a sum of Skolem rows (`y = 2s0+2s1+2s2+2s3+1`, the
+            // jain shape) the concrete witness only kills this round's
+            // model value and `y` hops forever, while the symbolic instance
+            // conflicts with the defining rows outright.  Both are ordinary
+            // candidates: whichever fails to falsify is simply dropped.
+            let a_term = manager.mk_int(a.clone());
+            let witness = manager.mk_div(rhs, a_term);
+            if !out.contains(&witness) {
+                out.push(witness);
             }
             if out.len() >= 8 {
                 break; // a handful of solved points is plenty

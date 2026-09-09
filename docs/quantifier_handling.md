@@ -148,15 +148,23 @@ because the Skolemized reading never asserts the universal.
 
 ## Known quantifier-completeness blockers (2026-09, follow-ups)
 
-* **LIA integer verdict returns `Unknown` mid-search on quantifier-bearing
-  goals** (the jain class): with a spine universal registered, the first
-  theory check can return `TheoryCheckResult::Unknown` (branch-and-bound /
-  integer-equality incumbent gives up) and the whole goal answers `unknown`
-  before MBQI ever runs.  Minimal repro: j5 shape before the reflexivity
-  fold; the surviving shape is `(exists a b. 2a+1=y ∧ 2b+1=x) ∧
-  (not (exists v. 2v+1=y))` — ground part alone is decided instantly.
-  See the `lia_cuts_then_bnb` / `cached_int_eq_verdict` paths in
-  `nixie-theories/src/arithmetic/solver.rs`.
+* **LIA integer verdict returns `Unknown` mid-search** — FIXED for the
+  dominant shape by the integral dive (`ArithSolver::integral_dive`):
+  free nonbasic integer variables rest at crash-basis defaults, so rows
+  like `y = 2a+1` sit at half-integral vertices where Gomory cuts are
+  inapplicable and branch-and-bound diverges to the depth cap.  The dive
+  pins fractional variables to floor/ceil equalities (drift-free, depth
+  ≤ #vars) and accepts only feasible integral leaves.  Together with the
+  nullary-`sk!N` candidate arm and spine-rewrite candidate collection,
+  the j4/j1 shapes now refute.  The **compound-sum jain_2 shape**
+  (`y = 2s0+2s1+2s2+2s3+1`, falsifier `s0+s1+s2+s3`) still answers
+  `unknown` — root-caused to the arithmetic layer (see
+  `docs/studies/2026-09-09-lia-parity-infeasibility.md`, the k7 repro):
+  the symbolic `div` witness instance now lands every round, and its
+  ground discharge reduces to an LP-feasible / integer-infeasible parity
+  conflict over unbounded variables that neither branch-and-bound (diverges)
+  nor the Gomory cuts (inapplicable off bounds) close.  Everything on the
+  quantifier side of the chain works; fixing k7 flips the class.
 * **Duplicate instantiations re-emitted on alternating rounds**: MBQI can
   alternate `NewInstantiations`/`Unknown` with byte-identical instance
   lists, burning the round budget on no-ops (observed on tautological
