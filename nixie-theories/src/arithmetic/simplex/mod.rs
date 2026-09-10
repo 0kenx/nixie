@@ -2900,11 +2900,109 @@ impl Simplex {
                     }
                 }
             }
+            // Note on the assignment vector: NO restore.  Non-basic values
+            // provably stay inside their restored (wider) windows — a
+            // non-basic only ever moves by a snap INTO the then-current
+            // window, and the leaving variable of a pivot is snapped to a
+            // bound of its then-window — while basic values are re-derived
+            // by the next `check`/`crash_basis`.  A consumer that reads
+            // values without a fresh feasibility pass must call
+            // [`Self::state_feasible`] first (the B&B leaf/dive paths do).
             self.infeasible = None;
         }
     }
     /// Get the current decision level
     #[must_use]
+    /// TEMP debug invariant check: every basic variable's assignment equals
+    /// its row evaluated over the current nonbasic assignments, and every
+    /// nonbasic sits inside its bound window.  Returns the first violation.
+    #[cfg(feature = "std")]
+    pub fn debug_verify_invariant(&self) -> Option<String> {
+        for i in 0..self.assignment.len() {
+            let lb = self.lower.get(i).and_then(|b| b.as_ref().map(|x| x.value));
+            let ub = self.upper.get(i).and_then(|b| b.as_ref().map(|x| x.value));
+            let val = self.assignment[i];
+            if let Some(lo) = lb
+                && val < lo
+            {
+                return Some(format!(
+                    "var {i} (basic={}) = {val:?} below lower {lo:?}",
+                    i < self.basic.len() && self.basic[i]
+                ));
+            }
+            if let Some(hi) = ub
+                && val > hi
+            {
+                return Some(format!(
+                    "var {i} (basic={}, has_row={}) = {val:?} above upper {hi:?}",
+                    i < self.basic.len() && self.basic[i],
+                    self.tableau.contains_key(&(i as VarId))
+                ));
+            }
+        }
+        for (b, row) in self.tableau.iter() {
+            let mut eval = DeltaRational::from_rational(row.constant);
+            for (t, c) in &row.terms {
+                let ti = *t as usize;
+                if ti >= self.assignment.len() {
+                    return Some(format!("row of {b:?} references unassigned var {t:?}"));
+                }
+                eval += self.assignment[ti] * *c;
+            }
+            let bi = *b as usize;
+            if bi < self.assignment.len() && self.assignment[bi] != eval {
+                return Some(format!(
+                    "basic {b:?}: assignment {:?} != row eval {eval:?}",
+                    self.assignment[bi]
+                ));
+            }
+        }
+        None
+    }
+
+    /// Whether the current state is a FEASIBLE basic solution: re-derives
+    /// the assignment first when it is stale (pops invalidate nothing but
+    /// leave basic values from the popped scope's pivots), then asks
+    /// `find_violating`.  Consumers that read variable values without a
+    /// fresh `check` — the branch-and-bound leaf and integral-dive paths,
+    /// before snapshotting a model — must gate on this: a stale or
+    /// mid-flight state can hold basic values outside their bound windows,
+    /// and snapshotting it publishes a model that violates asserted atoms
+    /// (the QF_ANIA/sum10 invalid-model class).
+    pub fn state_feasible(&mut self) -> bool {
+        if !self.assignment_current {
+            self.crash_basis();
+            self.assignment_current = true;
+        }
+        self.find_violating().is_none()
+    }
+
+    /// Copy the current bounds (with their full reason sets) from `from` to
+    /// `to`, trailed at the CURRENT scope like a fresh assertion.  Used to
+    /// re-home a constraint whose original slack lost its defining row (see
+    /// `ArithSolver::rehome_stranded_row_bounds`).
+    pub fn copy_bounds(&mut self, from: VarId, to: VarId) {
+        let fi = from as usize;
+        let lo = self.lower.get(fi).and_then(|b| b.as_ref().cloned());
+        let hi = self.upper.get(fi).and_then(|b| b.as_ref().cloned());
+        if let Some(b) = lo {
+            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
+            self.set_lower_delta(to, b.value, reasons);
+        }
+        if let Some(b) = hi {
+            let reasons: SmallVec<[u32; 4]> = b.all_reasons().collect();
+            self.set_upper_delta(to, b.value, reasons);
+        }
+    }
+
+    /// Whether `var` carries any bound at all.
+    pub fn has_any_bound(&self, var: VarId) -> bool {
+        let i = var as usize;
+        self.lower.get(i).is_some_and(Option::is_some)
+            || self.upper.get(i).is_some_and(Option::is_some)
+    }
+
+    /// Get the current decision level
     pub fn decision_level(&self) -> usize {
         self.trail_limits.len().saturating_sub(1)
     }

@@ -144,9 +144,53 @@ contradicts the printed ints; nested-array sorts make the export a real
 feature, not a patch).  That is the follow-up surface, together with
 cut-rows-as-CDCL-lemmas for the residual tableau growth between restarts.
 
+## Second follow-up (2026-09-10, later): the two sum10 invalid models closed as B&B-pop staleness, not array cells
+
+The two remaining QF_ANIA/sum10 invalid models were NOT the array-cell
+export: exact re-validation showed the printed *integer* values violated
+an asserted `(< a b)` atom while every value was "integer and integral".
+The chain, dug with an assignment-invariant checker:
+
+1. `ArithSolver`'s branch-and-bound (and its integral dive) unwinds branch
+   scopes AFTER accepting a leaf.  Under the DdM pop the scope's pivots
+   PERSIST; the popped (wider) bounds + the pivoted basic values can leave
+   the raw LP point outside some bound windows.
+2. A consumer that reads values without a fresh `check()` — the dive's
+   root base case snapshots right after a failed sibling's pop — then
+   publishes that stale/infeasible point as the model (`lia_model`).
+3. `value()`'s LP fallback reads the raw vector for variables the
+   snapshot does not cover, leaking the same stale values.
+
+Fixes (all landed):
+
+* `Simplex::state_feasible` — re-derive (crash_basis) when stale, then
+  probe `find_violating`; the dive base case and the B&B leaf gate their
+  snapshot on it (an infeasible "leaf" declines/returns Unknown).
+* `ArithSolver::ensure_feasible_or_conflict` at `final_check`'s Sat arm —
+  re-establish a feasible current assignment before any value reader; an
+  infeasible live bound set becomes an honest conflict.
+* `ArithSolver::rehome_stranded_row_bounds` — a bound whose row a pivot
+  consumed (the slack left the basis) constrains a free-floating variable;
+  the sweep re-interns the recorded form (`slack_forms`) and copies the
+  bounds (same reasons) to the fresh slack, in a bounded fixpoint around
+  the arithmetic check.  (The per-final-check resync used to re-assert
+  every atom and thus re-home these implicitly; the restart rebuild does
+  not, so the sweep is now explicit.)
+
+Measured (270-file differential, 10 s, `--validate-models`, z3 4.16.0):
+solved 167 → 172, **sat invalid-models 2 → 0 (87/87 valid)**,
+PAR-2 2176 → 2043, 0 soundness disagreements; parity 174/174.
+sum10 i_2/i_3 answer honest `unknown` again (their models were the
+symptom); the array-cell export for ground-ANIA witnesses remains open
+but is no longer reachable on this corpus.
+
 ## Verdict
 
 The resync backstop was 2/3 overhead with a 0-firing conflict channel;
 its trajectory value is reproduced at 1/50th the cost by rebuilding once
-per restart.  Landed (with the three witness fixes it exposed); the
-array-cell export and cuts-as-lemmas remain open.
+per restart.  The removal exposed a real invariant hole in the B&B's
+pop-then-snapshot discipline (and three nonlinear-witness holes the day
+before); all are closed with explicit mechanisms instead of the implicit
+per-final-check re-assertion.  Open: array-cell export for
+`try_decide_ground_ania` witnesses, cuts-as-CDCL-lemmas for residual
+tableau growth between restarts.

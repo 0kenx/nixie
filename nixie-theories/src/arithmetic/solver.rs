@@ -46,6 +46,10 @@ fn gcd_i64(mut a: i64, mut b: i64) -> i64 {
     a
 }
 
+/// The linear form that interned a row slack, kept for the stranded-bound
+/// re-homing sweep (see [`ArithSolver::rehome_stranded_row_bounds`]).
+type SlackForm = (Vec<(TermId, Rational64)>, Rational64, bool, TermId);
+
 /// Arithmetic Theory Solver (LRA/LIA)
 #[derive(Debug)]
 pub struct ArithSolver {
@@ -133,6 +137,11 @@ pub struct ArithSolver {
     /// invalidated when the slack's row was pivoted out of the tableau
     /// (`row_defines_var`) and cleared on `reset`.
     atom_rows: FxHashMap<(RowKey, TermId), VarId>,
+    /// Reverse of the row cache's slack allocation: slack var → the
+    /// (lhs, rhs, equality, reason) form that interned it.  The stranded-
+    /// bound re-homing sweep (`rehome_stranded_row_bounds`) uses it to
+    /// rebuild a lost row and re-attach its bounds.
+    slack_forms: FxHashMap<VarId, SlackForm>,
     /// Real-atom reason ids seen in any LP conflict during the current
     /// branch-and-bound / cut search.  When the search refutes the integer
     /// problem, this set (not the full reason list) is the unsat core: each
@@ -280,6 +289,7 @@ impl ArithSolver {
             bnb_used_reasons: FxHashSet::default(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
+            slack_forms: FxHashMap::default(),
         }
     }
 
@@ -449,8 +459,90 @@ impl ArithSolver {
         if integral {
             self.int_vars.insert(slack);
         }
+        self.slack_forms
+            .insert(slack, (lhs.to_vec(), rhs, equality, reason));
         self.atom_rows.insert(cache_key, slack);
         slack
+    }
+
+    /// Re-establish a FEASIBLE, current assignment before model values are
+    /// read after a `check()` that ended in `Sat`: the check's internal
+    /// branch-and-bound unwinds its scopes AFTER accepting its leaf, and the
+    /// persisted pivots can leave the raw LP point outside some bound
+    /// windows — a stale or infeasible vector read by `value()` (for
+    /// variables the accepted snapshot does not cover) publishes a model
+    /// that violates asserted atoms.
+    ///
+    /// Returns `Some(conflict_terms)` when the live bound set is
+    /// infeasible — the caller converts that into an honest conflict.
+    pub fn ensure_feasible_or_conflict(&mut self) -> Option<Vec<TermId>> {
+        if self.simplex.state_feasible() {
+            return None;
+        }
+        match self.simplex.check() {
+            Ok(()) => None,
+            Err(reasons) => {
+                let mut terms: Vec<TermId> = Vec::with_capacity(reasons.len());
+                for r in reasons {
+                    if let Some(&t) = self.reasons.get(r as usize) {
+                        terms.push(t);
+                    }
+                }
+                if terms.is_empty() {
+                    terms.extend(self.full_unsat_core());
+                }
+                Some(terms)
+            }
+        }
+    }
+
+    /// Re-home stranded row bounds: a slack that once defined a row
+    /// (`slack_forms`) but no longer does (`row_defines_var` false — a pivot
+    /// consumed its defining row) while still carrying bounds leaves those
+    /// bounds constraining a FREE-floating variable: the semantic constraint
+    /// on the linear form is silently dropped from the live system, and a
+    /// model accepted over that system violates the asserted atom (the
+    /// QF_ANIA/sum10 invalid-model class, exposed once the per-final-check
+    /// reset+replay — which re-homed every atom by re-assertion — was
+    /// replaced by the restart rebuild).
+    ///
+    /// For each stranded slack: re-intern its recorded form (a fresh row,
+    /// content-addressed), copy the bounds over (same values, same reason
+    /// sets, trailed at the current scope), and keep going.  Returns how
+    /// many constraints were re-homed; the caller re-checks feasibility when
+    /// it is non-zero.
+    ///
+    /// Scope note: the re-homed bounds live at the CURRENT scope, while the
+    /// stranded originals stay trailed at their own (possibly shallower)
+    /// scopes.  A backtrack past the re-homing scope re-strands the
+    /// constraint until the next call — callers must run this before every
+    /// feasibility decision that can accept a model, which `final_check`
+    /// does.
+    pub fn rehome_stranded_row_bounds(&mut self) -> usize {
+        let stranded: Vec<VarId> = self
+            .slack_forms
+            .keys()
+            .copied()
+            .filter(|&slack| {
+                self.simplex.has_any_bound(slack) && !self.simplex.row_defines_var(slack)
+            })
+            .collect();
+        let n = stranded.len();
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_REHOME_TRACE").is_ok() && n > 0 {
+            eprintln!("[rehome] {n} stranded");
+        }
+        for old in stranded {
+            let Some((lhs, rhs, equality, reason)) = self.slack_forms.get(&old).cloned() else {
+                continue;
+            };
+            let key = self.row_key(&lhs, rhs, equality);
+            let fresh = self.cached_row_slack(&key, &lhs, rhs, equality, reason);
+            if fresh != old {
+                self.simplex.copy_bounds(old, fresh);
+            }
+        }
+        n
     }
 
     /// Like [`Self::cached_row_slack`] for strict comparisons: no
@@ -1435,6 +1527,13 @@ impl ArithSolver {
     /// variable into `lia_model`.  Called at an integer-feasible leaf so that
     /// `value()` reports the integral model after branch-and-bound unwinds.
     fn snapshot_lia_model(&mut self, int_vars: &[VarId]) {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_INV_TRACE").is_ok()
+            && let Some(v) = self.simplex.debug_verify_invariant()
+        {
+            let bt = std::backtrace::Backtrace::force_capture();
+            eprintln!("[inv-viol] at snapshot: {v}\n{bt}");
+        }
         self.lia_model.clear();
         for &var in int_vars {
             self.lia_model.insert(var, self.simplex.value(var));
@@ -2051,8 +2150,17 @@ impl ArithSolver {
         *nodes += 1;
 
         let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
-            // Fully integral and feasible: record the model.  The caller
-            // keeps its own snapshot semantics, so snapshot here.
+            // Fully integral — and FEASIBLE: the dive's base case can run
+            // right after a failed sibling's scope pop, whose persisted
+            // pivots left basic values outside their (restored, wider)
+            // windows.  Snapshotting that state publishes a model that
+            // violates asserted atoms, so gate on a fresh feasibility
+            // probe (re-derives the stale assignment first); an infeasible
+            // state declines the dive and lets the ordinary branch-and-
+            // bound — whose every node re-solves — handle it.
+            if !self.simplex.state_feasible() {
+                return false;
+            }
             self.snapshot_lia_model(int_vars);
             return true;
         };
@@ -2144,7 +2252,16 @@ impl ArithSolver {
             }
             *nodes += 1;
             let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
-                // Fully integral leaf: record the model, unwind, report Sat.
+                // Fully integral leaf — and feasible: see the dive's base
+                // case for why a fresh probe is required before a snapshot
+                // is trusted.  Infeasible here is not a leaf: unwinding to
+                // `Unknown` keeps the verdict honest.
+                if !self.simplex.state_feasible() {
+                    for _ in 0..stack.len() {
+                        self.simplex.pop();
+                    }
+                    return Ok(TheoryResult::Unknown);
+                }
                 self.snapshot_lia_model(int_vars);
                 for _ in 0..stack.len() {
                     self.simplex.pop();
@@ -2373,6 +2490,7 @@ impl Theory for ArithSolver {
         self.simplex.reset();
         self.term_to_var.clear();
         self.atom_rows.clear();
+        self.slack_forms.clear();
         self.int_vars.clear();
         self.var_to_term.clear();
         self.reason_counter = 0;

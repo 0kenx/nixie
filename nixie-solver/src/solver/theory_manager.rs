@@ -4296,116 +4296,159 @@ impl TheoryCallback for TheoryManager<'_> {
             }
         }
 
-        // Check arithmetic
-        match self.arith.check() {
-            Ok(result) => {
-                match result {
-                    nixie_theories::TheoryCheckResult::Sat => {
-                        // z3-style theory propagation: for every axiomatized
-                        // `ite`-result term `t`, read its current arithmetic
-                        // value `v`; if arithmetic provably fixes `t = v` (with
-                        // an all-atom explanation), propagate the triangle's
-                        // `le`/`ge` atoms.  The clause `(eq ∨ ¬le ∨ ¬ge)` then
-                        // forces `eq`, EUF merges `t` with `v` using the `eq`
-                        // atom (SAT-backed reason), and congruence closure
-                        // collapses the nested chain – deterministically.
-                        // Cost: O(#ite-terms) – one value lookup + at most one
-                        // probe per term (only the constant it's assigned).
-                        let mut theory_props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
-                        for &term in self.ite_result_terms {
-                            let Some(val) = self.arith.value(term) else {
-                                continue;
-                            };
-                            let Some(v) = (if val.is_integer() { val.to_i64() } else { None })
-                            else {
-                                continue;
-                            };
-                            let Some(&(le_var, ge_var)) = self.ite_const_axioms.get(&(term, v))
-                            else {
-                                continue;
-                            };
-                            // Skip if both already assigned (avoids re-emitting
-                            // a no-op Propagated on a fully-assigned trail).
-                            if self.assigned_pol_of(le_var).is_some()
-                                && self.assigned_pol_of(ge_var).is_some()
-                            {
+        // Check arithmetic.  A `Sat` is only provisional until the
+        // stranded-bound re-homing below confirms no asserted constraint was
+        // dropped from the live system (a slack whose defining row a pivot
+        // consumed — see `ArithSolver::rehome_stranded_row_bounds`); the
+        // loop re-checks whenever a re-homing moved something, so a model is
+        // never accepted while it hides a re-homed constraint.
+        for _round in 0..4 {
+            match self.arith.check() {
+                Ok(result) => {
+                    match result {
+                        nixie_theories::TheoryCheckResult::Sat => {
+                            // The check's internal branch-and-bound unwound its
+                            // scopes AFTER accepting its leaf: the persisted
+                            // pivots can leave the raw LP point outside bound
+                            // windows.  Re-establish a feasible current
+                            // assignment before anything reads values (the ite
+                            // triangle propagation, the Nelson-Oppen model
+                            // rounds, model printing); an infeasible live bound
+                            // set is an honest conflict.
+                            if let Some(conflict_terms) = self.arith.ensure_feasible_or_conflict() {
+                                let conflict = self.conflict_from_terms(&conflict_terms);
+                                self.statistics.theory_conflicts += 1;
+                                self.statistics.conflicts += 1;
+                                if self.max_conflicts > 0
+                                    && self.statistics.conflicts >= self.max_conflicts
+                                {
+                                    self.resource_exhausted = true;
+                                    return TheoryCheckResult::Sat;
+                                }
+                                return conflict;
+                            }
+                            // Re-home and, if anything moved, re-run this check:
+                            // the check's own pivots can strand a bound AFTER the
+                            // pre-check re-homing, and an accepted `Sat` over a
+                            // stranded constraint prints a model that violates
+                            // the asserted atom (the QF_ANIA/sum10 invalid-model
+                            // class).
+                            if self.arith.rehome_stranded_row_bounds() > 0 && _round + 1 < 4 {
                                 continue;
                             }
-                            let Some(reasons) = self.arith.fixed_to_const_reason(term, v) else {
-                                continue;
-                            };
-                            let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
-                            let mut ok = true;
-                            for &r in &reasons {
-                                match self.term_to_var.get(&r) {
-                                    Some(&var) if self.assigned_pol_of(var) == Some(true) => {
-                                        reason_lits.push(Lit::pos(var));
-                                    }
-                                    _ => {
-                                        ok = false;
-                                        break;
+                            // z3-style theory propagation: for every axiomatized
+                            // `ite`-result term `t`, read its current arithmetic
+                            // value `v`; if arithmetic provably fixes `t = v` (with
+                            // an all-atom explanation), propagate the triangle's
+                            // `le`/`ge` atoms.  The clause `(eq ∨ ¬le ∨ ¬ge)` then
+                            // forces `eq`, EUF merges `t` with `v` using the `eq`
+                            // atom (SAT-backed reason), and congruence closure
+                            // collapses the nested chain – deterministically.
+                            // Cost: O(#ite-terms) – one value lookup + at most one
+                            // probe per term (only the constant it's assigned).
+                            let mut theory_props: Vec<(Lit, SmallVec<[Lit; 8]>)> = Vec::new();
+                            for &term in self.ite_result_terms {
+                                let Some(val) = self.arith.value(term) else {
+                                    continue;
+                                };
+                                let Some(v) = (if val.is_integer() { val.to_i64() } else { None })
+                                else {
+                                    continue;
+                                };
+                                let Some(&(le_var, ge_var)) = self.ite_const_axioms.get(&(term, v))
+                                else {
+                                    continue;
+                                };
+                                // Skip if both already assigned (avoids re-emitting
+                                // a no-op Propagated on a fully-assigned trail).
+                                if self.assigned_pol_of(le_var).is_some()
+                                    && self.assigned_pol_of(ge_var).is_some()
+                                {
+                                    continue;
+                                }
+                                let Some(reasons) = self.arith.fixed_to_const_reason(term, v)
+                                else {
+                                    continue;
+                                };
+                                let mut reason_lits: SmallVec<[Lit; 8]> = SmallVec::new();
+                                let mut ok = true;
+                                for &r in &reasons {
+                                    match self.term_to_var.get(&r) {
+                                        Some(&var) if self.assigned_pol_of(var) == Some(true) => {
+                                            reason_lits.push(Lit::pos(var));
+                                        }
+                                        _ => {
+                                            ok = false;
+                                            break;
+                                        }
                                     }
                                 }
+                                if !ok {
+                                    continue;
+                                }
+                                if self.assigned_pol_of(le_var).is_none() {
+                                    theory_props.push((Lit::pos(le_var), reason_lits.clone()));
+                                }
+                                if self.assigned_pol_of(ge_var).is_none() {
+                                    theory_props.push((Lit::pos(ge_var), reason_lits));
+                                }
                             }
-                            if !ok {
-                                continue;
+                            if !theory_props.is_empty() {
+                                self.statistics.theory_propagations += theory_props.len() as u64;
+                                return TheoryCheckResult::Propagated(theory_props);
                             }
-                            if self.assigned_pol_of(le_var).is_none() {
-                                theory_props.push((Lit::pos(le_var), reason_lits.clone()));
-                            }
-                            if self.assigned_pol_of(ge_var).is_none() {
-                                theory_props.push((Lit::pos(ge_var), reason_lits));
-                            }
+                            // Arithmetic is consistent, now check model-based theory combination
+                            // This ensures that different theories agree on shared terms
+                            return self.nelson_oppen_combine();
                         }
-                        if !theory_props.is_empty() {
-                            self.statistics.theory_propagations += theory_props.len() as u64;
-                            return TheoryCheckResult::Propagated(theory_props);
-                        }
-                        // Arithmetic is consistent, now check model-based theory combination
-                        // This ensures that different theories agree on shared terms
-                        self.nelson_oppen_combine()
-                    }
-                    nixie_theories::TheoryCheckResult::Unsat(conflict_terms) => {
-                        // Arithmetic conflict detected - convert to SAT conflict clause
-                        let conflict = self.conflict_from_terms(&conflict_terms);
-                        self.statistics.theory_conflicts += 1;
-                        self.statistics.conflicts += 1;
+                        nixie_theories::TheoryCheckResult::Unsat(conflict_terms) => {
+                            // Arithmetic conflict detected - convert to SAT conflict clause
+                            let conflict = self.conflict_from_terms(&conflict_terms);
+                            self.statistics.theory_conflicts += 1;
+                            self.statistics.conflicts += 1;
 
-                        // Check conflict limit
-                        if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts
-                        {
-                            // Dropping a real arithmetic conflict at the limit:
-                            // flag it so the solver reports Unknown, not Sat.
+                            // Check conflict limit
+                            if self.max_conflicts > 0
+                                && self.statistics.conflicts >= self.max_conflicts
+                            {
+                                // Dropping a real arithmetic conflict at the limit:
+                                // flag it so the solver reports Unknown, not Sat.
+                                self.resource_exhausted = true;
+                                return TheoryCheckResult::Sat; // Signal resource exhaustion
+                            }
+
+                            return conflict;
+                        }
+                        nixie_theories::TheoryCheckResult::Propagate(_) => {
+                            // Propagations should be handled in on_assignment
+                            return self.model_based_combination();
+                        }
+                        nixie_theories::TheoryCheckResult::Unknown => {
+                            // The arithmetic solver could not decide this state
+                            // (e.g. LIA branch-and-bound / LP budget exhausted).
+                            // Returning a plain `Sat` here would fabricate a model
+                            // the solver never verified – an unsound `Sat`.  Flag
+                            // resource exhaustion so the owning solver answers
+                            // `Unknown`, and stop the search by reporting Sat.
                             self.resource_exhausted = true;
-                            return TheoryCheckResult::Sat; // Signal resource exhaustion
+                            return TheoryCheckResult::Sat;
                         }
-
-                        conflict
-                    }
-                    nixie_theories::TheoryCheckResult::Propagate(_) => {
-                        // Propagations should be handled in on_assignment
-                        self.model_based_combination()
-                    }
-                    nixie_theories::TheoryCheckResult::Unknown => {
-                        // The arithmetic solver could not decide this state
-                        // (e.g. LIA branch-and-bound / LP budget exhausted).
-                        // Returning a plain `Sat` here would fabricate a model
-                        // the solver never verified – an unsound `Sat`.  Flag
-                        // resource exhaustion so the owning solver answers
-                        // `Unknown`, and stop the search by reporting Sat.
-                        self.resource_exhausted = true;
-                        TheoryCheckResult::Sat
                     }
                 }
-            }
-            Err(_error) => {
-                // Internal error in the arithmetic solver.  We have no verified
-                // model, so we must not claim `Sat`.  Flag resource exhaustion
-                // (→ solver answers `Unknown`) and stop the search.
-                self.resource_exhausted = true;
-                TheoryCheckResult::Sat
+                Err(_error) => {
+                    // Internal error in the arithmetic solver.  We have no verified
+                    // model, so we must not claim `Sat`.  Flag resource exhaustion
+                    // (→ solver answers `Unknown`) and stop the search.
+                    self.resource_exhausted = true;
+                    return TheoryCheckResult::Sat;
+                }
             }
         }
+        // Re-homing rounds exhausted with constraints still stranding: the
+        // arithmetic verdict above cannot be trusted for a model.  Answer
+        // honestly rather than accept it.
+        self.resource_exhausted = true;
+        TheoryCheckResult::Sat
     }
 
     fn on_new_level(&mut self, level: u32) {
@@ -4524,7 +4567,11 @@ impl TheoryCallback for TheoryManager<'_> {
         // function-bearing problems; arith/array/BV-bearing inputs always,
         // pure-EUF inputs only when not eagerly interned (the eager path
         // keeps its own interning discipline).
-        if level == 0 && self.theory_mode != TheoryMode::Lazy && self.euf.has_app_nodes() {
+        if level == 0
+            && self.theory_mode != TheoryMode::Lazy
+            && self.euf.has_app_nodes()
+            && std::env::var("NIXIE_NO_RESTART_RESYNC").is_err()
+        {
             let arith_bearing = !self.var_to_parsed_arith.is_empty()
                 || !self.array_theory.is_empty()
                 || !self.bv_terms.is_empty();
