@@ -67,8 +67,9 @@ impl Parser<'_> {
         // `(_ bvN W)`: the standard indexed bit-vector literal (the
         // FloatingPoint/FixedPoint theories and most benchmarks spell wide
         // constants this way; `#x`/`#b` only reach 64-bit-friendly widths
-        // comfortably).  The value must fit the declared width — SMT-LIB
-        // defines the literal as the width-`W` encoding of `N`.
+        // comfortably).  Out-of-range `N` is read modulo `2^W`
+        // (`mk_bitvec` normalizes; z3 parity — see its comment), so the
+        // literal is always accepted.
         if let Some(digits) = name.strip_prefix("bv")
             && !digits.is_empty()
             && digits.chars().all(|c| c.is_ascii_digit())
@@ -90,14 +91,9 @@ impl Parser<'_> {
                 position: 0,
                 message: format!("invalid bit-vector literal: (_ bv{digits} {width})"),
             })?;
-            if value.bits() > u64::from(width) {
-                return Err(NixieError::ParseError {
-                    position: 0,
-                    message: format!(
-                        "(_ bv{digits} {width}): value does not fit the declared width"
-                    ),
-                });
-            }
+            // Out-of-range values wrap modulo 2^width (mk_bitvec
+            // normalizes; see its comment for why staying raw is a
+            // soundness bug rather than a harmless oddity).
             if args.is_empty() {
                 return Ok(Some(self.manager.mk_bitvec(value, width)));
             }

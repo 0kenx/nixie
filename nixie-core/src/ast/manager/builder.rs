@@ -55,14 +55,26 @@ impl TermManager {
 
     /// Create a bit vector constant
     pub fn mk_bitvec(&mut self, value: impl Into<BigInt>, width: u32) -> TermId {
+        let mut value = value.into();
+        // Canonical residue: a width-`w` bit-vector denotes a value in
+        // `[0, 2^w)`.  SMT-LIB's `(_ bvN W)` reads `N` modulo `2^W` (z3
+        // parity: `(= (_ bv4 1) (_ bv0 1))` is VALID), and hash-consing
+        // must never see two terms for one value — an out-of-range literal
+        // that stays raw makes `(_ bv4 1)` and `(_ bv0 1)` distinct terms,
+        // and every value-comparing fold then folds `(= 4 0)` to `false`:
+        // a false `sat` on `(not (= (_ bv4 1) (_ bv0 1)))`.  Negative
+        // inputs reduce to their two's-complement residue, so no
+        // `BitVecConst` ever carries a negative value (the blaster's
+        // `to_biguint` rejection of negative constants becomes dead).
+        //
+        // Fast path: in-range non-negative values (the overwhelming
+        // majority) skip the modulus arithmetic entirely.
+        if value.sign() == num_bigint::Sign::Minus || value.bits() > u64::from(width) {
+            let modulus = BigInt::from(2u8).pow(width);
+            value = ((value % &modulus) + &modulus) % &modulus;
+        }
         let sort = self.sorts.bitvec(width);
-        self.intern(
-            TermKind::BitVecConst {
-                value: value.into(),
-                width,
-            },
-            sort,
-        )
+        self.intern(TermKind::BitVecConst { value, width }, sort)
     }
 
     /// Create a named variable
