@@ -342,3 +342,22 @@ Remaining gap on this family (8.3 s vs 0.068 s on the simplified form)
 is blast+SAT on the converged shape; the missing cascade pieces
 (ite-through-concat lifting, `= #x0000` selector normalizations) are the
 next increments if more is needed.
+
+## Addendum (2026-09-12, small hours): shift wiring landed default-off (797a6bf0)
+
+The last visible piece of z3's cascade for the shift-heavy families —
+const-distance shifts rewired to concat/extract at term construction
+(`x << k = concat(x[w-1-k:0], 0^k)`, `x >>u k = concat(0^k, x[w-1:k])`;
+Z3 `mk_bv_shl`/`mk_bv_lshr` numeral cases) — is in, behind
+`NIXIE_BV_SHIFT_WIRING=1` (default off).
+
+- Deterministic serial: bitrev0256 1.5×, bitrev0512/1024 2.0× faster;
+  composes with `NIXIE_BV_CONST_FLOW` (same family, different layer).
+- RWS family re-verified file-by-file against z3 in both arms (the
+  width-126 `bvlshr` shapes the reverted structural study tripped on):
+  zero disagreements.
+- 4476/4477 solver+core tests green with the flag forced on; the single
+  failure is the printer structural-contract test that pins "bvshl x 3
+  stays BvShl" — the exact contract this flag changes when enabled.
+- The 509-file screen: run settled, not under load-30+ (the lesson from
+  this session's early screens).  Cells + binary: `precompile/797a6bf0/`.
