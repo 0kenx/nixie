@@ -46,3 +46,6 @@ pub use bellman_ford::{BellmanFord, BellmanFordResult, NegativeCycle, Spfa};
 pub use dense_core::{DenseDlCore, DlAssert, DlPropagation};
 pub use graph::{ConstraintGraph, DiffConstraint, DiffEdge, DiffVar};
 pub use solver::{DiffLogicConfig, DiffLogicResult, DiffLogicSolver, DiffLogicStats};
+
+#[cfg(test)]
+mod fuzz_incremental;

@@ -269,6 +269,38 @@ fn arith_verdicts_match_bruteforce_oracle() {
                 v == 0,
                 "seed {seed}: boxed witness {witness:?} exists but solver verdict={v} (0=sat,1=unsat)\n ops: {live:?}"
             );
+            // On Sat, the solver's own reported values must satisfy every
+            // live constraint (the model-based combination layer and model
+            // printing both read `value()` — a drifted incremental
+            // assignment poisons them even when the verdict is right).
+            for op in &live {
+                let Op::Assert(kind, terms, rhs) = op else {
+                    continue;
+                };
+                let mut acc = num_rational::Rational64::from_integer(0);
+                let mut ok = true;
+                for (t, c) in terms {
+                    let Some(val) = s.value(*t) else {
+                        ok = false;
+                        break;
+                    };
+                    acc += val * num_rational::Rational64::from_integer(*c);
+                }
+                if !ok {
+                    continue;
+                }
+                let sat_q = match kind {
+                    0 => acc <= num_rational::Rational64::from_integer(*rhs),
+                    1 => acc >= num_rational::Rational64::from_integer(*rhs),
+                    2 => acc == num_rational::Rational64::from_integer(*rhs),
+                    3 => acc < num_rational::Rational64::from_integer(*rhs),
+                    _ => acc > num_rational::Rational64::from_integer(*rhs),
+                };
+                assert!(
+                    sat_q,
+                    "seed {seed}: solver reports Sat but its own values violate {op:?} (eval={acc})"
+                );
+            }
         }
     }
 }
