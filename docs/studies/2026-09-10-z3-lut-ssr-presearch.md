@@ -124,3 +124,20 @@ fires: the schedule is the original width-8 cubes, and `c2.len()+1 < c1.len()`
 skips already-shrunk targets. Re-queueing new binaries as extra subsumers
 (Z3 `m_sub_bin_todo`) moved 102,060→102,150 subsumed and **44.9k → 83.5k**
 conflicts, trail still 67. Do not requeue.
+
+## Negative: keep-more-cubes strengthen cap (2026-09-10)
+
+Z3's dump keeps 22k width-8; we keep 4k. Capping SSR so a clause is not
+strengthened below width `w` (Nixie search on a less-flattened residual):
+
+| min width | subsumed | strengthened | conflicts |
+| (none) | 102,060 | 540,747 | **44,894** |
+| 7 | 683 | 163,237 | 181,651 |
+| 6 | 6,472 | 320,200 | 112,483 |
+| 5 | 27,768 | 452,915 | 102,683 |
+| 4 | 73,596 | 527,044 | 126,046 |
+| 3 | 100,700 | 541,097 | 90,267 |
+| 2 | 102,060 | 540,747 | 44,894 |
+
+Full flatten in one round is Nixie's local optimum. Do not stop this instance
+by copying Z3's leftover cubes. The 1.94× gap is Z3 search × Z3 residual.
