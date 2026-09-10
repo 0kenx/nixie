@@ -126,63 +126,74 @@ fn scan<'a, const COMPACT: bool>(
                 work,
             );
         };
-        let (pair, tail) = live.lits().split_at_mut(2);
-        debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
-        let first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
-        // Even satisfied exits keep the original eager normalization:
-        // subsequent inprocessing observes literal order.
-        pair[0] = first;
-        pair[1] = false_lit;
-        if propagation_value(values, first) > 0 {
-            #[cfg(feature = "bcp-work")]
-            {
-                work.first_satisfied += 1;
-            }
-            entry.keep(Some(first));
-            continue;
-        }
-        // A disjoint mutable iterator needs only the current slot and end;
-        // no tail index or derived arena-plus-tail base survives the loop.
+        let searched = live.searched();
         let mut found = None;
-        for slot in tail {
-            #[cfg(feature = "bcp-work")]
-            {
-                work.tail_probes += 1;
-            }
-            let literal = *slot;
-            let value = propagation_value(values, literal);
-            if value > 0 {
+        let mut new_searched = searched;
+        let first;
+        {
+            let (pair, tail) = live.lits().split_at_mut(2);
+            debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
+            first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
+            // Even satisfied exits keep the original eager normalization:
+            // subsequent inprocessing observes literal order.
+            pair[0] = first;
+            pair[1] = false_lit;
+            if propagation_value(values, first) > 0 {
                 #[cfg(feature = "bcp-work")]
                 {
-                    work.tail_satisfied += 1;
+                    work.first_satisfied += 1;
                 }
-                found = Some(Some(literal));
-                break;
-            }
-            if value == 0 {
-                core::mem::swap(&mut pair[1], slot);
-                #[cfg(feature = "bcp-work")]
-                {
-                    work.watch_moves += 1;
+                found = Some(Some(first));
+            } else {
+                // CaDiCaL `clause->pos` / Kissat `c->searched` (Gent JAIR'13):
+                // resume at the last replacement index, then wrap to lits[2].
+                let hit = crate::memory::find_saved_pos_hit(
+                    tail,
+                    searched,
+                    |lit| propagation_value(values, lit),
+                    || {
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            work.tail_probes += 1;
+                        }
+                    },
+                );
+                if let Some((i, literal, value)) = hit {
+                    new_searched = crate::memory::saved_pos_store(i);
+                    if value > 0 {
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            work.tail_satisfied += 1;
+                        }
+                        found = Some(Some(literal));
+                    } else {
+                        core::mem::swap(&mut pair[1], &mut tail[i]);
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            work.watch_moves += 1;
+                        }
+                        // SAFETY: the buffer reserves one slot per input watcher;
+                        // each entry can reach this branch at most once, then breaks
+                        // and is removed. A suffix inherits the same writer. Since
+                        // the replacement is undefined and false_lit is false, the
+                        // queued destination cannot be the active watch list.
+                        #[allow(unsafe_code)]
+                        unsafe {
+                            moves.push(
+                                pair[1].negate(),
+                                Watcher {
+                                    blocker: first,
+                                    ..watcher
+                                },
+                            )
+                        };
+                        found = Some(None);
+                    }
                 }
-                // SAFETY: the buffer reserves one slot per input watcher;
-                // each entry can reach this branch at most once, then breaks
-                // and is removed. A suffix inherits the same writer. Since
-                // the replacement is undefined and false_lit is false, the
-                // queued destination cannot be the active watch list.
-                #[allow(unsafe_code)]
-                unsafe {
-                    moves.push(
-                        pair[1].negate(),
-                        Watcher {
-                            blocker: first,
-                            ..watcher
-                        },
-                    )
-                };
-                found = Some(None);
-                break;
             }
+        }
+        if new_searched != searched {
+            live.set_searched(new_searched);
         }
         if let Some(parked) = found {
             if let Some(blocker) = parked {

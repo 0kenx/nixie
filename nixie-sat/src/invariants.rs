@@ -528,11 +528,13 @@ pub(crate) fn check_learned_clause_lbd(solver: &Solver, clause_id: ClauseId) -> 
         return Ok(()); // unit clauses carry no LBD; see check_learned_clause_bounds
     }
     let recomputed = recompute_lbd(&solver.trail, clause.lits);
-    if recomputed != clause.lbd {
+    let stored = recomputed.min(u32::from(u8::MAX));
+    if stored != clause.lbd {
         return Err(format!(
             "learned clause {clause_id:?} was stored with LBD {} but recomputing it \
-             immediately after learning gives {recomputed}",
-            clause.lbd
+             immediately after learning gives {recomputed} (stored width saturates at {})",
+            clause.lbd,
+            u8::MAX
         ));
     }
     Ok(())

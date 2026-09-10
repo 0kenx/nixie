@@ -109,11 +109,14 @@ const TIER_SHIFT: u8 = 4;
 ///
 /// Widths are matched to their actual consumers, not defaulted to `u32`:
 /// * `len: u32` – genuinely large DIMACS clauses exist.
-/// * `lbd: u16` – distinct decision levels; every semantic consumer
-///   thresholds at ≤ 10 (tiering) or averages into `u64` stats. Stored
-///   saturating at `u16::MAX`; the debug invariant that recomputes an LBD
-///   right after learning must compare against the clamped value (see
-///   `invariants::check_learned_clause_lbd`).
+/// * `lbd: u8` – every semantic consumer thresholds at ≤ 10 (tiering) or
+///   averages into `u64` stats. Stored saturating at `u8::MAX`; the debug
+///   invariant that recomputes an LBD right after learning compares against
+///   the clamped value (see `invariants::check_learned_clause_lbd`).
+/// * `searched: u8` – CaDiCaL `clause->pos` / Kissat `c->searched` (Gent
+///   JAIR'13). Clause index where the last replacement scan started, ≥ 2.
+///   Clauses longer than 255 wrap the stored index; the scan still covers
+///   the tail via wrap-around. The 12-byte geometry is unchanged.
 /// * flags (2 bits) and tier (2 bits) share one byte.
 /// * `usage: u8` saturating – the tier-promotion consumers fire at 3 and 10
 ///   uses; saturation at 255 cannot change any decision those consumers
@@ -131,7 +134,8 @@ const TIER_SHIFT: u8 = 4;
 #[derive(Clone, Copy)]
 struct ClauseHeader {
     len: u32,
-    lbd: u16,
+    lbd: u8,
+    searched: u8,
     flags_tier: u8,
     usage: u8,
     identity: u32,
@@ -142,6 +146,7 @@ impl ClauseHeader {
         Self {
             len,
             lbd: 0,
+            searched: 2,
             flags_tier: if learned { FLAG_LEARNED } else { 0 },
             usage: 0,
             identity: u32::MAX,
@@ -168,10 +173,10 @@ impl ClauseHeader {
         self.lbd as u32
     }
 
-    /// Set the LBD, saturating at `u16::MAX` (the stored width).
+    /// Set the LBD, saturating at `u8::MAX` (the stored width).
     #[inline]
     fn set_lbd(&mut self, lbd: u32) {
-        self.lbd = lbd.min(u16::MAX as u32) as u16;
+        self.lbd = lbd.min(u32::from(u8::MAX)) as u8;
     }
 }
 
@@ -186,6 +191,8 @@ const MAX_ARENA_BYTES: usize = if usize::BITS > 32 {
 };
 // The header has no internal padding: raw typed writes initialize all bytes.
 const _: () = assert!(HEADER_BYTES == 12);
+const _: () = assert!(core::mem::offset_of!(ClauseHeader, searched) == 5);
+const _: () = assert!(core::mem::offset_of!(ClauseHeader, identity) == 8);
 
 /// Validate before reserving or writing. Keep room for the permanent tombstone
 /// even when an entirely live arena is compacted. No narrowing conversion may
@@ -316,13 +323,15 @@ pub(crate) struct PropagationArena<'a> {
     identities: usize,
 }
 
-/// One live arena slot: the mutable payload and immutable stable identity
-/// occupy disjoint bytes. Holding this borrow prevents deletion, shrink,
-/// allocation and relocation through the arena view. No raw ref can be
-/// supplied to `reason`: it belongs to this exact borrowed live clause.
+/// One live arena slot: the mutable payload, saved-position byte and
+/// immutable stable identity occupy disjoint bytes. Holding this borrow
+/// prevents deletion, shrink, allocation and relocation through the arena
+/// view. No raw ref can be supplied to `reason`: it belongs to this exact
+/// borrowed live clause.
 pub(crate) struct LivePropagationClause<'a> {
     lits: &'a mut [Lit],
     identity: &'a u32,
+    searched: &'a mut u8,
 }
 
 impl LivePropagationClause<'_> {
@@ -335,6 +344,58 @@ impl LivePropagationClause<'_> {
     pub(crate) fn reason(&self) -> ClauseId {
         ClauseId::new(*self.identity)
     }
+
+    #[inline]
+    pub(crate) fn searched(&self) -> u8 {
+        *self.searched
+    }
+
+    /// Clause index (≥ 2) where the next replacement scan starts.
+    #[inline]
+    pub(crate) fn set_searched(&mut self, searched: u8) {
+        *self.searched = searched.max(2);
+    }
+}
+
+/// Tail index where Gent's saved-position scan starts (`clause->pos - 2`).
+#[inline]
+pub(crate) fn saved_pos_tail_start(searched: u8, tail_len: usize) -> usize {
+    let start = (searched as usize).saturating_sub(2);
+    if start >= tail_len { 0 } else { start }
+}
+
+/// Store a tail index as a header `searched` clause position.
+#[inline]
+pub(crate) fn saved_pos_store(tail_index: usize) -> u8 {
+    (tail_index + 2).min(255) as u8
+}
+
+/// First non-false tail literal, resuming at `searched` then wrapping to
+/// index 0 (CaDiCaL `clause->pos` / Kissat `c->searched`). `on_probe` runs
+/// once per inspected slot.
+#[inline]
+pub(crate) fn find_saved_pos_hit(
+    tail: &[Lit],
+    searched: u8,
+    mut value_of: impl FnMut(Lit) -> i8,
+    mut on_probe: impl FnMut(),
+) -> Option<(usize, Lit, i8)> {
+    let n = tail.len();
+    if n == 0 {
+        return None;
+    }
+    let start = saved_pos_tail_start(searched, n);
+    let mut consider = |from: usize, to: usize| -> Option<(usize, Lit, i8)> {
+        for (offset, &lit) in tail[from..to].iter().enumerate() {
+            on_probe();
+            let value = value_of(lit);
+            if value >= 0 {
+                return Some((from + offset, lit, value));
+            }
+        }
+        None
+    };
+    consider(start, n).or_else(|| consider(0, start))
 }
 
 impl PropagationArena<'_> {
@@ -391,6 +452,7 @@ impl PropagationArena<'_> {
             LivePropagationClause {
                 lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
                 identity: &*core::ptr::addr_of!((*header).identity),
+                searched: &mut (*header).searched,
             }
         })
     }
@@ -938,6 +1000,11 @@ impl ClauseArena {
             // `check_learned_clause_lbd` flags and tier promotion mis-reads.
             let new_lbd = (*hp).lbd().min(new_lits.len().saturating_sub(1) as u32);
             (*hp).set_lbd(new_lbd);
+            // cadical `shrink_clause`: only reset the saved watch position
+            // when it would fall off the shortened tail.
+            if u32::from((*hp).searched) >= new_lits.len() as u32 {
+                (*hp).searched = 2;
+            }
         }
         true
     }
@@ -975,13 +1042,13 @@ impl ClauseArena {
         })
     }
 
-    /// Set the LBD of the clause at `r`. Values above `u16::MAX` saturate –
+    /// Set the LBD of the clause at `r`. Values above `u8::MAX` saturate –
     /// every consumer thresholds at ≤ 10 or averages into `u64` stats.
     pub fn set_lbd(&mut self, r: ClauseRef, lbd: u32) {
         if self.read_header(r).is_some() {
             // SAFETY: `r` validated by `get`.
             unsafe {
-                (*self.header_ptr_mut(r)).lbd = lbd.min(u16::MAX as u32) as u16;
+                (*self.header_ptr_mut(r)).lbd = lbd.min(u32::from(u8::MAX)) as u8;
             }
         }
     }
@@ -1104,6 +1171,10 @@ impl ClauseArena {
     /// the literal slice), with the region-arithmetic validation moved to
     /// `debug_assert!`s.
     ///
+    /// Hot-path live clause for propagation: literals, saved watch position
+    /// and stable identity. Region-arithmetic validation lives in
+    /// `debug_assert!`s.
+    ///
     /// Release elision argument: `self.pos` is written only by `alloc`
     /// (`self.pos = end`, monotonic) and by `compact` (`self.pos = dst`,
     /// shrinking) – and a compaction **synchronously rewrites every
@@ -1124,15 +1195,14 @@ impl ClauseArena {
     /// the bulk of the ~10 % `read_header` bucket in the noL propagate
     /// profile.
     #[inline]
-    pub fn live_lits_hot(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
+    pub(crate) fn live_clause_hot(&mut self, r: ClauseRef) -> Option<LivePropagationClause<'_>> {
         if r.is_null() {
             return None;
         }
         debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
-        // SAFETY: `r` is non-null and (by the arena-invariant argument
-        // above, debug-asserted) within the live region at a slot
-        // boundary written by `alloc`; reading by value holds no borrow.
-        let h = unsafe { core::ptr::read(self.header_ptr(r)) };
+        let header = self.header_ptr_mut(r);
+        // SAFETY: same arena-issued/ref-relocation contract as `live_lits_hot`.
+        let h = unsafe { core::ptr::read(header) };
         debug_assert!(
             h.len as usize
                 <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
@@ -1140,14 +1210,20 @@ impl ClauseArena {
         if h.deleted() {
             return None;
         }
-        // SAFETY: slot valid; the literal array holds `h.len` initialised
-        // elements (a shrunk slot's tail is unreachable).
+        debug_assert!((h.identity as usize) < self.activities.len());
         Some(unsafe {
-            core::slice::from_raw_parts_mut(
-                Self::lits_ptr_mut(self.header_ptr_mut(r)),
-                h.len as usize,
-            )
+            LivePropagationClause {
+                lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
+                identity: &*core::ptr::addr_of!((*header).identity),
+                searched: &mut (*header).searched,
+            }
         })
+    }
+
+    /// Literal slice of a live clause, addressing the slot directly.
+    #[inline]
+    pub fn live_lits_hot(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
+        self.live_clause_hot(r).map(|live| live.lits)
     }
 
     /// Mutable literal slice for a **live** (non-deleted) clause, or `None`.
@@ -1459,7 +1535,12 @@ mod tests {
                 assert_eq!(live.reason(), ClauseId::new(id as u32));
                 // Keep the identity reference live across payload writes.
                 // The two ranges share a u64 allocation word but no bytes.
-                let LivePropagationClause { lits, identity } = &mut live;
+                let LivePropagationClause {
+                    lits,
+                    identity,
+                    searched,
+                } = &mut live;
+                assert_eq!(**searched, 2);
                 lits.reverse();
                 literals.reverse();
                 assert_eq!(**identity, id as u32);
@@ -1761,14 +1842,45 @@ mod tests {
     fn header_is_twelve_bytes() {
         assert_eq!(core::mem::size_of::<ClauseHeader>(), 12);
         assert_eq!(core::mem::align_of::<ClauseHeader>(), 4);
+        assert_eq!(core::mem::offset_of!(ClauseHeader, searched), 5);
+        assert_eq!(core::mem::offset_of!(ClauseHeader, identity), 8);
     }
 
     #[test]
-    fn lbd_saturates_at_u16_max() {
+    fn searched_starts_at_two_and_resets_when_shrink_drops_it() {
+        let mut a = ClauseArena::new(0);
+        let r = a.alloc(&[l(0), l(1), l(2), l(3), l(4)], false);
+        {
+            let mut live = a.live_clause_hot(r).expect("live");
+            assert_eq!(live.searched(), 2);
+            live.set_searched(4);
+        }
+        assert_eq!(a.live_clause_hot(r).expect("kept").searched(), 4);
+        assert!(a.shrink(r, &[l(0), l(1), l(2)]));
+        assert_eq!(a.live_clause_hot(r).expect("shrunk").searched(), 2);
+        assert!(a.shrink(r, &[l(0), l(1), l(2)]));
+        assert_eq!(a.live_clause_hot(r).expect("same len").searched(), 2);
+    }
+
+    #[test]
+    fn saved_pos_tail_start_clamps_past_the_tail() {
+        assert_eq!(saved_pos_tail_start(2, 5), 0);
+        assert_eq!(saved_pos_tail_start(4, 5), 2);
+        assert_eq!(saved_pos_tail_start(9, 5), 0);
+        assert_eq!(saved_pos_tail_start(2, 0), 0);
+        assert_eq!(saved_pos_store(0), 2);
+        assert_eq!(saved_pos_store(300), 255);
+        let tail = [l(10), l(11), l(12)];
+        let hit = find_saved_pos_hit(&tail, 4, |lit| if lit == l(10) { 0 } else { -1 }, || {});
+        assert_eq!(hit, Some((0, l(10), 0)));
+    }
+
+    #[test]
+    fn lbd_saturates_at_u8_max() {
         let mut a = ClauseArena::new(0);
         let r = a.alloc(&[l(0), l(1)], true);
         a.set_lbd(r, 500_000);
-        assert_eq!(a.get(r).expect("sat").lbd, u16::MAX as u32);
+        assert_eq!(a.get(r).expect("sat").lbd, u8::MAX as u32);
         a.set_lbd(r, 7);
         assert_eq!(a.get(r).expect("small").lbd, 7);
     }

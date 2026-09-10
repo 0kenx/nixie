@@ -399,23 +399,15 @@ impl ClauseDatabase {
         self.arena.propagation()
     }
 
-    /// Mutable literal slice of a live clause addressed **directly** by its
-    /// arena slot – the propagation hot path, which already carries the slot
-    /// inside its watchers and must not pay the extra `refs[id]` indirection
-    /// (a second dependent cache miss per visited watcher) on every visit.
-    ///
-    /// Validation is identical to [`Self::live_lits_mut`] (slot bounds,
-    /// deleted flag); a null/stale ref simply reads as "no clause", exactly
-    /// as an invalid id does.
-    /// Propagation-scan entry (formerly two variants: the fully
-    /// validating `live_lits_by_ref` and the hot elided
-    /// `live_lits_by_ref_hot`; the hot variant measured 12–16 % fewer
-    /// instructions on identical trajectories, so it is the only one —
-    /// region validation lives in `debug_assert!`s, see
-    /// [`ClauseArena::live_lits_hot`]'s safety argument).
+    /// Live clause addressed **directly** by its arena slot: literals, Gent
+    /// saved-position and stable identity. Region validation lives in
+    /// `debug_assert!`s; see [`ClauseArena::live_clause_hot`].
     #[inline]
-    pub(crate) fn live_lits_by_ref(&mut self, r: ClauseRef) -> Option<&mut [Lit]> {
-        self.arena.live_lits_hot(r)
+    pub(crate) fn live_clause_by_ref(
+        &mut self,
+        r: ClauseRef,
+    ) -> Option<crate::memory::LivePropagationClause<'_>> {
+        self.arena.live_clause_hot(r)
     }
 
     /// Metadata by direct slot, including deleted headers for lazy consumers.

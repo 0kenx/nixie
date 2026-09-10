@@ -30,6 +30,35 @@ fn raw_solver(legacy: bool, reverse: bool, hbr: bool) -> (Solver, Vec<ClauseId>)
 }
 
 #[test]
+fn saved_position_scan_moves_the_first_non_false_tail_literal() {
+    for legacy in [false, true] {
+        let mut s = Solver::new();
+        s.propagate_legacy_oracle = legacy;
+        s.ensure_vars(6);
+        let [t, w, a, b, u] = [
+            Lit::from_code(0),
+            Lit::from_code(2),
+            Lit::from_code(4),
+            Lit::from_code(6),
+            Lit::from_code(8),
+        ];
+        let id = s.clauses.add_original([!t, w, a, b, u]);
+        s.attach_watchers(id, !t, w);
+        s.trail.new_decision_level();
+        s.trail.assign_decision(!a);
+        s.trail.assign_decision(!b);
+        while s.trail.next_to_propagate().is_some() {}
+        s.trail.new_decision_level();
+        s.trail.assign_decision(t);
+        assert_eq!(s.propagate(), None);
+        let view = s.clauses.get(id).expect("clause");
+        assert_eq!(view.lits[0], w);
+        assert_eq!(view.lits[1], u);
+        assert_eq!(view.lits[4], !t);
+    }
+}
+
+#[test]
 fn exhaustive_small_states_preserve_units_moves_conflicts_and_budgets() {
     let mut cases = 0;
     for pattern in 0..81 {

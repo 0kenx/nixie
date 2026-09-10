@@ -374,8 +374,8 @@ impl Solver {
                     {
                         self.stats.propagation_work.clause_reads += 1;
                     }
-                    let clause = match self.clauses.live_lits_by_ref(watcher.r) {
-                        Some(lits) => lits,
+                    let mut live = match self.clauses.live_clause_by_ref(watcher.r) {
+                        Some(live) => live,
                         None => {
                             #[cfg(feature = "bcp-work")]
                             {
@@ -403,115 +403,106 @@ impl Solver {
                         crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
                     }
                     let false_lit = lit.negate();
-                    debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
-                    if bcp_stats && clause[0] == false_lit {
-                        crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
-                    }
-                    // XOR cancels the false watch, independent of its position.
-                    // Store the normalized pair even on satisfied exits: literal
-                    // order is observable by later inprocessing tie-breaks.
-                    let first =
-                        Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
-                    clause[0] = first;
-                    clause[1] = false_lit;
-
-                    // If first watch is true, clause is satisfied
-                    if self.trail.lit_val_hot(first) > 0 {
-                        #[cfg(feature = "bcp-work")]
-                        {
-                            self.stats.propagation_work.first_satisfied += 1;
-                        }
-                        if bcp_stats {
-                            crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
-                        }
-                        if write != read {
-                            watches[write] = watcher;
-                        }
-                        // Refresh only the blocker word (the other two words are
-                        // unchanged; while `write == read` a full write-back
-                        // would be a pure self-write).
-                        watches[write].blocker = first;
-                        write += 1;
-                        continue;
-                    }
-
-                    // Look for a replacement watch, separating the satisfied
-                    // case from the unassigned case (cadical `propagate.cpp`'s
-                    // `if (v > 0) j[-1].blit = r` / `else if (!v) ...` pair):
-                    //
-                    // * a **satisfied** replacement literal means the clause
-                    //   cannot become unit or conflict before a backtrack —
-                    //   the watcher STAYS on this list and only its blocker is
-                    //   refreshed. No clause write, no watch-list move; the
-                    //   next visit short-circuits on the blocker byte instead
-                    //   of re-scanning the clause.
-                    // * only an **unassigned** replacement moves the watch to
-                    //   the new literal's list (the watch must track a
-                    //   non-false literal to preserve the two-watch
-                    //   invariant).
-                    //
-                    // The previous `>= 0` branch moved the watch in both cases,
-                    // paying a clause swap plus a cross-list push for every
-                    // satisfied replacement — the larger half of the blocker
-                    // gap measured against cadical (55% hit rate: watchers
-                    // parked on satisfied literals kept stale blockers).
+                    let searched = live.searched();
                     let mut found = false;
-                    for j in 2..clause.len() {
-                        #[cfg(feature = "clause-traffic")]
-                        traffic::record(&mut self.clause_traffic, traffic_event, traffic::SCAN);
-                        #[cfg(feature = "bcp-regions")]
-                        regions::record(&mut self.region_stats, region_event, regions::SCAN);
-                        #[cfg(feature = "bcp-work")]
-                        {
-                            self.stats.propagation_work.tail_probes += 1;
+                    let mut new_searched = searched;
+                    let first;
+                    {
+                        let clause = live.lits();
+                        debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
+                        if bcp_stats && clause[0] == false_lit {
+                            crate::diag_bcp::SWAPS.fetch_add(1, Relaxed);
                         }
-                        let l = clause[j];
-                        let v = self.trail.lit_val_hot(l);
-                        if v > 0 {
+                        // XOR cancels the false watch, independent of its position.
+                        // Store the normalized pair even on satisfied exits: literal
+                        // order is observable by later inprocessing tie-breaks.
+                        first =
+                            Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
+                        clause[0] = first;
+                        clause[1] = false_lit;
+
+                        // If first watch is true, clause is satisfied
+                        if self.trail.lit_val_hot(first) > 0 {
                             #[cfg(feature = "bcp-work")]
                             {
-                                self.stats.propagation_work.tail_satisfied += 1;
+                                self.stats.propagation_work.first_satisfied += 1;
                             }
-                            // Satisfied replacement: keep the watcher here,
-                            // refresh the blocker to the satisfied literal
-                            // (blocker word only).
+                            if bcp_stats {
+                                crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
+                            }
                             if write != read {
                                 watches[write] = watcher;
                             }
-                            watches[write].blocker = l;
+                            watches[write].blocker = first;
                             write += 1;
-                            if bcp_stats {
-                                crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
-                            }
                             found = true;
-                            break;
-                        }
-                        if v == 0 {
-                            // Unassigned replacement: move the watch (the
-                            // eager normalization above already set
-                            // `lits[0]` to the non-false watch).
-                            clause.swap(1, j);
-                            #[cfg(feature = "bcp-work")]
-                            {
-                                self.stats.propagation_work.watch_moves += 1;
-                            }
-                            if bcp_stats {
-                                crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
-                            }
-                            self.watches.add(
-                                clause[1].negate(),
-                                Watcher {
-                                    blocker: first,
-                                    ..watcher
+                        } else {
+                            let (pair, tail) = clause.split_at_mut(2);
+                            let hit = crate::memory::find_saved_pos_hit(
+                                tail,
+                                searched,
+                                |l| self.trail.lit_val_hot(l),
+                                || {
+                                    #[cfg(feature = "clause-traffic")]
+                                    traffic::record(
+                                        &mut self.clause_traffic,
+                                        traffic_event,
+                                        traffic::SCAN,
+                                    );
+                                    #[cfg(feature = "bcp-regions")]
+                                    regions::record(
+                                        &mut self.region_stats,
+                                        region_event,
+                                        regions::SCAN,
+                                    );
+                                    #[cfg(feature = "bcp-work")]
+                                    {
+                                        self.stats.propagation_work.tail_probes += 1;
+                                    }
                                 },
                             );
-                            found = true;
-                            break;
+                            if let Some((i, l, v)) = hit {
+                                new_searched = crate::memory::saved_pos_store(i);
+                                if v > 0 {
+                                    #[cfg(feature = "bcp-work")]
+                                    {
+                                        self.stats.propagation_work.tail_satisfied += 1;
+                                    }
+                                    if write != read {
+                                        watches[write] = watcher;
+                                    }
+                                    watches[write].blocker = l;
+                                    write += 1;
+                                    if bcp_stats {
+                                        crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
+                                    }
+                                    found = true;
+                                } else {
+                                    core::mem::swap(&mut pair[1], &mut tail[i]);
+                                    #[cfg(feature = "bcp-work")]
+                                    {
+                                        self.stats.propagation_work.watch_moves += 1;
+                                    }
+                                    if bcp_stats {
+                                        crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
+                                    }
+                                    self.watches.add(
+                                        pair[1].negate(),
+                                        Watcher {
+                                            blocker: first,
+                                            ..watcher
+                                        },
+                                    );
+                                    found = true;
+                                }
+                            }
                         }
                     }
-
+                    if new_searched != searched {
+                        live.set_searched(new_searched);
+                    }
                     if found {
-                        continue; // handled: parked-with-fresh-blocker or moved
+                        continue;
                     }
 
                     // No new watch found - clause is unit or conflicting
