@@ -80,3 +80,33 @@ to locate decode/update versus retained propagation cost, not retime the cell.
 Full workspace build/nextest/doctests/Clippy/fmt/docs and installed Z3 4.16.0
 parity precede any production landing. Otherwise archive the prototype, land
 the finding on main and remove owned temporary artifacts.
+
+## Initial preflight and the single repair
+
+Initial prototype 6dfb2f56 passes 1,024 default SAT tests and 1,049 all-feature
+tests (one ignored each); the latter preceded two additional boundary tests.
+Strict SAT Clippy and doctests pass. Strict-provenance Miri passes the packed
+word-boundary test and three fixed-queue tests. Ordinary test suites include
+native Rayon ownership moves. No solver cost invocation has run.
+
+The portable perf engine is 3,908 bytes with 248 local stack bytes, versus
+3,098/216 in the archived byte-valued complete engine. True-only blocker tests
+already use a word load and BT. At 0x64594..0x645ab, however, a binary query
+performs both bit tests, SETB/SBB and a signed comparison to reconstruct a
+ternary value before checking its positive exit. At 0x645b7..0x645d0, a new
+propagation computes and clears the entire pair even though its unsafe
+contract already requires both bits to be zero.
+
+Use the one preflight repair to express the complete engine's state tests
+directly: test the literal's bit, then its opposite only when needed, and set
+only the known-empty assignment bit. This keeps the exact true/undefined/false
+branch order and preserves every unrelated bit in the word. General Trail
+assignment still clears the pair because it permits reassignment. Recheck
+the affected unsafe queue path with Miri, exact-state tests and generated code
+before measurement. No encoding/word-width change or gate relaxation.
+
+On the 14,400-variable input domain the hot truth table is 3,600 bytes instead
+of 28,800 bytes. That footprint change is exact; any cycle saving is unknown.
+Word read/modify/write also couples independent variables sharing a word and
+may introduce store dependencies. Bit indexing, these writes, code/stack
+growth and general ternary queries all belong in the cost of this candidate.
