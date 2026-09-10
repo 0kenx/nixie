@@ -1,0 +1,114 @@
+{
+  "verdict": "reject at code-generation preflight; no cost or profile invocations",
+  "production_promoted": false,
+  "cost_cells": 0,
+  "profiles": 0,
+  "source_commit": "ebaef56db3f160a812772654f112e06258b0ee53",
+  "registration_base": "f87a05575082efa5b634350cc8d668c8d82a5189",
+  "source_tree": "ab4c8e873bb21203413397d86391ef7aa8adcde3",
+  "source_patch_sha256": "7343ce684c38cb8e1aae99083e00a1f53b6bd74bbe336ca9008883f731dbc1e4",
+  "reconstructed_tree": "ab4c8e873bb21203413397d86391ef7aa8adcde3",
+  "patch_applies_current_main": true,
+  "bundle_verified": true,
+  "perf_sha256": "d76fe044ac49f8bada48b4fe5332a87314ce5fb57628c5d1a2dcf75dbddce5f6",
+  "lock_sha256": "3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439",
+  "compiler": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+  "profile": "perf; portable; no study feature flags or RUSTFLAGS",
+  "codegen_sha256": "617d7248f09c34c222779276a1271dab1a317887e1dcd2c4286cf83cea2f9c73",
+  "bodies": [
+    {
+      "name": "assignment",
+      "address": "0x64130",
+      "text_bytes": 68,
+      "local_stack_bytes": 0
+    },
+    {
+      "name": "prefix",
+      "address": "0x64180",
+      "text_bytes": 569,
+      "local_stack_bytes": 40,
+      "saved_register_bytes": 48
+    },
+    {
+      "name": "suffix",
+      "address": "0x64f10",
+      "text_bytes": 785,
+      "local_stack_bytes": 56,
+      "saved_register_bytes": 48
+    },
+    {
+      "name": "outer_propagate_including_fallback",
+      "address": "0x4b090",
+      "text_bytes": 5098,
+      "local_stack_bytes": 280
+    }
+  ],
+  "remaining_reload_sites": [
+    "0x65011",
+    "0x6507b",
+    "0x6511d",
+    "0x6513b",
+    "0x641a7",
+    "0x641ac"
+  ],
+  "final_source_checks": {
+    "all_feature_sat_library": {
+      "passed": 812,
+      "log": "final-all-feature-lib-tests.log"
+    },
+    "default_kernel": {
+      "passed": 9,
+      "oracle_cases": 1296,
+      "log": "final-default-kernel-tests.log"
+    },
+    "miri_bcp_work": {
+      "passed": 2,
+      "log": "final-miri-ledger.log"
+    },
+    "miri_default_resumption": {
+      "passed": 1,
+      "log": "final-miri-kernel.log"
+    },
+    "strict_sat_clippy": {
+      "passed": true,
+      "log": "final-source-clippy.log"
+    },
+    "workspace_fmt": {
+      "passed": true,
+      "log": "final-fmt.log"
+    }
+  },
+  "earlier_source_checks": {
+    "default_sat_nextest": {
+      "passed": 1018,
+      "skipped": 1,
+      "log": "repaired-default-tests.log"
+    },
+    "miri_queue": {
+      "passed": 2,
+      "log": "miri-session.log"
+    },
+    "miri_clause_identity": {
+      "passed": 1,
+      "log": "miri-clause.log"
+    }
+  },
+  "miri_flags": "-Zmiri-seed=42 -Zmiri-strict-provenance",
+  "miri_toolchain": "nightly-2026-06-11",
+  "incomplete_gates": [
+    "all-feature SAT integration: initial build ENOSPC; not retried after rejection",
+    "SAT doctests",
+    "full workspace qualification",
+    "fresh installed-Z3 parity"
+  ],
+  "setup_failures": [
+    "initial check used regenerated ignored lock; qualification builds use frozen lock",
+    "default integration initially missed external corpus symlink",
+    "all-feature integration build exhausted data filesystem",
+    "initial final-source test filter selected zero tests; corrected filter passed nine",
+    "initial bundle named only object IDs; recreated using HEAD and verified"
+  ],
+  "raw_archive": "precompile/ebaef56",
+  "original_cache_patch_sha256": "9d85a7ce0777a4b8fec8dd86fa4cdb5a6942f8d11792ca15b9acb4d0e827a76f",
+  "asset_normalization": "Trailing whitespace removed; normalized patch reconstructs exact source tree. Raw patch/assembly retained in cache."
+}
