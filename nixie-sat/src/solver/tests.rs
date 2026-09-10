@@ -1235,6 +1235,43 @@ fn sat_caching_toggles_and_records_prefix() {
     assert_eq!(solver.sat_caching_best_size, 1);
 }
 
+/// Hamming-distance-1 width-8 cubes self-subsume to a 7-lit clause, matching
+/// Z3's first simplify step on LUT encodings.
+#[test]
+fn backward_ssr_collapses_hamming1_cubes() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    let vars: Vec<Var> = (0..8).map(|_| solver.new_var()).collect();
+    solver.add_clause(vars.iter().copied().map(Lit::pos));
+    let mut second: SmallVec<[Lit; 8]> = vars[..7].iter().copied().map(Lit::pos).collect();
+    second.push(Lit::neg(vars[7]));
+    solver.add_clause(second);
+    let (subsumed, strengthened) = solver.backward_subsume_round();
+    assert!(
+        strengthened >= 1 || subsumed >= 1,
+        "ssr sub={subsumed} str={strengthened}"
+    );
+    let live: Vec<Vec<Lit>> = solver
+        .clauses
+        .iter_ids()
+        .filter_map(|cid| {
+            solver.clauses.get(cid).and_then(|c| {
+                if c.deleted {
+                    None
+                } else {
+                    Some(c.lits.to_vec())
+                }
+            })
+        })
+        .collect();
+    assert!(
+        live.iter().any(|lits| lits.len() == 7),
+        "expected a 7-lit resolvent, got {live:?}"
+    );
+}
+
 /// Rephasing fires from the search loop on the arithmetic conflict schedule
 /// (interval × round) and the stats count every strategy used.
 #[test]

@@ -131,6 +131,14 @@ fn main() {
     {
         cfg.sat_caching = n;
     }
+    if let Ok(v) = std::env::var("VSIDS") {
+        cfg.use_vmtf = v == "0";
+        if v != "0" {
+            cfg.focused_vmtf = false;
+            cfg.use_lrb_branching = false;
+            cfg.use_chb_branching = false;
+        }
+    }
     if std::env::var("NO_STAB").is_ok() {
         cfg.enable_stabilize = false;
     }

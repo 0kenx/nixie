@@ -3801,6 +3801,10 @@ impl Solver {
             }
         }
 
+        if self.presearch_backward_simplify() {
+            return SolverResult::Unsat;
+        }
+
         // Bounded variable elimination (cadical `elim.cpp` port,
         // `solver/eliminate.rs`): collapses the original clause set via
         // resolution + interleaved subsumption rounds before search, with a

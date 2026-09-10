@@ -273,6 +273,216 @@ enum SubCheck {
 }
 
 impl Solver {
+    /// Z3-style backward self-subsuming resolution before search.
+    ///
+    /// CaDiCaL one-watch subsumption never connects these clauses: a 4-in-4-out
+    /// LUT cube has occurrence ≥240 > `subsumeocclim` (100), so the 168k
+    /// width-8 cubes on `circuit_48in64out` never become subsumers. Z3's first
+    /// simplify instead walks every occurrence of the minimum-occurrence
+    /// variable (both polarities) and shrinks 168k cubes to ~69k mixed-width
+    /// clauses. This pass is that slice — original clauses only, level 0.
+    ///
+    /// Auto-runs on wide-uniform CNFs (modal original width ≥6 covering ≥75%
+    /// of size≥3 originals, ≥1000 such clauses). `NIXIE_PRESUB=1` forces it;
+    /// `NIXIE_PRESUB=0` skips it.
+    pub(super) fn presearch_backward_simplify(&mut self) -> bool {
+        if self.trail.decision_level() != 0 || self.trivially_unsat {
+            return false;
+        }
+        if !self.presearch_backward_simplify_wanted() {
+            return false;
+        }
+        for _ in 0..8 {
+            let (sub, stren) = self.backward_subsume_round();
+            if sub == 0 && stren == 0 {
+                break;
+            }
+            self.rebuild_watches_and_binary_graph();
+            if let Some(conflict) = self.propagate() {
+                self.trivially_unsat = true;
+                self.drat_emit_empty(Some(conflict));
+                return true;
+            }
+        }
+        false
+    }
+
+    fn presearch_backward_simplify_wanted(&self) -> bool {
+        #[cfg(feature = "std")]
+        {
+            if let Ok(v) = std::env::var("NIXIE_PRESUB") {
+                if v == "0" || v.eq_ignore_ascii_case("false") {
+                    return false;
+                }
+                if v == "1" || v.eq_ignore_ascii_case("true") {
+                    return true;
+                }
+            }
+        }
+        self.formula_is_wide_uniform_cnf()
+    }
+
+    fn formula_is_wide_uniform_cnf(&self) -> bool {
+        let mut hist = [0u32; 33];
+        let mut n = 0u32;
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned {
+                continue;
+            }
+            let size = c.lits.len();
+            if size < 3 {
+                continue;
+            }
+            n = n.saturating_add(1);
+            if size < hist.len() {
+                hist[size] = hist[size].saturating_add(1);
+            }
+        }
+        if n < 1000 {
+            return false;
+        }
+        let mut mode = 0usize;
+        let mut best = 0u32;
+        for (size, &cnt) in hist.iter().enumerate() {
+            if cnt > best {
+                best = cnt;
+                mode = size;
+            }
+        }
+        mode >= 6 && u64::from(best).saturating_mul(4) >= u64::from(n).saturating_mul(3)
+    }
+
+    /// One backward-subsumption / SSR round (Z3 `back_subsumption1` over all
+    /// original clauses, small-first). Returns `(subsumed, strengthened)`.
+    pub(super) fn backward_subsume_round(&mut self) -> (usize, usize) {
+        if self.trail.decision_level() != 0 || self.trivially_unsat {
+            return (0, 0);
+        }
+        let num_lits = 2 * self.num_vars;
+        if num_lits == 0 {
+            return (0, 0);
+        }
+        let mut occs: Vec<Vec<ClauseId>> = vec![Vec::new(); num_lits];
+        let mut sched: Vec<(u32, ClauseId)> = Vec::new();
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned || c.lits.len() < 2 {
+                continue;
+            }
+            if c.lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
+                continue;
+            }
+            for &l in c.lits.iter() {
+                let code = l.code() as usize;
+                if code < occs.len() {
+                    occs[code].push(cid);
+                }
+            }
+            sched.push((c.lits.len() as u32, cid));
+        }
+        if sched.is_empty() {
+            return (0, 0);
+        }
+        sched.sort_unstable_by_key(|&(size, _)| size);
+
+        let mut mark = vec![0i8; num_lits];
+        let mut subsumed = 0usize;
+        let mut strengthened = 0usize;
+        let mut checks: u64 = 0;
+        const CHECK_CAP: u64 = 100_000_000;
+
+        for &(_, c1_id) in &sched {
+            if checks >= CHECK_CAP || self.trivially_unsat {
+                break;
+            }
+            let c1_lits: SmallVec<[Lit; 8]> = match self.clauses.get(c1_id) {
+                Some(c) if !c.deleted && c.lits.len() >= 2 => c.lits.iter().copied().collect(),
+                _ => continue,
+            };
+            let mut minlit = c1_lits[0];
+            let mut minocc = occs[minlit.code() as usize].len();
+            for &l in &c1_lits[1..] {
+                let occ = occs[l.code() as usize].len();
+                if occ < minocc {
+                    minlit = l;
+                    minocc = occ;
+                }
+            }
+            let pos_list = minlit.code() as usize;
+            let neg_list = minlit.negate().code() as usize;
+            for list in [pos_list, neg_list] {
+                if list >= occs.len() {
+                    continue;
+                }
+                let candidates = occs[list].clone();
+                for c2_id in candidates {
+                    if checks >= CHECK_CAP {
+                        break;
+                    }
+                    if c2_id == c1_id {
+                        continue;
+                    }
+                    let c2_lits: SmallVec<[Lit; 8]> = match self.clauses.get(c2_id) {
+                        Some(c) if !c.deleted && !c.learned && c.lits.len() >= 2 => {
+                            c.lits.iter().copied().collect()
+                        }
+                        _ => continue,
+                    };
+                    if c2_lits.len() + 1 < c1_lits.len() {
+                        continue;
+                    }
+                    checks = checks.saturating_add(1);
+                    for &l in &c2_lits {
+                        let code = l.code() as usize;
+                        if code < mark.len() {
+                            mark[code] = 1;
+                            mark[l.negate().code() as usize] = -1;
+                        }
+                    }
+                    let check = check_connected(c1_lits.iter().copied(), &mark, None);
+                    for &l in &c2_lits {
+                        let code = l.code() as usize;
+                        if code < mark.len() {
+                            mark[code] = 0;
+                            mark[l.negate().code() as usize] = 0;
+                        }
+                    }
+                    match check {
+                        ConnectedCheck::Mismatch => {}
+                        ConnectedCheck::Subsumed => {
+                            self.drat_delete(c2_id);
+                            self.retire_clause(c2_id);
+                            self.stats.deleted_clauses += 1;
+                            self.stats.subsumed_removed += 1;
+                            subsumed += 1;
+                        }
+                        ConnectedCheck::Strengthen(remove) => {
+                            if let Some(idx) = c2_lits.iter().position(|&l| l == remove) {
+                                let emitted = if self.proof.is_some() {
+                                    self.proof_strengthen_clause_res(c2_id, c1_id, &c2_lits, idx)
+                                } else {
+                                    true
+                                };
+                                if emitted {
+                                    self.mark_elim_vars(c2_lits.iter().copied());
+                                    self.strengthen_clause_in_subsume(c2_id, idx);
+                                    self.stats.self_subsumed += 1;
+                                    strengthened += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        (subsumed, strengthened)
+    }
+
     /// One forward-subsumption round over the live clause database.
     ///
     /// Returns `(subsumed, strengthened)` counts.  Sound at any assertion

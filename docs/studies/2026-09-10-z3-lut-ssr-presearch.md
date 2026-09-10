@@ -1,0 +1,47 @@
+# Z3 LUT-cube SSR: CaDiCaL one-watch never connects the 8-lit encoding (2026-09-10)
+
+Follow-up to [SAT-caching](2026-09-10-z3-sat-caching-circuit.md). Z3 4.16.0's first
+inprocess (`sat.inprocess.out`) shrinks `circuit_48in64out` from **168,064** clauses
+(64 units + 168,000 width-8) to **68,948** (173 units, 249 binary, 11k ternary,
+29k width-4, 6.5k width-5, **21,633** width-8). Nixie on that dump: 108k conflicts
+(vs 232k on the original). The remaining Z3 search on the dump is 17k.
+
+## Root cause
+
+CaDiCaL one-watch subsumption connects a clause only on its minimum-occurrence
+literal, and only if that list is ≤ `subsumeocclim` (100). A 4-in-4-out LUT cube
+has ≥240 occurrences per variable, so **none of the 168k original cubes ever
+connect**. `self_subsumed` stayed ~5k (learned-clause noise). Z3
+`back_subsumption1` walks every occurrence of the min-occ variable, both
+polarities — 465k self-subsuming resolutions.
+
+Pre-search elim is also off by default (`presearch_collapse`, cadical conflict
+scheduling). That is a separate, measured-negative full-elim lever
+(`2026-08-inprocessing-schedule.md`); this pass is SSR-only.
+
+## Fix
+
+`presearch_backward_simplify`: Z3-shaped backward SSR over original clauses,
+small-first, 1e8 check cap, up to 8 rounds. Auto-runs when the original CNF is
+wide-uniform (modal width ≥6 covering ≥75% of size≥3 originals, ≥1000 such
+clauses). `NIXIE_PRESUB=1` forces; `NIXIE_PRESUB=0` skips.
+
+## Cells (seed 0, CaDiCaL preset, `stats_solve`)
+
+| arm | circuit_48in64out | constraints_17 (sat) | j3037 (unsat) |
+| `NIXIE_PRESUB=0` | 231,596 | 85,245 | 366,030 |
+| auto (wide-uniform) | **110,180** | 85,245 (did not fire) | 366,030 (did not fire) |
+| auto + `SAT_CACHING=1` | 128,573 | — | — |
+| Z3 4.16.0 | 23,149 | 19,381 | 272,037 |
+
+`self_subsumed` on circuit: 5,084 → **547,517**. Auto did not fire on the two
+collateral files (identical conflicts). SAT-caching on top of this pass is
+trajectory-negative here; leave it off.
+
+## Verdict
+
+This closes the **simplify half** of the 7× gap (232k → 110k, matching Nixie on
+Z3's dumped CNF). The remaining **4.8×** (110k vs 23k) is search: Z3 VSIDS +
+SAT-caching on an already-compact formula. Do not default-on SAT-caching; do
+not raise CaDiCaL `subsumeocclim` globally. The auto gate keeps the pass off
+the standing corpus except LUT-cube encodings.
