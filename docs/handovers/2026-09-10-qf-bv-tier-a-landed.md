@@ -183,9 +183,10 @@ identities (Z3 `bv_rewriter` parity — `udiv/urem` by powers of two →
 shift/mask, 0/1-divisor total semantics), applying to 5126 corpus
 files; verdict-identical on the 509-file screen.
 
-**Separate and urgent**: all 6 `known_unsound_regressions` tests fail at
-current HEAD — introduced by the SAT watch-cursor perf series
-(cc6d3e1e..bfa6570b), under active repair by its author (d4828b1c,
-9c9551a3, in-flight nixie-sat edits at this moment).  Anyone screening
-against main should treat that suite's state as the author's in-flight
-front, not a stable baseline.
+**Resolved** (update 2026-09-12): the `known_unsound_regressions`
+breakage from the watch-cursor series is fixed at HEAD (6/6 pass in the
+main tree; d7b5dc34 "do not XOR-rewrite clauses from stale long-watchers"
+was the closing fix).  Note for future triage: some of my intermediate
+"failures at clean HEAD" observations were a worktree artifact — those
+tests read `smt-lib/...` relative paths, so any worktree verification
+needs the corpus symlink first (the AGENTS.md rule, now twice bitten).
