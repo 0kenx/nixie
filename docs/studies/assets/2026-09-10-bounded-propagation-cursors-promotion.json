@@ -1,0 +1,193 @@
+{
+  "decision": "User explicitly instructed promotion; the historical agent-selected 3% per-input wall gate is superseded, without changing measurements.",
+  "start": {
+    "base": "04f7bdbf026226fd53299eb9994cb27a6e442ab4",
+    "candidate": "f5e75a749d03701dd07e404b0aefcd8e4ad45e63",
+    "files": [
+      "nixie-sat/src/clause.rs",
+      "nixie-sat/src/memory.rs",
+      "nixie-sat/src/solver/list_kernel.rs",
+      "nixie-sat/src/solver/propagate.rs",
+      "nixie-sat/src/solver/session_kernel.rs",
+      "nixie-sat/src/solver/watch_cursor.rs",
+      "nixie-sat/src/solver/watch_kernel_tests.rs",
+      "nixie-sat/src/trail.rs",
+      "nixie-sat/src/trail_propagation.rs",
+      "nixie-sat/src/watched.rs"
+    ],
+    "patch_sha256": "bf15c23ef11e321f81924c015a25096b64ed14fccfc46bf8be9073e0af7d58a8",
+    "z3_version": "Z3 version 4.16.0 - 64 bit",
+    "instruction": "User explicitly requests promotion; study 3% wall guard superseded, correctness gates retained."
+  },
+  "landing_base": "bef45770c863b61f58f56a7dd98979ade3d29f9f",
+  "commands": [
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "build",
+        "--all-features"
+      ],
+      "started_utc": "2026-09-10T17:00:33.639679+00:00",
+      "elapsed_s": 27.109063250012696,
+      "exit": 0
+    },
+    {
+      "name": "nextest",
+      "command": [
+        "cargo",
+        "nextest",
+        "run",
+        "--workspace",
+        "--all-features"
+      ],
+      "started_utc": "2026-09-10T17:01:00.749462+00:00",
+      "elapsed_s": 564.765789614059,
+      "exit": 0
+    },
+    {
+      "name": "doctests",
+      "command": [
+        "cargo",
+        "test",
+        "--workspace",
+        "--all-features",
+        "--doc"
+      ],
+      "started_utc": "2026-09-10T17:10:25.515710+00:00",
+      "elapsed_s": 33.645515193929896,
+      "exit": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-features",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started_utc": "2026-09-10T17:10:59.161540+00:00",
+      "elapsed_s": 35.378119523171335,
+      "exit": 0
+    },
+    {
+      "name": "fmt",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "started_utc": "2026-09-10T17:11:34.540065+00:00",
+      "elapsed_s": 2.7429840029217303,
+      "exit": 0
+    },
+    {
+      "name": "doc",
+      "command": [
+        "cargo",
+        "doc",
+        "--no-deps",
+        "--all-features"
+      ],
+      "started_utc": "2026-09-10T17:11:37.283609+00:00",
+      "elapsed_s": 23.833898815093562,
+      "exit": 0
+    },
+    {
+      "name": "parity",
+      "command": [
+        "./bench/z3_parity/run_parity.sh"
+      ],
+      "started_utc": "2026-09-10T17:12:01.117888+00:00",
+      "elapsed_s": 192.1882377548609,
+      "exit": 0
+    },
+    {
+      "name": "sat-release",
+      "command": [
+        "cargo",
+        "build",
+        "--release",
+        "-p",
+        "nixie-sat",
+        "--example",
+        "stats_solve"
+      ],
+      "started_utc": "2026-09-10T17:15:13.306584+00:00",
+      "elapsed_s": 34.87588945706375,
+      "exit": 0
+    }
+  ],
+  "workspace_tests": {
+    "passed": 10900,
+    "skipped": 13
+  },
+  "doctests": {
+    "passed": 111,
+    "ignored": 29
+  },
+  "rustdoc_warnings": "-D warnings supplied by existing .cargo/config.toml; cargo doc rejects positional rustdoc passthrough",
+  "parity": {
+    "metadata": {
+      "nixie_version": "0.3.2",
+      "z3_version": "4.16.0",
+      "os": "linux",
+      "arch": "x86_64",
+      "generated_at": "2026-09-10T19:15:13+02:00",
+      "benchmark_count": 175
+    },
+    "counts": {
+      "Correct": 174,
+      "Inconclusive": 1
+    },
+    "inconclusive": [
+      {
+        "benchmark": "array_unique.smt2",
+        "logic": "AUFLIA",
+        "nixie_result": "Unsat",
+        "z3_result": "Unknown",
+        "nixie_time": {
+          "secs": 0,
+          "nanos": 3528451
+        },
+        "z3_time": {
+          "secs": 1,
+          "nanos": 451307664
+        },
+        "match_status": "Inconclusive"
+      }
+    ],
+    "record_sha256": "7c8be1be8b3943755f305308818d3bababf5268686090401851a3d9655cf1bbb"
+  },
+  "source_sha256": {
+    "nixie-sat/src/clause.rs": "7f5b515f2a4105645344cad50df5cd18ec94382df47d3b92f9674d00c22875d0",
+    "nixie-sat/src/memory.rs": "7013fd869ccff2be4ba7d51d5809e895cb44dc39276262935f1b6abb86f3ae13",
+    "nixie-sat/src/solver/list_kernel.rs": "a4d512f69d378adc57729657de4dc1262207b901ca0285ff07babbb011509d67",
+    "nixie-sat/src/solver/propagate.rs": "d45af57a6ccfbe3a8252961e69b6930fb4b05fb417d611800ece4c691cda1aff",
+    "nixie-sat/src/solver/session_kernel.rs": "63f3554d068dd607bfe66c8916efc059fc4d1e3d7d81689f8138b6aeb478e45f",
+    "nixie-sat/src/solver/watch_cursor.rs": "4c270a1b05eafaa4a9d634c84bb8d71620e7c3087eec7dc266268a515af789ae",
+    "nixie-sat/src/solver/watch_kernel_tests.rs": "755427043f062e0cad5004757195ed3131d442859eb9e0cab55eded2e6051a37",
+    "nixie-sat/src/trail.rs": "8a7cf3a45f97d0ff64f0603b6cab756813636a899d143810c1487506f3dc77cc",
+    "nixie-sat/src/trail_propagation.rs": "b729e73949356c12edb6bada32310286182bf0f89d9d8b1c7ff0d201f9d3b18a",
+    "nixie-sat/src/watched.rs": "1a39c89a0d819160b335f1bd801c80d0fdf14b60f324e819d81c50da79ada1b4"
+  },
+  "binaries": {
+    "target/release/examples/stats_solve": {
+      "sha256": "69c731e4351f91ae1680df81abf527c11afb096065b800e7854f8c8e5d1cd70a",
+      "bytes": 1182128
+    },
+    "target/release/nixie": {
+      "sha256": "b5e21529592175eb3145958c358d0d5bd703dfe5da32ec9952215bc56180c58a",
+      "bytes": 12792936
+    }
+  },
+  "miri": "Eight previously passed focused checks retained; exact archived SAT source, no additional Miri invocation during promotion.",
+  "new_performance_cells": 0,
+  "logs": "precompile/f5e75a7/promotion-04f7bdbf/",
+  "shared_checkout_note": "Unrelated debug-only experiments appeared after test/lint qualification and were removed by their owner before landing; neither is included. Release parity excludes those debug-only functions."
+}

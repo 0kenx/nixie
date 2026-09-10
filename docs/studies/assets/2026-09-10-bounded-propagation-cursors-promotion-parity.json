@@ -1,0 +1,2638 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "nixie_version": "0.3.2",
+    "z3_version": "4.16.0",
+    "os": "linux",
+    "arch": "x86_64",
+    "generated_at": "2026-09-10T19:15:13+02:00",
+    "benchmark_count": 175
+  },
+  "results": [
+    {
+      "benchmark": "array_extensionality.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3154694
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 49830558
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_forall_init.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3044465
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 61591015
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_max.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 5517320
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 52508330
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_partition.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2920514
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 39041844
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_permutation.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3206125
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30672438
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_search.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4079770
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 41913864
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_sorted.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1359051
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33881930
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_unique.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unknown",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3528451
+      },
+      "z3_time": {
+        "secs": 1,
+        "nanos": 451307664
+      },
+      "match_status": "Inconclusive"
+    },
+    {
+      "benchmark": "array_unsat.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1432761
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 37505766
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_update.smt2",
+      "logic": "AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 6532901
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35915734
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_array_func.smt2",
+      "logic": "AUFLIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2526979
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 44292095
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_basic_sat.smt2",
+      "logic": "AUFLIRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 483390
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30575540
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_mixed_arith.smt2",
+      "logic": "AUFLIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1903315
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 46767008
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_quantified.smt2",
+      "logic": "AUFLIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1947856
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 49188734
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "auflira_unsat.smt2",
+      "logic": "AUFLIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3674462
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38207467
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_bv_arith.smt2",
+      "logic": "QF_ABV",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2461740
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 58263771
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_contradiction.smt2",
+      "logic": "QF_ABV",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 958196
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25901114
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_overflow.smt2",
+      "logic": "QF_ABV",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 395140
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32839350
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_store_chain.smt2",
+      "logic": "QF_ABV",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1957815
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 49789722
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_abv_store_select_sat.smt2",
+      "logic": "QF_ABV",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1219660
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 46515981
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_basic.smt2",
+      "logic": "QF_ALIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 965302
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 47484655
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_const_array.smt2",
+      "logic": "QF_ALIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2471362
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 47100530
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_sorted.smt2",
+      "logic": "QF_ALIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 622704
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36949233
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_sum_pattern.smt2",
+      "logic": "QF_ALIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 469790
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32269256
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_int_unsat.smt2",
+      "logic": "QF_ALIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 5036618
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35372044
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_equality.smt2",
+      "logic": "QF_AUFBV",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 414159
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36401614
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_ite_select.smt2",
+      "logic": "QF_AUFBV",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3327746
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36162152
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_multi_store.smt2",
+      "logic": "QF_AUFBV",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2138733
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36658849
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_store_select.smt2",
+      "logic": "QF_AUFBV",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 765476
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28180465
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_bv_unsat_conflict.smt2",
+      "logic": "QF_AUFBV",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 377597
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 39018381
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_int.smt2",
+      "logic": "QF_AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 636572
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33031185
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_int_trans.smt2",
+      "logic": "QF_AUFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4583264
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34268078
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_model.smt2",
+      "logic": "QF_AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3765212
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 40882132
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_store_func.smt2",
+      "logic": "QF_AUFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1802619
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38606121
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_array_unsat.smt2",
+      "logic": "QF_AUFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1484921
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 47865767
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_basic_sat.smt2",
+      "logic": "QF_NIRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1949003
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 41682843
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_mixed.smt2",
+      "logic": "QF_NIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1846923
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33273347
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_product_sat.smt2",
+      "logic": "QF_NIRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1009691
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 49062111
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_real_poly.smt2",
+      "logic": "QF_NIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1301626
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 47985567
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "qf_nira_unsat.smt2",
+      "logic": "QF_NIRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 669963
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 42419052
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_basic.smt2",
+      "logic": "QF_UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 911024
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30367066
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_congruence.smt2",
+      "logic": "QF_UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 841235
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28282366
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_inject.smt2",
+      "logic": "QF_UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 7057183
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35454190
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_monotone.smt2",
+      "logic": "QF_UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2504860
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 58252491
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_int_unsat.smt2",
+      "logic": "QF_UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 758333
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 40423184
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_abs.smt2",
+      "logic": "QF_UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2559563
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 47826491
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_basic.smt2",
+      "logic": "QF_UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1087225
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27135735
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_interp.smt2",
+      "logic": "QF_UFLRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 571853
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36592497
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_linear.smt2",
+      "logic": "QF_UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 728548
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24983007
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "uf_real_unsat.smt2",
+      "logic": "QF_UFLRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 490704
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32016914
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "ackermann.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4260834
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 37364751
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "arith_unsat.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1063517
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30950595
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "congruence_closure.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1894861
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 37543841
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "division_property.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1836467
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 40113806
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "forall_exists_simple.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2691966
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 45275680
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "forall_exists_unsat.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1549107
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 58399911
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "idempotent.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 660458
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33898649
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "injective.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3701148
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 61663055
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "injective_unsat.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3270025
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 23409587
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "linear_order.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 15121183
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 42637362
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "monotone_basic.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2787157
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32810855
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "monotone_violation.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 775122
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25025620
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "nested_quantifiers.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 13534573
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 48066550
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "pigeonhole_3.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3458292
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29052842
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "reflexivity.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2674762
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32756775
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "skolem_test.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2840731
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 46804270
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "sum_bounds.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 728760
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38865965
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "surjective.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4739821
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34133925
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "trans_simple.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1384749
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30269375
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "trans_unsat.smt2",
+      "logic": "UFLIA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 630634
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 43483110
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_archimedean.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1323656
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29895324
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_bounds.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1296136
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32239575
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_composition.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2565944
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 45399048
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_convex.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 784881
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38592508
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_fixed_point.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 7994379
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27842300
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_identity.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4070507
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30424299
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_interp.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2544179
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 54274271
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_lipschitz.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2215294
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33893470
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_monotone.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4870031
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35273173
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "real_unsat.smt2",
+      "logic": "UFLRA",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 974973
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34188839
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_01.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1319863
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38903046
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_02.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2633757
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 44300102
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_03.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 666985
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28143938
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_04.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 709957
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28519777
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_05.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1386560
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36324263
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_06.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 394869
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34790655
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_07.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 849825
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33043483
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_08.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2644394
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 46468388
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_09.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 560357
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33663012
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "array_10.smt2",
+      "logic": "qf_a",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1638350
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24512972
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_01.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1774732
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 22348284
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_02.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 459677
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 26911421
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_03.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 863735
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 51678869
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_04.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1785794
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30081269
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_05.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1549033
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 56389327
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_06.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 911113
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33656472
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_07.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2249039
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25680606
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_08.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 504142
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 26756485
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_09.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1534480
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 46675292
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_10.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1137769
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 51068305
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_11.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1642051
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28818428
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_12.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1494393
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25544777
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_13.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1438487
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34557815
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_14.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 697950
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 20991698
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "bv_15.smt2",
+      "logic": "qf_bv",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2117018
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 75833775
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_01.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 6059045
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29873047
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_02.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1554314
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24003610
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_03.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 570492
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33667856
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_04.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3358327
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 23039131
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_05.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 15809535
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28480723
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_06.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 483080
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24152721
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_07.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 5825319
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35472549
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_08.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 387212
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24204307
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_09.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 22949011
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27449963
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "dt_10.smt2",
+      "logic": "qf_dt",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3809558
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 26974567
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_01.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 31477559
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38125958
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_02.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 777916
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 45810549
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_03.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 402197
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 42817454
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_04.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1586678
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 68713431
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_05.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1115893
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 58662714
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_06.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 453912
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 23217043
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_07.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 534755
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 48121368
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_08.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 381466
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 22824599
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_09.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 60940564
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24924389
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_10.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 667874
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35002474
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_symbolic_rm_sat.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 32373576
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36626125
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "fp_symbolic_rm_unsat.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2609653
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36353182
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "hybrid_class_conflict.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1637208
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34574778
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "hybrid_negative_square.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2700067
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 41530072
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "hybrid_rational_carry.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 688299
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34677092
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "hybrid_symbolic_add.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 24106060
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 41806957
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "hybrid_symbolic_rm.smt2",
+      "logic": "qf_fp",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 20171516
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 57417415
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_01_range.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 468616
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 48965348
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_02_linear_eq.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3039036
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 63806979
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_03_linear_ineq.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 689299
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 26089546
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_04_unsat_simple.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 325134
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 52552427
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_05_branch_bound.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 858112
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 67438162
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_06_cutting_planes.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 470664
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28231411
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_07_mixed_eq_ineq.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 455595
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33360307
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_08_negative_coeffs.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 685618
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 40303503
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_09_large_coeffs.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 542760
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 45559681
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_10_strict_ineq.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 894139
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 44821107
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_11_unsat_bounds.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 470366
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 30436037
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_12_many_vars.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 533883
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 31373963
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_13_divisibility.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 643482
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 78457373
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_14_sparse.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 848691
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 35612136
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_15_dense.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3034691
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 36600788
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lia_16_edge_zero.smt2",
+      "logic": "qf_lia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1279728
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 45109944
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_01_simple.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 370323
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29381617
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_02_simplex.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 451665
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 31288859
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_03_rational.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 698186
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 20006178
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_04_strict_ineq.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1336183
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 27243715
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_05_unsat_simple.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3133943
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32924366
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_06_dense.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2521553
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 40946353
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_07_sparse.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1082949
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 23555307
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_08_negative.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 582783
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32492527
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_09_tight_bounds.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1156811
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32161934
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_10_infeasible.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 4652866
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 41576384
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_11_many_vars.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 2335318
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 34047701
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_12_small_coeffs.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 625680
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 29407558
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_13_large_coeffs.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1005922
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25653701
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_14_edge_zero.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 888335
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 24537070
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_15_strict_boundary.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 664944
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 28379177
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "lra_16_mixed_strict.smt2",
+      "logic": "qf_lra",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 550490
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 33193320
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "nia_01_simple_mult.smt2",
+      "logic": "qf_nia",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1414355
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 38702874
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_01.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 961200
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 25283829
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_02.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 1750115
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 50046403
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_03.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 562742
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 43269320
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_04.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 264531
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 32607834
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_05.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 563790
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 31584797
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_06.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 5546276
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 39368744
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_07.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 527635
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 37280199
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_08.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Unsat",
+      "z3_result": "Unsat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 493043
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 22541666
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_09.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 660287
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 50976796
+      },
+      "match_status": "Correct"
+    },
+    {
+      "benchmark": "string_10.smt2",
+      "logic": "qf_s",
+      "nixie_result": "Sat",
+      "z3_result": "Sat",
+      "nixie_time": {
+        "secs": 0,
+        "nanos": 3319551
+      },
+      "z3_time": {
+        "secs": 0,
+        "nanos": 61576897
+      },
+      "match_status": "Correct"
+    }
+  ]
+}

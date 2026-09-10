@@ -1,6 +1,12 @@
 # Bounded traversal cursors inside a propagation session
 
-**Final verdict: do not promote.** The selected implementation reduces
+**Promoted at the user's instruction after required correctness verification.**
+The original screen verdict below is historical. Its 3% per-instance wall
+guard was an agent-selected experiment threshold, not an AGENTS.md promotion
+requirement, and does not override the user's decision to land the productive
+implementation. The recorded measurements and their limitations are unchanged.
+
+The selected implementation reduces
 four-input instructions by 11.45% and cycles by 5.05%, but observed wall
 improves only 4.18% and noL regresses 5.88%, failing its 3% guard. Complete
 Nixie output remains identical. Six new cost cells and one diagnostic ran;
@@ -347,3 +353,50 @@ The throwaway source worktree has been removed. Delete its unused branch
 and owned `/var/tmp/nixie-bounded-cursors-target-7437a6d3` build directory
 after landing this archive; retain the shared binary/result cache. No
 production solver change is part of this step.
+
+## User-directed promotion
+
+After the archive landed, the user explicitly instructed promotion and
+challenged the rejection rule. AGENTS.md requires a positive/productive step
+to commit its code and tests to main after verification; it does not impose
+the study's 3% per-instance wall cutoff. That local cutoff was given too much
+authority in the original decision. The measured instruction/cycle reduction
+and aggregate wall improvement are retained as productive evidence, with
+the noL observation and cached-control limits disclosed rather than erased.
+
+Apply the exact archived `f5e75a7` implementation to main `04f7bdbf`, including
+its ownership tests and complete callback/observer fallback. No source repair,
+heuristic change, threshold retuning or new performance cell is part of this
+promotion. Run the full repository correctness gates and installed Z3 4.16.0
+parity before committing the production change; record their results below.
+
+All required commands completed successfully:
+
+| Verification | Result |
+|---|---|
+| `cargo build --all-features` | Passed |
+| `cargo nextest run --workspace --all-features` | 10,900 passed; 13 existing skips |
+| `cargo test --workspace --all-features --doc` | 111 passed; 29 ignored |
+| `cargo clippy --all-features --all-targets -- -D warnings` | Passed |
+| `cargo fmt --all -- --check` | Passed |
+| `cargo doc --no-deps --all-features` | Passed with `.cargo/config.toml` enforcing `-D warnings` |
+| `./bench/z3_parity/run_parity.sh` | Z3 4.16.0: 174 decisive matches, zero disagreements, one inconclusive |
+| Portable release `stats_solve` build | Passed |
+
+The inconclusive case is `AUFLIA/array_unique.smt2`: Nixie reports UNSAT and
+Z3 reports Unknown. It is not counted as a match. The prior local snapshot
+has the same verdict tuple, but its source revision was not established;
+it is retained as local context rather than a claimed clean-source control.
+The [fresh parity record](assets/2026-09-10-bounded-propagation-cursors-promotion-parity.json)
+preserves all 175 results and the actual comparator version. The
+[promotion audit](assets/2026-09-10-bounded-propagation-cursors-promotion.json)
+records commands, outcomes, binary/source hashes and the user decision.
+
+The ten SAT files are byte-identical to the measured archived implementation.
+The earlier eight Miri checks are retained exact-source evidence; this
+promotion did not rerun the performance screen. During verification, main
+also received an unrelated bit-vector test expansion and a study update;
+neither changes the promoted SAT implementation. Temporary debug experiments
+from the other agent were excluded from this commit. The source and evidence
+are committed from an isolated worktree and fast-forwarded onto main, with
+release binaries cached under the landed commit.

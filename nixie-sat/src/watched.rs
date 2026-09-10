@@ -119,6 +119,10 @@ pub struct WatchSnapshot {
 }
 
 impl WatchLists {
+    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32]) {
+        (&mut self.watches, &self.bin_phantom)
+    }
+
     /// Create new watch lists for n variables
     #[must_use]
     pub fn new(num_vars: usize) -> Self {

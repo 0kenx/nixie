@@ -395,6 +395,10 @@ impl ClauseDatabase {
         self.refs.get(id.index()).copied()
     }
 
+    pub(crate) fn propagation(&mut self) -> crate::memory::PropagationArena<'_> {
+        self.arena.propagation()
+    }
+
     /// Mutable literal slice of a live clause addressed **directly** by its
     /// arena slot – the propagation hot path, which already carries the slot
     /// inside its watchers and must not pay the extra `refs[id]` indirection

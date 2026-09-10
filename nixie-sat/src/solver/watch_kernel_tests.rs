@@ -291,6 +291,50 @@ fn assert_state(a: &Solver, b: &Solver) {
     assert_eq!(a.trivially_unsat, b.trivially_unsat);
 }
 
+#[test]
+fn session_gate_excludes_callbacks() {
+    let mut s = Solver::new();
+    assert!(s.use_propagation_session());
+    s.config.enable_lazy_hyper_binary = true;
+    assert!(!s.use_propagation_session());
+    s.config.enable_lazy_hyper_binary = false;
+    s.lrat = true;
+    assert!(!s.use_propagation_session());
+}
+
+#[cfg(all(feature = "std", not(miri)))]
+#[test]
+fn session_solver_moves_between_rayon_owners_after_growth_and_rebuild() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .expect("pool");
+    let (a, _) = raw_solver(false, true, false);
+    let (mut b, _) = raw_solver(true, true, false);
+    let mut a = pool.install(move || {
+        let mut a = a;
+        assert!(a.use_watch_kernel(false) && a.use_propagation_session());
+        let result = a.propagate();
+        (a, result)
+    });
+    assert_eq!(a.1, b.propagate());
+    assert_state(&a.0, &b);
+    for s in [&mut a.0, &mut b] {
+        s.trail.backtrack_to_size(0);
+        s.ensure_vars(128);
+        s.rebuild_watches_and_binary_graph();
+        s.trail.assign_unit_fact(Lit::from_code(2));
+        s.trail.assign_decision(Lit::from_code(0));
+    }
+    let a = pool.install(move || {
+        let mut s = a.0;
+        let result = s.propagate();
+        (s, result)
+    });
+    assert_eq!(a.1, b.propagate());
+    assert_state(&a.0, &b);
+}
+
 fn pair(
     nvars: usize,
     clauses: &[Vec<i32>],
@@ -430,4 +474,75 @@ fn paired_solves_match_truth_models_and_independent_lrat() {
         }
     }
     assert!(sat > 0 && unsat > 0, "SAT {sat}, UNSAT {unsat}");
+}
+
+#[test]
+fn bounded_cursors_match_scalar_for_all_short_truth_patterns() {
+    let mut cases = 0;
+    for tail_len in 1..=5 {
+        for pattern in 0..3usize.pow(tail_len) {
+            for first_value in 0..3 {
+                for hole in 0..3 {
+                    for reverse in [false, true] {
+                        let mut a = Solver::new();
+                        let mut b = Solver::new();
+                        b.propagate_legacy_oracle = true;
+                        let trigger = Lit::from_code(0);
+                        let first = Lit::from_code(2);
+                        let no = Lit::from_code(4);
+                        let tail: Vec<_> = (0..tail_len)
+                            .map(|i| Lit::from_code(2 * (i + 3) + (i & 1)))
+                            .collect();
+                        for s in [&mut a, &mut b] {
+                            s.ensure_vars(10);
+                            if hole != 0 {
+                                let lits = [!trigger, no, Lit::from_code(16)];
+                                let id = s.clauses.add_original(lits);
+                                s.attach_watchers(id, lits[0], lits[1]);
+                                if hole == 2 {
+                                    s.clauses.mark_deleted_raw(id);
+                                }
+                            }
+                            let mut lits = vec![!trigger, first];
+                            lits.extend_from_slice(&tail);
+                            if reverse {
+                                lits.swap(0, 1);
+                            }
+                            let id = s.clauses.add_original(lits.clone());
+                            s.attach_watchers(id, lits[0], lits[1]);
+                            // This must remain an untouched tail on conflict.
+                            let last = [!trigger, no, Lit::from_code(18)];
+                            let id = s.clauses.add_original(last);
+                            s.attach_watchers(id, last[0], last[1]);
+                            s.trail.new_decision_level();
+                            s.trail.assign_decision(!no);
+                            let mut code = pattern;
+                            for (lit, value) in std::iter::once((first, first_value)).chain(
+                                tail.iter().copied().map(|lit| {
+                                    let value = code % 3;
+                                    code /= 3;
+                                    (lit, value)
+                                }),
+                            ) {
+                                match value {
+                                    0 => {}
+                                    1 => s.trail.assign_decision(lit),
+                                    2 => s.trail.assign_decision(!lit),
+                                    _ => unreachable!(),
+                                }
+                            }
+                            while s.trail.next_to_propagate().is_some() {}
+                            s.trail.assign_decision(trigger);
+                        }
+                        assert!(a.use_watch_kernel(false));
+                        assert!(a.use_propagation_session());
+                        assert_eq!(a.propagate(), b.propagate());
+                        assert_state(&a, &b);
+                        cases += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 6534);
 }

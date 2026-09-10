@@ -307,6 +307,95 @@ pub struct ClauseArena {
     compactions: u64,
 }
 
+/// Exclusive fixed allocation used throughout ordinary propagation. The
+/// lifetime prevents allocation, shrink, deletion or compaction while a scan
+/// uses arena offsets; each returned payload borrow ends before the next one.
+pub(crate) struct PropagationArena<'a> {
+    buffer: &'a mut [u64],
+    pos: usize,
+    identities: usize,
+}
+
+/// One live arena slot: the mutable payload and immutable stable identity
+/// occupy disjoint bytes. Holding this borrow prevents deletion, shrink,
+/// allocation and relocation through the arena view. No raw ref can be
+/// supplied to `reason`: it belongs to this exact borrowed live clause.
+pub(crate) struct LivePropagationClause<'a> {
+    lits: &'a mut [Lit],
+    identity: &'a u32,
+}
+
+impl LivePropagationClause<'_> {
+    #[inline]
+    pub(crate) fn lits(&mut self) -> &mut [Lit] {
+        self.lits
+    }
+
+    #[inline]
+    pub(crate) fn reason(&self) -> ClauseId {
+        ClauseId::new(*self.identity)
+    }
+}
+
+impl PropagationArena<'_> {
+    /// Reborrow a fixed allocation by value. The scan owns these slice
+    /// coordinates, so assignment cannot change or invalidate its base.
+    #[inline]
+    pub(crate) fn reborrow(&mut self) -> PropagationArena<'_> {
+        PropagationArena {
+            buffer: self.buffer,
+            pos: self.pos,
+            identities: self.identities,
+        }
+    }
+
+    /// Same arena-issued/ref-relocation contract as `live_lits_hot`.
+    #[inline]
+    pub(crate) fn live_clause(&mut self, r: ClauseRef) -> Option<LivePropagationClause<'_>> {
+        if r.is_null() {
+            return None;
+        }
+        debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
+        // SAFETY: the same arena-issued/ref-relocation invariant as
+        // ClauseArena::live_lits_hot. The exclusive slice pins the allocation
+        // for this entire pass. A slot is 8-aligned and contains an initialized
+        // header; copying it does not borrow any payload.
+        let header = unsafe {
+            self.buffer
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(r.byte_offset())
+                .cast::<ClauseHeader>()
+        };
+        let h = unsafe { core::ptr::read(header) };
+        debug_assert!(
+            h.len as usize
+                <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
+        );
+        if h.deleted() {
+            return None;
+        }
+        // Every live identity was initialized by alloc after checking the
+        // u32 ID space. Shrink preserves it; compaction copies it with the
+        // payload. Only the shared deleted tombstone has an invalid identity,
+        // and that slot was excluded by the liveness check above.
+        debug_assert!((h.identity as usize) < self.identities);
+        // SAFETY: the arena-issued slot has an initialized, aligned header
+        // and h.len initialized literals. The shared identity covers header
+        // bytes 8..12 and the mutable payload starts at byte 12, so even
+        // though they share an allocation word they do not overlap. Both
+        // references borrow this exclusive view; no arena access or header
+        // mutation can occur until they end. The payload cannot reach back
+        // into the header, and the identity is never exposed mutably.
+        Some(unsafe {
+            LivePropagationClause {
+                lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
+                identity: &*core::ptr::addr_of!((*header).identity),
+            }
+        })
+    }
+}
+
 /// All allocation and address checks precede any reference mutation.
 pub(crate) struct CompactionPlan {
     relocated: Vec<ClauseRef>,
@@ -334,6 +423,14 @@ impl Default for ClauseArena {
 }
 
 impl ClauseArena {
+    pub(crate) fn propagation(&mut self) -> PropagationArena<'_> {
+        PropagationArena {
+            buffer: &mut self.buffer,
+            pos: self.pos,
+            identities: self.activities.len(),
+        }
+    }
+
     /// Create an arena whose buffer is pre-allocated to hold at least
     /// `initial_capacity` bytes (rounded up to whole `u64`s).
     #[must_use]
@@ -1343,6 +1440,59 @@ mod initialization_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn borrowed_propagation_clause_identity_survives_mutation_and_relocation() {
+        let mut arena = ClauseArena::new(0);
+        let mut refs = Vec::new();
+        let mut expected = Vec::new();
+        for len in [2, 3, 5, 64] {
+            let lits: Vec<_> = (0..len).map(Lit::from_code).collect();
+            refs.push(arena.alloc(&lits, false));
+            expected.push(lits);
+        }
+        {
+            let mut view = arena.propagation();
+            assert!(view.live_clause(ClauseRef::NULL).is_none());
+            for (id, (&r, literals)) in refs.iter().zip(&mut expected).enumerate() {
+                let mut live = view.live_clause(r).expect("live allocated clause");
+                assert_eq!(live.reason(), ClauseId::new(id as u32));
+                // Keep the identity reference live across payload writes.
+                // The two ranges share a u64 allocation word but no bytes.
+                let LivePropagationClause { lits, identity } = &mut live;
+                lits.reverse();
+                literals.reverse();
+                assert_eq!(**identity, id as u32);
+                assert_eq!(*lits, literals.as_slice());
+                assert_eq!(live.reason(), ClauseId::new(id as u32));
+            }
+        }
+        arena.delete(refs[0]);
+        expected[2].truncate(3);
+        assert!(arena.shrink(refs[2], &expected[2]));
+        let before = refs.clone();
+        arena.compact(&mut refs);
+        assert_ne!(refs[1], before[1], "the live clause was relocated");
+        // Compaction shrinks the allocation; growth happens before reborrow.
+        let extra: Vec<_> = (0..512).map(Lit::from_code).collect();
+        refs.push(arena.alloc(&extra, true));
+        expected.push(extra);
+        {
+            let mut view = arena.propagation();
+            assert!(view.live_clause(refs[0]).is_none(), "deleted tombstone");
+            for (id, (&r, literals)) in refs.iter().zip(&expected).enumerate().skip(1) {
+                let mut live = view.live_clause(r).expect("relocated live clause");
+                assert_eq!(live.lits(), literals.as_slice());
+                assert_eq!(live.reason(), ClauseId::new(id as u32));
+            }
+        }
+        for &r in &refs {
+            arena.delete(r);
+        }
+        arena.compact(&mut refs);
+        let mut view = arena.propagation();
+        assert!(refs.iter().all(|&r| view.live_clause(r).is_none()));
+    }
     use crate::literal::Var;
 
     fn l(v: u32) -> Lit {

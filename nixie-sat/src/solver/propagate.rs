@@ -59,6 +59,11 @@ use core::sync::atomic::Ordering::Relaxed;
 mod watch_kernel;
 use watch_kernel::{Cursor, Step};
 
+#[path = "list_kernel.rs"]
+mod list_kernel;
+#[path = "session_kernel.rs"]
+mod session_kernel;
+
 impl Solver {
     /// Unit propagation using two-watched literals
     ///
@@ -76,6 +81,15 @@ impl Solver {
         #[cfg(not(feature = "bcp-stats"))]
         let bcp_stats = false;
         let use_kernel = self.use_watch_kernel(bcp_stats);
+        if use_kernel && self.use_propagation_session() {
+            let conflict = self.propagate_session();
+            if conflict.is_some() {
+                self.note_conflict_prefix();
+            } else if !self.propagate_aborted {
+                self.no_conflict_until = self.trail.size();
+            }
+            return conflict;
+        }
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
             #[cfg(feature = "bcp-work")]
@@ -624,6 +638,13 @@ impl Solver {
             return false;
         }
         true
+    }
+
+    /// A fixed session excludes every path that can invoke a Solver callback
+    /// or change the borrowed arena/domain. Evaluate once per propagation call.
+    #[inline]
+    fn use_propagation_session(&self) -> bool {
+        !self.lrat && !self.config.enable_lazy_hyper_binary && !Self::reason_stats_enabled()
     }
 
     /// Each scanner call borrows a fixed trail. The borrow ends before any

@@ -5,6 +5,10 @@ use crate::literal::{LBool, Lit, Var};
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+#[path = "trail_propagation.rs"]
+mod propagation;
+pub(crate) use propagation::{PropagationQueue, assign_undefined, propagation_value};
+
 /// Reason for an assignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
