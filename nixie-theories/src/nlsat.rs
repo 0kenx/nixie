@@ -1624,6 +1624,22 @@ macro_rules! nl_trace {
     };
 }
 
+/// Complete a dispatch `Sat` result's witness with definition-Boolean pins
+/// (see [`crate::nl_model_search::attach_definition_truths_to`]).  `Unsat`
+/// results pass through untouched.
+fn complete_definition_bools(
+    r: &mut NlDispatchResult,
+    assertions: &[TermId],
+    manager: &TermManager,
+) {
+    let NlDispatchResult::Sat(model) = r else {
+        return;
+    };
+    let mut defs = rustc_hash::FxHashMap::default();
+    crate::nl_model_search::collect_bool_defs_into(assertions, manager, &mut defs);
+    crate::nl_model_search::attach_definition_truths_to(model, &defs, manager);
+}
+
 /// Dispatch nonlinear integer arithmetic assertions to the `NiaSolver`.
 ///
 /// Returns:
@@ -1718,9 +1734,10 @@ pub fn dispatch_nia_constraints(
     // starved their domains (regression: VeryMax 489/510 sat→unknown).
     if !symbolic_divmod
         && crate::ania_ground::assertions_contain_store(assertions, manager)
-        && let Some(r) = crate::ania_ground::try_decide_ground_ania(assertions, manager)
+        && let Some(mut r) = crate::ania_ground::try_decide_ground_ania(assertions, manager)
     {
         nl_trace!("ania_ground stores: decided {:?}", r);
+        complete_definition_bools(&mut r, assertions, manager);
         return Some(r);
     }
     // Finite-domain enumeration for pure nonlinear-integer formulas whose
@@ -1728,9 +1745,10 @@ pub fn dispatch_nia_constraints(
     // bounded indices). The relaxation-based NIA core routinely returns
     // Unknown on these; exhaustive substitution decides them.
     if !symbolic_divmod
-        && let Some(r) = crate::ania_ground::try_decide_finite_domain_nia(assertions, manager)
+        && let Some(mut r) = crate::ania_ground::try_decide_finite_domain_nia(assertions, manager)
     {
         nl_trace!("finite-domain: decided {:?}", r);
+        complete_definition_bools(&mut r, assertions, manager);
         return Some(r);
     }
     // Model-based nonlinear search (z3-style): linearise monomials into fresh
@@ -1750,8 +1768,10 @@ pub fn dispatch_nia_constraints(
         // regressed VeryMax 489/510 sat→unknown).  The dispatch-level
         // `verify_nl_model` backstop stays on the CAD path, whose models
         // carry no such split.
-        if let Some(r) = crate::nl_model_search::try_model_based_nia_search(assertions, manager) {
+        if let Some(mut r) = crate::nl_model_search::try_model_based_nia_search(assertions, manager)
+        {
             nl_trace!("model-based search: decided {:?}", r);
+            complete_definition_bools(&mut r, assertions, manager);
             return Some(r);
         }
         nl_trace!("model-based search: no decision");
@@ -1769,7 +1789,7 @@ pub fn dispatch_nia_constraints(
     // Gaussian preamble.
     if has_boolean_structure(&working, manager)
         && count_arith_symbols(&working, manager) <= DPLL_MAX_GOAL_SYMBOLS
-        && let Some(r) = crate::nl_dpll::try_dpll_nia_case_split(
+        && let Some(mut r) = crate::nl_dpll::try_dpll_nia_case_split(
             &working,
             assertions,
             &gauss.eliminations,
@@ -1778,6 +1798,7 @@ pub fn dispatch_nia_constraints(
         )
     {
         nl_trace!("dpll case-split: decided {r:?}");
+        complete_definition_bools(&mut r, assertions, manager);
         return Some(r);
     }
 
@@ -2282,7 +2303,8 @@ fn verify_nl_model(
     // evaluator can read, and treating them as "cannot decide" rejected
     // witnesses the stage itself had already certified (regression:
     // 489/510 sat→unknown).
-    let grounded = crate::nl_model_search::ground_bool_interface_eqs(assertions, manager);
+    let (grounded, bool_defs) =
+        crate::nl_model_search::ground_bool_interface_eqs_with_defs(assertions, manager);
     let grounded = crate::nl_model_search::fold_array_reads(grounded, manager);
     let all_integral = renv.values().all(num_rational::BigRational::is_integer);
     for &a in &grounded {
@@ -2305,11 +2327,22 @@ fn verify_nl_model(
             env.entry(t).or_insert_with(|| v.to_integer());
         }
     }
-    ModelCheck::Verified(NlDispatchResult::sat_with(
+    let mut result = NlDispatchResult::sat_with(
         env.into_iter()
             .map(|(t, v)| (t, BigRational::from(v)))
             .collect(),
-    ))
+    );
+    // Complete the witness's Boolean half: the verification above ran on the
+    // GROUNDED assertions (definition Booleans substituted away), so the
+    // returned model must re-derive their values (`φ` under the numeric
+    // witness) or downstream model printing completes them with a default
+    // that contradicts the definition conjunct (the QF_NIA/VeryMax
+    // invalid-model class).
+    let NlDispatchResult::Sat(model) = &mut result else {
+        unreachable!("just constructed Sat");
+    };
+    crate::nl_model_search::attach_definition_truths_to(model, &bool_defs, manager);
+    ModelCheck::Verified(result)
 }
 
 /// Augment a model environment with *select-term* values read through the

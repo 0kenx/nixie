@@ -49,7 +49,7 @@ use crate::arithmetic::simplex::{LinExpr, Simplex, VarId};
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use crate::ania_ground::{ArrayInterp, eval_assertions_true, eval_bool, eval_int};
-use crate::nl_dispatch::NlDispatchResult;
+use crate::nl_dispatch::{NlDispatchResult, NlSatModel};
 use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
@@ -174,7 +174,7 @@ pub fn try_model_based_nia_search(
     // formula carrying a Boolean spur (the dominant VeryMax shape) and the
     // search never runs. Substitution is semantics-preserving; the concrete
     // verification at the end remains the soundness backstop.
-    let grounded = ground_bool_interface_eqs(assertions, manager);
+    let (grounded, bool_defs) = ground_bool_interface_eqs_with_defs(assertions, manager);
     // Fold resolvable array reads (select over a store tower at a constant
     // index) into their values, so the relaxation sees `8*n = 72` rather than
     // `(select (store A 3 8) 3) * n = 72`. Unresolvable reads stay put and
@@ -187,7 +187,8 @@ pub fn try_model_based_nia_search(
 
     // No free Boolean variables: search the grounded assertions directly.
     if free_bools.is_empty() {
-        return nia_search_core(&grounded, manager, &mut nodes);
+        let result = nia_search_core(&grounded, manager, &mut nodes);
+        return attach_truth_pins(result, &bool_defs, &FxHashMap::default(), manager);
     }
     // Too many free Booleans to enumerate: fall through (CAD / other paths).
     if free_bools.len() > MAX_FREE_BOOL_CASESPLIT {
@@ -223,8 +224,8 @@ pub fn try_model_based_nia_search(
         // never returns `Unsat`. A `None` means "no certified verdict"; keep
         // the whole Boolean split honest rather than aggregating relaxation
         // infeasibility into an uncertified `Unsat`.
-        if let r @ Some(NlDispatchResult::Sat(_)) = nia_search_core(&cased, manager, &mut nodes) {
-            return r;
+        if let Some(r) = nia_search_core(&cased, manager, &mut nodes) {
+            return attach_truth_pins(Some(r), &bool_defs, &sub, manager);
         }
     }
     None
@@ -333,6 +334,38 @@ fn nia_search_core_on_worker(
     s.search(assertions, manager, nodes, 0)
 }
 
+/// Complete a witness's Boolean half with the DEFINITION pins only,
+/// preserving any truth pins already present (case-split choices).
+/// See [`truth_pins`].
+pub(crate) fn attach_definition_truths_to(
+    model: &mut crate::nl_dispatch::NlSatModel,
+    defs: &FxHashMap<TermId, TermId>,
+    manager: &TermManager,
+) {
+    let truths = truth_pins(&model.assignments, defs, &FxHashMap::default(), manager);
+    model.truths.extend(truths);
+}
+
+/// Merge [`truth_pins`] into a dispatch result's witness: rebuilds the
+/// `Sat` model with the Boolean half attached (numeric channels pass through
+/// untouched).
+fn attach_truth_pins(
+    result: Option<NlDispatchResult>,
+    defs: &FxHashMap<TermId, TermId>,
+    choices: &FxHashMap<TermId, TermId>,
+    manager: &TermManager,
+) -> Option<NlDispatchResult> {
+    let Some(NlDispatchResult::Sat(model)) = result else {
+        return None;
+    };
+    let truths = truth_pins(&model.assignments, defs, choices, manager);
+    Some(NlDispatchResult::Sat(NlSatModel {
+        assignments: model.assignments,
+        algebraic: model.algebraic,
+        truths,
+    }))
+}
+
 /// Free Boolean-sorted variables referenced anywhere in `assertions`.
 fn free_bool_vars_in(assertions: &[TermId], manager: &TermManager) -> Vec<TermId> {
     let bool_sort = manager.sorts.bool_sort;
@@ -368,10 +401,30 @@ fn free_bool_vars_in(assertions: &[TermId], manager: &TermManager) -> Vec<TermId
 /// satisfiability, and the concrete verification at the end of the search
 /// remains the soundness backstop. A pure relay (cloned inputs) when no such
 /// definitions exist.
-pub(crate) fn ground_bool_interface_eqs(
+/// [`ground_bool_interface_eqs`], also returning the definition map it
+/// substituted (`bool_var := defining formula`).  The caller needs it to pin
+/// the definition Booleans' values into the eventual witness: the grounding
+/// erases them from the verified formula, so without re-deriving their
+/// value (`φ` under the numeric witness) the printed model would complete
+/// them with a default that can contradict the very values it prints.
+pub(crate) fn ground_bool_interface_eqs_with_defs(
     assertions: &[TermId],
     manager: &mut TermManager,
-) -> Vec<TermId> {
+) -> (Vec<TermId>, FxHashMap<TermId, TermId>) {
+    let mut defs: FxHashMap<TermId, TermId> = FxHashMap::default();
+    collect_bool_defs_into(assertions, manager, &mut defs);
+    ground_with_defs(assertions, manager, defs)
+}
+
+/// Collect the conjunct-level Boolean definitions `(= b φ)` (see
+/// [`ground_bool_interface_eqs_with_defs`]).  Pure collection: no term is
+/// created, so this also serves callers that only need the map — e.g. the
+/// dispatch-level witness completion below.
+pub(crate) fn collect_bool_defs_into(
+    assertions: &[TermId],
+    manager: &TermManager,
+    defs: &mut FxHashMap<TermId, TermId>,
+) {
     let bool_sort = manager.sorts.bool_sort;
     let is_bool_var = |t: TermId| -> bool {
         manager
@@ -381,7 +434,6 @@ pub(crate) fn ground_bool_interface_eqs(
     let is_bool_sorted =
         |t: TermId| -> bool { manager.get(t).is_some_and(|n| n.sort == bool_sort) };
 
-    let mut defs: FxHashMap<TermId, TermId> = FxHashMap::default();
     {
         // Collect definitions from **conjunct level only**: the direct
         // children of the top-level conjunction (or a whole assertion),
@@ -415,9 +467,15 @@ pub(crate) fn ground_bool_interface_eqs(
             }
         }
     }
+}
 
+fn ground_with_defs(
+    assertions: &[TermId],
+    manager: &mut TermManager,
+    mut defs: FxHashMap<TermId, TermId>,
+) -> (Vec<TermId>, FxHashMap<TermId, TermId>) {
     if defs.is_empty() {
-        return assertions.to_vec();
+        return (assertions.to_vec(), defs);
     }
 
     // Resolve chains: substitute the map into each definition until it is
@@ -444,6 +502,61 @@ pub(crate) fn ground_bool_interface_eqs(
         .iter()
         .map(|&a| manager.substitute(a, &defs))
         .collect();
+    (out, defs)
+}
+
+/// Derive the Boolean half of a witness: the values the search DECIDED for
+/// Boolean variables, which the verified (grounded) formula no longer
+/// mentions.  Two sources:
+///
+/// * `choices` — the free-Boolean case split's assignments (part of the
+///   satisfying assignment by construction);
+/// * `defs` — the grounding's `bool_var := φ` map: the definition conjunct
+///   `(= b φ)` became the tautology `(= φ φ)`, so the verified formula never
+///   constrains the RECORDED value of `b`; pin `b := eval(φ)` under the
+///   numeric witness (iterated to a fixpoint for definition chains).
+///
+/// A definition whose `φ` stays unevaluable under the witness is left
+/// unpinned — the publication gate (`refuted_under`) abstains on unpinned
+/// Booleans rather than fabricating a value.
+fn truth_pins(
+    numeric: &HashMap<TermId, BigRational>,
+    defs: &FxHashMap<TermId, TermId>,
+    choices: &FxHashMap<TermId, TermId>,
+    manager: &TermManager,
+) -> HashMap<TermId, bool> {
+    let mut interp = crate::nl_eval::Interpretation::empty();
+    for (&t, v) in numeric {
+        interp.pin_num(t, v.clone());
+    }
+    let mut out: HashMap<TermId, bool> = HashMap::new();
+    for (&b, &lit) in choices {
+        let Some(node) = manager.get(lit) else {
+            continue;
+        };
+        let v = matches!(node.kind, nixie_core::TermKind::True);
+        interp.pin_truth(b, v);
+        out.insert(b, v);
+    }
+    // Definition chains: resolve until stable, capped at |defs| + 1 rounds.
+    for _ in 0..defs.len().saturating_add(1) {
+        let mut changed = false;
+        for (&b, &phi) in defs {
+            if out.contains_key(&b) {
+                continue;
+            }
+            if let Some(crate::nl_eval::Value::Truth(v)) =
+                crate::nl_eval::evaluate(phi, manager, &interp)
+            {
+                interp.pin_truth(b, v);
+                out.insert(b, v);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     out
 }
 

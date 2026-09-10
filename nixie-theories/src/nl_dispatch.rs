@@ -26,6 +26,16 @@ pub struct NlSatModel {
     /// populated only when at least one of them is irrational — then
     /// `assignments` is left empty. (Upstream v0.3.3.)
     pub algebraic: rustc_hash::FxHashMap<TermId, crate::nl_witness::NlWitnessValue>,
+    /// TermId → Boolean value for every Boolean variable the search DECIDED:
+    /// the free-Boolean case-split choices, and the grounded definition
+    /// Booleans (`(= b φ)` conjuncts whose variable the grounding substituted
+    /// away — their value is `φ` under the numeric witness, NOT whatever a
+    /// model printer would default an unpinned Boolean to).  Empty on the
+    /// algebraic channel.  A witness that omits these is not a model of the
+    /// original formula even when every numeric value is right (the
+    /// QF_NIA/VeryMax invalid-model class: definition Booleans completed
+    /// `false` while their definitions evaluated `true`).
+    pub truths: HashMap<TermId, bool>,
 }
 
 /// The definitive result from a nonlinear dispatch call.
@@ -53,6 +63,21 @@ impl NlDispatchResult {
         Self::Sat(NlSatModel {
             assignments,
             algebraic: rustc_hash::FxHashMap::default(),
+            truths: HashMap::new(),
+        })
+    }
+
+    /// Satisfiable with numeric assignments AND the Boolean values the
+    /// search decided (see [`NlSatModel::truths`]).
+    #[must_use]
+    pub fn sat_with_truths(
+        assignments: HashMap<TermId, BigRational>,
+        truths: HashMap<TermId, bool>,
+    ) -> Self {
+        Self::Sat(NlSatModel {
+            assignments,
+            algebraic: rustc_hash::FxHashMap::default(),
+            truths,
         })
     }
 
@@ -65,6 +90,7 @@ impl NlDispatchResult {
         Self::Sat(NlSatModel {
             assignments: HashMap::new(),
             algebraic,
+            truths: HashMap::new(),
         })
     }
 }

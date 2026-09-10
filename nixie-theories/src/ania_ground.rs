@@ -1046,9 +1046,77 @@ fn parse_interface(manager: &TermManager, a: TermId, b: TermId) -> Option<Interf
 
 /// `v = t` where `v` is a variable and `t` is a non-variable evaluable term
 /// (nullary define-fun body: product of selects, ite, …).
+/// Whether `v` (a variable) occurs anywhere in `term`.
+fn term_occurs_var(manager: &TermManager, term: TermId, v: TermId) -> bool {
+    let mut stack = vec![term];
+    let mut seen = HashSet::new();
+    while let Some(id) = stack.pop() {
+        if id == v {
+            return true;
+        }
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(n) = manager.get(id) else { continue };
+        match &n.kind {
+            TermKind::IntConst(_)
+            | TermKind::RealConst(_)
+            | TermKind::True
+            | TermKind::False
+            | TermKind::Var(_) => {}
+            TermKind::Neg(a) | TermKind::Not(a) => stack.push(*a),
+            TermKind::Add(xs)
+            | TermKind::Mul(xs)
+            | TermKind::And(xs)
+            | TermKind::Or(xs)
+            | TermKind::Distinct(xs) => stack.extend(xs.iter().copied()),
+            TermKind::Sub(a, b)
+            | TermKind::Eq(a, b)
+            | TermKind::Le(a, b)
+            | TermKind::Lt(a, b)
+            | TermKind::Ge(a, b)
+            | TermKind::Gt(a, b)
+            | TermKind::Implies(a, b) => {
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Ite(c, a, b) => {
+                stack.push(*c);
+                stack.push(*a);
+                stack.push(*b);
+            }
+            TermKind::Let { bindings, body } => {
+                for &(_, val) in bindings.iter() {
+                    stack.push(val);
+                }
+                stack.push(*body);
+            }
+            _ => {
+                // Conservatively unreachable for the evaluator's term
+                // language; `is_evaluable_arith` has already rejected
+                // anything the walkers below cannot read.
+            }
+        }
+    }
+    false
+}
+
 fn parse_definition(manager: &TermManager, a: TermId, b: TermId) -> Option<(TermId, TermId)> {
     let one = |v, body| {
         as_var(manager, v)?;
+        // The defined variable must be INTEGER-sorted: this stage realizes
+        // definitions through `eval_int`, so a Boolean-sorted "definition"
+        // (`(= b φ)`, the purification interface shape) could never bind —
+        // its realization returns `None` at every leaf and the search
+        // rejected every candidate (a false `Unsat`).  Boolean interface
+        // equalities are the nonlinear grounding's business
+        // (`ground_bool_interface_eqs`), not this enumerator's.
+        if manager
+            .get(v)
+            .is_none_or(|n| n.sort != manager.sorts.int_sort)
+        {
+            return None;
+        }
         // Body must not itself be a bare variable or numeral-only (those are
         // ordinary eqs / bounds).
         if as_var(manager, body).is_some() || eval_ground_int(body, manager).is_some() {
@@ -1056,6 +1124,16 @@ fn parse_definition(manager: &TermManager, a: TermId, b: TermId) -> Option<(Term
         }
         // Must be evaluable under a concrete index env (select/ite/mul/…).
         if !is_evaluable_arith(body, manager) {
+            return None;
+        }
+        // Must be ACYCLIC: the defined variable may not occur in the body.
+        // `(= (* x x) x)` parses as the "definition" `x := x*x` on its var
+        // side; swallowing it removed the constraint from the atom list and
+        // skipped `x`'s domain, so the finite-domain search accepted with an
+        // EMPTY witness and the printed model defaulted every value (an
+        // invalid model behind a correct verdict, 2026-09-10).  A genuine
+        // definition never mentions the variable it defines.
+        if term_occurs_var(manager, body, v) {
             return None;
         }
         Some((v, body))
@@ -1279,8 +1357,21 @@ fn parse_cond_definition(q: TermId, manager: &TermManager) -> Option<(TermId, Te
     let a_var = as_var(manager, *a);
     let b_var = as_var(manager, *b);
     match (a_var, b_var) {
-        (Some(v), None) => Some((v, *b)),
-        (None, Some(v)) => Some((v, *a)),
+        (Some(v), None) => {
+            // Acyclicity, same as `parse_definition`: a conditional
+            // "definition" whose body mentions the variable it defines is a
+            // constraint, not a definition.
+            if term_occurs_var(manager, *b, v) {
+                return None;
+            }
+            Some((v, *b))
+        }
+        (None, Some(v)) => {
+            if term_occurs_var(manager, *a, v) {
+                return None;
+            }
+            Some((v, *a))
+        }
         _ => None,
     }
 }

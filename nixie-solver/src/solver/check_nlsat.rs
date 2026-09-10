@@ -223,6 +223,21 @@ impl Solver {
             model.set(term, value_term);
             interpretation.pin_num(term, value);
         }
+        // The Boolean half of the witness (see `NlSatModel::truths`): the
+        // case-split choices and the grounded definition Booleans.  Pinning
+        // them into the interpretation makes the publication gate below
+        // actually EVALUATE the definition conjuncts `(= b φ)` instead of
+        // abstaining on unpinned Booleans — a mis-derived truth pin is
+        // caught here and the whole witness declined.
+        for (term, value) in nl_model.truths {
+            let value_term = if value {
+                manager.mk_true()
+            } else {
+                manager.mk_false()
+            };
+            model.set(term, value_term);
+            interpretation.pin_truth(term, value);
+        }
         // Publication gate (upstream v0.3.3's `adopt_nl_witness`, fork-adapted
         // to `refuted_under`): the witness is re-evaluated against every
         // current assertion in exact `BigRational`, over the *original*
