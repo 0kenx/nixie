@@ -52,6 +52,26 @@ pub(crate) fn propagation_value(values: &[i8], lit: Lit) -> i8 {
     unsafe { *values.get_unchecked(lit.index()) }
 }
 
+/// Kissat `inlineassign.h` prefetches `WATCHES(not_lit)` at assign time so
+/// the later scan of that list overlaps remaining work. Locality 1 is
+/// `_MM_HINT_T2`. Empty lists are skipped. This does not change solver state.
+#[inline]
+pub(crate) fn prefetch_watch_payload<T>(slice: &[T]) {
+    if slice.is_empty() {
+        return;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[allow(unsafe_code)]
+        unsafe {
+            core::arch::x86_64::_mm_prefetch(
+                slice.as_ptr().cast::<i8>(),
+                core::arch::x86_64::_MM_HINT_T2,
+            );
+        }
+    }
+}
+
 /// Assign through the disjoint truth/queue views.
 ///
 /// # Safety

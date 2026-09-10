@@ -4,7 +4,7 @@
 use super::{ClauseId, Lit, Watcher};
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::trail::{PropagationQueue, assign_undefined, propagation_value};
+use crate::trail::{PropagationQueue, assign_undefined, prefetch_watch_payload, propagation_value};
 use crate::watched::{MoveBuffer, MoveWriter, Moves};
 
 #[path = "watch_cursor.rs"]
@@ -50,6 +50,7 @@ pub(super) fn scan_list(
         values,
         queue,
         clauses,
+        destinations,
         moves,
         #[cfg(feature = "bcp-work")]
         super::super::PropagationWork::default(),
@@ -88,6 +89,7 @@ fn scan<'a, const COMPACT: bool>(
     values: &mut [i8],
     queue: &mut PropagationQueue<'_>,
     mut clauses: crate::memory::PropagationArena<'_>,
+    destinations: &[Vec<Watcher>],
     mut moves: MoveWriter<'a>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd<'a> {
@@ -121,6 +123,7 @@ fn scan<'a, const COMPACT: bool>(
                 values,
                 queue,
                 clauses,
+                destinations,
                 moves,
                 #[cfg(feature = "bcp-work")]
                 work,
@@ -207,6 +210,7 @@ fn scan<'a, const COMPACT: bool>(
                         values,
                         queue,
                         clauses,
+                        destinations,
                         moves,
                         #[cfg(feature = "bcp-work")]
                         work,
@@ -237,6 +241,9 @@ fn scan<'a, const COMPACT: bool>(
         unsafe {
             assign_undefined(values, queue, first, live.reason())
         };
+        if let Some(list) = destinations.get(first.index()) {
+            prefetch_watch_payload(list);
+        }
         #[cfg(feature = "bcp-work")]
         {
             work.long_assignments += 1;

@@ -7,7 +7,9 @@ use crate::prelude::*;
 
 #[path = "trail_propagation.rs"]
 mod propagation;
-pub(crate) use propagation::{PropagationQueue, assign_undefined, propagation_value};
+pub(crate) use propagation::{
+    PropagationQueue, assign_undefined, prefetch_watch_payload, propagation_value,
+};
 
 /// Reason for an assignment
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

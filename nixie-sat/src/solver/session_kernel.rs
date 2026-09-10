@@ -1,7 +1,7 @@
 //! Ordinary propagation driver. Fixed-domain borrows live across all lists;
 //! the narrow long-list call keeps BIG/driver state out of its scanning loops.
 use super::*;
-use crate::trail::{assign_undefined, propagation_value};
+use crate::trail::{assign_undefined, prefetch_watch_payload, propagation_value};
 
 impl Solver {
     pub(super) fn propagate_session(&mut self) -> Option<ClauseId> {
@@ -76,6 +76,15 @@ impl Solver {
                         unsafe {
                             assign_undefined(values, &mut queue, implied, reason)
                         };
+                        let implied_code = implied.index();
+                        if let Some(list) = destinations.get(implied_code) {
+                            prefetch_watch_payload(list);
+                        }
+                        let (istart, ilen) = graph.span_of(implied_code);
+                        prefetch_watch_payload(&graph.edges[istart..istart + ilen]);
+                        if let Some(overflow) = graph.extra.get(implied_code) {
+                            prefetch_watch_payload(overflow);
+                        }
                         #[cfg(feature = "bcp-work")]
                         {
                             self.stats.propagation_work.binary_assignments += 1;
