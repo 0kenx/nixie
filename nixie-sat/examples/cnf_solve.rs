@@ -15,6 +15,7 @@
 //!                    unknown tokens are a hard error, and INTERVAL drives
 //!                    the interval strategies' schedule)
 //!   INPROCESS=0|1  BVE=0|1  EQUIV=0|1  STABLE=0|1  REPHASE=N  MAXC=N
+//!   SAT_CACHING=0|1|2  (Z3 two-phase SAT-caching; 2 = matched null)
 //!
 //! ```text
 //! cargo run --release --example cnf_solve -- path/to/file.cnf
@@ -186,6 +187,11 @@ fn main() {
     }
     if std::env::var("REPHASE").as_deref() == Ok("0") {
         config.rephase_interval = 0;
+    }
+    if let Ok(v) = std::env::var("SAT_CACHING")
+        && let Ok(n) = v.parse::<u8>()
+    {
+        config.sat_caching = n;
     }
     // Portfolio mode (kissat-style seeded restarts + heterogeneous config
     // arms): `SEEDS` gives a comma-separated arm list, `ARM_CONFLICTS` a

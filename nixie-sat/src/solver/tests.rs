@@ -1186,6 +1186,55 @@ fn rephase_target_phase_decision_fallback() {
     assert!(!solver.decision_polarity(b));
 }
 
+/// Z3 SAT-caching uses the sticky SAT-phase array during the SAT period,
+/// ignores saved/target phases, and the matched-null mode complements it.
+#[test]
+fn sat_caching_sat_phase_uses_sticky_prefix() {
+    let mut solver = Solver::with_config(SolverConfig {
+        random_polarity_prob: 0.0,
+        sat_caching: 1,
+        ..SolverConfig::default()
+    });
+    let a = solver.new_var();
+    solver.phase[a.index()] = false;
+    solver.target_phase[a.index()] = false;
+    solver.sat_caching_phase[a.index()] = true;
+    solver.sat_caching_sat_phase = true;
+    solver.stable = false;
+    assert!(solver.decision_polarity(a));
+
+    solver.config.sat_caching = 2;
+    assert!(!solver.decision_polarity(a));
+}
+
+/// Z3 SAT-caching periods grow 400, 800, 800, 1200, … and SAT-phase copies
+/// the conflict-free prefix into the sticky array.
+#[test]
+fn sat_caching_toggles_and_records_prefix() {
+    let mut solver = Solver::with_config(SolverConfig {
+        random_polarity_prob: 0.0,
+        sat_caching: 1,
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    let a = solver.new_var();
+    let b = solver.new_var();
+    solver.add_clause([Lit::pos(a), Lit::pos(b)]);
+    solver.trail.new_decision_level();
+    solver.trail.assign_decision(Lit::pos(a));
+    solver.no_conflict_until = 1;
+    solver.sat_caching_trail_avg = 1.0;
+    for _ in 0..400 {
+        solver.sat_caching_on_conflict();
+    }
+    assert!(solver.sat_caching_sat_phase);
+    assert_eq!(solver.sat_caching_next_toggle, 800);
+
+    solver.sat_caching_on_conflict();
+    assert!(solver.sat_caching_phase[a.index()]);
+    assert_eq!(solver.sat_caching_best_size, 1);
+}
+
 /// Rephasing fires from the search loop on the arithmetic conflict schedule
 /// (interval × round) and the stats count every strategy used.
 #[test]

@@ -211,11 +211,13 @@ impl Solver {
                 self.phase.resize(self.num_vars, false);
                 self.target_phase.resize(self.num_vars, false);
                 self.best_phase.resize(self.num_vars, false);
+                self.sat_caching_phase.resize(self.num_vars, false);
                 for (&v, &val) in &assignment {
                     if (v as usize) < self.num_vars {
                         self.phase[v as usize] = val;
                         self.target_phase[v as usize] = val;
                         self.best_phase[v as usize] = val;
+                        self.sat_caching_phase[v as usize] = val;
                         seeded += 1;
                     }
                 }

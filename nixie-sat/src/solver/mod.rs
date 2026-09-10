@@ -779,6 +779,12 @@ pub struct SolverConfig {
     /// VSIDS/LRB/CHB; returning `None` from the heuristic falls back to built-in.
     /// Default: `None` (pure built-in strategy).
     pub external_branching: Option<BoxedBranchingHeuristic>,
+    /// Z3 `sat.phase=caching` two-phase SAT/UNSAT search (0 = off, 1 = on,
+    /// 2 = matched null). During the SAT phase, decisions use the longest
+    /// conflict-free trail prefix instead of CaDiCaL target/saved phases.
+    /// Mode 2 keeps the same toggle, copies and number of choices but
+    /// complements the sticky polarity — the matched null for this lever.
+    pub sat_caching: u8,
 }
 
 impl core::fmt::Debug for SolverConfig {
@@ -930,6 +936,7 @@ impl Default for SolverConfig {
             enable_hyper_binary_probing: false,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 }
@@ -1401,6 +1408,22 @@ pub struct Solver {
     /// the decision heuristic prefers while in stable mode
     /// (cadical `decide_phase(idx, target)`).
     pub(super) target_phase: Vec<bool>,
+    /// Sticky SAT-phase assignment (Z3 `m_best_phase` under `PS_SAT_CACHING`).
+    pub(super) sat_caching_phase: Vec<bool>,
+    /// Whether the two-phase search is currently in Z3's SAT state.
+    pub(super) sat_caching_sat_phase: bool,
+    /// Conflicts spent in the current SAT/UNSAT period (`m_phase_counter`).
+    pub(super) sat_caching_phase_counter: u64,
+    /// Conflict threshold that ends the current period (`m_search_next_toggle`).
+    pub(super) sat_caching_next_toggle: u64,
+    /// Growing UNSAT-period budget (`m_search_unsat_conflicts`).
+    pub(super) sat_caching_unsat_budget: u64,
+    /// Growing SAT-period budget (`m_search_sat_conflicts`).
+    pub(super) sat_caching_sat_budget: u64,
+    /// Longest prefix recorded in the current SAT period (`m_best_phase_size`).
+    pub(super) sat_caching_best_size: usize,
+    /// Slow EMA of conflict-free prefix length during UNSAT periods.
+    pub(super) sat_caching_trail_avg: f64,
     /// Size of the conflict-free trail prefix recorded in `target_phase`
     /// (cadical `target_assigned`; reset to 0 after each rephase).
     pub(super) target_assigned: usize,
@@ -2046,6 +2069,11 @@ impl Solver {
         if let Ok(v) = std::env::var("NIXIE_CHRONO_ALWAYS") {
             config.chrono_always = v == "1";
         }
+        if let Ok(v) = std::env::var("NIXIE_SAT_CACHING")
+            && let Ok(n) = v.parse::<u8>()
+        {
+            config.sat_caching = n;
+        }
         let chrono_enabled = config.enable_chronological_backtrack;
         let chrono_threshold = config.chrono_backtrack_threshold;
         let chrono_always = config.chrono_always;
@@ -2091,6 +2119,14 @@ impl Solver {
             deterministic_phase: Vec::new(),
             best_phase: Vec::new(),
             target_phase: Vec::new(),
+            sat_caching_phase: Vec::new(),
+            sat_caching_sat_phase: false,
+            sat_caching_phase_counter: 0,
+            sat_caching_next_toggle: 400,
+            sat_caching_unsat_budget: 400,
+            sat_caching_sat_budget: 400,
+            sat_caching_best_size: 0,
+            sat_caching_trail_avg: 0.0,
             target_assigned: 0,
             best_assigned: 0,
             no_conflict_until: 0,
@@ -2910,6 +2946,16 @@ impl Solver {
         if let Some(phase) = self.deterministic_phase.get(var.index()).copied().flatten() {
             return phase;
         }
+        if self.config.sat_caching != 0
+            && self.sat_caching_sat_phase
+            && let Some(&phase) = self.sat_caching_phase.get(var.index())
+        {
+            return if self.config.sat_caching == 2 {
+                !phase
+            } else {
+                phase
+            };
+        }
         let source = if self.target_phase_active() {
             self.target_phase.get(var.index()).copied()
         } else {
@@ -2997,6 +3043,7 @@ impl Solver {
         self.deterministic_phase.resize(self.num_vars, None);
         self.best_phase.resize(self.num_vars, false);
         self.target_phase.resize(self.num_vars, false);
+        self.sat_caching_phase.resize(self.num_vars, false);
         // Resize level_marks to at least num_vars (enough for decision levels)
         if self.level_marks.len() < self.num_vars {
             self.level_marks.resize(self.num_vars, 0);
@@ -4872,6 +4919,14 @@ impl Solver {
         self.lrb = LRB::new(0);
         self.best_phase.clear();
         self.target_phase.clear();
+        self.sat_caching_phase.clear();
+        self.sat_caching_sat_phase = false;
+        self.sat_caching_phase_counter = 0;
+        self.sat_caching_next_toggle = 400;
+        self.sat_caching_unsat_budget = 400;
+        self.sat_caching_sat_budget = 400;
+        self.sat_caching_best_size = 0;
+        self.sat_caching_trail_avg = 0.0;
         self.target_assigned = 0;
         self.best_assigned = 0;
         self.no_conflict_until = 0;

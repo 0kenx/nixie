@@ -803,6 +803,73 @@ impl Solver {
             let delta = (delta * delta) * super::probe::INPROBE_BASE_INTERVAL as f64;
             self.lim_inprobe = self.stats.conflicts.saturating_add(delta.max(1.0) as u64);
         }
+        self.reset_sat_caching_period();
+    }
+
+    const SAT_CACHING_PERIOD: u64 = 400;
+    const SAT_CACHING_TRAIL_ALPHA: f64 = 1e-5;
+
+    fn reset_sat_caching_period(&mut self) {
+        self.sat_caching_sat_phase = false;
+        self.sat_caching_phase_counter = 0;
+        self.sat_caching_next_toggle = Self::SAT_CACHING_PERIOD;
+        self.sat_caching_unsat_budget = Self::SAT_CACHING_PERIOD;
+        self.sat_caching_sat_budget = Self::SAT_CACHING_PERIOD;
+        self.sat_caching_best_size = 0;
+        self.sat_caching_trail_avg = 0.0;
+    }
+
+    /// Z3 `updt_phase_of_vars` + `updt_phase_counters` for `PS_SAT_CACHING`.
+    pub(super) fn sat_caching_on_conflict(&mut self) {
+        if self.config.sat_caching == 0 {
+            return;
+        }
+        if self.sat_caching_sat_phase {
+            let head = self.no_conflict_until;
+            if head >= self.sat_caching_best_size {
+                self.sat_caching_best_size = head;
+                self.sat_caching_phase.resize(self.num_vars, false);
+                for &lit in self.trail.assignments().iter().take(head) {
+                    let i = lit.var().index();
+                    if let Some(slot) = self.sat_caching_phase.get_mut(i) {
+                        *slot = lit.is_pos();
+                    }
+                }
+            }
+        } else {
+            let x = self.no_conflict_until as f64;
+            if self.sat_caching_trail_avg == 0.0 {
+                self.sat_caching_trail_avg = x;
+            } else {
+                let a = Self::SAT_CACHING_TRAIL_ALPHA;
+                self.sat_caching_trail_avg = self.sat_caching_trail_avg * (1.0 - a) + x * a;
+            }
+        }
+        self.sat_caching_phase_counter = self.sat_caching_phase_counter.saturating_add(1);
+        let trail_gate = self.sat_caching_sat_phase
+            || (self.sat_caching_trail_avg > 0.0
+                && (self.no_conflict_until as f64) > 0.5 * self.sat_caching_trail_avg);
+        if self.sat_caching_phase_counter >= self.sat_caching_next_toggle && trail_gate {
+            self.toggle_sat_caching();
+        }
+    }
+
+    fn toggle_sat_caching(&mut self) {
+        self.sat_caching_best_size = 0;
+        if self.sat_caching_sat_phase {
+            self.sat_caching_unsat_budget = self
+                .sat_caching_unsat_budget
+                .saturating_add(Self::SAT_CACHING_PERIOD);
+            self.sat_caching_sat_phase = false;
+            self.sat_caching_next_toggle = self.sat_caching_unsat_budget;
+        } else {
+            self.sat_caching_sat_budget = self
+                .sat_caching_sat_budget
+                .saturating_add(Self::SAT_CACHING_PERIOD);
+            self.sat_caching_sat_phase = true;
+            self.sat_caching_next_toggle = self.sat_caching_sat_budget;
+        }
+        self.sat_caching_phase_counter = 0;
     }
 
     /// cadical `Internal::rephase()`: backtrack to the root (routing through

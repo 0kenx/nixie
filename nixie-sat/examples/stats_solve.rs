@@ -126,6 +126,11 @@ fn main() {
         // the *scheduled* mid-search rounds (memory-composition studies).
         cfg.elim_interval = u64::MAX;
     }
+    if let Ok(v) = std::env::var("SAT_CACHING")
+        && let Ok(n) = v.parse::<u8>()
+    {
+        cfg.sat_caching = n;
+    }
     if std::env::var("NO_STAB").is_ok() {
         cfg.enable_stabilize = false;
     }

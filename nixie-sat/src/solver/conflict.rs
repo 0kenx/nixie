@@ -331,6 +331,7 @@ impl Solver {
             use core::sync::atomic::Ordering::Relaxed;
             CONFLICTS_ANALYZED.fetch_add(1, Relaxed);
         }
+        self.sat_caching_on_conflict();
         // Debug: print conflict info (only with analyze-debug feature)
         #[cfg(feature = "analyze-debug")]
         if self.num_vars <= 5 {

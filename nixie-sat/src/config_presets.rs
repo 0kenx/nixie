@@ -149,6 +149,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -211,6 +212,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -273,6 +275,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -335,6 +338,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -397,6 +401,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -459,6 +464,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -517,6 +523,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -575,6 +582,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
@@ -673,6 +681,7 @@ impl ConfigPreset {
             enable_hyper_binary_probing: true,
             enable_lucky: true,
             external_branching: None,
+            sat_caching: 0,
         }
     }
 
