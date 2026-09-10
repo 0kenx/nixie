@@ -936,6 +936,26 @@ impl Solver {
         if !self.bv_unified {
             return;
         }
+        // Stand-down gate: destructive preprocessing (ELS substitution, BVE)
+        // eliminates variables and *resolves their defining clauses away*.
+        // `save_model` reconstructs values that satisfy the rewritten
+        // formula, and those values need not satisfy the original circuit
+        // clauses (they were deleted, not violated) — so comparing raw
+        // circuit-var reads against reference semantics is a category
+        // error once any elimination ran.  This is the root cause of the
+        // false positives recorded in the study's appendix: the
+        // mismatching `bvand` bit had *zero live clauses* precisely
+        // because BVE had eliminated it.
+        if self.sat.stats().substitutions > 0 || self.sat.stats().bve_eliminated > 0 {
+            #[cfg(feature = "std")]
+            eprintln!(
+                "[bv-net] skipping: destructive preprocessing ran ({} substitutions, {} BVE) — raw circuit reads are not model-truthful",
+                self.sat.stats().substitutions,
+                self.sat.stats().bve_eliminated
+            );
+            return;
+        }
+        let mut net_failed: Vec<(nixie_core::ast::TermId, String)> = Vec::new();
         for &atom in self.bv.unified_atoms() {
             if let Some(term) = manager.get(atom) {
                 match &term.kind {
@@ -950,6 +970,38 @@ impl Solver {
                     _ => {}
                 }
             }
+        }
+        #[cfg(feature = "std")]
+        if net_failed.is_empty() {
+            use super::theory_bv_encode::NET_MISMATCH;
+            NET_MISMATCH.with(|m| net_failed.extend(std::mem::take(&mut *m.borrow_mut())));
+        }
+        if !net_failed.is_empty() {
+            // Dump first, fail second (see the net's comment).
+            for (t, why) in &net_failed {
+                if std::env::var("NIXIE_NET_DUMP_CLAUSES").is_ok()
+                    && let Some(bits) = self.bv.debug_bits(*t).map(<[nixie_sat::Var]>::to_vec)
+                {
+                    for v in bits {
+                        let clauses = self.sat.debug_clauses_containing(v);
+                        eprintln!(
+                            "[net-dump] {t:?} {why}: bit var {} watched by {} clauses",
+                            v.index(),
+                            clauses.len()
+                        );
+                        for c in clauses.iter().take(4) {
+                            eprintln!(
+                                "[net-dump]   {:?}",
+                                c.iter().map(|l| l.to_dimacs()).collect::<Vec<_>>()
+                            );
+                        }
+                    }
+                }
+            }
+            debug_assert!(
+                net_failed.is_empty(),
+                "bit-blasted BV circuits disagree with reference semantics: {net_failed:?}"
+            );
         }
     }
 }

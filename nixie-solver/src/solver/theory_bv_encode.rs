@@ -12,6 +12,18 @@ use nixie_theories::bv::BvSolver;
 use crate::prelude::FxHashMap;
 use crate::prelude::FxHashSet;
 
+// Terms whose circuits the model-validity net found inconsistent at the
+// most recent verify pass (debug builds only), with a short reason.  The
+// unified caller drains this to dump the live core's clauses for their
+// bits — the diagnostic that resolved the false-positive mode (BVE/ELS
+// elimination; see docs/studies/2026-09-11-bv-constflow-results.md,
+// appendix) — and then fails loudly.
+#[cfg(all(debug_assertions, feature = "std"))]
+thread_local! {
+    pub(super) static NET_MISMATCH: std::cell::RefCell<Vec<(TermId, String)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Post-order, memoised BV term encoding.
 ///
 /// Bit-blast every BV-sorted operand reachable through a boolean condition
@@ -804,16 +816,33 @@ pub(super) fn debug_verify_bv_circuits(bv: &BvSolver, root: TermId, mgr: &TermMa
         };
 
         if let (Some(actual), Some(expected), Some(w)) = (modelled, expected, width) {
-            debug_assert_eq!(
-                actual,
-                expected & width_mask(w),
-                "bit-blasted BV circuit disagrees with the reference semantics \
-                 of {:?} at width {w}: the model says {actual:#x} but the \
-                 operation evaluates to {expected:#x} on its operands' model \
-                 values – the circuit admits assignments the operation forbids, \
-                 which surfaces as a false `sat`",
-                term.kind
-            );
+            // Record (do not panic yet): the unified caller dumps the live
+            // core's clauses for the mismatching bits first — the single
+            // observation that separates "clause never emitted into this
+            // core" from "clause emitted and removed" — and then fails
+            // loudly.
+            #[cfg(feature = "std")]
+            if actual != expected & width_mask(w) {
+                NET_MISMATCH.with(|m| {
+                    let mut m = m.borrow_mut();
+                    m.push((
+                        tid,
+                        format!(
+                            "{:?} w={w} model={actual:#x} expected={:#x}",
+                            term.kind,
+                            expected & width_mask(w)
+                        ),
+                    ));
+                });
+            }
+            #[cfg(not(feature = "std"))]
+            if actual != expected & width_mask(w) {
+                debug_assert_eq!(
+                    actual,
+                    expected & width_mask(w),
+                    "bit-blasted BV circuit disagrees with the reference semantics"
+                );
+            }
         }
         values.insert(tid, modelled);
     }

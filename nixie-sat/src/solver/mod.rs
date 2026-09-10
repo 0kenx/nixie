@@ -4336,6 +4336,46 @@ impl Solver {
         &self.model
     }
 
+    /// Debug dump: every **live** clause (original or learned, arena-stored)
+    /// that contains `var` in either polarity, plus the binary implication
+    /// graph edges through `var`, each as a `Vec<Lit>`.
+    ///
+    /// This is a full-database scan (`clauses.iter_ids()`), not a watch-list
+    /// walk: the two-watched-literal scheme only indexes each clause under
+    /// two of its literals, so a watch walk under `var` would miss clauses
+    /// that merely contain it.  Diagnostics-grade only — never call this on
+    /// a hot path.
+    ///
+    /// Used by the BV model-validity net's mismatch dump
+    /// (`NIXIE_NET_DUMP_CLAUSES` in `nixie-solver`'s unified verify) to
+    /// answer "is this gate's defining clause present at all, and under
+    /// which indices?" — the observation that separates era-crossing from
+    /// clause-removal hypotheses, and the one that resolved the net's
+    /// false-positive mode (BVE/ELS elimination; see
+    /// `docs/studies/2026-09-11-bv-constflow-results.md`, appendix).
+    #[cfg(any(debug_assertions, test))]
+    pub fn debug_clauses_containing(&self, var: Var) -> Vec<Vec<Lit>> {
+        let mut out: Vec<Vec<Lit>> = Vec::new();
+        for id in self.clauses.iter_ids() {
+            let Some(view) = self.clauses.get(id) else {
+                continue;
+            };
+            if view.deleted {
+                continue;
+            }
+            if view.lits.iter().any(|l| l.var() == var) {
+                out.push(view.lits.to_vec());
+            }
+        }
+        // Binary edges (some binary clauses live only in the graph).
+        for l in [Lit::pos(var), Lit::neg(var)] {
+            for &(implicated, _) in self.binary_graph.get(l).iter() {
+                out.push(vec![l, implicated]);
+            }
+        }
+        out
+    }
+
     /// Get the value of a variable in the model
     #[must_use]
     pub fn model_value(&self, var: Var) -> LBool {
