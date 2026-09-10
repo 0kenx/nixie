@@ -94,5 +94,20 @@ On this family it assigned 4 units (trail 72 vs 67) and **raised** conflicts
 literals. Leave off.
 
 Other search copies on the 1-round residual are also worse: `SAT_CACHING=1`
-95k, `VSIDS=1` 80k, `NO_STAB=1` 321k, `ELS_PRE=1` 82k. The 23k is Z3 search
-× Z3 residual; neither side copies onto the other.
+60k, `VSIDS=1` 101k, `NO_STAB=1` 321k (8-round), `NO_PROBE` 107k,
+`NIXIE_PRESUB_Z3PROBE=1` 97k.
+
+## Negative: ELS_PRE seed-0 is a shuffle (2026-09-10)
+
+`ELS_PRE=1` on the 1-round residual is **30,972** at seed 0 (vs 44,894). Across
+seeds 0–9 it wins **4/10** (also 3, 7, 8) and loses the other six (e.g. seed 1:
+96k → 116k). Mid-search `ELS=1` alone is 128k; in-presub ELS with 0 substitutions
+still refreshes the BIG and is 113k. Do not land.
+
+Post-SSR lucky is not transparent (87k). Subsume-without-strengthen deletes
+nothing (the 102k subsumed count is strengthen-then-subsume in the same round)
+and returns to 179k.
+
+Z3 4.16.0 on the 1-round dump: **55,728** conflicts (vs 23,149 on the original).
+Our residual is worse for Z3 than theirs; theirs is worse for Nixie (108k). The
+leftover **1.94×** is that interaction, not a missing Z3 pass we can copy.
