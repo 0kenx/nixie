@@ -5,6 +5,7 @@ use super::{ClauseId, Lit, Watcher};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::trail::{PropagationQueue, assign_undefined, propagation_value};
+use crate::watched::{MoveBuffer, MoveWriter, Moves};
 
 #[path = "watch_cursor.rs"]
 mod watch_cursor;
@@ -15,7 +16,8 @@ pub(super) struct ScanResult {
     pub(super) work: super::super::PropagationWork,
     pub(super) write: usize,
     // Live arena identities exclude NULL. Keeping this result to two
-    // scalars avoids a hidden output pointer in ordinary scan calls.
+    // scalars keeps the driver-facing result compact. Internal scans also
+    // return their initialized move slice.
     pub(super) conflict: ClauseId,
 }
 
@@ -38,15 +40,17 @@ pub(super) fn scan_list(
     queue: &mut PropagationQueue<'_>,
     clauses: crate::memory::PropagationArena<'_>,
     destinations: &mut [Vec<Watcher>],
+    delayed: &mut MoveBuffer,
 ) -> ScanResult {
     let begin = watches.as_mut_ptr();
+    let moves = delayed.prepare(watches.len());
     let result = scan::<false>(
         WatchCursor::new(watches),
         false_lit,
         values,
         queue,
         clauses,
-        destinations,
+        moves,
         #[cfg(feature = "bcp-work")]
         super::super::PropagationWork::default(),
     );
@@ -54,6 +58,9 @@ pub(super) fn scan_list(
     // this same borrowed slice (possibly its beginning/end for an empty list).
     #[allow(unsafe_code)]
     let write = unsafe { result.end.offset_from(begin) as usize };
+    if !result.moves.is_empty() {
+        result.moves.flush(destinations);
+    }
     ScanResult {
         write,
         conflict: result.conflict,
@@ -62,9 +69,10 @@ pub(super) fn scan_list(
     }
 }
 
-struct ScanEnd {
+struct ScanEnd<'a> {
     end: *mut Watcher,
     conflict: ClauseId,
+    moves: Moves<'a>,
     #[cfg(feature = "bcp-work")]
     work: super::super::PropagationWork,
 }
@@ -74,15 +82,16 @@ struct ScanEnd {
 /// A phase returns its final state; no caller-owned cursor stays live in it.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)] // Disjoint fixed stores are explicit borrows.
-fn scan<const COMPACT: bool>(
-    mut watches: WatchCursor<'_, COMPACT>,
+fn scan<'a, const COMPACT: bool>(
+    watches: WatchCursor<'_, COMPACT>,
     false_lit: Lit,
     values: &mut [i8],
     queue: &mut PropagationQueue<'_>,
     mut clauses: crate::memory::PropagationArena<'_>,
-    destinations: &mut [Vec<Watcher>],
+    mut moves: MoveWriter<'a>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
-) -> ScanEnd {
+) -> ScanEnd<'a> {
+    let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
         #[cfg(feature = "bcp-work")]
@@ -112,7 +121,7 @@ fn scan<const COMPACT: bool>(
                 values,
                 queue,
                 clauses,
-                destinations,
+                moves,
                 #[cfg(feature = "bcp-work")]
                 work,
             );
@@ -156,10 +165,21 @@ fn scan<const COMPACT: bool>(
                 {
                     work.watch_moves += 1;
                 }
-                destinations[pair[1].negate().index()].push(Watcher {
-                    blocker: first,
-                    ..watcher
-                });
+                // SAFETY: the buffer reserves one slot per input watcher;
+                // each entry can reach this branch at most once, then breaks
+                // and is removed. A suffix inherits the same writer. Since
+                // the replacement is undefined and false_lit is false, the
+                // queued destination cannot be the active watch list.
+                #[allow(unsafe_code)]
+                unsafe {
+                    moves.push(
+                        pair[1].negate(),
+                        Watcher {
+                            blocker: first,
+                            ..watcher
+                        },
+                    )
+                };
                 found = Some(None);
                 break;
             }
@@ -176,7 +196,7 @@ fn scan<const COMPACT: bool>(
                         values,
                         queue,
                         clauses,
-                        destinations,
+                        moves,
                         #[cfg(feature = "bcp-work")]
                         work,
                     );
@@ -193,6 +213,7 @@ fn scan<const COMPACT: bool>(
             return ScanEnd {
                 end: watches.finish(),
                 conflict: live.reason(),
+                moves: moves.finish(),
                 #[cfg(feature = "bcp-work")]
                 work,
             };
@@ -213,6 +234,7 @@ fn scan<const COMPACT: bool>(
     ScanEnd {
         end: watches.finish(),
         conflict: ClauseId::NULL,
+        moves: moves.finish(),
         #[cfg(feature = "bcp-work")]
         work,
     }

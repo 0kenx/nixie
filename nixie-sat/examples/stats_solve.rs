@@ -377,13 +377,14 @@ fn main() {
     if std::env::var("NIXIE_MEM_STATS").is_ok() {
         let mc = solver.memory_composition();
         println!(
-            "memstat arena={}/{}B waste={}B refs={}B watch={}/{}B big={}/{}B compactions={}",
+            "memstat arena={}/{}B waste={}B refs={}B watch={}/{}B moves={}B big={}/{}B compactions={}",
             mc.arena_used_bytes,
             mc.arena_capacity_bytes,
             mc.arena_wasted_bytes,
             mc.refs_bytes,
             mc.watch_bytes,
             mc.watch_capacity_bytes,
+            mc.watch_move_capacity_bytes,
             mc.big_edge_bytes,
             mc.big_capacity_bytes,
             mc.arena_compactions

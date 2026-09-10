@@ -8,6 +8,10 @@ use crate::prelude::*;
 #[allow(unused_imports)]
 use smallvec::SmallVec;
 
+#[path = "watched_moves.rs"]
+mod moves;
+pub(crate) use moves::{MoveBuffer, MoveWriter, Moves};
+
 /// A watcher entry
 ///
 /// Ordinary entries occupy eight bytes: a direct arena reference and a blocker.
@@ -98,6 +102,8 @@ pub struct WatchLists {
     /// Per-literal count of binary clauses keyed here in the old scheme
     /// (tick parity bookkeeping – see the module-level note above).
     bin_phantom: Vec<u32>,
+    /// Allocation scratch only; no initialized move escapes a list scan.
+    delayed: MoveBuffer,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -119,8 +125,12 @@ pub struct WatchSnapshot {
 }
 
 impl WatchLists {
-    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32]) {
-        (&mut self.watches, &self.bin_phantom)
+    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut MoveBuffer) {
+        (&mut self.watches, &self.bin_phantom, &mut self.delayed)
+    }
+
+    pub(crate) fn move_capacity_bytes(&self) -> usize {
+        self.delayed.capacity_bytes()
     }
 
     /// Create new watch lists for n variables
@@ -129,6 +139,7 @@ impl WatchLists {
         Self {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
+            delayed: MoveBuffer::default(),
         }
     }
 

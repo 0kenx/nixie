@@ -32,6 +32,18 @@ impl<'a> WatchCursor<'a, false> {
 }
 
 impl<'a, const COMPACT: bool> WatchCursor<'a, COMPACT> {
+    /// Materialize the consumed coordinates as local state. The list kernel
+    /// must not retain the caller's indirect argument as its mutable cursor.
+    #[inline]
+    pub(super) fn into_local(self) -> Self {
+        Self {
+            read: self.read,
+            write: self.write,
+            end: self.end,
+            owner: PhantomData,
+        }
+    }
+
     #[inline]
     #[allow(unsafe_code)]
     pub(super) fn next(&mut self) -> Option<Entry<'_, 'a, COMPACT>> {

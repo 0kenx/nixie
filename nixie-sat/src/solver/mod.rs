@@ -1252,6 +1252,8 @@ pub struct MemoryComposition {
     pub watch_bytes: usize,
     /// Watch-list capacity (doubling overshoot) bytes.
     pub watch_capacity_bytes: usize,
+    /// Scratch allocation for delayed long-watch moves.
+    pub watch_move_capacity_bytes: usize,
     /// Binary implication graph live edge bytes (8 per edge).
     pub big_edge_bytes: usize,
     /// Binary implication graph capacity bytes.
@@ -4400,6 +4402,7 @@ impl Solver {
             refs_bytes: self.clauses.num_slots() * 4,
             watch_bytes: watch.0 * core::mem::size_of::<crate::watched::Watcher>(),
             watch_capacity_bytes: watch.1 * core::mem::size_of::<crate::watched::Watcher>(),
+            watch_move_capacity_bytes: self.watches.move_capacity_bytes(),
             big_edge_bytes: big_edges * 8,
             big_capacity_bytes: big_cap * 8,
             arena_compactions: arena.compactions,

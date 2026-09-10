@@ -292,6 +292,72 @@ fn assert_state(a: &Solver, b: &Solver) {
 }
 
 #[test]
+fn delayed_moves_cross_units_and_flush_before_next_literal_and_conflict() {
+    for conflict in [false, true] {
+        for burst in [1, 7, 97] {
+            let mut a = Solver::new();
+            let mut b = Solver::new();
+            b.propagate_legacy_oracle = true;
+            for s in [&mut a, &mut b] {
+                s.ensure_vars(6);
+                let [t, no, destination, u, v, tail] =
+                    std::array::from_fn(|i| Lit::from_code(2 * i as u32));
+                // An existing destination entry must remain before every
+                // delayed append. The move bursts straddle internal units.
+                for lits in [[destination, u, tail], [!t, u, no]] {
+                    let id = s.clauses.add_original(lits);
+                    s.attach_watchers(id, lits[0], lits[1]);
+                }
+                for phase in 0..2 {
+                    for _ in 0..burst {
+                        let lits = [!t, no, destination];
+                        let id = s.clauses.add_original(lits);
+                        s.attach_watchers(id, lits[0], lits[1]);
+                    }
+                    let lits = if phase == 0 {
+                        [!t, v, !u]
+                    } else if conflict {
+                        [!t, !u, !v]
+                    } else {
+                        // This unit queues the destination's trigger. It
+                        // must see all moved watches from both earlier bursts.
+                        [!t, !destination, !v]
+                    };
+                    let id = s.clauses.add_original(lits);
+                    s.attach_watchers(id, lits[0], lits[1]);
+                }
+                let lits = [!t, no, tail];
+                let id = s.clauses.add_original(lits);
+                s.attach_watchers(id, lits[0], lits[1]);
+                s.trail.assign_unit_fact(!no);
+                while s.trail.next_to_propagate().is_some() {}
+                s.trail.new_decision_level();
+                s.trail.assign_decision(t);
+            }
+            assert_eq!(a.propagate(), b.propagate());
+            assert_state(&a, &b);
+            assert!(a.trail.lit_val(Lit::from_code(6)) > 0);
+            assert!(a.trail.lit_val(Lit::from_code(8)) > 0);
+            assert!(a.watches.move_capacity_bytes() > 0);
+            let snapshot = a.watches.packed_snapshot();
+            a.watches.restore(snapshot);
+            assert_state(&a, &b);
+            let cloned = a.watches.clone();
+            assert_eq!(cloned.move_capacity_bytes(), 0);
+            assert_eq!(format!("{cloned:?}"), format!("{:?}", a.watches));
+            for s in [&mut a, &mut b] {
+                s.trail.backtrack_to(0);
+                s.trail.new_decision_level();
+                s.trail.assign_decision(Lit::from_code(0));
+            }
+            let expected = b.propagate();
+            assert_eq!(a.propagate(), expected);
+            assert_state(&a, &b);
+        }
+    }
+}
+
+#[test]
 fn session_gate_excludes_callbacks() {
     let mut s = Solver::new();
     assert!(s.use_propagation_session());
