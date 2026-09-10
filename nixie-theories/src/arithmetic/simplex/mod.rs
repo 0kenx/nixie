@@ -17,15 +17,6 @@ pub type VarId = u32;
 /// Tableau rows and basic-variable flags captured at one decision scope.
 ///
 /// Rows are `Arc`-shared so a snapshot is a *shallow* map clone and a pivot
-/// only deep-copies the rows it actually edits (copy-on-write via
-/// `Arc::make_mut`): snapshotting the full tableau per decision level used
-/// to deep-clone thousands of rows, which dominated QF_AUFLIA runtimes.
-type TableauSnapshot = (
-    FxHashMap<VarId, Arc<LinExpr>>,
-    Vec<bool>,
-    FxHashMap<VarId, Arc<SmallVec<[VarId; 4]>>>,
-);
-
 /// Canonical identity of a linear form: terms sorted by VarId with merged
 /// coefficients and zero coefficients dropped, plus the constant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -847,12 +838,10 @@ pub struct Simplex {
     trail_limits: Vec<usize>,
     /// Cached assignments for warm-starting (basis caching)
     /// Saves assignment state at each decision level for faster incremental solving
-    cached_assignments: Vec<Option<Vec<DeltaRational>>>,
     /// Lazily saved tableau snapshots for correct restoration on pop.
     /// Pivoting during `check()` modifies rows in-place, so the first operation
     /// that can mutate a scoped basis snapshots it.  A decision level that only
     /// accumulates trailed bounds/rows needs no full-tableau clone.
-    saved_tableaux: Vec<Option<TableauSnapshot>>,
     /// Pivoting rule to use
     /// Maximum number of pivot operations before giving up
     max_pivots: usize,
@@ -906,8 +895,6 @@ impl Simplex {
             propagated: Vec::new(),
             trail: Vec::new(),
             trail_limits: vec![0],
-            cached_assignments: Vec::new(),
-            saved_tableaux: Vec::new(),
             max_pivots: config.max_pivots,
             // Experiment knob (NIXIE_ARITH_SOI=1) mirroring the
             // NIXIE_SAT_VMTF_FOCUS precedent: lets the A/B measurement run
@@ -1476,24 +1463,6 @@ impl Simplex {
     /// variables and fresh slack rows have explicit undo records, so `push()`
     /// itself remains O(1); only a level that actually runs simplex pays for a
     /// full snapshot, at most once.
-    fn ensure_scope_snapshot(&mut self) {
-        let Some(index) = self.saved_tableaux.len().checked_sub(1) else {
-            return;
-        };
-        if self.saved_tableaux[index].is_none() {
-            self.saved_tableaux[index] = Some((
-                self.tableau.clone(),
-                self.basic.clone(),
-                self.columns.clone(),
-            ));
-        }
-        let Some(index) = self.cached_assignments.len().checked_sub(1) else {
-            return;
-        };
-        if self.cached_assignments[index].is_none() {
-            self.cached_assignments[index] = Some(self.assignment.clone());
-        }
-    }
     /// Eager bound-crossing conflict probe: O(variables), no pivoting.
     ///
     /// Detects a variable whose lower bound exceeds its upper bound
@@ -1575,7 +1544,6 @@ impl Simplex {
                 return Err(conflict);
             }
         }
-        self.ensure_scope_snapshot();
         // Skip the O(tableau) `crash_basis` re-derivation when the assignment
         // is already current (maintained incrementally by `add_le` on basic
         // slacks and left untouched by basic-bound changes).  Non-basic bound
@@ -2044,7 +2012,6 @@ impl Simplex {
     /// - Bixby, "Implementing the Simplex Method" (2002)
     /// - Modern MIP solvers (CPLEX, Gurobi) use dual simplex as the primary LP solver
     pub fn dual_simplex(&mut self) -> Result<(), Vec<u32>> {
-        self.ensure_scope_snapshot();
         self.resource_limit = false;
         self.update_assignment();
         for _ in 0..self.max_pivots {
@@ -2278,7 +2245,6 @@ impl Simplex {
 
         #[cfg(feature = "profiling")]
         let _timer = ScopedTimer::new(ProfilingCategory::SimplexPivot);
-        self.ensure_scope_snapshot();
         let Some(expr) = self.tableau.get(&basic_var) else {
             self.resource_limit = true;
             return false;
@@ -2855,8 +2821,6 @@ impl Simplex {
         self.trail.clear();
         self.trail_limits.clear();
         self.trail_limits.push(0);
-        self.cached_assignments.clear();
-        self.saved_tableaux.clear();
         self.resource_limit = false;
         self.assignment_current = true;
     }
@@ -2880,8 +2844,6 @@ impl Simplex {
     /// Push a new decision level
     pub fn push(&mut self) {
         self.trail_limits.push(self.trail.len());
-        self.cached_assignments.push(None);
-        self.saved_tableaux.push(None);
     }
     /// Pop to previous decision level.
     ///
@@ -2903,20 +2865,22 @@ impl Simplex {
         // (`intern_row_cached`) – a row without bounds constrains nothing, so
         // its bounds dying at this pop fully retracts the scope's
         // assertions.  The basis is free to stay pivoted (any basis spanning
-        // the row space is valid); the assignment is restored from the scope
-        // snapshot below.
-        let saved_tableau = self.saved_tableaux.pop().flatten();
-        let cached_assignment = self.cached_assignments.pop().flatten();
-        // Whether this scope mutated the tableau or assignment at all (a
-        // `Some` snapshot exists only from `ensure_scope_snapshot`, taken at
-        // the first mutation).
-        let restored_mutation = saved_tableau.is_some() || cached_assignment.is_some();
-        if let Some((saved_tableau, mut saved_basic, saved_columns)) = saved_tableau {
-            saved_basic.resize(self.basic.len(), false);
-            self.basic = saved_basic;
-            self.tableau = saved_tableau;
-            self.columns = saved_columns;
-        }
+        // the row space is valid).
+        //
+        // The assignment is NOT restored either: every assignment mutation
+        // (bound snaps in `on_nonbasic_bound_change`, pivot re-derivations)
+        // maintains the invariant "nonbasics inside their bound window,
+        // basics equal to their row over the current nonbasics", and a pop
+        // only ever RELAXES bounds (assertions tighten monotonically within
+        // a scope), so the invariant survives the pop untouched.  This used
+        // to snapshot+restore the whole tableau, `basic` flags, `columns`
+        // and the assignment vector per scope — O(tableau) clones that also
+        // shared every column `Arc`, turning each in-scope column edit into
+        // a full column clone (`Arc::make_mut`), which dominated once the
+        // tableau persisted across the search (see the restart-resync note
+        // in `TheoryManager::on_backtrack` and
+        // docs/studies/2026-09-10-per-final-check-resync.md).  The
+        // incremental-vs-replay differential fuzzers guard the contract.
         if let Some(limit) = self.trail_limits.pop() {
             while self.trail.len() > limit {
                 if let Some(undo) = self.trail.pop() {
@@ -2934,33 +2898,6 @@ impl Simplex {
                             self.upper[var as usize] = Some(old);
                         }
                     }
-                }
-            }
-            if let Some(cached) = cached_assignment {
-                let restore_len = cached.len().min(self.assignment.len());
-                self.assignment[..restore_len].copy_from_slice(&cached[..restore_len]);
-                for item in self.assignment.iter_mut().skip(restore_len) {
-                    *item = DeltaRational::zero();
-                }
-                // Variables created inside this scope (rows are permanent, so
-                // their slacks live on as BASIC vars with rows but no
-                // bounds) now hold zeroed assignments that do NOT satisfy
-                // their rows.  The next `check` must re-derive the basic
-                // assignments via `crash_basis` instead of trusting the
-                // incremental flag.
-                // The growth-only condition this replaced missed two stale
-                // shapes (found via the div/mod differential debug-assert,
-                // 2026-08-28): (a) a scope whose pivots rewrote rows — the
-                // restored assignment is the pre-mutation vector, which does
-                // not satisfy the restored tableau even at unchanged length;
-                // (b) a slack interned while the flag was already down (its
-                // entry stayed at the `zero()` default) whose error the
-                // scope snapshot then froze as if consistent.  Any scope that
-                // mutated (a `Some` cache exists) must re-derive on its next
-                // consumer — the flag is exactly that "needs re-derivation"
-                // mark, and `pivot` now honors it too.
-                if restored_mutation || self.assignment.len() > restore_len {
-                    self.assignment_current = false;
                 }
             }
             self.infeasible = None;

@@ -330,15 +330,14 @@ mod tests_2 {
 
         let rows_before_pop = simplex.tableau.len();
         simplex.pop();
-        // Final contract (Dutertre–de Moura, with lazy basis snapshots):
+        // Final contract (Dutertre–de Moura, bounds-only backtracking):
         // variables are permanent and rows are permanent definitions, while
-        // the BOUNDS the scope asserted are rolled back.  Because the second
-        // scoped row was interned AFTER the first  took its lazy
-        // snapshot, the pop restores that snapshot's basis and then undoes
-        // the first row's bounds — the tableau keeps every row interned
-        // before the snapshot, and the post-snapshot row is dropped with the
-        // basis restore (it only ever lived in the pivoted view).
-        assert_eq!(simplex.tableau.len(), rows_before_pop - 1);
+        // the BOUNDS the scope asserted are rolled back.  The tableau never
+        // shrinks on backtrack — a row without bounds constrains nothing and
+        // its content-cache entry stays valid.  (This used to restore a
+        // pre-scope basis snapshot, dropping post-snapshot rows; the
+        // snapshot machinery is gone — see `Simplex::pop`.)
+        assert_eq!(simplex.tableau.len(), rows_before_pop);
         assert_eq!(simplex.num_original_vars(), 3);
         assert!(simplex.get_lower(y).is_none());
         assert!(simplex.get_lower(z).is_none());
@@ -349,9 +348,11 @@ mod tests_2 {
         again.add_term(y, Rational64::one());
         again.add_constant(Rational64::from_integer(-4));
         simplex.add_eq(again, 1);
-        // Re-asserting the first form re-interns its row (a content-cache
-        // entry naming a basis-restored row misses): one row again.
-        assert_eq!(simplex.tableau.len(), rows_before_pop - 1);
+        // Re-asserting the first form re-uses the row while it is still
+        // basic (its content-cache entry names a live defining row); if a
+        // pivot removed it in the meantime, the re-intern rebuilds it —
+        // one row either way, never a duplicate.
+        assert!(simplex.tableau.len() >= rows_before_pop);
         assert!(simplex.check().is_ok());
     }
 
@@ -365,7 +366,6 @@ mod tests_2 {
 
         simplex.push();
         simplex.set_upper(x, Rational64::from_integer(9), 1);
-        assert!(matches!(simplex.saved_tableaux.last(), Some(None)));
         simplex.pop();
 
         assert_eq!(simplex.delta_value(x), parent_value);

@@ -103,10 +103,50 @@ was attempted here.
 * This commit — the DL fuzzer + the `value()`-consistency half of the
   arith oracle (test-only).
 
+## Follow-up (same day): the restart-resync landed
+
+The named design — basis re-canonicalization at restart points — works.
+`TheoryManager::on_backtrack(0)` now rebuilds from the (root-only, hence
+small) shadow trail once per restart, replacing the per-final-check
+replay; `Simplex::pop` is the pure Dutertre–de Moura bounds-only contract
+(the snapshot-restore and its per-scope `Arc`-sharing column clones are
+gone).  Measurements (270-file differential, 10 s cap, `--validate-models`):
+
+| | baseline (resync kept) | restart-resync |
+|---|---|---|
+| solved / agree | 167 | **175** |
+| PAR-2 | 2 176 | **1 993** |
+| soundness disagreements | 0 | **0** |
+| invalid models | 0 | 2 (array cells, below) |
+
+Per instance: xs_8_13 (the pinned regression that blocked every removal
+variant) 2.5 s → 0.7 s and *passes its determinism test*; xs_15_15
+5.3 s → 1.3 s; hash_sat_05_06 12.1 s → 5.3 s.  Family deltas: QF_NIA +5,
+QF_UFLIA +2, QF_ANIA +2, QF_AUFLIA +1, QF_UFIDL +0, QF_LIA −1, QF_BV −1
+(inherited from main's own movement — bench_66/app1 shifted on main's BV
+commits, verified on both binaries).
+
+Why this variant succeeded where the four earlier ones failed: the
+per-final-check rebuild's value was never its (never-firing) conflict
+channel but the FRESH TABLEAU BASIS each candidate saw, which both bounds
+permanent-row accumulation and canonicalizes `arith.value()` for the
+model-based Nelson–Oppen round.  Restart points get both properties at
+O(root trail) cost instead of O(full trail) per final check.
+
+Exposing the solvable families surfaced three PRE-EXISTING
+nonlinear-witness soundness holes (fixed in the companion commit:
+definition-Boolean witness pins, completion-site honesty, ania cyclic/
+Boolean definition parsing — the invalid-model classes the
+`--validate-models` gate then flagged).  The two remaining QF_ANIA/sum10
+invalid models are the next known gap: `try_decide_ground_ania`'s
+`ArrayInterp` cells never reach the printed model (const-0 array default
+contradicts the printed ints; nested-array sorts make the export a real
+feature, not a patch).  That is the follow-up surface, together with
+cut-rows-as-CDCL-lemmas for the residual tableau growth between restarts.
+
 ## Verdict
 
-The resync backstop is **2/3 overhead with a 0-firing conflict channel**,
-but it is load-bearing as trajectory shaping: removing it nets +2 solved
-at the corpus level while breaking a pinned soundness-shape regression
-beyond its budget.  Reverted; the map above (row lifecycle, basis
-restore, cut-as-lemma export) is the follow-up surface.
+The resync backstop was 2/3 overhead with a 0-firing conflict channel;
+its trajectory value is reproduced at 1/50th the cost by rebuilding once
+per restart.  Landed (with the three witness fixes it exposed); the
+array-cell export and cuts-as-lemmas remain open.

@@ -4222,21 +4222,9 @@ impl TheoryCallback for TheoryManager<'_> {
             && self.var_to_parsed_arith.is_empty()
             && self.bv_terms.is_empty()
         {
-            if !self.eager_interned
-                && self.theory_mode != TheoryMode::Lazy
-                && self.euf.has_app_nodes()
-            {
-                let replay = self.resync_theory_state();
-                if let TheoryCheckResult::Conflict(conflict_lits) = replay {
-                    self.statistics.theory_conflicts += 1;
-                    self.statistics.conflicts += 1;
-                    if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
-                        self.resource_exhausted = true;
-                        return TheoryCheckResult::Sat;
-                    }
-                    return TheoryCheckResult::Conflict(conflict_lits);
-                }
-            }
+            // (The pure-EUF per-final-check `resync_theory_state` replay used
+            // to live here; it moved to the restart hook in `on_backtrack` —
+            // see the note there.)
             return TheoryCheckResult::Sat;
         }
 
@@ -4271,31 +4259,21 @@ impl TheoryCallback for TheoryManager<'_> {
             return r;
         }
 
-        // Soundness backstop: the incremental EUF state, built up across CDCL
-        // push/pop, can lose a congruence or disequality, so the live
-        // `check_conflicts` above can report a spurious "consistent" on a
-        // genuinely-unsatisfiable, *function-bearing* assignment (the live
-        // e-graph diverges from a fresh replay of the same asserted equalities).
-        // Rebuild the theory state from the deduplicated shadow trail and
-        // re-check; honor any conflict the rebuild finds that the incremental
-        // state missed. Gated on `has_app_nodes` because the divergence is
-        // specific to function-bearing EUF, and pure-equality problems would be
-        // unfairly penalized by the per-final_check rebuild cost.
-        // Eager mode only: lazy mode has already rebuilt all theory state from
-        // this shadow trail at the start of `final_check`, so replaying it a
-        // second time here would be redundant.
-        if self.theory_mode != TheoryMode::Lazy && self.euf.has_app_nodes() {
-            let replay = self.resync_theory_state();
-            if let TheoryCheckResult::Conflict(conflict_lits) = replay {
-                self.statistics.theory_conflicts += 1;
-                self.statistics.conflicts += 1;
-                if self.max_conflicts > 0 && self.statistics.conflicts >= self.max_conflicts {
-                    self.resource_exhausted = true;
-                    return TheoryCheckResult::Sat;
-                }
-                return TheoryCheckResult::Conflict(conflict_lits);
-            }
-        }
+        // NOTE (2026-09-10): this site used to run an unconditional
+        // `resync_theory_state` per final check — a full reset+replay of
+        // EUF/arith/DL on the premise that "the incremental EUF state can
+        // lose a congruence or disequality".  That premise is refuted by the
+        // three incremental-vs-replay differential fuzzers
+        // (`euf_incremental_matches_replay_fuzz`,
+        // `arith_incremental_matches_replay_fuzz`,
+        // `dl_incremental_matches_replay_fuzz`), and across the 270-file
+        // differential sample (~50k final checks on UF-bearing problems) the
+        // backstop NEVER produced a conflict the incremental checks missed —
+        // while its reset+replay was ~2/3 of all theory-layer work.  The
+        // rebuild now happens once per restart instead (`on_backtrack(0)`):
+        // that is where it is cheap (the shadow trail is root-only at that
+        // moment) and it still bounds the permanent-row accumulation that
+        // otherwise grows the tableau over the whole search.
 
         // Propagate EUF-derived equalities into the arithmetic solver.
         // When EUF fires congruence closure and derives f(x) = f(y) because
@@ -4509,6 +4487,49 @@ impl TheoryCallback for TheoryManager<'_> {
         if let Some(f) = self.bool_false_node {
             if (f as usize) >= live_nodes {
                 self.bool_false_node = None;
+            }
+        }
+
+        // ===== Restart resync (basis re-canonicalization) =====
+        //
+        // On a backtrack to the ROOT (restart, or a level-0 unit learn), the
+        // shadow trail is exactly the set of level-0 atoms — small — so a
+        // full reset+replay here is cheap, unlike the per-final-check resync
+        // this replaces (which replayed the ENTIRE trail on every candidate
+        // model: ~2/3 of all theory-layer work on UF+arith problems, and its
+        // conflict channel never fired once across ~50k final checks on the
+        // differential corpus — see
+        // docs/studies/2026-09-10-per-final-check-resync.md).
+        //
+        // What the periodic rebuild buys:
+        // * Bounded tableau growth: simplex rows are permanent
+        //   (content-addressed), so cut rows and retracted-branch rows
+        //   accumulate over the whole search otherwise (measured 430 ->
+        //   9300+ rows on QF_UFLIA xs_8_13); every restart compacts back to
+        //   the live root rows.
+        // * A canonical basis at each restart boundary: the LP vertex — and
+        //   with it `arith.value()` at the next candidates, which the
+        //   model-based Nelson–Oppen round reads — no longer depends on the
+        //   entire pivot history of the search.
+        //
+        // The replay's result is discarded by design: at this point the
+        // incremental solvers hold exactly the level-0 atoms (every higher
+        // scope was just popped above), and the per-layer differential
+        // fuzzers verify incremental ≡ replay — so a Conflict here would be
+        // a conflict the incremental layers also hold and will surface at
+        // the next final_check.  Dropping it can delay a refutation by one
+        // round; it can never fabricate one.
+        //
+        // Gating mirrors the removed per-final-check sites: eager mode,
+        // function-bearing problems; arith/array/BV-bearing inputs always,
+        // pure-EUF inputs only when not eagerly interned (the eager path
+        // keeps its own interning discipline).
+        if level == 0 && self.theory_mode != TheoryMode::Lazy && self.euf.has_app_nodes() {
+            let arith_bearing = !self.var_to_parsed_arith.is_empty()
+                || !self.array_theory.is_empty()
+                || !self.bv_terms.is_empty();
+            if arith_bearing || !self.eager_interned {
+                let _ = self.resync_theory_state();
             }
         }
     }
