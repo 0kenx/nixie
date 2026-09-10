@@ -314,3 +314,31 @@ against original-circuit semantics — a category error, not a solver bug
 (verdict correctness was never in question).  The net now stands down
 loudly whenever eliminations ran (`bv_unified`'s stand-down gate), and
 `NIXIE_NET_DUMP_CLAUSES` remains wired for the next incident.
+
+## Session close (late 2026-09-11 → 2026-09-12): the simplify cascade, landed (4292c427)
+
+The maxandminor mechanism question is now fully answered end-to-end:
+
+1. **Ground truth** (with the probe-order mistakes corrected — `(apply …)`
+   must run *after* the asserts, and worktrees need the corpus symlink):
+   z3's `simplify` **alone** collapses maxandminor016's 16-round
+   bound-propagation chain to `(not (= (bvor (¬a!244) (¬a!263)) (bvor a!501 a!514)))`
+   — one near-mirror equality — and z3 decides the result in 0.068 s.
+   Nixie on z3's simplified form: **unsat in 8.3 s** (vs 28–43 s raw).
+   The term-simplifier cascade is the entire gap.
+2. The cascade's visible transformations: De Morgan pushdown of
+   `~(a & b)`, constant masks folded as `bvor` operands, NOT through
+   concat, on top of sorted operand flattening (which nixie already had —
+   it is the convergence substrate).
+3. **Landed** (`NIXIE_BV_SIMCASCADE=0` disables; default on): the
+   NOT-descent rules in `bv_preprocess` + `X | ~X` complement folding.
+   Standalone AND elimination was screened and **excluded** (bitrev0256
+   10× regression — not-or-not chains cost 3–4 gate vars per bit).
+   A/B: 286 vs 284, zero flips; maxxor016 2.2× and under the cap;
+   maxandminor016 −24% (≈21 s at settled load — crossing the cap);
+   bitrev untouched by construction.
+
+Remaining gap on this family (8.3 s vs 0.068 s on the simplified form)
+is blast+SAT on the converged shape; the missing cascade pieces
+(ite-through-concat lifting, `= #x0000` selector normalizations) are the
+next increments if more is needed.
