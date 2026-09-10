@@ -59,6 +59,42 @@ fn saved_position_scan_moves_the_first_non_false_tail_literal() {
 }
 
 #[test]
+fn stale_watcher_does_not_rewrite_clause_literals() {
+    for legacy in [false, true] {
+        let mut s = Solver::new();
+        s.propagate_legacy_oracle = legacy;
+        s.ensure_vars(5);
+        let [a, b, extra, junk] = [
+            Lit::from_code(0),
+            Lit::from_code(2),
+            Lit::from_code(4),
+            Lit::from_code(6),
+        ];
+        let id = s.clauses.add_original([a, b, extra]);
+        s.attach_watchers(id, a, b);
+        let r = s.clauses.ref_of(id).expect("arena ref");
+        s.watches.add(junk, Watcher::new(id, r, a));
+        s.trail.new_decision_level();
+        s.trail.assign_decision(junk);
+        assert_eq!(s.propagate(), None);
+        let view = s.clauses.get(id).expect("clause");
+        assert_eq!(view.lits, [a, b, extra].as_slice());
+        assert!(
+            s.watches.get(junk).iter().all(|w| w.r != r),
+            "stale watcher must be dropped"
+        );
+        assert!(
+            s.watches.get(a.negate()).iter().any(|w| w.r == r),
+            "pair watch 0 must remain"
+        );
+        assert!(
+            s.watches.get(b.negate()).iter().any(|w| w.r == r),
+            "pair watch 1 must remain"
+        );
+    }
+}
+
+#[test]
 fn exhaustive_small_states_preserve_units_moves_conflicts_and_budgets() {
     let mut cases = 0;
     for pattern in 0..81 {

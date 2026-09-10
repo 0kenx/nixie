@@ -83,14 +83,24 @@ struct ScanEnd<'a> {
 /// A phase returns its final state; no caller-owned cursor stays live in it.
 #[inline(never)]
 #[allow(clippy::too_many_arguments)] // Disjoint fixed stores are explicit borrows.
+fn push_watch(destinations: &mut [Vec<Watcher>], key: Lit, watcher: Watcher) {
+    let Some(list) = destinations.get_mut(key.index()) else {
+        return;
+    };
+    if list.iter().any(|w| w.r == watcher.r) {
+        return;
+    }
+    list.push(watcher);
+}
+
 fn scan<'a, const COMPACT: bool>(
     watches: WatchCursor<'_, COMPACT>,
     false_lit: Lit,
     values: &mut [i8],
     queue: &mut PropagationQueue<'_>,
     mut clauses: crate::memory::PropagationArena<'_>,
-    destinations: &[Vec<Watcher>],
-    mut moves: MoveWriter<'a>,
+    destinations: &mut [Vec<Watcher>],
+    moves: MoveWriter<'a>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd<'a> {
     let mut watches = watches.into_local();
@@ -129,6 +139,38 @@ fn scan<'a, const COMPACT: bool>(
                 work,
             );
         };
+        let cid = live.reason();
+        let repair = {
+            let lits = live.lits();
+            if lits.len() < 2 {
+                Some(None)
+            } else if lits[0] != false_lit && lits[1] != false_lit {
+                Some(Some((lits[0], lits[1])))
+            } else {
+                None
+            }
+        };
+        if let Some(pair) = repair {
+            if let Some((a, b)) = pair {
+                push_watch(destinations, a.negate(), Watcher::new(cid, watcher.r, b));
+                push_watch(destinations, b.negate(), Watcher::new(cid, watcher.r, a));
+            }
+            entry.remove();
+            if COMPACT {
+                continue;
+            }
+            return scan::<true>(
+                watches.compacting(),
+                false_lit,
+                values,
+                queue,
+                clauses,
+                destinations,
+                moves,
+                #[cfg(feature = "bcp-work")]
+                work,
+            );
+        }
         let searched = live.searched();
         let mut found = None;
         let mut new_searched = searched;
@@ -175,21 +217,14 @@ fn scan<'a, const COMPACT: bool>(
                         {
                             work.watch_moves += 1;
                         }
-                        // SAFETY: the buffer reserves one slot per input watcher;
-                        // each entry can reach this branch at most once, then breaks
-                        // and is removed. A suffix inherits the same writer. Since
-                        // the replacement is undefined and false_lit is false, the
-                        // queued destination cannot be the active watch list.
-                        #[allow(unsafe_code)]
-                        unsafe {
-                            moves.push(
-                                pair[1].negate(),
-                                Watcher {
-                                    blocker: first,
-                                    ..watcher
-                                },
-                            )
-                        };
+                        push_watch(
+                            destinations,
+                            pair[1].negate(),
+                            Watcher {
+                                blocker: first,
+                                ..watcher
+                            },
+                        );
                         found = Some(None);
                     }
                 }

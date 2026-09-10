@@ -35,6 +35,7 @@ pub(crate) struct MoveWriter<'a> {
     begin: *mut DelayedWatch,
     next: *mut DelayedWatch,
     #[cfg(debug_assertions)]
+    #[allow(dead_code)]
     end: *mut DelayedWatch,
     owner: PhantomData<&'a mut [MaybeUninit<DelayedWatch>]>,
 }
@@ -74,6 +75,7 @@ impl<'a> MoveWriter<'a> {
     /// watcher, including across its single prefix-to-suffix transition.
     #[inline]
     #[allow(unsafe_code)]
+    #[allow(dead_code)]
     pub(crate) unsafe fn push(&mut self, literal: Lit, watcher: Watcher) {
         #[cfg(debug_assertions)]
         debug_assert!(self.next != self.end);

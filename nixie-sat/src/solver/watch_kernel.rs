@@ -80,6 +80,45 @@ impl Cursor {
                 self.write = read;
                 return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
             };
+            let repair = {
+                let clause = live.lits();
+                if clause.len() < 2 {
+                    Some(None)
+                } else if clause[0] != false_lit && clause[1] != false_lit {
+                    Some(Some((clause[0], clause[1])))
+                } else {
+                    None
+                }
+            };
+            if let Some(pair) = repair {
+                if let Some((a, b)) = pair {
+                    let r = watcher.r;
+                    if !destinations.get(a.negate()).iter().any(|w| w.r == r) {
+                        destinations.add(
+                            a.negate(),
+                            Watcher {
+                                blocker: b,
+                                ..watcher
+                            },
+                        );
+                    }
+                    if !destinations.get(b.negate()).iter().any(|w| w.r == r) {
+                        destinations.add(
+                            b.negate(),
+                            Watcher {
+                                blocker: a,
+                                ..watcher
+                            },
+                        );
+                    }
+                }
+                if COMPACT {
+                    continue;
+                }
+                self.read = read + 1;
+                self.write = read;
+                return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
+            }
             let searched = live.searched();
             let mut found = false;
             let mut new_searched = searched;

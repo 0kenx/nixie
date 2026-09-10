@@ -404,6 +404,40 @@ impl Solver {
                         crate::diag_bcp::MISS_VISITS.fetch_add(1, Relaxed);
                     }
                     let false_lit = lit.negate();
+                    let repair = {
+                        let clause = live.lits();
+                        if clause.len() < 2 {
+                            Some(None)
+                        } else if clause[0] != false_lit && clause[1] != false_lit {
+                            Some(Some((clause[0], clause[1])))
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(pair) = repair {
+                        if let Some((a, b)) = pair {
+                            let r = watcher.r;
+                            if !self.watches.get(a.negate()).iter().any(|w| w.r == r) {
+                                self.watches.add(
+                                    a.negate(),
+                                    Watcher {
+                                        blocker: b,
+                                        ..watcher
+                                    },
+                                );
+                            }
+                            if !self.watches.get(b.negate()).iter().any(|w| w.r == r) {
+                                self.watches.add(
+                                    b.negate(),
+                                    Watcher {
+                                        blocker: a,
+                                        ..watcher
+                                    },
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     let searched = live.searched();
                     let mut found = false;
                     let mut new_searched = searched;
