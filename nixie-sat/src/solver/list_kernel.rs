@@ -128,16 +128,73 @@ fn scan<const COMPACT: bool>(
                 work,
             );
         };
-        let repair = {
+        let searched = live.searched();
+        let mut found = None;
+        let mut new_searched = searched;
+        let mut repair = None;
+        let first;
+        {
             let lits = live.lits();
             if lits.len() < 2 {
-                Some(None)
-            } else if lits[0] != false_lit && lits[1] != false_lit {
-                Some(Some((lits[0], lits[1])))
+                repair = Some(None);
+                first = false_lit;
             } else {
-                None
+                let (pair, tail) = lits.split_at_mut(2);
+                if pair[0] != false_lit && pair[1] != false_lit {
+                    repair = Some(Some((pair[0], pair[1])));
+                    first = false_lit;
+                } else {
+                    debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
+                    first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
+                    pair[0] = first;
+                    pair[1] = false_lit;
+                    if propagation_value(values, first) > 0 {
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            work.first_satisfied += 1;
+                        }
+                        found = Some(Some(first));
+                    } else {
+                        let hit = crate::memory::find_saved_pos_hit(
+                            tail,
+                            searched,
+                            |lit| propagation_value(values, lit),
+                            || {
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    work.tail_probes += 1;
+                                }
+                            },
+                        );
+                        if let Some((i, literal, value)) = hit {
+                            new_searched = crate::memory::saved_pos_store(i);
+                            if value > 0 {
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    work.tail_satisfied += 1;
+                                }
+                                found = Some(Some(literal));
+                            } else {
+                                core::mem::swap(&mut pair[1], &mut tail[i]);
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    work.watch_moves += 1;
+                                }
+                                push_watch(
+                                    destinations,
+                                    pair[1].negate(),
+                                    Watcher {
+                                        blocker: first,
+                                        ..watcher
+                                    },
+                                );
+                                found = Some(None);
+                            }
+                        }
+                    }
+                }
             }
-        };
+        }
         if let Some(pair) = repair {
             if let Some((a, b)) = pair {
                 let cid = live.reason();
@@ -158,65 +215,6 @@ fn scan<const COMPACT: bool>(
                 #[cfg(feature = "bcp-work")]
                 work,
             );
-        }
-        let searched = live.searched();
-        let mut found = None;
-        let mut new_searched = searched;
-        let first;
-        {
-            let (pair, tail) = live.lits().split_at_mut(2);
-            debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
-            first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
-            // Even satisfied exits keep the original eager normalization:
-            // subsequent inprocessing observes literal order.
-            pair[0] = first;
-            pair[1] = false_lit;
-            if propagation_value(values, first) > 0 {
-                #[cfg(feature = "bcp-work")]
-                {
-                    work.first_satisfied += 1;
-                }
-                found = Some(Some(first));
-            } else {
-                // CaDiCaL `clause->pos` / Kissat `c->searched` (Gent JAIR'13):
-                // resume at the last replacement index, then wrap to lits[2].
-                let hit = crate::memory::find_saved_pos_hit(
-                    tail,
-                    searched,
-                    |lit| propagation_value(values, lit),
-                    || {
-                        #[cfg(feature = "bcp-work")]
-                        {
-                            work.tail_probes += 1;
-                        }
-                    },
-                );
-                if let Some((i, literal, value)) = hit {
-                    new_searched = crate::memory::saved_pos_store(i);
-                    if value > 0 {
-                        #[cfg(feature = "bcp-work")]
-                        {
-                            work.tail_satisfied += 1;
-                        }
-                        found = Some(Some(literal));
-                    } else {
-                        core::mem::swap(&mut pair[1], &mut tail[i]);
-                        #[cfg(feature = "bcp-work")]
-                        {
-                            work.watch_moves += 1;
-                        }
-                        push_watch(
-                            destinations,
-                            pair[1].negate(),
-                            Watcher {
-                                blocker: first,
-                                ..watcher
-                            },
-                        );
-                        found = Some(None);
-                    }
-                }
-            }
         }
         if new_searched != searched {
             live.set_searched(new_searched);
