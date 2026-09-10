@@ -283,8 +283,9 @@ impl Solver {
     /// clauses. This pass is that slice — original clauses only, level 0.
     ///
     /// Auto-runs on wide-uniform CNFs (modal original width ≥6 covering ≥75%
-    /// of size≥3 originals, ≥1000 such clauses). `NIXIE_PRESUB=1` forces it;
-    /// `NIXIE_PRESUB=0` skips it.
+    /// of size≥3 originals, ≥1000 such clauses). One backward round by default
+    /// (`NIXIE_PRESUB_ROUNDS`); extra rounds reshuffle this family. `NIXIE_PRESUB=1`
+    /// forces it; `NIXIE_PRESUB=0` skips it.
     pub(super) fn presearch_backward_simplify(&mut self) -> bool {
         if self.trail.decision_level() != 0 || self.trivially_unsat {
             return false;
@@ -299,11 +300,11 @@ impl Solver {
                     .ok()
                     .and_then(|v| v.parse().ok())
                     .filter(|n: &u32| *n >= 1)
-                    .unwrap_or(8)
+                    .unwrap_or(1)
             }
             #[cfg(not(feature = "std"))]
             {
-                8u32
+                1u32
             }
         };
         for round in 0..max_rounds {
@@ -329,7 +330,19 @@ impl Solver {
             }
         }
         if self.config.enable_failed_literal_probing {
-            let (_probed, failed, _hyper) = self.probe_round();
+            let failed = {
+                #[cfg(feature = "std")]
+                let z3probe = std::env::var("NIXIE_PRESUB_Z3PROBE")
+                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+                #[cfg(not(feature = "std"))]
+                let z3probe = false;
+                if z3probe {
+                    self.probe_both_polarities()
+                } else {
+                    let (_probed, failed, _hyper) = self.probe_round();
+                    failed
+                }
+            };
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_PRESUB_TRACE").is_ok() {
                 eprintln!(

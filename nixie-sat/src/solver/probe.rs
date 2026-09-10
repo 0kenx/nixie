@@ -34,6 +34,11 @@
 
 use super::*;
 
+enum ProbeOutcome {
+    Ok,
+    Conflict,
+}
+
 /// cadical `probeeffort` (per-mille of search ticks as the probe budget).
 const PROBE_EFFORT_PERMILLE: u64 = 80;
 /// cadical `probmineff`: floor on the propagation budget of a round.
@@ -144,6 +149,113 @@ impl Solver {
         self.lim_inprobe = self.stats.conflicts.saturating_add(delta);
 
         (probed, failed, hyper)
+    }
+
+    /// Z3 `sat_probing.cpp` `process_core`: probe both polarities of every
+    /// unassigned variable (not just binary-implication roots). Failed
+    /// literal ⇒ force the negation. Literals implied by *both* polarities
+    /// are units of the formula (Stålmarck intersection).
+    ///
+    /// CaDiCaL `probe_round` only schedules BIG roots; after LUT SSR the
+    /// residual is width-4 and that queue is empty. Opt-in:
+    /// `NIXIE_PRESUB_Z3PROBE=1`. Default stays `probe_round` (this pass
+    /// raised circuit_48in64out 66k → 117k).
+    pub(super) fn probe_both_polarities(&mut self) -> usize {
+        #[cfg(feature = "std")]
+        if let Ok(v) = std::env::var("NIXIE_PRESUB_Z3PROBE")
+            && (v == "0" || v.eq_ignore_ascii_case("false"))
+        {
+            return 0;
+        }
+        if self.trail.decision_level() != 0 {
+            self.backtrack_with_phase_saving(0);
+        }
+        if self.trivially_unsat || self.propagate().is_some() {
+            self.trivially_unsat = true;
+            return 0;
+        }
+        let n = self.num_vars;
+        if n == 0 {
+            return 0;
+        }
+        let mut mark = vec![0u8; 2 * n];
+        let mut forced = 0usize;
+        for idx in 0..n {
+            if self.trivially_unsat {
+                break;
+            }
+            let v = Var::new(idx as u32);
+            if self.trail.is_assigned(v) || self.var_eliminated(v) {
+                continue;
+            }
+            let pos = Lit::pos(v);
+            match self.probe_collect(pos, &mut mark) {
+                ProbeOutcome::Conflict => {
+                    self.force_level0(pos.negate());
+                    forced = forced.saturating_add(1);
+                    continue;
+                }
+                ProbeOutcome::Ok => {}
+            }
+            if self.trail.is_assigned(v) || self.trivially_unsat {
+                continue;
+            }
+            let neg = pos.negate();
+            self.trail.new_decision_level();
+            self.trail.assign_decision(neg);
+            if let Some(_conflict) = self.propagate() {
+                self.backtrack(0);
+                self.force_level0(pos);
+                forced = forced.saturating_add(1);
+                continue;
+            }
+            let mut common: SmallVec<[Lit; 8]> = SmallVec::new();
+            for &lit in self.trail.level_assignments() {
+                if lit == neg {
+                    continue;
+                }
+                let code = lit.code() as usize;
+                if code < mark.len() && mark[code] == 1 {
+                    common.push(lit);
+                }
+            }
+            self.backtrack(0);
+            for q in common {
+                if self.trivially_unsat {
+                    break;
+                }
+                if self.trail.is_assigned(q.var()) {
+                    continue;
+                }
+                self.force_level0(q);
+                forced = forced.saturating_add(1);
+            }
+        }
+        if !self.trivially_unsat && self.propagate().is_some() {
+            self.trivially_unsat = true;
+        }
+        forced
+    }
+
+    fn probe_collect(&mut self, lit: Lit, mark: &mut [u8]) -> ProbeOutcome {
+        mark.fill(0);
+        self.trail.new_decision_level();
+        self.trail.assign_decision(lit);
+        if self.propagate().is_some() {
+            self.backtrack(0);
+            return ProbeOutcome::Conflict;
+        }
+        for &q in self.trail.level_assignments() {
+            if q == lit {
+                continue;
+            }
+            let code = q.code() as usize;
+            if code < mark.len() {
+                mark[code] = 1;
+            }
+        }
+        self.backtrack(0);
+        ProbeOutcome::Ok
     }
 
     /// cadical `generate_probes`: binary-implication-graph roots, ranked by
@@ -445,4 +557,42 @@ fn round_log10(n: u64) -> u64 {
         digits += 1;
     }
     digits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::Solver;
+    use crate::literal::{LBool, Lit, Var};
+
+    fn solver_with(n: usize, clauses: &[&[i32]]) -> Solver {
+        let mut s = Solver::new();
+        for _ in 0..n {
+            s.new_var();
+        }
+        for c in clauses {
+            s.add_clause_dimacs(c);
+        }
+        s
+    }
+
+    #[test]
+    fn both_polarities_force_common_implication() {
+        let mut s = solver_with(4, &[&[-1, 2], &[-2, 4], &[1, 3], &[-3, 4]]);
+        assert!(s.propagate().is_none());
+        let n = s.probe_both_polarities();
+        assert!(n >= 1, "expected at least the intersection unit, got {n}");
+        let q = Lit::pos(Var::new(3));
+        assert_eq!(s.trail.lit_value(q), LBool::True);
+    }
+
+    #[test]
+    fn failed_literal_forced() {
+        let mut s = solver_with(2, &[&[-1, 2], &[-1, -2]]);
+        assert!(s.propagate().is_none());
+        let n = s.probe_both_polarities();
+        assert!(n >= 1, "expected failed literal, got {n}");
+        let v = Var::new(0);
+        assert!(s.trail.is_assigned(v));
+        assert_eq!(s.trail.lit_value(Lit::pos(v)), LBool::False);
+    }
 }
