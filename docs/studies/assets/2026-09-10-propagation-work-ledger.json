@@ -1,0 +1,96 @@
+{
+  "binary": {
+    "path": "/media/data/proj/nixie/precompile/38e4f53/stats_solve-bcp-work",
+    "sha256": "2886943d99812cdc2e62a7bab3a05b2290850ceff35e39b6d8ffd86d44a6a040"
+  },
+  "config": {
+    "cmdline": [
+      "taskset",
+      "-c",
+      "15",
+      "/media/data/proj/nixie/precompile/38e4f53/stats_solve-bcp-work",
+      "/media/data/proj/nixie/nixie-sat/tests/fixtures/crn_11_99_u.cnf"
+    ],
+    "features": [
+      "bcp-work"
+    ],
+    "flags": {
+      "cpu": 15,
+      "features": [
+        "bcp-work"
+      ],
+      "max_conflicts": 10000000,
+      "measurement": "propagation-work-ledger-v1",
+      "print_model": true,
+      "profile": "release",
+      "seed": 0,
+      "solver_options": [
+        "CaDiCaL-preset",
+        "NIXIE_SWEEP=0",
+        "NIXIE_DEFINITIONS=0"
+      ],
+      "timeout_s": 300
+    },
+    "id": "ledger"
+  },
+  "counts": {
+    "binary_assignments": 252915,
+    "binary_conflicts": 4801,
+    "binary_list_lines": 179336,
+    "binary_lists": 152442,
+    "binary_overflow_visits": 137588,
+    "binary_primary_visits": 276100,
+    "blocker_hits": 73189848,
+    "clause_reads": 42045160,
+    "deleted": 18958,
+    "dequeued": 3826944,
+    "estimated_ticks": 84416613,
+    "first_satisfied": 3345236,
+    "long_assignments": 3337228,
+    "long_conflicts": 84421,
+    "long_list_lines": 9225765,
+    "long_lists": 3656057,
+    "long_visits": 115235008,
+    "started": 3826944,
+    "tail_probes": 76240226,
+    "tail_satisfied": 9710052,
+    "watch_moves": 25549265
+  },
+  "derived": {
+    "average_probes_per_tail_scan": 1.9710010861672895,
+    "binary_nonempty_pct": 3.9833872667068033,
+    "binary_visits": 413688,
+    "binary_visits_per_dequeue": 0.10809878587196468,
+    "blocker_hit_pct": 63.513553103584634,
+    "clause_reads_per_dequeue": 10.986614907351662,
+    "estimate_over_schedule_ticks": 6.45955765941293,
+    "failed_lucky_dequeues": 9257,
+    "long_assignments_per_dequeue": 0.8720347096795772,
+    "long_visits_per_dequeue": 30.11149575222423,
+    "tail_probes_per_dequeue": 19.92196018546391,
+    "watch_moves_per_dequeue": 6.676153348468125
+  },
+  "git": {
+    "dirty": false,
+    "sha_long": "38e4f53c372f5b6fed4f136ab0674a3e47adb636",
+    "sha_short": "38e4f53"
+  },
+  "instance": {
+    "family": "crn",
+    "name": "crn_11_99_u.cnf",
+    "sat_expected": false,
+    "sha256": "301a5351b7cec4bbc27bf066df769db2870c1e3f3948d6c2ff0b7a9f6bab52eb"
+  },
+  "legacy": {
+    "conflicts": 87939,
+    "propagations": 3817687,
+    "ticks": 13068482
+  },
+  "ordinary_stdout_identical": true,
+  "ordinary_stdout_sha256": "e6b6585518b5a116484f284fcbefe5def563efe8c20cece920124a3bfa4db8dc",
+  "performance_claim": false,
+  "record_id": "760297a9084a5f60",
+  "reported_answer": "unsat",
+  "scope": "All calls to this solver propagate, including inprocessing; excludes other engines and solver phases",
+  "verified_model_or_proof": false
+}

@@ -123,3 +123,67 @@ release has a distinct 998391-byte `.text` and its diagnostic output marker;
 the ordinary release has no such marker. This audit uses binary sections,
 not another solver execution or a timing comparison. Completed debug build
 artifacts were deleted after qualification, recovering about 83 GB.
+
+## Single crn observation
+
+Qualified code landed as **38e4f53c**. The one registered capture is canonical
+record **760297a9084a5f60**, with raw artifacts under
+`precompile/38e4f53/benchmark/propagation-work-ledger/`. Complete ordinary
+stdout is byte-identical to reused control **0840cab28aa276cb**: 87939
+conflicts, 3817687 reported propagations, 13068482 scheduling ticks. No new
+control, Kissat run, timing comparison or full panel was executed. Reported
+UNSAT is retained as unknown/unverified in the canonical store; the observation
+was not proof-checked. [All counts and identities](assets/2026-09-10-propagation-work-ledger.json)
+are retained with this study.
+
+The ledger counts **3826944** dequeues/scans, including **9257** dequeues
+hidden by failed-lucky rollback in the legacy counter. No step-limit abort
+occurred in this capture. Denominators below include those lucky attempts.
+
+| Event | Count | Per started literal |
+|---|---:|---:|
+| Binary edge visits (primary + overflow) | 413688 | 0.1081 |
+| Long-watch visits | 115235008 | 30.1115 |
+| Clause lookups, including deleted headers | 42045160 | 10.9866 |
+| Tail literal probes | 76240226 | 19.9220 |
+| Watch moves | 25549265 | 6.6762 |
+| Long-clause assignments | 3337228 | 0.8720 |
+
+Blockers discharge **73189848 visits (63.51%)** without a clause lookup.
+The lookup outcomes reconcile exactly: 18958 deleted/non-live, 3345236
+first-watch satisfied, 9710052 true-tail parked, 25549265 moved, 3337228
+assigned and 84421 conflicting. Tail scans inspect **1.9710 literals** on
+average. Binary visits split into 276100 primary and 137588 overflow, with
+252915 assignments and 4801 conflicts. Long lists are nonempty on 3656057
+started literals; binary lists on only **152442 (3.98%)**.
+
+The reference-shaped estimate is **84416613**, or **6.4596x** the old
+scheduling ticks. Its components are 3826944 started literals, 179336 binary
+list-line estimates, 9225765 long list-line estimates, 42045160 clause reads,
+25549265 moves and 3590143 assignments. Neither estimate is cycles. The new
+estimate omits separate charges for tail probes, as do the cited reference
+formulas; their exact raw count is available. It must not be substituted for
+Kissat search_ticks or used to claim a new relative-speed number.
+
+### What this changes about the next lever
+
+Long-watch processing dominates counted work on this short anchor. Moving
+binary *entries* into the watch loop does not remove its 115 million long
+visits or 25.5 million moves. Sparse binary lists do **not** bound the fixed
+cost or cache pollution of probing the three binary-directory arrays on
+every literal; those need hardware attribution before ruling the structure
+out. An event-count estimate cannot establish a cycle share for either path.
+
+The next implementation candidate is the narrow whole-watch-list engine:
+complete assignments inside the long scan while retaining a separate call
+boundary around that scan. This combines the archived complete engine's
+removal of per-unit yields with the production kernel's narrower live state,
+aiming to avoid the arena reload/register-pressure regression observed in
+[the tail-classifier rejection](2026-09-10-single-tail-classifier.md). This
+capture establishes 3.34 million long assignments where that boundary matters;
+it does not measure the cost of the proposed replacement. Price call setup,
+state commits and callbacks, inspect the generated dependencies, and use the
+short break/crn anchors with a held-out check. Unchanged ledger totals would
+be expected for an execution-only rewrite and are not a rejection criterion.
+Kissat remains the wall-time target; CaDiCaL is an additional diagnostic
+reference. No new engine or speedup is claimed in this instrumentation step.
