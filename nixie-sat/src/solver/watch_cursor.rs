@@ -93,6 +93,9 @@ impl<'a, const COMPACT: bool> WatchCursor<'a, COMPACT> {
         // cover empty slices without a nonempty-allocation assumption.
         unsafe {
             let remaining = self.end.offset_from(self.read) as usize;
+            if remaining == 0 || self.read == self.write {
+                return self.write.add(remaining);
+            }
             core::ptr::copy(self.read, self.write, remaining);
             self.write.add(remaining)
         }
