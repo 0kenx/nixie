@@ -156,3 +156,36 @@ Next-lever finding for the Tier-B near-misses: the `maxandminor` collapse
 needs constants/substitution through the **`ite` selector layer** (boolean
 `solve-eqs`-style substitution at the Tseitin boundary), not BV-operand
 constants; ELS already folds 45 k literals there without closing the file.
+
+## Addendum (2026-09-11, late): Tier-B triage — the CEGAR framing is the wrong layer for cjpeg
+
+The option-2 framing ("CEGAR refinement tiers improved in place" for the
+Sydr/cjpeg × 5 + s3_clnt × 4 cluster) was measured against ground truth:
+
+- **cjpeg: no search happens at all, in either solver's winning path.**
+  `NIXIE_BV_CEGAR_TRACE` on the dispatch path prints zero refinement
+  rounds — the whole cost is one embedded SAT solve over the blasted
+  instance.  z3 (`-v:10`) refutes these files by **post-blast boolean
+  substitution**: bit-blast → simplifier → `solve-eqs :num-exprs 1` →
+  unsat, no SAT decisions — the *same mechanism as maxandminor*, i.e.
+  the shared lever is the Tseitin-boundary substitution layer, not the
+  CEGAR loop.  (Divisors are *dynamic* — `concat` of symbolic refs — so
+  the newly landed constant-divisor identities do not apply here.)
+- **s3_clnt is genuine search for z3** (148 decisions, sat-cleaner
+  passes over a 247 k-clause instance): that half of the cluster is an
+  encoding/search-quality problem.
+- Division abstraction on the dispatch path (`NIXIE_BV_CEGAR_DIV=64`)
+  moves nothing on cjpeg (traced: only 8 muls abstracted; divisors
+  dynamic) — the per-shape gate experiment is moot for this cluster.
+
+Landed as a side effect (e8c986da): the constant-divisor division
+identities (Z3 `bv_rewriter` parity — `udiv/urem` by powers of two →
+shift/mask, 0/1-divisor total semantics), applying to 5126 corpus
+files; verdict-identical on the 509-file screen.
+
+**Separate and urgent**: all 6 `known_unsound_regressions` tests fail at
+current HEAD — introduced by the SAT watch-cursor perf series
+(cc6d3e1e..bfa6570b), under active repair by its author (d4828b1c,
+9c9551a3, in-flight nixie-sat edits at this moment).  Anyone screening
+against main should treat that suite's state as the author's in-flight
+front, not a stable baseline.
