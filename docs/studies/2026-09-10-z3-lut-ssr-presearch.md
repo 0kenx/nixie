@@ -50,3 +50,21 @@ SAT-caching on *our* dump is 50–662k depending on round count, so the leftover
 SSR. Do not default-on SAT-caching; do not raise CaDiCaL `subsumeocclim`
 globally. The auto gate keeps the pass off the standing corpus except LUT-cube
 encodings. `NIXIE_PRESUB_TRACE=1` / `NIXIE_DUMP_POSTSSR=path` dump the residual.
+
+## Negative: circuit PI-first (2026-09-10, same day)
+
+`domain_priority` on the rarest original variables (occ = 240 = one 4-in-4-out
+gate pin) is the textbook circuit-SAT PI order. Measured:
+
+- **After SSR:** residual modal width is 4, so a post-SSR occ ranking is not
+  the PIs (2 vars at occ 13–14). Forcing that ranking: 66k → 111k.
+- **On original occ, after SSR:** PI-first via `domain_priority` (every
+  decision is a remaining pin until they are all assigned) **timed out at
+  180s**. Flattening already destroyed the LUT BCP that would make PI
+  assignments useful; the search then spends a long prefix on variables that
+  barely appear in the residual.
+- **Without SSR (cubes intact + PI-first):** also timed out at 180s.
+
+Do not seed `domain_priority` from occurrence on this family. Walk's printed
+`minimum=0` is an uninitialized counter, not a found model. Leftover 2.8× is
+still search on a non-Z3 residual.
