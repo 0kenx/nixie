@@ -149,6 +149,29 @@ fn infinite_sort_never_claims_exhaustion() {
     assert_eq!(last_status(&output), "unsat");
 }
 
+/// Empty-domain seeding must not manufacture exhaustion coverage: a
+/// sort whose only visible elements are the synthetic `u!i` seeds of
+/// model completion may not conclude `Satisfied` while the problem's own
+/// declared constants of that sort sit outside the truncated candidate
+/// list.  (The seeding landed together with the `pool_covered` guard in
+/// `build_candidate_lists`; this pin is the CLEARSY shape over a seeded
+/// sort.)
+#[test]
+fn seeded_empty_domain_does_not_vacuously_satisfy() {
+    let output = run(r#"
+        (set-logic UF)
+        (declare-sort U 0)
+        (declare-fun P (U) Bool)
+        (declare-const c1 U)
+        (declare-const c2 U)
+        (assert (forall ((x U)) (P x)))
+        (assert (not (P c1)))
+        (assert (not (P c2)))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
 /// The original file, kept as an end-to-end guard: `:status unsat`, z3
 /// `unsat`; nixie must never print `sat` for it (honest `unknown` until
 /// E-matching gains the missing depth).

@@ -606,8 +606,21 @@ impl CounterExampleGenerator {
             // non-empty, so "no values found" is a harvest failure, not an
             // empty domain; treating it as vacuously covered is the
             // constants-only false-`sat` shape).
+            // Synthetic seeds (the `u!i` constants of empty-domain
+            // completion) must never *alone* certify exhaustion: the
+            // problem's own ground terms of this sort (the injected pool)
+            // are candidate domain elements too, so each must survive the
+            // truncation as well -- otherwise the visible domain looks
+            // complete while real elements sit outside it (the CLEARSY
+            // shape over a seeded sort: 12 constants, 8 seeds, a
+            // 10-entry list, `Satisfied` over a refutable goal).
+            let pool_covered = self
+                .injected_candidates
+                .get(&sort)
+                .is_none_or(|pool| pool.iter().all(|t| candidates.contains(t)));
             let covered = finite_by_kind
                 && required.iter().all(|r| candidates.contains(r))
+                && pool_covered
                 && match manager.sorts.get(sort).map(|s| &s.kind) {
                     Some(SortKind::Uninterpreted(_)) => !required.is_empty(),
                     _ => true,

@@ -448,7 +448,7 @@ impl ModelCompleter {
 
         // Step 4: Handle uninterpreted sorts
         self.uninterp_handler
-            .complete_universes(&mut completed, manager)?;
+            .complete_universes(&mut completed, quantifiers, manager)?;
 
         // Step 5: Set default values for all sorts
         self.set_default_values(&mut completed, manager)?;
@@ -1395,12 +1395,33 @@ impl UninterpretedSortHandler {
     pub fn complete_universes(
         &mut self,
         model: &mut CompletedModel,
+        quantifiers: &[super::QuantifiedFormula],
         manager: &mut TermManager,
     ) -> Result<(), CompletionError> {
         // Identify uninterpreted sorts
-        let uninterp_sorts = self.identify_uninterpreted_sorts(model, manager);
+        let uninterp_sorts = self.identify_uninterpreted_sorts(model, quantifiers, manager);
 
         for sort in uninterp_sorts {
+            // Seed only sorts the model says *nothing* about: a sort with
+            // existing values already has a real universe (built by
+            // `collect_universes_from_model`), and a synthetic seed would
+            // both mask it and perturb the exhaustion-coverage accounting
+            // (the CLEARSY regression: 12 distinct constants' values plus
+            // 8 synthetic seeds overflowed the candidate truncation and
+            // flipped a `never-sat` pin).  Empty-domain seeding is the
+            // Rodin case this exists for -- SMT-LIB domains are non-empty,
+            // so a sort with no values still needs its first element.
+            let has_values = model
+                .assignments
+                .values()
+                .any(|v| manager.get(*v).is_some_and(|t| t.sort == sort))
+                || model
+                    .assignments
+                    .keys()
+                    .any(|k| manager.get(*k).is_some_and(|t| t.sort == sort));
+            if has_values {
+                continue;
+            }
             if let crate::prelude::hash_map::Entry::Vacant(e) = model.universes.entry(sort) {
                 // Create a finite universe for this sort
                 let universe = self.create_finite_universe(sort, manager)?;
@@ -1416,6 +1437,7 @@ impl UninterpretedSortHandler {
     fn identify_uninterpreted_sorts(
         &self,
         model: &CompletedModel,
+        quantifiers: &[super::QuantifiedFormula],
         manager: &TermManager,
     ) -> Vec<SortId> {
         let mut sorts = Vec::new();
@@ -1429,6 +1451,21 @@ impl UninterpretedSortHandler {
             }
             if self.is_uninterpreted(interp.range, manager) && !sorts.contains(&interp.range) {
                 sorts.push(interp.range);
+            }
+        }
+
+        // Collect sorts from quantifier bound variables.  This is the
+        // Rodin/EUF finite-model gap: a sort can appear *only* under
+        // quantifier binders (no ground applications of any function over
+        // it exist), leaving `function_interps` silent about it – the
+        // universe was then never seeded, every candidate list for the
+        // sort stayed empty, and MBQI answered `unknown` on every round
+        // without ever trying a single element.
+        for q in quantifiers {
+            for &(_, sort) in &q.bound_vars {
+                if self.is_uninterpreted(sort, manager) && !sorts.contains(&sort) {
+                    sorts.push(sort);
+                }
             }
         }
 

@@ -72,6 +72,20 @@ next to the code it protects.
    Repro: `AUFLIA/20170829-Rodin/smt1002232729905089644.smt2` (shrinker
    script preserved in this note's history: assert-level + conjunct-level
    delta, keeping `nixie=unknown ∧ z3=unsat`).
+   **Update (eleventh session): (a) answered and fixed** — the completed
+   universes were empty because `identify_uninterpreted_sorts` only read
+   function *interpretations*, and with no ground applications there are
+   none; it now also reads quantifier bound-variable sorts (seeding
+   restricted to sorts the model is silent about).  The candidate lists
+   went from 0 to 8/9 elements and the rounds now instantiate for real
+   (assignments 7 → 1152 per round).  A CLEARSY-shape regression the
+   seeding exposed (synthetic seeds alone must not certify exhaustion)
+   is closed by the `pool_covered` guard: every injected pool term of
+   the sort must also survive the truncation.  Verdicts: classic 567
+   unchanged (178 / 0 wrong), QF differential *improved* (170 solved, 0
+   disagreements, par2 2101), CLEARSY pin + new seeded-domain pin pass.
+   Rodin itself still `unknown` — the remaining gap is (b): convergence
+   (round budget/selection over the now-seeded domain), the next lever.
 3. **psyco sat-class** — boundary `∃` witness exhibition for `sat`.
 4. **NL zero-factor fold** — `sk·f(x)` with `f` pinned 0 (funcprobs).
 5. **Duplicate-instantiation audit** — dedup persists within a check
