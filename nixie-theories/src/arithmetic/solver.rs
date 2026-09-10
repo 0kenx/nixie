@@ -1958,8 +1958,17 @@ impl ArithSolver {
                 } else {
                     (one - fj) / one_minus_f0
                 }
+            // GMI continuous-variable coefficient for `ā_j ≥ 0` (with the
+            // `x_B = b̄ − Σ ā_j y_j` textbook orientation `bar_a` carries):
+            // `γ_j = ā_j / f0 ≥ 0`.  The previous `-bar_a / f0` here flipped
+            // the sign for every non-negative coefficient, emitting a
+            // negative γ — the derived cut then excluded genuine integer
+            // points (a satisfiable four-constraint QF_LIA system was
+            // refuted `unsat` once a second cut round used the first round's
+            // continuous cut slacks; caught by the arith incremental-vs-
+            // replay differential fuzzer).
             } else if bar_a >= Rational64::zero() {
-                -bar_a / f0
+                bar_a / f0
             } else {
                 hat_a / one_minus_f0
             };
@@ -2877,9 +2886,41 @@ impl ArithSolver {
 }
 
 #[cfg(test)]
+mod fuzz_incremental;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use num_traits::{One, Zero};
+
+    /// Regression (2026-09-10): the Gomory mixed-integer cut's
+    /// continuous-variable branch had a sign error for `bar_a >= 0`
+    /// (`-bar_a / f0`, a negative γ where the GMI formula requires
+    /// `bar_a / f0`).  The invalid cut excluded genuine integer points and,
+    /// once a second cut round used the first round's continuous cut slacks,
+    /// refuted this satisfiable four-constraint system as `unsat` (found by
+    /// the `arith_incremental_matches_replay_fuzz` differential; witness
+    /// t1=0, t2=4, t3=7, t4=0, z3-certified `sat`).
+    #[test]
+    fn gomory_continuous_branch_sign_does_not_refute_satisfiable_system() {
+        use crate::theory::Theory as _;
+        let mut s = ArithSolver::lia();
+        let t = |i: u32| TermId::new(i);
+        let r = Rational64::from_integer;
+        // >: t3 + 2*t1 - 3*t4 > -3
+        s.assert_gt(&[(t(3), r(1)), (t(1), r(2)), (t(4), r(-3))], r(-3), t(100));
+        // >: t2 - 2*t1 > 3
+        s.assert_gt(&[(t(2), r(1)), (t(1), r(-2))], r(3), t(101));
+        // =: -2*t3 + t3 - t4 = -7  (duplicate-term spelling of t3 + t4 = 7)
+        s.assert_eq(&[(t(3), r(-2)), (t(3), r(1)), (t(4), r(-1))], r(-7), t(102));
+        // >=: 2*t2 + 3*t4 >= 4
+        s.assert_ge(&[(t(2), r(2)), (t(4), r(3))], r(4), t(103));
+        assert!(
+            matches!(s.check(), Ok(TheoryResult::Sat)),
+            "satisfiable system refuted (GMI continuous-branch cut): {}",
+            "witness t1=0 t2=4 t3=7 t4=0"
+        );
+    }
 
     /// The parity-shaped pure-equality class that stall(ed) branch-and-bound:
     /// unbounded vertex equations with slack, even total charge.  The

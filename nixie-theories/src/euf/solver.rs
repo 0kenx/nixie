@@ -24,6 +24,8 @@ use smallvec::SmallVec;
 mod congruence;
 mod explain;
 #[cfg(test)]
+mod fuzz_incremental;
+#[cfg(test)]
 mod tests;
 
 /// Capacity of the explanation cache: how many (a, b) -> reasons entries to retain.
