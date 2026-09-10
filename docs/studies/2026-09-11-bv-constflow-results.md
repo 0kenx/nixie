@@ -28,27 +28,42 @@ path, and wire it if so.
    `bitrev` family, but −1 cell on the campaign aggregate, so it ships
    **default-off** behind `NIXIE_BV_CONST_FLOW=1`.
 
-## What z3 actually does on maxandminor016
+## What z3 actually does on maxandminor016 — corrected 2026-09-11 (evening)
+
+> **Correction.**  This section first claimed `bit-blast` *alone* closes
+> the goal, based on `(apply (then bit-blast …))` printing nothing.  That
+> inference was an artifact: the corpus file ends with `(check-sat)
+`(exit)`,
+> and the `sed` surgery used for the probes removed only `(check-sat)`, so
+> z3 executed `(exit)` *before* the appended probe — every "0 bytes =
+> closed" row was z3 terminating, not the tactic deciding.  A closed goal
+> prints `(goal false)` (verified on trivial probes).  The corrected
+> stage-by-stage table:
+>
+> | pipeline (`check-sat-using`, 60 s cap) | outcome |
+> |---|---|
+> | `then bit-blast sat` | **timeout** |
+> | `then bit-blast simplify solve-eqs sat` | timeout |
+> | `then bit-blast simplify solve-eqs aig sat` | timeout |
+> | `then simplify bit-blast sat` | **unsat, 206 ms** |
+> | full default stage order + `sat` | unsat, 32 ms |
+>
+> So the blaster alone does **not** close the file — the **term-level
+> `simplify` before blasting** is the entire lever (z3: 5561 → 3191 ASTs),
+> and everything downstream is decided on the simplified goal.  The
+> "constants stay constants through the DAG" account of the blaster layer
+> below remains true and is what the landed emitter rewrite ports; it is
+> just not the whole story for `maxandminor`.
 
 The handover's premise ("z3's trace shows its aig tactic deciding the file
-after blasting") is true but the attribution is wrong.  Stage-by-stage
-reconstruction with `z3 -v:10` and `(apply …)` probes:
+after blasting") is true but the attribution is wrong.  `z3 -v:10` shows
+`simplifier → propagate-values → solve-eqs → elim-uncnstr → reduce-bv-size
+→ simplifier → max-bv-sharing → ackermannize_bv → bit-blast → simplifier →
+solve-eqs → aig → unsat` at 0.05 s total; the `(aig :num-exprs 1)` line is
+the closed goal, and bisecting the stage prefixes pins the win on the
+**first `simplify`** (see the corrected table above).
 
-| stage prefix applied | outcome |
-|---|---|
-| `bit-blast` **alone** | goal **closed** (unsat, no search) |
-| `then bit-blast simplify` | closed |
-| `… solve-eqs`, `… aig` | closed (goal already trivial) |
-
-z3 decides the file *inside the bit-blaster*: every gate is built through
-its hash-consed, constant-folding rewriting layer, so a bit that folds to
-`true`/`false` **stays** a constant node for the whole downstream DAG, and
-the `minOR/maxAND` bound-propagation chains collapse structurally.  The
-`simplifier → solve-eqs → aig` stages in the trace ran on an
-already-refuted goal (their `:num-exprs 1` report is a closed goal, not a
-1-expression encoding).
-
-Nixie's `Sig` gate layer folds constants too — but each *operation result*
+Nixie's `Sig` gate layer folds constants — but each *operation result*
 was written into pre-allocated fresh variables, and `wire` re-opacified
 each folded constant into a pinned variable the next gate could not see
 through.  The chain died at every operation boundary.
@@ -175,3 +190,49 @@ equivalence substitution already folds 45 k literals on `maxandminor016`
 (first round) without collapsing the file — clause-level equivalence
 reasoning is not the bottleneck; substitution *into selector positions*
 is.
+
+## Follow-up screen (same evening): De Morgan canonicalization — rejected
+
+With the corrected attribution (the term `simplify` is the lever), the most
+plausible portable rule was identified in Z3's source:
+`bv_rewriter::mk_bv_and` **unconditionally eliminates AND** —
+`bv_and(args) → bv_not(bv_or(bv_not(args)))` — putting every bitwise chain
+in one OR+NOT normal form so De Morgan-equivalent shapes hash-cons to the
+same term (verified on probes: `bvand x y` and `bvor (bvnot x) (bvnot y)`
+both normalize to `~(~x | ~y)` under z3 `simplify`).
+
+Implemented behind `NIXIE_BV_DEMORGAN=1` in `bv_preprocess`
+(AND-elimination at the `BvAnd` arm, `mk_not_norm` with Z3's
+concat/ite-const-branch NOT-pushdowns, `X | ~X = all-ones` complement
+folding in the OR flattener, all flag-gated so the off-arm is the
+historical term stream) and measured per family (same binary, flag on/off,
+pinned core, load ~25 — the box was busy, so absolute times are inflated
+but the arm delta is decisive):
+
+| file | off | on | verdict |
+|---|---|---|---|
+| `maxandminor016` (the target) | 43.4 s | 43.4 s | **no effect** |
+| `maxandminor008` | 0.52 s | 0.57 s | no effect |
+| `brummayerbiere/bitrev0256` | 0.39 s | 3.14 s | **8× slower** |
+| `RWS/Example_1` | 2.09 s | 0.69 s | 3× faster (already solved) |
+| `RWS/Example_7` | 56.6 s (sat) | timeout | regression |
+| `2018-Mann` arbiter ×2 | 2.8 s | 3.0 s | ~8% slower |
+| `calypto/problem_14` | timeout | timeout | no effect |
+
+Reverted without landing.  The pattern is the structural-rewriting study's
+pattern again: the bitwise convergence the normal form buys does not
+decide the flagship file (whose difficulty sits in `ite`/`bvult`/`bvadd`
+loops, not in De Morgan mirrors), while committing to the normal form
+everywhere costs blast size (not-or-not chains are 3 gate vars per bit
+where `bvand` is 1) — hence the bitrev/Mann regressions.  A
+convergence-*probe* variant (rewrite on trial inside equality checks,
+keep the original term stream unless the sides collapse) was considered
+and skipped: it cannot help `maxandminor` either, because the top-level
+sides contain non-bitwise structure that bitwise-only normalization does
+not converge.
+
+**Do not retry** rule-by-rule ports of z3's simplifier for this file
+family.  If the `maxandminor` class is picked up again, the lever is a
+bound-propagation / value-substitution analysis over the `bvult`/`ite`
+loop structure (what z3's simplify+propagate-values cascade computes in
+concert), not bitwise normalization.

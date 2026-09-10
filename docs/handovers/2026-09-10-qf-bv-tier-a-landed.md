@@ -121,10 +121,12 @@ box, which regularly runs at load 30+).
 The option-1 premise ("check whether an AIG simplification pass exists but
 isn't wired") is answered: `bv/aig.rs`, `aig_builder.rs`, and
 `bitblast_advanced.rs` are standalone test-only modules — nothing to wire.
-Z3's own win on `maxandminor016` happens **inside `bit-blast`** (verified
-with `(apply …)` stage probes: the blaster alone closes the goal); its
-post-blast `simplifier → solve-eqs → aig` lines ran on an already-refuted
-goal.  The gap it exploits: folded constants stay constants through the
+[CORRECTED 2026-09-11 evening: the first write-up here said the blaster
+alone closes the goal — that was a probe artifact (the corpus file's
+trailing `(exit)` ran before the appended tactic).  The corrected stage
+bisect: `then bit-blast sat` **times out**; `then simplify bit-blast sat`
+answers unsat in 206 ms — the **term-level simplify before blasting** is
+the lever, not the blaster.]  The gap it exploits: folded constants stay constants through the
 whole DAG in z3's rewriting layer, while nixie's op results re-opacified
 them into pinned fresh variables.
 
