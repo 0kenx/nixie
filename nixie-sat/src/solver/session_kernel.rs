@@ -12,7 +12,7 @@ impl Solver {
         let values = session.values;
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
-        let (destinations, phantom, delayed) = self.watches.propagation_parts();
+        let (destinations, phantom, ghost_debt, delayed) = self.watches.propagation_parts();
         let graph = &self.binary_graph;
         let ticks = if self.stable {
             &mut self.ticks_stable
@@ -102,7 +102,11 @@ impl Solver {
             }
             // Preserve the old scheduling formula, including phantom binaries.
             let bins = phantom.get(code).map_or(0, |&n| n as usize);
-            let charge = 1 + (((watches.len() + bins) as u64) * 8).div_ceil(128);
+            let ghosts = ghost_debt.get(code).map_or(0, |&n| n as usize);
+            let charge = 1 + (((watches.len() + bins + ghosts) as u64) * 8).div_ceil(128);
+            if ghosts != 0 {
+                ghost_debt[code] = 0;
+            }
             *ticks = ticks.saturating_add(charge);
             #[allow(unused_mut)]
             let mut result = if watches.is_empty() {

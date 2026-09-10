@@ -102,6 +102,9 @@ pub struct WatchLists {
     /// Per-literal count of binary clauses keyed here in the old scheme
     /// (tick parity bookkeeping – see the module-level note above).
     bin_phantom: Vec<u32>,
+    /// Deleted long-watchers stripped at arena compact. Charged once on the
+    /// next propagate of that literal, matching lazy ghost removal ticks.
+    ghost_debt: Vec<u32>,
     /// Allocation scratch only; no initialized move escapes a list scan.
     delayed: MoveBuffer,
 }
@@ -122,11 +125,20 @@ pub struct WatchSnapshot {
     ends: Vec<u32>,
     /// Copy of the phantom binary counters (small; cloned verbatim).
     bin_phantom: Vec<u32>,
+    /// Copy of compact-time ghost tick debt.
+    ghost_debt: Vec<u32>,
 }
 
 impl WatchLists {
-    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut MoveBuffer) {
-        (&mut self.watches, &self.bin_phantom, &mut self.delayed)
+    pub(crate) fn propagation_parts(
+        &mut self,
+    ) -> (&mut [Vec<Watcher>], &[u32], &mut [u32], &mut MoveBuffer) {
+        (
+            &mut self.watches,
+            &self.bin_phantom,
+            &mut self.ghost_debt,
+            &mut self.delayed,
+        )
     }
 
     pub(crate) fn move_capacity_bytes(&self) -> usize {
@@ -139,6 +151,7 @@ impl WatchLists {
         Self {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
+            ghost_debt: vec![0; num_vars * 2],
             delayed: MoveBuffer::default(),
         }
     }
@@ -162,6 +175,8 @@ impl WatchLists {
     pub fn phantom_reset(&mut self, num_lits: usize) {
         self.bin_phantom.clear();
         self.bin_phantom.resize(num_lits, 0);
+        self.ghost_debt.clear();
+        self.ghost_debt.resize(num_lits, 0);
     }
 
     /// Phantom binary count under `lit` (tick parity read; 0 when the
@@ -214,6 +229,9 @@ impl WatchLists {
         if new_size > self.bin_phantom.len() {
             self.bin_phantom.resize(new_size, 0);
         }
+        if new_size > self.ghost_debt.len() {
+            self.ghost_debt.resize(new_size, 0);
+        }
     }
 
     /// Packed rollback snapshot: concatenates every list into one buffer
@@ -227,6 +245,7 @@ impl WatchLists {
             packed: Vec::with_capacity(total),
             ends: Vec::with_capacity(self.watches.len()),
             bin_phantom: self.bin_phantom.clone(),
+            ghost_debt: self.ghost_debt.clone(),
         };
         for list in &self.watches {
             snap.packed.extend_from_slice(list);
@@ -242,6 +261,7 @@ impl WatchLists {
             packed,
             ends,
             bin_phantom,
+            ghost_debt,
         } = snap;
         self.watches.clear();
         self.watches.reserve(ends.len());
@@ -256,6 +276,7 @@ impl WatchLists {
             start = end;
         }
         self.bin_phantom = bin_phantom;
+        self.ghost_debt = ghost_debt;
     }
 
     /// Live watcher count and total capacity count across all lists
@@ -274,6 +295,9 @@ impl WatchLists {
         for c in &mut self.bin_phantom {
             *c = 0;
         }
+        for c in &mut self.ghost_debt {
+            *c = 0;
+        }
     }
 
     /// Get the number of watchers for a literal
@@ -283,9 +307,22 @@ impl WatchLists {
         self.watches.get(lit.index()).map_or(0, |w| w.len())
     }
 
+    /// Tick debt for deleted long-watchers stripped at the last compact of
+    /// `lit`'s list. Zeros the slot so later propagates match lazy removal.
+    pub(crate) fn take_ghost_debt(&mut self, lit: Lit) -> usize {
+        let idx = lit.index();
+        if idx >= self.ghost_debt.len() {
+            return 0;
+        }
+        let debt = self.ghost_debt[idx];
+        self.ghost_debt[idx] = 0;
+        debt as usize
+    }
+
     /// Validate all references before either the arena or a watcher changes.
-    /// Deleted hits remain present and map to the shared tombstone, preserving
-    /// blocker visits, list order and tick accounting.
+    /// Live watchers are rewritten in place. Deleted hits are dropped and
+    /// recorded as [`Self::ghost_debt`] so the next propagate charges the
+    /// same ticks as lazy ghost removal (Kissat `collect.c` watch flush).
     pub(crate) fn relocate_refs(
         &mut self,
         arena: &ClauseArena,
@@ -297,16 +334,30 @@ impl WatchLists {
             self.check_ref_consistency(refs, arena).is_ok(),
             "invalid watcher before relocation"
         );
-        for list in &mut self.watches {
-            for w in list {
+        if self.ghost_debt.len() < self.watches.len() {
+            self.ghost_debt.resize(self.watches.len(), 0);
+        }
+        for (idx, list) in self.watches.iter_mut().enumerate() {
+            let mut write = 0;
+            let mut dropped = 0u32;
+            for read in 0..list.len() {
+                let mut w = list[read];
                 if w.r.is_null() {
+                    list[write] = w;
+                    write += 1;
                     continue;
                 }
-                w.r = if arena.is_deleted(w.r) {
-                    plan.tombstone()
-                } else {
-                    plan.relocated()[arena.live_identity(w.r).index()]
-                };
+                if arena.is_deleted(w.r) {
+                    dropped = dropped.saturating_add(1);
+                    continue;
+                }
+                w.r = plan.relocated()[arena.live_identity(w.r).index()];
+                list[write] = w;
+                write += 1;
+            }
+            list.truncate(write);
+            if dropped != 0 {
+                self.ghost_debt[idx] = self.ghost_debt[idx].saturating_add(dropped);
             }
         }
     }

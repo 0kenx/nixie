@@ -292,7 +292,8 @@ impl Solver {
             // (attach/rebuild bump it; retirement leaves it lingering, as the
             // old entries lingered) so the schedules stay bit-identical.
             let phantom_bins = self.watches.phantom_len(lit);
-            let ticks = 1u64 + (((watches.len() + phantom_bins) as u64) * 8).div_ceil(128);
+            let ghosts = self.watches.take_ghost_debt(lit);
+            let ticks = 1u64 + (((watches.len() + phantom_bins + ghosts) as u64) * 8).div_ceil(128);
             if self.stable {
                 self.ticks_stable = self.ticks_stable.saturating_add(ticks);
             } else {

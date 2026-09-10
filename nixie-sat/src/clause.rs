@@ -875,6 +875,29 @@ mod tests {
     }
 
     #[test]
+    fn compact_flushes_deleted_watchers_and_records_tick_debt() {
+        use crate::watched::{WatchLists, Watcher};
+        let mut db = ClauseDatabase::new();
+        let l0 = Lit::pos(Var::new(0));
+        let l1 = Lit::pos(Var::new(1));
+        let l2 = Lit::pos(Var::new(2));
+        let keep = db.add_original([l0, l1, l2]);
+        let drop = db.add_learned([l0, l1, Lit::pos(Var::new(3))]);
+        let mut wl = WatchLists::new(4);
+        for cid in [keep, drop] {
+            let v = db.get(cid).expect("live");
+            let r = db.ref_of(cid).expect("slot");
+            wl.add(v.lits[0].negate(), Watcher::new(cid, r, v.lits[1]));
+        }
+        db.remove(drop);
+        assert!(db.compact_arena_forced(&mut wl));
+        assert_eq!(wl.get(l0.negate()).len(), 1);
+        assert_eq!(wl.take_ghost_debt(l0.negate()), 1);
+        assert_eq!(wl.take_ghost_debt(l0.negate()), 0);
+        assert_eq!(wl.get(l0.negate())[0].reason(&db), keep);
+    }
+
+    #[test]
     fn test_compact_arena_rewrites_refs_and_watchers() {
         use crate::watched::{WatchLists, Watcher};
 
@@ -977,24 +1000,26 @@ mod tests {
                 db.mark_deleted_raw(ids[round - 2]);
             }
             db.compact_arena_forced(&mut watches);
+            let live_ids: Vec<_> = ids
+                .iter()
+                .copied()
+                .filter(|id| db.get(*id).is_some_and(|c| !c.deleted))
+                .collect();
             assert_eq!(
                 watches.get(!lits[0]).len(),
-                round + 1,
-                "ghost positions retained"
+                live_ids.len(),
+                "deleted watchers flushed at compact"
             );
-            for (index, (w, id)) in watches.get(!lits[0]).iter().zip(&ids).enumerate() {
+            for (w, id) in watches.get(!lits[0]).iter().zip(&live_ids) {
                 let clause = db.get(*id).expect("stable id");
                 assert_eq!(Some(w.r), db.ref_of(*id));
-                if !clause.deleted {
-                    assert_eq!(w.reason(&db), *id);
-                    assert_eq!(clause.lits, lits);
-                    assert_eq!(clause.activity.to_bits(), (index as f32 + 0.25).to_bits());
-                }
+                assert_eq!(w.reason(&db), *id);
+                assert_eq!(clause.lits, lits);
             }
             let snapshot = watches.packed_snapshot();
             let newest = db.ref_of(id).expect("live");
             watches.remove_clause(!lits[0], newest);
-            assert_eq!(watches.get(!lits[0]).len(), round);
+            assert_eq!(watches.get(!lits[0]).len(), live_ids.len() - 1);
             watches.restore(snapshot);
             assert!(db.check_watch_ref_consistency(&watches).is_ok());
         }

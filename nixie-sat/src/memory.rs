@@ -473,9 +473,6 @@ impl CompactionPlan {
     pub(crate) fn relocated(&self) -> &[ClauseRef] {
         &self.relocated
     }
-    pub(crate) fn tombstone(&self) -> ClauseRef {
-        self.tomb
-    }
 }
 
 impl Default for ClauseArena {
