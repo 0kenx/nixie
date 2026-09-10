@@ -1,0 +1,726 @@
+diff --git a/docs/studies/2026-09-10-long-list-internal-assignment.md b/docs/studies/2026-09-10-long-list-internal-assignment.md
+index 585fb5a3..879afd88 100644
+--- a/docs/studies/2026-09-10-long-list-internal-assignment.md
++++ b/docs/studies/2026-09-10-long-list-internal-assignment.md
+@@ -76,3 +76,64 @@ rejected source and findings on main. Full workspace qualification and fresh
+ installed-Z3 parity are required before any production promotion. Z3 is a
+ soundness gate only. Clean owned worktrees, branches and idle scratch files;
+ retain source/binary identities and once-only results in the cache.
++
++## Preflight repair: retain the fixed watch-directory domain
++
++The initial scan has 788/1007 bytes of text and 88/120-byte local frames.
++Units inline without assignment checks, queue growth or repeated reason
++validation. However, the general WatchLists::add still exposes directory
++resize through Vec::extend_with, even though all destination literals belong
++to the fixed domain. The suffix reloads its arena base twice per clause miss
++and value base per tail probe. Smaller frames alone have not removed the
++introduced hot reloads. Use the one preflight repair to pass an exclusive
++mutable slice of destination Vecs, preserving each list's normal checked
++index and Vec::push but structurally excluding directory resize. This is a
++borrow-contract correction, not an annotation sweep. Keep the initial
++assembly and qualification logs; final-source tests/codegen must be rerun.
++
++## Final preflight
++
++The repaired prefix is 677 bytes with a 56-byte local frame; the suffix is
++916 bytes with a 104-byte frame. Six saved registers are additional, and the
++bounded prefix-to-suffix call retains the prefix frame. The directory-growth
++call is gone. Unit paths at 0x63e21 and 0x64cff read the borrowed reason and
++store values/metadata/queue directly: no assignment bounds branch, queue
++growth or second header validation. Each unit still publishes the local
++initialized-length field; each list reserves/checks capacity, builds views
++and publishes the real Vec length on return. The suffix still reloads its
++arena base from [rsp+0x18] at 0x64bc5/0x64bd1 and its value base from
++[rsp+0x8] at 0x64c4d on tail probes. The repair reduces frame/text and removes
++an impossible resize path; it has not eliminated all hot reloads. Price these
++costs in the registered whole-process screen.
++
++Final source passes 1018 default SAT tests and 1051 all-feature SAT tests,
++one existing skip in each, including the 1296-state scalar oracle, exact
++ledger comparisons, callback gates and native Rayon owner moves with domain
++growth/rebuilds. Strict SAT all-feature/all-target Clippy and workspace format
++pass; SAT doctests pass 2 with 1 ignored. Five focused strict-provenance Miri
++tests pass (nightly 2026-06-11, seed 42): two assignment-view cases, disjoint
++live identity/payload across relocation, unit resumption/conflict suffix and
++first-hole compaction. The initial suites also passed; reruns follow the one
++source-directed repair, not performance resampling. Full workspace gates
++are reserved for promotion and have not been claimed.
++
++Safety audit: the assignment view reserves domain-size *additional* space,
++so repeated entries in the old prefix cannot invalidate its capacity proof.
++Every new assignment requires an undefined in-domain variable, consumes one
++such variable and cannot be undone through the view. Both truth signs and
++VarInfo are fixed exclusive slices; Drop exposes only initialized queue
++entries and leaves the propagation head untouched. Arena allocation checks
++size and identity exhaustion before initialization. Shrink preserves identity;
++compaction relocates references together with initialized headers/payloads.
++A borrowed live identity excludes deleted/null slots and occupies disjoint
++bytes from mutable literals. WatchLists::propagation_lists fixes the directory
++size; checked indexing still diagnoses any violated destination-domain
++invariant. No new Send/Sync implementation, shared raw pointer or native
++recursion of input-dependent depth is introduced. Callback and active-observer
++paths remain complete. No production promotion follows from these tests alone.
++
++For the single conditional rejection diagnostic, use the existing grouped
++user-cycle/instruction LBR capture with cycle period 4194301, 128 mmap pages,
++sample CPU/period/read and running-time audit. Require zero loss/throttle,
++CPU 15 only, >=99.9% PMU coverage and >=1000 resolved samples. Its elapsed
++time is diagnostic only; it is not another wall observation for the screen.
+diff --git a/nixie-sat/src/clause.rs b/nixie-sat/src/clause.rs
+index 497a7dc6..33d2870e 100644
+--- a/nixie-sat/src/clause.rs
++++ b/nixie-sat/src/clause.rs
+@@ -395,6 +395,10 @@ impl ClauseDatabase {
+         self.refs.get(id.index()).copied()
+     }
+ 
++    pub(crate) fn propagation(&mut self) -> crate::memory::PropagationArena<'_> {
++        self.arena.propagation()
++    }
++
+     /// Mutable literal slice of a live clause addressed **directly** by its
+     /// arena slot – the propagation hot path, which already carries the slot
+     /// inside its watchers and must not pay the extra `refs[id]` indirection
+diff --git a/nixie-sat/src/memory.rs b/nixie-sat/src/memory.rs
+index da76b572..864f57c5 100644
+--- a/nixie-sat/src/memory.rs
++++ b/nixie-sat/src/memory.rs
+@@ -307,6 +307,84 @@ pub struct ClauseArena {
+     compactions: u64,
+ }
+ 
++/// Exclusive fixed allocation used throughout ordinary propagation. The
++/// lifetime prevents allocation, shrink, deletion or compaction while a scan
++/// uses arena offsets; each returned payload borrow ends before the next one.
++pub(crate) struct PropagationArena<'a> {
++    buffer: &'a mut [u64],
++    pos: usize,
++    identities: usize,
++}
++
++/// One live arena slot: the mutable payload and immutable stable identity
++/// occupy disjoint bytes. Holding this borrow prevents deletion, shrink,
++/// allocation and relocation through the arena view. No raw ref can be
++/// supplied to `reason`: it belongs to this exact borrowed live clause.
++pub(crate) struct LivePropagationClause<'a> {
++    lits: &'a mut [Lit],
++    identity: &'a u32,
++}
++
++impl LivePropagationClause<'_> {
++    #[inline]
++    pub(crate) fn lits(&mut self) -> &mut [Lit] {
++        self.lits
++    }
++
++    #[inline]
++    pub(crate) fn reason(&self) -> ClauseId {
++        ClauseId::new(*self.identity)
++    }
++}
++
++impl PropagationArena<'_> {
++    /// Same arena-issued/ref-relocation contract as `live_lits_hot`.
++    #[inline]
++    pub(crate) fn live_clause(&mut self, r: ClauseRef) -> Option<LivePropagationClause<'_>> {
++        if r.is_null() {
++            return None;
++        }
++        debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
++        // SAFETY: the same arena-issued/ref-relocation invariant as
++        // ClauseArena::live_lits_hot. The exclusive slice pins the allocation
++        // for this entire pass. A slot is 8-aligned and contains an initialized
++        // header; copying it does not borrow any payload.
++        let header = unsafe {
++            self.buffer
++                .as_mut_ptr()
++                .cast::<u8>()
++                .add(r.byte_offset())
++                .cast::<ClauseHeader>()
++        };
++        let h = unsafe { core::ptr::read(header) };
++        debug_assert!(
++            h.len as usize
++                <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
++        );
++        if h.deleted() {
++            return None;
++        }
++        // Every live identity was initialized by alloc after checking the
++        // u32 ID space. Shrink preserves it; compaction copies it with the
++        // payload. Only the shared deleted tombstone has an invalid identity,
++        // and that slot was excluded by the liveness check above.
++        debug_assert!((h.identity as usize) < self.identities);
++        // SAFETY: the arena-issued slot has an initialized, aligned header
++        // and h.len initialized literals. The shared identity covers header
++        // bytes 8..12 and the mutable payload starts at byte 12, so even
++        // though they share an allocation word they do not overlap. Both
++        // references borrow this exclusive view; no arena access or header
++        // mutation can occur until they end. The payload cannot reach back
++        // into the header, and the identity is never exposed mutably.
++        Some(unsafe {
++            LivePropagationClause {
++                lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
++                identity: &*core::ptr::addr_of!((*header).identity),
++            }
++        })
++    }
++}
++
+ /// All allocation and address checks precede any reference mutation.
+ pub(crate) struct CompactionPlan {
+     relocated: Vec<ClauseRef>,
+@@ -334,6 +412,14 @@ impl Default for ClauseArena {
+ }
+ 
+ impl ClauseArena {
++    pub(crate) fn propagation(&mut self) -> PropagationArena<'_> {
++        PropagationArena {
++            buffer: &mut self.buffer,
++            pos: self.pos,
++            identities: self.activities.len(),
++        }
++    }
++
+     /// Create an arena whose buffer is pre-allocated to hold at least
+     /// `initial_capacity` bytes (rounded up to whole `u64`s).
+     #[must_use]
+@@ -1343,6 +1429,59 @@ mod initialization_tests {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn borrowed_propagation_clause_identity_survives_mutation_and_relocation() {
++        let mut arena = ClauseArena::new(0);
++        let mut refs = Vec::new();
++        let mut expected = Vec::new();
++        for len in [2, 3, 5, 64] {
++            let lits: Vec<_> = (0..len).map(Lit::from_code).collect();
++            refs.push(arena.alloc(&lits, false));
++            expected.push(lits);
++        }
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(ClauseRef::NULL).is_none());
++            for (id, (&r, literals)) in refs.iter().zip(&mut expected).enumerate() {
++                let mut live = view.live_clause(r).expect("live allocated clause");
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++                // Keep the identity reference live across payload writes.
++                // The two ranges share a u64 allocation word but no bytes.
++                let LivePropagationClause { lits, identity } = &mut live;
++                lits.reverse();
++                literals.reverse();
++                assert_eq!(**identity, id as u32);
++                assert_eq!(*lits, literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        arena.delete(refs[0]);
++        expected[2].truncate(3);
++        assert!(arena.shrink(refs[2], &expected[2]));
++        let before = refs.clone();
++        arena.compact(&mut refs);
++        assert_ne!(refs[1], before[1], "the live clause was relocated");
++        // Compaction shrinks the allocation; growth happens before reborrow.
++        let extra: Vec<_> = (0..512).map(Lit::from_code).collect();
++        refs.push(arena.alloc(&extra, true));
++        expected.push(extra);
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(refs[0]).is_none(), "deleted tombstone");
++            for (id, (&r, literals)) in refs.iter().zip(&expected).enumerate().skip(1) {
++                let mut live = view.live_clause(r).expect("relocated live clause");
++                assert_eq!(live.lits(), literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        for &r in &refs {
++            arena.delete(r);
++        }
++        arena.compact(&mut refs);
++        let mut view = arena.propagation();
++        assert!(refs.iter().all(|&r| view.live_clause(r).is_none()));
++    }
+     use crate::literal::Var;
+ 
+     fn l(v: u32) -> Lit {
+diff --git a/nixie-sat/src/solver/list_kernel.rs b/nixie-sat/src/solver/list_kernel.rs
+new file mode 100644
+index 00000000..4e2636a3
+--- /dev/null
++++ b/nixie-sat/src/solver/list_kernel.rs
+@@ -0,0 +1,165 @@
++//! One complete long-watch list under fixed-domain assignment/arena borrows.
++//! Both compaction phases retain a narrow call boundary; no BIG state or outer
++//! propagation-head cursor is live inside this kernel. Units never yield.
++use super::{ClauseId, Lit, Watcher};
++#[allow(unused_imports)]
++use crate::prelude::*;
++
++#[derive(Default)]
++pub(super) struct Cursor {
++    #[cfg(feature = "bcp-work")]
++    pub(super) work: super::super::PropagationWork,
++    pub(super) read: usize,
++    pub(super) write: usize,
++}
++
++impl Cursor {
++    /// The prefix transfers to the suffix exactly once, at the first removal.
++    /// The suffix never calls either phase, so call depth is bounded by two,
++    /// independently of the input or the number of removals. Const specialization
++    /// removes the compaction-state test from every kept entry in both loops.
++    #[inline(never)]
++    pub(super) fn scan<const COMPACT: bool>(
++        &mut self,
++        watches: &mut [Watcher],
++        false_lit: Lit,
++        trail: &mut crate::trail::AssignmentTrail<'_>,
++        clauses: &mut crate::memory::PropagationArena<'_>,
++        destinations: &mut [Vec<Watcher>],
++    ) -> Option<ClauseId> {
++        debug_assert_eq!(self.write < self.read, COMPACT);
++        let mut write = self.write;
++        for read in self.read..watches.len() {
++            let watcher = watches[read];
++            #[cfg(feature = "bcp-work")]
++            {
++                self.work.long_visits += 1;
++            }
++            if trail.value(watcher.blocker) > 0 {
++                if COMPACT {
++                    watches[write] = watcher;
++                    write += 1;
++                }
++                continue;
++            }
++            #[cfg(feature = "bcp-work")]
++            {
++                self.work.clause_reads += 1;
++            }
++            let Some(mut live) = clauses.live_clause(watcher.r) else {
++                #[cfg(feature = "bcp-work")]
++                {
++                    self.work.deleted += 1;
++                }
++                if COMPACT {
++                    continue;
++                }
++                self.read = read + 1;
++                self.write = read;
++                return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
++            };
++            let clause = live.lits();
++            debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
++            let first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
++            // Even satisfied exits keep the original eager normalization:
++            // subsequent inprocessing observes literal order.
++            clause[0] = first;
++            clause[1] = false_lit;
++            if trail.value(first) > 0 {
++                #[cfg(feature = "bcp-work")]
++                {
++                    self.work.first_satisfied += 1;
++                }
++                let kept = if COMPACT { write } else { read };
++                if COMPACT {
++                    watches[kept] = watcher;
++                    write += 1;
++                }
++                watches[kept].blocker = first;
++                continue;
++            }
++            let mut found = false;
++            for j in 2..clause.len() {
++                #[cfg(feature = "bcp-work")]
++                {
++                    self.work.tail_probes += 1;
++                }
++                let literal = clause[j];
++                let value = trail.value(literal);
++                if value > 0 {
++                    #[cfg(feature = "bcp-work")]
++                    {
++                        self.work.tail_satisfied += 1;
++                    }
++                    let kept = if COMPACT { write } else { read };
++                    if COMPACT {
++                        watches[kept] = watcher;
++                        write += 1;
++                    }
++                    watches[kept].blocker = literal;
++                    found = true;
++                    break;
++                }
++                if value == 0 {
++                    clause.swap(1, j);
++                    #[cfg(feature = "bcp-work")]
++                    {
++                        self.work.watch_moves += 1;
++                    }
++                    destinations[clause[1].negate().index()].push(Watcher {
++                        blocker: first,
++                        ..watcher
++                    });
++                    if !COMPACT {
++                        self.read = read + 1;
++                        self.write = read;
++                        return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
++                    }
++                    found = true;
++                    break;
++                }
++            }
++            if found {
++                continue;
++            }
++            let kept = if COMPACT { write } else { read };
++            if COMPACT {
++                watches[kept] = watcher;
++            }
++            watches[kept].blocker = first;
++            let next_write = kept + 1;
++            if trail.value(first) < 0 {
++                #[cfg(feature = "bcp-work")]
++                {
++                    self.work.long_conflicts += 1;
++                }
++                // Preserve the unvisited tail without examining its blockers.
++                // In the prefix it is already in its final position.
++                if COMPACT {
++                    watches.copy_within(read + 1.., next_write);
++                }
++                self.read = watches.len();
++                self.write = next_write + watches.len() - read - 1;
++                return Some(live.reason());
++            }
++            // SAFETY: first is an in-domain clause literal. Its true exit
++            // precedes the tail scan and its false exit is above. No assignment
++            // occurred between these checks, so it is still undefined. The
++            // exclusive view prevents resize, unassignment and queue growth.
++            #[allow(unsafe_code)]
++            unsafe {
++                trail.assign_undefined(first, live.reason())
++            };
++            #[cfg(feature = "bcp-work")]
++            {
++                self.work.long_assignments += 1;
++            }
++            if COMPACT {
++                write = next_write;
++            }
++        }
++        self.read = watches.len();
++        self.write = if COMPACT { write } else { watches.len() };
++        None
++    }
++}
+diff --git a/nixie-sat/src/solver/propagate.rs b/nixie-sat/src/solver/propagate.rs
+index 40efaf56..49fd3673 100644
+--- a/nixie-sat/src/solver/propagate.rs
++++ b/nixie-sat/src/solver/propagate.rs
+@@ -59,6 +59,9 @@ use core::sync::atomic::Ordering::Relaxed;
+ mod watch_kernel;
+ use watch_kernel::{Cursor, Step};
+ 
++#[path = "list_kernel.rs"]
++mod list_kernel;
++
+ impl Solver {
+     /// Unit propagation using two-watched literals
+     ///
+@@ -626,10 +629,32 @@ impl Solver {
+         true
+     }
+ 
++    // These modes can invoke Solver callbacks on units, potentially growing
++    // its stores. They must not enter the exclusive fixed-domain list borrow.
++    #[inline]
++    fn use_list_kernel(&self) -> bool {
++        !self.lrat && !Self::reason_stats_enabled() && !self.config.enable_lazy_hyper_binary
++    }
++
+     /// Each scanner call borrows a fixed trail. The borrow ends before any
+     /// assignment, proof work or HBR can mutate or grow the solver stores.
+     #[inline]
+     fn scan_watch_list(&mut self, lit: Lit, watches: &mut [Watcher]) -> (usize, Option<ClauseId>) {
++        if !watches.is_empty() && self.use_list_kernel() {
++            let mut cursor = list_kernel::Cursor::default();
++            let conflict = cursor.scan::<false>(
++                watches,
++                lit.negate(),
++                &mut self.trail.assignments_for_propagation(),
++                &mut self.clauses.propagation(),
++                self.watches.propagation_lists(),
++            );
++            #[cfg(feature = "bcp-work")]
++            self.stats
++                .propagation_work
++                .take_watch_scan(&mut cursor.work);
++            return (cursor.write, conflict);
++        }
+         let mut cursor = Cursor::default();
+         while cursor.read < watches.len() {
+             let step = cursor.advance(
+diff --git a/nixie-sat/src/solver/watch_kernel_tests.rs b/nixie-sat/src/solver/watch_kernel_tests.rs
+index 81b45772..bdaae4b8 100644
+--- a/nixie-sat/src/solver/watch_kernel_tests.rs
++++ b/nixie-sat/src/solver/watch_kernel_tests.rs
+@@ -431,3 +431,52 @@ fn paired_solves_match_truth_models_and_independent_lrat() {
+     }
+     assert!(sat > 0 && unsat > 0, "SAT {sat}, UNSAT {unsat}");
+ }
++
++#[test]
++fn list_kernel_gate_preserves_unit_callback_modes() {
++    let mut s = Solver::new();
++    s.config.enable_lazy_hyper_binary = false;
++    assert_eq!(s.use_list_kernel(), !Solver::reason_stats_enabled());
++    s.config.enable_lazy_hyper_binary = true;
++    assert!(!s.use_list_kernel());
++    s.config.enable_lazy_hyper_binary = false;
++    let _proof = s.enable_lrat_transcript();
++    assert!(!s.use_list_kernel());
++}
++
++#[cfg(feature = "std")]
++#[test]
++fn list_kernel_owner_moves_across_workers_and_rebuilds() {
++    use rayon::prelude::*;
++    let pairs: Vec<_> = (0..8)
++        .map(|i| {
++            let (mut a, _) = raw_solver(false, i % 2 != 0, false);
++            let (mut b, _) = raw_solver(true, i % 2 != 0, false);
++            for s in [&mut a, &mut b] {
++                s.trail.assign_unit_fact(Lit::from_code(5));
++                while s.trail.next_to_propagate().is_some() {}
++            }
++            (a, b)
++        })
++        .collect();
++    let pairs: Vec<_> = pairs
++        .into_par_iter()
++        .map(|(mut a, mut b)| {
++            for round in 0..3 {
++                for s in [&mut a, &mut b] {
++                    s.trail.backtrack_to(0);
++                    s.ensure_vars(5 + 64 * round);
++                    s.rebuild_watches_and_binary_graph();
++                    s.trail.new_decision_level();
++                    s.trail.assign_decision(Lit::from_code(0));
++                }
++                assert_eq!(a.propagate(), b.propagate());
++                assert_state(&a, &b);
++            }
++            (a, b)
++        })
++        .collect();
++    for (a, b) in pairs {
++        assert_state(&a, &b);
++    }
++}
+diff --git a/nixie-sat/src/trail.rs b/nixie-sat/src/trail.rs
+index 760ee917..f70a6c89 100644
+--- a/nixie-sat/src/trail.rs
++++ b/nixie-sat/src/trail.rs
+@@ -62,7 +62,105 @@ pub struct Trail {
+     prop_head: usize,
+ }
+ 
++/// Exclusive, fixed-domain trail borrow for one long-watch list.
++/// The queue is reserved before borrowing; only the local initialized length
++/// changes during the pass. Ending the view publishes that length.
++/// Creating variables, changing levels and backtracking require ending this
++/// borrow first. No pointer is shared with another solver or worker.
++pub(crate) struct AssignmentTrail<'a> {
++    assignments: &'a mut Vec<Lit>,
++    queue: *mut Lit,
++    initialized: usize,
++    values: &'a mut [i8],
++    var_info: &'a mut [VarInfo],
++    level: u32,
++}
++
++impl AssignmentTrail<'_> {
++    /// Same solver-literal domain contract as `Trail::lit_val_hot`. Unlike
++    /// the general trail, this view cannot grow or replace the value array.
++    #[allow(unsafe_code)]
++    #[inline]
++    pub(crate) fn value(&self, lit: Lit) -> i8 {
++        debug_assert!(lit.index() < self.values.len());
++        // SAFETY: Solver sizes the values for every variable before attaching
++        // a watch/edge or assigning it. This borrow prevents domain changes.
++        unsafe { *self.values.get_unchecked(lit.index()) }
++    }
++
++    /// Append an ordinary propagation without queue growth or publication.
++    ///
++    /// # Safety
++    /// `lit` must be in the borrowed variable domain and currently undefined.
++    /// No backtrack/unassignment is possible through this view, so each such
++    /// assignment consumes a different variable and there are at most domain
++    /// size appends. Entry reserved that many slots beyond the original length.
++    #[allow(unsafe_code)]
++    #[inline]
++    pub(crate) unsafe fn assign_undefined(&mut self, lit: Lit, reason: ClauseId) {
++        let code = lit.index();
++        let idx = lit.var().index();
++        debug_assert!(idx < self.var_info.len());
++        debug_assert!(code < self.values.len() && (code ^ 1) < self.values.len());
++        debug_assert_eq!(self.values[code], 0);
++        debug_assert!(self.initialized < self.assignments.capacity());
++        // SAFETY: the caller supplies an in-domain literal. Both signs of
++        // every variable are allocated together; this exclusive view cannot
++        // resize either array. These are disjoint byte stores and a metadata
++        // store into the valid variable slot, without live element aliases.
++        unsafe {
++            *self.values.get_unchecked_mut(code) = 1;
++            *self.values.get_unchecked_mut(code ^ 1) = -1;
++            *self.var_info.get_unchecked_mut(idx) = VarInfo {
++                value: if lit.is_pos() {
++                    LBool::True
++                } else {
++                    LBool::False
++                },
++                level: self.level,
++                reason: Reason::Propagation(reason),
++                trail_idx: self.initialized as u32,
++            };
++        }
++        // SAFETY: the undefined-variable contract bounds total appends by
++        // the additional domain-sized reservation. This slot is in the fixed
++        // allocation and no element reference aliases it. Publish locally
++        // only after its initialized Lit has been written.
++        unsafe { self.queue.add(self.initialized).write(lit) };
++        self.initialized += 1;
++    }
++}
++
++impl Drop for AssignmentTrail<'_> {
++    #[allow(unsafe_code)]
++    #[inline]
++    fn drop(&mut self) {
++        // SAFETY: every entry below initialized is initialized, within the
++        // reserved allocation. No raw queue access occurs after this commit.
++        // Lit is Copy and has no destructor; unwinding cannot expose the
++        // uninitialized capacity beyond this prefix.
++        unsafe { self.assignments.set_len(self.initialized) };
++    }
++}
++
+ impl Trail {
++    pub(crate) fn assignments_for_propagation(&mut self) -> AssignmentTrail<'_> {
++        // General Trail APIs can contain repeated entries. Reserving merely
++        // num_vars total would assume uniqueness of the existing prefix.
++        // Ordinary BCP can add at most num_vars *new* entries regardless.
++        self.assignments.reserve(self.var_info.len());
++        let initialized = self.assignments.len();
++        let queue = self.assignments.as_mut_ptr();
++        AssignmentTrail {
++            assignments: &mut self.assignments,
++            queue,
++            initialized,
++            values: &mut self.values,
++            var_info: &mut self.var_info,
++            level: self.current_level,
++        }
++    }
++
+     /// Create a new trail for n variables
+     #[must_use]
+     pub fn new(num_vars: usize) -> Self {
+@@ -548,6 +646,77 @@ impl Trail {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    #[allow(unsafe_code)]
++    fn assignment_view_preserves_head_duplicate_prefix_and_reborrow() {
++        for n in [0, 1, 5, 65] {
++            let mut trail = Trail::new(n);
++            let mut scalar = Trail::new(n);
++            for t in [&mut trail, &mut scalar] {
++                if n > 0 {
++                    for _ in 0..3 {
++                        t.assign_unit_fact(Lit::from_code(0));
++                    }
++                    assert_eq!(t.next_to_propagate(), Some(Lit::from_code(0)));
++                }
++                t.new_decision_level();
++            }
++            for _ in 0..2 {
++                {
++                    let mut view = trail.assignments_for_propagation();
++                    for i in 1..n {
++                        let lit = Lit::from_code((2 * i + i % 2) as u32);
++                        let reason = ClauseId::new(i as u32);
++                        assert_eq!(view.value(lit), 0);
++                        // SAFETY: each valid variable is assigned once per view.
++                        unsafe { view.assign_undefined(lit, reason) };
++                        scalar.assign_propagation(lit, reason);
++                        assert_eq!(view.value(lit), 1);
++                        assert_eq!(view.value(!lit), -1);
++                    }
++                }
++                assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++                while let Some(lit) = trail.next_to_propagate() {
++                    assert_eq!(Some(lit), scalar.next_to_propagate());
++                }
++                assert_eq!(scalar.next_to_propagate(), None);
++                for t in [&mut trail, &mut scalar] {
++                    t.backtrack_to(0);
++                    t.resize(n + 1);
++                    t.reset_propagation_head();
++                    t.new_decision_level();
++                }
++            }
++        }
++    }
++
++    #[cfg(feature = "std")]
++    #[test]
++    #[allow(unsafe_code)]
++    fn assignment_view_unwind_publishes_only_initialized_entries() {
++        let mut trail = Trail::new(4);
++        let mut scalar = Trail::new(4);
++        let first = Lit::from_code(0);
++        let implied = Lit::from_code(3);
++        let reason = ClauseId::new(7);
++        for t in [&mut trail, &mut scalar] {
++            t.new_decision_level();
++            t.assign_decision(first);
++            assert_eq!(t.next_to_propagate(), Some(first));
++        }
++        scalar.assign_propagation(implied, reason);
++        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            let mut view = trail.assignments_for_propagation();
++            // SAFETY: implied is an in-domain, undefined literal.
++            unsafe { view.assign_undefined(implied, reason) };
++            panic!("exercise initialized-prefix publication during unwind");
++        }));
++        assert!(result.is_err());
++        assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++        assert_eq!(trail.next_to_propagate(), Some(implied));
++        assert_eq!(trail.next_to_propagate(), None);
++    }
++
+     #[test]
+     fn test_trail_basic() {
+         let mut trail = Trail::new(5);
+diff --git a/nixie-sat/src/watched.rs b/nixie-sat/src/watched.rs
+index 5bba90d1..224a5e36 100644
+--- a/nixie-sat/src/watched.rs
++++ b/nixie-sat/src/watched.rs
+@@ -119,6 +119,10 @@ pub struct WatchSnapshot {
+ }
+ 
+ impl WatchLists {
++    pub(crate) fn propagation_lists(&mut self) -> &mut [Vec<Watcher>] {
++        &mut self.watches
++    }
++
+     /// Create new watch lists for n variables
+     #[must_use]
+     pub fn new(num_vars: usize) -> Self {

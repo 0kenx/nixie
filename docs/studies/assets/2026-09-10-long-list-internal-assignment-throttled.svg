@@ -1,0 +1,1394 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="398" onload="init(evt)" viewBox="0 0 1200 398" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="398.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >THROTTLED j3037 capture: no cycle-share inference</text>
+<text id="subtitle" x="600.00" y="48" >Exploratory call-chain samples only; 2923 throttle events invalidate attribution</text>
+<text id="details" x="10.00" y="381" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="381" > </text>
+<g id="frames">
+<g >
+<title>core::slice::sort::stable::driftsort_main (205,523,680 sampled cycle weight (throttled), 0.12%)</title><rect x="250.5" y="157" width="1.5" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="253.52" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vmtf::VMTF::dequeue (390,073,065 sampled cycle weight (throttled), 0.23%)</title><rect x="1170.6" y="205" width="2.7" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="1173.56" y="215.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (25,164,843 sampled cycle weight (throttled), 0.02%)</title><rect x="207.7" y="189" width="0.1" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="210.65" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::drift::sort (16,777,033 sampled cycle weight (throttled), 0.01%)</title><rect x="220.8" y="141" width="0.1" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="223.76" y="151.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (37,748,592 sampled cycle weight (throttled), 0.02%)</title><rect x="332.0" y="125" width="0.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="334.97" y="135.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,971,447 sampled cycle weight (throttled), 0.01%)</title><rect x="248.8" y="77" width="0.1" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="251.80" y="87.5" ></text>
+</g>
+<g >
+<title>&lt;core::iter::adapters::filter::Filter&lt;I,P&gt; as core::iter::traits::iterator::Iterator&gt;::next (142,607,116 sampled cycle weight (throttled), 0.09%)</title><rect x="217.8" y="173" width="1.0" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="220.82" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (62,914,518 sampled cycle weight (throttled), 0.04%)</title><rect x="253.5" y="141" width="0.5" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="256.52" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_backward_clauses (37,748,129 sampled cycle weight (throttled), 0.02%)</title><rect x="219.9" y="173" width="0.2" height="15.0" fill="rgb(209,19,4)" rx="2" ry="2" />
+<text  x="222.87" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (16,779,067 sampled cycle weight (throttled), 0.01%)</title><rect x="250.3" y="141" width="0.1" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="253.31" y="151.5" ></text>
+</g>
+<g >
+<title>realloc (16,779,067 sampled cycle weight (throttled), 0.01%)</title><rect x="250.3" y="125" width="0.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="253.31" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::AnalysisMark::mark_antecedent (1,543,491,700 sampled cycle weight (throttled), 0.93%)</title><rect x="142.1" y="205" width="10.9" height="15.0" fill="rgb(225,95,22)" rx="2" ry="2" />
+<text  x="145.11" y="215.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (50,331,581 sampled cycle weight (throttled), 0.03%)</title><rect x="76.6" y="173" width="0.4" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="79.62" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="125" width="0.1" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="230.90" y="135.5" ></text>
+</g>
+<g >
+<title>realloc (54,524,621 sampled cycle weight (throttled), 0.03%)</title><rect x="253.6" y="109" width="0.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="256.58" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::inprocess (12,687,764,766 sampled cycle weight (throttled), 7.62%)</title><rect x="239.6" y="189" width="89.9" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="242.55" y="199.5" >nixie_sat:..</text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::reduce_clause_database::{{closure}} (150,997,593 sampled cycle weight (throttled), 0.09%)</title><rect x="335.4" y="173" width="1.1" height="15.0" fill="rgb(247,194,46)" rx="2" ry="2" />
+<text  x="338.45" y="183.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (134,220,391 sampled cycle weight (throttled), 0.08%)</title><rect x="152.1" y="173" width="0.9" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="155.09" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::subsume::&lt;impl nixie_sat::solver::Solver&gt;::subsume_round (3,921,667,182 sampled cycle weight (throttled), 2.36%)</title><rect x="300.0" y="173" width="27.8" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="303.04" y="183.5" >n..</text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (25,165,475 sampled cycle weight (throttled), 0.02%)</title><rect x="75.7" y="125" width="0.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="78.73" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::minimize_classify (1,916,824,121 sampled cycle weight (throttled), 1.15%)</title><rect x="127.7" y="173" width="13.6" height="15.0" fill="rgb(227,103,24)" rx="2" ry="2" />
+<text  x="130.69" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::mark_subsume_lit (16,777,534 sampled cycle weight (throttled), 0.01%)</title><rect x="326.3" y="141" width="0.1" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="329.26" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::attach_watchers (20,971,375 sampled cycle weight (throttled), 0.01%)</title><rect x="77.2" y="205" width="0.2" height="15.0" fill="rgb(212,35,8)" rx="2" ry="2" />
+<text  x="80.24" y="215.5" ></text>
+</g>
+<g >
+<title>_int_realloc (239,075,950 sampled cycle weight (throttled), 0.14%)</title><rect x="247.4" y="109" width="1.7" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="250.40" y="119.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (37,748,058 sampled cycle weight (throttled), 0.02%)</title><rect x="251.7" y="61" width="0.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="254.71" y="71.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (25,165,857 sampled cycle weight (throttled), 0.02%)</title><rect x="114.8" y="189" width="0.1" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="117.76" y="199.5" ></text>
+</g>
+<g >
+<title>unlink_chunk.isra.0 (33,557,323 sampled cycle weight (throttled), 0.02%)</title><rect x="241.7" y="125" width="0.3" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="244.72" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_flush_sort_occs (125,832,219 sampled cycle weight (throttled), 0.08%)</title><rect x="220.1" y="173" width="0.9" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="223.14" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (20,974,704 sampled cycle weight (throttled), 0.01%)</title><rect x="241.3" y="125" width="0.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="244.30" y="135.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (16,776,286 sampled cycle weight (throttled), 0.01%)</title><rect x="63.3" y="189" width="0.1" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="66.27" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::bump_batch (2,235,575,316 sampled cycle weight (throttled), 1.34%)</title><rect x="1173.3" y="205" width="15.9" height="15.0" fill="rgb(226,99,23)" rx="2" ry="2" />
+<text  x="1176.32" y="215.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (88,078,359 sampled cycle weight (throttled), 0.05%)</title><rect x="118.1" y="157" width="0.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="121.06" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (1,035,984,817 sampled cycle weight (throttled), 0.62%)</title><rect x="69.1" y="173" width="7.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="72.10" y="183.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (83,887,663 sampled cycle weight (throttled), 0.05%)</title><rect x="323.7" y="157" width="0.6" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="326.71" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (46,137,147 sampled cycle weight (throttled), 0.03%)</title><rect x="331.9" y="157" width="0.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="334.91" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (255,849,455 sampled cycle weight (throttled), 0.15%)</title><rect x="116.9" y="173" width="1.8" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="119.87" y="183.5" ></text>
+</g>
+<g >
+<title>long-list suffix (1,325,407,269 sampled cycle weight (throttled), 0.80%)</title><rect x="350.0" y="157" width="9.3" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="352.96" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_add_resolvents (16,778,890 sampled cycle weight (throttled), 0.01%)</title><rect x="219.8" y="173" width="0.1" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="222.75" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (109,050,475 sampled cycle weight (throttled), 0.07%)</title><rect x="248.3" y="93" width="0.8" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="251.32" y="103.5" ></text>
+</g>
+<g >
+<title>main (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="269" width="1180.0" height="15.0" fill="rgb(243,179,42)" rx="2" ry="2" />
+<text  x="13.00" y="279.5" >main</text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::reserve_one_unchecked (92,275,190 sampled cycle weight (throttled), 0.06%)</title><rect x="141.3" y="189" width="0.6" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="144.27" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (46,137,147 sampled cycle weight (throttled), 0.03%)</title><rect x="331.9" y="173" width="0.3" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="334.91" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (20,974,704 sampled cycle weight (throttled), 0.01%)</title><rect x="241.3" y="141" width="0.2" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="244.30" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::eliminate_phase (3,690,983,534 sampled cycle weight (throttled), 2.22%)</title><rect x="213.3" y="189" width="26.2" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="216.33" y="199.5" >n..</text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::sweep_root_fixed_clauses (134,212,168 sampled cycle weight (throttled), 0.08%)</title><rect x="336.5" y="189" width="1.0" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="339.52" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::equiv::&lt;impl nixie_sat::solver::Solver&gt;::rebuild_watches_and_binary_graph (595,592,639 sampled cycle weight (throttled), 0.36%)</title><rect x="223.8" y="173" width="4.2" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="226.82" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (113,573,129,043 sampled cycle weight (throttled), 68.22%)</title><rect x="365.5" y="205" width="805.0" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="368.53" y="215.5" >nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate</text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (125,827,213 sampled cycle weight (throttled), 0.08%)</title><rect x="226.6" y="157" width="0.9" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="229.65" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::BinaryImplicationGraph::get (20,971,508 sampled cycle weight (throttled), 0.01%)</title><rect x="362.9" y="173" width="0.2" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="365.92" y="183.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (1,447,023,467 sampled cycle weight (throttled), 0.87%)</title><rect x="66.2" y="205" width="10.2" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="69.18" y="215.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (16,782,301 sampled cycle weight (throttled), 0.01%)</title><rect x="226.5" y="141" width="0.1" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="229.53" y="151.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (29,360,041 sampled cycle weight (throttled), 0.02%)</title><rect x="332.0" y="93" width="0.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="335.03" y="103.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (25,166,089 sampled cycle weight (throttled), 0.02%)</title><rect x="237.4" y="157" width="0.2" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="240.44" y="167.5" ></text>
+</g>
+<g >
+<title>_int_realloc (16,779,067 sampled cycle weight (throttled), 0.01%)</title><rect x="250.3" y="109" width="0.1" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="253.31" y="119.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (247,462,506 sampled cycle weight (throttled), 0.15%)</title><rect x="74.7" y="141" width="1.7" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="77.69" y="151.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (29,360,847 sampled cycle weight (throttled), 0.02%)</title><rect x="247.9" y="93" width="0.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="250.87" y="103.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::transred::&lt;impl nixie_sat::solver::Solver&gt;::transred_round (230,688,017 sampled cycle weight (throttled), 0.14%)</title><rect x="327.8" y="173" width="1.7" height="15.0" fill="rgb(213,40,9)" rx="2" ry="2" />
+<text  x="330.84" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::trail::Trail::assign (134,216,155 sampled cycle weight (throttled), 0.08%)</title><rect x="299.0" y="141" width="1.0" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="302.00" y="151.5" ></text>
+</g>
+<g >
+<title>long-list prefix (4,546,622,235 sampled cycle weight (throttled), 2.73%)</title><rect x="266.8" y="141" width="32.2" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="269.78" y="151.5" >lo..</text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack_with_phase_saving (3,309,283,975 sampled cycle weight (throttled), 1.99%)</title><rect x="153.9" y="205" width="23.5" height="15.0" fill="rgb(234,133,32)" rx="2" ry="2" />
+<text  x="156.91" y="215.5" >n..</text>
+</g>
+<g >
+<title>realloc (109,054,943 sampled cycle weight (throttled), 0.07%)</title><rect x="152.3" y="157" width="0.7" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="155.27" y="167.5" ></text>
+</g>
+<g >
+<title>realloc (289,407,562 sampled cycle weight (throttled), 0.17%)</title><rect x="247.0" y="125" width="2.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="250.04" y="135.5" ></text>
+</g>
+<g >
+<title>_int_malloc (25,166,217 sampled cycle weight (throttled), 0.02%)</title><rect x="227.4" y="93" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="230.36" y="103.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (1,400,886,693 sampled cycle weight (throttled), 0.84%)</title><rect x="66.5" y="189" width="9.9" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="69.51" y="199.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (20,970,742 sampled cycle weight (throttled), 0.01%)</title><rect x="250.0" y="157" width="0.1" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="252.98" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (67,111,211 sampled cycle weight (throttled), 0.04%)</title><rect x="1153.5" y="157" width="0.5" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="1156.50" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (3,183,470,245 sampled cycle weight (throttled), 1.91%)</title><rect x="337.5" y="189" width="22.5" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="340.47" y="199.5" >n..</text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (88,082,081 sampled cycle weight (throttled), 0.05%)</title><rect x="242.3" y="173" width="0.6" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="245.32" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (71,301,421 sampled cycle weight (throttled), 0.04%)</title><rect x="219.1" y="173" width="0.5" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="222.10" y="183.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (113,247,591 sampled cycle weight (throttled), 0.07%)</title><rect x="1189.2" y="205" width="0.8" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="1192.17" y="215.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (16,776,261 sampled cycle weight (throttled), 0.01%)</title><rect x="324.2" y="141" width="0.1" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="327.18" y="151.5" ></text>
+</g>
+<g >
+<title>realloc (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="109" width="0.1" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="230.90" y="119.5" ></text>
+</g>
+<g >
+<title>_int_malloc (71,305,320 sampled cycle weight (throttled), 0.04%)</title><rect x="152.5" y="125" width="0.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="155.54" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::RoundOccs::combined (16,776,399 sampled cycle weight (throttled), 0.01%)</title><rect x="223.7" y="173" width="0.1" height="15.0" fill="rgb(207,12,3)" rx="2" ry="2" />
+<text  x="226.71" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::compute_lbd_stamped (121,632,537 sampled cycle weight (throttled), 0.07%)</title><rect x="153.0" y="205" width="0.9" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="156.05" y="215.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (54,525,314 sampled cycle weight (throttled), 0.03%)</title><rect x="251.6" y="77" width="0.4" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="254.59" y="87.5" ></text>
+</g>
+<g >
+<title>realloc (46,137,549 sampled cycle weight (throttled), 0.03%)</title><rect x="141.6" y="157" width="0.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="144.60" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::memory::ClauseArena::alloc (16,778,677 sampled cycle weight (throttled), 0.01%)</title><rect x="77.1" y="189" width="0.1" height="15.0" fill="rgb(209,21,5)" rx="2" ry="2" />
+<text  x="80.12" y="199.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (67,111,797 sampled cycle weight (throttled), 0.04%)</title><rect x="241.5" y="141" width="0.5" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="244.48" y="151.5" ></text>
+</g>
+<g >
+<title>_int_realloc (96,470,592 sampled cycle weight (throttled), 0.06%)</title><rect x="209.4" y="125" width="0.7" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="212.38" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::minimize_literal_plain (3,187,679,191 sampled cycle weight (throttled), 1.91%)</title><rect x="118.7" y="189" width="22.6" height="15.0" fill="rgb(207,10,2)" rx="2" ry="2" />
+<text  x="121.68" y="199.5" >n..</text>
+</g>
+<g >
+<title>nixie_sat::trail::Trail::assign (2,327,817,433 sampled cycle weight (throttled), 1.40%)</title><rect x="1154.0" y="189" width="16.5" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="1156.97" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::shrink_and_minimize_clause (8,904,503,687 sampled cycle weight (throttled), 5.35%)</title><rect x="79.0" y="205" width="63.1" height="15.0" fill="rgb(239,157,37)" rx="2" ry="2" />
+<text  x="82.00" y="215.5" >nixie_..</text>
+</g>
+<g >
+<title>nixie_sat::solver::BinaryImplicationGraph::build_layout (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="157" width="0.1" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="230.90" y="167.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (88,081,047 sampled cycle weight (throttled), 0.05%)</title><rect x="141.3" y="173" width="0.6" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="144.30" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::add_clause (29,359,414 sampled cycle weight (throttled), 0.02%)</title><rect x="10.1" y="221" width="0.2" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="13.06" y="231.5" ></text>
+</g>
+<g >
+<title>_int_realloc (50,330,320 sampled cycle weight (throttled), 0.03%)</title><rect x="253.6" y="93" width="0.4" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="256.61" y="103.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (67,111,211 sampled cycle weight (throttled), 0.04%)</title><rect x="1153.5" y="141" width="0.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="1156.50" y="151.5" ></text>
+</g>
+<g >
+<title>_int_malloc (33,555,994 sampled cycle weight (throttled), 0.02%)</title><rect x="1153.7" y="93" width="0.3" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="1156.73" y="103.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,971,634 sampled cycle weight (throttled), 0.01%)</title><rect x="141.8" y="125" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="144.78" y="135.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (16,779,174 sampled cycle weight (throttled), 0.01%)</title><rect x="226.1" y="157" width="0.1" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="229.08" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_opts (205,528,118 sampled cycle weight (throttled), 0.12%)</title><rect x="326.4" y="141" width="1.4" height="15.0" fill="rgb(247,196,47)" rx="2" ry="2" />
+<text  x="329.38" y="151.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (33,554,340 sampled cycle weight (throttled), 0.02%)</title><rect x="332.0" y="109" width="0.2" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="335.00" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::lrb::LRB::unassign (33,553,520 sampled cycle weight (throttled), 0.02%)</title><rect x="210.1" y="173" width="0.2" height="15.0" fill="rgb(240,165,39)" rx="2" ry="2" />
+<text  x="213.06" y="183.5" ></text>
+</g>
+<g >
+<title>stats_solve::main (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="237" width="1180.0" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="13.00" y="247.5" >stats_solve::main</text>
+</g>
+<g >
+<title>_int_malloc (20,971,690 sampled cycle weight (throttled), 0.01%)</title><rect x="872.9" y="109" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="875.88" y="119.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (121,639,600 sampled cycle weight (throttled), 0.07%)</title><rect x="241.5" y="173" width="0.8" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="244.45" y="183.5" ></text>
+</g>
+<g >
+<title>_int_realloc (37,748,957 sampled cycle weight (throttled), 0.02%)</title><rect x="141.7" y="141" width="0.2" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="144.66" y="151.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (448,786,124 sampled cycle weight (throttled), 0.27%)</title><rect x="245.9" y="157" width="3.2" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="248.91" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::reserve::do_reserve_and_handle (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="141" width="0.1" height="15.0" fill="rgb(212,35,8)" rx="2" ry="2" />
+<text  x="230.90" y="151.5" ></text>
+</g>
+<g >
+<title>realloc (33,554,265 sampled cycle weight (throttled), 0.02%)</title><rect x="872.8" y="141" width="0.2" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="875.79" y="151.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (46,144,451 sampled cycle weight (throttled), 0.03%)</title><rect x="227.6" y="157" width="0.3" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="230.57" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (150,997,480 sampled cycle weight (throttled), 0.09%)</title><rect x="209.0" y="157" width="1.1" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="211.99" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (121,632,957 sampled cycle weight (throttled), 0.07%)</title><rect x="226.7" y="141" width="0.8" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="229.68" y="151.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (29,362,803 sampled cycle weight (throttled), 0.02%)</title><rect x="226.3" y="125" width="0.2" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="229.32" y="135.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::convert::From&lt;&amp;[&lt;A as smallvec::Array&gt;::Item]&gt;&gt;::from (62,912,094 sampled cycle weight (throttled), 0.04%)</title><rect x="63.0" y="205" width="0.4" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="66.00" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::clause::ClauseDatabase::compact_arena_forced (452,987,307 sampled cycle weight (throttled), 0.27%)</title><rect x="332.2" y="173" width="3.2" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="335.24" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_opts (92,275,310 sampled cycle weight (throttled), 0.06%)</title><rect x="238.8" y="141" width="0.7" height="15.0" fill="rgb(247,196,47)" rx="2" ry="2" />
+<text  x="241.84" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_resolve_clauses (352,315,547 sampled cycle weight (throttled), 0.21%)</title><rect x="221.0" y="173" width="2.5" height="15.0" fill="rgb(216,51,12)" rx="2" ry="2" />
+<text  x="224.03" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_and_rewatch_silent (117,442,390 sampled cycle weight (throttled), 0.07%)</title><rect x="238.7" y="157" width="0.8" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="241.66" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::mark_subsume_lit (222,306,344 sampled cycle weight (throttled), 0.13%)</title><rect x="77.4" y="205" width="1.6" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="80.39" y="215.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (71,302,696 sampled cycle weight (throttled), 0.04%)</title><rect x="76.5" y="189" width="0.5" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="79.47" y="199.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (50,333,554 sampled cycle weight (throttled), 0.03%)</title><rect x="242.0" y="157" width="0.3" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="244.96" y="167.5" ></text>
+</g>
+<g >
+<title>getenv (285,200,464 sampled cycle weight (throttled), 0.17%)</title><rect x="363.2" y="157" width="2.1" height="15.0" fill="rgb(221,73,17)" rx="2" ry="2" />
+<text  x="366.24" y="167.5" ></text>
+</g>
+<g >
+<title>_int_realloc (50,331,511 sampled cycle weight (throttled), 0.03%)</title><rect x="219.2" y="125" width="0.4" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="222.25" y="135.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (16,778,958 sampled cycle weight (throttled), 0.01%)</title><rect x="250.2" y="141" width="0.1" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="253.19" y="151.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (16,776,206 sampled cycle weight (throttled), 0.01%)</title><rect x="114.6" y="189" width="0.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="117.64" y="199.5" ></text>
+</g>
+<g >
+<title>_int_realloc (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="93" width="0.1" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="230.90" y="103.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (16,776,866 sampled cycle weight (throttled), 0.01%)</title><rect x="207.9" y="189" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="210.92" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (16,777,183 sampled cycle weight (throttled), 0.01%)</title><rect x="220.9" y="141" width="0.1" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="223.88" y="151.5" ></text>
+</g>
+<g >
+<title>_int_realloc (20,974,704 sampled cycle weight (throttled), 0.01%)</title><rect x="241.3" y="109" width="0.2" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="244.30" y="119.5" ></text>
+</g>
+<g >
+<title>__libc_start_call_main (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="285" width="1180.0" height="15.0" fill="rgb(210,26,6)" rx="2" ry="2" />
+<text  x="13.00" y="295.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>nixie_sat::solver::walk::&lt;impl nixie_sat::solver::Solver&gt;::walk_round (436,206,066 sampled cycle weight (throttled), 0.26%)</title><rect x="360.0" y="189" width="3.1" height="15.0" fill="rgb(246,192,46)" rx="2" ry="2" />
+<text  x="363.03" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::trail::Trail::assign (96,468,348 sampled cycle weight (throttled), 0.06%)</title><rect x="359.3" y="173" width="0.7" height="15.0" fill="rgb(251,214,51)" rx="2" ry="2" />
+<text  x="362.35" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (29,360,133 sampled cycle weight (throttled), 0.02%)</title><rect x="219.4" y="109" width="0.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="222.40" y="119.5" ></text>
+</g>
+<g >
+<title>_int_realloc (88,083,352 sampled cycle weight (throttled), 0.05%)</title><rect x="152.4" y="141" width="0.6" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="155.42" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack (314,571,806 sampled cycle weight (throttled), 0.19%)</title><rect x="208.1" y="189" width="2.2" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="211.07" y="199.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (29,359,904 sampled cycle weight (throttled), 0.02%)</title><rect x="68.7" y="173" width="0.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="71.68" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::handle_clause_deletion_and_restart (26,512,146,000 sampled cycle weight (throttled), 15.92%)</title><rect x="177.4" y="205" width="187.9" height="15.0" fill="rgb(215,49,11)" rx="2" ry="2" />
+<text  x="180.36" y="215.5" >nixie_sat::solver::learn..</text>
+</g>
+<g >
+<title>long-list suffix (39,640,245,017 sampled cycle weight (throttled), 23.81%)</title><rect x="873.0" y="173" width="281.0" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="876.03" y="183.5" >long-list suffix</text>
+</g>
+<g >
+<title>_int_free_chunk (62,927,651 sampled cycle weight (throttled), 0.04%)</title><rect x="226.2" y="157" width="0.4" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="229.20" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::mark_elim_one (29,362,859 sampled cycle weight (throttled), 0.02%)</title><rect x="326.0" y="157" width="0.2" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="329.00" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (37,748,473 sampled cycle weight (throttled), 0.02%)</title><rect x="872.8" y="157" width="0.2" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="875.76" y="167.5" ></text>
+</g>
+<g >
+<title>realloc (58,722,574 sampled cycle weight (throttled), 0.04%)</title><rect x="1153.6" y="125" width="0.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="1156.56" y="135.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (150,997,480 sampled cycle weight (throttled), 0.09%)</title><rect x="209.0" y="173" width="1.1" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="211.99" y="183.5" ></text>
+</g>
+<g >
+<title>__log10_finite@GLIBC_2.15 (41,942,519 sampled cycle weight (throttled), 0.03%)</title><rect x="192.3" y="189" width="0.3" height="15.0" fill="rgb(251,213,51)" rx="2" ry="2" />
+<text  x="195.28" y="199.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (16,776,057 sampled cycle weight (throttled), 0.01%)</title><rect x="192.6" y="189" width="0.1" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="195.58" y="199.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (46,137,754 sampled cycle weight (throttled), 0.03%)</title><rect x="246.6" y="125" width="0.4" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="249.63" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_retire_pivot_clauses (25,167,047 sampled cycle weight (throttled), 0.02%)</title><rect x="223.5" y="173" width="0.2" height="15.0" fill="rgb(227,104,25)" rx="2" ry="2" />
+<text  x="226.53" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::sift_up (1,749,033,925 sampled cycle weight (throttled), 1.05%)</title><rect x="1176.8" y="189" width="12.4" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="1179.77" y="199.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (16,777,176 sampled cycle weight (throttled), 0.01%)</title><rect x="65.8" y="205" width="0.1" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="68.80" y="215.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (67,107,118 sampled cycle weight (throttled), 0.04%)</title><rect x="219.1" y="157" width="0.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="222.13" y="167.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,971,442 sampled cycle weight (throttled), 0.01%)</title><rect x="1189.7" y="157" width="0.2" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="1192.73" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::drift::sort (33,554,837 sampled cycle weight (throttled), 0.02%)</title><rect x="66.3" y="189" width="0.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="69.27" y="199.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,971,497 sampled cycle weight (throttled), 0.01%)</title><rect x="253.8" y="77" width="0.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="256.82" y="87.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::reserve::do_reserve_and_handle (20,974,704 sampled cycle weight (throttled), 0.01%)</title><rect x="241.3" y="157" width="0.2" height="15.0" fill="rgb(212,35,8)" rx="2" ry="2" />
+<text  x="244.30" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (67,107,161 sampled cycle weight (throttled), 0.04%)</title><rect x="191.8" y="173" width="0.5" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="194.81" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (41,944,028 sampled cycle weight (throttled), 0.03%)</title><rect x="209.8" y="109" width="0.3" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="212.76" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::clause::ClauseDatabase::add_lits (113,247,481 sampled cycle weight (throttled), 0.07%)</title><rect x="76.4" y="205" width="0.8" height="15.0" fill="rgb(217,58,13)" rx="2" ry="2" />
+<text  x="79.44" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::note_learned_lbd (37,750,970 sampled cycle weight (throttled), 0.02%)</title><rect x="365.3" y="205" width="0.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="368.26" y="215.5" ></text>
+</g>
+<g >
+<title>__ieee754_log_fma (20,971,288 sampled cycle weight (throttled), 0.01%)</title><rect x="192.4" y="173" width="0.2" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="195.43" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (50,331,750 sampled cycle weight (throttled), 0.03%)</title><rect x="227.2" y="125" width="0.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="230.18" y="135.5" ></text>
+</g>
+<g >
+<title>unlink_chunk.isra.0 (16,777,162 sampled cycle weight (throttled), 0.01%)</title><rect x="246.8" y="93" width="0.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="249.83" y="103.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (29,358,420 sampled cycle weight (throttled), 0.02%)</title><rect x="223.3" y="157" width="0.2" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="226.32" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::vivify_clauses (7,189,036,024 sampled cycle weight (throttled), 4.32%)</title><rect x="249.1" y="173" width="50.9" height="15.0" fill="rgb(227,105,25)" rx="2" ry="2" />
+<text  x="252.09" y="183.5" >nixie..</text>
+</g>
+<g >
+<title>_int_free_create_chunk (20,973,407 sampled cycle weight (throttled), 0.01%)</title><rect x="242.1" y="141" width="0.2" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="245.14" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::lrb::LRB::unassign (25,165,788 sampled cycle weight (throttled), 0.02%)</title><rect x="254.0" y="141" width="0.1" height="15.0" fill="rgb(240,165,39)" rx="2" ry="2" />
+<text  x="256.97" y="151.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (37,747,694 sampled cycle weight (throttled), 0.02%)</title><rect x="192.0" y="157" width="0.3" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="195.02" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (37,750,177 sampled cycle weight (throttled), 0.02%)</title><rect x="209.1" y="125" width="0.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="212.08" y="135.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (96,470,161 sampled cycle weight (throttled), 0.06%)</title><rect x="1189.2" y="189" width="0.7" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="1192.23" y="199.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (16,777,078 sampled cycle weight (throttled), 0.01%)</title><rect x="74.1" y="141" width="0.1" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="77.12" y="151.5" ></text>
+</g>
+<g >
+<title>realloc (100,664,893 sampled cycle weight (throttled), 0.06%)</title><rect x="209.3" y="141" width="0.8" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="212.35" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (6,455,027,076 sampled cycle weight (throttled), 3.88%)</title><rect x="254.2" y="157" width="45.8" height="15.0" fill="rgb(253,221,52)" rx="2" ry="2" />
+<text  x="257.21" y="167.5" >nixi..</text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (16,776,866 sampled cycle weight (throttled), 0.01%)</title><rect x="207.9" y="141" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="210.92" y="151.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (16,779,067 sampled cycle weight (throttled), 0.01%)</title><rect x="250.3" y="157" width="0.1" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="253.31" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (54,524,870 sampled cycle weight (throttled), 0.03%)</title><rect x="226.8" y="109" width="0.4" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="229.77" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::BinaryImplicationGraph::get (109,054,881 sampled cycle weight (throttled), 0.07%)</title><rect x="237.7" y="157" width="0.8" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="240.74" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::mark_elim_one (20,972,532 sampled cycle weight (throttled), 0.01%)</title><rect x="238.5" y="157" width="0.2" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="241.51" y="167.5" ></text>
+</g>
+<g >
+<title>all (166,492,779,706 sampled cycle weight (throttled), 100%)</title><rect x="10.0" y="349" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="359.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (520,085,514 sampled cycle weight (throttled), 0.31%)</title><rect x="115.0" y="189" width="3.7" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="118.00" y="199.5" ></text>
+</g>
+<g >
+<title>_int_free_maybe_consolidate.part.0 (67,111,797 sampled cycle weight (throttled), 0.04%)</title><rect x="241.5" y="157" width="0.5" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="244.48" y="167.5" ></text>
+</g>
+<g >
+<title>__strncmp_avx2 (146,794,362 sampled cycle weight (throttled), 0.09%)</title><rect x="364.2" y="141" width="1.0" height="15.0" fill="rgb(229,110,26)" rx="2" ry="2" />
+<text  x="367.19" y="151.5" ></text>
+</g>
+<g >
+<title>long-list prefix (2,055,212,046 sampled cycle weight (throttled), 1.23%)</title><rect x="344.8" y="173" width="14.5" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="347.78" y="183.5" ></text>
+</g>
+<g >
+<title>_int_realloc (20,971,690 sampled cycle weight (throttled), 0.01%)</title><rect x="872.9" y="125" width="0.1" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="875.88" y="135.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (398,457,517 sampled cycle weight (throttled), 0.24%)</title><rect x="246.3" y="141" width="2.8" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="249.27" y="151.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (41,944,316 sampled cycle weight (throttled), 0.03%)</title><rect x="209.1" y="141" width="0.2" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="212.05" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_and_rewatch_silent (230,694,486 sampled cycle weight (throttled), 0.14%)</title><rect x="326.2" y="157" width="1.6" height="15.0" fill="rgb(243,178,42)" rx="2" ry="2" />
+<text  x="329.20" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (16,775,655 sampled cycle weight (throttled), 0.01%)</title><rect x="116.7" y="173" width="0.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="119.75" y="183.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (16,776,866 sampled cycle weight (throttled), 0.01%)</title><rect x="207.9" y="173" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="210.92" y="183.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (46,133,325 sampled cycle weight (throttled), 0.03%)</title><rect x="335.1" y="157" width="0.3" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="338.12" y="167.5" ></text>
+</g>
+<g >
+<title>malloc (16,777,345 sampled cycle weight (throttled), 0.01%)</title><rect x="142.0" y="173" width="0.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="144.99" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (62,914,518 sampled cycle weight (throttled), 0.04%)</title><rect x="253.5" y="125" width="0.5" height="15.0" fill="rgb(233,129,30)" rx="2" ry="2" />
+<text  x="256.52" y="135.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::vec::Vec&lt;T&gt; as alloc::vec::spec_from_iter_nested::SpecFromIterNested&lt;T,I&gt;&gt;::from_iter (167,773,489 sampled cycle weight (throttled), 0.10%)</title><rect x="240.3" y="173" width="1.2" height="15.0" fill="rgb(214,45,10)" rx="2" ry="2" />
+<text  x="243.26" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::BinaryImplicationGraph::get (188,746,305 sampled cycle weight (throttled), 0.11%)</title><rect x="324.6" y="157" width="1.4" height="15.0" fill="rgb(238,155,37)" rx="2" ry="2" />
+<text  x="327.63" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (25,165,378 sampled cycle weight (throttled), 0.02%)</title><rect x="117.9" y="157" width="0.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="120.88" y="167.5" ></text>
+</g>
+<g >
+<title>std::env::_var (301,977,451 sampled cycle weight (throttled), 0.18%)</title><rect x="363.1" y="189" width="2.2" height="15.0" fill="rgb(212,33,8)" rx="2" ry="2" />
+<text  x="366.12" y="199.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (20,971,475 sampled cycle weight (throttled), 0.01%)</title><rect x="218.9" y="157" width="0.2" height="15.0" fill="rgb(240,163,39)" rx="2" ry="2" />
+<text  x="221.95" y="167.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (67,107,161 sampled cycle weight (throttled), 0.04%)</title><rect x="191.8" y="189" width="0.5" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="194.81" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (201,329,635 sampled cycle weight (throttled), 0.12%)</title><rect x="250.5" y="141" width="1.5" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="253.55" y="151.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (16,776,866 sampled cycle weight (throttled), 0.01%)</title><rect x="207.9" y="157" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="210.92" y="167.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::reserve_one_unchecked (138,414,688 sampled cycle weight (throttled), 0.08%)</title><rect x="152.1" y="189" width="0.9" height="15.0" fill="rgb(221,76,18)" rx="2" ry="2" />
+<text  x="155.07" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (37,747,348 sampled cycle weight (throttled), 0.02%)</title><rect x="324.4" y="157" width="0.2" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="327.36" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::pivot::median3_rec (16,777,778 sampled cycle weight (throttled), 0.01%)</title><rect x="116.6" y="173" width="0.1" height="15.0" fill="rgb(218,62,14)" rx="2" ry="2" />
+<text  x="119.63" y="183.5" ></text>
+</g>
+<g >
+<title>__libc_start_main@@GLIBC_2.34 (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="301" width="1180.0" height="15.0" fill="rgb(229,113,27)" rx="2" ry="2" />
+<text  x="13.00" y="311.5" >__libc_start_main@@GLIBC_2.34</text>
+</g>
+<g >
+<title>_int_free_chunk (25,168,878 sampled cycle weight (throttled), 0.02%)</title><rect x="250.1" y="157" width="0.2" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="253.13" y="167.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="253" width="1180.0" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="13.00" y="263.5" >std::sys::backtrace::__rust_begin_short_backtrace</text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (46,136,797 sampled cycle weight (throttled), 0.03%)</title><rect x="872.7" y="173" width="0.3" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="875.70" y="183.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (2,109,744,664 sampled cycle weight (throttled), 1.27%)</title><rect x="192.7" y="189" width="15.0" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="195.70" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (46,135,875 sampled cycle weight (throttled), 0.03%)</title><rect x="71.8" y="157" width="0.3" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="74.80" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (20,970,189 sampled cycle weight (throttled), 0.01%)</title><rect x="324.5" y="141" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="327.48" y="151.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (37,749,083 sampled cycle weight (throttled), 0.02%)</title><rect x="65.9" y="205" width="0.3" height="15.0" fill="rgb(233,131,31)" rx="2" ry="2" />
+<text  x="68.92" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::mark_subsume_lit (20,972,787 sampled cycle weight (throttled), 0.01%)</title><rect x="238.7" y="141" width="0.1" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="241.69" y="151.5" ></text>
+</g>
+<g >
+<title>long-list suffix (3,070,226,791 sampled cycle weight (throttled), 1.84%)</title><rect x="277.2" y="125" width="21.8" height="15.0" fill="rgb(237,148,35)" rx="2" ry="2" />
+<text  x="280.24" y="135.5" >l..</text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (150,995,087 sampled cycle weight (throttled), 0.09%)</title><rect x="250.9" y="125" width="1.1" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="253.91" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack_with_phase_saving (427,814,931 sampled cycle weight (throttled), 0.26%)</title><rect x="210.3" y="189" width="3.0" height="15.0" fill="rgb(234,133,32)" rx="2" ry="2" />
+<text  x="213.30" y="199.5" ></text>
+</g>
+<g >
+<title>Captured caller chain (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="333" width="1180.0" height="15.0" fill="rgb(249,206,49)" rx="2" ry="2" />
+<text  x="13.00" y="343.5" >Captured caller chain</text>
+</g>
+<g >
+<title>unlink_chunk.isra.0 (20,971,794 sampled cycle weight (throttled), 0.01%)</title><rect x="248.9" y="77" width="0.2" height="15.0" fill="rgb(248,198,47)" rx="2" ry="2" />
+<text  x="251.94" y="87.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (130,023,271 sampled cycle weight (throttled), 0.08%)</title><rect x="251.1" y="109" width="0.9" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="254.05" y="119.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (33,554,216 sampled cycle weight (throttled), 0.02%)</title><rect x="220.8" y="157" width="0.2" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="223.76" y="167.5" ></text>
+</g>
+<g >
+<title>_int_free_maybe_consolidate.part.0 (29,362,803 sampled cycle weight (throttled), 0.02%)</title><rect x="226.3" y="141" width="0.2" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="229.32" y="151.5" ></text>
+</g>
+<g >
+<title>long-list prefix (76,441,101,375 sampled cycle weight (throttled), 45.91%)</title><rect x="612.2" y="189" width="541.8" height="15.0" fill="rgb(232,126,30)" rx="2" ry="2" />
+<text  x="615.20" y="199.5" >long-list prefix</text>
+</g>
+<g >
+<title>_int_realloc (41,943,245 sampled cycle weight (throttled), 0.03%)</title><rect x="227.2" y="109" width="0.3" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="230.24" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::search_ext::&lt;impl nixie_sat::solver::Solver&gt;::solve_with_theory (166,425,669,327 sampled cycle weight (throttled), 99.96%)</title><rect x="10.4" y="221" width="1179.6" height="15.0" fill="rgb(207,13,3)" rx="2" ry="2" />
+<text  x="13.45" y="231.5" >nixie_sat::solver::search_ext::&lt;impl nixie_sat::solver::Solver&gt;::solve_with_theory</text>
+</g>
+<g >
+<title>malloc (37,749,224 sampled cycle weight (throttled), 0.02%)</title><rect x="76.7" y="157" width="0.3" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="79.71" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (92,275,810 sampled cycle weight (throttled), 0.06%)</title><rect x="1189.3" y="173" width="0.6" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="1192.26" y="183.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (608,168,722 sampled cycle weight (throttled), 0.37%)</title><rect x="72.1" y="157" width="4.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="75.13" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (41,942,846 sampled cycle weight (throttled), 0.03%)</title><rect x="331.9" y="141" width="0.3" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="334.94" y="151.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (314,583,446 sampled cycle weight (throttled), 0.19%)</title><rect x="63.6" y="205" width="2.2" height="15.0" fill="rgb(223,84,20)" rx="2" ry="2" />
+<text  x="66.57" y="215.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (92,274,119 sampled cycle weight (throttled), 0.06%)</title><rect x="251.3" y="93" width="0.7" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="254.32" y="103.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (20,974,704 sampled cycle weight (throttled), 0.01%)</title><rect x="241.3" y="93" width="0.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="244.30" y="103.5" ></text>
+</g>
+<g >
+<title>_start (166,492,779,706 sampled cycle weight (throttled), 100.00%)</title><rect x="10.0" y="317" width="1180.0" height="15.0" fill="rgb(245,185,44)" rx="2" ry="2" />
+<text  x="13.00" y="327.5" >_start</text>
+</g>
+<g >
+<title>nixie_sat::solver::subsume::&lt;impl nixie_sat::solver::Solver&gt;::subsume_round (1,610,610,357 sampled cycle weight (throttled), 0.97%)</title><rect x="228.1" y="173" width="11.4" height="15.0" fill="rgb(241,166,39)" rx="2" ry="2" />
+<text  x="231.08" y="183.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (33,554,503 sampled cycle weight (throttled), 0.02%)</title><rect x="248.1" y="93" width="0.2" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="251.08" y="103.5" ></text>
+</g>
+<g >
+<title>nixie_sat::preprocessing_core::Preprocessor::pure_literal_elimination (868,211,496 sampled cycle weight (throttled), 0.52%)</title><rect x="242.9" y="173" width="6.2" height="15.0" fill="rgb(206,6,1)" rx="2" ry="2" />
+<text  x="245.94" y="183.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (29,360,081 sampled cycle weight (throttled), 0.02%)</title><rect x="218.9" y="173" width="0.2" height="15.0" fill="rgb(215,46,11)" rx="2" ry="2" />
+<text  x="221.89" y="183.5" ></text>
+</g>
+<g >
+<title>_int_realloc (41,945,022 sampled cycle weight (throttled), 0.03%)</title><rect x="1153.7" y="109" width="0.3" height="15.0" fill="rgb(230,117,28)" rx="2" ry="2" />
+<text  x="1156.67" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack (306,182,396 sampled cycle weight (throttled), 0.18%)</title><rect x="252.0" y="157" width="2.1" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="254.98" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (75,496,084 sampled cycle weight (throttled), 0.05%)</title><rect x="75.9" y="125" width="0.5" height="15.0" fill="rgb(231,123,29)" rx="2" ry="2" />
+<text  x="78.91" y="135.5" ></text>
+</g>
+<g >
+<title>_int_malloc (41,943,491 sampled cycle weight (throttled), 0.03%)</title><rect x="246.7" y="109" width="0.3" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="249.66" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::reduce_clause_database (994,051,539 sampled cycle weight (throttled), 0.60%)</title><rect x="329.5" y="189" width="7.0" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="332.47" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (58,719,410 sampled cycle weight (throttled), 0.04%)</title><rect x="74.3" y="141" width="0.4" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="77.27" y="151.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (25,166,112 sampled cycle weight (throttled), 0.02%)</title><rect x="141.9" y="189" width="0.2" height="15.0" fill="rgb(205,0,0)" rx="2" ry="2" />
+<text  x="144.93" y="199.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,971,374 sampled cycle weight (throttled), 0.01%)</title><rect x="227.9" y="77" width="0.1" height="15.0" fill="rgb(215,47,11)" rx="2" ry="2" />
+<text  x="230.90" y="87.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (54,524,870 sampled cycle weight (throttled), 0.03%)</title><rect x="226.8" y="125" width="0.4" height="15.0" fill="rgb(218,61,14)" rx="2" ry="2" />
+<text  x="229.77" y="135.5" ></text>
+</g>
+<g >
+<title>realloc (54,525,808 sampled cycle weight (throttled), 0.03%)</title><rect x="219.2" y="141" width="0.4" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="222.22" y="151.5" ></text>
+</g>
+<g >
+<title>malloc (16,777,182 sampled cycle weight (throttled), 0.01%)</title><rect x="152.2" y="157" width="0.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="155.15" y="167.5" ></text>
+</g>
+<g >
+<title>std::sys::env::unix::getenv::{closure#0} (297,783,152 sampled cycle weight (throttled), 0.18%)</title><rect x="363.2" y="173" width="2.1" height="15.0" fill="rgb(243,177,42)" rx="2" ry="2" />
+<text  x="366.15" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::sift_up (29,359,548 sampled cycle weight (throttled), 0.02%)</title><rect x="177.2" y="189" width="0.2" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="180.15" y="199.5" ></text>
+</g>
+<g >
+<title>malloc (20,971,742 sampled cycle weight (throttled), 0.01%)</title><rect x="141.5" y="157" width="0.1" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="144.45" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (25,164,848 sampled cycle weight (throttled), 0.02%)</title><rect x="68.9" y="173" width="0.2" height="15.0" fill="rgb(250,210,50)" rx="2" ry="2" />
+<text  x="71.92" y="183.5" ></text>
+</g>
+</g>
+</svg>
