@@ -236,3 +236,39 @@ family.  If the `maxandminor` class is picked up again, the lever is a
 bound-propagation / value-substitution analysis over the `bvult`/`ite`
 loop structure (what z3's simplify+propagate-values cascade computes in
 concert), not bitwise normalization.
+
+## Follow-up (late evening): the odd-width fuzzer found a real false `sat`
+
+The identity-pair differential harness described above
+(`nixie-solver/tests/bv_odd_width_blast_differential.rs`, built to probe
+the dormant width-126 concat/extract class) found and reduced, on case
+51, a live soundness bug — not in the blaster but in the term layer:
+
+```smt2
+(set-logic QF_BV)
+(assert (not (= (_ bv4 1) (_ bv0 1))))   ; nixie: sat (z3: unsat)
+```
+
+`(_ bv4 1)` is out of range (reads as `4 mod 2 = 0`).  The live parser
+path for `(_ bvN W)` (`smtlib/parser/terms.rs`) interned the raw value
+with no range handling; the two spellings of the same constant hash-consed
+as distinct terms, and the equality folder answered `(= 4 0)` **false** —
+so the negated equality was satisfiable (false `sat`) and the positive
+one unsatisfiable (false `unsat`).  The second parser arm
+(`indexed.rs`) *rejected* out-of-range literals, so the codebase held
+both semantics at once.
+
+Fix (landed as `37551372`): `mk_bitvec` reduces every constant into
+`[0, 2^width)` at construction — the canonical representative — with a
+fast path for in-range values; both parser arms delegate to it, matching
+z3's accept-and-wrap reading.  Negative values reduce to their
+two's-complement residue, so no `BitVecConst` ever carries a negative
+value.  Parity after: 175 files, 0 disagreements.
+
+The fuzzer itself stays in the tree as a standing net: it builds random
+terms over free variables at limb-boundary widths and asserts
+construction-valid identities in unsat/sat pairs (double negation,
+concat/extract split, extract-of-concat, De Morgan, xor-const twice,
+add/sub cancel, udiv/urem reconstruction) — a wrong verdict in either
+direction fails the pair.  Extending its template set is the cheapest
+way to harden the blaster layers against the next width-edge bug.
