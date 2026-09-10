@@ -10,8 +10,17 @@ Written 2026-09-10 (evening), superseding the Tier-A prompt in
 | state | solved of 509 |
 |---|---|
 | pre-campaign baseline (u64-wrap fix landed) | 266 |
-| **after Tier A (this session)** | **276** |
+| after Tier A | 276 |
+| **after the depth-guard frontier fix (a1a08ec0)** | **283** |
 | z3 | 281 |
+
+The depth-guard fix (see the commit) made the assert-time depth guard
+measure the *recursion frontier* instead of total structure — deep
+bit-vector operation chains and BV-sorted ite chains are iterative
+territory — converting 7 sample files (+10 more outside it, all
+header-correct) from instant spurious `Unknown`.  Nixie now solves
+three sample files z3 4.16.0 times out on (smulov3bw0512/0768,
+float/square.3.0.i).
 
 Zero verdict disagreements vs z3 at every step. The remaining net gap of
 ~5 files is a set of *load-flaky boundary files* (see below) plus the
