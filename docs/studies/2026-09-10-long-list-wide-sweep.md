@@ -69,3 +69,165 @@ claim follows from one seed or this selected panel. Existing source-level
 cost diagnoses still apply to the unchanged binary. Preserve the prior
 rejection and record whether broader evidence supports or contradicts its
 generality. Any later production promotion still requires full qualification.
+
+## Completed sweep: retain the rejection
+
+The wider evidence does not support promoting this kernel. It retires 3.50%
+fewer instructions across all eight inputs, but the four fresh pairs that
+pass the timing-quality gate are 7.87% slower in wall geomean and use 8.13%
+more cycles. None of those four improves wall: break is flat at the timer's
+resolution; circuit, constraints and si2 regress. The apparent improvement
+in the aggregate containing older controls comes from crn and especially
+summle. This is a once-only implementation screen, not a statistically
+established population effect.
+
+Exactly 16 new cost cells completed and eight existing cells were reused.
+There were no solver retries, replacement controls, new profiles, variants,
+builds or shortened noL prefixes. All 24 cells completed within the cap.
+Each arm reports five SAT and three UNSAT results. All 15 SAT models were
+independently checked against every original CNF clause. The nine UNSAT
+results have no independently checked proof and remain unknown/unverified
+in canonical storage. All eight Nixie candidate/control stdout streams are
+byte-identical, including every printed counter and complete model. No
+production source is changed or promoted; the earlier scoped qualification
+is not presented as full workspace qualification.
+
+### Per-input cost
+
+Times are whole-process seconds. `C/P` means candidate / production, so
+smaller is better. Cycles and instructions are grouped user-mode hardware
+counters, not the solver's scheduling ticks. The
+[derived audit](assets/2026-09-10-long-list-wide-sweep-audit.json) retains
+absolute counts, identities, quality fields and aggregation membership.
+
+| Input | Production wall | Candidate wall | Kissat wall | C/P instructions | C/P cycles | C/P wall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| break | 0.82 | 0.82 | 0.41 | 0.9576 | 1.0052 | 1.0000 |
+| noL | 220.87* | 196.33 | 16.69 | 0.9528 | 0.9427* | 0.8889* |
+| crn | 1.44 | 1.30 | 0.68 | 0.9398 | 0.9007 | 0.9028 |
+| summle | 4.97 | 2.94 | 1.88 | 0.9803 | 0.5965 | 0.5915 |
+| j3037 | 36.13 | 37.66 | 18.04 | 0.9460 | 1.0431 | 1.0423 |
+| circuit | 7.44 | 7.57 | 5.55 | 0.9406 | 1.0159 | 1.0175 |
+| constraints | 19.41 | 25.14 | 4.63 | 1.0221 | 1.2995 | 1.2952 |
+| si2 | 2.19 | 2.25 | 1.22 | 0.9836 | 1.0302 | 1.0274 |
+
+*The noL production run spent 5.302% off CPU, exceeding the registered 5%
+gate. Its wall and cycle comparisons are retained as raw observations but
+excluded from qualified aggregates. Its instruction count remains usable:
+the solve completed with 100% counter coverage, zero major faults and the
+same printed trajectory as the candidate. It was not rerun. The candidate's
+off-CPU fraction was 0.606%. All other cells pass their timing checks, and
+all 16 new captures have 100% PMU coverage, zero major faults and unchanged
+audited constrained sleepers. These checks do not exclude interference from
+other runnable work or shared caches and memory bandwidth.
+
+Production crn, summle and j3037 controls are cached from September 9;
+their candidates were measured on September 10. Candidate crn/j3037 and
+Kissat j3037/circuit/si2 were already available before this extension.
+Kissat circuit/si2 have cached wall and search counters but no hardware
+instruction/cycle capture. The other five Nixie pairs were freshly paired
+in the registered alternating order, without intervening owned builds.
+
+| Cohort | C/P instructions (n) | C/P cycles (n) | C/P wall (n) |
+| --- | ---: | ---: | ---: |
+| Entire eight-input panel | 0.9650 (8) | 0.9627 (7) | 0.9604 (7) |
+| Six added candidate inputs | 0.9725 (6) | 0.9600 (5) | 0.9566 (5) |
+| Five fresh Nixie pairs | 0.9709 (5) | 1.0813 (4) | 1.0787 (4) |
+| Three comparisons against cached production | 0.9552 (3) | 0.8245 (3) | 0.8226 (3) |
+
+Every entry is a geometric mean of per-input ratios; `n` is the number
+included for that metric. The six added inputs exclude crn/j3037; the five
+fresh pairs additionally exclude summle. The raw all-eight wall ratio would
+be 0.9512, but includes the failed-quality noL control and is not a qualified
+result. Across seven qualified pairs there are two apparent wall gains,
+one flat result and four regressions. Both apparent gains use older
+controls. In particular, summle's 40.85% wall reduction accompanies only a
+1.97% instruction reduction. This observation cannot establish a 41% kernel
+speedup from a single noncontemporaneous comparison. The mixed-panel 3.96%
+wall reduction is also within the methodology's neutral band.
+
+### Kissat remains the target
+
+On the **same seven inputs** with qualified wall for all three arms,
+production / Kissat is 2.1695 and candidate / Kissat is 2.0836. That apparent
+4% improvement has the cached-control limitation above; it is not a landed
+improvement. Candidate / Kissat across all eight qualified reference pairs
+is 2.5869, including the full noL outlier. Do not compare that eight-input
+number to the seven-input production ratio, or directly to an earlier
+six-input headline. On the common six inputs with hardware instructions,
+production / Kissat is 3.1653 and candidate / Kissat is 3.0578. On the common
+five with qualified cycles, those ratios are 2.5116 and 2.3597.
+
+The candidate changes execution cost without changing Nixie's printed
+search work. Therefore its cost ratios against production are also its
+cost-per-conflict and cost-per-propagation ratios. Across solvers, the work
+counts differ:
+
+| Input | Nixie conflicts, both arms | Kissat conflicts | Nixie propagations, both arms | Kissat propagations |
+| --- | ---: | ---: | ---: | ---: |
+| break | 28,619 | 28,289 | 4,071,874 | 3,640,748 |
+| noL | 6,362,065 | 794,536 | 255,078,463 | 33,208,368 |
+| crn | 87,939 | 71,192 | 3,817,687 | 4,238,393 |
+| summle | 19,333 | 19,709 | 32,793,359 | 40,986,169 |
+| j3037 | 330,565 | 286,784 | 323,390,316 | 218,808,022 |
+| circuit | 162,529 | 277,061 | 17,162,958 | 16,013,560 |
+| constraints | 87,007 | 21,955 | 11,659,552 | 3,749,535 |
+| si2 | 39,246 | 51,823 | 960,337 | 1,164,987 |
+
+The eight-input Nixie / Kissat geomeans are 1.4535 for conflicts and 1.4964
+for printed propagations. NoL alone performs about eight times as many
+conflicts and 7.68 times as many propagations; constraints performs 3.96
+and 3.11 times as many. The smaller panel's near-equal propagation totals
+do not extend to this complete panel. Execution remains an essential target,
+but whole-process wall divided by a legacy propagation counter also includes
+inprocessing and other work, and is not an isolated BCP cost measurement.
+
+### What the added regressions tell us
+
+Constraints is the strongest new counterexample: instructions increase
+2.21%, cycles 29.95% and wall 29.52%. Retired branches fall 1.64%, branch
+misses fall 0.61%, and peak RSS falls from 109468 to 96864 KiB. Cycles per
+instruction increase 27.14%; cycles per user second differ by only 0.44%.
+Thus fewer branches, fewer misses and lower peak memory do not price the
+critical path. This is consistent with added dependencies or stalls, but
+these aggregate counters cannot identify the exact cause. Allocation timing
+and layout are also possible contributors; they are not established by RSS.
+
+Circuit and si2 similarly retire fewer instructions but use more cycles;
+their cycles-per-instruction ratios rise 8.01% and 4.74%, respectively.
+The broad instruction reduction therefore does not justify treating the
+remaining machine cost as an incidental detail. Break is an additional
+neutral example: 4.24% fewer instructions, essentially unchanged wall and
+slightly more cycles. Avoid selecting a runtime threshold from the observed
+winners or treating this kernel as universally cheaper.
+
+The prior assembly diagnosis remains the concrete implementation lead:
+fixed-domain reservation, view setup and callback gates are repeated per
+nonempty list, while internal assignment state introduces dependent arena
+and value-base reloads in the scanning loop. The narrow boundary reduced
+individual frames but did not remove those loads. No new profile was taken;
+the earlier throttled capture still cannot establish cycle shares. The next
+distinct implementation should amortize setup across a propagation session
+while keeping the scanning boundary narrow, and isolate assignment-only
+metadata if needed to keep hot bases live. It must demonstrate removal of
+the identified setup and reloads in assembly before a new cost screen.
+Include constraints as a required regression case alongside crn and j3037.
+Neither repeating this exact kernel nor sweeping inline annotations follows
+from these results.
+
+### Result retention and checks
+
+The derived audit contains exact source/binary/input/output hashes, the
+fixed new-cell order, fresh/cached membership, all 24 record IDs, raw counts
+and explicit aggregation masks. Canonical records remain under
+`precompile/<source>/benchmark/runs/long-list-internal-assignment/`; raw
+captures remain in each source's benchmark cache. The frozen runner, input
+manifest, reuse map, start/completion log and read-only report are retained
+under `precompile/7842303/wide-sweep/`, with their hashes in the audit.
+These are reusable cost cells, not permission to run them again.
+
+Validation rechecked the canonical schema, record identities, binary/input
+hashes, every SAT model, eight stdout comparisons and aggregate masks. No
+solver code changed during the extension, so no build, full workspace suite
+or new Z3 parity claim is attached to this documentation-only result. The
+production performance gap remains open.
