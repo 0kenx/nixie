@@ -128,7 +128,6 @@ fn scan<const COMPACT: bool>(
                 work,
             );
         };
-        let cid = live.reason();
         let repair = {
             let lits = live.lits();
             if lits.len() < 2 {
@@ -141,6 +140,7 @@ fn scan<const COMPACT: bool>(
         };
         if let Some(pair) = repair {
             if let Some((a, b)) = pair {
+                let cid = live.reason();
                 push_watch_unique(destinations, a.negate(), Watcher::new(cid, watcher.r, b));
                 push_watch_unique(destinations, b.negate(), Watcher::new(cid, watcher.r, a));
             }
