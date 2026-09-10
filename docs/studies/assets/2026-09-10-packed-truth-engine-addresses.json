@@ -1,0 +1,519 @@
+{
+  "record_id": "2bee68451ea612ec",
+  "sampled_prefix_only": true,
+  "engine_self_share": 0.7245975693678981,
+  "symbol_self_shares": {
+    "nixie_sat::solver::propagate::propagation_engine::propagate": 0.7245975693678981,
+    "nixie_sat::solver::search_ext::<impl nixie_sat::solver::Solver>::solve_with_theory": 0.04357340785508703,
+    "nixie_sat::solver::subsume::<impl nixie_sat::solver::Solver>::subsume_round": 0.029698445548915032,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::shrink_and_minimize_clause": 0.028383476144995028,
+    "nixie_sat::solver::decide::<impl nixie_sat::solver::Solver>::backtrack_with_phase_saving": 0.026207105208181196,
+    "nixie_sat::solver::propagate::watch_kernel::Cursor::scan": 0.016413588622698164,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::handle_clause_deletion_and_restart": 0.014191669276461186,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::minimize_classify": 0.01224229066344367,
+    "nixie_sat::vsids::VSIDS::sift_up": 0.00974837833733145,
+    "__memset_avx2_unaligned_erms": 0.009657578154715683,
+    "core::slice::sort::stable::quicksort::quicksort": 0.0073452179212315505,
+    "nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate": 0.007299911238493681,
+    "nixie_sat::solver::conflict::AnalysisMark::mark_antecedent": 0.005667561156245023,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::minimize_literal_plain": 0.004624723423935813,
+    "_int_malloc": 0.003445963734155764,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::eliminate_phase": 0.0032192361433778824,
+    "nixie_sat::vsids::VSIDS::bump_batch": 0.002947181772873324,
+    "nixie_sat::clause::ClauseDatabase::compact_arena_forced": 0.002765846071390121,
+    "nixie_sat::solver::decide::<impl nixie_sat::solver::Solver>::backtrack": 0.0025844565903302354,
+    "nixie_sat::preprocessing_core::Preprocessor::pure_literal_elimination": 0.002357732155671449,
+    "core::slice::sort::unstable::quicksort::quicksort": 0.0022670091486098557,
+    "nixie_sat::solver::Solver::mark_subsume_lit": 0.0022217255631221556,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::remove_literal_opts": 0.0020857098225898056,
+    "__memmove_avx_unaligned_erms": 0.002040310421818268,
+    "nixie_sat::solver::walk::<impl nixie_sat::solver::Solver>::walk_round": 0.001994999942212845,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::reduce_clause_database": 0.0019949688226188027,
+    "nixie_sat::solver::equiv::<impl nixie_sat::solver::Solver>::rebuild_watches_and_binary_graph": 0.0017683132467723756,
+    "nixie_sat::vmtf::VMTF::dequeue": 0.0015416191047957697,
+    "cfree@GLIBC_2.2.5": 0.0014962778259705336,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_resolve_clauses": 0.0014055494764522003,
+    "malloc_consolidate": 0.0013602567689577321,
+    "_int_realloc": 0.0013602270780595767,
+    "realloc": 0.0013149004628493965,
+    "core::slice::sort::shared::smallsort::sort8_stable": 0.0012242144243762184,
+    "unlink_chunk.isra.0": 0.0011788928312485491,
+    "malloc": 0.0011788567761596253,
+    "<smallvec::SmallVec<A> as core::iter::traits::collect::Extend<<A as smallvec::Array>::Item>>::extend": 0.0011335407332990072,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_flush_sort_occs": 0.0010428557555242903,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::reduce_clause_database::{{closure}}": 0.000997522685206331,
+    "nixie_sat::solver::transred::<impl nixie_sat::solver::Solver>::transred_round": 0.000997509307417573,
+    "<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter": 0.000997500683289675,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::sweep_root_fixed_clauses": 0.0007707875742928269,
+    "nixie_sat::solver::conflict::compute_lbd_stamped": 0.0007254479622794587,
+    "<core::iter::adapters::filter::Filter<I,P> as core::iter::traits::iterator::Iterator>::next": 0.0006801319930183255,
+    "__strncmp_avx2": 0.0006800944486221744,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::vivify_clauses": 0.0006347661752588891,
+    "_int_free_create_chunk": 0.0005894428676961558,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::inprocess": 0.0004987532271775905,
+    "_int_free_chunk": 0.0004987427544038026,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_backward_clauses": 0.0004534140654198958,
+    "core::slice::sort::shared::pivot::median3_rec": 0.0004080766310854095,
+    "getenv": 0.0004080566033667062,
+    "core::slice::sort::stable::drift::sort": 0.00036272479289875596,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::note_learned_lbd": 0.00031739214253079955,
+    "nixie_sat::clause::ClauseDatabase::add_lits": 0.0003173870598369479,
+    "_int_free_merge_chunk": 0.0003173869862374628,
+    "[unknown]": 0.0003173807519281388,
+    "alloc::raw_vec::RawVecInner<A>::finish_grow": 0.00027204417048180314,
+    "nixie_sat::trail::Trail::assign_at": 0.00022670677511175014,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::mark_elim_one": 0.00022670511695864522,
+    "nixie_sat::lrb::LRB::unassign": 0.0002267021599910978,
+    "nixie_sat::trail::Trail::assign": 0.0002266970902853906,
+    "alloc::raw_vec::RawVec<T,A>::grow_one": 0.00018137262244842192,
+    "nixie_sat::solver::Solver::retire_clause": 0.0001360245118592183,
+    "smallvec::SmallVec<A>::try_grow": 0.00013602268918961734,
+    "__ieee754_log_fma": 0.0001360202171127951,
+    "__libc_malloc2": 0.00013602016083083594,
+    "std::sys::env::unix::getenv::{closure#0}": 0.00013601574919111292,
+    "__log10_finite@GLIBC_2.15": 9.068892184124037e-05,
+    "nixie_sat::solver::decide::<impl nixie_sat::solver::Solver>::copy_phases": 9.068544101853448e-05,
+    "smallvec::SmallVec<A>::reserve_one_unchecked": 9.068229355820216e-05,
+    "stats_solve::main": 9.068175671489926e-05,
+    "strncmp@plt": 9.067675194991417e-05,
+    "nixie_sat::solver::BinaryImplicationGraph::shrink": 4.534732697115664e-05,
+    "nixie_sat::solver::Solver::add_clause": 4.5345941569084637e-05,
+    "nixie_sat::solver::BinaryImplicationGraph::build_layout": 4.5344274757216766e-05,
+    "core::slice::sort::unstable::ipnsort": 4.534335259896259e-05,
+    "core::iter::traits::iterator::Iterator::collect": 4.534307551854819e-05,
+    "alloc::slice::<impl [T]>::sort_by::{{closure}}": 4.5341387059772944e-05,
+    "smallvec::SmallVec<A>::insert_from_slice": 4.534130480152492e-05,
+    "ceil": 4.5341248519565744e-05,
+    "nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::has_binary_implication": 4.534118790822509e-05,
+    "nixie_sat::clause::ClauseDatabase::remove": 4.534118357884362e-05,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_retire_pivot_clauses": 4.5341140285028865e-05,
+    "nixie_sat::solver::BinaryImplicationGraph::remove_clause_edges": 4.534104070925494e-05,
+    "core::slice::sort::shared::smallsort::insertion_sort_shift_left": 4.534052984224089e-05,
+    "nixie_sat::memory::ClauseArena::alloc": 4.534028739687829e-05,
+    "nixie_sat::vsids::VSIDS::insert": 4.534017050357847e-05,
+    "_int_free_maybe_consolidate.part.0": 4.533984147058637e-05,
+    "nixie_sat::solver::eliminate::RoundOccs::iter": 4.5339819823678996e-05,
+    "<smallvec::SmallVec<A> as core::convert::From<&[<A as smallvec::Array>::Item]>>::from": 4.533930895666495e-05,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::improve_learnt_clause": 4.5339213710272495e-05,
+    "__log10": 4.533889766542482e-05,
+    "nixie_sat::solver::Solver::attach_watchers": 4.533673297468732e-05
+  },
+  "groups_overlap": true,
+  "interpretation": "Sampled IP weight is subject to skid; these are not cache miss, store-forwarding, or removable-time measurements.",
+  "groups": {
+    "prefix_blocker_load_bit_test_exit": {
+      "ips": [
+        "0x647f9",
+        "0x647fe",
+        "0x64800",
+        "0x64803",
+        "0x64808",
+        "0x6480c"
+      ],
+      "self_share": 0.08311152883303745
+    },
+    "suffix_blocker_load_bit_test_exit": {
+      "ips": [
+        "0x64ab3",
+        "0x64ab8",
+        "0x64aba",
+        "0x64abd",
+        "0x64ac2",
+        "0x64ac6",
+        "0x64d33",
+        "0x64d38",
+        "0x64d3a",
+        "0x64d3d",
+        "0x64d42",
+        "0x64d46"
+      ],
+      "self_share": 0.008433495274266201
+    },
+    "deleted_header_test_and_branch": {
+      "ips": [
+        "0x64824",
+        "0x6482a",
+        "0x64aed",
+        "0x64af2",
+        "0x64d6d",
+        "0x64d72"
+      ],
+      "self_share": 0.16395563319990017
+    },
+    "binary_overflow_pointer_and_following_spill": {
+      "ips": [
+        "0x6451a",
+        "0x6451f"
+      ],
+      "self_share": 0.045115049606877296
+    },
+    "binary_truth_queries_with_early_mask_setup": {
+      "ips": [
+        "0x64581",
+        "0x64584",
+        "0x64588",
+        "0x6458d",
+        "0x64593",
+        "0x64596",
+        "0x6459a",
+        "0x6459c",
+        "0x645a1",
+        "0x645a4",
+        "0x645a8",
+        "0x645aa",
+        "0x645ad",
+        "0x645b2",
+        "0x645b4",
+        "0x645b8",
+        "0x645bc",
+        "0x645c0",
+        "0x64650",
+        "0x64652",
+        "0x64655",
+        "0x6465a",
+        "0x64660",
+        "0x64663",
+        "0x64667",
+        "0x64669",
+        "0x6466e",
+        "0x64671",
+        "0x64675",
+        "0x6467a",
+        "0x6467d",
+        "0x64681",
+        "0x64685",
+        "0x64689"
+      ],
+      "self_share": 0.04402622927147681
+    },
+    "tail_truth_queries_and_loop_increment": {
+      "ips": [
+        "0x648b9",
+        "0x648bc",
+        "0x648c0",
+        "0x648c5",
+        "0x648c9",
+        "0x648cf",
+        "0x648d2",
+        "0x648d6",
+        "0x648db",
+        "0x648de",
+        "0x648e2",
+        "0x648e6",
+        "0x648e9",
+        "0x648ed",
+        "0x64b8d",
+        "0x64b90",
+        "0x64b93",
+        "0x64b98",
+        "0x64b9c",
+        "0x64ba2",
+        "0x64ba5",
+        "0x64ba8",
+        "0x64bad",
+        "0x64bb0",
+        "0x64bb4",
+        "0x64bb8",
+        "0x64bbb",
+        "0x64bbf",
+        "0x64e1d",
+        "0x64e20",
+        "0x64e24",
+        "0x64e29",
+        "0x64e2d",
+        "0x64e33",
+        "0x64e36",
+        "0x64e3a",
+        "0x64e3f",
+        "0x64e42",
+        "0x64e46",
+        "0x64e4a",
+        "0x64e4d",
+        "0x64e51"
+      ],
+      "self_share": 0.031738456100454816
+    },
+    "repeated_word_load_sites": {
+      "ips": [
+        "0x645ad",
+        "0x64675",
+        "0x648d6",
+        "0x64ba8",
+        "0x64e3a"
+      ],
+      "self_share": 0.0013602311476781633
+    },
+    "packed_binary_or_and_word_store": {
+      "ips": [
+        "0x645c6",
+        "0x645c9",
+        "0x64692",
+        "0x64695"
+      ],
+      "self_share": 0.0007254465422423349
+    },
+    "packed_long_or_and_word_store": {
+      "ips": [
+        "0x6491c",
+        "0x64921",
+        "0x64c7a",
+        "0x64c7d",
+        "0x64f12",
+        "0x64f1a"
+      ],
+      "self_share": 0.0002720466858524401
+    }
+  },
+  "hot_engine_addresses": [
+    {
+      "ip": "0x64af2",
+      "self_share": 0.1001599714351802,
+      "instruction": "75 ac                \tjne    64aa0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x700>"
+    },
+    {
+      "ip": "0x647fe",
+      "self_share": 0.07227518613530509,
+      "instruction": "89 c1                \tmov    ecx,eax"
+    },
+    {
+      "ip": "0x6482a",
+      "self_share": 0.06180067969419384,
+      "instruction": "0f 85 c8 01 00 00    \tjne    649f8 <nixie_sat::solver::propagate::propagation_engine::propagate+0x658>"
+    },
+    {
+      "ip": "0x6451f",
+      "self_share": 0.04497902929018873,
+      "instruction": "48 89 94 24 e8 00 00 \tmov    QWORD PTR [rsp+0xe8],rdx"
+    },
+    {
+      "ip": "0x64bf3",
+      "self_share": 0.03046921660228815,
+      "instruction": "4c 3b 24 c1          \tcmp    r12,QWORD PTR [rcx+rax*8]"
+    },
+    {
+      "ip": "0x64581",
+      "self_share": 0.02761279432017411,
+      "instruction": "41 89 c9             \tmov    r9d,ecx"
+    },
+    {
+      "ip": "0x644b0",
+      "self_share": 0.02067538504997343,
+      "instruction": "48 39 94 24 98 00 00 \tcmp    QWORD PTR [rsp+0x98],rdx"
+    },
+    {
+      "ip": "0x64a86",
+      "self_share": 0.019405635970619013,
+      "instruction": "42 89 4c e0 04       \tmov    DWORD PTR [rax+r12*8+0x4],ecx"
+    },
+    {
+      "ip": "0x64bc5",
+      "self_share": 0.016277328614133613,
+      "instruction": "8b 44 24 14          \tmov    eax,DWORD PTR [rsp+0x14]"
+    },
+    {
+      "ip": "0x6470d",
+      "self_share": 0.013783788515252467,
+      "instruction": "48 89 94 24 e0 00 00 \tmov    QWORD PTR [rsp+0xe0],rdx"
+    },
+    {
+      "ip": "0x64b12",
+      "self_share": 0.011154198885016562,
+      "instruction": "41 33 57 0c          \txor    edx,DWORD PTR [r15+0xc]"
+    },
+    {
+      "ip": "0x64812",
+      "self_share": 0.010655140700537254,
+      "instruction": "41 83 fc ff          \tcmp    r12d,0xffffffff"
+    },
+    {
+      "ip": "0x649b6",
+      "self_share": 0.010247028936521175,
+      "instruction": "48 3b 2c c1          \tcmp    rbp,QWORD PTR [rcx+rax*8]"
+    },
+    {
+      "ip": "0x644dc",
+      "self_share": 0.008116048062003039,
+      "instruction": "4a 8d 34 07          \tlea    rsi,[rdi+r8*1]"
+    },
+    {
+      "ip": "0x64b8d",
+      "self_share": 0.00798011706478368,
+      "instruction": "44 89 db             \tmov    ebx,r11d"
+    },
+    {
+      "ip": "0x64625",
+      "self_share": 0.006846393700856533,
+      "instruction": "48 85 d2             \ttest   rdx,rdx"
+    },
+    {
+      "ip": "0x64808",
+      "self_share": 0.006755710147448322,
+      "instruction": "48 0f a3 c1          \tbt     rcx,rax"
+    },
+    {
+      "ip": "0x64b83",
+      "self_share": 0.006257014228293316,
+      "instruction": "0f 84 a3 00 00 00    \tje     64c2c <nixie_sat::solver::propagate::propagation_engine::propagate+0x88c>"
+    },
+    {
+      "ip": "0x64852",
+      "self_share": 0.00603044116612842,
+      "instruction": "41 33 46 0c          \txor    eax,DWORD PTR [r14+0xc]"
+    },
+    {
+      "ip": "0x64cdd",
+      "self_share": 0.0054407568964506,
+      "instruction": "4d 89 f2             \tmov    r10,r14"
+    },
+    {
+      "ip": "0x649db",
+      "self_share": 0.005395512686687415,
+      "instruction": "89 5c e8 04          \tmov    DWORD PTR [rax+rbp*8+0x4],ebx"
+    },
+    {
+      "ip": "0x6458d",
+      "self_share": 0.005078166717010046,
+      "instruction": "41 bb 01 00 00 00    \tmov    r11d,0x1"
+    },
+    {
+      "ip": "0x64acb",
+      "self_share": 0.004987377249613431,
+      "instruction": "0f 83 80 05 00 00    \tjae    65051 <nixie_sat::solver::propagate::propagation_engine::propagate+0xcb1>"
+    },
+    {
+      "ip": "0x64b98",
+      "self_share": 0.00485141272566393,
+      "instruction": "4c 0f a3 db          \tbt     rbx,r11"
+    },
+    {
+      "ip": "0x64b30",
+      "self_share": 0.004443356559564753,
+      "instruction": "41 b8 01 00 00 00    \tmov    r8d,0x1"
+    },
+    {
+      "ip": "0x645ec",
+      "self_share": 0.004171331711112472,
+      "instruction": "47 89 64 93 04       \tmov    DWORD PTR [r11+r10*4+0x4],r12d"
+    },
+    {
+      "ip": "0x64984",
+      "self_share": 0.003944663519448428,
+      "instruction": "41 89 6e 10          \tmov    DWORD PTR [r14+0x10],ebp"
+    },
+    {
+      "ip": "0x647ed",
+      "self_share": 0.0038086062168539176,
+      "instruction": "0f 84 fe 01 00 00    \tje     649f1 <nixie_sat::solver::propagate::propagation_engine::propagate+0x651>"
+    },
+    {
+      "ip": "0x645a1",
+      "self_share": 0.0038085804440459972,
+      "instruction": "48 89 da             \tmov    rdx,rbx"
+    },
+    {
+      "ip": "0x64574",
+      "self_share": 0.003491211411753511,
+      "instruction": "49 39 f8             \tcmp    r8,rdi"
+    },
+    {
+      "ip": "0x64ab3",
+      "self_share": 0.003400630365110483,
+      "instruction": "42 8b 44 e7 04       \tmov    eax,DWORD PTR [rdi+r12*8+0x4]"
+    },
+    {
+      "ip": "0x64ae3",
+      "self_share": 0.003355213750718201,
+      "instruction": "74 bb                \tje     64aa0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x700>"
+    },
+    {
+      "ip": "0x64bf7",
+      "self_share": 0.0033099011367277104,
+      "instruction": "48 8b 34 24          \tmov    rsi,QWORD PTR [rsp]"
+    },
+    {
+      "ip": "0x6452c",
+      "self_share": 0.003264622053796744,
+      "instruction": "48 89 4c 24 20       \tmov    QWORD PTR [rsp+0x20],rcx"
+    },
+    {
+      "ip": "0x64988",
+      "self_share": 0.003083157769683734,
+      "instruction": "8b 44 24 14          \tmov    eax,DWORD PTR [rsp+0x14]"
+    },
+    {
+      "ip": "0x64650",
+      "self_share": 0.0029925715883942763,
+      "instruction": "89 cf                \tmov    edi,ecx"
+    },
+    {
+      "ip": "0x6474f",
+      "self_share": 0.0029925377845837196,
+      "instruction": "eb 11                \tjmp    64762 <nixie_sat::solver::propagate::propagation_engine::propagate+0x3c2>"
+    },
+    {
+      "ip": "0x648b9",
+      "self_share": 0.002856476455664438,
+      "instruction": "41 89 eb             \tmov    r11d,ebp"
+    },
+    {
+      "ip": "0x647ea",
+      "self_share": 0.0028564183510356622,
+      "instruction": "48 39 f2             \tcmp    rdx,rsi"
+    },
+    {
+      "ip": "0x648b3",
+      "self_share": 0.0027204633517254064,
+      "instruction": "74 3f                \tje     648f4 <nixie_sat::solver::propagate::propagation_engine::propagate+0x554>"
+    },
+    {
+      "ip": "0x64ad5",
+      "self_share": 0.0027204617282073533,
+      "instruction": "42 89 44 d7 04       \tmov    DWORD PTR [rdi+r10*8+0x4],eax"
+    },
+    {
+      "ip": "0x64a17",
+      "self_share": 0.0027204400120298747,
+      "instruction": "48 8b 8c 24 e8 00 00 \tmov    rcx,QWORD PTR [rsp+0xe8]"
+    },
+    {
+      "ip": "0x64af4",
+      "self_share": 0.0026751251857254506,
+      "instruction": "4c 8d 3c 28          \tlea    r15,[rax+rbp*1]"
+    },
+    {
+      "ip": "0x64ac2",
+      "self_share": 0.0026751245103419407,
+      "instruction": "48 0f a3 c1          \tbt     rcx,rax"
+    },
+    {
+      "ip": "0x64b59",
+      "self_share": 0.0026297099740527664,
+      "instruction": "4c 89 5c 24 48       \tmov    QWORD PTR [rsp+0x48],r11"
+    },
+    {
+      "ip": "0x64ba2",
+      "self_share": 0.002493736895245471,
+      "instruction": "44 89 db             \tmov    ebx,r11d"
+    },
+    {
+      "ip": "0x6486f",
+      "self_share": 0.002403049237583621,
+      "instruction": "41 b9 01 00 00 00    \tmov    r9d,0x1"
+    },
+    {
+      "ip": "0x648f9",
+      "self_share": 0.0020403495767443275,
+      "instruction": "48 8b 4c 24 18       \tmov    rcx,QWORD PTR [rsp+0x18]"
+    },
+    {
+      "ip": "0x64cf2",
+      "self_share": 0.0019949852872565518,
+      "instruction": "46 89 5c d7 04       \tmov    DWORD PTR [rdi+r10*8+0x4],r11d"
+    },
+    {
+      "ip": "0x64478",
+      "self_share": 0.001994971532811606,
+      "instruction": "49 ff c1             \tinc    r9"
+    }
+  ]
+}
