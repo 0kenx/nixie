@@ -114,6 +114,24 @@ no QF differential cost (par2 2177.9 vs 2171-2177 baseline band; the
 split only triggers when a fractional row's cut was refused for free
 nonbasics, which the common path never hits).
 
+**jain per-round perf (twelfth session) — hypothesis rejected, reverted.**
+The deep unrollings' timeout was attributed to the O(defined-terms)
+idempotence re-walk in `instantiate_arith_axioms` (called per MBQI round
+since the k9 fix).  An insertion-ordered log + watermark (scan only new
+terms; zero-divisor congruence pairs persisted across batches) was
+implemented and measured: the *solving* variants were already at 0.02 s
+(the re-walk was never material at these sizes), and the timing-out
+variants (i_4+) still time out — the cost lives elsewhere.  A 12 s
+`perf record` on i_4 shows the time dominated by `memmove`/hash-churn
+in a per-round loop the stripped binary cannot name (~4 % self, ~10 %
+children on anonymous frames; no `instantiate_arith_axioms` frame in
+evidence).  **Reverted** (measured neutral, added state).  Resume: build
+a symbols release, profile i_4, and look at MBQI round internals —
+candidate loop shapes are the completed-model clone per round
+(`assignments` reaches ~1150 entries on Rodin-class files), the
+candidate-cache rebuild, or SAT-clause re-addition of duplicate
+instantiations across rounds.
+
 **Remaining (k9, four-plus free vars):** the split leaves close some
 branches with real unsat cores but the rest churn — the leaf cut loops
 exhaust `LIA_MAX_CUT_ROUNDS` (24) without closing the four-variable
