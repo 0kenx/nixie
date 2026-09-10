@@ -7,7 +7,11 @@ div terms axiomatized in-round, remainder case enumeration, and the HNF
 Diophantine solver refuting the pinned-remainder parity combination
 (k1/jain_2 now `unsat`; classic LIA/UFLIA/AUFLIA sample agree 169 → 178,
 0 wrong).  Still open: the hand-written four-free-variable shape without
-a div term (below) and the deeper jain unrollings (larger unprimed sums).**
+a div term (below) and the deeper jain unrollings — which **time out
+rather than refuse** (i_4 still searching at 60 s: a performance
+profile, not a capability gap; candidate cause is the per-round
+`instantiate_arith_axioms` re-walk whose idempotence check is
+O(defined-terms) per MBQI round).**
 
 ## The sharpest repro (k7)
 
