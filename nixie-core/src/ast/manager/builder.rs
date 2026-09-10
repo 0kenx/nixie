@@ -6,6 +6,7 @@ use crate::prelude::*;
 use crate::sort::SortId;
 use num_bigint::BigInt;
 use num_rational::Rational64;
+use num_traits::ToPrimitive;
 use smallvec::SmallVec;
 
 use super::TermManager;
@@ -1986,12 +1987,59 @@ impl TermManager {
     ///
     /// Folds two literals; a shift distance of at least the width discards
     /// every bit, so `t << k` is `0` for any `t` once `k >= width`.
+    /// Whether constant-distance shifts rewire to concat/extract at term
+    /// construction (`NIXIE_BV_SHIFT_WIRING=1` enables; default off).
+    ///
+    /// The wiring is Z3 `mk_bv_shl`/`mk_bv_lshr`'s numeral case and is the
+    /// piece that makes shift-heavy identities (`maxandminor*`, `bitrev*`)
+    /// converge *syntactically* under the simplify cascade: the concat
+    /// splices align piecewise instead of hiding inside a shift node.
+    /// Gated because the concat-spine term shapes change the blast for
+    /// every const-shift in the corpus (the reverted structural-rewriting
+    /// study's rules belonged to this family and measured zero cells then —
+    /// re-measured now that the NOT-descent cascade composes with them).
+    fn shift_wiring_enabled() -> bool {
+        #[cfg(feature = "std")]
+        {
+            use std::sync::OnceLock;
+            static FLAG: OnceLock<bool> = OnceLock::new();
+            *FLAG
+                .get_or_init(|| matches!(std::env::var("NIXIE_BV_SHIFT_WIRING"), Ok(v) if v == "1"))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Create a bit vector shift left.
+    ///
+    /// Folds two literals; a zero distance is the identity; and, under
+    /// [`Self::shift_wiring_enabled`], a constant distance `0 < k < w`
+    /// rewires to `concat(x[w-1-k:0], 0^k)` (Z3 `mk_bv_shl`'s numeral
+    /// case — the syntactic convergence piece for shift-heavy identities).
     pub fn mk_bv_shl(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if let Some(width) = self.bv_binop_width(lhs, rhs) {
             match self.fold_bv_shift(lhs, rhs, width, bv_fold::bv_shl) {
                 ShiftFold::Value(value) => return self.mk_bitvec(value, width),
                 ShiftFold::Identity => return lhs,
                 ShiftFold::None => {}
+            }
+            // Constant-distance shift → concat/extract wiring (Z3
+            // `mk_bv_shl`'s numeral case): `x << k =
+            // concat(x[w-1-k:0], 0^k)` for `0 < k < w`, gated by
+            // `NIXIE_BV_SHIFT_WIRING=1` (default off — the wiring is what
+            // makes shift-heavy identities converge *syntactically* under
+            // the simplify cascade, at the price of concat-spine terms).
+            if Self::shift_wiring_enabled()
+                && let Some(k) = self.bv_const_unsigned(rhs, width)
+                && k > BigInt::ZERO
+                && k < BigInt::from(u64::from(width))
+            {
+                let k = k.to_u64().unwrap_or(0) as u32;
+                let low = self.mk_bv_extract(width - k - 1, 0, lhs);
+                let zeros = self.mk_bitvec(BigInt::ZERO, k);
+                return self.mk_bv_concat(low, zeros);
             }
         }
 
@@ -2010,6 +2058,20 @@ impl TermManager {
                 ShiftFold::Value(value) => return self.mk_bitvec(value, width),
                 ShiftFold::Identity => return lhs,
                 ShiftFold::None => {}
+            }
+            // Constant-distance shift → concat/extract wiring (Z3
+            // `mk_bv_lshr`'s numeral case): `x >>u k =
+            // concat(0^k, x[w-1:k])` for `0 < k < w`, gated with the
+            // `mk_bv_shl` wiring (`NIXIE_BV_SHIFT_WIRING`).
+            if Self::shift_wiring_enabled()
+                && let Some(k) = self.bv_const_unsigned(rhs, width)
+                && k > BigInt::ZERO
+                && k < BigInt::from(u64::from(width))
+            {
+                let k = k.to_u64().unwrap_or(0) as u32;
+                let zeros = self.mk_bitvec(BigInt::ZERO, k);
+                let high = self.mk_bv_extract(width - 1, k, lhs);
+                return self.mk_bv_concat(zeros, high);
             }
         }
 
