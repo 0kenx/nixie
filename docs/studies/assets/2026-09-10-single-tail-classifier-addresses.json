@@ -1,0 +1,410 @@
+{
+  "record_id": "8df4957b65a26b4e",
+  "sampled_prefix_only": true,
+  "engine_self_share": 0.6994467907753749,
+  "symbol_self_shares": {
+    "nixie_sat::solver::propagate::propagation_engine::propagate": 0.6994467907753749,
+    "nixie_sat::solver::search_ext::<impl nixie_sat::solver::Solver>::solve_with_theory": 0.04866933120962511,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::shrink_and_minimize_clause": 0.03278065328700483,
+    "nixie_sat::solver::subsume::<impl nixie_sat::solver::Solver>::subsume_round": 0.02976621287338836,
+    "nixie_sat::solver::decide::<impl nixie_sat::solver::Solver>::backtrack_with_phase_saving": 0.02593561732141245,
+    "__memset_avx2_unaligned_erms": 0.015511144797792566,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::minimize_classify": 0.01438086995301635,
+    "nixie_sat::solver::propagate::watch_kernel::Cursor::scan": 0.014129639627510916,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::handle_clause_deletion_and_restart": 0.012308513436126989,
+    "nixie_sat::vsids::VSIDS::sift_up": 0.009671015263487107,
+    "nixie_sat::solver::conflict::AnalysisMark::mark_antecedent": 0.00929406751794013,
+    "core::slice::sort::stable::quicksort::quicksort": 0.00879169784224729,
+    "nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate": 0.005965855337124131,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::minimize_literal_plain": 0.005714599611444217,
+    "core::slice::sort::unstable::quicksort::quicksort": 0.004207474820187536,
+    "_int_malloc": 0.0038307683403205153,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::eliminate_phase": 0.003642299603347178,
+    "nixie_sat::solver::decide::<impl nixie_sat::solver::Solver>::backtrack": 0.0033910566497096727,
+    "nixie_sat::preprocessing_core::Preprocessor::pure_literal_elimination": 0.003139874756028897,
+    "nixie_sat::clause::ClauseDatabase::compact_arena_forced": 0.0027003613738624203,
+    "__memmove_avx_unaligned_erms": 0.002386311607869419,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_resolve_clauses": 0.0023235035422947393,
+    "nixie_sat::vsids::VSIDS::bump_batch": 0.00219798717099023,
+    "nixie_sat::solver::walk::<impl nixie_sat::solver::Solver>::walk_round": 0.002197932970759563,
+    "nixie_sat::vmtf::VMTF::dequeue": 0.0021351569012498057,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::reduce_clause_database": 0.0021351263203031965,
+    "nixie_sat::solver::equiv::<impl nixie_sat::solver::Solver>::rebuild_watches_and_binary_graph": 0.0020723433490935283,
+    "cfree@GLIBC_2.2.5": 0.001883985920769585,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::remove_literal_opts": 0.0018211796540741174,
+    "nixie_sat::solver::Solver::mark_subsume_lit": 0.0017583920597448734,
+    "malloc_consolidate": 0.0013815543516393141,
+    "malloc": 0.0013187930929017386,
+    "<smallvec::SmallVec<A> as core::iter::traits::collect::Extend<<A as smallvec::Array>::Item>>::extend": 0.0013187805487173648,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::vivify_clauses": 0.001193191808502144,
+    "nixie_sat::solver::transred::<impl nixie_sat::solver::Solver>::transred_round": 0.0011931893920077356,
+    "unlink_chunk.isra.0": 0.0011931273186823826,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::reduce_clause_database::{{closure}}": 0.001004784263403346,
+    "<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter": 0.0010047613516784451,
+    "_int_realloc": 0.0009419915482646109,
+    "core::slice::sort::shared::smallsort::sort8_stable": 0.0009419652186692067,
+    "_int_free_chunk": 0.0008791948755916088,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_flush_sort_occs": 0.0008791810841843144,
+    "getenv": 0.0008791597554731204,
+    "nixie_sat::solver::conflict::compute_lbd_stamped": 0.0008163848192572671,
+    "_int_free_create_chunk": 0.0008163794166233661,
+    "realloc": 0.0008163718253530902,
+    "nixie_sat::trail::Trail::assign": 0.00075356870069998,
+    "__strncmp_avx2": 0.0006907953534940975,
+    "<core::iter::adapters::filter::Filter<I,P> as core::iter::traits::iterator::Iterator>::next": 0.0006907861672175867,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::sweep_root_fixed_clauses": 0.000627968675515834,
+    "_int_free_merge_chunk": 0.0005651925940135489,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::inprocess": 0.0004396691890913196,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::mark_elim_one": 0.00043959757570987735,
+    "alloc::raw_vec::RawVec<T,A>::grow_one": 0.0003767845991949477,
+    "<smallvec::SmallVec<A> as core::convert::From<&[<A as smallvec::Array>::Item]>>::from": 0.00031399535589309247,
+    "nixie_sat::clause::ClauseDatabase::add_lits": 0.00031399515801637913,
+    "smallvec::SmallVec<A>::try_grow": 0.00031399510405000274,
+    "nixie_sat::solver::learn::<impl nixie_sat::solver::Solver>::note_learned_lbd": 0.0003139931552641894,
+    "[unknown]": 0.0002511901385438319,
+    "std::sys::env::unix::getenv::{closure#0}": 0.00025118994066711855,
+    "smallvec::SmallVec<A>::reserve_one_unchecked": 0.00025116873188120534,
+    "core::slice::sort::shared::smallsort::sort4_stable": 0.00018840052946987018,
+    "nixie_sat::trail::Trail::assign_at": 0.0001883949229629918,
+    "nixie_sat::solver::Solver::attach_watchers": 0.00018839440728428427,
+    "__ieee754_log_fma": 0.0001883932440090603,
+    "__log10_finite@GLIBC_2.15": 0.00012560310126759894,
+    "stats_solve::main": 0.00012560209989150408,
+    "core::slice::sort::unstable::ipnsort": 0.000125599605445663,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_backward_clauses": 0.00012559660731364247,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_retire_pivot_clauses": 0.00012559660131737844,
+    "nixie_sat::solver::eliminate::<impl nixie_sat::solver::Solver>::elim_add_resolvents": 0.00012559574385162056,
+    "nixie_sat::lrb::LRB::unassign": 0.00012559565990392398,
+    "nixie_sat::solver::Solver::retire_clause": 0.0001255948144306942,
+    "alloc::raw_vec::RawVecInner<A>::finish_grow": 0.0001255947544680538,
+    "core::slice::sort::stable::driftsort_main": 6.280111590465649e-05,
+    "core::slice::sort::stable::drift::sort": 6.279934700676438e-05,
+    "nixie_sat::solver::conflict::<impl nixie_sat::solver::Solver>::improve_learnt_clause": 6.279839360078185e-05,
+    "nixie_sat::solver::eliminate::RoundOccs::combined": 6.279832164561336e-05,
+    "nixie_sat::memory::ClauseArena::alloc": 6.279820771659659e-05,
+    "core::slice::sort::shared::pivot::median3_rec": 6.279814175769212e-05,
+    "ceil": 6.279799784735515e-05,
+    "nixie_sat::solver::Solver::drat_delete": 6.279794388097878e-05,
+    "nixie_sat::clause::ClauseDatabase::remove": 6.279738023215891e-05,
+    "__libc_malloc2": 6.279648079255276e-05,
+    "nixie_sat::solver::binary_graph::BinaryImplicationGraph::build_layout": 6.279523956589627e-05,
+    "nixie_sat::vsids::VSIDS::insert": 6.279433413002607e-05
+  },
+  "groups_overlap": false,
+  "interpretation": "Sampled IP weight is subject to skid; these are not cache miss, store-forwarding, or removable-time measurements.",
+  "groups": {
+    "false_prefix_loop_regions": {
+      "ips": [
+        "0x63ad0",
+        "0x63ad3",
+        "0x63ad5",
+        "0x63ad9",
+        "0x63adc",
+        "0x63ae1",
+        "0x63d20",
+        "0x63d23",
+        "0x63d25",
+        "0x63d29",
+        "0x63d2c",
+        "0x63d31",
+        "0x63f40",
+        "0x63f43",
+        "0x63f45",
+        "0x63f49",
+        "0x63f4c",
+        "0x63f51"
+      ],
+      "self_share": 0.051871064570787905
+    },
+    "selected_true_or_undefined_branches": {
+      "ips": [
+        "0x63ae3",
+        "0x63d33",
+        "0x63f53"
+      ],
+      "self_share": 0.0030143301363244907
+    },
+    "prefix_blocker_load_value_and_exit": {
+      "ips": [
+        "0x63a54",
+        "0x63a59",
+        "0x63a5e"
+      ],
+      "self_share": 0.05746091734147332
+    },
+    "suffix_blocker_load_value_and_exit": {
+      "ips": [
+        "0x63c74",
+        "0x63c79",
+        "0x63c7e",
+        "0x63e97",
+        "0x63e9c",
+        "0x63ea1"
+      ],
+      "self_share": 0.008477793041933745
+    },
+    "deleted_header_test_and_branch": {
+      "ips": [
+        "0x63a6e",
+        "0x63a74",
+        "0x63ca5",
+        "0x63cab",
+        "0x63eca",
+        "0x63ecf"
+      ],
+      "self_share": 0.10305307426368226
+    }
+  },
+  "hot_engine_addresses": [
+    {
+      "ip": "0x63ecf",
+      "self_share": 0.055891216899836185,
+      "instruction": "75 af                \tjne    63e80 <nixie_sat::solver::propagate::propagation_engine::propagate+0x6f0>"
+    },
+    {
+      "ip": "0x63a74",
+      "self_share": 0.044461579823751214,
+      "instruction": "0f 85 26 01 00 00    \tjne    63ba0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x410>"
+    },
+    {
+      "ip": "0x63a59",
+      "self_share": 0.04320583661975667,
+      "instruction": "41 80 3c 04 00       \tcmp    BYTE PTR [r12+rax*1],0x0"
+    },
+    {
+      "ip": "0x6389e",
+      "self_share": 0.041258663789450284,
+      "instruction": "8b 44 01 04          \tmov    eax,DWORD PTR [rcx+rax*1+0x4]"
+    },
+    {
+      "ip": "0x6393c",
+      "self_share": 0.038997607193724616,
+      "instruction": "42 80 3c 09 00       \tcmp    BYTE PTR [rcx+r9*1],0x0"
+    },
+    {
+      "ip": "0x64032",
+      "self_share": 0.029326837519223842,
+      "instruction": "4c 3b 2c c1          \tcmp    r13,QWORD PTR [rcx+rax*8]"
+    },
+    {
+      "ip": "0x64045",
+      "self_share": 0.026563524823042535,
+      "instruction": "42 89 4c e8 04       \tmov    DWORD PTR [rax+r13*8+0x4],ecx"
+    },
+    {
+      "ip": "0x63a65",
+      "self_share": 0.019216176200232086,
+      "instruction": "83 fb ff             \tcmp    ebx,0xffffffff"
+    },
+    {
+      "ip": "0x63941",
+      "self_share": 0.01563663678229122,
+      "instruction": "7f eb                \tjg     6392e <nixie_sat::solver::propagate::propagation_engine::propagate+0x19e>"
+    },
+    {
+      "ip": "0x64002",
+      "self_share": 0.014569152104241524,
+      "instruction": "48 8b 4c 24 10       \tmov    rcx,QWORD PTR [rsp+0x10]"
+    },
+    {
+      "ip": "0x63ffe",
+      "self_share": 0.014443517348696052,
+      "instruction": "44 89 40 10          \tmov    DWORD PTR [rax+0x10],r8d"
+    },
+    {
+      "ip": "0x63958",
+      "self_share": 0.013438698984539104,
+      "instruction": "48 89 ee             \tmov    rsi,rbp"
+    },
+    {
+      "ip": "0x63a5e",
+      "self_share": 0.011868794981730308,
+      "instruction": "7f e5                \tjg     63a45 <nixie_sat::solver::propagate::propagation_engine::propagate+0x2b5>"
+    },
+    {
+      "ip": "0x63f43",
+      "self_share": 0.011554781912873239,
+      "instruction": "74 2f                \tje     63f74 <nixie_sat::solver::propagate::propagation_engine::propagate+0x7e4>"
+    },
+    {
+      "ip": "0x63f51",
+      "self_share": 0.010738441765783077,
+      "instruction": "78 ed                \tjs     63f40 <nixie_sat::solver::propagate::propagation_engine::propagate+0x7b0>"
+    },
+    {
+      "ip": "0x63e61",
+      "self_share": 0.009105706515842818,
+      "instruction": "44 89 6c f8 04       \tmov    DWORD PTR [rax+rdi*8+0x4],r13d"
+    },
+    {
+      "ip": "0x63e50",
+      "self_share": 0.008791685220111485,
+      "instruction": "48 3b 3c c1          \tcmp    rdi,QWORD PTR [rcx+rax*8]"
+    },
+    {
+      "ip": "0x63973",
+      "self_share": 0.008477880941168324,
+      "instruction": "48 8b 6c c8 08       \tmov    rbp,QWORD PTR [rax+rcx*8+0x8]"
+    },
+    {
+      "ip": "0x63947",
+      "self_share": 0.007661401171069966,
+      "instruction": "79 97                \tjns    638e0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x150>"
+    },
+    {
+      "ip": "0x63932",
+      "self_share": 0.007661336363448211,
+      "instruction": "4c 39 c0             \tcmp    rax,r8"
+    },
+    {
+      "ip": "0x63f49",
+      "self_share": 0.007347359901783112,
+      "instruction": "48 ff c6             \tinc    rsi"
+    },
+    {
+      "ip": "0x63a45",
+      "self_share": 0.007158958526840012,
+      "instruction": "4d 39 d7             \tcmp    r15,r10"
+    },
+    {
+      "ip": "0x63e20",
+      "self_share": 0.0053378478777724786,
+      "instruction": "48 8b 4c 24 10       \tmov    rcx,QWORD PTR [rsp+0x10]"
+    },
+    {
+      "ip": "0x63a48",
+      "self_share": 0.0051494241787383545,
+      "instruction": "0f 84 42 01 00 00    \tje     63b90 <nixie_sat::solver::propagate::propagation_engine::propagate+0x400>"
+    },
+    {
+      "ip": "0x63ea6",
+      "self_share": 0.00508665621617758,
+      "instruction": "0f 83 f9 02 00 00    \tjae    641a5 <nixie_sat::solver::propagate::propagation_engine::propagate+0xa15>"
+    },
+    {
+      "ip": "0x63ea1",
+      "self_share": 0.004961051118154056,
+      "instruction": "7e 1d                \tjle    63ec0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x730>"
+    },
+    {
+      "ip": "0x63ae1",
+      "self_share": 0.004961026191684438,
+      "instruction": "78 ed                \tjs     63ad0 <nixie_sat::solver::propagate::propagation_engine::propagate+0x340>"
+    },
+    {
+      "ip": "0x63bb1",
+      "self_share": 0.00483542773752147,
+      "instruction": "48 8b 8c 24 a0 00 00 00 \tmov    rcx,QWORD PTR [rsp+0xa0]"
+    },
+    {
+      "ip": "0x63e1c",
+      "self_share": 0.004772624546909456,
+      "instruction": "44 89 40 10          \tmov    DWORD PTR [rax+0x10],r8d"
+    },
+    {
+      "ip": "0x63f5c",
+      "self_share": 0.004647090096868862,
+      "instruction": "0f 83 b6 02 00 00    \tjae    64218 <nixie_sat::solver::propagate::propagation_engine::propagate+0xa88>"
+    },
+    {
+      "ip": "0x63ad3",
+      "self_share": 0.0046470633475349755,
+      "instruction": "74 21                \tje     63af6 <nixie_sat::solver::propagate::propagation_engine::propagate+0x366>"
+    },
+    {
+      "ip": "0x63ad9",
+      "self_share": 0.00464705985171304,
+      "instruction": "48 ff c6             \tinc    rsi"
+    },
+    {
+      "ip": "0x63afb",
+      "self_share": 0.004521438413870003,
+      "instruction": "84 d2                \ttest   dl,dl"
+    },
+    {
+      "ip": "0x6390a",
+      "self_share": 0.004395850938866495,
+      "instruction": "42 89 5c 9a 04       \tmov    DWORD PTR [rdx+r11*4+0x4],ebx"
+    },
+    {
+      "ip": "0x63efb",
+      "self_share": 0.004081828575800162,
+      "instruction": "84 d2                \ttest   dl,dl"
+    },
+    {
+      "ip": "0x63f59",
+      "self_share": 0.003956253561033331,
+      "instruction": "4d 39 d6             \tcmp    r14,r10"
+    },
+    {
+      "ip": "0x63ec3",
+      "self_share": 0.003830653188065871,
+      "instruction": "74 bb                \tje     63e80 <nixie_sat::solver::propagate::propagation_engine::propagate+0x6f0>"
+    },
+    {
+      "ip": "0x638b4",
+      "self_share": 0.003516680426095685,
+      "instruction": "48 85 c0             \ttest   rax,rax"
+    },
+    {
+      "ip": "0x63f67",
+      "self_share": 0.0034539011785659863,
+      "instruction": "46 89 44 f5 04       \tmov    DWORD PTR [rbp+r14*8+0x4],r8d"
+    },
+    {
+      "ip": "0x63eb1",
+      "self_share": 0.0033910969625928207,
+      "instruction": "42 89 44 f5 04       \tmov    DWORD PTR [rbp+r14*8+0x4],eax"
+    },
+    {
+      "ip": "0x63aa9",
+      "self_share": 0.003328278703369271,
+      "instruction": "84 d2                \ttest   dl,dl"
+    },
+    {
+      "ip": "0x63bc8",
+      "self_share": 0.0032026953178178386,
+      "instruction": "0f 84 52 fc ff ff    \tje     63820 <nixie_sat::solver::propagate::propagation_engine::propagate+0x90>"
+    },
+    {
+      "ip": "0x63e97",
+      "self_share": 0.0030143601895998642,
+      "instruction": "42 8b 44 ed 04       \tmov    eax,DWORD PTR [rbp+r13*8+0x4]"
+    },
+    {
+      "ip": "0x63f1a",
+      "self_share": 0.0029514973661419613,
+      "instruction": "48 89 7c 24 08       \tmov    QWORD PTR [rsp+0x8],rdi"
+    },
+    {
+      "ip": "0x63eeb",
+      "self_share": 0.002888743854577527,
+      "instruction": "33 78 10             \txor    edi,DWORD PTR [rax+0x10]"
+    },
+    {
+      "ip": "0x6403d",
+      "self_share": 0.002888683580131386,
+      "instruction": "48 8b 42 08          \tmov    rax,QWORD PTR [rdx+0x8]"
+    },
+    {
+      "ip": "0x63a7a",
+      "self_share": 0.002825896117719951,
+      "instruction": "49 8d 04 19          \tlea    rax,[r9+rbx*1]"
+    },
+    {
+      "ip": "0x63ed1",
+      "self_share": 0.0027631231842562875,
+      "instruction": "48 01 d8             \tadd    rax,rbx"
+    },
+    {
+      "ip": "0x63b36",
+      "self_share": 0.0027003297015957555,
+      "instruction": "89 44 97 04          \tmov    DWORD PTR [rdi+rdx*4+0x4],eax"
+    },
+    {
+      "ip": "0x638e5",
+      "self_share": 0.002700327746813678,
+      "instruction": "4d 89 ca             \tmov    r10,r9"
+    }
+  ]
+}
