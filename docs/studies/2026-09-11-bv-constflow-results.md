@@ -272,3 +272,40 @@ concat/extract split, extract-of-concat, De Morgan, xor-const twice,
 add/sub cancel, udiv/urem reconstruction) — a wrong verdict in either
 direction fails the pair.  Extending its template set is the cheapest
 way to harden the blaster layers against the next width-edge bug.
+
+## Appendix: the debug-net false positive — evidence trail (unresolved)
+
+The debug model-validity net's residual false-positive mode on
+multi-round unified solves (`RWS/Example_7`, both const-flow arms) is
+narrowed to the following facts; a future session can finish it:
+
+1. **Not snapshot staleness.**  Re-adopting `self.sat.model()` immediately
+   before the net changes nothing — the mismatching bits read the same.
+2. **Not undefined reads.**  Every bit the net reads is *defined* in the
+   model (the undetermined-bit filter is in place), and the model vector
+   spans the full var space (`len == num_vars`).
+3. **The contradiction is against clauses absent from the live core.**
+   For the mismatching `bvand` gate: the live core's own
+   `model_value` reports `p = True, q = True, out = False`.  A CDCL solver
+   returning `Sat` cannot hold a model violating a clause it contains, so
+   the gate's defining clauses (`out ⇔ p ∧ q`) are not in the core the
+   model came from — or the vars' indices no longer mean what the stored
+   `term_to_bv` entry says.
+4. **Ruled out**: mid-run `Solver::reset` (never called on a single-file
+   QF_BV run), double-encoding of the term (traced once, `pre_entry=None`),
+   and ELS/BVE reconstruction gaps for these particular reads (the values
+   are the live core's, post-reconstruction).
+
+Verdict correctness is not in question on the evidence: the file's `sat`
+and full model are z3-validated by pinning, the parity suite is
+175/175, and the 509-file A/B shows zero verdict flips.  The open
+question is *which era's clause set* the stored `term_to_bv` entries
+reference when a unified generation spans pending-atom link rounds.
+
+**Next step for whoever picks this up:** add a debug API that dumps every
+clause of the main core containing a given var (watch-list walk), run
+`RWS/Example_7` under the net, and check whether `out ⇔ p ∧ q` exists at
+all and under which var indices.  That single observation separates
+"clauses never emitted into the caller's core" (an era-crossing bug in
+the window protocol) from "clauses emitted and later removed" (a pop /
+rewrite interaction).
