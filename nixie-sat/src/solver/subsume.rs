@@ -466,6 +466,9 @@ impl Solver {
                 Some(c) if !c.deleted && c.lits.len() >= 2 => c.lits.iter().copied().collect(),
                 _ => continue,
             };
+            if c1_lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
+                continue;
+            }
             let mut minlit = c1_lits[0];
             let mut minocc = occs[minlit.code() as usize].len();
             for &l in &c1_lits[1..] {
@@ -532,7 +535,15 @@ impl Solver {
                                 };
                                 if emitted {
                                     self.mark_elim_vars(c2_lits.iter().copied());
-                                    self.strengthen_clause_in_subsume(c2_id, idx);
+                                    if c2_lits.len() == 2 {
+                                        if let Some(&u) = c2_lits.iter().find(|&&l| l != remove) {
+                                            self.force_level0(u);
+                                            self.drat_delete(c2_id);
+                                            self.retire_clause(c2_id);
+                                        }
+                                    } else {
+                                        self.strengthen_clause_in_subsume(c2_id, idx);
+                                    }
                                     self.stats.self_subsumed += 1;
                                     strengthened += 1;
                                 }
@@ -1038,6 +1049,26 @@ impl Solver {
         // above enters new binaries into the BIG (BIG-authoritative BCP,
         // 2026-09) – adding edges here again would duplicate them and
         // double the phantom tick count.
+    }
+}
+
+#[cfg(test)]
+mod unit_on_strengthen_tests {
+    use super::super::Solver;
+    use crate::literal::{LBool, Lit, Var};
+
+    #[test]
+    fn binary_ssr_forces_unit_immediately() {
+        let mut s = Solver::new();
+        for _ in 0..2 {
+            s.new_var();
+        }
+        s.add_clause_dimacs(&[1, 2]);
+        s.add_clause_dimacs(&[1, -2]);
+        assert!(s.propagate().is_none());
+        let (sub, stren) = s.backward_subsume_round();
+        assert!(stren >= 1 || sub >= 1, "sub={sub} stren={stren}");
+        assert_eq!(s.trail.lit_value(Lit::pos(Var::new(0))), LBool::True);
     }
 }
 

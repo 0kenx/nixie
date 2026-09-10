@@ -111,3 +111,16 @@ and returns to 179k.
 Z3 4.16.0 on the 1-round dump: **55,728** conflicts (vs 23,149 on the original).
 Our residual is worse for Z3 than theirs; theirs is worse for Nixie (108k). The
 leftover **1.94×** is that interaction, not a missing Z3 pass we can copy.
+
+## Z3 `elim_lit` units (2026-09-10)
+
+Z3 first inprocess has **173** units vs our **67**. `elim_lit` on a shrink-to-2
+promotes a binary subsumer (`m_sub_bin_todo`); shrink-to-1 calls `propagate_unit`
+immediately. Our `remove_literal_opts` no-ops on `len <= 2`, so the backward
+pass never derived those units.
+
+Fix: binary SSR now forces the remaining literal (tested). On this CNF it never
+fires: the schedule is the original width-8 cubes, and `c2.len()+1 < c1.len()`
+skips already-shrunk targets. Re-queueing new binaries as extra subsumers
+(Z3 `m_sub_bin_todo`) moved 102,060→102,150 subsumed and **44.9k → 83.5k**
+conflicts, trail still 67. Do not requeue.
