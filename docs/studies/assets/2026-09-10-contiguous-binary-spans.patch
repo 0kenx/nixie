@@ -1,0 +1,1659 @@
+diff --git a/nixie-sat/src/clause.rs b/nixie-sat/src/clause.rs
+index 497a7dc6..bc4a4bb3 100644
+--- a/nixie-sat/src/clause.rs
++++ b/nixie-sat/src/clause.rs
+@@ -414,6 +414,10 @@ impl ClauseDatabase {
+         self.arena.live_lits_hot(r)
+     }
+ 
++    pub(crate) fn propagation(&mut self) -> crate::memory::PropagationArena<'_> {
++        self.arena.propagation()
++    }
++
+     /// Metadata by direct slot, including deleted headers for lazy consumers.
+     pub(crate) fn get_by_ref(&self, r: ClauseRef) -> Option<ClauseView<'_>> {
+         self.arena.get(r)
+diff --git a/nixie-sat/src/memory.rs b/nixie-sat/src/memory.rs
+index da76b572..864f57c5 100644
+--- a/nixie-sat/src/memory.rs
++++ b/nixie-sat/src/memory.rs
+@@ -307,6 +307,84 @@ pub struct ClauseArena {
+     compactions: u64,
+ }
+ 
++/// Exclusive fixed allocation used throughout ordinary propagation. The
++/// lifetime prevents allocation, shrink, deletion or compaction while a scan
++/// uses arena offsets; each returned payload borrow ends before the next one.
++pub(crate) struct PropagationArena<'a> {
++    buffer: &'a mut [u64],
++    pos: usize,
++    identities: usize,
++}
++
++/// One live arena slot: the mutable payload and immutable stable identity
++/// occupy disjoint bytes. Holding this borrow prevents deletion, shrink,
++/// allocation and relocation through the arena view. No raw ref can be
++/// supplied to `reason`: it belongs to this exact borrowed live clause.
++pub(crate) struct LivePropagationClause<'a> {
++    lits: &'a mut [Lit],
++    identity: &'a u32,
++}
++
++impl LivePropagationClause<'_> {
++    #[inline]
++    pub(crate) fn lits(&mut self) -> &mut [Lit] {
++        self.lits
++    }
++
++    #[inline]
++    pub(crate) fn reason(&self) -> ClauseId {
++        ClauseId::new(*self.identity)
++    }
++}
++
++impl PropagationArena<'_> {
++    /// Same arena-issued/ref-relocation contract as `live_lits_hot`.
++    #[inline]
++    pub(crate) fn live_clause(&mut self, r: ClauseRef) -> Option<LivePropagationClause<'_>> {
++        if r.is_null() {
++            return None;
++        }
++        debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
++        // SAFETY: the same arena-issued/ref-relocation invariant as
++        // ClauseArena::live_lits_hot. The exclusive slice pins the allocation
++        // for this entire pass. A slot is 8-aligned and contains an initialized
++        // header; copying it does not borrow any payload.
++        let header = unsafe {
++            self.buffer
++                .as_mut_ptr()
++                .cast::<u8>()
++                .add(r.byte_offset())
++                .cast::<ClauseHeader>()
++        };
++        let h = unsafe { core::ptr::read(header) };
++        debug_assert!(
++            h.len as usize
++                <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
++        );
++        if h.deleted() {
++            return None;
++        }
++        // Every live identity was initialized by alloc after checking the
++        // u32 ID space. Shrink preserves it; compaction copies it with the
++        // payload. Only the shared deleted tombstone has an invalid identity,
++        // and that slot was excluded by the liveness check above.
++        debug_assert!((h.identity as usize) < self.identities);
++        // SAFETY: the arena-issued slot has an initialized, aligned header
++        // and h.len initialized literals. The shared identity covers header
++        // bytes 8..12 and the mutable payload starts at byte 12, so even
++        // though they share an allocation word they do not overlap. Both
++        // references borrow this exclusive view; no arena access or header
++        // mutation can occur until they end. The payload cannot reach back
++        // into the header, and the identity is never exposed mutably.
++        Some(unsafe {
++            LivePropagationClause {
++                lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
++                identity: &*core::ptr::addr_of!((*header).identity),
++            }
++        })
++    }
++}
++
+ /// All allocation and address checks precede any reference mutation.
+ pub(crate) struct CompactionPlan {
+     relocated: Vec<ClauseRef>,
+@@ -334,6 +412,14 @@ impl Default for ClauseArena {
+ }
+ 
+ impl ClauseArena {
++    pub(crate) fn propagation(&mut self) -> PropagationArena<'_> {
++        PropagationArena {
++            buffer: &mut self.buffer,
++            pos: self.pos,
++            identities: self.activities.len(),
++        }
++    }
++
+     /// Create an arena whose buffer is pre-allocated to hold at least
+     /// `initial_capacity` bytes (rounded up to whole `u64`s).
+     #[must_use]
+@@ -1343,6 +1429,59 @@ mod initialization_tests {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn borrowed_propagation_clause_identity_survives_mutation_and_relocation() {
++        let mut arena = ClauseArena::new(0);
++        let mut refs = Vec::new();
++        let mut expected = Vec::new();
++        for len in [2, 3, 5, 64] {
++            let lits: Vec<_> = (0..len).map(Lit::from_code).collect();
++            refs.push(arena.alloc(&lits, false));
++            expected.push(lits);
++        }
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(ClauseRef::NULL).is_none());
++            for (id, (&r, literals)) in refs.iter().zip(&mut expected).enumerate() {
++                let mut live = view.live_clause(r).expect("live allocated clause");
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++                // Keep the identity reference live across payload writes.
++                // The two ranges share a u64 allocation word but no bytes.
++                let LivePropagationClause { lits, identity } = &mut live;
++                lits.reverse();
++                literals.reverse();
++                assert_eq!(**identity, id as u32);
++                assert_eq!(*lits, literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        arena.delete(refs[0]);
++        expected[2].truncate(3);
++        assert!(arena.shrink(refs[2], &expected[2]));
++        let before = refs.clone();
++        arena.compact(&mut refs);
++        assert_ne!(refs[1], before[1], "the live clause was relocated");
++        // Compaction shrinks the allocation; growth happens before reborrow.
++        let extra: Vec<_> = (0..512).map(Lit::from_code).collect();
++        refs.push(arena.alloc(&extra, true));
++        expected.push(extra);
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(refs[0]).is_none(), "deleted tombstone");
++            for (id, (&r, literals)) in refs.iter().zip(&expected).enumerate().skip(1) {
++                let mut live = view.live_clause(r).expect("relocated live clause");
++                assert_eq!(live.lits(), literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        for &r in &refs {
++            arena.delete(r);
++        }
++        arena.compact(&mut refs);
++        let mut view = arena.propagation();
++        assert!(refs.iter().all(|&r| view.live_clause(r).is_none()));
++    }
+     use crate::literal::Var;
+ 
+     fn l(v: u32) -> Lit {
+diff --git a/nixie-sat/src/solver/binary_graph.rs b/nixie-sat/src/solver/binary_graph.rs
+new file mode 100644
+index 00000000..bf7fac2d
+--- /dev/null
++++ b/nixie-sat/src/solver/binary_graph.rs
+@@ -0,0 +1,365 @@
++//! Ordered binary adjacency with one contiguous span per literal.
++//!
++//! Rebuilds allocate exact-size spans. Incremental growth copies a full span
++//! into a larger segment at the pool end; old segments remain inaccessible
++//! until a quiescent rebuild/compaction. Pool reallocation preserves indices.
++use super::{ClauseId, Lit, Var};
++#[allow(unused_imports)]
++use crate::prelude::*;
++
++type Edge = (Lit, ClauseId);
++
++#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
++pub(super) struct Span {
++    pub(super) start: u32,
++    pub(super) len: u32,
++    pub(super) capacity: u32,
++    // Preserve the historical removal contract even for duplicate/sentinel IDs:
++    // remove one matching built edge, otherwise all matching appended edges.
++    pub(super) built: u32,
++}
++
++#[derive(Debug, Clone)]
++pub(crate) struct BinaryImplicationGraph {
++    pub(super) spans: Vec<Span>,
++    pub(super) edges: Vec<Edge>,
++}
++
++impl BinaryImplicationGraph {
++    pub(super) fn new(num_vars: usize) -> Self {
++        Self {
++            spans: vec![Span::default(); num_vars * 2],
++            edges: Vec::new(),
++        }
++    }
++
++    pub(crate) fn edge_accounting(&self) -> (usize, usize) {
++        (
++            self.spans.iter().map(|s| s.len as usize).sum(),
++            self.edges.capacity(),
++        )
++    }
++
++    pub(super) fn resize(&mut self, num_vars: usize) {
++        self.ensure_codes(num_vars * 2);
++    }
++
++    fn ensure_codes(&mut self, n: usize) {
++        if self.spans.len() < n {
++            self.spans.resize(n, Span::default());
++        }
++    }
++
++    pub(super) fn add(&mut self, lit: Lit, implied: Lit, clause_id: ClauseId) {
++        let code = lit.index();
++        self.ensure_codes(code + 1);
++        let mut span = self.spans[code];
++        let Some(new_len) = span.len.checked_add(1) else {
++            panic!("binary span count overflow");
++        };
++        if new_len > span.capacity {
++            // Existing spans never move in place or get reclaimed here: the
++            // scalar HBR path may retain indices into a different trigger.
++            let Ok(start) = u32::try_from(self.edges.len()) else {
++                panic!("binary edge extent overflow");
++            };
++            let capacity = span.capacity.saturating_mul(2).max(4);
++            let Some(end) = start.checked_add(capacity) else {
++                panic!("binary edge extent overflow");
++            };
++            self.edges.resize(end as usize, Self::empty_edge());
++            let old_start = span.start as usize;
++            self.edges
++                .copy_within(old_start..old_start + span.len as usize, start as usize);
++            span.start = start;
++            span.capacity = capacity;
++        }
++        self.edges[span.start as usize + span.len as usize] = (implied, clause_id);
++        span.len = new_len;
++        self.spans[code] = span;
++    }
++
++    #[inline]
++    pub(crate) fn get(&self, lit: Lit) -> &[Edge] {
++        let (start, len) = self.span_of(lit.index());
++        &self.edges[start..start + len]
++    }
++
++    /// Stable indices across appends, including growth of other triggers.
++    /// Compaction/rebuild must not run while a caller uses this snapshot.
++    #[inline]
++    pub(crate) fn span_of(&self, code: usize) -> (usize, usize) {
++        let span = &self.spans[code];
++        (span.start as usize, span.len as usize)
++    }
++
++    #[inline]
++    pub(crate) fn edge_at(&self, at: usize) -> Edge {
++        self.edges[at]
++    }
++
++    #[cfg_attr(not(debug_assertions), allow(dead_code))]
++    pub(crate) fn iter(&self) -> impl Iterator<Item = (Lit, Lit, ClauseId)> + '_ {
++        self.spans.iter().enumerate().flat_map(|(code, span)| {
++            let from = Lit::from_code(code as u32);
++            let start = span.start as usize;
++            self.edges[start..start + span.len as usize]
++                .iter()
++                .map(move |&(to, cid)| (from, to, cid))
++        })
++    }
++
++    pub(super) fn clear(&mut self) {
++        self.spans.fill(Span::default());
++        self.edges.clear();
++    }
++
++    /// Called immediately after a full rebuild. Index-based spans remain
++    /// valid even if shrinking changes the pool's allocation address.
++    pub(super) fn shrink(&mut self) {
++        self.edges.shrink_to_fit();
++    }
++
++    pub(super) fn remove_clause_edges(&mut self, trigger: Lit, clause_id: ClauseId) {
++        let Some(span) = self.spans.get_mut(trigger.index()) else {
++            return;
++        };
++        let start = span.start as usize;
++        let end = start + span.len as usize;
++        let built_end = start + span.built as usize;
++        if let Some(pos) = self.edges[start..built_end]
++            .iter()
++            .position(|&(_, cid)| cid == clause_id)
++        {
++            self.edges.copy_within(start + pos + 1..end, start + pos);
++            span.built -= 1;
++            span.len -= 1;
++        } else {
++            let mut write = built_end;
++            for read in built_end..end {
++                let edge = self.edges[read];
++                if edge.1 != clause_id {
++                    self.edges[write] = edge;
++                    write += 1;
++                }
++            }
++            span.len = (write - start) as u32;
++        }
++    }
++
++    /// Reclaim old segments and dead edges, retaining each logical sequence.
++    /// Relocation puts segments out of literal order, so a separate destination
++    /// pool is necessary: an in-place prefix copy could overwrite unread spans.
++    pub(crate) fn compact_dead(&mut self, dead: &[bool]) {
++        let mut next = Vec::with_capacity(self.edge_accounting().0);
++        for span in &mut self.spans {
++            let start = next.len();
++            let old_start = span.start as usize;
++            let mut built = 0;
++            for (i, &edge) in self.edges[old_start..old_start + span.len as usize]
++                .iter()
++                .enumerate()
++            {
++                if !dead.get(edge.1.index()).copied().unwrap_or(false) {
++                    next.push(edge);
++                    built += u32::from(i < span.built as usize);
++                }
++            }
++            // Live spans are disjoint subsets of the u32-addressed old pool;
++            // filtering cannot increase that extent.
++            let Ok(start32) = u32::try_from(start) else {
++                panic!("binary compacted extent overflow");
++            };
++            let Ok(len) = u32::try_from(next.len() - start) else {
++                panic!("binary compacted span overflow");
++            };
++            *span = Span {
++                start: start32,
++                len,
++                capacity: len,
++                built,
++            };
++        }
++        self.edges = next;
++    }
++
++    pub(super) fn build_reset(&mut self, num_vars: usize) {
++        self.resize(num_vars);
++        self.clear();
++    }
++
++    #[inline]
++    pub(super) fn build_count(&mut self, trigger: Lit) {
++        let span = &mut self.spans[trigger.index()];
++        let Some(count) = span.len.checked_add(1) else {
++            panic!("binary span count overflow");
++        };
++        span.len = count;
++    }
++
++    pub(super) fn build_layout(&mut self) {
++        // Check the complete extent before changing any boundary or cursor.
++        let Some(total) = self
++            .spans
++            .iter()
++            .try_fold(0u32, |acc, span| acc.checked_add(span.len))
++        else {
++            panic!("binary edge extent overflow");
++        };
++        self.edges.clear();
++        self.edges.resize(total as usize, Self::empty_edge());
++        let mut start = 0;
++        for span in &mut self.spans {
++            let capacity = span.len;
++            *span = Span {
++                start,
++                capacity,
++                len: 0,
++                built: 0,
++            };
++            start += capacity;
++        }
++        debug_assert_eq!(start, total);
++    }
++
++    #[inline]
++    pub(super) fn build_edge(&mut self, trigger: Lit, implied: Lit, clause_id: ClauseId) {
++        let span = &mut self.spans[trigger.index()];
++        assert!(
++            span.len == span.built && span.len < span.capacity,
++            "binary count/fill mismatch"
++        );
++        self.edges[span.start as usize + span.len as usize] = (implied, clause_id);
++        span.len += 1;
++        span.built += 1;
++    }
++
++    fn empty_edge() -> Edge {
++        (Lit::pos(Var::new(0)), ClauseId::new(0))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn lit(code: u32) -> Lit {
++        Lit::from_code(code)
++    }
++
++    fn check(graph: &BinaryImplicationGraph, model: &[Vec<Edge>]) {
++        for (code, expected) in model.iter().enumerate() {
++            assert_eq!(graph.get(lit(code as u32)), expected);
++        }
++        assert_eq!(
++            graph.edge_accounting().0,
++            model.iter().map(Vec::len).sum::<usize>()
++        );
++        let mut ranges: Vec<_> = graph
++            .spans
++            .iter()
++            .filter(|s| s.capacity != 0)
++            .map(|s| {
++                assert!(s.built <= s.len && s.len <= s.capacity);
++                assert!(s.start as usize + s.capacity as usize <= graph.edges.len());
++                (s.start, s.start + s.capacity)
++            })
++            .collect();
++        ranges.sort_unstable();
++        assert!(ranges.windows(2).all(|pair| pair[0].1 <= pair[1].0));
++    }
++
++    #[test]
++    fn contiguous_spans_growth_compaction_clone_and_reset() {
++        let mut graph = BinaryImplicationGraph::new(4);
++        let mut model = vec![Vec::new(); 8];
++        for code in 0..8 {
++            graph.build_count(lit(code));
++        }
++        graph.build_layout();
++        for code in 0..8 {
++            let edge = (lit(code ^ 1), ClauseId::new(code));
++            graph.build_edge(lit(code), edge.0, edge.1);
++            model[code as usize].push(edge);
++        }
++        // Reverse-key relocations make physical and logical order disagree.
++        for id in 8..104 {
++            let code = 7 - id % 8;
++            let edge = (lit(code ^ 1), ClauseId::new(id));
++            graph.add(lit(code), edge.0, edge.1);
++            model[code as usize].push(edge);
++            check(&graph, &model);
++            if id % 11 == 0 {
++                let old = model[code as usize][0].1;
++                graph.remove_clause_edges(lit(code), old);
++                model[code as usize].remove(0);
++                check(&graph, &model);
++            }
++            if id % 23 == 0 {
++                let dead: Vec<_> = (0..=id).map(|n| n % 3 == 0).collect();
++                graph.compact_dead(&dead);
++                for list in &mut model {
++                    list.retain(|edge| !dead[edge.1.index()]);
++                }
++                check(&graph, &model);
++            }
++        }
++        let mut cloned = graph.clone();
++        graph.clear();
++        assert!(graph.iter().next().is_none());
++        check(&cloned, &model);
++        cloned.resize(17);
++        model.resize(34, Vec::new());
++        check(&cloned, &model);
++        cloned.add(lit(33), lit(32), ClauseId::new(200));
++        model[33].push((lit(32), ClauseId::new(200)));
++        check(&cloned, &model);
++        cloned.compact_dead(&[]);
++        cloned.shrink();
++        check(&cloned, &model);
++        cloned.build_reset(17);
++        cloned.build_count(lit(32));
++        cloned.build_layout();
++        cloned.build_edge(lit(32), lit(33), ClauseId::new(201));
++        model.iter_mut().for_each(Vec::clear);
++        model[32].push((lit(33), ClauseId::new(201)));
++        check(&cloned, &model);
++    }
++
++    #[test]
++    fn contiguous_spans_preserve_duplicate_origin_removal() {
++        let mut graph = BinaryImplicationGraph::new(2);
++        for _ in 0..2 {
++            graph.build_count(lit(0));
++        }
++        graph.build_layout();
++        let id = ClauseId::new(u32::MAX);
++        graph.build_edge(lit(0), lit(1), id);
++        graph.build_edge(lit(0), lit(2), id);
++        graph.add(lit(0), lit(3), id);
++        graph.add(lit(0), lit(0), id);
++        graph.compact_dead(&[]);
++        graph.remove_clause_edges(lit(0), id);
++        assert_eq!(
++            graph.get(lit(0)),
++            [(lit(2), id), (lit(3), id), (lit(0), id)]
++        );
++        graph.remove_clause_edges(lit(0), id);
++        assert_eq!(graph.get(lit(0)), [(lit(3), id), (lit(0), id)]);
++        graph.remove_clause_edges(lit(0), id);
++        assert!(graph.get(lit(0)).is_empty());
++    }
++
++    #[test]
++    fn contiguous_spans_other_trigger_growth_preserves_snapshot() {
++        let mut graph = BinaryImplicationGraph::new(2);
++        graph.add(lit(0), lit(1), ClauseId::new(0));
++        let (start, len) = graph.span_of(0);
++        for id in 1..65 {
++            graph.add(lit(2), lit(3), ClauseId::new(id));
++        }
++        assert_eq!(len, 1);
++        assert_eq!(graph.edge_at(start), (lit(1), ClauseId::new(0)));
++        assert_eq!(graph.span_of(0), (start, len));
++    }
++}
+diff --git a/nixie-sat/src/solver/mod.rs b/nixie-sat/src/solver/mod.rs
+index c052cb94..2cd16942 100644
+--- a/nixie-sat/src/solver/mod.rs
++++ b/nixie-sat/src/solver/mod.rs
+@@ -100,341 +100,8 @@ const INPROBE_INIT_LIMIT: u64 = u64::MAX;
+ /// rounds, each of which re-runs its sub-passes to their own fixpoints).
+ const ELS_PRESEARCH_MAX_ROUNDS: u32 = 4;
+ 
+-#[derive(Debug, Clone)]
+-pub(super) struct BinaryImplicationGraph {
+-    /// CSR layout over literal codes: `code`'s primary span is
+-    /// `edges[span_start(code)..span_start(code)+live[code]]` where
+-    /// `span_start(code)` reads `span_end[code-1]` (`0` for `code == 0`).
+-    /// Fixed at [`Self::build_layout`]; only [`Self::live`] shrinks
+-    /// (deletions compact the span in place, order-preserving).
+-    span_end: Vec<u32>,
+-    /// Live length of each code's primary span (`<=` the span extent;
+-    /// doubles as the counting cursor between `build_reset` and
+-    /// `build_layout`, exactly like `RoundOccs::prim_len`).
+-    live: Vec<u32>,
+-    /// Flat edge storage: `(implied lit, clause id)`, id-ascending within
+-    /// each span by construction (rebuilds iterate ids ascending).
+-    edges: Vec<(Lit, ClauseId)>,
+-    /// Post-build appends per literal (learned binaries, gate-congruence
+-    /// sentinels, factoring products): every append's id is strictly
+-    /// greater than any id in the primary (ids are append-only and the
+-    /// primary froze at layout time), so primary-then-extra is globally
+-    /// id-ascending — the chronological order the old single per-literal
+-    /// `Vec` held.
+-    extra: Vec<Vec<(Lit, ClauseId)>>,
+-}
+-
+-/// Combined read view of one literal's BIG edges: the primary span then
+-/// the post-build overflow. Indexing, `len` and iteration cover both in
+-/// order, so every consumer sees exactly the old `&[(Lit, ClauseId)]`
+-/// sequence.
+-#[derive(Debug, Clone, Copy)]
+-pub(crate) struct BigList<'a> {
+-    primary: &'a [(Lit, ClauseId)],
+-    extra: &'a [(Lit, ClauseId)],
+-}
+-
+-/// Iterator over a [`BigList`]'s combined view (primary span then
+-/// overflow).
+-pub(crate) type BigListIter<'a> = core::iter::Chain<
+-    core::slice::Iter<'a, (Lit, ClauseId)>,
+-    core::slice::Iter<'a, (Lit, ClauseId)>,
+->;
+-
+-impl BigList<'_> {
+-    #[inline]
+-    pub(crate) fn len(&self) -> usize {
+-        self.primary.len() + self.extra.len()
+-    }
+-
+-    #[inline]
+-    pub(crate) fn is_empty(&self) -> bool {
+-        self.primary.is_empty() && self.extra.is_empty()
+-    }
+-
+-    pub(crate) fn iter(&self) -> BigListIter<'_> {
+-        self.primary.iter().chain(self.extra.iter())
+-    }
+-}
+-
+-impl core::ops::Index<usize> for BigList<'_> {
+-    type Output = (Lit, ClauseId);
+-
+-    #[inline]
+-    fn index(&self, i: usize) -> &(Lit, ClauseId) {
+-        if i < self.primary.len() {
+-            &self.primary[i]
+-        } else {
+-            &self.extra[i - self.primary.len()]
+-        }
+-    }
+-}
+-
+-/// Start offset of `code`'s primary span (`span_end` stores exclusive ends).
+-#[inline]
+-fn big_span_start(span_end: &[u32], code: usize) -> usize {
+-    if code == 0 {
+-        0
+-    } else {
+-        span_end[code - 1] as usize
+-    }
+-}
+-
+-impl BinaryImplicationGraph {
+-    fn new(num_vars: usize) -> Self {
+-        let n = num_vars * 2;
+-        Self {
+-            span_end: vec![0; n],
+-            live: vec![0; n],
+-            edges: Vec::new(),
+-            extra: vec![Vec::new(); n],
+-        }
+-    }
+-
+-    /// Total live edges and their allocation slack (diagnostics:
+-    /// `NIXIE_MEM_STATS`). The CSR primary is exact-size by construction;
+-    /// the only slack is the flat buffer's own `Vec` margin and the
+-    /// lazily-allocated overflow lists.
+-    pub(crate) fn edge_accounting(&self) -> (usize, usize) {
+-        let edges: usize = self.live.iter().map(|&l| l as usize).sum::<usize>()
+-            + self.extra.iter().map(Vec::len).sum::<usize>();
+-        let cap: usize =
+-            self.edges.capacity() + self.extra.iter().map(Vec::capacity).sum::<usize>();
+-        (edges, cap)
+-    }
+-
+-    fn resize(&mut self, num_vars: usize) {
+-        self.ensure_codes(num_vars * 2);
+-    }
+-
+-    /// Grow the code-indexed arrays to at least `n` codes, preserving the
+-    /// CSR invariant: every new code's span is empty and starts where the
+-    /// last existing span ended (`span_end`'s new entries copy the current
+-    /// total — filling 0 would alias code 0's span and misread its edges
+-    /// as the new code's after a mid-search `new_var` growth).
+-    fn ensure_codes(&mut self, n: usize) {
+-        if n <= self.span_end.len() {
+-            return;
+-        }
+-        let fill = self.span_end.last().copied().unwrap_or(0);
+-        self.span_end.resize(n, fill);
+-        self.live.resize(n, 0);
+-        self.extra.resize(n, Vec::new());
+-    }
+-
+-    fn add(&mut self, lit: Lit, implied: Lit, clause_id: ClauseId) {
+-        let idx = lit.code() as usize;
+-        self.ensure_codes(idx + 1);
+-        self.extra[idx].push((implied, clause_id));
+-    }
+-
+-    /// Read view of `lit`'s edges (primary span then overflow).
+-    pub(crate) fn get(&self, lit: Lit) -> BigList<'_> {
+-        let code = lit.code() as usize;
+-        let start = big_span_start(&self.span_end, code);
+-        let plen = self.live[code] as usize;
+-        BigList {
+-            primary: &self.edges[start..start + plen],
+-            extra: &self.extra[code],
+-        }
+-    }
+-
+-    /// `(start, live_len)` of `code`'s primary span in the flat buffer —
+-    /// the propagation hot loop's snapshot (index-based iteration, no
+-    /// borrow held across `&mut self` calls).
+-    #[inline]
+-    pub(crate) fn span_of(&self, code: usize) -> (usize, usize) {
+-        (
+-            big_span_start(&self.span_end, code),
+-            self.live[code] as usize,
+-        )
+-    }
+-
+-    /// Copy the primary edge at flat-buffer index `at`.
+-    #[inline]
+-    pub(crate) fn edge_at(&self, at: usize) -> (Lit, ClauseId) {
+-        self.edges[at]
+-    }
+-
+-    /// Overflow length of `code`'s post-build list.
+-    #[inline]
+-    pub(crate) fn extra_len(&self, code: usize) -> usize {
+-        self.extra[code].len()
+-    }
+-
+-    /// Copy the overflow edge `(code, i)`.
+-    #[inline]
+-    pub(crate) fn extra_at(&self, code: usize, i: usize) -> (Lit, ClauseId) {
+-        self.extra[code][i]
+-    }
+-
+-    /// Iterate every edge as `(trigger, implied, clause_id)`, in key order.
+-    /// Debug-invariant use (BIG-authoritative BCP backing check): the hot
+-    /// loop trusts edges without a liveness probe, so every non-sentinel
+-    /// edge must reference a live binary clause.
+-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
+-    pub(crate) fn iter(&self) -> impl Iterator<Item = (Lit, Lit, ClauseId)> + '_ {
+-        self.span_end.iter().enumerate().flat_map(|(code, _)| {
+-            let from = Lit::from_code(code as u32);
+-            let start = big_span_start(&self.span_end, code);
+-            let plen = self.live[code] as usize;
+-            self.edges[start..start + plen]
+-                .iter()
+-                .chain(self.extra[code].iter())
+-                .map(move |&(to, cid)| (from, to, cid))
+-        })
+-    }
+-
+-    fn clear(&mut self) {
+-        self.span_end.iter_mut().for_each(|e| *e = 0);
+-        self.live.iter_mut().for_each(|l| *l = 0);
+-        self.edges.clear();
+-        self.extra.iter_mut().for_each(Vec::clear);
+-    }
+-
+-    /// Release allocation slack (`shrink_to_fit`) after a full rebuild.
+-    ///
+-    /// The CSR primary is exact-size the moment [`Self::build_layout`]
+-    /// sized it, so this only tightens the flat buffer's `Vec` margin and
+-    /// the overflow lists. It deliberately does NOT fold non-empty
+-    /// overflow into the primary: the fold would have to grow the flat
+-    /// buffer (a full realloc — a 2x transient on binary-dense
+-    /// instances), and every current caller runs it with empty overflow
+-    /// straight after a rebuild.
+-    fn shrink(&mut self) {
+-        self.edges.shrink_to_fit();
+-        self.extra.iter_mut().for_each(Vec::shrink_to_fit);
+-    }
+-
+-    /// Remove the edge belonging to `clause_id` keyed under `trigger`.
+-    /// Used to purge binary implications when a clause is retracted so the graph
+-    /// does not accumulate stale (and, after slot reuse, misleading) edges.
+-    /// The primary span is compacted in place (order-preserving memmove) so
+-    /// per-literal id-ascending order — the walk's merge contract — never
+-    /// breaks; the overflow is `retain`ed like the old per-literal `Vec`.
+-    fn remove_clause_edges(&mut self, trigger: Lit, clause_id: ClauseId) {
+-        let idx = trigger.code() as usize;
+-        if idx >= self.live.len() {
+-            return;
+-        }
+-        let start = big_span_start(&self.span_end, idx);
+-        let plen = self.live[idx] as usize;
+-        if let Some(pos) = self.edges[start..start + plen]
+-            .iter()
+-            .position(|&(_, cid)| cid == clause_id)
+-        {
+-            self.edges
+-                .copy_within(start + pos + 1..start + plen, start + pos);
+-            self.live[idx] -= 1;
+-            return;
+-        }
+-        self.extra[idx].retain(|&(_, cid)| cid != clause_id);
+-    }
+-
+-    /// Bulk dead-edge compaction (the factor pass's analogue of kissat's
+-    /// eager O(1) watch removal, amortized): drop every primary edge and
+-    /// overflow entry whose clause id is `dead[cid]`, preserving per-code
+-    /// order.  Only valid between rounds — propagation never runs on a
+-    /// tombstoned graph (the caller rebuilds before re-propagating).
+-    ///
+-    /// The read cursor walks the ORIGINAL span offsets (running sum of the
+-    /// pre-compaction `live` counts) while the write cursor trails it at
+-    /// the compacted prefix — reading at the rewritten `span_end` offsets
+-    /// instead (the bug this replaced) made every literal after the first
+-    /// dropped edge read the wrong span and silently emptied the graph
+-    /// mid-pass.
+-    pub(crate) fn compact_dead(&mut self, dead: &[bool]) {
+-        let n = self.live.len();
+-        let mut write = 0usize;
+-        let mut orig_start = 0usize;
+-        let mut new_prefix = 0u32;
+-        for code in 0..n {
+-            // Individual retirement can leave slack before the next span.
+-            // Preserve its old physical boundary before rewriting span_end.
+-            let orig_end = self.span_end[code] as usize;
+-            let plen = self.live[code] as usize;
+-            let mut kept = 0usize;
+-            for i in 0..plen {
+-                let edge = self.edges[orig_start + i];
+-                if !dead.get(edge.1.index()).copied().unwrap_or(false) {
+-                    self.edges[write] = edge;
+-                    write += 1;
+-                    kept += 1;
+-                }
+-            }
+-            orig_start = orig_end;
+-            self.live[code] = kept as u32;
+-            new_prefix += kept as u32;
+-            self.span_end[code] = new_prefix;
+-        }
+-        self.edges.truncate(write);
+-        for extra in &mut self.extra {
+-            extra.retain(|&(_, cid)| !dead.get(cid.index()).copied().unwrap_or(false));
+-        }
+-    }
+-
+-    // ---- two-phase CSR build (count, layout, fill) --------------------
+-
+-    /// Reset to an empty graph over `num_vars` variables, keeping the
+-    /// flat buffer's allocation for the fill pass to reuse.
+-    fn build_reset(&mut self, num_vars: usize) {
+-        self.resize(num_vars);
+-        self.clear();
+-    }
+-
+-    /// Counting pass: bump once per edge that the fill pass will add
+-    /// under `trigger`. `live` accumulates the counts until
+-    /// [`Self::build_layout`].
+-    #[inline]
+-    fn build_count(&mut self, trigger: Lit) {
+-        let code = trigger.code() as usize;
+-        let Some(count) = self.live[code].checked_add(1) else {
+-            panic!("binary span count overflow");
+-        };
+-        self.live[code] = count;
+-    }
+-
+-    /// Freeze the layout from the counts: exact span ends, exact-size flat
+-    /// buffer. `live` is reset to 0 and doubles as the fill cursor.
+-    fn build_layout(&mut self) {
+-        // Reject overflow before modifying any span boundary or fill cursor.
+-        let Some(total) = self
+-            .live
+-            .iter()
+-            .try_fold(0u32, |acc, &n| acc.checked_add(n))
+-        else {
+-            panic!("binary edge extent overflow");
+-        };
+-        let mut acc = 0u32;
+-        for (end, &count) in self.span_end.iter_mut().zip(self.live.iter()) {
+-            acc += count;
+-            *end = acc;
+-        }
+-        debug_assert_eq!(acc, total);
+-        self.edges.clear();
+-        self.edges
+-            .resize(acc as usize, (Lit::pos(Var::new(0)), ClauseId::new(0)));
+-        self.live.iter_mut().for_each(|l| *l = 0);
+-    }
+-
+-    /// Fill pass: write one edge at `trigger`'s cursor and advance it.
+-    /// Must interleave exactly like the counting pass did. Indexes the
+-    /// flat buffer directly: a count/fill mismatch must panic, not
+-    /// silently drop an edge (a missing BIG edge is a lost propagation).
+-    #[inline]
+-    fn build_edge(&mut self, trigger: Lit, implied: Lit, clause_id: ClauseId) {
+-        let code = trigger.code() as usize;
+-        let at = big_span_start(&self.span_end, code) + self.live[code] as usize;
+-        // Checking the whole edge pool cannot detect an overfilled span:
+-        // the next slot may belong to a different literal.
+-        assert!(
+-            at < self.span_end[code] as usize,
+-            "binary count/fill mismatch"
+-        );
+-        self.edges[at] = (implied, clause_id);
+-        self.live[code] += 1;
+-    }
+-}
++mod binary_graph;
++use binary_graph::BinaryImplicationGraph;
+ 
+ /// Result from a theory check
+ #[derive(Debug, Clone)]
+@@ -4412,14 +4079,9 @@ impl Solver {
+             while let Some(&mut (node, ref mut cursor)) = work.last_mut() {
+                 // Successor walk: BIG edges FROM this literal code.
+                 let (span_start, plen) = self.binary_graph.span_of(node);
+-                let xlen = self.binary_graph.extra_len(node);
+                 let mut advanced = false;
+-                while *cursor < plen + xlen {
+-                    let succ = if *cursor < plen {
+-                        self.binary_graph.edge_at(span_start + *cursor).0.code() as usize
+-                    } else {
+-                        self.binary_graph.extra_at(node, *cursor - plen).0.code() as usize
+-                    };
++                while *cursor < plen {
++                    let succ = self.binary_graph.edge_at(span_start + *cursor).0.code() as usize;
+                     *cursor += 1;
+                     if index[succ] == -1 {
+                         index[succ] = counter as i64;
+diff --git a/nixie-sat/src/solver/propagate.rs b/nixie-sat/src/solver/propagate.rs
+index 3fb98a71..8813d1f4 100644
+--- a/nixie-sat/src/solver/propagate.rs
++++ b/nixie-sat/src/solver/propagate.rs
+@@ -59,6 +59,9 @@ use core::sync::atomic::Ordering::Relaxed;
+ mod watch_kernel;
+ use watch_kernel::{Cursor, Step};
+ 
++#[path = "propagation_engine.rs"]
++mod propagation_engine;
++
+ impl Solver {
+     /// Unit propagation using two-watched literals
+     ///
+@@ -76,6 +79,30 @@ impl Solver {
+         #[cfg(not(feature = "bcp-stats"))]
+         let bcp_stats = false;
+         let use_kernel = self.use_watch_kernel(bcp_stats);
++        if use_kernel && self.use_complete_engine() {
++            let ticks = if self.stable {
++                &mut self.ticks_stable
++            } else {
++                &mut self.ticks_focused
++            };
++            let (watches, phantom) = self.watches.propagation();
++            let conflict = propagation_engine::propagate(
++                self.trail.propagation(),
++                &self.binary_graph,
++                &mut self.clauses,
++                watches,
++                phantom,
++                &mut self.stats.propagations,
++                ticks,
++            );
++            if conflict.is_some() {
++                self.note_conflict_prefix();
++                self.trail.requeue_last_propagated();
++            } else if !self.propagate_aborted {
++                self.no_conflict_until = self.trail.size();
++            }
++            return conflict;
++        }
+         while let Some(lit) = self.trail.next_to_propagate() {
+             self.stats.propagations += 1;
+             if bcp_stats {
+@@ -92,42 +119,22 @@ impl Solver {
+ 
+             // First, propagate binary implications (faster).
+             //
+-            // The trigger's edges live in the BIG's CSR primary span plus
+-            // its post-build overflow; both are iterated by index (one
+-            // copied edge per step) so no borrow is held across the `&mut
+-            // self` calls below. Span layout and overflow length are
+-            // snapshotted up front — nothing can move or append under
+-            // `lit` while it propagates (the single-threaded invariant the
+-            // old take/put-back version documented: the only mid-
+-            // propagation append source is hyper-binary resolution, which
+-            // keys its new edges under negations of literals *other than*
+-            // `lit`), and deletions never run inside propagation.
+-            //
+-            // Most propagated literals have no binary implications at all –
+-            // the combined-length probe (`plen + xlen == 0`) keeps the common
+-            // case down to three array loads instead of constructing the
+-            // `BigList` view through the (non-inlined, 2026-09-07 perf) `get`
+-            // call: `span_of` + `extra_len` are the same two length reads the
+-            // loop needs anyway, so the empty case pays no extra work and the
+-            // non-empty case saves the call + its post-call register restores.
++            // Indices survive pool reallocation when HBR appends under other
++            // triggers. No deletion/compaction runs inside propagation, and
++            // HBR never appends under the trigger currently being scanned.
+             let code = lit.code() as usize;
+             let (span_start, plen) = self.binary_graph.span_of(code);
+-            let xlen = self.binary_graph.extra_len(code);
+             #[cfg(feature = "bcp-regions")]
+             let region_sample = self
+                 .region_stats
+                 .as_mut()
+-                .is_some_and(|s| s.begin(plen + xlen != 0 || !self.watches.get(lit).is_empty()));
+-            if plen + xlen != 0 {
++                .is_some_and(|s| s.begin(plen != 0 || !self.watches.get(lit).is_empty()));
++            if plen != 0 {
+                 if bcp_stats {
+                     crate::diag_bcp::BIG_LISTS.fetch_add(1, Relaxed);
+                 }
+-                for i in 0..plen + xlen {
+-                    let (implied_lit, clause_id) = if i < plen {
+-                        self.binary_graph.edge_at(span_start + i)
+-                    } else {
+-                        self.binary_graph.extra_at(code, i - plen)
+-                    };
++                for i in 0..plen {
++                    let (implied_lit, clause_id) = self.binary_graph.edge_at(span_start + i);
+                     // Binary clauses are never deleted during search
+                     // (reduce_clause_database skips len<=2 clauses), so edges in
+                     // the binary implication graph are always valid. The previous
+@@ -530,6 +537,14 @@ impl Solver {
+         None
+     }
+ 
++    #[inline]
++    fn use_complete_engine(&self) -> bool {
++        self.propagate_step_limit.is_none()
++            && !self.lrat
++            && !self.config.enable_lazy_hyper_binary
++            && !Self::reason_stats_enabled()
++    }
++
+     #[inline]
+     fn use_watch_kernel(&self, bcp_stats: bool) -> bool {
+         if bcp_stats {
+diff --git a/nixie-sat/src/solver/propagation_engine.rs b/nixie-sat/src/solver/propagation_engine.rs
+new file mode 100644
+index 00000000..70c3e379
+--- /dev/null
++++ b/nixie-sat/src/solver/propagation_engine.rs
+@@ -0,0 +1,186 @@
++//! Ordinary BCP to a complete fixpoint under exclusive fixed-domain borrows.
++//! No unit yield, Solver callback, variable creation or arena relocation.
++use super::{BinaryImplicationGraph, ClauseDatabase, ClauseId, Lit, Watcher};
++use crate::memory::PropagationArena;
++#[allow(unused_imports)]
++use crate::prelude::*;
++use crate::trail::PropagationTrail;
++
++#[inline(never)]
++pub(super) fn propagate(
++    mut trail: PropagationTrail<'_>,
++    binary: &BinaryImplicationGraph,
++    clauses: &mut ClauseDatabase,
++    destinations: &mut [Vec<Watcher>],
++    phantom: &[u32],
++    propagated: &mut u64,
++    ticks: &mut u64,
++) -> Option<ClauseId> {
++    let mut arena = clauses.propagation();
++    while let Some(lit) = trail.next() {
++        *propagated += 1;
++        let code = lit.index();
++        let edges = binary.get(lit);
++        // One fixed graph slice survives every assignment in this scan.
++        for edge in edges {
++            let implied = edge.0;
++            let value = trail.value(implied);
++            if value > 0 {
++                continue;
++            }
++            let reason = edge.1;
++            if value < 0 {
++                return Some(reason);
++            }
++            // SAFETY: this graph literal is in the fixed domain and the
++            // value just tested is zero; nothing assigned it in between.
++            #[allow(unsafe_code)]
++            unsafe {
++                trail.assign_undefined(implied, reason)
++            };
++        }
++        let mut watches = core::mem::take(&mut destinations[code]);
++        let phantom = phantom.get(code).copied().unwrap_or(0) as usize;
++        let charge = 1u64 + (((watches.len() + phantom) as u64) * 8).div_ceil(128);
++        *ticks = ticks.saturating_add(charge);
++        let mut cursor = Cursor::default();
++        let conflict = cursor.scan::<false>(
++            &mut watches,
++            lit.negate(),
++            &mut trail,
++            &mut arena,
++            destinations,
++        );
++        watches.truncate(cursor.write);
++        destinations[code] = watches;
++        if conflict.is_some() {
++            return conflict;
++        }
++    }
++    None
++}
++
++#[derive(Default)]
++struct Cursor {
++    read: usize,
++    write: usize,
++}
++
++impl Cursor {
++    /// The prefix transfers to the suffix exactly once, at the first removal.
++    /// The suffix never calls either phase, so call depth is bounded by two,
++    /// independently of the input or the number of removals. Const specialization
++    /// removes the compaction-state test from every kept entry in both loops.
++    // The fixed borrows let both phases live in the fixpoint driver without
++    // a Solver callback invalidating their bases at each implied assignment.
++    #[inline(always)]
++    fn scan<const COMPACT: bool>(
++        &mut self,
++        watches: &mut [Watcher],
++        false_lit: Lit,
++        trail: &mut PropagationTrail<'_>,
++        clauses: &mut PropagationArena<'_>,
++        destinations: &mut [Vec<Watcher>],
++    ) -> Option<ClauseId> {
++        debug_assert_eq!(self.write < self.read, COMPACT);
++        let mut write = self.write;
++        for read in self.read..watches.len() {
++            let watcher = watches[read];
++            if trail.value(watcher.blocker) > 0 {
++                if COMPACT {
++                    watches[write] = watcher;
++                    write += 1;
++                }
++                continue;
++            }
++            let Some(mut live) = clauses.live_clause(watcher.r) else {
++                if COMPACT {
++                    continue;
++                }
++                self.read = read + 1;
++                self.write = read;
++                return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
++            };
++            let clause = live.lits();
++            debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
++            let first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
++            // Even satisfied exits keep the original eager normalization:
++            // subsequent inprocessing observes literal order.
++            clause[0] = first;
++            clause[1] = false_lit;
++            if trail.value(first) > 0 {
++                let kept = if COMPACT { write } else { read };
++                if COMPACT {
++                    watches[kept] = watcher;
++                    write += 1;
++                }
++                watches[kept].blocker = first;
++                continue;
++            }
++            let mut found = false;
++            for j in 2..clause.len() {
++                let literal = clause[j];
++                let value = trail.value(literal);
++                if value > 0 {
++                    let kept = if COMPACT { write } else { read };
++                    if COMPACT {
++                        watches[kept] = watcher;
++                        write += 1;
++                    }
++                    watches[kept].blocker = literal;
++                    found = true;
++                    break;
++                }
++                if value == 0 {
++                    clause.swap(1, j);
++                    destinations[clause[1].negate().index()].push(Watcher {
++                        blocker: first,
++                        ..watcher
++                    });
++                    if !COMPACT {
++                        self.read = read + 1;
++                        self.write = read;
++                        return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
++                    }
++                    found = true;
++                    break;
++                }
++            }
++            if found {
++                continue;
++            }
++            let kept = if COMPACT { write } else { read };
++            if COMPACT {
++                watches[kept] = watcher;
++            }
++            watches[kept].blocker = first;
++            let next_write = kept + 1;
++            if trail.value(first) < 0 {
++                // Preserve the unvisited tail without examining its blockers.
++                // In the prefix it is already in its final position.
++                if COMPACT {
++                    watches.copy_within(read + 1.., next_write);
++                }
++                self.read = watches.len();
++                self.write = next_write + watches.len() - read - 1;
++                return Some(live.reason());
++            }
++            // Units stay inside the scanner. Fixed value and reason arrays
++            // survive assignment-queue and destination-buffer growth.
++            let reason = live.reason();
++            // SAFETY: first is a valid clause literal. Its positive exit was
++            // handled before the tail scan and its negative exit just above;
++            // no assignment occurred in between, so it is still undefined.
++            #[allow(unsafe_code)]
++            unsafe {
++                trail.assign_undefined(first, reason)
++            };
++            if COMPACT {
++                write = next_write;
++            }
++        }
++        self.read = watches.len();
++        self.write = if COMPACT { write } else { watches.len() };
++        None
++    }
++}
+diff --git a/nixie-sat/src/solver/tests.rs b/nixie-sat/src/solver/tests.rs
+index 1ed079b6..ef617db0 100644
+--- a/nixie-sat/src/solver/tests.rs
++++ b/nixie-sat/src/solver/tests.rs
+@@ -2251,7 +2251,7 @@ fn binary_graph_matches_vec_semantics() {
+         // overflow) equals the reference list in content AND order.
+         for (code, reference) in model.iter().enumerate() {
+             let lit = Lit::from_code(code as u32);
+-            let got: Vec<(Lit, ClauseId)> = big.get(lit).iter().copied().collect();
++            let got: Vec<(Lit, ClauseId)> = big.get(lit).to_vec();
+             assert_eq!(
+                 got, *reference,
+                 "round {round}: BIG view diverged at code {code}"
+@@ -2312,8 +2312,8 @@ fn deferred_big_materializes_incremental_attach() {
+         b.finish_deferred_big();
+         for code in 0..vars * 2 {
+             let lit = Lit::from_code(code as u32);
+-            let va: Vec<(Lit, ClauseId)> = a.binary_graph.get(lit).iter().copied().collect();
+-            let vb: Vec<(Lit, ClauseId)> = b.binary_graph.get(lit).iter().copied().collect();
++            let va: Vec<(Lit, ClauseId)> = a.binary_graph.get(lit).to_vec();
++            let vb: Vec<(Lit, ClauseId)> = b.binary_graph.get(lit).to_vec();
+             assert_eq!(
+                 va, vb,
+                 "deferred materialization diverged from incremental attach at code {code}"
+@@ -2626,18 +2626,28 @@ fn big_compaction_after_individual_retirement_preserves_later_spans() {
+ #[test]
+ fn big_count_overflow_does_not_mutate_layout() {
+     let mut graph = BinaryImplicationGraph::new(1);
+-    graph.live[0] = u32::MAX;
++    graph.spans[0].len = u32::MAX;
+     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+         graph.build_count(Lit::from_code(0));
+     }));
+     assert!(result.is_err());
+-    assert_eq!(graph.live, [u32::MAX, 0]);
+-    graph.live[1] = 1;
+-    graph.span_end = vec![7, 11];
++    assert_eq!(
++        graph.spans.iter().map(|s| s.len).collect::<Vec<_>>(),
++        [u32::MAX, 0]
++    );
++    graph.spans[1].len = 1;
++    graph.spans[0].start = 7;
++    graph.spans[1].start = 11;
+     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| graph.build_layout()));
+     assert!(result.is_err());
+-    assert_eq!(graph.live, [u32::MAX, 1]);
+-    assert_eq!(graph.span_end, [7, 11]);
++    assert_eq!(
++        graph.spans.iter().map(|s| s.len).collect::<Vec<_>>(),
++        [u32::MAX, 1]
++    );
++    assert_eq!(
++        graph.spans.iter().map(|s| s.start).collect::<Vec<_>>(),
++        [7, 11]
++    );
+     assert!(graph.edges.is_empty());
+ }
+ 
+diff --git a/nixie-sat/src/solver/watch_kernel_tests.rs b/nixie-sat/src/solver/watch_kernel_tests.rs
+index 81b45772..673e6f7b 100644
+--- a/nixie-sat/src/solver/watch_kernel_tests.rs
++++ b/nixie-sat/src/solver/watch_kernel_tests.rs
+@@ -291,6 +291,145 @@ fn assert_state(a: &Solver, b: &Solver) {
+     assert_eq!(a.trivially_unsat, b.trivially_unsat);
+ }
+ 
++#[test]
++fn complete_engine_gates_mutating_and_bounded_modes() {
++    let mut s = Solver::new();
++    assert!(s.use_complete_engine());
++    s.propagate_step_limit = Some(0);
++    assert!(!s.use_complete_engine());
++    s.propagate_step_limit = None;
++    s.config.enable_lazy_hyper_binary = true;
++    assert!(!s.use_complete_engine());
++    s.config.enable_lazy_hyper_binary = false;
++    let _proof = s.enable_lrat_transcript();
++    assert!(!s.use_complete_engine());
++}
++
++#[test]
++fn fixed_queue_binary_span_conflict_preserves_unvisited_overflow() {
++    for primary_conflict in [false, true] {
++        let mut a = Solver::new();
++        let mut b = Solver::new();
++        b.propagate_legacy_oracle = true;
++        let [trigger, bad, before, after] = std::array::from_fn(|i| Lit::from_code(2 * i as u32));
++        for s in [&mut a, &mut b] {
++            s.ensure_vars(4);
++            let main = if primary_conflict { bad } else { before };
++            let id = s.clauses.add_original([!trigger, main]);
++            s.attach_watchers(id, !trigger, main);
++            s.rebuild_watches_and_binary_graph();
++            let extra = if primary_conflict { after } else { bad };
++            for implied in [extra, after] {
++                let id = s.clauses.add_original([!trigger, implied]);
++                s.attach_watchers(id, !trigger, implied);
++            }
++            s.trail.new_decision_level();
++            s.trail.assign_decision(!bad);
++            while s.trail.next_to_propagate().is_some() {}
++            s.trail.assign_decision(trigger);
++        }
++        assert!(a.propagate().is_some());
++        assert!(b.propagate().is_some());
++        assert_state(&a, &b);
++        assert_eq!(a.trail.lit_val(after), 0);
++        assert_eq!(a.trail.lit_val(before), i8::from(!primary_conflict));
++        assert_eq!(a.trail.propagation_head(), 1, "trigger requeued");
++        assert_eq!(a.stats.propagations, 1);
++    }
++}
++
++fn complete_engine_owner_pair() -> (Solver, Solver) {
++    let mut a = Solver::new();
++    let mut b = Solver::new();
++    b.propagate_legacy_oracle = true;
++    for s in [&mut a, &mut b] {
++        s.ensure_vars(40);
++        for i in 1..39 {
++            let from = Lit::from_code(2 * i);
++            let to = Lit::from_code(2 * (i + 1));
++            let mut lits = vec![!from, to];
++            if i % 2 == 0 {
++                lits.push(Lit::from_code(1));
++            }
++            let id = s.clauses.add_original(lits.clone());
++            s.attach_watchers(id, lits[0], lits[1]);
++        }
++        // Freeze the primary binary spans before moving the owner.
++        s.rebuild_watches_and_binary_graph();
++    }
++    (a, b)
++}
++
++fn exercise_complete_engine_owner_pair((mut a, mut b): (Solver, Solver)) {
++    for s in [&mut a, &mut b] {
++        // Resize after the move, retaining primary edges. New binaries land
++        // in overflow; the long clauses exercise destination-buffer growth.
++        s.ensure_vars(80);
++        for i in 39..79 {
++            let from = Lit::from_code(2 * i);
++            let to = Lit::from_code(2 * (i + 1));
++            let mut lits = vec![!from, to];
++            if i % 2 == 0 {
++                lits.push(Lit::from_code(1));
++            }
++            let id = s.clauses.add_original(lits.clone());
++            s.attach_watchers(id, lits[0], lits[1]);
++        }
++        // Leave one deleted slot for the arena compactor to relocate.
++        let id = s
++            .clauses
++            .add_original([Lit::from_code(4), Lit::from_code(6), Lit::from_code(8)]);
++        s.attach_watchers(id, Lit::from_code(4), Lit::from_code(6));
++        s.clauses.mark_deleted_raw(id);
++        assert!(s.clauses.compact_arena_forced(&mut s.watches));
++    }
++    for stable in [false, true] {
++        for s in [&mut a, &mut b] {
++            s.stable = stable;
++            s.trail.new_decision_level();
++            s.trail.assign_decision(Lit::from_code(0));
++            s.trail.assign_decision(Lit::from_code(2));
++        }
++        assert_eq!(a.propagate(), None);
++        assert_eq!(b.propagate(), None);
++        assert_eq!(a.trail.size(), 80);
++        assert_state(&a, &b);
++        for s in [&mut a, &mut b] {
++            s.trail.backtrack_to(0);
++            s.trail.new_decision_level();
++            s.trail.assign_decision(Lit::from_code(0));
++            s.trail.assign_decision(Lit::from_code(159));
++            s.trail.assign_decision(Lit::from_code(2));
++        }
++        assert!(a.propagate().is_some());
++        assert!(b.propagate().is_some());
++        assert_state(&a, &b);
++        a.trail.backtrack_to(0);
++        b.trail.backtrack_to(0);
++    }
++}
++
++#[test]
++fn complete_engine_moved_owner_growth_compaction_and_requeue() {
++    exercise_complete_engine_owner_pair(complete_engine_owner_pair());
++}
++
++#[cfg(feature = "std")]
++#[test]
++fn complete_engine_prebuilt_owners_move_to_rayon() {
++    use rayon::prelude::*;
++    let pairs: Vec<_> = (0..8).map(|_| complete_engine_owner_pair()).collect();
++    let pool = rayon::ThreadPoolBuilder::new()
++        .num_threads(2)
++        .build()
++        .expect("pool");
++    pool.install(|| {
++        pairs
++            .into_par_iter()
++            .for_each(exercise_complete_engine_owner_pair)
++    });
++}
++
+ fn pair(
+     nvars: usize,
+     clauses: &[Vec<i32>],
+diff --git a/nixie-sat/src/trail.rs b/nixie-sat/src/trail.rs
+index 760ee917..345da3ad 100644
+--- a/nixie-sat/src/trail.rs
++++ b/nixie-sat/src/trail.rs
+@@ -62,7 +62,124 @@ pub struct Trail {
+     prop_head: usize,
+ }
+ 
++/// Exclusive, fixed-domain trail borrow for an ordinary BCP fixpoint.
++/// The queue is reserved before borrowing; only local initialized-length and
++/// head cursors change during the pass. Ending the view publishes both cursors.
++/// Creating variables, changing levels and backtracking require ending this
++/// borrow first. No pointer is shared with another solver or worker.
++pub(crate) struct PropagationTrail<'a> {
++    assignments: &'a mut Vec<Lit>,
++    queue: *mut Lit,
++    initialized: usize,
++    head: usize,
++    values: &'a mut [i8],
++    var_info: &'a mut [VarInfo],
++    prop_head: &'a mut usize,
++    level: u32,
++}
++
++impl PropagationTrail<'_> {
++    #[allow(unsafe_code)]
++    #[inline]
++    pub(crate) fn next(&mut self) -> Option<Lit> {
++        if self.head >= self.initialized {
++            return None;
++        }
++        // SAFETY: the original prefix and every appended entry below
++        // initialized contain a Lit. The exclusive queue borrow prevents
++        // reallocation or element references while this pointer is used.
++        let lit = unsafe { self.queue.add(self.head).read() };
++        self.head += 1;
++        Some(lit)
++    }
++
++    /// Same solver-literal domain contract as `Trail::lit_val_hot`. Unlike
++    /// the general trail, this view cannot grow or replace the value array.
++    #[allow(unsafe_code)]
++    #[inline]
++    pub(crate) fn value(&self, lit: Lit) -> i8 {
++        debug_assert!(lit.index() < self.values.len());
++        // SAFETY: Solver sizes the values for every variable before attaching
++        // a watch/edge or assigning it. This borrow prevents domain changes.
++        unsafe { *self.values.get_unchecked(lit.index()) }
++    }
++
++    /// Append an ordinary propagation without queue growth or publication.
++    ///
++    /// # Safety
++    /// `lit` must be in the borrowed variable domain and currently undefined.
++    /// No backtrack/unassignment is possible through this view, so each such
++    /// assignment consumes a different variable and there are at most domain
++    /// size appends. Entry reserved that many slots beyond the original length.
++    #[allow(unsafe_code)]
++    #[inline]
++    pub(crate) unsafe fn assign_undefined(&mut self, lit: Lit, reason: ClauseId) {
++        let code = lit.index();
++        let idx = lit.var().index();
++        debug_assert!(idx < self.var_info.len());
++        debug_assert!(code < self.values.len() && (code ^ 1) < self.values.len());
++        debug_assert_eq!(self.values[code], 0);
++        debug_assert!(self.initialized < self.assignments.capacity());
++        // SAFETY: the caller supplies an in-domain literal. Both signs of
++        // every variable are allocated together; this exclusive view cannot
++        // resize either array. These are disjoint byte stores and a metadata
++        // store into the valid variable slot, without live element aliases.
++        unsafe {
++            *self.values.get_unchecked_mut(code) = 1;
++            *self.values.get_unchecked_mut(code ^ 1) = -1;
++            *self.var_info.get_unchecked_mut(idx) = VarInfo {
++                value: if lit.is_pos() {
++                    LBool::True
++                } else {
++                    LBool::False
++                },
++                level: self.level,
++                reason: Reason::Propagation(reason),
++                trail_idx: self.initialized as u32,
++            };
++        }
++        // SAFETY: the undefined-variable contract bounds total appends by
++        // the additional domain-sized reservation. This slot is in the fixed
++        // allocation and no element reference aliases it. Publish locally
++        // only after its initialized Lit has been written.
++        unsafe { self.queue.add(self.initialized).write(lit) };
++        self.initialized += 1;
++    }
++}
++
++impl Drop for PropagationTrail<'_> {
++    #[allow(unsafe_code)]
++    #[inline]
++    fn drop(&mut self) {
++        // SAFETY: every entry below initialized is initialized, within the
++        // reserved allocation. No raw queue access occurs after this commit.
++        // Lit is Copy and has no destructor; unwinding cannot expose the
++        // uninitialized capacity beyond this prefix.
++        unsafe { self.assignments.set_len(self.initialized) };
++        *self.prop_head = self.head;
++    }
++}
++
+ impl Trail {
++    pub(crate) fn propagation(&mut self) -> PropagationTrail<'_> {
++        // General Trail APIs can contain repeated entries. Reserving merely
++        // num_vars total would assume uniqueness of the existing prefix.
++        // Ordinary BCP can add at most num_vars *new* entries regardless.
++        self.assignments.reserve(self.var_info.len());
++        let initialized = self.assignments.len();
++        let queue = self.assignments.as_mut_ptr();
++        PropagationTrail {
++            assignments: &mut self.assignments,
++            queue,
++            initialized,
++            head: self.prop_head,
++            values: &mut self.values,
++            var_info: &mut self.var_info,
++            prop_head: &mut self.prop_head,
++            level: self.current_level,
++        }
++    }
++
+     /// Create a new trail for n variables
+     #[must_use]
+     pub fn new(num_vars: usize) -> Self {
+@@ -548,6 +665,86 @@ impl Trail {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    #[allow(unsafe_code)]
++    fn fixed_queue_empty_duplicate_prefix_and_reborrow() {
++        for n in [0, 1, 5, 65] {
++            let mut trail = Trail::new(0);
++            let mut scalar = Trail::new(0);
++            for t in [&mut trail, &mut scalar] {
++                t.resize(n);
++                if n > 0 {
++                    // Existing callers can repeat an assigned variable; the
++                    // reservation must count this whole initialized prefix.
++                    for _ in 0..3 {
++                        t.assign_unit_fact(Lit::pos(Var::new(0)));
++                    }
++                }
++                t.new_decision_level();
++            }
++            for _ in 0..2 {
++                {
++                    let mut q = trail.propagation();
++                    for i in 1..n {
++                        let lit = Lit::from_code((2 * i + i % 2) as u32);
++                        let reason = ClauseId::new(i as u32);
++                        assert_eq!(q.value(lit), 0);
++                        // SAFETY: this is the first assignment of a valid
++                        // variable in this view, and its value is undefined.
++                        unsafe { q.assign_undefined(lit, reason) };
++                        scalar.assign_propagation(lit, reason);
++                        assert_eq!(q.next(), scalar.next_to_propagate());
++                    }
++                    while let Some(lit) = q.next() {
++                        assert_eq!(Some(lit), scalar.next_to_propagate());
++                    }
++                    assert_eq!(scalar.next_to_propagate(), None);
++                    assert_eq!(q.next(), None);
++                }
++                assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++                if n > 0 {
++                    assert_eq!(trail.size(), n + 2);
++                    assert!(trail.size() > n, "duplicate prefix was preserved");
++                }
++                for t in [&mut trail, &mut scalar] {
++                    t.backtrack_to(0);
++                    t.reset_propagation_head();
++                    t.resize(n + 1);
++                    t.new_decision_level();
++                }
++            }
++        }
++    }
++
++    #[cfg(feature = "std")]
++    #[test]
++    #[allow(unsafe_code)]
++    fn fixed_queue_unwind_publishes_only_initialized_entries() {
++        let mut trail = Trail::new(0);
++        let mut scalar = Trail::new(0);
++        let first = Lit::pos(Var::new(0));
++        let implied = Lit::neg(Var::new(1));
++        let reason = ClauseId::new(7);
++        for t in [&mut trail, &mut scalar] {
++            t.resize(4);
++            t.new_decision_level();
++            t.assign_decision(first);
++        }
++        scalar.assign_propagation(implied, reason);
++        assert_eq!(scalar.next_to_propagate(), Some(first));
++        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            let mut q = trail.propagation();
++            // SAFETY: implied is within the fixed domain and undefined.
++            unsafe { q.assign_undefined(implied, reason) };
++            assert_eq!(q.next(), Some(first));
++            panic!("exercise queue publication during unwind");
++        }));
++        assert!(result.is_err());
++        assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++        assert_eq!(trail.next_to_propagate(), Some(implied));
++        assert_eq!(trail.next_to_propagate(), None);
++    }
++
+     #[test]
+     fn test_trail_basic() {
+         let mut trail = Trail::new(5);
+diff --git a/nixie-sat/src/watched.rs b/nixie-sat/src/watched.rs
+index 5bba90d1..b567c21c 100644
+--- a/nixie-sat/src/watched.rs
++++ b/nixie-sat/src/watched.rs
+@@ -119,6 +119,12 @@ pub struct WatchSnapshot {
+ }
+ 
+ impl WatchLists {
++    /// Fixed directory for a propagation pass. Destination buffers can grow,
++    /// but the caller cannot create a new literal through this borrow.
++    pub(crate) fn propagation(&mut self) -> (&mut [Vec<Watcher>], &[u32]) {
++        (&mut self.watches, &self.bin_phantom)
++    }
++
+     /// Create new watch lists for n variables
+     #[must_use]
+     pub fn new(num_vars: usize) -> Self {

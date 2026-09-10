@@ -1,0 +1,1246 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="398" onload="init(evt)" viewBox="0 0 1200 398" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES: Record acf2c30643da66db. CPU 15, 14449 samples, 100% read coverage, zero lost or throttled records. Caller truncation is labeled. Sampled IP attribution is subject to skid; diagnostic elapsed time is not cost evidence. -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="398.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Contiguous binary spans: j3037</text>
+<text id="subtitle" x="600.00" y="48" >71001128; one diagnostic capture; sampled-prefix cycles only</text>
+<text id="details" x="10.00" y="381" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="381" > </text>
+<g id="frames">
+<g >
+<title>_int_malloc (20,945,806 sampled-prefix cycles, 0.01%)</title><rect x="1171.0" y="109" width="0.1" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="1173.97" y="119.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (62,837,915 sampled-prefix cycles, 0.04%)</title><rect x="238.1" y="125" width="0.5" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="241.10" y="135.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (20,945,740 sampled-prefix cycles, 0.01%)</title><rect x="312.5" y="141" width="0.2" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="315.49" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::bump_batch (2,021,279,631 sampled-prefix cycles, 1.34%)</title><rect x="1173.0" y="205" width="15.8" height="15.0" fill="rgb(242,199,41)" rx="2" ry="2" />
+<text  x="1176.01" y="215.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (104,730,906 sampled-prefix cycles, 0.07%)</title><rect x="253.5" y="173" width="0.8" height="15.0" fill="rgb(246,123,45)" rx="2" ry="2" />
+<text  x="256.53" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::lrb::LRB::unassign (31,418,416 sampled-prefix cycles, 0.02%)</title><rect x="265.9" y="141" width="0.2" height="15.0" fill="rgb(244,199,43)" rx="2" ry="2" />
+<text  x="268.86" y="151.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,946,905 sampled-prefix cycles, 0.01%)</title><rect x="229.7" y="109" width="0.1" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="232.68" y="119.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (52,365,978 sampled-prefix cycles, 0.03%)</title><rect x="228.9" y="173" width="0.5" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="231.95" y="183.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (2,115,532,510 sampled-prefix cycles, 1.40%)</title><rect x="200.7" y="189" width="16.5" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="203.69" y="199.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (31,418,655 sampled-prefix cycles, 0.02%)</title><rect x="120.8" y="189" width="0.3" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="123.82" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack (377,025,800 sampled-prefix cycles, 0.25%)</title><rect x="217.4" y="189" width="3.0" height="15.0" fill="rgb(242,199,40)" rx="2" ry="2" />
+<text  x="220.43" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::watch_kernel::Cursor::scan (1,560,463,251 sampled-prefix cycles, 1.03%)</title><rect x="358.0" y="173" width="12.1" height="15.0" fill="rgb(243,199,41)" rx="2" ry="2" />
+<text  x="360.98" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::equiv::&lt;impl nixie_sat::solver::Solver&gt;::rebuild_watches_and_binary_graph (534,120,180 sampled-prefix cycles, 0.35%)</title><rect x="234.7" y="173" width="4.2" height="15.0" fill="rgb(245,199,44)" rx="2" ry="2" />
+<text  x="237.75" y="183.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (20,946,174 sampled-prefix cycles, 0.01%)</title><rect x="262.1" y="157" width="0.2" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="265.11" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::mark_elim_one (20,946,053 sampled-prefix cycles, 0.01%)</title><rect x="250.3" y="189" width="0.2" height="15.0" fill="rgb(251,199,50)" rx="2" ry="2" />
+<text  x="253.35" y="199.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (31,419,018 sampled-prefix cycles, 0.02%)</title><rect x="237.7" y="141" width="0.2" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="240.69" y="151.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (52,364,342 sampled-prefix cycles, 0.03%)</title><rect x="73.6" y="157" width="0.4" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="76.62" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::lrb::LRB::unassign (52,364,668 sampled-prefix cycles, 0.03%)</title><rect x="220.0" y="173" width="0.4" height="15.0" fill="rgb(244,199,43)" rx="2" ry="2" />
+<text  x="222.97" y="183.5" ></text>
+</g>
+<g >
+<title>all (151,322,975,896 sampled-prefix cycles, 100%)</title><rect x="10.0" y="349" width="1180.0" height="15.0" fill="rgb(255,230,55)" rx="2" ry="2" />
+<text  x="13.00" y="359.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,946,174 sampled-prefix cycles, 0.01%)</title><rect x="262.1" y="125" width="0.2" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="265.11" y="135.5" ></text>
+</g>
+<g >
+<title>[unknown] (20,945,687 sampled-prefix cycles, 0.01%)</title><rect x="78.8" y="173" width="0.2" height="15.0" fill="rgb(242,180,40)" rx="2" ry="2" />
+<text  x="81.85" y="183.5" ></text>
+</g>
+<g >
+<title>malloc (31,418,690 sampled-prefix cycles, 0.02%)</title><rect x="258.3" y="125" width="0.2" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="261.27" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (178,038,783 sampled-prefix cycles, 0.12%)</title><rect x="76.9" y="141" width="1.4" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="79.89" y="151.5" ></text>
+</g>
+<g >
+<title>__ieee754_log_fma (41,891,322 sampled-prefix cycles, 0.03%)</title><rect x="200.1" y="173" width="0.3" height="15.0" fill="rgb(227,125,24)" rx="2" ry="2" />
+<text  x="203.12" y="183.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,946,078 sampled-prefix cycles, 0.01%)</title><rect x="237.5" y="125" width="0.2" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="240.52" y="135.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (41,892,824 sampled-prefix cycles, 0.03%)</title><rect x="69.9" y="173" width="0.3" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="72.86" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (31,419,119 sampled-prefix cycles, 0.02%)</title><rect x="219.7" y="109" width="0.3" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="222.72" y="119.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (20,946,580 sampled-prefix cycles, 0.01%)</title><rect x="260.2" y="93" width="0.2" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="263.23" y="103.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (146,621,047 sampled-prefix cycles, 0.10%)</title><rect x="1188.8" y="205" width="1.1" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="1191.78" y="215.5" ></text>
+</g>
+<g >
+<title>__log10_finite@GLIBC_2.15 (41,891,322 sampled-prefix cycles, 0.03%)</title><rect x="200.1" y="189" width="0.3" height="15.0" fill="rgb(237,154,35)" rx="2" ry="2" />
+<text  x="203.12" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (157,093,452 sampled-prefix cycles, 0.10%)</title><rect x="262.4" y="141" width="1.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="265.43" y="151.5" ></text>
+</g>
+<g >
+<title>std::env::_var (303,713,741 sampled-prefix cycles, 0.20%)</title><rect x="373.3" y="189" width="2.4" height="15.0" fill="rgb(231,146,28)" rx="2" ry="2" />
+<text  x="376.33" y="199.5" ></text>
+</g>
+<g >
+<title>_int_malloc (52,365,014 sampled-prefix cycles, 0.03%)</title><rect x="238.2" y="109" width="0.4" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="241.18" y="119.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (167,569,071 sampled-prefix cycles, 0.11%)</title><rect x="218.7" y="173" width="1.3" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="221.66" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_opts (125,675,438 sampled-prefix cycles, 0.08%)</title><rect x="338.8" y="141" width="1.0" height="15.0" fill="rgb(236,199,35)" rx="2" ry="2" />
+<text  x="341.79" y="151.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (20,945,740 sampled-prefix cycles, 0.01%)</title><rect x="312.5" y="157" width="0.2" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="315.49" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::subsume::&lt;impl nixie_sat::solver::Solver&gt;::subsume_round (1,466,204,433 sampled-prefix cycles, 0.97%)</title><rect x="238.9" y="173" width="11.4" height="15.0" fill="rgb(248,199,48)" rx="2" ry="2" />
+<text  x="241.91" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (41,891,702 sampled-prefix cycles, 0.03%)</title><rect x="1170.8" y="141" width="0.3" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="1173.81" y="151.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (20,945,858 sampled-prefix cycles, 0.01%)</title><rect x="253.4" y="157" width="0.1" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="256.37" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (73,310,455 sampled-prefix cycles, 0.05%)</title><rect x="1170.6" y="173" width="0.5" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="1173.56" y="183.5" ></text>
+</g>
+<g >
+<title>Captured caller chain (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="333" width="1180.0" height="15.0" fill="rgb(247,115,46)" rx="2" ry="2" />
+<text  x="13.00" y="343.5" >Captured caller chain</text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::minimize_literal_plain (3,037,145,066 sampled-prefix cycles, 2.01%)</title><rect x="126.2" y="189" width="23.7" height="15.0" fill="rgb(247,199,46)" rx="2" ry="2" />
+<text  x="129.21" y="199.5" >n..</text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (638,846,889 sampled-prefix cycles, 0.42%)</title><rect x="121.2" y="189" width="5.0" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="124.23" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::retire_clause (31,419,062 sampled-prefix cycles, 0.02%)</title><rect x="229.4" y="173" width="0.3" height="15.0" fill="rgb(241,199,40)" rx="2" ry="2" />
+<text  x="232.44" y="183.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (31,419,088 sampled-prefix cycles, 0.02%)</title><rect x="237.2" y="157" width="0.2" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="240.20" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (73,310,542 sampled-prefix cycles, 0.05%)</title><rect x="263.1" y="93" width="0.6" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="266.09" y="103.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::AnalysisMark::mark_antecedent (1,424,315,193 sampled-prefix cycles, 0.94%)</title><rect x="150.6" y="205" width="11.1" height="15.0" fill="rgb(241,199,39)" rx="2" ry="2" />
+<text  x="153.63" y="215.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (20,945,857 sampled-prefix cycles, 0.01%)</title><rect x="67.1" y="205" width="0.1" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="70.09" y="215.5" ></text>
+</g>
+<g >
+<title>_int_realloc (62,838,540 sampled-prefix cycles, 0.04%)</title><rect x="161.2" y="141" width="0.5" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="164.25" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::mark_subsume_lit (20,945,559 sampled-prefix cycles, 0.01%)</title><rect x="338.6" y="141" width="0.2" height="15.0" fill="rgb(237,199,36)" rx="2" ry="2" />
+<text  x="341.63" y="151.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (41,891,009 sampled-prefix cycles, 0.03%)</title><rect x="78.5" y="173" width="0.3" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="81.52" y="183.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (31,417,805 sampled-prefix cycles, 0.02%)</title><rect x="261.9" y="157" width="0.2" height="15.0" fill="rgb(251,201,51)" rx="2" ry="2" />
+<text  x="264.86" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (418,919,477 sampled-prefix cycles, 0.28%)</title><rect x="257.8" y="141" width="3.2" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="260.78" y="151.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (52,363,925 sampled-prefix cycles, 0.03%)</title><rect x="78.4" y="189" width="0.4" height="15.0" fill="rgb(251,201,51)" rx="2" ry="2" />
+<text  x="81.44" y="199.5" ></text>
+</g>
+<g >
+<title>realloc (73,312,534 sampled-prefix cycles, 0.05%)</title><rect x="219.4" y="141" width="0.6" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="222.39" y="151.5" ></text>
+</g>
+<g >
+<title>[unknown] (20,945,687 sampled-prefix cycles, 0.01%)</title><rect x="78.8" y="189" width="0.2" height="15.0" fill="rgb(242,180,40)" rx="2" ry="2" />
+<text  x="81.85" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::propagation_engine::propagate (101,901,275,086 sampled-prefix cycles, 67.34%)</title><rect x="376.5" y="189" width="794.6" height="15.0" fill="rgb(245,199,45)" rx="2" ry="2" />
+<text  x="379.52" y="199.5" >nixie_sat::solver::propagate::propagation_engine::propagate</text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (1,005,398,220 sampled-prefix cycles, 0.66%)</title><rect x="70.4" y="173" width="7.9" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="73.43" y="183.5" ></text>
+</g>
+<g >
+<title>std::sys::backtrace::__rust_begin_short_backtrace (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="253" width="1180.0" height="15.0" fill="rgb(252,146,52)" rx="2" ry="2" />
+<text  x="13.00" y="263.5" >std::sys::backtrace::__rust_begin_short_backtrace</text>
+</g>
+<g >
+<title>_int_realloc (41,891,620 sampled-prefix cycles, 0.03%)</title><rect x="238.6" y="109" width="0.3" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="241.59" y="119.5" ></text>
+</g>
+<g >
+<title>_int_free_maybe_consolidate.part.0 (20,946,174 sampled-prefix cycles, 0.01%)</title><rect x="262.1" y="141" width="0.2" height="15.0" fill="rgb(233,153,31)" rx="2" ry="2" />
+<text  x="265.11" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_resolve_clauses (387,493,919 sampled-prefix cycles, 0.26%)</title><rect x="231.3" y="173" width="3.0" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="234.32" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (83,783,890 sampled-prefix cycles, 0.06%)</title><rect x="260.4" y="93" width="0.6" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="263.39" y="103.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (41,892,094 sampled-prefix cycles, 0.03%)</title><rect x="257.9" y="125" width="0.4" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="260.94" y="135.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (31,417,805 sampled-prefix cycles, 0.02%)</title><rect x="261.9" y="141" width="0.2" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="264.86" y="151.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (52,365,713 sampled-prefix cycles, 0.03%)</title><rect x="218.9" y="141" width="0.4" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="221.90" y="151.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (41,893,124 sampled-prefix cycles, 0.03%)</title><rect x="229.0" y="157" width="0.4" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="232.03" y="167.5" ></text>
+</g>
+<g >
+<title>malloc (20,945,701 sampled-prefix cycles, 0.01%)</title><rect x="150.0" y="157" width="0.1" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="152.98" y="167.5" ></text>
+</g>
+<g >
+<title>main (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="269" width="1180.0" height="15.0" fill="rgb(247,83,46)" rx="2" ry="2" />
+<text  x="13.00" y="279.5" >main</text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack_with_phase_saving (418,915,389 sampled-prefix cycles, 0.28%)</title><rect x="220.4" y="189" width="3.2" height="15.0" fill="rgb(243,199,42)" rx="2" ry="2" />
+<text  x="223.37" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::trail::Trail::assign (41,891,642 sampled-prefix cycles, 0.03%)</title><rect x="370.1" y="173" width="0.4" height="15.0" fill="rgb(244,199,43)" rx="2" ry="2" />
+<text  x="373.15" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_add_resolvents (52,365,749 sampled-prefix cycles, 0.03%)</title><rect x="229.7" y="173" width="0.4" height="15.0" fill="rgb(238,199,36)" rx="2" ry="2" />
+<text  x="232.68" y="183.5" ></text>
+</g>
+<g >
+<title>__libc_start_main@@GLIBC_2.34 (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="301" width="1180.0" height="15.0" fill="rgb(236,154,35)" rx="2" ry="2" />
+<text  x="13.00" y="311.5" >__libc_start_main@@GLIBC_2.34</text>
+</g>
+<g >
+<title>_int_malloc (20,945,897 sampled-prefix cycles, 0.01%)</title><rect x="238.7" y="93" width="0.2" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="241.75" y="103.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::mark_subsume_lit (157,095,507 sampled-prefix cycles, 0.10%)</title><rect x="79.3" y="205" width="1.2" height="15.0" fill="rgb(237,199,36)" rx="2" ry="2" />
+<text  x="82.25" y="215.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,945,723 sampled-prefix cycles, 0.01%)</title><rect x="1189.5" y="157" width="0.2" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="1192.51" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (41,891,554 sampled-prefix cycles, 0.03%)</title><rect x="77.9" y="125" width="0.4" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="80.95" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (1,319,584,584 sampled-prefix cycles, 0.87%)</title><rect x="68.0" y="189" width="10.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="70.98" y="199.5" ></text>
+</g>
+<g >
+<title>_int_malloc (62,836,921 sampled-prefix cycles, 0.04%)</title><rect x="199.6" y="173" width="0.5" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="202.63" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::sift_up (1,602,361,507 sampled-prefix cycles, 1.06%)</title><rect x="1176.3" y="189" width="12.5" height="15.0" fill="rgb(236,199,34)" rx="2" ry="2" />
+<text  x="1179.28" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::drift::sort (52,364,443 sampled-prefix cycles, 0.03%)</title><rect x="67.6" y="189" width="0.4" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="70.58" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (146,621,061 sampled-prefix cycles, 0.10%)</title><rect x="262.5" y="125" width="1.2" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="265.51" y="135.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (41,891,498 sampled-prefix cycles, 0.03%)</title><rect x="149.9" y="173" width="0.3" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="152.90" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,945,740 sampled-prefix cycles, 0.01%)</title><rect x="312.5" y="125" width="0.2" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="315.49" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_retire_pivot_clauses (31,419,119 sampled-prefix cycles, 0.02%)</title><rect x="234.3" y="173" width="0.3" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="237.34" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (324,662,887 sampled-prefix cycles, 0.21%)</title><rect x="258.5" y="125" width="2.5" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="261.51" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::shrink_and_minimize_clause (8,985,756,068 sampled-prefix cycles, 5.94%)</title><rect x="80.6" y="205" width="70.0" height="15.0" fill="rgb(241,199,40)" rx="2" ry="2" />
+<text  x="83.56" y="215.5" >nixie_s..</text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (41,891,591 sampled-prefix cycles, 0.03%)</title><rect x="344.3" y="109" width="0.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="347.26" y="119.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (356,078,514 sampled-prefix cycles, 0.24%)</title><rect x="123.4" y="173" width="2.8" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="126.44" y="183.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (94,256,339 sampled-prefix cycles, 0.06%)</title><rect x="262.9" y="109" width="0.8" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="265.92" y="119.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (20,945,782 sampled-prefix cycles, 0.01%)</title><rect x="64.8" y="205" width="0.2" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="67.80" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::handle_clause_deletion_and_restart (24,244,771,977 sampled-prefix cycles, 16.02%)</title><rect x="186.6" y="205" width="189.1" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="189.65" y="215.5" >nixie_sat::solver::learn..</text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (20,947,281 sampled-prefix cycles, 0.01%)</title><rect x="229.1" y="109" width="0.2" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="232.11" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::binary_graph::BinaryImplicationGraph::remove_clause_edges (20,946,112 sampled-prefix cycles, 0.01%)</title><rect x="229.5" y="157" width="0.2" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="232.52" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::compute_lbd_stamped (52,364,089 sampled-prefix cycles, 0.03%)</title><rect x="161.7" y="205" width="0.4" height="15.0" fill="rgb(250,199,49)" rx="2" ry="2" />
+<text  x="164.74" y="215.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (94,255,857 sampled-prefix cycles, 0.06%)</title><rect x="343.9" y="173" width="0.7" height="15.0" fill="rgb(247,133,46)" rx="2" ry="2" />
+<text  x="346.85" y="183.5" ></text>
+</g>
+<g >
+<title>malloc (20,945,335 sampled-prefix cycles, 0.01%)</title><rect x="161.1" y="157" width="0.1" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="164.08" y="167.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (20,945,526 sampled-prefix cycles, 0.01%)</title><rect x="338.2" y="141" width="0.2" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="341.22" y="151.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (167,569,071 sampled-prefix cycles, 0.11%)</title><rect x="218.7" y="157" width="1.3" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="221.66" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (157,093,452 sampled-prefix cycles, 0.10%)</title><rect x="262.4" y="157" width="1.3" height="15.0" fill="rgb(247,133,46)" rx="2" ry="2" />
+<text  x="265.43" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::RoundOccs::combined (20,945,699 sampled-prefix cycles, 0.01%)</title><rect x="234.6" y="173" width="0.1" height="15.0" fill="rgb(251,199,51)" rx="2" ry="2" />
+<text  x="237.58" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::preprocessing_core::Preprocessor::pure_literal_elimination (858,781,705 sampled-prefix cycles, 0.57%)</title><rect x="254.3" y="173" width="6.7" height="15.0" fill="rgb(247,199,46)" rx="2" ry="2" />
+<text  x="257.35" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (62,838,540 sampled-prefix cycles, 0.04%)</title><rect x="161.2" y="125" width="0.5" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="164.25" y="135.5" ></text>
+</g>
+<g >
+<title>malloc (20,945,855 sampled-prefix cycles, 0.01%)</title><rect x="150.5" y="173" width="0.1" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="153.47" y="183.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (104,729,681 sampled-prefix cycles, 0.07%)</title><rect x="160.9" y="173" width="0.8" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="163.92" y="183.5" ></text>
+</g>
+<g >
+<title>_int_realloc (62,839,172 sampled-prefix cycles, 0.04%)</title><rect x="219.5" y="125" width="0.5" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="222.48" y="135.5" ></text>
+</g>
+<g >
+<title>[unknown] (20,945,045 sampled-prefix cycles, 0.01%)</title><rect x="376.4" y="173" width="0.1" height="15.0" fill="rgb(242,180,40)" rx="2" ry="2" />
+<text  x="379.36" y="183.5" ></text>
+</g>
+<g >
+<title>_int_malloc (31,419,202 sampled-prefix cycles, 0.02%)</title><rect x="258.0" y="109" width="0.3" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="261.02" y="119.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (52,364,018 sampled-prefix cycles, 0.03%)</title><rect x="199.7" y="157" width="0.4" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="202.71" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (62,837,239 sampled-prefix cycles, 0.04%)</title><rect x="344.1" y="141" width="0.5" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="347.10" y="151.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (31,418,580 sampled-prefix cycles, 0.02%)</title><rect x="200.4" y="189" width="0.3" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="203.45" y="199.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (471,284,036 sampled-prefix cycles, 0.31%)</title><rect x="257.4" y="157" width="3.6" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="260.37" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (20,945,878 sampled-prefix cycles, 0.01%)</title><rect x="67.4" y="173" width="0.2" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="70.41" y="183.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (62,837,717 sampled-prefix cycles, 0.04%)</title><rect x="259.7" y="93" width="0.5" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="262.74" y="103.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::driftsort_main (1,392,894,905 sampled-prefix cycles, 0.92%)</title><rect x="67.4" y="205" width="10.9" height="15.0" fill="rgb(247,133,46)" rx="2" ry="2" />
+<text  x="70.41" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (101,943,165,934 sampled-prefix cycles, 67.37%)</title><rect x="376.2" y="205" width="794.9" height="15.0" fill="rgb(245,199,45)" rx="2" ry="2" />
+<text  x="379.19" y="215.5" >nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate</text>
+</g>
+<g >
+<title>_int_free_chunk (94,257,213 sampled-prefix cycles, 0.06%)</title><rect x="252.8" y="173" width="0.7" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="255.80" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::conflict::&lt;impl nixie_sat::solver::Solver&gt;::minimize_classify (1,769,927,953 sampled-prefix cycles, 1.17%)</title><rect x="136.1" y="173" width="13.8" height="15.0" fill="rgb(243,199,42)" rx="2" ry="2" />
+<text  x="139.09" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::sweep_root_fixed_clauses (167,565,091 sampled-prefix cycles, 0.11%)</title><rect x="348.9" y="189" width="1.3" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="351.92" y="199.5" ></text>
+</g>
+<g >
+<title>__memmove_avx_unaligned_erms (20,945,985 sampled-prefix cycles, 0.01%)</title><rect x="347.7" y="157" width="0.2" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="350.69" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_opts (94,256,679 sampled-prefix cycles, 0.06%)</title><rect x="249.6" y="141" width="0.7" height="15.0" fill="rgb(236,199,35)" rx="2" ry="2" />
+<text  x="252.61" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::elim_flush_sort_occs (146,618,037 sampled-prefix cycles, 0.10%)</title><rect x="230.2" y="173" width="1.1" height="15.0" fill="rgb(244,199,43)" rx="2" ry="2" />
+<text  x="233.17" y="183.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (20,945,878 sampled-prefix cycles, 0.01%)</title><rect x="67.4" y="189" width="0.2" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="70.41" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::mark_elim_one (20,945,809 sampled-prefix cycles, 0.01%)</title><rect x="249.3" y="157" width="0.1" height="15.0" fill="rgb(251,199,50)" rx="2" ry="2" />
+<text  x="252.28" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::note_learned_lbd (62,836,611 sampled-prefix cycles, 0.04%)</title><rect x="375.7" y="205" width="0.5" height="15.0" fill="rgb(244,199,42)" rx="2" ry="2" />
+<text  x="378.70" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_and_rewatch_silent (115,202,471 sampled-prefix cycles, 0.08%)</title><rect x="249.4" y="157" width="0.9" height="15.0" fill="rgb(241,199,39)" rx="2" ry="2" />
+<text  x="252.45" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (104,728,250 sampled-prefix cycles, 0.07%)</title><rect x="1188.9" y="173" width="0.9" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="1191.94" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vmtf::VMTF::dequeue (209,458,163 sampled-prefix cycles, 0.14%)</title><rect x="1171.4" y="205" width="1.6" height="15.0" fill="rgb(242,199,40)" rx="2" ry="2" />
+<text  x="1174.38" y="215.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::subsume::&lt;impl nixie_sat::solver::Solver&gt;::subsume_round (3,476,999,659 sampled-prefix cycles, 2.30%)</title><rect x="312.7" y="173" width="27.1" height="15.0" fill="rgb(248,199,48)" rx="2" ry="2" />
+<text  x="315.66" y="183.5" >n..</text>
+</g>
+<g >
+<title>nixie_sat::solver::search_ext::&lt;impl nixie_sat::solver::Solver&gt;::solve_with_theory (151,270,610,943 sampled-prefix cycles, 99.97%)</title><rect x="10.3" y="221" width="1179.6" height="15.0" fill="rgb(246,199,45)" rx="2" ry="2" />
+<text  x="13.33" y="231.5" >nixie_sat::solver::search_ext::&lt;impl nixie_sat::solver::Solver&gt;::solve_with_theory</text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (31,419,915 sampled-prefix cycles, 0.02%)</title><rect x="229.7" y="157" width="0.2" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="232.68" y="167.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (41,891,591 sampled-prefix cycles, 0.03%)</title><rect x="344.3" y="93" width="0.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="347.26" y="103.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (31,419,915 sampled-prefix cycles, 0.02%)</title><rect x="229.7" y="141" width="0.2" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="232.68" y="151.5" ></text>
+</g>
+<g >
+<title>stats_solve::main (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="237" width="1180.0" height="15.0" fill="rgb(247,156,46)" rx="2" ry="2" />
+<text  x="13.00" y="247.5" >stats_solve::main</text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (534,118,958 sampled-prefix cycles, 0.35%)</title><rect x="74.1" y="157" width="4.2" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="77.11" y="167.5" ></text>
+</g>
+<g >
+<title>unlink_chunk.isra.0 (20,946,844 sampled-prefix cycles, 0.01%)</title><rect x="260.9" y="77" width="0.1" height="15.0" fill="rgb(238,173,36)" rx="2" ry="2" />
+<text  x="263.88" y="87.5" ></text>
+</g>
+<g >
+<title>_int_free_merge_chunk (20,946,580 sampled-prefix cycles, 0.01%)</title><rect x="260.2" y="77" width="0.2" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="263.23" y="87.5" ></text>
+</g>
+<g >
+<title>nixie_sat::vsids::VSIDS::sift_up (62,837,483 sampled-prefix cycles, 0.04%)</title><rect x="186.2" y="189" width="0.4" height="15.0" fill="rgb(236,199,34)" rx="2" ry="2" />
+<text  x="189.16" y="199.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::reserve_one_unchecked (104,729,681 sampled-prefix cycles, 0.07%)</title><rect x="160.9" y="189" width="0.8" height="15.0" fill="rgb(245,136,44)" rx="2" ry="2" />
+<text  x="163.92" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (2,597,277,142 sampled-prefix cycles, 1.72%)</title><rect x="350.2" y="189" width="20.3" height="15.0" fill="rgb(245,199,45)" rx="2" ry="2" />
+<text  x="353.22" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (62,837,598 sampled-prefix cycles, 0.04%)</title><rect x="263.2" y="77" width="0.5" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="266.17" y="87.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (62,836,921 sampled-prefix cycles, 0.04%)</title><rect x="199.6" y="189" width="0.5" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="202.63" y="199.5" ></text>
+</g>
+<g >
+<title>&lt;alloc::vec::Vec&lt;T&gt; as alloc::vec::spec_from_iter_nested::SpecFromIterNested&lt;T,I&gt;&gt;::from_iter (219,930,498 sampled-prefix cycles, 0.15%)</title><rect x="251.1" y="173" width="1.7" height="15.0" fill="rgb(240,184,38)" rx="2" ry="2" />
+<text  x="254.08" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::walk::&lt;impl nixie_sat::solver::Solver&gt;::walk_round (366,552,073 sampled-prefix cycles, 0.24%)</title><rect x="370.5" y="189" width="2.8" height="15.0" fill="rgb(248,199,48)" rx="2" ry="2" />
+<text  x="373.48" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::&lt;impl nixie_sat::solver::Solver&gt;::propagate (5,927,665,160 sampled-prefix cycles, 3.92%)</title><rect x="266.3" y="157" width="46.2" height="15.0" fill="rgb(245,199,45)" rx="2" ry="2" />
+<text  x="269.27" y="167.5" >nixi..</text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (20,943,711 sampled-prefix cycles, 0.01%)</title><rect x="217.3" y="189" width="0.1" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="220.27" y="199.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (83,782,996 sampled-prefix cycles, 0.06%)</title><rect x="343.9" y="157" width="0.7" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="346.94" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::reduce_clause_database::{{closure}} (125,675,515 sampled-prefix cycles, 0.08%)</title><rect x="347.9" y="173" width="1.0" height="15.0" fill="rgb(238,199,36)" rx="2" ry="2" />
+<text  x="350.94" y="183.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,945,887 sampled-prefix cycles, 0.01%)</title><rect x="253.2" y="141" width="0.2" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="256.20" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::transred::&lt;impl nixie_sat::solver::Solver&gt;::transred_round (219,930,399 sampled-prefix cycles, 0.15%)</title><rect x="339.8" y="173" width="1.7" height="15.0" fill="rgb(248,199,48)" rx="2" ry="2" />
+<text  x="342.77" y="183.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (20,945,862 sampled-prefix cycles, 0.01%)</title><rect x="70.3" y="173" width="0.1" height="15.0" fill="rgb(241,133,40)" rx="2" ry="2" />
+<text  x="73.27" y="183.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack (303,712,630 sampled-prefix cycles, 0.20%)</title><rect x="263.7" y="157" width="2.4" height="15.0" fill="rgb(242,199,40)" rx="2" ry="2" />
+<text  x="266.74" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::trail::Trail::assign_at (20,945,787 sampled-prefix cycles, 0.01%)</title><rect x="1171.2" y="205" width="0.2" height="15.0" fill="rgb(226,199,24)" rx="2" ry="2" />
+<text  x="1174.22" y="215.5" ></text>
+</g>
+<g >
+<title>_int_free_maybe_consolidate.part.0 (20,946,078 sampled-prefix cycles, 0.01%)</title><rect x="237.5" y="141" width="0.2" height="15.0" fill="rgb(233,153,31)" rx="2" ry="2" />
+<text  x="240.52" y="151.5" ></text>
+</g>
+<g >
+<title>_int_realloc (219,933,688 sampled-prefix cycles, 0.15%)</title><rect x="259.3" y="109" width="1.7" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="262.33" y="119.5" ></text>
+</g>
+<g >
+<title>nixie_sat::clause::ClauseDatabase::add_lits (104,728,381 sampled-prefix cycles, 0.07%)</title><rect x="78.3" y="205" width="0.8" height="15.0" fill="rgb(233,199,31)" rx="2" ry="2" />
+<text  x="81.27" y="215.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (31,418,776 sampled-prefix cycles, 0.02%)</title><rect x="263.4" y="61" width="0.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="266.41" y="71.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (73,310,455 sampled-prefix cycles, 0.05%)</title><rect x="1170.6" y="157" width="0.5" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="1173.56" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::inprocess (11,666,817,330 sampled-prefix cycles, 7.71%)</title><rect x="250.5" y="189" width="91.0" height="15.0" fill="rgb(237,199,35)" rx="2" ry="2" />
+<text  x="253.51" y="199.5" >nixie_sat:..</text>
+</g>
+<g >
+<title>nixie_sat::clause::ClauseDatabase::compact_arena_forced (418,919,055 sampled-prefix cycles, 0.28%)</title><rect x="344.6" y="173" width="3.3" height="15.0" fill="rgb(250,199,50)" rx="2" ry="2" />
+<text  x="347.59" y="183.5" ></text>
+</g>
+<g >
+<title>__libc_malloc2 (20,946,905 sampled-prefix cycles, 0.01%)</title><rect x="229.7" y="125" width="0.1" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="232.68" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::Solver::attach_watchers (20,945,807 sampled-prefix cycles, 0.01%)</title><rect x="79.1" y="205" width="0.2" height="15.0" fill="rgb(238,199,36)" rx="2" ry="2" />
+<text  x="82.09" y="215.5" ></text>
+</g>
+<g >
+<title>_int_free_maybe_consolidate.part.0 (20,945,887 sampled-prefix cycles, 0.01%)</title><rect x="253.2" y="157" width="0.2" height="15.0" fill="rgb(233,153,31)" rx="2" ry="2" />
+<text  x="256.20" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::clause::ClauseDatabase::add_lits (20,945,834 sampled-prefix cycles, 0.01%)</title><rect x="229.9" y="157" width="0.2" height="15.0" fill="rgb(233,199,31)" rx="2" ry="2" />
+<text  x="232.93" y="167.5" ></text>
+</g>
+<g >
+<title>_int_malloc (52,365,713 sampled-prefix cycles, 0.03%)</title><rect x="218.9" y="125" width="0.4" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="221.90" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (31,418,708 sampled-prefix cycles, 0.02%)</title><rect x="344.3" y="77" width="0.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="347.34" y="87.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::reduce_clause_database (953,036,177 sampled-prefix cycles, 0.63%)</title><rect x="341.5" y="189" width="7.4" height="15.0" fill="rgb(247,199,46)" rx="2" ry="2" />
+<text  x="344.49" y="199.5" ></text>
+</g>
+<g >
+<title>getenv (293,240,844 sampled-prefix cycles, 0.19%)</title><rect x="373.4" y="157" width="2.3" height="15.0" fill="rgb(237,170,35)" rx="2" ry="2" />
+<text  x="376.42" y="167.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::vivify_clauses (6,618,876,354 sampled-prefix cycles, 4.37%)</title><rect x="261.0" y="173" width="51.7" height="15.0" fill="rgb(239,199,37)" rx="2" ry="2" />
+<text  x="264.04" y="183.5" >nixie..</text>
+</g>
+<g >
+<title>__libc_start_call_main (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="285" width="1180.0" height="15.0" fill="rgb(247,154,46)" rx="2" ry="2" />
+<text  x="13.00" y="295.5" >__libc_start_call_main</text>
+</g>
+<g >
+<title>malloc (20,945,757 sampled-prefix cycles, 0.01%)</title><rect x="78.7" y="157" width="0.1" height="15.0" fill="rgb(238,112,36)" rx="2" ry="2" />
+<text  x="81.68" y="167.5" ></text>
+</g>
+<g >
+<title>cfree@GLIBC_2.2.5 (20,945,797 sampled-prefix cycles, 0.01%)</title><rect x="67.2" y="205" width="0.2" height="15.0" fill="rgb(246,123,45)" rx="2" ry="2" />
+<text  x="70.25" y="215.5" ></text>
+</g>
+<g >
+<title>[unknown] (20,945,045 sampled-prefix cycles, 0.01%)</title><rect x="376.4" y="189" width="0.1" height="15.0" fill="rgb(242,180,40)" rx="2" ry="2" />
+<text  x="379.36" y="199.5" ></text>
+</g>
+<g >
+<title>_int_realloc (41,893,124 sampled-prefix cycles, 0.03%)</title><rect x="229.0" y="125" width="0.4" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="232.03" y="135.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::decide::&lt;impl nixie_sat::solver::Solver&gt;::backtrack_with_phase_saving (3,141,863,806 sampled-prefix cycles, 2.08%)</title><rect x="162.1" y="205" width="24.5" height="15.0" fill="rgb(243,199,42)" rx="2" ry="2" />
+<text  x="165.15" y="215.5" >n..</text>
+</g>
+<g >
+<title>__libc_malloc2 (20,945,180 sampled-prefix cycles, 0.01%)</title><rect x="261.9" y="125" width="0.1" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="264.86" y="135.5" ></text>
+</g>
+<g >
+<title>_int_free_chunk (62,838,311 sampled-prefix cycles, 0.04%)</title><rect x="237.4" y="157" width="0.5" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="240.44" y="167.5" ></text>
+</g>
+<g >
+<title>__memset_avx2_unaligned_erms (272,299,893 sampled-prefix cycles, 0.18%)</title><rect x="65.0" y="205" width="2.1" height="15.0" fill="rgb(231,151,28)" rx="2" ry="2" />
+<text  x="67.96" y="215.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::convert::From&lt;&amp;[&lt;A as smallvec::Array&gt;::Item]&gt;&gt;::from (52,364,573 sampled-prefix cycles, 0.03%)</title><rect x="64.4" y="205" width="0.4" height="15.0" fill="rgb(234,201,31)" rx="2" ry="2" />
+<text  x="67.39" y="215.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (52,364,041 sampled-prefix cycles, 0.03%)</title><rect x="248.7" y="157" width="0.4" height="15.0" fill="rgb(251,201,51)" rx="2" ry="2" />
+<text  x="251.71" y="167.5" ></text>
+</g>
+<g >
+<title>&lt;smallvec::SmallVec&lt;A&gt; as core::iter::traits::collect::Extend&lt;&lt;A as smallvec::Array&gt;::Item&gt;&gt;::extend (52,364,261 sampled-prefix cycles, 0.03%)</title><rect x="338.0" y="157" width="0.4" height="15.0" fill="rgb(251,201,51)" rx="2" ry="2" />
+<text  x="340.97" y="167.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVec&lt;T,A&gt;::grow_one (125,675,490 sampled-prefix cycles, 0.08%)</title><rect x="237.9" y="157" width="1.0" height="15.0" fill="rgb(251,128,50)" rx="2" ry="2" />
+<text  x="240.93" y="167.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::try_grow (52,364,557 sampled-prefix cycles, 0.03%)</title><rect x="150.2" y="189" width="0.4" height="15.0" fill="rgb(234,136,31)" rx="2" ry="2" />
+<text  x="153.22" y="199.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::eliminate::&lt;impl nixie_sat::solver::Solver&gt;::eliminate_phase (3,424,639,649 sampled-prefix cycles, 2.26%)</title><rect x="223.6" y="189" width="26.7" height="15.0" fill="rgb(247,199,46)" rx="2" ry="2" />
+<text  x="226.64" y="199.5" >n..</text>
+</g>
+<g >
+<title>__libc_malloc2 (115,201,160 sampled-prefix cycles, 0.08%)</title><rect x="1188.9" y="189" width="0.9" height="15.0" fill="rgb(252,154,52)" rx="2" ry="2" />
+<text  x="1191.86" y="199.5" ></text>
+</g>
+<g >
+<title>_start (151,322,975,896 sampled-prefix cycles, 100.00%)</title><rect x="10.0" y="317" width="1180.0" height="15.0" fill="rgb(239,139,37)" rx="2" ry="2" />
+<text  x="13.00" y="327.5" >_start</text>
+</g>
+<g >
+<title>nixie_sat::solver::propagate::propagation_engine::propagate (5,917,192,198 sampled-prefix cycles, 3.91%)</title><rect x="266.4" y="141" width="46.1" height="15.0" fill="rgb(245,199,45)" rx="2" ry="2" />
+<text  x="269.35" y="151.5" >nixi..</text>
+</g>
+<g >
+<title>_int_free_chunk (20,946,622 sampled-prefix cycles, 0.01%)</title><rect x="228.8" y="173" width="0.1" height="15.0" fill="rgb(236,153,34)" rx="2" ry="2" />
+<text  x="231.79" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (62,838,540 sampled-prefix cycles, 0.04%)</title><rect x="161.2" y="157" width="0.5" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="164.25" y="167.5" ></text>
+</g>
+<g >
+<title>realloc (41,891,620 sampled-prefix cycles, 0.03%)</title><rect x="238.6" y="125" width="0.3" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="241.59" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::stable::quicksort::quicksort (41,891,591 sampled-prefix cycles, 0.03%)</title><rect x="344.3" y="125" width="0.3" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="347.26" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::shared::smallsort::sort8_stable (20,945,664 sampled-prefix cycles, 0.01%)</title><rect x="76.7" y="141" width="0.2" height="15.0" fill="rgb(241,133,40)" rx="2" ry="2" />
+<text  x="79.72" y="151.5" ></text>
+</g>
+<g >
+<title>_int_realloc (41,891,702 sampled-prefix cycles, 0.03%)</title><rect x="1170.8" y="125" width="0.3" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="1173.81" y="135.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (20,945,240 sampled-prefix cycles, 0.01%)</title><rect x="126.0" y="141" width="0.2" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="129.05" y="151.5" ></text>
+</g>
+<g >
+<title>__strncmp_avx2 (198,985,082 sampled-prefix cycles, 0.13%)</title><rect x="374.2" y="141" width="1.5" height="15.0" fill="rgb(237,132,35)" rx="2" ry="2" />
+<text  x="377.15" y="151.5" ></text>
+</g>
+<g >
+<title>nixie_sat::solver::learn::&lt;impl nixie_sat::solver::Solver&gt;::remove_literal_and_rewatch_silent (146,620,997 sampled-prefix cycles, 0.10%)</title><rect x="338.6" y="157" width="1.2" height="15.0" fill="rgb(241,199,39)" rx="2" ry="2" />
+<text  x="341.63" y="167.5" ></text>
+</g>
+<g >
+<title>&lt;core::iter::adapters::filter::Filter&lt;I,P&gt; as core::iter::traits::iterator::Iterator&gt;::next (125,674,571 sampled-prefix cycles, 0.08%)</title><rect x="227.8" y="173" width="1.0" height="15.0" fill="rgb(230,220,27)" rx="2" ry="2" />
+<text  x="230.81" y="183.5" ></text>
+</g>
+<g >
+<title>alloc::raw_vec::RawVecInner&lt;A&gt;::finish_grow (115,202,485 sampled-prefix cycles, 0.08%)</title><rect x="238.0" y="141" width="0.9" height="15.0" fill="rgb(234,128,31)" rx="2" ry="2" />
+<text  x="241.01" y="151.5" ></text>
+</g>
+<g >
+<title>malloc_consolidate (20,945,660 sampled-prefix cycles, 0.01%)</title><rect x="260.7" y="77" width="0.2" height="15.0" fill="rgb(245,112,45)" rx="2" ry="2" />
+<text  x="263.72" y="87.5" ></text>
+</g>
+<g >
+<title>smallvec::SmallVec&lt;A&gt;::reserve_one_unchecked (41,891,498 sampled-prefix cycles, 0.03%)</title><rect x="149.9" y="189" width="0.3" height="15.0" fill="rgb(245,136,44)" rx="2" ry="2" />
+<text  x="152.90" y="199.5" ></text>
+</g>
+<g >
+<title>std::sys::env::unix::getenv::{closure#0} (293,240,844 sampled-prefix cycles, 0.19%)</title><rect x="373.4" y="173" width="2.3" height="15.0" fill="rgb(234,146,32)" rx="2" ry="2" />
+<text  x="376.42" y="183.5" ></text>
+</g>
+<g >
+<title>realloc (41,893,124 sampled-prefix cycles, 0.03%)</title><rect x="229.0" y="141" width="0.4" height="15.0" fill="rgb(238,184,36)" rx="2" ry="2" />
+<text  x="232.03" y="151.5" ></text>
+</g>
+<g >
+<title>core::slice::sort::unstable::quicksort::quicksort (104,728,882 sampled-prefix cycles, 0.07%)</title><rect x="125.4" y="157" width="0.8" height="15.0" fill="rgb(238,133,36)" rx="2" ry="2" />
+<text  x="128.40" y="167.5" ></text>
+</g>
+</g>
+</svg>
