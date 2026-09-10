@@ -3660,7 +3660,7 @@ impl Solver {
     /// split tool (`NIXIE_DUMP_CNF`; see
     /// `docs/handovers/2026-09-09-bv-false-sat.md`).
     #[cfg(feature = "std")]
-    fn debug_dump_cnf(&self, path: &str) {
+    pub(super) fn debug_dump_cnf(&self, path: &str) {
         use std::fmt::Write as _;
         let mut out = String::new();
         let mut n_clauses = 0usize;

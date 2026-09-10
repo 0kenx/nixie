@@ -31,6 +31,7 @@ clauses). `NIXIE_PRESUB=1` forces; `NIXIE_PRESUB=0` skips.
 | arm | circuit_48in64out | constraints_17 (sat) | j3037 (unsat) |
 | `NIXIE_PRESUB=0` | 231,596 | 85,245 | 366,030 |
 | auto (wide-uniform) | **110,180** | 85,245 (did not fire) | 366,030 (did not fire) |
+| auto + failed-literal probe | **65,539** | (did not fire) | (did not fire) |
 | auto + `SAT_CACHING=1` | 128,573 | — | — |
 | Z3 4.16.0 | 23,149 | 19,381 | 272,037 |
 
@@ -41,7 +42,11 @@ trajectory-negative here; leave it off.
 ## Verdict
 
 This closes the **simplify half** of the 7× gap (232k → 110k, matching Nixie on
-Z3's dumped CNF). The remaining **4.8×** (110k vs 23k) is search: Z3 VSIDS +
-SAT-caching on an already-compact formula. Do not default-on SAT-caching; do
-not raise CaDiCaL `subsumeocclim` globally. The auto gate keeps the pass off
-the standing corpus except LUT-cube encodings.
+Z3's dumped CNF). A post-SSR failed-literal probe (Z3 assigned 16, we get 1)
+moves the same binary **179k → 66k**. Residual formula is actually *smaller*
+than Z3's first inprocess (57k vs 69k clauses, 4k vs 22k width-8); Z3
+SAT-caching on *our* dump is 50–662k depending on round count, so the leftover
+**2.8×** (66k vs 23k) is search on a differently-shaped residual, not missing
+SSR. Do not default-on SAT-caching; do not raise CaDiCaL `subsumeocclim`
+globally. The auto gate keeps the pass off the standing corpus except LUT-cube
+encodings. `NIXIE_PRESUB_TRACE=1` / `NIXIE_DUMP_POSTSSR=path` dump the residual.

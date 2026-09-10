@@ -292,8 +292,32 @@ impl Solver {
         if !self.presearch_backward_simplify_wanted() {
             return false;
         }
-        for _ in 0..8 {
+        let max_rounds = {
+            #[cfg(feature = "std")]
+            {
+                std::env::var("NIXIE_PRESUB_ROUNDS")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .filter(|n: &u32| *n >= 1)
+                    .unwrap_or(8)
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                8u32
+            }
+        };
+        for round in 0..max_rounds {
             let (sub, stren) = self.backward_subsume_round();
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_PRESUB_TRACE").is_ok() {
+                eprintln!(
+                    "c [presub] round={} subsumed={} strengthened={} orig={}",
+                    round,
+                    sub,
+                    stren,
+                    self.clauses.num_original()
+                );
+            }
             if sub == 0 && stren == 0 {
                 break;
             }
@@ -303,6 +327,31 @@ impl Solver {
                 self.drat_emit_empty(Some(conflict));
                 return true;
             }
+        }
+        if self.config.enable_failed_literal_probing {
+            let (_probed, failed, _hyper) = self.probe_round();
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_PRESUB_TRACE").is_ok() {
+                eprintln!(
+                    "c [presub] probe_failed={failed} trail={}",
+                    self.trail.size()
+                );
+            }
+            if self.trivially_unsat {
+                return true;
+            }
+            if failed > 0 {
+                self.rebuild_watches_and_binary_graph();
+                if let Some(conflict) = self.propagate() {
+                    self.trivially_unsat = true;
+                    self.drat_emit_empty(Some(conflict));
+                    return true;
+                }
+            }
+        }
+        #[cfg(feature = "std")]
+        if let Ok(path) = std::env::var("NIXIE_DUMP_POSTSSR") {
+            self.debug_dump_cnf(&path);
         }
         false
     }
