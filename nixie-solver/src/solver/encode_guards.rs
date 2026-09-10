@@ -336,8 +336,28 @@ impl Solver {
         false
     }
 
-    /// Depth-limited structural scan of one non-skeleton subtree (the body
-    /// of the old `term_exceeds_encode_depth`).
+    /// Depth-limited scan of one non-skeleton subtree (the body of the old
+    /// `term_exceeds_encode_depth`).
+    ///
+    /// The measured depth follows the *native-recursion frontier*, not
+    /// total structural depth.  **Bit-vector operation nodes are depth
+    /// terminals**: the Tseitin encoder mint-a-var-and-stops on them (only
+    /// Bool connectives recurse — see `encode_depth_uncached`), and their
+    /// subtrees are consumed by the *iterative* circuit builders
+    /// (`encode_bv_term_recursive`, `assert_formula_true`, the unified
+    /// link pass), so a 2500-deep `bvadd`/`bvshl`/extract chain costs no
+    /// recursion budget anywhere.  Counting it anyway made every deep
+    /// bit-vector expression trip the guard — SAGE-style reference chains
+    /// (`sage/app7/bench_4443`, depth 2481), `bmc-bv/ex49` (1009), wide
+    /// `smulov`/`umulov` overflow checks — and a measured 51 corpus files
+    /// answered an instant, spurious `Unknown` at assert time.
+    ///
+    /// Every other kind keeps the full structural accounting: datatype
+    /// constructor/tester/selector chains (the datatype passes recurse —
+    /// pinned by `depth_guard_measures_datatype_constructor_chains`),
+    /// `match`, `let`, string/FP/arith/array structure (conservative: the
+    /// guard protects every walk between assert and verdict, and only the
+    /// bit-vector op set has been verified mint-and-stop end to end).
     fn subtree_exceeds_encode_depth(
         root: TermId,
         manager: &TermManager,
@@ -354,9 +374,51 @@ impl Solver {
                 _ => {}
             }
             best.insert(t, depth);
+            // Bit-vector operation node — and a *bit-vector-sorted*
+            // `ite` (the multiplexer chains of the LLBMC-style bmc
+            // encodings, a thousand deep): iterative territory, no
+            // recursion budget below it.  A Bool-sorted `ite` stays
+            // measured (the Tseitin encoder recurses through those);
+            // by typing a bit-vector `ite` only ever reaches the Bool
+            // encoder under a comparison atom, which mint-a-var-and-stops.
+            if manager.get(t).is_some_and(|node| {
+                Self::is_bv_operation(&node.kind)
+                    || (matches!(node.kind, TermKind::Ite(_, _, _))
+                        && manager.sorts.get(node.sort).is_some_and(|s| s.is_bitvec()))
+            }) {
+                continue;
+            }
             Self::push_child_terms(t, manager, depth + 1, &mut stack);
         }
         false
+    }
+
+    /// Whether `kind` is a bit-vector *operation* node — the set the
+    /// Tseitin encoder mint-a-var-and-stops on and the iterative BV
+    /// circuit builders own.  Bit-vector *comparisons* are deliberately
+    /// absent: they are Bool-sorted atoms the encoder also stops at, but
+    /// descending one level is free and keeps this set minimal.
+    fn is_bv_operation(kind: &TermKind) -> bool {
+        matches!(
+            kind,
+            TermKind::BitVecConst { .. }
+                | TermKind::BvAdd(_, _)
+                | TermKind::BvSub(_, _)
+                | TermKind::BvMul(_, _)
+                | TermKind::BvNot(_)
+                | TermKind::BvAnd(_, _)
+                | TermKind::BvOr(_, _)
+                | TermKind::BvXor(_, _)
+                | TermKind::BvShl(_, _)
+                | TermKind::BvLshr(_, _)
+                | TermKind::BvAshr(_, _)
+                | TermKind::BvConcat(_, _)
+                | TermKind::BvExtract { .. }
+                | TermKind::BvUdiv(_, _)
+                | TermKind::BvSdiv(_, _)
+                | TermKind::BvUrem(_, _)
+                | TermKind::BvSrem(_, _)
+        )
     }
 
     /// Push every direct sub-term of `term` onto `stack` paired with

@@ -1169,6 +1169,64 @@ fn depth_guard_measures_datatype_constructor_chains() {
         .expect("a deep constructor chain must return on 128 KiB instead of overflowing it");
 }
 
+/// A deep chain of *bit-vector operations* must NOT trip the assert-time
+/// depth guard: the Tseitin encoder mint-a-var-and-stops on BV nodes and
+/// the circuit builders are iterative, so a 2500-deep `bvadd`/`bvshl`
+/// chain consumes no native recursion anywhere.  This is the carve-out
+/// that turned the instant spurious `Unknown` on `sage/app7/bench_4443`
+/// (depth 2481), `bmc-bv/ex49` (1009-deep BV-`ite` multiplexers) and the
+/// wide `smulov`/`umulov` overflow checks into decided verdicts.
+#[test]
+fn deep_bv_operation_chains_do_not_trip_the_depth_guard() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let sort = manager.sorts.bitvec(8);
+    let v = manager.mk_var("v", sort);
+    // 2500-deep bvadd chain (5x the guard's limit).
+    let mut chain = v;
+    let one = manager.mk_bitvec(1u32, 8);
+    for _ in 0..2500 {
+        chain = manager.mk_bv_add(chain, one);
+    }
+    let eq = manager.mk_eq(chain, chain);
+    solver.assert(eq, &mut manager);
+    assert!(
+        !solver.encode_depth_exceeded,
+        "a BV-operation chain is iterative territory; the depth guard must not trip"
+    );
+    assert_eq!(
+        solver.check(&mut manager),
+        SolverResult::Sat,
+        "t = t is satisfiable at any depth"
+    );
+}
+
+/// The multiplexer shape specifically: a deep *bit-vector-sorted* `ite`
+/// chain (the LLBMC/bmc encodings nest a thousand of them).  A Bool-sorted
+/// `ite` chain must still be measured — that half is pinned by the
+/// small-stack tests above.
+#[test]
+fn deep_bv_ite_chains_do_not_trip_the_depth_guard() {
+    let mut solver = Solver::new();
+    let mut manager = TermManager::new();
+    let sort = manager.sorts.bitvec(8);
+    let v = manager.mk_var("v", sort);
+    let c = manager.mk_var("c", manager.sorts.bool_sort);
+    let zero = manager.mk_bitvec(0u32, 8);
+    // 1200-deep BV-sorted ite chain (2x the guard's limit).
+    let mut chain = v;
+    for _ in 0..1200 {
+        chain = manager.mk_ite(c, chain, zero);
+    }
+    let eq = manager.mk_eq(chain, v);
+    solver.assert(eq, &mut manager);
+    assert!(
+        !solver.encode_depth_exceeded,
+        "a BV-sorted ite chain only ever reaches the Bool encoder under an atom"
+    );
+    assert_eq!(solver.check(&mut manager), SolverResult::Sat);
+}
+
 /// The `check()` wrapper must degrade `Sat` to `Unknown` whenever
 /// `encode_depth_exceeded` is set – `check_core`'s top-of-function gate is
 /// not enough on its own, because MBQI instantiation results and E-matching
