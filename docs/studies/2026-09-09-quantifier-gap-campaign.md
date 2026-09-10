@@ -56,9 +56,22 @@ next to the code it protects.
    necessary-but-insufficient — combine with the conditional
    divisibility lemma at the div-axiom site.  Blocks jain_2 + the
    compound Ultimate shapes.
-2. **E-matching depth at scale** — Rodin/tptp/AUFLIRA (~100 z3-only on
-   the classic sample): instantiation selection and throughput on
-   2000+-axiom theories.  Profile first (where do the rounds go?).
+2. **Rodin/EUF finite-model class (profiled, 2026-09 tenth session)** —
+   shrunk repro committed as the analysis below; every MBQI round returns
+   `Unknown` with *model completion succeeding* (all five fallible steps
+   traced green) and the generate loop finding no counterexamples over
+   non-ground evaluations.  Root shape: `∀x:B. resbl(x) → ∃x5:R.
+   rsrtbl(x, x5)` with **no ground B-terms anywhere** — the ∃ is nested
+   under an implies (not the skolemizable ∀∃ spine), and the B candidate
+   domain is whatever `create_finite_universe` seeds.  Next: (a) check
+   whether the completed B-universe actually reaches
+   `build_candidate_lists` (universe overwrite in
+   `collect_universes_from_model`), (b) whether the inline `ExistsState`
+   evaluation resolves with R-candidates from the seeded universe, and
+   (c) only then consider Ge–de-Moura macro expansion for the nested ∃.
+   Repro: `AUFLIA/20170829-Rodin/smt1002232729905089644.smt2` (shrinker
+   script preserved in this note's history: assert-level + conjunct-level
+   delta, keeping `nixie=unknown ∧ z3=unsat`).
 3. **psyco sat-class** — boundary `∃` witness exhibition for `sat`.
 4. **NL zero-factor fold** — `sk·f(x)` with `f` pinned 0 (funcprobs).
 5. **Duplicate-instantiation audit** — dedup persists within a check
