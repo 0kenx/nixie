@@ -953,6 +953,8 @@ pub use resolution_graph::{
     GraphStats as ResolutionGraphStats, ResolutionAnalyzer, ResolutionGraph, ResolutionNode,
 };
 pub use smoothed_lbd::{SmoothedLbdStats, SmoothedLbdTracker};
+#[cfg(feature = "bcp-work")]
+pub use solver::PropagationWork;
 pub use solver::{
     BoxedBranchingHeuristic, BranchingHeuristic, RestartStrategy, Solver, SolverConfig,
     SolverError, SolverResult, SolverStats, TheoryCallback, TheoryCheckResult,

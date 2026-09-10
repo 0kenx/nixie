@@ -16,6 +16,10 @@ use subsume::SubsumeScratch;
 mod lucky;
 mod probe;
 mod propagate;
+#[cfg(feature = "bcp-work")]
+mod propagation_work;
+#[cfg(feature = "bcp-work")]
+pub use propagation_work::PropagationWork;
 mod search_ext;
 mod subsume;
 mod sweep;
@@ -933,6 +937,9 @@ impl Default for SolverConfig {
 /// Statistics for the solver
 #[derive(Debug, Default, Clone)]
 pub struct SolverStats {
+    /// Diagnostic BCP events; never used for scheduling or solver decisions.
+    #[cfg(feature = "bcp-work")]
+    pub propagation_work: PropagationWork,
     /// Number of decisions made
     pub decisions: u64,
     /// Number of propagations

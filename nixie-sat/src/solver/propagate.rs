@@ -78,6 +78,10 @@ impl Solver {
         let use_kernel = self.use_watch_kernel(bcp_stats);
         while let Some(lit) = self.trail.next_to_propagate() {
             self.stats.propagations += 1;
+            #[cfg(feature = "bcp-work")]
+            {
+                self.stats.propagation_work.dequeued += 1;
+            }
             if bcp_stats {
                 crate::diag_bcp::LITS.fetch_add(1, Relaxed);
             }
@@ -113,6 +117,15 @@ impl Solver {
             let code = lit.code() as usize;
             let (span_start, plen) = self.binary_graph.span_of(code);
             let xlen = self.binary_graph.extra_len(code);
+            #[cfg(feature = "bcp-work")]
+            {
+                use super::propagation_work::list_lines;
+                let work = &mut self.stats.propagation_work;
+                work.started += 1;
+                work.binary_lists += u64::from(plen + xlen != 0);
+                work.binary_list_lines +=
+                    list_lines::<(Lit, ClauseId)>(plen) + list_lines::<(Lit, ClauseId)>(xlen);
+            }
             #[cfg(feature = "bcp-regions")]
             let region_sample = self
                 .region_stats
@@ -138,6 +151,14 @@ impl Solver {
 
                     if bcp_stats {
                         crate::diag_bcp::BIG_EDGES.fetch_add(1, Relaxed);
+                    }
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        if i < plen {
+                            self.stats.propagation_work.binary_primary_visits += 1;
+                        } else {
+                            self.stats.propagation_work.binary_overflow_visits += 1;
+                        }
                     }
                     let value = self.trail.lit_val(implied_lit);
                     #[cfg(feature = "clause-traffic")]
@@ -179,6 +200,10 @@ impl Solver {
                         if bcp_stats {
                             crate::diag_bcp::BIG_CONFLICTS.fetch_add(1, Relaxed);
                         }
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.binary_conflicts += 1;
+                        }
                         self.note_conflict_prefix();
                         self.trail.requeue_last_propagated();
                         return Some(clause_id);
@@ -206,6 +231,10 @@ impl Solver {
                         // from the watch lists where the BIG edge may not
                         // exist.
                         self.trail.assign_propagation(implied_lit, clause_id);
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.binary_assignments += 1;
+                        }
                         // LRAT: flush level-0 propagations to explicit derived units
                         // so every level-0 literal carries a unit id.
                         if self.lrat && self.trail.decision_level() == 0 {
@@ -218,6 +247,13 @@ impl Solver {
             // Take the current watch list, mutate it in place, then move it
             // back once propagation for this literal is finished.
             let mut watches = core::mem::take(self.watches.get_mut(lit));
+            #[cfg(feature = "bcp-work")]
+            {
+                let work = &mut self.stats.propagation_work;
+                work.long_lists += u64::from(!watches.is_empty());
+                work.long_list_lines +=
+                    super::propagation_work::list_lines::<Watcher>(watches.len());
+            }
             // Visit counting at list granularity (exact: the two-pointer scan
             // visits every entry of the pre-scan list; the conflict-abort
             // path below subtracts the tail it never reached). A per-visit
@@ -267,6 +303,10 @@ impl Solver {
             } else {
                 for read in 0..watches.len() {
                     let watcher = watches[read];
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        self.stats.propagation_work.long_visits += 1;
+                    }
                     #[cfg(feature = "clause-traffic")]
                     let traffic_event = traffic::visit(
                         &mut self.clause_traffic,
@@ -316,9 +356,17 @@ impl Solver {
                     regions::record(&mut self.region_stats, region_event, regions::PAYLOAD);
                     #[cfg(feature = "clause-traffic")]
                     traffic::record(&mut self.clause_traffic, traffic_event, traffic::PAYLOAD);
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        self.stats.propagation_work.clause_reads += 1;
+                    }
                     let clause = match self.clauses.live_lits_by_ref(watcher.r) {
                         Some(lits) => lits,
                         None => {
+                            #[cfg(feature = "bcp-work")]
+                            {
+                                self.stats.propagation_work.deleted += 1;
+                            }
                             // Deleted clause – drop (don't advance write).
                             if bcp_stats {
                                 crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
@@ -355,6 +403,10 @@ impl Solver {
 
                     // If first watch is true, clause is satisfied
                     if self.trail.lit_val_hot(first) > 0 {
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.first_satisfied += 1;
+                        }
                         if bcp_stats {
                             crate::diag_bcp::SATISFIED_FIRST.fetch_add(1, Relaxed);
                         }
@@ -395,9 +447,17 @@ impl Solver {
                         traffic::record(&mut self.clause_traffic, traffic_event, traffic::SCAN);
                         #[cfg(feature = "bcp-regions")]
                         regions::record(&mut self.region_stats, region_event, regions::SCAN);
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.tail_probes += 1;
+                        }
                         let l = clause[j];
                         let v = self.trail.lit_val_hot(l);
                         if v > 0 {
+                            #[cfg(feature = "bcp-work")]
+                            {
+                                self.stats.propagation_work.tail_satisfied += 1;
+                            }
                             // Satisfied replacement: keep the watcher here,
                             // refresh the blocker to the satisfied literal
                             // (blocker word only).
@@ -417,6 +477,10 @@ impl Solver {
                             // eager normalization above already set
                             // `lits[0]` to the non-false watch).
                             clause.swap(1, j);
+                            #[cfg(feature = "bcp-work")]
+                            {
+                                self.stats.propagation_work.watch_moves += 1;
+                            }
                             if bcp_stats {
                                 crate::diag_bcp::MOVED.fetch_add(1, Relaxed);
                             }
@@ -456,6 +520,10 @@ impl Solver {
                             crate::diag_bcp::VISITS
                                 .fetch_sub((watches.len() - read - 1) as u64, Relaxed);
                         }
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.long_conflicts += 1;
+                        }
                         conflict_found = Some(reason);
                         write += 1; // keep the conflicting watcher
                         // Copy remaining watchers to preserve them
@@ -474,6 +542,10 @@ impl Solver {
                             crate::diag_bcp::UNIT.fetch_add(1, Relaxed);
                         }
                         self.trail.assign_propagation(first, reason);
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.stats.propagation_work.long_assignments += 1;
+                        }
                         // Diagnostic (`NIXIE_REASON_STATS`): classify each BCP
                         // propagation by whether its reason clause was learned.
                         // Cold: one extra clause-header read per assignment, only
@@ -560,17 +632,26 @@ impl Solver {
     fn scan_watch_list(&mut self, lit: Lit, watches: &mut [Watcher]) -> (usize, Option<ClauseId>) {
         let mut cursor = Cursor::default();
         while cursor.read < watches.len() {
-            match cursor.advance(
+            let step = cursor.advance(
                 watches,
                 lit.negate(),
                 &self.trail,
                 &mut self.clauses,
                 &mut self.watches,
-            ) {
+            );
+            #[cfg(feature = "bcp-work")]
+            self.stats
+                .propagation_work
+                .take_watch_scan(&mut cursor.work);
+            match step {
                 Step::Done => break,
                 Step::Conflict(reason) => return (cursor.write, Some(reason)),
                 Step::Unit { literal, reason } => {
                     self.trail.assign_propagation(literal, reason);
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        self.stats.propagation_work.long_assignments += 1;
+                    }
                     if Self::reason_stats_enabled() && !reason.is_null() {
                         self.count_reason_origin(reason);
                     }
@@ -965,3 +1046,7 @@ mod normalization_tests {
 #[cfg(test)]
 #[path = "watch_kernel_tests.rs"]
 mod kernel_tests;
+
+#[cfg(all(test, feature = "bcp-work"))]
+#[path = "propagation_work_tests.rs"]
+mod work_tests;

@@ -8,6 +8,8 @@ six-instance comparison motivates short break/crn anchors, but its raw runs,
 versions and counter scopes have not been provided. RUSAGE_CHILDREN user time
 is CPU user time, not wall time. Equal aggregate propagation counts do not
 establish equal binary/long-clause work, or exclude search-work outliers.
+Whole-process time divided by propagations also includes analysis, elimination,
+allocation and every other phase; it is not time sampled inside propagation.
 
 Nixie scheduling ticks charge one plus estimated logical watch-list lines per
 processed literal, after the binary pass. They omit arena accesses, watch
@@ -43,14 +45,16 @@ This is a work estimate, not measured cache misses, CPU cycles, or a directly
 comparable Kissat search_ticks value. Raw components remain available.
 
 Scope is calls to this Solver's propagate method, including calls from
-inprocessing. It excludes other propagation engines, conflict analysis,
+inprocessing and failed lucky attempts. Unlike the legacy propagation counter,
+which lucky.rs restores after a failed attempt, this ledger retains that work. It excludes other propagation engines, conflict analysis,
 allocation, clause maintenance, proof operations and formula loading. Snapshot
 differences can measure caller-defined phases. It must never drive policy.
 
 ## Verification and bounded observation, registered before execution
 
 Require hand-counted outcomes, aborted/partial scans, both binary spans,
-unit resumption, compaction and independent solver isolation. Extend existing
+unit resumption, compaction, failed-lucky counter rollback and independent
+solver isolation. Extend existing
 kernel/scalar equivalence tests to compare the ledger too. Run default and
 all-feature SAT tests and the repository's full qualification gates before
 landing. Inspect ordinary release code to confirm feature-off instrumentation
@@ -80,3 +84,42 @@ representation must lose. A new attempt must identify the removed dependency
 and price dispatch, maintenance, entry width and ordering. Raising the BVE
 occurrence limit or disabling BVE changes the workload; propagation throughput
 under that ablation is not an isolated measurement of the propagation loop.
+
+## Implemented and qualified
+
+Build `stats_solve` with `--features bcp-work` to emit the cumulative ledger
+to stderr. Library callers read `solver.stats().propagation_work`; snapshots
+are solver-local and copyable. The production scanner remains selected unless
+another observer explicitly requests the legacy path. The feature adds no
+unsafe code or global counters. Its 19 raw fields and derived blocker-hit and
+estimated-tick totals never feed solver decisions.
+
+Six focused regressions cover hand-counted live/deleted misses, both binary
+spans and conflict replay, step-limit aborts, empty lists, Rayon isolation,
+line rounding/wide sums, and failed-lucky rollback. Existing exhaustive
+kernel/scalar checks compare the ledger as part of complete solver state,
+including 1296 small-state cases and independent LRAT/model checks. The
+ledger-only feature combination also passes the focused scanner tests with
+ordinary 8-byte watchers; all-feature observers use 12-byte watchers and are
+accounted at their actual size.
+
+Qualification completed with the retained root Cargo.lock SHA-256
+`3699f4eaec582b0243463999e3bc784461764ec2e2e78d5aedcf37cbc60c1439`:
+workspace build, strict Clippy, formatting and docs passed; **10881 workspace
+tests passed, 13 skipped**; **1013 default SAT tests passed, 1 skipped**;
+**111 doc tests passed, 29 ignored**. The first workspace attempt stopped on
+a missing external corpus in the new worktree. Linking the available primary
+checkout corpora fixed access; the complete rerun passed. No test was skipped
+to bypass that failure. Installed Z3 **4.16.0** parity gives **174 Correct,
+1 Inconclusive**, zero wrong/error/timeout. The inconclusive case is
+`array_unique.smt2`, where Z3 returns Unknown; it is not counted as a match.
+
+The ordinary release `.text` is **994535 bytes, byte-identical** to cached
+production fd01d0b, SHA-256
+`56f7e4077946924c614a7749b94ee23a6b1be38fcd42dd279ce37acdb8bd91c3`.
+Thus the feature-off executable contains no additional ledger machine code.
+Whole-binary hashes differ; whole-binary identity is not claimed. The ledger
+release has a distinct 998391-byte `.text` and its diagnostic output marker;
+the ordinary release has no such marker. This audit uses binary sections,
+not another solver execution or a timing comparison. Completed debug build
+artifacts were deleted after qualification, recovering about 83 GB.

@@ -12,6 +12,8 @@ pub(super) enum Step {
 
 #[derive(Default)]
 pub(super) struct Cursor {
+    #[cfg(feature = "bcp-work")]
+    pub(super) work: super::super::PropagationWork,
     pub(super) read: usize,
     pub(super) write: usize,
 }
@@ -51,6 +53,10 @@ impl Cursor {
         let mut write = self.write;
         for read in self.read..watches.len() {
             let watcher = watches[read];
+            #[cfg(feature = "bcp-work")]
+            {
+                self.work.long_visits += 1;
+            }
             if trail.lit_val_hot(watcher.blocker) > 0 {
                 if COMPACT {
                     watches[write] = watcher;
@@ -58,7 +64,15 @@ impl Cursor {
                 }
                 continue;
             }
+            #[cfg(feature = "bcp-work")]
+            {
+                self.work.clause_reads += 1;
+            }
             let Some(clause) = clauses.live_lits_by_ref(watcher.r) else {
+                #[cfg(feature = "bcp-work")]
+                {
+                    self.work.deleted += 1;
+                }
                 if COMPACT {
                     continue;
                 }
@@ -73,6 +87,10 @@ impl Cursor {
             clause[0] = first;
             clause[1] = false_lit;
             if trail.lit_val_hot(first) > 0 {
+                #[cfg(feature = "bcp-work")]
+                {
+                    self.work.first_satisfied += 1;
+                }
                 let kept = if COMPACT { write } else { read };
                 if COMPACT {
                     watches[kept] = watcher;
@@ -83,9 +101,17 @@ impl Cursor {
             }
             let mut found = false;
             for j in 2..clause.len() {
+                #[cfg(feature = "bcp-work")]
+                {
+                    self.work.tail_probes += 1;
+                }
                 let literal = clause[j];
                 let value = trail.lit_val_hot(literal);
                 if value > 0 {
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        self.work.tail_satisfied += 1;
+                    }
                     let kept = if COMPACT { write } else { read };
                     if COMPACT {
                         watches[kept] = watcher;
@@ -97,6 +123,10 @@ impl Cursor {
                 }
                 if value == 0 {
                     clause.swap(1, j);
+                    #[cfg(feature = "bcp-work")]
+                    {
+                        self.work.watch_moves += 1;
+                    }
                     destinations.add(
                         clause[1].negate(),
                         Watcher {
@@ -123,6 +153,10 @@ impl Cursor {
             watches[kept].blocker = first;
             let next_write = kept + 1;
             if trail.lit_val_hot(first) < 0 {
+                #[cfg(feature = "bcp-work")]
+                {
+                    self.work.long_conflicts += 1;
+                }
                 // Preserve the unvisited tail without examining its blockers.
                 // In the prefix it is already in its final position.
                 if COMPACT {

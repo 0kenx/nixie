@@ -22,6 +22,8 @@
 //!                       in memory and validate SAT on the original CNF
 //!   NIXIE_REASON_STATS=1 count BCP reasons by clause origin (learned/original)
 //!   NO_REDUCE=1         disable scheduled clause-database reduction
+//!   --features bcp-work prints a per-solver production-kernel work ledger
+//!                       to stderr, with no runtime flag
 //!   NIXIE_BCP_STATS=1   print the BCP anatomy counters (requires a build
 //!                       with `--features bcp-stats`; see `diag_bcp`)
 //!   NIXIE_WATCH_GROUPS=N sample every Nth nonempty watch list (positive N;
@@ -332,6 +334,15 @@ fn main() {
     {
         eprintln!("writing watch group observations failed: {error}");
         std::process::exit(2);
+    }
+    #[cfg(feature = "bcp-work")]
+    {
+        let work = &solver.stats().propagation_work;
+        eprintln!(
+            "bcp-work: {work:?} blocker_hits={} estimated_ticks={}",
+            work.blocker_hits(),
+            work.estimated_ticks()
+        );
     }
     #[cfg(feature = "bcp-stats")]
     if nixie_sat::diag_bcp::enabled() {
