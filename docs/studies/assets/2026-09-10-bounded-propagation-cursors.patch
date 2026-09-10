@@ -1,0 +1,1197 @@
+diff --git a/nixie-sat/src/clause.rs b/nixie-sat/src/clause.rs
+index 497a7dc6..33d2870e 100644
+--- a/nixie-sat/src/clause.rs
++++ b/nixie-sat/src/clause.rs
+@@ -395,6 +395,10 @@ impl ClauseDatabase {
+         self.refs.get(id.index()).copied()
+     }
+
++    pub(crate) fn propagation(&mut self) -> crate::memory::PropagationArena<'_> {
++        self.arena.propagation()
++    }
++
+     /// Mutable literal slice of a live clause addressed **directly** by its
+     /// arena slot – the propagation hot path, which already carries the slot
+     /// inside its watchers and must not pay the extra `refs[id]` indirection
+diff --git a/nixie-sat/src/memory.rs b/nixie-sat/src/memory.rs
+index da76b572..33b05818 100644
+--- a/nixie-sat/src/memory.rs
++++ b/nixie-sat/src/memory.rs
+@@ -307,6 +307,95 @@ pub struct ClauseArena {
+     compactions: u64,
+ }
+
++/// Exclusive fixed allocation used throughout ordinary propagation. The
++/// lifetime prevents allocation, shrink, deletion or compaction while a scan
++/// uses arena offsets; each returned payload borrow ends before the next one.
++pub(crate) struct PropagationArena<'a> {
++    buffer: &'a mut [u64],
++    pos: usize,
++    identities: usize,
++}
++
++/// One live arena slot: the mutable payload and immutable stable identity
++/// occupy disjoint bytes. Holding this borrow prevents deletion, shrink,
++/// allocation and relocation through the arena view. No raw ref can be
++/// supplied to `reason`: it belongs to this exact borrowed live clause.
++pub(crate) struct LivePropagationClause<'a> {
++    lits: &'a mut [Lit],
++    identity: &'a u32,
++}
++
++impl LivePropagationClause<'_> {
++    #[inline]
++    pub(crate) fn lits(&mut self) -> &mut [Lit] {
++        self.lits
++    }
++
++    #[inline]
++    pub(crate) fn reason(&self) -> ClauseId {
++        ClauseId::new(*self.identity)
++    }
++}
++
++impl PropagationArena<'_> {
++    /// Reborrow a fixed allocation by value. The scan owns these slice
++    /// coordinates, so assignment cannot change or invalidate its base.
++    #[inline]
++    pub(crate) fn reborrow(&mut self) -> PropagationArena<'_> {
++        PropagationArena {
++            buffer: self.buffer,
++            pos: self.pos,
++            identities: self.identities,
++        }
++    }
++
++    /// Same arena-issued/ref-relocation contract as `live_lits_hot`.
++    #[inline]
++    pub(crate) fn live_clause(&mut self, r: ClauseRef) -> Option<LivePropagationClause<'_>> {
++        if r.is_null() {
++            return None;
++        }
++        debug_assert!(r.byte_offset() + HEADER_BYTES <= self.pos);
++        // SAFETY: the same arena-issued/ref-relocation invariant as
++        // ClauseArena::live_lits_hot. The exclusive slice pins the allocation
++        // for this entire pass. A slot is 8-aligned and contains an initialized
++        // header; copying it does not borrow any payload.
++        let header = unsafe {
++            self.buffer
++                .as_mut_ptr()
++                .cast::<u8>()
++                .add(r.byte_offset())
++                .cast::<ClauseHeader>()
++        };
++        let h = unsafe { core::ptr::read(header) };
++        debug_assert!(
++            h.len as usize
++                <= (self.pos - r.byte_offset() - HEADER_BYTES) / core::mem::size_of::<Lit>()
++        );
++        if h.deleted() {
++            return None;
++        }
++        // Every live identity was initialized by alloc after checking the
++        // u32 ID space. Shrink preserves it; compaction copies it with the
++        // payload. Only the shared deleted tombstone has an invalid identity,
++        // and that slot was excluded by the liveness check above.
++        debug_assert!((h.identity as usize) < self.identities);
++        // SAFETY: the arena-issued slot has an initialized, aligned header
++        // and h.len initialized literals. The shared identity covers header
++        // bytes 8..12 and the mutable payload starts at byte 12, so even
++        // though they share an allocation word they do not overlap. Both
++        // references borrow this exclusive view; no arena access or header
++        // mutation can occur until they end. The payload cannot reach back
++        // into the header, and the identity is never exposed mutably.
++        Some(unsafe {
++            LivePropagationClause {
++                lits: core::slice::from_raw_parts_mut(header.add(1).cast::<Lit>(), h.len as usize),
++                identity: &*core::ptr::addr_of!((*header).identity),
++            }
++        })
++    }
++}
++
+ /// All allocation and address checks precede any reference mutation.
+ pub(crate) struct CompactionPlan {
+     relocated: Vec<ClauseRef>,
+@@ -334,6 +423,14 @@ impl Default for ClauseArena {
+ }
+
+ impl ClauseArena {
++    pub(crate) fn propagation(&mut self) -> PropagationArena<'_> {
++        PropagationArena {
++            buffer: &mut self.buffer,
++            pos: self.pos,
++            identities: self.activities.len(),
++        }
++    }
++
+     /// Create an arena whose buffer is pre-allocated to hold at least
+     /// `initial_capacity` bytes (rounded up to whole `u64`s).
+     #[must_use]
+@@ -1343,6 +1440,59 @@ mod initialization_tests {
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn borrowed_propagation_clause_identity_survives_mutation_and_relocation() {
++        let mut arena = ClauseArena::new(0);
++        let mut refs = Vec::new();
++        let mut expected = Vec::new();
++        for len in [2, 3, 5, 64] {
++            let lits: Vec<_> = (0..len).map(Lit::from_code).collect();
++            refs.push(arena.alloc(&lits, false));
++            expected.push(lits);
++        }
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(ClauseRef::NULL).is_none());
++            for (id, (&r, literals)) in refs.iter().zip(&mut expected).enumerate() {
++                let mut live = view.live_clause(r).expect("live allocated clause");
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++                // Keep the identity reference live across payload writes.
++                // The two ranges share a u64 allocation word but no bytes.
++                let LivePropagationClause { lits, identity } = &mut live;
++                lits.reverse();
++                literals.reverse();
++                assert_eq!(**identity, id as u32);
++                assert_eq!(*lits, literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        arena.delete(refs[0]);
++        expected[2].truncate(3);
++        assert!(arena.shrink(refs[2], &expected[2]));
++        let before = refs.clone();
++        arena.compact(&mut refs);
++        assert_ne!(refs[1], before[1], "the live clause was relocated");
++        // Compaction shrinks the allocation; growth happens before reborrow.
++        let extra: Vec<_> = (0..512).map(Lit::from_code).collect();
++        refs.push(arena.alloc(&extra, true));
++        expected.push(extra);
++        {
++            let mut view = arena.propagation();
++            assert!(view.live_clause(refs[0]).is_none(), "deleted tombstone");
++            for (id, (&r, literals)) in refs.iter().zip(&expected).enumerate().skip(1) {
++                let mut live = view.live_clause(r).expect("relocated live clause");
++                assert_eq!(live.lits(), literals.as_slice());
++                assert_eq!(live.reason(), ClauseId::new(id as u32));
++            }
++        }
++        for &r in &refs {
++            arena.delete(r);
++        }
++        arena.compact(&mut refs);
++        let mut view = arena.propagation();
++        assert!(refs.iter().all(|&r| view.live_clause(r).is_none()));
++    }
+     use crate::literal::Var;
+
+     fn l(v: u32) -> Lit {
+diff --git a/nixie-sat/src/solver/list_kernel.rs b/nixie-sat/src/solver/list_kernel.rs
+new file mode 100644
+index 00000000..859a5133
+--- /dev/null
++++ b/nixie-sat/src/solver/list_kernel.rs
+@@ -0,0 +1,219 @@
++//! One long-watch list inside a fixed-domain propagation session.
++//! Both compaction phases retain a narrow call boundary; no BIG state or outer
++//! propagation-head cursor is live inside this kernel. Units never yield.
++use super::{ClauseId, Lit, Watcher};
++#[allow(unused_imports)]
++use crate::prelude::*;
++use crate::trail::{PropagationQueue, assign_undefined, propagation_value};
++
++#[path = "watch_cursor.rs"]
++mod watch_cursor;
++use watch_cursor::WatchCursor;
++
++pub(super) struct ScanResult {
++    #[cfg(feature = "bcp-work")]
++    pub(super) work: super::super::PropagationWork,
++    pub(super) write: usize,
++    // Live arena identities exclude NULL. Keeping this result to two
++    // scalars avoids a hidden output pointer in ordinary scan calls.
++    pub(super) conflict: ClauseId,
++}
++
++impl Default for ScanResult {
++    fn default() -> Self {
++        Self {
++            write: 0,
++            conflict: ClauseId::NULL,
++            #[cfg(feature = "bcp-work")]
++            work: super::super::PropagationWork::default(),
++        }
++    }
++}
++
++#[inline]
++pub(super) fn scan_list(
++    watches: &mut [Watcher],
++    false_lit: Lit,
++    values: &mut [i8],
++    queue: &mut PropagationQueue<'_>,
++    clauses: crate::memory::PropagationArena<'_>,
++    destinations: &mut [Vec<Watcher>],
++) -> ScanResult {
++    let begin = watches.as_mut_ptr();
++    let result = scan::<false>(
++        WatchCursor::new(watches),
++        false_lit,
++        values,
++        queue,
++        clauses,
++        destinations,
++        #[cfg(feature = "bcp-work")]
++        super::super::PropagationWork::default(),
++    );
++    // SAFETY: the cursor only returns an initialized-prefix endpoint within
++    // this same borrowed slice (possibly its beginning/end for an empty list).
++    #[allow(unsafe_code)]
++    let write = unsafe { result.end.offset_from(begin) as usize };
++    ScanResult {
++        write,
++        conflict: result.conflict,
++        #[cfg(feature = "bcp-work")]
++        work: result.work,
++    }
++}
++
++struct ScanEnd {
++    end: *mut Watcher,
++    conflict: ClauseId,
++    #[cfg(feature = "bcp-work")]
++    work: super::super::PropagationWork,
++}
++
++/// Only the prefix can call the suffix, once at its first removal. The suffix
++/// never recurses; no input can increase native call depth beyond these two.
++/// A phase returns its final state; no caller-owned cursor stays live in it.
++#[inline(never)]
++#[allow(clippy::too_many_arguments)] // Disjoint fixed stores are explicit borrows.
++fn scan<const COMPACT: bool>(
++    mut watches: WatchCursor<'_, COMPACT>,
++    false_lit: Lit,
++    values: &mut [i8],
++    queue: &mut PropagationQueue<'_>,
++    mut clauses: crate::memory::PropagationArena<'_>,
++    destinations: &mut [Vec<Watcher>],
++    #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
++) -> ScanEnd {
++    while let Some(entry) = watches.next() {
++        let watcher = entry.watcher();
++        #[cfg(feature = "bcp-work")]
++        {
++            work.long_visits += 1;
++        }
++        if propagation_value(values, watcher.blocker) > 0 {
++            entry.keep(None);
++            continue;
++        }
++        #[cfg(feature = "bcp-work")]
++        {
++            work.clause_reads += 1;
++        }
++        let Some(mut live) = clauses.live_clause(watcher.r) else {
++            #[cfg(feature = "bcp-work")]
++            {
++                work.deleted += 1;
++            }
++            entry.remove();
++            if COMPACT {
++                continue;
++            }
++            return scan::<true>(
++                watches.compacting(),
++                false_lit,
++                values,
++                queue,
++                clauses,
++                destinations,
++                #[cfg(feature = "bcp-work")]
++                work,
++            );
++        };
++        let (pair, tail) = live.lits().split_at_mut(2);
++        debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
++        let first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
++        // Even satisfied exits keep the original eager normalization:
++        // subsequent inprocessing observes literal order.
++        pair[0] = first;
++        pair[1] = false_lit;
++        if propagation_value(values, first) > 0 {
++            #[cfg(feature = "bcp-work")]
++            {
++                work.first_satisfied += 1;
++            }
++            entry.keep(Some(first));
++            continue;
++        }
++        // A disjoint mutable iterator needs only the current slot and end;
++        // no tail index or derived arena-plus-tail base survives the loop.
++        let mut found = None;
++        for slot in tail {
++            #[cfg(feature = "bcp-work")]
++            {
++                work.tail_probes += 1;
++            }
++            let literal = *slot;
++            let value = propagation_value(values, literal);
++            if value > 0 {
++                #[cfg(feature = "bcp-work")]
++                {
++                    work.tail_satisfied += 1;
++                }
++                found = Some(Some(literal));
++                break;
++            }
++            if value == 0 {
++                core::mem::swap(&mut pair[1], slot);
++                #[cfg(feature = "bcp-work")]
++                {
++                    work.watch_moves += 1;
++                }
++                destinations[pair[1].negate().index()].push(Watcher {
++                    blocker: first,
++                    ..watcher
++                });
++                found = Some(None);
++                break;
++            }
++        }
++        if let Some(parked) = found {
++            if let Some(blocker) = parked {
++                entry.keep(Some(blocker));
++            } else {
++                entry.remove();
++                if !COMPACT {
++                    return scan::<true>(
++                        watches.compacting(),
++                        false_lit,
++                        values,
++                        queue,
++                        clauses,
++                        destinations,
++                        #[cfg(feature = "bcp-work")]
++                        work,
++                    );
++                }
++            }
++            continue;
++        }
++        entry.keep(Some(first));
++        if propagation_value(values, first) < 0 {
++            #[cfg(feature = "bcp-work")]
++            {
++                work.long_conflicts += 1;
++            }
++            return ScanEnd {
++                end: watches.finish(),
++                conflict: live.reason(),
++                #[cfg(feature = "bcp-work")]
++                work,
++            };
++        }
++        // SAFETY: first is an in-domain clause literal. Its true exit
++        // precedes the tail scan and its false exit is above. No assignment
++        // occurred between these checks, so it is still undefined. The
++        // exclusive view prevents resize, unassignment and queue growth.
++        #[allow(unsafe_code)]
++        unsafe {
++            assign_undefined(values, queue, first, live.reason())
++        };
++        #[cfg(feature = "bcp-work")]
++        {
++            work.long_assignments += 1;
++        }
++    }
++    ScanEnd {
++        end: watches.finish(),
++        conflict: ClauseId::NULL,
++        #[cfg(feature = "bcp-work")]
++        work,
++    }
++}
+diff --git a/nixie-sat/src/solver/propagate.rs b/nixie-sat/src/solver/propagate.rs
+index 40efaf56..0a902fb5 100644
+--- a/nixie-sat/src/solver/propagate.rs
++++ b/nixie-sat/src/solver/propagate.rs
+@@ -59,6 +59,11 @@ use core::sync::atomic::Ordering::Relaxed;
+ mod watch_kernel;
+ use watch_kernel::{Cursor, Step};
+
++#[path = "list_kernel.rs"]
++mod list_kernel;
++#[path = "session_kernel.rs"]
++mod session_kernel;
++
+ impl Solver {
+     /// Unit propagation using two-watched literals
+     ///
+@@ -76,6 +81,15 @@ impl Solver {
+         #[cfg(not(feature = "bcp-stats"))]
+         let bcp_stats = false;
+         let use_kernel = self.use_watch_kernel(bcp_stats);
++        if use_kernel && self.use_propagation_session() {
++            let conflict = self.propagate_session();
++            if conflict.is_some() {
++                self.note_conflict_prefix();
++            } else if !self.propagate_aborted {
++                self.no_conflict_until = self.trail.size();
++            }
++            return conflict;
++        }
+         while let Some(lit) = self.trail.next_to_propagate() {
+             self.stats.propagations += 1;
+             #[cfg(feature = "bcp-work")]
+@@ -626,6 +640,13 @@ impl Solver {
+         true
+     }
+
++    /// A fixed session excludes every path that can invoke a Solver callback
++    /// or change the borrowed arena/domain. Evaluate once per propagation call.
++    #[inline]
++    fn use_propagation_session(&self) -> bool {
++        !self.lrat && !self.config.enable_lazy_hyper_binary && !Self::reason_stats_enabled()
++    }
++
+     /// Each scanner call borrows a fixed trail. The borrow ends before any
+     /// assignment, proof work or HBR can mutate or grow the solver stores.
+     #[inline]
+diff --git a/nixie-sat/src/solver/session_kernel.rs b/nixie-sat/src/solver/session_kernel.rs
+new file mode 100644
+index 00000000..360ce07a
+--- /dev/null
++++ b/nixie-sat/src/solver/session_kernel.rs
+@@ -0,0 +1,124 @@
++//! Ordinary propagation driver. Fixed-domain borrows live across all lists;
++//! the narrow long-list call keeps BIG/driver state out of its scanning loops.
++use super::*;
++use crate::trail::{assign_undefined, propagation_value};
++
++impl Solver {
++    pub(super) fn propagate_session(&mut self) -> Option<ClauseId> {
++        if !self.trail.has_pending_propagation() {
++            return None;
++        }
++        let session = self.trail.propagation_session();
++        let values = session.values;
++        let mut queue = session.queue;
++        let mut arena = self.clauses.propagation();
++        let (destinations, phantom) = self.watches.propagation_parts();
++        let graph = &self.binary_graph;
++        let ticks = if self.stable {
++            &mut self.ticks_stable
++        } else {
++            &mut self.ticks_focused
++        };
++        while let Some(lit) = queue.next() {
++            self.stats.propagations += 1;
++            #[cfg(feature = "bcp-work")]
++            {
++                self.stats.propagation_work.dequeued += 1;
++            }
++            if let Some(limit) = &mut self.propagate_step_limit {
++                if *limit == 0 {
++                    self.propagate_aborted = true;
++                    return None;
++                }
++                *limit -= 1;
++            }
++            let code = lit.index();
++            let (start, plen) = graph.span_of(code);
++            let primary = &graph.edges[start..start + plen];
++            let extra = &graph.extra[code];
++            #[cfg(feature = "bcp-work")]
++            {
++                use super::super::propagation_work::list_lines;
++                let work = &mut self.stats.propagation_work;
++                work.started += 1;
++                work.binary_lists += u64::from(!primary.is_empty() || !extra.is_empty());
++                work.binary_list_lines += list_lines::<(Lit, ClauseId)>(primary.len())
++                    + list_lines::<(Lit, ClauseId)>(extra.len());
++            }
++            // No graph mutation is possible in this callback-free session.
++            // Preserve primary-before-overflow and binary-before-long order.
++            for (is_primary, span) in [(true, primary), (false, extra)] {
++                #[cfg(not(feature = "bcp-work"))]
++                let _ = is_primary;
++                for &(implied, reason) in span {
++                    #[cfg(feature = "bcp-work")]
++                    {
++                        if is_primary {
++                            self.stats.propagation_work.binary_primary_visits += 1;
++                        } else {
++                            self.stats.propagation_work.binary_overflow_visits += 1;
++                        }
++                    }
++                    let value = propagation_value(values, implied);
++                    if value < 0 {
++                        #[cfg(feature = "bcp-work")]
++                        {
++                            self.stats.propagation_work.binary_conflicts += 1;
++                        }
++                        queue.requeue();
++                        return Some(reason);
++                    }
++                    if value == 0 {
++                        // SAFETY: graph literals belong to this session's
++                        // fixed domain. The immediately preceding read proves
++                        // undefined; no callback/unassignment can intervene.
++                        #[allow(unsafe_code)]
++                        unsafe {
++                            assign_undefined(values, &mut queue, implied, reason)
++                        };
++                        #[cfg(feature = "bcp-work")]
++                        {
++                            self.stats.propagation_work.binary_assignments += 1;
++                        }
++                    }
++                }
++            }
++            let mut watches = core::mem::take(&mut destinations[code]);
++            #[cfg(feature = "bcp-work")]
++            {
++                let work = &mut self.stats.propagation_work;
++                work.long_lists += u64::from(!watches.is_empty());
++                work.long_list_lines +=
++                    super::super::propagation_work::list_lines::<Watcher>(watches.len());
++            }
++            // Preserve the old scheduling formula, including phantom binaries.
++            let bins = phantom.get(code).map_or(0, |&n| n as usize);
++            let charge = 1 + (((watches.len() + bins) as u64) * 8).div_ceil(128);
++            *ticks = ticks.saturating_add(charge);
++            #[allow(unused_mut)]
++            let mut result = if watches.is_empty() {
++                list_kernel::ScanResult::default()
++            } else {
++                list_kernel::scan_list(
++                    &mut watches,
++                    !lit,
++                    values,
++                    &mut queue,
++                    arena.reborrow(),
++                    destinations,
++                )
++            };
++            #[cfg(feature = "bcp-work")]
++            self.stats
++                .propagation_work
++                .take_watch_scan(&mut result.work);
++            watches.truncate(result.write);
++            destinations[code] = watches;
++            if !result.conflict.is_null() {
++                queue.requeue();
++                return Some(result.conflict);
++            }
++        }
++        None
++    }
++}
+diff --git a/nixie-sat/src/solver/watch_cursor.rs b/nixie-sat/src/solver/watch_cursor.rs
+new file mode 100644
+index 00000000..89bc7538
+--- /dev/null
++++ b/nixie-sat/src/solver/watch_cursor.rs
+@@ -0,0 +1,215 @@
++//! Exclusive initialized watch-slice traversal with stable compaction.
++//! All raw coordinates stay within one borrowed slice. No element references
++//! escape, and a pending entry must be consumed before the next can be read.
++use super::{Lit, Watcher};
++use core::marker::PhantomData;
++
++pub(super) struct WatchCursor<'a, const COMPACT: bool> {
++    read: *mut Watcher,
++    write: *mut Watcher,
++    end: *mut Watcher,
++    owner: PhantomData<&'a mut [Watcher]>,
++}
++
++pub(super) struct Entry<'c, 'a, const COMPACT: bool> {
++    cursor: &'c mut WatchCursor<'a, COMPACT>,
++    watcher: Watcher,
++}
++
++impl<'a> WatchCursor<'a, false> {
++    #[inline]
++    #[allow(unsafe_code)]
++    pub(super) fn new(watches: &'a mut [Watcher]) -> Self {
++        let begin = watches.as_mut_ptr();
++        Self {
++            read: begin,
++            write: begin,
++            // SAFETY: one-past-end of this initialized slice, including empty.
++            end: unsafe { begin.add(watches.len()) },
++            owner: PhantomData,
++        }
++    }
++}
++
++impl<'a, const COMPACT: bool> WatchCursor<'a, COMPACT> {
++    #[inline]
++    #[allow(unsafe_code)]
++    pub(super) fn next(&mut self) -> Option<Entry<'_, 'a, COMPACT>> {
++        if self.read == self.end {
++            return None;
++        }
++        if !COMPACT {
++            self.write = self.read;
++        }
++        // SAFETY: read advances exactly once per nonempty next, never past
++        // end. Keeping writes strictly behind the newly advanced read cursor.
++        // The Entry borrow excludes another next/finish until it is consumed.
++        let watcher = unsafe {
++            let watcher = self.read.read();
++            self.read = self.read.add(1);
++            watcher
++        };
++        Some(Entry {
++            cursor: self,
++            watcher,
++        })
++    }
++
++    #[inline]
++    pub(super) fn compacting(self) -> WatchCursor<'a, true> {
++        // After a removed prefix entry, write names precisely its hole. No
++        // subtraction from begin/end or unchecked nonempty assumption occurs.
++        WatchCursor {
++            read: self.read,
++            write: self.write,
++            end: self.end,
++            owner: PhantomData,
++        }
++    }
++
++    /// Publish the kept prefix plus the untouched remainder on early conflict.
++    /// The returned pointer belongs to the original slice and is never read.
++    #[inline]
++    #[allow(unsafe_code)]
++    pub(super) fn finish(self) -> *mut Watcher {
++        if !COMPACT {
++            return self.end;
++        }
++        // SAFETY: read <= end and write <= read in the same allocation.
++        // Both ranges are initialized and fit inside the original slice;
++        // copy explicitly permits overlap. Watcher is Copy. Equal pointers
++        // cover empty slices without a nonempty-allocation assumption.
++        unsafe {
++            let remaining = self.end.offset_from(self.read) as usize;
++            core::ptr::copy(self.read, self.write, remaining);
++            self.write.add(remaining)
++        }
++    }
++}
++
++impl<const COMPACT: bool> Entry<'_, '_, COMPACT> {
++    #[inline]
++    pub(super) fn watcher(&self) -> Watcher {
++        self.watcher
++    }
++
++    #[inline]
++    #[allow(unsafe_code)]
++    pub(super) fn keep(self, blocker: Option<Lit>) {
++        // SAFETY: next established write < read <= end. Consuming this token
++        // permits exactly one keep, and its exclusive borrow prevents another
++        // next from changing coordinates. No element reference aliases writes.
++        unsafe {
++            if COMPACT {
++                let mut watcher = self.watcher;
++                if let Some(blocker) = blocker {
++                    watcher.blocker = blocker;
++                }
++                self.cursor.write.write(watcher);
++                self.cursor.write = self.cursor.write.add(1);
++            } else if let Some(blocker) = blocker {
++                (*self.cursor.write).blocker = blocker;
++            }
++        }
++    }
++
++    #[inline]
++    pub(super) fn remove(self) {}
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::clause::ClauseId;
++    use crate::memory::ClauseRef;
++    #[allow(unused_imports)]
++    use crate::prelude::*;
++
++    #[test]
++    #[allow(unsafe_code)]
++    fn cursor_keeps_removes_and_copies_every_unvisited_suffix() {
++        for len in 0..=7 {
++            for mask in 0..1usize << len {
++                for stop in 0..=len {
++                    let mut watches: Vec<_> = (0..len)
++                        .map(|i| {
++                            Watcher::new(
++                                ClauseId::new(i as u32),
++                                ClauseRef::NULL,
++                                Lit::from_code(i as u32),
++                            )
++                        })
++                        .collect();
++                    let begin = watches.as_mut_ptr();
++                    let mut cursor = WatchCursor::new(&mut watches).compacting();
++                    let mut expected = Vec::new();
++                    for i in 0..stop {
++                        let Some(entry) = cursor.next() else {
++                            panic!("initialized slot missing")
++                        };
++                        assert_eq!(entry.watcher().blocker.index(), i);
++                        if mask & (1 << i) != 0 {
++                            entry.keep(Some(Lit::from_code((i + 20) as u32)));
++                            expected.push(i + 20);
++                        } else {
++                            entry.remove();
++                        }
++                    }
++                    expected.extend(stop..len);
++                    let end = cursor.finish();
++                    // SAFETY: endpoint from the same exclusive slice cursor.
++                    let kept = unsafe { end.offset_from(begin) as usize };
++                    assert_eq!(
++                        watches[..kept]
++                            .iter()
++                            .map(|w| w.blocker.index())
++                            .collect::<Vec<_>>(),
++                        expected
++                    );
++                }
++            }
++        }
++    }
++
++    #[test]
++    #[allow(unsafe_code)]
++    fn cursor_prefix_first_last_holes_and_empty_transitions() {
++        for len in 0..=7 {
++            for hole in 0..=len {
++                let mut watches: Vec<_> = (0..len)
++                    .map(|i| {
++                        Watcher::new(
++                            ClauseId::new(i as u32),
++                            ClauseRef::NULL,
++                            Lit::from_code(i as u32),
++                        )
++                    })
++                    .collect();
++                let begin = watches.as_mut_ptr();
++                let mut prefix = WatchCursor::new(&mut watches);
++                for _ in 0..hole {
++                    let Some(entry) = prefix.next() else {
++                        panic!("prefix missing")
++                    };
++                    entry.keep(None);
++                }
++                let end = if let Some(entry) = prefix.next() {
++                    entry.remove();
++                    prefix.compacting().finish()
++                } else {
++                    prefix.finish()
++                };
++                // SAFETY: endpoint from the same exclusive slice cursor.
++                let kept = unsafe { end.offset_from(begin) as usize };
++                let expected: Vec<_> = (0..len).filter(|&i| i != hole).collect();
++                assert_eq!(
++                    watches[..kept]
++                        .iter()
++                        .map(|w| w.blocker.index())
++                        .collect::<Vec<_>>(),
++                    expected
++                );
++            }
++        }
++    }
++}
+diff --git a/nixie-sat/src/solver/watch_kernel_tests.rs b/nixie-sat/src/solver/watch_kernel_tests.rs
+index 81b45772..c63db1ee 100644
+--- a/nixie-sat/src/solver/watch_kernel_tests.rs
++++ b/nixie-sat/src/solver/watch_kernel_tests.rs
+@@ -291,6 +291,50 @@ fn assert_state(a: &Solver, b: &Solver) {
+     assert_eq!(a.trivially_unsat, b.trivially_unsat);
+ }
+
++#[test]
++fn session_gate_excludes_callbacks() {
++    let mut s = Solver::new();
++    assert!(s.use_propagation_session());
++    s.config.enable_lazy_hyper_binary = true;
++    assert!(!s.use_propagation_session());
++    s.config.enable_lazy_hyper_binary = false;
++    s.lrat = true;
++    assert!(!s.use_propagation_session());
++}
++
++#[cfg(all(feature = "std", not(miri)))]
++#[test]
++fn session_solver_moves_between_rayon_owners_after_growth_and_rebuild() {
++    let pool = rayon::ThreadPoolBuilder::new()
++        .num_threads(2)
++        .build()
++        .expect("pool");
++    let (a, _) = raw_solver(false, true, false);
++    let (mut b, _) = raw_solver(true, true, false);
++    let mut a = pool.install(move || {
++        let mut a = a;
++        assert!(a.use_watch_kernel(false) && a.use_propagation_session());
++        let result = a.propagate();
++        (a, result)
++    });
++    assert_eq!(a.1, b.propagate());
++    assert_state(&a.0, &b);
++    for s in [&mut a.0, &mut b] {
++        s.trail.backtrack_to_size(0);
++        s.ensure_vars(128);
++        s.rebuild_watches_and_binary_graph();
++        s.trail.assign_unit_fact(Lit::from_code(2));
++        s.trail.assign_decision(Lit::from_code(0));
++    }
++    let a = pool.install(move || {
++        let mut s = a.0;
++        let result = s.propagate();
++        (s, result)
++    });
++    assert_eq!(a.1, b.propagate());
++    assert_state(&a.0, &b);
++}
++
+ fn pair(
+     nvars: usize,
+     clauses: &[Vec<i32>],
+@@ -431,3 +475,74 @@ fn paired_solves_match_truth_models_and_independent_lrat() {
+     }
+     assert!(sat > 0 && unsat > 0, "SAT {sat}, UNSAT {unsat}");
+ }
++
++#[test]
++fn bounded_cursors_match_scalar_for_all_short_truth_patterns() {
++    let mut cases = 0;
++    for tail_len in 1..=5 {
++        for pattern in 0..3usize.pow(tail_len) {
++            for first_value in 0..3 {
++                for hole in 0..3 {
++                    for reverse in [false, true] {
++                        let mut a = Solver::new();
++                        let mut b = Solver::new();
++                        b.propagate_legacy_oracle = true;
++                        let trigger = Lit::from_code(0);
++                        let first = Lit::from_code(2);
++                        let no = Lit::from_code(4);
++                        let tail: Vec<_> = (0..tail_len)
++                            .map(|i| Lit::from_code(2 * (i + 3) + (i & 1)))
++                            .collect();
++                        for s in [&mut a, &mut b] {
++                            s.ensure_vars(10);
++                            if hole != 0 {
++                                let lits = [!trigger, no, Lit::from_code(16)];
++                                let id = s.clauses.add_original(lits);
++                                s.attach_watchers(id, lits[0], lits[1]);
++                                if hole == 2 {
++                                    s.clauses.mark_deleted_raw(id);
++                                }
++                            }
++                            let mut lits = vec![!trigger, first];
++                            lits.extend_from_slice(&tail);
++                            if reverse {
++                                lits.swap(0, 1);
++                            }
++                            let id = s.clauses.add_original(lits.clone());
++                            s.attach_watchers(id, lits[0], lits[1]);
++                            // This must remain an untouched tail on conflict.
++                            let last = [!trigger, no, Lit::from_code(18)];
++                            let id = s.clauses.add_original(last);
++                            s.attach_watchers(id, last[0], last[1]);
++                            s.trail.new_decision_level();
++                            s.trail.assign_decision(!no);
++                            let mut code = pattern;
++                            for (lit, value) in std::iter::once((first, first_value)).chain(
++                                tail.iter().copied().map(|lit| {
++                                    let value = code % 3;
++                                    code /= 3;
++                                    (lit, value)
++                                }),
++                            ) {
++                                match value {
++                                    0 => {}
++                                    1 => s.trail.assign_decision(lit),
++                                    2 => s.trail.assign_decision(!lit),
++                                    _ => unreachable!(),
++                                }
++                            }
++                            while s.trail.next_to_propagate().is_some() {}
++                            s.trail.assign_decision(trigger);
++                        }
++                        assert!(a.use_watch_kernel(false));
++                        assert!(a.use_propagation_session());
++                        assert_eq!(a.propagate(), b.propagate());
++                        assert_state(&a, &b);
++                        cases += 1;
++                    }
++                }
++            }
++        }
++    }
++    assert_eq!(cases, 6534);
++}
+diff --git a/nixie-sat/src/trail.rs b/nixie-sat/src/trail.rs
+index 760ee917..49fcf255 100644
+--- a/nixie-sat/src/trail.rs
++++ b/nixie-sat/src/trail.rs
+@@ -5,6 +5,10 @@ use crate::literal::{LBool, Lit, Var};
+ #[allow(unused_imports)]
+ use crate::prelude::*;
+
++#[path = "trail_propagation.rs"]
++mod propagation;
++pub(crate) use propagation::{PropagationQueue, assign_undefined, propagation_value};
++
+ /// Reason for an assignment
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum Reason {
+diff --git a/nixie-sat/src/trail_propagation.rs b/nixie-sat/src/trail_propagation.rs
+new file mode 100644
+index 00000000..213b742b
+--- /dev/null
++++ b/nixie-sat/src/trail_propagation.rs
+@@ -0,0 +1,219 @@
++//! A fixed-domain propagation session. Truth bytes and assignment-only state
++//! have disjoint borrows, so a watch scan need not retain queue/metadata bases.
++use super::{ClauseId, LBool, Lit, Reason, Trail, VarInfo};
++#[allow(unused_imports)]
++use crate::prelude::*;
++
++pub(crate) struct PropagationTrail<'a> {
++    pub(crate) values: &'a mut [i8],
++    pub(crate) queue: PropagationQueue<'a>,
++}
++
++pub(crate) struct PropagationQueue<'a> {
++    assignments: &'a mut Vec<Lit>,
++    published_head: &'a mut usize,
++    queue: *mut Lit,
++    initialized: usize,
++    head: usize,
++    info: &'a mut [VarInfo],
++    level: u32,
++}
++
++impl Trail {
++    pub(crate) fn propagation_session(&mut self) -> PropagationTrail<'_> {
++        // General Trail APIs permit repeated entries in the old prefix. Only
++        // undefined variables append in this session, at most domain size more.
++        self.assignments.reserve(self.var_info.len());
++        let initialized = self.assignments.len();
++        let queue = self.assignments.as_mut_ptr();
++        let head = self.prop_head;
++        PropagationTrail {
++            values: &mut self.values,
++            queue: PropagationQueue {
++                assignments: &mut self.assignments,
++                published_head: &mut self.prop_head,
++                queue,
++                initialized,
++                head,
++                info: &mut self.var_info,
++                level: self.current_level,
++            },
++        }
++    }
++}
++
++/// The same valid solver-literal domain contract as Trail::lit_val_hot.
++#[inline]
++#[allow(unsafe_code)]
++pub(crate) fn propagation_value(values: &[i8], lit: Lit) -> i8 {
++    debug_assert!(lit.index() < values.len());
++    // SAFETY: Solver grows both truth signs before constructing any watch,
++    // edge or trail literal. The session excludes resizing and unassignment.
++    unsafe { *values.get_unchecked(lit.index()) }
++}
++
++/// Assign through the disjoint truth/queue views.
++///
++/// # Safety
++/// These must be the two parts of the same active propagation session, and
++/// lit must be in-domain and currently undefined. No variable may be unassigned
++/// during the session; thus the reserved additional capacity bounds appends.
++#[inline]
++#[allow(unsafe_code)]
++pub(crate) unsafe fn assign_undefined(
++    values: &mut [i8],
++    queue: &mut PropagationQueue<'_>,
++    lit: Lit,
++    reason: ClauseId,
++) {
++    let code = lit.index();
++    debug_assert!(code < values.len() && (code ^ 1) < values.len());
++    debug_assert_eq!(values[code], 0);
++    // SAFETY: the caller's undefined-variable contract bounds total appends.
++    // The leaf checks its domain/capacity before touching initialized state.
++    unsafe { queue.append(lit, reason) };
++    // SAFETY: both signs are in the fixed exclusive truth slice. The append
++    // cannot run callbacks; these stores complete the assignment before any
++    // subsequent scan/dequeue can observe it. Neither store can unwind.
++    unsafe {
++        *values.get_unchecked_mut(code) = 1;
++        *values.get_unchecked_mut(code ^ 1) = -1;
++    }
++}
++
++impl PropagationQueue<'_> {
++    #[inline]
++    #[allow(unsafe_code)]
++    pub(crate) fn next(&mut self) -> Option<Lit> {
++        if self.head >= self.initialized {
++            return None;
++        }
++        // SAFETY: only initialized entries are read; the exclusive queue
++        // borrow prevents reallocation or aliased element references.
++        let lit = unsafe { self.queue.add(self.head).read() };
++        self.head += 1;
++        Some(lit)
++    }
++
++    #[inline]
++    pub(crate) fn requeue(&mut self) {
++        debug_assert!(self.head > 0);
++        self.head = self.head.saturating_sub(1);
++    }
++
++    // Assignment-only state stays behind this leaf rather than competing
++    // with the arena/value bases in every blocker and tail-literal visit.
++    #[inline(never)]
++    #[allow(unsafe_code)]
++    unsafe fn append(&mut self, lit: Lit, reason: ClauseId) {
++        let idx = lit.var().index();
++        debug_assert!(idx < self.info.len());
++        debug_assert!(self.initialized < self.assignments.capacity());
++        // SAFETY: the session reserves domain-size additional capacity. Its
++        // caller assigns each newly defined variable at most once, and the
++        // valid literal identifies an initialized metadata slot. No element
++        // reference aliases the queue's raw initialized/uninitialized prefix.
++        unsafe {
++            *self.info.get_unchecked_mut(idx) = VarInfo {
++                value: if lit.is_pos() {
++                    LBool::True
++                } else {
++                    LBool::False
++                },
++                level: self.level,
++                reason: Reason::Propagation(reason),
++                trail_idx: self.initialized as u32,
++            };
++            self.queue.add(self.initialized).write(lit);
++        }
++        self.initialized += 1;
++    }
++}
++
++impl Drop for PropagationQueue<'_> {
++    #[inline]
++    #[allow(unsafe_code)]
++    fn drop(&mut self) {
++        // SAFETY: every slot below initialized has been initialized, and no
++        // slot exceeds the reserved allocation. Lit is Copy with no destructor.
++        // No further raw access occurs after publishing, including on unwind.
++        unsafe { self.assignments.set_len(self.initialized) };
++        *self.published_head = self.head;
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    #[allow(unsafe_code)]
++    fn session_queue_matches_scalar_with_duplicates_requeue_and_reborrow() {
++        for n in [0, 1, 5, 65] {
++            let mut trail = Trail::new(n);
++            let mut scalar = Trail::new(n);
++            for t in [&mut trail, &mut scalar] {
++                if n != 0 {
++                    for _ in 0..3 {
++                        t.assign_unit_fact(Lit::from_code(0));
++                    }
++                    assert_eq!(t.next_to_propagate(), Some(Lit::from_code(0)));
++                }
++                t.new_decision_level();
++            }
++            for round in 0..2 {
++                {
++                    let mut session = trail.propagation_session();
++                    if round == 0 {
++                        for i in 1..n {
++                            let lit = Lit::from_code((2 * i + i % 2) as u32);
++                            let reason = ClauseId::new(i as u32);
++                            assert_eq!(propagation_value(session.values, lit), 0);
++                            // SAFETY: paired views, each valid variable once.
++                            unsafe {
++                                assign_undefined(session.values, &mut session.queue, lit, reason)
++                            };
++                            scalar.assign_propagation(lit, reason);
++                            assert_eq!(propagation_value(session.values, lit), 1);
++                            assert_eq!(propagation_value(session.values, !lit), -1);
++                        }
++                    }
++                    while let Some(lit) = session.queue.next() {
++                        assert_eq!(Some(lit), scalar.next_to_propagate());
++                    }
++                    assert_eq!(scalar.next_to_propagate(), None);
++                    if n != 0 {
++                        session.queue.requeue();
++                        scalar.requeue_last_propagated();
++                    }
++                }
++                assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++            }
++        }
++    }
++
++    #[test]
++    #[allow(unsafe_code)]
++    fn session_queue_unwind_publishes_initialized_prefix_and_head() {
++        let mut trail = Trail::new(3);
++        let mut scalar = Trail::new(3);
++        let lit = Lit::from_code(3);
++        let reason = ClauseId::new(7);
++        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++            let mut session = trail.propagation_session();
++            // SAFETY: paired views and an in-domain undefined variable.
++            unsafe { assign_undefined(session.values, &mut session.queue, lit, reason) };
++            assert_eq!(session.queue.next(), Some(lit));
++            panic!("exercise session publication");
++        }));
++        assert!(outcome.is_err());
++        scalar.assign_propagation(lit, reason);
++        assert_eq!(scalar.next_to_propagate(), Some(lit));
++        assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++        trail.resize(128);
++        scalar.resize(128);
++        trail.backtrack_to_size(0);
++        scalar.backtrack_to_size(0);
++        assert_eq!(format!("{trail:?}"), format!("{scalar:?}"));
++    }
++}
+diff --git a/nixie-sat/src/watched.rs b/nixie-sat/src/watched.rs
+index 5bba90d1..de823be8 100644
+--- a/nixie-sat/src/watched.rs
++++ b/nixie-sat/src/watched.rs
+@@ -119,6 +119,10 @@ pub struct WatchSnapshot {
+ }
+
+ impl WatchLists {
++    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32]) {
++        (&mut self.watches, &self.bin_phantom)
++    }
++
+     /// Create new watch lists for n variables
+     #[must_use]
+     pub fn new(num_vars: usize) -> Self {

@@ -1,0 +1,1526 @@
+=== prefix ===
+
+/media/data/proj/nixie/precompile/f5e75a7/stats_solve-perf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000064100 <nixie_sat::solver::propagate::list_kernel::scan>:
+   64100:	55                   	push   rbp
+   64101:	41 57                	push   r15
+   64103:	41 56                	push   r14
+   64105:	41 55                	push   r13
+   64107:	41 54                	push   r12
+   64109:	53                   	push   rbx
+   6410a:	48 83 ec 48          	sub    rsp,0x48
+   6410e:	48 89 f0             	mov    rax,rsi
+   64111:	41 ba ff ff ff ff    	mov    r10d,0xffffffff
+   64117:	48 39 f7             	cmp    rdi,rsi
+   6411a:	0f 84 c2 01 00 00    	je     642e2 <nixie_sat::solver::propagate::list_kernel::scan+0x1e2>
+   64120:	4c 8b 94 24 88 00 00 	mov    r10,QWORD PTR [rsp+0x88]
+   64127:	00
+   64128:	4c 8b b4 24 80 00 00 	mov    r14,QWORD PTR [rsp+0x80]
+   6412f:	00
+   64130:	4d 8d 66 10          	lea    r12,[r14+0x10]
+   64134:	eb 17                	jmp    6414d <nixie_sat::solver::propagate::list_kernel::scan+0x4d>
+   64136:	66 2e 0f 1f 84 00 00 	cs nop WORD PTR [rax+rax*1+0x0]
+   6413d:	00 00 00
+   64140:	44 89 7b 04          	mov    DWORD PTR [rbx+0x4],r15d
+   64144:	48 39 c7             	cmp    rdi,rax
+   64147:	0f 84 8f 01 00 00    	je     642dc <nixie_sat::solver::propagate::list_kernel::scan+0x1dc>
+   6414d:	48 89 fb             	mov    rbx,rdi
+   64150:	8b 77 04             	mov    esi,DWORD PTR [rdi+0x4]
+   64153:	48 83 c7 08          	add    rdi,0x8
+   64157:	80 3c 31 00          	cmp    BYTE PTR [rcx+rsi*1],0x0
+   6415b:	7f e7                	jg     64144 <nixie_sat::solver::propagate::list_kernel::scan+0x44>
+   6415d:	44 8b 2b             	mov    r13d,DWORD PTR [rbx]
+   64160:	41 83 fd ff          	cmp    r13d,0xffffffff
+   64164:	0f 84 39 01 00 00    	je     642a3 <nixie_sat::solver::propagate::list_kernel::scan+0x1a3>
+   6416a:	43 f6 44 2e 06 01    	test   BYTE PTR [r14+r13*1+0x6],0x1
+   64170:	0f 85 2d 01 00 00    	jne    642a3 <nixie_sat::solver::propagate::list_kernel::scan+0x1a3>
+   64176:	47 8b 1c 2e          	mov    r11d,DWORD PTR [r14+r13*1]
+   6417a:	49 83 fb 01          	cmp    r11,0x1
+   6417e:	0f 86 b9 01 00 00    	jbe    6433d <nixie_sat::solver::propagate::list_kernel::scan+0x23d>
+   64184:	47 8b 7c 2e 0c       	mov    r15d,DWORD PTR [r14+r13*1+0xc]
+   64189:	47 33 7c 2e 10       	xor    r15d,DWORD PTR [r14+r13*1+0x10]
+   6418e:	41 31 d7             	xor    r15d,edx
+   64191:	47 89 7c 2e 0c       	mov    DWORD PTR [r14+r13*1+0xc],r15d
+   64196:	43 89 54 2e 10       	mov    DWORD PTR [r14+r13*1+0x10],edx
+   6419b:	42 0f b6 34 39       	movzx  esi,BYTE PTR [rcx+r15*1]
+   641a0:	40 84 f6             	test   sil,sil
+   641a3:	7f 9b                	jg     64140 <nixie_sat::solver::propagate::list_kernel::scan+0x40>
+   641a5:	4f 8d 14 2c          	lea    r10,[r12+r13*1]
+   641a9:	4e 8d 1c 9d f8 ff ff 	lea    r11,[r11*4-0x8]
+   641b0:	ff
+   641b1:	66 66 66 66 66 66 2e 	data16 data16 data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   641b8:	0f 1f 84 00 00 00 00
+   641bf:	00
+   641c0:	4d 85 db             	test   r11,r11
+   641c3:	74 1d                	je     641e2 <nixie_sat::solver::propagate::list_kernel::scan+0xe2>
+   641c5:	45 8b 62 04          	mov    r12d,DWORD PTR [r10+0x4]
+   641c9:	42 0f b6 2c 21       	movzx  ebp,BYTE PTR [rcx+r12*1]
+   641ce:	40 84 ed             	test   bpl,bpl
+   641d1:	7f 6b                	jg     6423e <nixie_sat::solver::propagate::list_kernel::scan+0x13e>
+   641d3:	49 83 c2 04          	add    r10,0x4
+   641d7:	49 83 c3 fc          	add    r11,0xfffffffffffffffc
+   641db:	40 84 ed             	test   bpl,bpl
+   641de:	75 e0                	jne    641c0 <nixie_sat::solver::propagate::list_kernel::scan+0xc0>
+   641e0:	eb 71                	jmp    64253 <nixie_sat::solver::propagate::list_kernel::scan+0x153>
+   641e2:	44 89 7b 04          	mov    DWORD PTR [rbx+0x4],r15d
+   641e6:	47 8b 54 2e 08       	mov    r10d,DWORD PTR [r14+r13*1+0x8]
+   641eb:	40 84 f6             	test   sil,sil
+   641ee:	0f 88 ee 00 00 00    	js     642e2 <nixie_sat::solver::propagate::list_kernel::scan+0x1e2>
+   641f4:	48 89 7c 24 10       	mov    QWORD PTR [rsp+0x10],rdi
+   641f9:	4c 89 cf             	mov    rdi,r9
+   641fc:	44 89 fe             	mov    esi,r15d
+   641ff:	89 54 24 0c          	mov    DWORD PTR [rsp+0xc],edx
+   64203:	44 89 d2             	mov    edx,r10d
+   64206:	49 89 c4             	mov    r12,rax
+   64209:	4c 89 cb             	mov    rbx,r9
+   6420c:	4d 89 c5             	mov    r13,r8
+   6420f:	48 89 cd             	mov    rbp,rcx
+   64212:	e8 99 fe ff ff       	call   640b0 <nixie_sat::trail::propagation::PropagationQueue::append>
+   64217:	48 8b 7c 24 10       	mov    rdi,QWORD PTR [rsp+0x10]
+   6421c:	8b 54 24 0c          	mov    edx,DWORD PTR [rsp+0xc]
+   64220:	48 89 e9             	mov    rcx,rbp
+   64223:	4d 89 e8             	mov    r8,r13
+   64226:	49 89 d9             	mov    r9,rbx
+   64229:	4c 89 e0             	mov    rax,r12
+   6422c:	42 c6 44 3d 00 01    	mov    BYTE PTR [rbp+r15*1+0x0],0x1
+   64232:	49 83 f7 01          	xor    r15,0x1
+   64236:	42 c6 44 3d 00 ff    	mov    BYTE PTR [rbp+r15*1+0x0],0xff
+   6423c:	eb 04                	jmp    64242 <nixie_sat::solver::propagate::list_kernel::scan+0x142>
+   6423e:	44 89 63 04          	mov    DWORD PTR [rbx+0x4],r12d
+   64242:	4c 8b 94 24 88 00 00 	mov    r10,QWORD PTR [rsp+0x88]
+   64249:	00
+   6424a:	4d 8d 66 10          	lea    r12,[r14+0x10]
+   6424e:	e9 f1 fe ff ff       	jmp    64144 <nixie_sat::solver::propagate::list_kernel::scan+0x44>
+   64253:	47 89 64 2e 10       	mov    DWORD PTR [r14+r13*1+0x10],r12d
+   64258:	41 89 12             	mov    DWORD PTR [r10],edx
+   6425b:	43 8b 74 2e 10       	mov    esi,DWORD PTR [r14+r13*1+0x10]
+   64260:	48 83 f6 01          	xor    rsi,0x1
+   64264:	48 39 b4 24 90 00 00 	cmp    QWORD PTR [rsp+0x90],rsi
+   6426b:	00
+   6426c:	0f 86 e3 00 00 00    	jbe    64355 <nixie_sat::solver::propagate::list_kernel::scan+0x255>
+   64272:	48 8d 34 76          	lea    rsi,[rsi+rsi*2]
+   64276:	4c 8b 94 24 88 00 00 	mov    r10,QWORD PTR [rsp+0x88]
+   6427d:	00
+   6427e:	4d 8d 24 f2          	lea    r12,[r10+rsi*8]
+   64282:	49 8b 6c f2 10       	mov    rbp,QWORD PTR [r10+rsi*8+0x10]
+   64287:	49 3b 2c f2          	cmp    rbp,QWORD PTR [r10+rsi*8]
+   6428b:	74 67                	je     642f4 <nixie_sat::solver::propagate::list_kernel::scan+0x1f4>
+   6428d:	49 8b 74 24 08       	mov    rsi,QWORD PTR [r12+0x8]
+   64292:	44 89 2c ee          	mov    DWORD PTR [rsi+rbp*8],r13d
+   64296:	44 89 7c ee 04       	mov    DWORD PTR [rsi+rbp*8+0x4],r15d
+   6429b:	48 ff c5             	inc    rbp
+   6429e:	49 89 6c 24 10       	mov    QWORD PTR [r12+0x10],rbp
+   642a3:	48 89 7c 24 18       	mov    QWORD PTR [rsp+0x18],rdi
+   642a8:	48 89 5c 24 20       	mov    QWORD PTR [rsp+0x20],rbx
+   642ad:	48 89 44 24 28       	mov    QWORD PTR [rsp+0x28],rax
+   642b2:	48 8d 7c 24 18       	lea    rdi,[rsp+0x18]
+   642b7:	89 d6                	mov    esi,edx
+   642b9:	48 89 ca             	mov    rdx,rcx
+   642bc:	4c 89 c1             	mov    rcx,r8
+   642bf:	4d 89 c8             	mov    r8,r9
+   642c2:	4d 89 f1             	mov    r9,r14
+   642c5:	ff b4 24 90 00 00 00 	push   QWORD PTR [rsp+0x90]
+   642cc:	41 52                	push   r10
+   642ce:	e8 ed 0b 00 00       	call   64ec0 <nixie_sat::solver::propagate::list_kernel::scan>
+   642d3:	48 83 c4 10          	add    rsp,0x10
+   642d7:	41 89 d2             	mov    r10d,edx
+   642da:	eb 06                	jmp    642e2 <nixie_sat::solver::propagate::list_kernel::scan+0x1e2>
+   642dc:	41 ba ff ff ff ff    	mov    r10d,0xffffffff
+   642e2:	44 89 d2             	mov    edx,r10d
+   642e5:	48 83 c4 48          	add    rsp,0x48
+   642e9:	5b                   	pop    rbx
+   642ea:	41 5c                	pop    r12
+   642ec:	41 5d                	pop    r13
+   642ee:	41 5e                	pop    r14
+   642f0:	41 5f                	pop    r15
+   642f2:	5d                   	pop    rbp
+   642f3:	c3                   	ret
+   642f4:	4c 89 e7             	mov    rdi,r12
+   642f7:	48 89 44 24 10       	mov    QWORD PTR [rsp+0x10],rax
+   642fc:	4c 89 4c 24 38       	mov    QWORD PTR [rsp+0x38],r9
+   64301:	4c 89 44 24 40       	mov    QWORD PTR [rsp+0x40],r8
+   64306:	48 89 4c 24 30       	mov    QWORD PTR [rsp+0x30],rcx
+   6430b:	89 54 24 0c          	mov    DWORD PTR [rsp+0xc],edx
+   6430f:	e8 5c 1a ff ff       	call   55d70 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   64314:	4c 8b 94 24 88 00 00 	mov    r10,QWORD PTR [rsp+0x88]
+   6431b:	00
+   6431c:	48 8d 7b 08          	lea    rdi,[rbx+0x8]
+   64320:	8b 54 24 0c          	mov    edx,DWORD PTR [rsp+0xc]
+   64324:	48 8b 4c 24 30       	mov    rcx,QWORD PTR [rsp+0x30]
+   64329:	4c 8b 44 24 40       	mov    r8,QWORD PTR [rsp+0x40]
+   6432e:	4c 8b 4c 24 38       	mov    r9,QWORD PTR [rsp+0x38]
+   64333:	48 8b 44 24 10       	mov    rax,QWORD PTR [rsp+0x10]
+   64338:	e9 50 ff ff ff       	jmp    6428d <nixie_sat::solver::propagate::list_kernel::scan+0x18d>
+   6433d:	48 8d 3d 1c ed fa ff 	lea    rdi,[rip+0xfffffffffffaed1c]        # 13060 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x171c>
+   64344:	48 8d 15 05 bc 0b 00 	lea    rdx,[rip+0xbbc05]        # 11ff50 <__frame_dummy_init_array_entry+0x5260>
+   6434b:	be 13 00 00 00       	mov    esi,0x13
+   64350:	e8 8b 70 fd ff       	call   3b3e0 <core::panicking::panic_fmt>
+   64355:	48 8d 15 0c bc 0b 00 	lea    rdx,[rip+0xbbc0c]        # 11ff68 <__frame_dummy_init_array_entry+0x5278>
+   6435c:	48 89 f7             	mov    rdi,rsi
+   6435f:	48 8b b4 24 90 00 00 	mov    rsi,QWORD PTR [rsp+0x90]
+   64366:	00
+   64367:	e8 2b 8e fd ff       	call   3d197 <core::panicking::panic_bounds_check>
+
+=== suffix ===
+
+/media/data/proj/nixie/precompile/f5e75a7/stats_solve-perf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000064ec0 <nixie_sat::solver::propagate::list_kernel::scan>:
+   64ec0:	55                   	push   rbp
+   64ec1:	41 57                	push   r15
+   64ec3:	41 56                	push   r14
+   64ec5:	41 55                	push   r13
+   64ec7:	41 54                	push   r12
+   64ec9:	53                   	push   rbx
+   64eca:	48 83 ec 38          	sub    rsp,0x38
+   64ece:	89 f5                	mov    ebp,esi
+   64ed0:	48 8b 5f 10          	mov    rbx,QWORD PTR [rdi+0x10]
+   64ed4:	48 8b 37             	mov    rsi,QWORD PTR [rdi]
+   64ed7:	4c 8b 77 08          	mov    r14,QWORD PTR [rdi+0x8]
+   64edb:	48 39 de             	cmp    rsi,rbx
+   64ede:	0f 84 af 01 00 00    	je     65093 <nixie_sat::solver::propagate::list_kernel::scan+0x1d3>
+   64ee4:	4d 8d 69 10          	lea    r13,[r9+0x10]
+   64ee8:	4c 89 6c 24 20       	mov    QWORD PTR [rsp+0x20],r13
+   64eed:	eb 15                	jmp    64f04 <nixie_sat::solver::propagate::list_kernel::scan+0x44>
+   64eef:	90                   	nop
+   64ef0:	45 89 3e             	mov    DWORD PTR [r14],r15d
+   64ef3:	41 89 46 04          	mov    DWORD PTR [r14+0x4],eax
+   64ef7:	49 83 c6 08          	add    r14,0x8
+   64efb:	48 39 de             	cmp    rsi,rbx
+   64efe:	0f 84 8f 01 00 00    	je     65093 <nixie_sat::solver::propagate::list_kernel::scan+0x1d3>
+   64f04:	44 8b 3e             	mov    r15d,DWORD PTR [rsi]
+   64f07:	8b 46 04             	mov    eax,DWORD PTR [rsi+0x4]
+   64f0a:	48 83 c6 08          	add    rsi,0x8
+   64f0e:	80 3c 02 00          	cmp    BYTE PTR [rdx+rax*1],0x0
+   64f12:	7f dc                	jg     64ef0 <nixie_sat::solver::propagate::list_kernel::scan+0x30>
+   64f14:	41 83 ff ff          	cmp    r15d,0xffffffff
+   64f18:	74 e1                	je     64efb <nixie_sat::solver::propagate::list_kernel::scan+0x3b>
+   64f1a:	43 f6 44 39 06 01    	test   BYTE PTR [r9+r15*1+0x6],0x1
+   64f20:	75 d9                	jne    64efb <nixie_sat::solver::propagate::list_kernel::scan+0x3b>
+   64f22:	43 8b 3c 39          	mov    edi,DWORD PTR [r9+r15*1]
+   64f26:	48 83 ff 01          	cmp    rdi,0x1
+   64f2a:	0f 86 a8 01 00 00    	jbe    650d8 <nixie_sat::solver::propagate::list_kernel::scan+0x218>
+   64f30:	47 8b 64 39 0c       	mov    r12d,DWORD PTR [r9+r15*1+0xc]
+   64f35:	47 33 64 39 10       	xor    r12d,DWORD PTR [r9+r15*1+0x10]
+   64f3a:	41 31 ec             	xor    r12d,ebp
+   64f3d:	47 89 64 39 0c       	mov    DWORD PTR [r9+r15*1+0xc],r12d
+   64f42:	43 89 6c 39 10       	mov    DWORD PTR [r9+r15*1+0x10],ebp
+   64f47:	42 0f b6 04 22       	movzx  eax,BYTE PTR [rdx+r12*1]
+   64f4c:	84 c0                	test   al,al
+   64f4e:	7e 09                	jle    64f59 <nixie_sat::solver::propagate::list_kernel::scan+0x99>
+   64f50:	45 89 3e             	mov    DWORD PTR [r14],r15d
+   64f53:	45 89 66 04          	mov    DWORD PTR [r14+0x4],r12d
+   64f57:	eb 9e                	jmp    64ef7 <nixie_sat::solver::propagate::list_kernel::scan+0x37>
+   64f59:	4b 8d 0c 2f          	lea    rcx,[r15+r13*1]
+   64f5d:	48 8d 3c bd f8 ff ff 	lea    rdi,[rdi*4-0x8]
+   64f64:	ff
+   64f65:	66 66 2e 0f 1f 84 00 	data16 cs nop WORD PTR [rax+rax*1+0x0]
+   64f6c:	00 00 00 00
+   64f70:	48 85 ff             	test   rdi,rdi
+   64f73:	74 74                	je     64fe9 <nixie_sat::solver::propagate::list_kernel::scan+0x129>
+   64f75:	44 8b 51 04          	mov    r10d,DWORD PTR [rcx+0x4]
+   64f79:	46 0f b6 1c 12       	movzx  r11d,BYTE PTR [rdx+r10*1]
+   64f7e:	45 84 db             	test   r11b,r11b
+   64f81:	0f 8f bf 00 00 00    	jg     65046 <nixie_sat::solver::propagate::list_kernel::scan+0x186>
+   64f87:	48 83 c1 04          	add    rcx,0x4
+   64f8b:	48 83 c7 fc          	add    rdi,0xfffffffffffffffc
+   64f8f:	45 84 db             	test   r11b,r11b
+   64f92:	75 dc                	jne    64f70 <nixie_sat::solver::propagate::list_kernel::scan+0xb0>
+   64f94:	47 89 54 39 10       	mov    DWORD PTR [r9+r15*1+0x10],r10d
+   64f99:	89 29                	mov    DWORD PTR [rcx],ebp
+   64f9b:	43 8b 7c 39 10       	mov    edi,DWORD PTR [r9+r15*1+0x10]
+   64fa0:	48 83 f7 01          	xor    rdi,0x1
+   64fa4:	48 39 7c 24 78       	cmp    QWORD PTR [rsp+0x78],rdi
+   64fa9:	0f 86 41 01 00 00    	jbe    650f0 <nixie_sat::solver::propagate::list_kernel::scan+0x230>
+   64faf:	48 8d 04 7f          	lea    rax,[rdi+rdi*2]
+   64fb3:	48 8b 4c 24 70       	mov    rcx,QWORD PTR [rsp+0x70]
+   64fb8:	48 8d 3c c1          	lea    rdi,[rcx+rax*8]
+   64fbc:	4c 8b 6c c1 10       	mov    r13,QWORD PTR [rcx+rax*8+0x10]
+   64fc1:	4c 3b 2c c1          	cmp    r13,QWORD PTR [rcx+rax*8]
+   64fc5:	0f 84 87 00 00 00    	je     65052 <nixie_sat::solver::propagate::list_kernel::scan+0x192>
+   64fcb:	48 8b 47 08          	mov    rax,QWORD PTR [rdi+0x8]
+   64fcf:	46 89 3c e8          	mov    DWORD PTR [rax+r13*8],r15d
+   64fd3:	46 89 64 e8 04       	mov    DWORD PTR [rax+r13*8+0x4],r12d
+   64fd8:	49 ff c5             	inc    r13
+   64fdb:	4c 89 6f 10          	mov    QWORD PTR [rdi+0x10],r13
+   64fdf:	4c 8b 6c 24 20       	mov    r13,QWORD PTR [rsp+0x20]
+   64fe4:	e9 12 ff ff ff       	jmp    64efb <nixie_sat::solver::propagate::list_kernel::scan+0x3b>
+   64fe9:	45 89 3e             	mov    DWORD PTR [r14],r15d
+   64fec:	45 89 66 04          	mov    DWORD PTR [r14+0x4],r12d
+   64ff0:	49 83 c6 08          	add    r14,0x8
+   64ff4:	84 c0                	test   al,al
+   64ff6:	0f 88 c0 00 00 00    	js     650bc <nixie_sat::solver::propagate::list_kernel::scan+0x1fc>
+   64ffc:	43 8b 44 39 08       	mov    eax,DWORD PTR [r9+r15*1+0x8]
+   65001:	4c 89 c7             	mov    rdi,r8
+   65004:	48 89 74 24 10       	mov    QWORD PTR [rsp+0x10],rsi
+   65009:	44 89 e6             	mov    esi,r12d
+   6500c:	48 89 54 24 08       	mov    QWORD PTR [rsp+0x8],rdx
+   65011:	89 c2                	mov    edx,eax
+   65013:	4d 89 cf             	mov    r15,r9
+   65016:	4d 89 c5             	mov    r13,r8
+   65019:	e8 92 f0 ff ff       	call   640b0 <nixie_sat::trail::propagation::PropagationQueue::append>
+   6501e:	48 8b 54 24 08       	mov    rdx,QWORD PTR [rsp+0x8]
+   65023:	4d 89 e8             	mov    r8,r13
+   65026:	4c 8b 6c 24 20       	mov    r13,QWORD PTR [rsp+0x20]
+   6502b:	48 8b 74 24 10       	mov    rsi,QWORD PTR [rsp+0x10]
+   65030:	4d 89 f9             	mov    r9,r15
+   65033:	42 c6 04 22 01       	mov    BYTE PTR [rdx+r12*1],0x1
+   65038:	49 83 f4 01          	xor    r12,0x1
+   6503c:	42 c6 04 22 ff       	mov    BYTE PTR [rdx+r12*1],0xff
+   65041:	e9 b5 fe ff ff       	jmp    64efb <nixie_sat::solver::propagate::list_kernel::scan+0x3b>
+   65046:	45 89 3e             	mov    DWORD PTR [r14],r15d
+   65049:	45 89 56 04          	mov    DWORD PTR [r14+0x4],r10d
+   6504d:	e9 a5 fe ff ff       	jmp    64ef7 <nixie_sat::solver::propagate::list_kernel::scan+0x37>
+   65052:	48 89 7c 24 18       	mov    QWORD PTR [rsp+0x18],rdi
+   65057:	48 8b 7c 24 18       	mov    rdi,QWORD PTR [rsp+0x18]
+   6505c:	4c 89 4c 24 30       	mov    QWORD PTR [rsp+0x30],r9
+   65061:	48 89 74 24 10       	mov    QWORD PTR [rsp+0x10],rsi
+   65066:	4c 89 44 24 28       	mov    QWORD PTR [rsp+0x28],r8
+   6506b:	48 89 54 24 08       	mov    QWORD PTR [rsp+0x8],rdx
+   65070:	e8 fb 0c ff ff       	call   55d70 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   65075:	48 8b 7c 24 18       	mov    rdi,QWORD PTR [rsp+0x18]
+   6507a:	48 8b 54 24 08       	mov    rdx,QWORD PTR [rsp+0x8]
+   6507f:	4c 8b 44 24 28       	mov    r8,QWORD PTR [rsp+0x28]
+   65084:	48 8b 74 24 10       	mov    rsi,QWORD PTR [rsp+0x10]
+   65089:	4c 8b 4c 24 30       	mov    r9,QWORD PTR [rsp+0x30]
+   6508e:	e9 38 ff ff ff       	jmp    64fcb <nixie_sat::solver::propagate::list_kernel::scan+0x10b>
+   65093:	48 29 f3             	sub    rbx,rsi
+   65096:	4c 89 f7             	mov    rdi,r14
+   65099:	48 89 da             	mov    rdx,rbx
+   6509c:	ff 15 ee c5 0b 00    	call   QWORD PTR [rip+0xbc5ee]        # 121690 <memmove@GLIBC_2.2.5>
+   650a2:	4c 01 f3             	add    rbx,r14
+   650a5:	ba ff ff ff ff       	mov    edx,0xffffffff
+   650aa:	48 89 d8             	mov    rax,rbx
+   650ad:	48 83 c4 38          	add    rsp,0x38
+   650b1:	5b                   	pop    rbx
+   650b2:	41 5c                	pop    r12
+   650b4:	41 5d                	pop    r13
+   650b6:	41 5e                	pop    r14
+   650b8:	41 5f                	pop    r15
+   650ba:	5d                   	pop    rbp
+   650bb:	c3                   	ret
+   650bc:	48 29 f3             	sub    rbx,rsi
+   650bf:	4c 89 f7             	mov    rdi,r14
+   650c2:	48 89 da             	mov    rdx,rbx
+   650c5:	4d 89 cc             	mov    r12,r9
+   650c8:	ff 15 c2 c5 0b 00    	call   QWORD PTR [rip+0xbc5c2]        # 121690 <memmove@GLIBC_2.2.5>
+   650ce:	4c 01 f3             	add    rbx,r14
+   650d1:	43 8b 54 3c 08       	mov    edx,DWORD PTR [r12+r15*1+0x8]
+   650d6:	eb d2                	jmp    650aa <nixie_sat::solver::propagate::list_kernel::scan+0x1ea>
+   650d8:	48 8d 3d 81 df fa ff 	lea    rdi,[rip+0xfffffffffffadf81]        # 13060 <core::num::imp::flt2dec::strategy::dragon::POW5TO256+0x171c>
+   650df:	48 8d 15 6a ae 0b 00 	lea    rdx,[rip+0xbae6a]        # 11ff50 <__frame_dummy_init_array_entry+0x5260>
+   650e6:	be 13 00 00 00       	mov    esi,0x13
+   650eb:	e8 f0 62 fd ff       	call   3b3e0 <core::panicking::panic_fmt>
+   650f0:	48 8d 15 71 ae 0b 00 	lea    rdx,[rip+0xbae71]        # 11ff68 <__frame_dummy_init_array_entry+0x5278>
+   650f7:	48 8b 74 24 78       	mov    rsi,QWORD PTR [rsp+0x78]
+   650fc:	e8 96 80 fd ff       	call   3d197 <core::panicking::panic_bounds_check>
+
+=== assignment ===
+
+/media/data/proj/nixie/precompile/f5e75a7/stats_solve-perf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000640b0 <nixie_sat::trail::propagation::PropagationQueue::append>:
+   640b0:	89 f0                	mov    eax,esi
+   640b2:	24 01                	and    al,0x1
+   640b4:	89 f1                	mov    ecx,esi
+   640b6:	d1 e9                	shr    ecx,1
+   640b8:	44 8b 47 38          	mov    r8d,DWORD PTR [rdi+0x38]
+   640bc:	4c 8b 4f 10          	mov    r9,QWORD PTR [rdi+0x10]
+   640c0:	4c 8b 57 28          	mov    r10,QWORD PTR [rdi+0x28]
+   640c4:	48 8d 0c 89          	lea    rcx,[rcx+rcx*4]
+   640c8:	41 c7 04 89 01 00 00 	mov    DWORD PTR [r9+rcx*4],0x1
+   640cf:	00
+   640d0:	41 89 54 89 04       	mov    DWORD PTR [r9+rcx*4+0x4],edx
+   640d5:	45 89 44 89 08       	mov    DWORD PTR [r9+rcx*4+0x8],r8d
+   640da:	45 89 54 89 0c       	mov    DWORD PTR [r9+rcx*4+0xc],r10d
+   640df:	41 88 44 89 10       	mov    BYTE PTR [r9+rcx*4+0x10],al
+   640e4:	48 8b 47 20          	mov    rax,QWORD PTR [rdi+0x20]
+   640e8:	42 89 34 90          	mov    DWORD PTR [rax+r10*4],esi
+   640ec:	49 ff c2             	inc    r10
+   640ef:	4c 89 57 28          	mov    QWORD PTR [rdi+0x28],r10
+   640f3:	c3                   	ret
+
+=== driver ===
+
+/media/data/proj/nixie/precompile/f5e75a7/stats_solve-perf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000004aff0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate>:
+   4aff0:	55                   	push   rbp
+   4aff1:	41 57                	push   r15
+   4aff3:	41 56                	push   r14
+   4aff5:	41 55                	push   r13
+   4aff7:	41 54                	push   r12
+   4aff9:	53                   	push   rbx
+   4affa:	48 81 ec 18 01 00 00 	sub    rsp,0x118
+   4b001:	49 89 fa             	mov    r10,rdi
+   4b004:	48 8b 87 c0 00 00 00 	mov    rax,QWORD PTR [rdi+0xc0]
+   4b00b:	48 89 84 24 d0 00 00 	mov    QWORD PTR [rsp+0xd0],rax
+   4b012:	00
+   4b013:	80 bf 6c 13 00 00 00 	cmp    BYTE PTR [rdi+0x136c],0x0
+   4b01a:	48 89 7c 24 08       	mov    QWORD PTR [rsp+0x8],rdi
+   4b01f:	75 25                	jne    4b046 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x56>
+   4b021:	41 80 ba 9c 00 00 00 	cmp    BYTE PTR [r10+0x9c],0x0
+   4b028:	00
+   4b029:	75 1b                	jne    4b046 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x56>
+   4b02b:	8b 05 ef 79 0d 00    	mov    eax,DWORD PTR [rip+0xd79ef]        # 122a20 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::reason_stats_enabled::FLAG>
+   4b031:	85 c0                	test   eax,eax
+   4b033:	0f 85 ea 0d 00 00    	jne    4be23 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xe33>
+   4b039:	80 3d e4 79 0d 00 01 	cmp    BYTE PTR [rip+0xd79e4],0x1        # 122a24 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::reason_stats_enabled::FLAG+0x4>
+   4b040:	0f 85 f4 0d 00 00    	jne    4be3a <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xe4a>
+   4b046:	49 8d 82 00 02 00 00 	lea    rax,[r10+0x200]
+   4b04d:	48 89 44 24 70       	mov    QWORD PTR [rsp+0x70],rax
+   4b052:	49 8d 82 10 02 00 00 	lea    rax,[r10+0x210]
+   4b059:	48 89 84 24 00 01 00 	mov    QWORD PTR [rsp+0x100],rax
+   4b060:	00
+   4b061:	49 8d 82 d8 05 00 00 	lea    rax,[r10+0x5d8]
+   4b068:	48 89 84 24 c0 00 00 	mov    QWORD PTR [rsp+0xc0],rax
+   4b06f:	00
+   4b070:	4d 8d ba 70 02 00 00 	lea    r15,[r10+0x270]
+   4b077:	49 8d 82 f0 00 00 00 	lea    rax,[r10+0xf0]
+   4b07e:	48 89 44 24 48       	mov    QWORD PTR [rsp+0x48],rax
+   4b083:	4c 89 7c 24 30       	mov    QWORD PTR [rsp+0x30],r15
+   4b088:	49 8b 8a 10 02 00 00 	mov    rcx,QWORD PTR [r10+0x210]
+   4b08f:	49 8b 82 60 02 00 00 	mov    rax,QWORD PTR [r10+0x260]
+   4b096:	48 39 c8             	cmp    rax,rcx
+   4b099:	0f 83 60 0d 00 00    	jae    4bdff <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xe0f>
+   4b09f:	49 8b 8a 08 02 00 00 	mov    rcx,QWORD PTR [r10+0x208]
+   4b0a6:	8b 0c 81             	mov    ecx,DWORD PTR [rcx+rax*4]
+   4b0a9:	49 ff 82 c0 0a 00 00 	inc    QWORD PTR [r10+0xac0]
+   4b0b0:	48 ff c0             	inc    rax
+   4b0b3:	49 89 82 60 02 00 00 	mov    QWORD PTR [r10+0x260],rax
+   4b0ba:	48 83 bc 24 d0 00 00 	cmp    QWORD PTR [rsp+0xd0],0x0
+   4b0c1:	00 00
+   4b0c3:	74 24                	je     4b0e9 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xf9>
+   4b0c5:	41 80 ba c0 00 00 00 	cmp    BYTE PTR [r10+0xc0],0x0
+   4b0cc:	00
+   4b0cd:	74 1a                	je     4b0e9 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xf9>
+   4b0cf:	49 8b 82 c8 00 00 00 	mov    rax,QWORD PTR [r10+0xc8]
+   4b0d6:	48 85 c0             	test   rax,rax
+   4b0d9:	0f 84 35 0d 00 00    	je     4be14 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xe24>
+   4b0df:	48 ff c8             	dec    rax
+   4b0e2:	49 89 82 c8 00 00 00 	mov    QWORD PTR [r10+0xc8],rax
+   4b0e9:	48 85 c9             	test   rcx,rcx
+   4b0ec:	74 42                	je     4b130 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x140>
+   4b0ee:	49 8b b2 e8 05 00 00 	mov    rsi,QWORD PTR [r10+0x5e8]
+   4b0f5:	48 8d 79 ff          	lea    rdi,[rcx-0x1]
+   4b0f9:	48 39 f7             	cmp    rdi,rsi
+   4b0fc:	0f 83 6f 12 00 00    	jae    4c371 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1381>
+   4b102:	49 8b 82 e0 05 00 00 	mov    rax,QWORD PTR [r10+0x5e0]
+   4b109:	8b 44 88 fc          	mov    eax,DWORD PTR [rax+rcx*4-0x4]
+   4b10d:	48 89 44 24 18       	mov    QWORD PTR [rsp+0x18],rax
+   4b112:	49 8b b2 00 06 00 00 	mov    rsi,QWORD PTR [r10+0x600]
+   4b119:	48 39 ce             	cmp    rsi,rcx
+   4b11c:	77 2b                	ja     4b149 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x159>
+   4b11e:	e9 30 12 00 00       	jmp    4c353 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1363>
+   4b123:	66 66 66 66 2e 0f 1f 	data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4b12a:	84 00 00 00 00 00
+   4b130:	48 c7 44 24 18 00 00 	mov    QWORD PTR [rsp+0x18],0x0
+   4b137:	00 00
+   4b139:	49 8b b2 00 06 00 00 	mov    rsi,QWORD PTR [r10+0x600]
+   4b140:	48 39 ce             	cmp    rsi,rcx
+   4b143:	0f 86 0a 12 00 00    	jbe    4c353 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1363>
+   4b149:	49 8b b2 30 06 00 00 	mov    rsi,QWORD PTR [r10+0x630]
+   4b150:	48 39 ce             	cmp    rsi,rcx
+   4b153:	0f 86 09 12 00 00    	jbe    4c362 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1372>
+   4b159:	49 8b 82 f8 05 00 00 	mov    rax,QWORD PTR [r10+0x5f8]
+   4b160:	44 8b 2c 88          	mov    r13d,DWORD PTR [rax+rcx*4]
+   4b164:	49 8b 82 28 06 00 00 	mov    rax,QWORD PTR [r10+0x628]
+   4b16b:	48 8d 14 49          	lea    rdx,[rcx+rcx*2]
+   4b16f:	48 8b 44 d0 10       	mov    rax,QWORD PTR [rax+rdx*8+0x10]
+   4b174:	48 89 4c 24 20       	mov    QWORD PTR [rsp+0x20],rcx
+   4b179:	48 89 c1             	mov    rcx,rax
+   4b17c:	4c 01 e9             	add    rcx,r13
+   4b17f:	48 8b 4c 24 20       	mov    rcx,QWORD PTR [rsp+0x20]
+   4b184:	48 89 54 24 10       	mov    QWORD PTR [rsp+0x10],rdx
+   4b189:	0f 84 31 01 00 00    	je     4b2c0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x2d0>
+   4b18f:	4d 89 ef             	mov    r15,r13
+   4b192:	49 f7 df             	neg    r15
+   4b195:	4e 8d 24 ed 00 00 00 	lea    r12,[r13*8+0x0]
+   4b19c:	00
+   4b19d:	49 f7 dc             	neg    r12
+   4b1a0:	4c 89 7c 24 38       	mov    QWORD PTR [rsp+0x38],r15
+   4b1a5:	49 29 c7             	sub    r15,rax
+   4b1a8:	31 db                	xor    ebx,ebx
+   4b1aa:	eb 14                	jmp    4b1c0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1d0>
+   4b1ac:	0f 1f 40 00          	nop    DWORD PTR [rax+0x0]
+   4b1b0:	49 83 c4 08          	add    r12,0x8
+   4b1b4:	4c 89 f8             	mov    rax,r15
+   4b1b7:	48 01 d8             	add    rax,rbx
+   4b1ba:	0f 84 00 01 00 00    	je     4b2c0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x2d0>
+   4b1c0:	4c 39 eb             	cmp    rbx,r13
+   4b1c3:	73 2b                	jae    4b1f0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x200>
+   4b1c5:	48 8b 44 24 18       	mov    rax,QWORD PTR [rsp+0x18]
+   4b1ca:	48 8d 3c 03          	lea    rdi,[rbx+rax*1]
+   4b1ce:	49 8b b2 18 06 00 00 	mov    rsi,QWORD PTR [r10+0x618]
+   4b1d5:	48 39 f7             	cmp    rdi,rsi
+   4b1d8:	0f 83 4e 11 00 00    	jae    4c32c <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x133c>
+   4b1de:	48 c1 e7 03          	shl    rdi,0x3
+   4b1e2:	49 03 ba 10 06 00 00 	add    rdi,QWORD PTR [r10+0x610]
+   4b1e9:	eb 3e                	jmp    4b229 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x239>
+   4b1eb:	0f 1f 44 00 00       	nop    DWORD PTR [rax+rax*1+0x0]
+   4b1f0:	49 8b b2 30 06 00 00 	mov    rsi,QWORD PTR [r10+0x630]
+   4b1f7:	48 39 ce             	cmp    rsi,rcx
+   4b1fa:	0f 86 44 11 00 00    	jbe    4c344 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1354>
+   4b200:	48 8b 44 24 38       	mov    rax,QWORD PTR [rsp+0x38]
+   4b205:	48 8d 3c 18          	lea    rdi,[rax+rbx*1]
+   4b209:	49 8b 82 28 06 00 00 	mov    rax,QWORD PTR [r10+0x628]
+   4b210:	48 8b 74 d0 10       	mov    rsi,QWORD PTR [rax+rdx*8+0x10]
+   4b215:	48 39 f7             	cmp    rdi,rsi
+   4b218:	0f 83 1a 11 00 00    	jae    4c338 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1348>
+   4b21e:	48 8d 04 d0          	lea    rax,[rax+rdx*8]
+   4b222:	48 8b 78 08          	mov    rdi,QWORD PTR [rax+0x8]
+   4b226:	4c 01 e7             	add    rdi,r12
+   4b229:	44 8b 37             	mov    r14d,DWORD PTR [rdi]
+   4b22c:	49 8b b2 28 02 00 00 	mov    rsi,QWORD PTR [r10+0x228]
+   4b233:	4c 39 f6             	cmp    rsi,r14
+   4b236:	0f 86 e1 10 00 00    	jbe    4c31d <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x132d>
+   4b23c:	48 ff c3             	inc    rbx
+   4b23f:	8b 6f 04             	mov    ebp,DWORD PTR [rdi+0x4]
+   4b242:	49 8b 82 20 02 00 00 	mov    rax,QWORD PTR [r10+0x220]
+   4b249:	42 80 3c 30 00       	cmp    BYTE PTR [rax+r14*1],0x0
+   4b24e:	0f 88 45 0b 00 00    	js     4bd99 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xda9>
+   4b254:	0f 85 56 ff ff ff    	jne    4b1b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1c0>
+   4b25a:	48 8b 7c 24 70       	mov    rdi,QWORD PTR [rsp+0x70]
+   4b25f:	44 89 f6             	mov    esi,r14d
+   4b262:	ba 01 00 00 00       	mov    edx,0x1
+   4b267:	89 e9                	mov    ecx,ebp
+   4b269:	e8 f2 2a 00 00       	call   4dd60 <nixie_sat::trail::Trail::assign>
+   4b26e:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4b273:	48 8b 4c 24 20       	mov    rcx,QWORD PTR [rsp+0x20]
+   4b278:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b27d:	41 80 ba 6c 13 00 00 	cmp    BYTE PTR [r10+0x136c],0x1
+   4b284:	01
+   4b285:	0f 85 25 ff ff ff    	jne    4b1b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1c0>
+   4b28b:	41 83 ba 68 02 00 00 	cmp    DWORD PTR [r10+0x268],0x0
+   4b292:	00
+   4b293:	0f 85 17 ff ff ff    	jne    4b1b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1c0>
+   4b299:	4c 89 d7             	mov    rdi,r10
+   4b29c:	44 89 f6             	mov    esi,r14d
+   4b29f:	89 ea                	mov    edx,ebp
+   4b2a1:	e8 7a b1 00 00       	call   56420 <nixie_sat::solver::Solver::flush_level0_unit>
+   4b2a6:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4b2ab:	48 8b 4c 24 20       	mov    rcx,QWORD PTR [rsp+0x20]
+   4b2b0:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b2b5:	e9 f6 fe ff ff       	jmp    4b1b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1c0>
+   4b2ba:	66 0f 1f 44 00 00    	nop    WORD PTR [rax+rax*1+0x0]
+   4b2c0:	49 8b b2 80 02 00 00 	mov    rsi,QWORD PTR [r10+0x280]
+   4b2c7:	48 39 ce             	cmp    rsi,rcx
+   4b2ca:	76 14                	jbe    4b2e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x2f0>
+   4b2cc:	4c 8b 7c 24 30       	mov    r15,QWORD PTR [rsp+0x30]
+   4b2d1:	eb 5f                	jmp    4b332 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x342>
+   4b2d3:	66 66 66 66 2e 0f 1f 	data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4b2da:	84 00 00 00 00 00
+   4b2e0:	48 c7 44 24 78 00 00 	mov    QWORD PTR [rsp+0x78],0x0
+   4b2e7:	00 00
+   4b2e9:	48 c7 84 24 80 00 00 	mov    QWORD PTR [rsp+0x80],0x4
+   4b2f0:	00 04 00 00 00
+   4b2f5:	48 c7 84 24 88 00 00 	mov    QWORD PTR [rsp+0x88],0x0
+   4b2fc:	00 00 00 00 00
+   4b301:	48 29 f1             	sub    rcx,rsi
+   4b304:	48 ff c1             	inc    rcx
+   4b307:	4c 8b 7c 24 30       	mov    r15,QWORD PTR [rsp+0x30]
+   4b30c:	4c 89 ff             	mov    rdi,r15
+   4b30f:	48 89 ce             	mov    rsi,rcx
+   4b312:	48 8d 54 24 78       	lea    rdx,[rsp+0x78]
+   4b317:	e8 14 a5 00 00       	call   55830 <alloc::vec::Vec<T,A>::extend_with>
+   4b31c:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4b321:	48 8b 4c 24 20       	mov    rcx,QWORD PTR [rsp+0x20]
+   4b326:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b32b:	49 8b b2 80 02 00 00 	mov    rsi,QWORD PTR [r10+0x280]
+   4b332:	48 39 ce             	cmp    rsi,rcx
+   4b335:	0f 86 4e 10 00 00    	jbe    4c389 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1399>
+   4b33b:	49 8b 82 78 02 00 00 	mov    rax,QWORD PTR [r10+0x278]
+   4b342:	48 8b 34 d0          	mov    rsi,QWORD PTR [rax+rdx*8]
+   4b346:	48 89 b4 24 c8 00 00 	mov    QWORD PTR [rsp+0xc8],rsi
+   4b34d:	00
+   4b34e:	48 8b 74 d0 08       	mov    rsi,QWORD PTR [rax+rdx*8+0x8]
+   4b353:	48 89 74 24 18       	mov    QWORD PTR [rsp+0x18],rsi
+   4b358:	4c 8b 64 d0 10       	mov    r12,QWORD PTR [rax+rdx*8+0x10]
+   4b35d:	48 c7 04 d0 00 00 00 	mov    QWORD PTR [rax+rdx*8],0x0
+   4b364:	00
+   4b365:	48 c7 44 d0 08 04 00 	mov    QWORD PTR [rax+rdx*8+0x8],0x4
+   4b36c:	00 00
+   4b36e:	48 c7 44 d0 10 00 00 	mov    QWORD PTR [rax+rdx*8+0x10],0x0
+   4b375:	00 00
+   4b377:	49 39 8a 98 02 00 00 	cmp    QWORD PTR [r10+0x298],rcx
+   4b37e:	76 10                	jbe    4b390 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x3a0>
+   4b380:	49 8b 82 90 02 00 00 	mov    rax,QWORD PTR [r10+0x290]
+   4b387:	8b 04 88             	mov    eax,DWORD PTR [rax+rcx*4]
+   4b38a:	eb 06                	jmp    4b392 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x3a2>
+   4b38c:	0f 1f 40 00          	nop    DWORD PTR [rax+0x0]
+   4b390:	31 c0                	xor    eax,eax
+   4b392:	4c 01 e0             	add    rax,r12
+   4b395:	48 83 c0 0f          	add    rax,0xf
+   4b399:	48 c1 e8 04          	shr    rax,0x4
+   4b39d:	48 ff c0             	inc    rax
+   4b3a0:	41 80 ba 5f 13 00 00 	cmp    BYTE PTR [r10+0x135f],0x0
+   4b3a7:	00
+   4b3a8:	74 36                	je     4b3e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x3f0>
+   4b3aa:	49 03 82 f0 0e 00 00 	add    rax,QWORD PTR [r10+0xef0]
+   4b3b1:	48 c7 c1 ff ff ff ff 	mov    rcx,0xffffffffffffffff
+   4b3b8:	48 0f 42 c1          	cmovb  rax,rcx
+   4b3bc:	49 89 82 f0 0e 00 00 	mov    QWORD PTR [r10+0xef0],rax
+   4b3c3:	0f 57 c0             	xorps  xmm0,xmm0
+   4b3c6:	0f 29 84 24 f0 00 00 	movaps XMMWORD PTR [rsp+0xf0],xmm0
+   4b3cd:	00
+   4b3ce:	4d 85 e4             	test   r12,r12
+   4b3d1:	75 3a                	jne    4b40d <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x41d>
+   4b3d3:	e9 76 08 00 00       	jmp    4bc4e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc5e>
+   4b3d8:	0f 1f 84 00 00 00 00 	nop    DWORD PTR [rax+rax*1+0x0]
+   4b3df:	00
+   4b3e0:	49 03 82 e8 0e 00 00 	add    rax,QWORD PTR [r10+0xee8]
+   4b3e7:	48 c7 c1 ff ff ff ff 	mov    rcx,0xffffffffffffffff
+   4b3ee:	48 0f 42 c1          	cmovb  rax,rcx
+   4b3f2:	49 89 82 e8 0e 00 00 	mov    QWORD PTR [r10+0xee8],rax
+   4b3f9:	0f 57 c0             	xorps  xmm0,xmm0
+   4b3fc:	0f 29 84 24 f0 00 00 	movaps XMMWORD PTR [rsp+0xf0],xmm0
+   4b403:	00
+   4b404:	4d 85 e4             	test   r12,r12
+   4b407:	0f 84 41 08 00 00    	je     4bc4e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc5e>
+   4b40d:	48 8b 44 24 20       	mov    rax,QWORD PTR [rsp+0x20]
+   4b412:	83 f0 01             	xor    eax,0x1
+   4b415:	89 44 24 38          	mov    DWORD PTR [rsp+0x38],eax
+   4b419:	31 c9                	xor    ecx,ecx
+   4b41b:	4c 89 a4 24 d8 00 00 	mov    QWORD PTR [rsp+0xd8],r12
+   4b422:	00
+   4b423:	eb 34                	jmp    4b459 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x469>
+   4b425:	ff 15 35 62 0d 00    	call   QWORD PTR [rip+0xd6235]        # 121660 <free@GLIBC_2.2.5>
+   4b42b:	48 89 df             	mov    rdi,rbx
+   4b42e:	ff 15 2c 62 0d 00    	call   QWORD PTR [rip+0xd622c]        # 121660 <free@GLIBC_2.2.5>
+   4b434:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b439:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4b43e:	66 90                	xchg   ax,ax
+   4b440:	48 8b 8c 24 f0 00 00 	mov    rcx,QWORD PTR [rsp+0xf0]
+   4b447:	00
+   4b448:	4c 8b a4 24 d8 00 00 	mov    r12,QWORD PTR [rsp+0xd8]
+   4b44f:	00
+   4b450:	4c 39 e1             	cmp    rcx,r12
+   4b453:	0f 83 f5 07 00 00    	jae    4bc4e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc5e>
+   4b459:	4d 8b 8a 20 02 00 00 	mov    r9,QWORD PTR [r10+0x220]
+   4b460:	49 8b 82 28 02 00 00 	mov    rax,QWORD PTR [r10+0x228]
+   4b467:	48 39 8c 24 f8 00 00 	cmp    QWORD PTR [rsp+0xf8],rcx
+   4b46e:	00
+   4b46f:	75 4f                	jne    4b4c0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x4d0>
+   4b471:	48 83 ec 08          	sub    rsp,0x8
+   4b475:	48 8d bc 24 ec 00 00 	lea    rdi,[rsp+0xec]
+   4b47c:	00
+   4b47d:	48 8d b4 24 f8 00 00 	lea    rsi,[rsp+0xf8]
+   4b484:	00
+   4b485:	48 8b 54 24 20       	mov    rdx,QWORD PTR [rsp+0x20]
+   4b48a:	4c 89 e1             	mov    rcx,r12
+   4b48d:	44 8b 44 24 40       	mov    r8d,DWORD PTR [rsp+0x40]
+   4b492:	41 57                	push   r15
+   4b494:	ff 74 24 58          	push   QWORD PTR [rsp+0x58]
+   4b498:	50                   	push   rax
+   4b499:	e8 32 93 01 00       	call   647d0 <nixie_sat::solver::propagate::watch_kernel::Cursor::scan>
+   4b49e:	48 83 c4 20          	add    rsp,0x20
+   4b4a2:	8b 84 24 e4 00 00 00 	mov    eax,DWORD PTR [rsp+0xe4]
+   4b4a9:	83 f8 02             	cmp    eax,0x2
+   4b4ac:	74 53                	je     4b501 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x511>
+   4b4ae:	e9 8d 07 00 00       	jmp    4bc40 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc50>
+   4b4b3:	66 66 66 66 2e 0f 1f 	data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4b4ba:	84 00 00 00 00 00
+   4b4c0:	48 83 ec 08          	sub    rsp,0x8
+   4b4c4:	48 8d bc 24 ec 00 00 	lea    rdi,[rsp+0xec]
+   4b4cb:	00
+   4b4cc:	48 8d b4 24 f8 00 00 	lea    rsi,[rsp+0xf8]
+   4b4d3:	00
+   4b4d4:	48 8b 54 24 20       	mov    rdx,QWORD PTR [rsp+0x20]
+   4b4d9:	4c 89 e1             	mov    rcx,r12
+   4b4dc:	44 8b 44 24 40       	mov    r8d,DWORD PTR [rsp+0x40]
+   4b4e1:	41 57                	push   r15
+   4b4e3:	ff 74 24 58          	push   QWORD PTR [rsp+0x58]
+   4b4e7:	50                   	push   rax
+   4b4e8:	e8 83 8e 01 00       	call   64370 <nixie_sat::solver::propagate::watch_kernel::Cursor::scan>
+   4b4ed:	48 83 c4 20          	add    rsp,0x20
+   4b4f1:	8b 84 24 e4 00 00 00 	mov    eax,DWORD PTR [rsp+0xe4]
+   4b4f8:	83 f8 02             	cmp    eax,0x2
+   4b4fb:	0f 85 3f 07 00 00    	jne    4bc40 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc50>
+   4b501:	8b ac 24 e8 00 00 00 	mov    ebp,DWORD PTR [rsp+0xe8]
+   4b508:	44 8b ac 24 ec 00 00 	mov    r13d,DWORD PTR [rsp+0xec]
+   4b50f:	00
+   4b510:	48 8b 7c 24 70       	mov    rdi,QWORD PTR [rsp+0x70]
+   4b515:	89 ee                	mov    esi,ebp
+   4b517:	ba 01 00 00 00       	mov    edx,0x1
+   4b51c:	44 89 e9             	mov    ecx,r13d
+   4b51f:	e8 3c 28 00 00       	call   4dd60 <nixie_sat::trail::Trail::assign>
+   4b524:	8b 05 f6 74 0d 00    	mov    eax,DWORD PTR [rip+0xd74f6]        # 122a20 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::reason_stats_enabled::FLAG>
+   4b52a:	85 c0                	test   eax,eax
+   4b52c:	0f 85 a6 05 00 00    	jne    4bad8 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xae8>
+   4b532:	41 83 fd ff          	cmp    r13d,0xffffffff
+   4b536:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b53b:	0f 84 a3 00 00 00    	je     4b5e4 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f4>
+   4b541:	80 3d dc 74 0d 00 00 	cmp    BYTE PTR [rip+0xd74dc],0x0        # 122a24 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::reason_stats_enabled::FLAG+0x4>
+   4b548:	0f 84 96 00 00 00    	je     4b5e4 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f4>
+   4b54e:	4c 8d 05 93 7e 0d 00 	lea    r8,[rip+0xd7e93]        # 1233e8 <nixie_sat::DIAG_REASON_ORIGINAL>
+   4b555:	4c 89 c1             	mov    rcx,r8
+   4b558:	4d 39 aa 60 01 00 00 	cmp    QWORD PTR [r10+0x160],r13
+   4b55f:	76 7f                	jbe    4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b561:	49 8b 82 58 01 00 00 	mov    rax,QWORD PTR [r10+0x158]
+   4b568:	42 8b 04 a8          	mov    eax,DWORD PTR [rax+r13*4]
+   4b56c:	4c 89 c1             	mov    rcx,r8
+   4b56f:	ba ff ff ff ff       	mov    edx,0xffffffff
+   4b574:	48 39 d0             	cmp    rax,rdx
+   4b577:	74 67                	je     4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b579:	48 8d 70 0c          	lea    rsi,[rax+0xc]
+   4b57d:	49 8b 92 20 01 00 00 	mov    rdx,QWORD PTR [r10+0x120]
+   4b584:	4c 89 c1             	mov    rcx,r8
+   4b587:	48 39 d6             	cmp    rsi,rdx
+   4b58a:	77 54                	ja     4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b58c:	49 8b b2 f8 00 00 00 	mov    rsi,QWORD PTR [r10+0xf8]
+   4b593:	8b 3c 06             	mov    edi,DWORD PTR [rsi+rax*1]
+   4b596:	48 29 c2             	sub    rdx,rax
+   4b599:	48 83 c2 f4          	add    rdx,0xfffffffffffffff4
+   4b59d:	48 c1 ea 02          	shr    rdx,0x2
+   4b5a1:	4c 89 c1             	mov    rcx,r8
+   4b5a4:	48 39 fa             	cmp    rdx,rdi
+   4b5a7:	72 37                	jb     4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b5a9:	8b 54 06 08          	mov    edx,DWORD PTR [rsi+rax*1+0x8]
+   4b5ad:	0f b6 44 06 06       	movzx  eax,BYTE PTR [rsi+rax*1+0x6]
+   4b5b2:	83 fa ff             	cmp    edx,0xffffffff
+   4b5b5:	0f 84 f1 00 00 00    	je     4b6ac <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x6bc>
+   4b5bb:	48 8d 35 26 7e 0d 00 	lea    rsi,[rip+0xd7e26]        # 1233e8 <nixie_sat::DIAG_REASON_ORIGINAL>
+   4b5c2:	48 89 f1             	mov    rcx,rsi
+   4b5c5:	a8 02                	test   al,0x2
+   4b5c7:	74 17                	je     4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b5c9:	48 89 f1             	mov    rcx,rsi
+   4b5cc:	49 39 92 18 01 00 00 	cmp    QWORD PTR [r10+0x118],rdx
+   4b5d3:	76 0b                	jbe    4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b5d5:	48 8d 0d 04 7e 0d 00 	lea    rcx,[rip+0xd7e04]        # 1233e0 <nixie_sat::DIAG_REASON_LEARNED>
+   4b5dc:	0f 1f 40 00          	nop    DWORD PTR [rax+0x0]
+   4b5e0:	f0 48 ff 01          	lock inc QWORD PTR [rcx]
+   4b5e4:	41 80 ba 6c 13 00 00 	cmp    BYTE PTR [r10+0x136c],0x1
+   4b5eb:	01
+   4b5ec:	75 1c                	jne    4b60a <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x61a>
+   4b5ee:	41 83 ba 68 02 00 00 	cmp    DWORD PTR [r10+0x268],0x0
+   4b5f5:	00
+   4b5f6:	75 12                	jne    4b60a <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x61a>
+   4b5f8:	4c 89 d7             	mov    rdi,r10
+   4b5fb:	89 ee                	mov    esi,ebp
+   4b5fd:	44 89 ea             	mov    edx,r13d
+   4b600:	e8 1b ae 00 00       	call   56420 <nixie_sat::solver::Solver::flush_level0_unit>
+   4b605:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4b60a:	41 80 ba 9c 00 00 00 	cmp    BYTE PTR [r10+0x9c],0x0
+   4b611:	00
+   4b612:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4b617:	0f 84 23 fe ff ff    	je     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b61d:	45 8b a2 68 02 00 00 	mov    r12d,DWORD PTR [r10+0x268]
+   4b624:	41 83 fc 02          	cmp    r12d,0x2
+   4b628:	0f 82 12 fe ff ff    	jb     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b62e:	4d 39 aa 60 01 00 00 	cmp    QWORD PTR [r10+0x160],r13
+   4b635:	0f 86 05 fe ff ff    	jbe    4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b63b:	49 8b 82 58 01 00 00 	mov    rax,QWORD PTR [r10+0x158]
+   4b642:	42 8b 1c a8          	mov    ebx,DWORD PTR [rax+r13*4]
+   4b646:	b8 ff ff ff ff       	mov    eax,0xffffffff
+   4b64b:	48 39 c3             	cmp    rbx,rax
+   4b64e:	0f 84 ec fd ff ff    	je     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b654:	48 8d 4b 0c          	lea    rcx,[rbx+0xc]
+   4b658:	49 8b 82 20 01 00 00 	mov    rax,QWORD PTR [r10+0x120]
+   4b65f:	48 39 c1             	cmp    rcx,rax
+   4b662:	0f 87 d8 fd ff ff    	ja     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b668:	4d 8b b2 f8 00 00 00 	mov    r14,QWORD PTR [r10+0xf8]
+   4b66f:	45 8b 2c 1e          	mov    r13d,DWORD PTR [r14+rbx*1]
+   4b673:	48 29 d8             	sub    rax,rbx
+   4b676:	48 83 c0 f4          	add    rax,0xfffffffffffffff4
+   4b67a:	48 c1 e8 02          	shr    rax,0x2
+   4b67e:	4c 39 e8             	cmp    rax,r13
+   4b681:	0f 82 b9 fd ff ff    	jb     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b687:	41 8b 44 1e 08       	mov    eax,DWORD PTR [r14+rbx*1+0x8]
+   4b68c:	83 f8 ff             	cmp    eax,0xffffffff
+   4b68f:	74 2f                	je     4b6c0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x6d0>
+   4b691:	41 8d 4d fe          	lea    ecx,[r13-0x2]
+   4b695:	83 f9 02             	cmp    ecx,0x2
+   4b698:	0f 87 a2 fd ff ff    	ja     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b69e:	49 39 82 18 01 00 00 	cmp    QWORD PTR [r10+0x118],rax
+   4b6a5:	77 26                	ja     4b6cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x6dd>
+   4b6a7:	e9 94 fd ff ff       	jmp    4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b6ac:	48 8d 0d 35 7d 0d 00 	lea    rcx,[rip+0xd7d35]        # 1233e8 <nixie_sat::DIAG_REASON_ORIGINAL>
+   4b6b3:	a8 02                	test   al,0x2
+   4b6b5:	0f 85 1a ff ff ff    	jne    4b5d5 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5e5>
+   4b6bb:	e9 20 ff ff ff       	jmp    4b5e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f0>
+   4b6c0:	41 8d 45 fe          	lea    eax,[r13-0x2]
+   4b6c4:	83 f8 02             	cmp    eax,0x2
+   4b6c7:	0f 87 73 fd ff ff    	ja     4b440 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x450>
+   4b6cd:	49 c1 e5 02          	shl    r13,0x2
+   4b6d1:	4c 89 ef             	mov    rdi,r13
+   4b6d4:	ff 15 6e 5f 0d 00    	call   QWORD PTR [rip+0xd5f6e]        # 121648 <malloc@GLIBC_2.2.5>
+   4b6da:	48 85 c0             	test   rax,rax
+   4b6dd:	0f 84 e7 0c 00 00    	je     4c3ca <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13da>
+   4b6e3:	49 01 de             	add    r14,rbx
+   4b6e6:	49 83 c6 0c          	add    r14,0xc
+   4b6ea:	48 89 c7             	mov    rdi,rax
+   4b6ed:	4c 89 f6             	mov    rsi,r14
+   4b6f0:	4c 89 ea             	mov    rdx,r13
+   4b6f3:	48 89 c3             	mov    rbx,rax
+   4b6f6:	ff 15 5c 5f 0d 00    	call   QWORD PTR [rip+0xd5f5c]        # 121658 <memcpy@GLIBC_2.14>
+   4b6fc:	48 c7 44 24 68 00 00 	mov    QWORD PTR [rsp+0x68],0x0
+   4b703:	00 00
+   4b705:	48 8b 44 24 08       	mov    rax,QWORD PTR [rsp+0x8]
+   4b70a:	48 8b 90 20 02 00 00 	mov    rdx,QWORD PTR [rax+0x220]
+   4b711:	48 8b b0 28 02 00 00 	mov    rsi,QWORD PTR [rax+0x228]
+   4b718:	48 8b 88 40 02 00 00 	mov    rcx,QWORD PTR [rax+0x240]
+   4b71f:	48 89 4c 24 40       	mov    QWORD PTR [rsp+0x40],rcx
+   4b724:	48 8b 80 38 02 00 00 	mov    rax,QWORD PTR [rax+0x238]
+   4b72b:	48 89 84 24 10 01 00 	mov    QWORD PTR [rsp+0x110],rax
+   4b732:	00
+   4b733:	45 31 ff             	xor    r15d,r15d
+   4b736:	45 31 db             	xor    r11d,r11d
+   4b739:	48 8d 7c 24 68       	lea    rdi,[rsp+0x68]
+   4b73e:	4c 8d 44 24 60       	lea    r8,[rsp+0x60]
+   4b743:	4c 8d 4c 24 58       	lea    r9,[rsp+0x58]
+   4b748:	41 ba 04 00 00 00    	mov    r10d,0x4
+   4b74e:	48 89 9c 24 b8 00 00 	mov    QWORD PTR [rsp+0xb8],rbx
+   4b755:	00
+   4b756:	48 89 54 24 28       	mov    QWORD PTR [rsp+0x28],rdx
+   4b75b:	eb 18                	jmp    4b775 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x785>
+   4b75d:	0f 1f 00             	nop    DWORD PTR [rax]
+   4b760:	85 c0                	test   eax,eax
+   4b762:	0f 95 c0             	setne  al
+   4b765:	41 08 c3             	or     r11b,al
+   4b768:	49 83 c7 04          	add    r15,0x4
+   4b76c:	4d 39 fd             	cmp    r13,r15
+   4b76f:	0f 84 c7 00 00 00    	je     4b83c <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x84c>
+   4b775:	46 8b 34 3b          	mov    r14d,DWORD PTR [rbx+r15*1]
+   4b779:	41 39 ee             	cmp    r14d,ebp
+   4b77c:	74 ea                	je     4b768 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x778>
+   4b77e:	4c 39 f6             	cmp    rsi,r14
+   4b781:	0f 86 96 0b 00 00    	jbe    4c31d <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x132d>
+   4b787:	42 80 3c 32 00       	cmp    BYTE PTR [rdx+r14*1],0x0
+   4b78c:	0f 89 4e 01 00 00    	jns    4b8e0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x8f0>
+   4b792:	44 89 f1             	mov    ecx,r14d
+   4b795:	d1 e9                	shr    ecx,1
+   4b797:	31 c0                	xor    eax,eax
+   4b799:	48 39 4c 24 40       	cmp    QWORD PTR [rsp+0x40],rcx
+   4b79e:	76 10                	jbe    4b7b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x7c0>
+   4b7a0:	48 8d 04 89          	lea    rax,[rcx+rcx*4]
+   4b7a4:	48 8b 8c 24 10 01 00 	mov    rcx,QWORD PTR [rsp+0x110]
+   4b7ab:	00
+   4b7ac:	8b 44 81 08          	mov    eax,DWORD PTR [rcx+rax*4+0x8]
+   4b7b0:	44 39 e0             	cmp    eax,r12d
+   4b7b3:	75 ab                	jne    4b760 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x770>
+   4b7b5:	48 89 f3             	mov    rbx,rsi
+   4b7b8:	48 8b 74 24 68       	mov    rsi,QWORD PTR [rsp+0x68]
+   4b7bd:	31 d2                	xor    edx,edx
+   4b7bf:	48 83 fe 05          	cmp    rsi,0x5
+   4b7c3:	48 8b 44 24 58       	mov    rax,QWORD PTR [rsp+0x58]
+   4b7c8:	49 0f 42 c1          	cmovb  rax,r9
+   4b7cc:	0f 92 c2             	setb   dl
+   4b7cf:	48 89 f9             	mov    rcx,rdi
+   4b7d2:	49 0f 43 c8          	cmovae rcx,r8
+   4b7d6:	49 0f 42 f2          	cmovb  rsi,r10
+   4b7da:	48 8b 54 d4 60       	mov    rdx,QWORD PTR [rsp+rdx*8+0x60]
+   4b7df:	48 39 f2             	cmp    rdx,rsi
+   4b7e2:	74 1c                	je     4b800 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x810>
+   4b7e4:	44 89 34 90          	mov    DWORD PTR [rax+rdx*4],r14d
+   4b7e8:	48 ff 01             	inc    QWORD PTR [rcx]
+   4b7eb:	48 89 de             	mov    rsi,rbx
+   4b7ee:	48 8b 9c 24 b8 00 00 	mov    rbx,QWORD PTR [rsp+0xb8]
+   4b7f5:	00
+   4b7f6:	48 8b 54 24 28       	mov    rdx,QWORD PTR [rsp+0x28]
+   4b7fb:	e9 68 ff ff ff       	jmp    4b768 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x778>
+   4b800:	4c 89 cf             	mov    rdi,r9
+   4b803:	4c 89 9c 24 08 01 00 	mov    QWORD PTR [rsp+0x108],r11
+   4b80a:	00
+   4b80b:	e8 70 93 01 00       	call   64b80 <smallvec::SmallVec<A>::reserve_one_unchecked>
+   4b810:	4c 8b 9c 24 08 01 00 	mov    r11,QWORD PTR [rsp+0x108]
+   4b817:	00
+   4b818:	41 ba 04 00 00 00    	mov    r10d,0x4
+   4b81e:	4c 8d 4c 24 58       	lea    r9,[rsp+0x58]
+   4b823:	4c 8d 44 24 60       	lea    r8,[rsp+0x60]
+   4b828:	48 8d 7c 24 68       	lea    rdi,[rsp+0x68]
+   4b82d:	48 8b 44 24 58       	mov    rax,QWORD PTR [rsp+0x58]
+   4b832:	48 8b 54 24 60       	mov    rdx,QWORD PTR [rsp+0x60]
+   4b837:	4c 89 c1             	mov    rcx,r8
+   4b83a:	eb a8                	jmp    4b7e4 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x7f4>
+   4b83c:	4c 8b 74 24 68       	mov    r14,QWORD PTR [rsp+0x68]
+   4b841:	4c 89 f0             	mov    rax,r14
+   4b844:	49 83 fe 05          	cmp    r14,0x5
+   4b848:	72 05                	jb     4b84f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x85f>
+   4b84a:	48 8b 44 24 60       	mov    rax,QWORD PTR [rsp+0x60]
+   4b84f:	48 8b 7c 24 58       	mov    rdi,QWORD PTR [rsp+0x58]
+   4b854:	48 83 f8 01          	cmp    rax,0x1
+   4b858:	0f 95 c0             	setne  al
+   4b85b:	44 08 d8             	or     al,r11b
+   4b85e:	a8 01                	test   al,0x1
+   4b860:	4c 8b 7c 24 30       	mov    r15,QWORD PTR [rsp+0x30]
+   4b865:	0f 85 b8 00 00 00    	jne    4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4b86b:	49 83 fe 05          	cmp    r14,0x5
+   4b86f:	48 89 7c 24 40       	mov    QWORD PTR [rsp+0x40],rdi
+   4b874:	4c 0f 43 cf          	cmovae r9,rdi
+   4b878:	45 8b 29             	mov    r13d,DWORD PTR [r9]
+   4b87b:	45 89 ec             	mov    r12d,r13d
+   4b87e:	44 89 6c 24 50       	mov    DWORD PTR [rsp+0x50],r13d
+   4b883:	89 6c 24 54          	mov    DWORD PTR [rsp+0x54],ebp
+   4b887:	49 83 f5 01          	xor    r13,0x1
+   4b88b:	48 8d 7c 24 78       	lea    rdi,[rsp+0x78]
+   4b890:	48 8b b4 24 c0 00 00 	mov    rsi,QWORD PTR [rsp+0xc0]
+   4b897:	00
+   4b898:	44 89 ea             	mov    edx,r13d
+   4b89b:	e8 60 95 01 00       	call   64e00 <nixie_sat::solver::BinaryImplicationGraph::get>
+   4b8a0:	48 8b 54 24 78       	mov    rdx,QWORD PTR [rsp+0x78]
+   4b8a5:	48 8b b4 24 80 00 00 	mov    rsi,QWORD PTR [rsp+0x80]
+   4b8ac:	00
+   4b8ad:	48 8b 84 24 88 00 00 	mov    rax,QWORD PTR [rsp+0x88]
+   4b8b4:	00
+   4b8b5:	48 8b 8c 24 90 00 00 	mov    rcx,QWORD PTR [rsp+0x90]
+   4b8bc:	00
+   4b8bd:	48 c1 e6 03          	shl    rsi,0x3
+   4b8c1:	31 ff                	xor    edi,edi
+   4b8c3:	66 66 66 66 2e 0f 1f 	data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4b8ca:	84 00 00 00 00 00
+   4b8d0:	48 39 fe             	cmp    rsi,rdi
+   4b8d3:	74 26                	je     4b8fb <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x90b>
+   4b8d5:	39 2c 3a             	cmp    DWORD PTR [rdx+rdi*1],ebp
+   4b8d8:	48 8d 7f 08          	lea    rdi,[rdi+0x8]
+   4b8dc:	75 f2                	jne    4b8d0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x8e0>
+   4b8de:	eb 3e                	jmp    4b91e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x92e>
+   4b8e0:	48 83 7c 24 68 05    	cmp    QWORD PTR [rsp+0x68],0x5
+   4b8e6:	4c 8b 7c 24 30       	mov    r15,QWORD PTR [rsp+0x30]
+   4b8eb:	0f 82 3a fb ff ff    	jb     4b42b <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x43b>
+   4b8f1:	48 8b 7c 24 58       	mov    rdi,QWORD PTR [rsp+0x58]
+   4b8f6:	e9 2a fb ff ff       	jmp    4b425 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x435>
+   4b8fb:	48 c1 e1 03          	shl    rcx,0x3
+   4b8ff:	31 d2                	xor    edx,edx
+   4b901:	66 66 66 66 66 66 2e 	data16 data16 data16 data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4b908:	0f 1f 84 00 00 00 00
+   4b90f:	00
+   4b910:	48 39 d1             	cmp    rcx,rdx
+   4b913:	74 1d                	je     4b932 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x942>
+   4b915:	39 2c 10             	cmp    DWORD PTR [rax+rdx*1],ebp
+   4b918:	48 8d 52 08          	lea    rdx,[rdx+0x8]
+   4b91c:	75 f2                	jne    4b910 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x920>
+   4b91e:	48 8b 7c 24 40       	mov    rdi,QWORD PTR [rsp+0x40]
+   4b923:	49 83 fe 04          	cmp    r14,0x4
+   4b927:	0f 87 f8 fa ff ff    	ja     4b425 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x435>
+   4b92d:	e9 f9 fa ff ff       	jmp    4b42b <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x43b>
+   4b932:	48 8b 7c 24 48       	mov    rdi,QWORD PTR [rsp+0x48]
+   4b937:	48 8d 74 24 50       	lea    rsi,[rsp+0x50]
+   4b93c:	48 8d 54 24 58       	lea    rdx,[rsp+0x58]
+   4b941:	b9 01 00 00 00       	mov    ecx,0x1
+   4b946:	e8 95 95 00 00       	call   54ee0 <nixie_sat::clause::ClauseDatabase::add_lits>
+   4b94b:	48 8b 4c 24 08       	mov    rcx,QWORD PTR [rsp+0x8]
+   4b950:	48 8b 99 a0 05 00 00 	mov    rbx,QWORD PTR [rcx+0x5a0]
+   4b957:	48 3b 99 90 05 00 00 	cmp    rbx,QWORD PTR [rcx+0x590]
+   4b95e:	89 44 24 28          	mov    DWORD PTR [rsp+0x28],eax
+   4b962:	0f 84 80 02 00 00    	je     4bbe8 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xbf8>
+   4b968:	48 8b 91 98 05 00 00 	mov    rdx,QWORD PTR [rcx+0x598]
+   4b96f:	89 04 9a             	mov    DWORD PTR [rdx+rbx*4],eax
+   4b972:	48 ff c3             	inc    rbx
+   4b975:	48 89 99 a0 05 00 00 	mov    QWORD PTR [rcx+0x5a0],rbx
+   4b97c:	48 8b 91 f8 04 00 00 	mov    rdx,QWORD PTR [rcx+0x4f8]
+   4b983:	48 85 d2             	test   rdx,rdx
+   4b986:	74 2e                	je     4b9b6 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x9c6>
+   4b988:	48 8b 89 f0 04 00 00 	mov    rcx,QWORD PTR [rcx+0x4f0]
+   4b98f:	48 8d 14 52          	lea    rdx,[rdx+rdx*2]
+   4b993:	48 8d 1c d1          	lea    rbx,[rcx+rdx*8]
+   4b997:	4c 8b 7c d1 f8       	mov    r15,QWORD PTR [rcx+rdx*8-0x8]
+   4b99c:	4c 3b 7c d1 e8       	cmp    r15,QWORD PTR [rcx+rdx*8-0x18]
+   4b9a1:	0f 84 7e 02 00 00    	je     4bc25 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc35>
+   4b9a7:	48 8b 4b f0          	mov    rcx,QWORD PTR [rbx-0x10]
+   4b9ab:	42 89 04 b9          	mov    DWORD PTR [rcx+r15*4],eax
+   4b9af:	49 ff c7             	inc    r15
+   4b9b2:	4c 89 7b f8          	mov    QWORD PTR [rbx-0x8],r15
+   4b9b6:	49 8d 75 01          	lea    rsi,[r13+0x1]
+   4b9ba:	48 8b bc 24 c0 00 00 	mov    rdi,QWORD PTR [rsp+0xc0]
+   4b9c1:	00
+   4b9c2:	e8 59 a0 00 00       	call   55a20 <nixie_sat::solver::BinaryImplicationGraph::ensure_codes>
+   4b9c7:	4c 8b 7c 24 08       	mov    r15,QWORD PTR [rsp+0x8]
+   4b9cc:	49 8b b7 30 06 00 00 	mov    rsi,QWORD PTR [r15+0x630]
+   4b9d3:	4c 39 ee             	cmp    rsi,r13
+   4b9d6:	0f 86 fb 09 00 00    	jbe    4c3d7 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13e7>
+   4b9dc:	49 8b 87 28 06 00 00 	mov    rax,QWORD PTR [r15+0x628]
+   4b9e3:	4a 8d 0c 6d 00 00 00 	lea    rcx,[r13*2+0x0]
+   4b9ea:	00
+   4b9eb:	4c 01 e9             	add    rcx,r13
+   4b9ee:	4c 8d 2c c8          	lea    r13,[rax+rcx*8]
+   4b9f2:	48 8b 5c c8 10       	mov    rbx,QWORD PTR [rax+rcx*8+0x10]
+   4b9f7:	48 3b 1c c8          	cmp    rbx,QWORD PTR [rax+rcx*8]
+   4b9fb:	8b 4c 24 28          	mov    ecx,DWORD PTR [rsp+0x28]
+   4b9ff:	0f 84 fd 01 00 00    	je     4bc02 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc12>
+   4ba05:	49 8b 45 08          	mov    rax,QWORD PTR [r13+0x8]
+   4ba09:	89 2c d8             	mov    DWORD PTR [rax+rbx*8],ebp
+   4ba0c:	89 4c d8 04          	mov    DWORD PTR [rax+rbx*8+0x4],ecx
+   4ba10:	48 ff c3             	inc    rbx
+   4ba13:	49 89 5d 10          	mov    QWORD PTR [r13+0x10],rbx
+   4ba17:	48 83 f5 01          	xor    rbp,0x1
+   4ba1b:	48 8d 75 01          	lea    rsi,[rbp+0x1]
+   4ba1f:	48 8b bc 24 c0 00 00 	mov    rdi,QWORD PTR [rsp+0xc0]
+   4ba26:	00
+   4ba27:	e8 f4 9f 00 00       	call   55a20 <nixie_sat::solver::BinaryImplicationGraph::ensure_codes>
+   4ba2c:	49 8b b7 30 06 00 00 	mov    rsi,QWORD PTR [r15+0x630]
+   4ba33:	48 39 ee             	cmp    rsi,rbp
+   4ba36:	0f 86 aa 09 00 00    	jbe    4c3e6 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13f6>
+   4ba3c:	4d 89 f8             	mov    r8,r15
+   4ba3f:	49 8b 87 28 06 00 00 	mov    rax,QWORD PTR [r15+0x628]
+   4ba46:	48 8d 0c 6d 00 00 00 	lea    rcx,[rbp*2+0x0]
+   4ba4d:	00
+   4ba4e:	48 01 e9             	add    rcx,rbp
+   4ba51:	4c 8d 2c c8          	lea    r13,[rax+rcx*8]
+   4ba55:	48 8b 5c c8 10       	mov    rbx,QWORD PTR [rax+rcx*8+0x10]
+   4ba5a:	48 3b 1c c8          	cmp    rbx,QWORD PTR [rax+rcx*8]
+   4ba5e:	4c 8b 7c 24 30       	mov    r15,QWORD PTR [rsp+0x30]
+   4ba63:	0f 84 aa 01 00 00    	je     4bc13 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc23>
+   4ba69:	49 8b 45 08          	mov    rax,QWORD PTR [r13+0x8]
+   4ba6d:	44 89 24 d8          	mov    DWORD PTR [rax+rbx*8],r12d
+   4ba71:	44 8b 54 24 28       	mov    r10d,DWORD PTR [rsp+0x28]
+   4ba76:	44 89 54 d8 04       	mov    DWORD PTR [rax+rbx*8+0x4],r10d
+   4ba7b:	48 ff c3             	inc    rbx
+   4ba7e:	49 89 5d 10          	mov    QWORD PTR [r13+0x10],rbx
+   4ba82:	49 ff 80 d8 0a 00 00 	inc    QWORD PTR [r8+0xad8]
+   4ba89:	41 8b 80 40 13 00 00 	mov    eax,DWORD PTR [r8+0x1340]
+   4ba90:	ff c0                	inc    eax
+   4ba92:	41 89 80 40 13 00 00 	mov    DWORD PTR [r8+0x1340],eax
+   4ba99:	75 56                	jne    4baf1 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb01>
+   4ba9b:	4d 8b a8 80 05 00 00 	mov    r13,QWORD PTR [r8+0x580]
+   4baa2:	49 8b 98 88 05 00 00 	mov    rbx,QWORD PTR [r8+0x588]
+   4baa9:	48 8d 14 9d 00 00 00 	lea    rdx,[rbx*4+0x0]
+   4bab0:	00
+   4bab1:	4c 89 ef             	mov    rdi,r13
+   4bab4:	31 f6                	xor    esi,esi
+   4bab6:	ff 15 ac 5b 0d 00    	call   QWORD PTR [rip+0xd5bac]        # 121668 <memset@GLIBC_2.2.5>
+   4babc:	44 8b 54 24 28       	mov    r10d,DWORD PTR [rsp+0x28]
+   4bac1:	4c 8b 44 24 08       	mov    r8,QWORD PTR [rsp+0x8]
+   4bac6:	41 c7 80 40 13 00 00 	mov    DWORD PTR [r8+0x1340],0x1
+   4bacd:	01 00 00 00
+   4bad1:	b8 01 00 00 00       	mov    eax,0x1
+   4bad6:	eb 27                	jmp    4baff <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb0f>
+   4bad8:	e8 80 85 01 00       	call   6405d <std::sync::once_lock::OnceLock<T>::initialize>
+   4badd:	41 83 fd ff          	cmp    r13d,0xffffffff
+   4bae1:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4bae6:	0f 85 55 fa ff ff    	jne    4b541 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x551>
+   4baec:	e9 f3 fa ff ff       	jmp    4b5e4 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x5f4>
+   4baf1:	4d 8b a8 80 05 00 00 	mov    r13,QWORD PTR [r8+0x580]
+   4baf8:	49 8b 98 88 05 00 00 	mov    rbx,QWORD PTR [r8+0x588]
+   4baff:	48 8b 7c 24 40       	mov    rdi,QWORD PTR [rsp+0x40]
+   4bb04:	49 8b 90 38 02 00 00 	mov    rdx,QWORD PTR [r8+0x238]
+   4bb0b:	49 8b b0 40 02 00 00 	mov    rsi,QWORD PTR [r8+0x240]
+   4bb12:	8b 4c 24 50          	mov    ecx,DWORD PTR [rsp+0x50]
+   4bb16:	d1 e9                	shr    ecx,1
+   4bb18:	48 39 ce             	cmp    rsi,rcx
+   4bb1b:	76 0a                	jbe    4bb27 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb37>
+   4bb1d:	48 8d 0c 89          	lea    rcx,[rcx+rcx*4]
+   4bb21:	8b 4c 8a 08          	mov    ecx,DWORD PTR [rdx+rcx*4+0x8]
+   4bb25:	eb 02                	jmp    4bb29 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb39>
+   4bb27:	31 c9                	xor    ecx,ecx
+   4bb29:	48 39 cb             	cmp    rbx,rcx
+   4bb2c:	76 07                	jbe    4bb35 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb45>
+   4bb2e:	41 39 44 8d 00       	cmp    DWORD PTR [r13+rcx*4+0x0],eax
+   4bb33:	75 04                	jne    4bb39 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb49>
+   4bb35:	31 c9                	xor    ecx,ecx
+   4bb37:	eb 09                	jmp    4bb42 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb52>
+   4bb39:	41 89 44 8d 00       	mov    DWORD PTR [r13+rcx*4+0x0],eax
+   4bb3e:	66 b9 01 00          	mov    cx,0x1
+   4bb42:	44 8b 4c 24 54       	mov    r9d,DWORD PTR [rsp+0x54]
+   4bb47:	41 d1 e9             	shr    r9d,1
+   4bb4a:	4c 39 ce             	cmp    rsi,r9
+   4bb4d:	76 0a                	jbe    4bb59 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb69>
+   4bb4f:	4b 8d 34 89          	lea    rsi,[r9+r9*4]
+   4bb53:	8b 54 b2 08          	mov    edx,DWORD PTR [rdx+rsi*4+0x8]
+   4bb57:	eb 02                	jmp    4bb5b <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb6b>
+   4bb59:	31 d2                	xor    edx,edx
+   4bb5b:	48 39 d3             	cmp    rbx,rdx
+   4bb5e:	76 1b                	jbe    4bb7b <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb8b>
+   4bb60:	41 39 44 95 00       	cmp    DWORD PTR [r13+rdx*4+0x0],eax
+   4bb65:	48 8b 9c 24 b8 00 00 	mov    rbx,QWORD PTR [rsp+0xb8]
+   4bb6c:	00
+   4bb6d:	74 14                	je     4bb83 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb93>
+   4bb6f:	41 89 44 95 00       	mov    DWORD PTR [r13+rdx*4+0x0],eax
+   4bb74:	0f b7 c9             	movzx  ecx,cx
+   4bb77:	ff c1                	inc    ecx
+   4bb79:	eb 08                	jmp    4bb83 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xb93>
+   4bb7b:	48 8b 9c 24 b8 00 00 	mov    rbx,QWORD PTR [rsp+0xb8]
+   4bb82:	00
+   4bb83:	44 89 d0             	mov    eax,r10d
+   4bb86:	49 39 80 60 01 00 00 	cmp    QWORD PTR [r8+0x160],rax
+   4bb8d:	0f 86 90 fd ff ff    	jbe    4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4bb93:	49 8b 90 58 01 00 00 	mov    rdx,QWORD PTR [r8+0x158]
+   4bb9a:	8b 04 82             	mov    eax,DWORD PTR [rdx+rax*4]
+   4bb9d:	ba ff ff ff ff       	mov    edx,0xffffffff
+   4bba2:	48 39 d0             	cmp    rax,rdx
+   4bba5:	0f 84 78 fd ff ff    	je     4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4bbab:	49 8b 90 20 01 00 00 	mov    rdx,QWORD PTR [r8+0x120]
+   4bbb2:	48 8d 70 0c          	lea    rsi,[rax+0xc]
+   4bbb6:	48 39 d6             	cmp    rsi,rdx
+   4bbb9:	0f 87 64 fd ff ff    	ja     4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4bbbf:	49 8b b0 f8 00 00 00 	mov    rsi,QWORD PTR [r8+0xf8]
+   4bbc6:	44 8b 04 06          	mov    r8d,DWORD PTR [rsi+rax*1]
+   4bbca:	48 29 c2             	sub    rdx,rax
+   4bbcd:	48 83 c2 f4          	add    rdx,0xfffffffffffffff4
+   4bbd1:	48 c1 ea 02          	shr    rdx,0x2
+   4bbd5:	4c 39 c2             	cmp    rdx,r8
+   4bbd8:	0f 82 45 fd ff ff    	jb     4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4bbde:	66 89 4c 06 04       	mov    WORD PTR [rsi+rax*1+0x4],cx
+   4bbe3:	e9 3b fd ff ff       	jmp    4b923 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x933>
+   4bbe8:	48 8d b9 90 05 00 00 	lea    rdi,[rcx+0x590]
+   4bbef:	e8 0c 24 00 00       	call   4e000 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   4bbf4:	8b 44 24 28          	mov    eax,DWORD PTR [rsp+0x28]
+   4bbf8:	48 8b 4c 24 08       	mov    rcx,QWORD PTR [rsp+0x8]
+   4bbfd:	e9 66 fd ff ff       	jmp    4b968 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x978>
+   4bc02:	4c 89 ef             	mov    rdi,r13
+   4bc05:	e8 66 a1 00 00       	call   55d70 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   4bc0a:	8b 4c 24 28          	mov    ecx,DWORD PTR [rsp+0x28]
+   4bc0e:	e9 f2 fd ff ff       	jmp    4ba05 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xa15>
+   4bc13:	4c 89 ef             	mov    rdi,r13
+   4bc16:	e8 55 a1 00 00       	call   55d70 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   4bc1b:	4c 8b 44 24 08       	mov    r8,QWORD PTR [rsp+0x8]
+   4bc20:	e9 44 fe ff ff       	jmp    4ba69 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xa79>
+   4bc25:	48 8d 7b e8          	lea    rdi,[rbx-0x18]
+   4bc29:	e8 d2 23 00 00       	call   4e000 <alloc::raw_vec::RawVec<T,A>::grow_one>
+   4bc2e:	8b 44 24 28          	mov    eax,DWORD PTR [rsp+0x28]
+   4bc32:	e9 70 fd ff ff       	jmp    4b9a7 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x9b7>
+   4bc37:	66 0f 1f 84 00 00 00 	nop    WORD PTR [rax+rax*1+0x0]
+   4bc3e:	00 00
+   4bc40:	85 c0                	test   eax,eax
+   4bc42:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4bc47:	75 16                	jne    4bc5f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc6f>
+   4bc49:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4bc4e:	48 8b 84 24 f8 00 00 	mov    rax,QWORD PTR [rsp+0xf8]
+   4bc55:	00
+   4bc56:	31 db                	xor    ebx,ebx
+   4bc58:	48 8b 7c 24 20       	mov    rdi,QWORD PTR [rsp+0x20]
+   4bc5d:	eb 22                	jmp    4bc81 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xc91>
+   4bc5f:	8b 84 24 e8 00 00 00 	mov    eax,DWORD PTR [rsp+0xe8]
+   4bc66:	89 84 24 e0 00 00 00 	mov    DWORD PTR [rsp+0xe0],eax
+   4bc6d:	48 8b 84 24 f8 00 00 	mov    rax,QWORD PTR [rsp+0xf8]
+   4bc74:	00
+   4bc75:	b3 01                	mov    bl,0x1
+   4bc77:	48 8b 7c 24 20       	mov    rdi,QWORD PTR [rsp+0x20]
+   4bc7c:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4bc81:	4c 39 e0             	cmp    rax,r12
+   4bc84:	4c 0f 42 e0          	cmovb  r12,rax
+   4bc88:	49 8b b2 80 02 00 00 	mov    rsi,QWORD PTR [r10+0x280]
+   4bc8f:	48 39 fe             	cmp    rsi,rdi
+   4bc92:	77 50                	ja     4bce4 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xcf4>
+   4bc94:	48 c7 44 24 78 00 00 	mov    QWORD PTR [rsp+0x78],0x0
+   4bc9b:	00 00
+   4bc9d:	48 c7 84 24 80 00 00 	mov    QWORD PTR [rsp+0x80],0x4
+   4bca4:	00 04 00 00 00
+   4bca9:	48 c7 84 24 88 00 00 	mov    QWORD PTR [rsp+0x88],0x0
+   4bcb0:	00 00 00 00 00
+   4bcb5:	48 89 f8             	mov    rax,rdi
+   4bcb8:	48 29 f0             	sub    rax,rsi
+   4bcbb:	48 ff c0             	inc    rax
+   4bcbe:	4c 89 ff             	mov    rdi,r15
+   4bcc1:	48 89 c6             	mov    rsi,rax
+   4bcc4:	48 8d 54 24 78       	lea    rdx,[rsp+0x78]
+   4bcc9:	e8 62 9b 00 00       	call   55830 <alloc::vec::Vec<T,A>::extend_with>
+   4bcce:	48 8b 54 24 10       	mov    rdx,QWORD PTR [rsp+0x10]
+   4bcd3:	48 8b 7c 24 20       	mov    rdi,QWORD PTR [rsp+0x20]
+   4bcd8:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4bcdd:	49 8b b2 80 02 00 00 	mov    rsi,QWORD PTR [r10+0x280]
+   4bce4:	48 39 fe             	cmp    rsi,rdi
+   4bce7:	0f 86 90 06 00 00    	jbe    4c37d <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x138d>
+   4bced:	49 8b 82 78 02 00 00 	mov    rax,QWORD PTR [r10+0x278]
+   4bcf4:	4c 8d 34 d0          	lea    r14,[rax+rdx*8]
+   4bcf8:	48 83 3c d0 00       	cmp    QWORD PTR [rax+rdx*8],0x0
+   4bcfd:	74 0f                	je     4bd0e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xd1e>
+   4bcff:	49 8b 7e 08          	mov    rdi,QWORD PTR [r14+0x8]
+   4bd03:	ff 15 57 59 0d 00    	call   QWORD PTR [rip+0xd5957]        # 121660 <free@GLIBC_2.2.5>
+   4bd09:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4bd0e:	48 8b 84 24 c8 00 00 	mov    rax,QWORD PTR [rsp+0xc8]
+   4bd15:	00
+   4bd16:	49 89 06             	mov    QWORD PTR [r14],rax
+   4bd19:	48 8b 44 24 18       	mov    rax,QWORD PTR [rsp+0x18]
+   4bd1e:	49 89 46 08          	mov    QWORD PTR [r14+0x8],rax
+   4bd22:	4d 89 66 10          	mov    QWORD PTR [r14+0x10],r12
+   4bd26:	84 db                	test   bl,bl
+   4bd28:	0f 84 5a f3 ff ff    	je     4b088 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x98>
+   4bd2e:	41 80 ba 5f 13 00 00 	cmp    BYTE PTR [r10+0x135f],0x0
+   4bd35:	00
+   4bd36:	74 07                	je     4bd3f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xd4f>
+   4bd38:	49 ff 82 68 0c 00 00 	inc    QWORD PTR [r10+0xc68]
+   4bd3f:	41 8b 82 68 02 00 00 	mov    eax,DWORD PTR [r10+0x268]
+   4bd46:	48 8d 0c c5 00 00 00 	lea    rcx,[rax*8+0x0]
+   4bd4d:	00
+   4bd4e:	49 03 8a 50 02 00 00 	add    rcx,QWORD PTR [r10+0x250]
+   4bd55:	49 39 82 58 02 00 00 	cmp    QWORD PTR [r10+0x258],rax
+   4bd5c:	48 8b 94 24 00 01 00 	mov    rdx,QWORD PTR [rsp+0x100]
+   4bd63:	00
+   4bd64:	48 0f 47 d1          	cmova  rdx,rcx
+   4bd68:	49 8b 82 60 02 00 00 	mov    rax,QWORD PTR [r10+0x260]
+   4bd6f:	48 8b 0a             	mov    rcx,QWORD PTR [rdx]
+   4bd72:	49 89 8a a8 0d 00 00 	mov    QWORD PTR [r10+0xda8],rcx
+   4bd79:	48 83 f8 01          	cmp    rax,0x1
+   4bd7d:	48 83 d0 ff          	adc    rax,0xffffffffffffffff
+   4bd81:	49 89 82 60 02 00 00 	mov    QWORD PTR [r10+0x260],rax
+   4bd88:	b8 01 00 00 00       	mov    eax,0x1
+   4bd8d:	8b 94 24 e0 00 00 00 	mov    edx,DWORD PTR [rsp+0xe0]
+   4bd94:	e9 34 05 00 00       	jmp    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4bd99:	41 80 ba 5f 13 00 00 	cmp    BYTE PTR [r10+0x135f],0x0
+   4bda0:	00
+   4bda1:	74 07                	je     4bdaa <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xdba>
+   4bda3:	49 ff 82 68 0c 00 00 	inc    QWORD PTR [r10+0xc68]
+   4bdaa:	41 8b 82 68 02 00 00 	mov    eax,DWORD PTR [r10+0x268]
+   4bdb1:	48 8d 0c c5 00 00 00 	lea    rcx,[rax*8+0x0]
+   4bdb8:	00
+   4bdb9:	49 03 8a 50 02 00 00 	add    rcx,QWORD PTR [r10+0x250]
+   4bdc0:	49 39 82 58 02 00 00 	cmp    QWORD PTR [r10+0x258],rax
+   4bdc7:	49 8b 82 60 02 00 00 	mov    rax,QWORD PTR [r10+0x260]
+   4bdce:	48 8b 94 24 00 01 00 	mov    rdx,QWORD PTR [rsp+0x100]
+   4bdd5:	00
+   4bdd6:	48 0f 47 d1          	cmova  rdx,rcx
+   4bdda:	48 8b 0a             	mov    rcx,QWORD PTR [rdx]
+   4bddd:	48 83 f8 01          	cmp    rax,0x1
+   4bde1:	48 83 d0 ff          	adc    rax,0xffffffffffffffff
+   4bde5:	49 89 8a a8 0d 00 00 	mov    QWORD PTR [r10+0xda8],rcx
+   4bdec:	49 89 82 60 02 00 00 	mov    QWORD PTR [r10+0x260],rax
+   4bdf3:	b8 01 00 00 00       	mov    eax,0x1
+   4bdf8:	89 ea                	mov    edx,ebp
+   4bdfa:	e9 ce 04 00 00       	jmp    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4bdff:	31 c0                	xor    eax,eax
+   4be01:	41 80 ba 5e 13 00 00 	cmp    BYTE PTR [r10+0x135e],0x0
+   4be08:	00
+   4be09:	0f 84 b7 04 00 00    	je     4c2c6 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12d6>
+   4be0f:	e9 b9 04 00 00       	jmp    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4be14:	41 c6 82 5e 13 00 00 	mov    BYTE PTR [r10+0x135e],0x1
+   4be1b:	01
+   4be1c:	31 c0                	xor    eax,eax
+   4be1e:	e9 aa 04 00 00       	jmp    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4be23:	e8 35 82 01 00       	call   6405d <std::sync::once_lock::OnceLock<T>::initialize>
+   4be28:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4be2d:	80 3d f0 6b 0d 00 01 	cmp    BYTE PTR [rip+0xd6bf0],0x1        # 122a24 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::reason_stats_enabled::FLAG+0x4>
+   4be34:	0f 84 0c f2 ff ff    	je     4b046 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x56>
+   4be3a:	49 8b b2 10 02 00 00 	mov    rsi,QWORD PTR [r10+0x210]
+   4be41:	49 8b 82 60 02 00 00 	mov    rax,QWORD PTR [r10+0x260]
+   4be48:	48 39 f0             	cmp    rax,rsi
+   4be4b:	0f 83 62 04 00 00    	jae    4c2b3 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12c3>
+   4be51:	49 8d 9a 60 02 00 00 	lea    rbx,[r10+0x260]
+   4be58:	4d 8d ba 00 02 00 00 	lea    r15,[r10+0x200]
+   4be5f:	49 8b 8a 00 02 00 00 	mov    rcx,QWORD PTR [r10+0x200]
+   4be66:	49 8b 92 40 02 00 00 	mov    rdx,QWORD PTR [r10+0x240]
+   4be6d:	48 29 f1             	sub    rcx,rsi
+   4be70:	48 39 ca             	cmp    rdx,rcx
+   4be73:	0f 87 72 04 00 00    	ja     4c2eb <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12fb>
+   4be79:	49 8d 8a 10 02 00 00 	lea    rcx,[r10+0x210]
+   4be80:	48 89 4c 24 38       	mov    QWORD PTR [rsp+0x38],rcx
+   4be85:	49 8b 8a 08 02 00 00 	mov    rcx,QWORD PTR [r10+0x208]
+   4be8c:	4d 8b b2 20 02 00 00 	mov    r14,QWORD PTR [r10+0x220]
+   4be93:	49 8b ba 28 02 00 00 	mov    rdi,QWORD PTR [r10+0x228]
+   4be9a:	48 89 bc 24 d0 00 00 	mov    QWORD PTR [rsp+0xd0],rdi
+   4bea1:	00
+   4bea2:	49 8b ba 38 02 00 00 	mov    rdi,QWORD PTR [r10+0x238]
+   4bea9:	45 8b 82 68 02 00 00 	mov    r8d,DWORD PTR [r10+0x268]
+   4beb0:	4c 89 7c 24 78       	mov    QWORD PTR [rsp+0x78],r15
+   4beb5:	48 89 9c 24 80 00 00 	mov    QWORD PTR [rsp+0x80],rbx
+   4bebc:	00
+   4bebd:	48 89 bc 24 88 00 00 	mov    QWORD PTR [rsp+0x88],rdi
+   4bec4:	00
+   4bec5:	48 89 94 24 90 00 00 	mov    QWORD PTR [rsp+0x90],rdx
+   4becc:	00
+   4becd:	48 89 8c 24 98 00 00 	mov    QWORD PTR [rsp+0x98],rcx
+   4bed4:	00
+   4bed5:	48 89 b4 24 a0 00 00 	mov    QWORD PTR [rsp+0xa0],rsi
+   4bedc:	00
+   4bedd:	48 89 84 24 a8 00 00 	mov    QWORD PTR [rsp+0xa8],rax
+   4bee4:	00
+   4bee5:	44 89 84 24 b0 00 00 	mov    DWORD PTR [rsp+0xb0],r8d
+   4beec:	00
+   4beed:	49 8b 82 f8 00 00 00 	mov    rax,QWORD PTR [r10+0xf8]
+   4bef4:	48 89 84 24 c8 00 00 	mov    QWORD PTR [rsp+0xc8],rax
+   4befb:	00
+   4befc:	4d 8b aa 78 02 00 00 	mov    r13,QWORD PTR [r10+0x278]
+   4bf03:	49 8b 82 80 02 00 00 	mov    rax,QWORD PTR [r10+0x280]
+   4bf0a:	48 89 44 24 18       	mov    QWORD PTR [rsp+0x18],rax
+   4bf0f:	49 8b 82 90 02 00 00 	mov    rax,QWORD PTR [r10+0x290]
+   4bf16:	48 89 44 24 30       	mov    QWORD PTR [rsp+0x30],rax
+   4bf1b:	49 8b 82 98 02 00 00 	mov    rax,QWORD PTR [r10+0x298]
+   4bf22:	48 89 44 24 48       	mov    QWORD PTR [rsp+0x48],rax
+   4bf27:	41 0f b6 82 5f 13 00 	movzx  eax,BYTE PTR [r10+0x135f]
+   4bf2e:	00
+   4bf2f:	48 8d 04 c5 e8 0e 00 	lea    rax,[rax*8+0xee8]
+   4bf36:	00
+   4bf37:	48 89 84 24 d8 00 00 	mov    QWORD PTR [rsp+0xd8],rax
+   4bf3e:	00
+   4bf3f:	48 8b 8c 24 a0 00 00 	mov    rcx,QWORD PTR [rsp+0xa0]
+   4bf46:	00
+   4bf47:	48 8b 84 24 a8 00 00 	mov    rax,QWORD PTR [rsp+0xa8]
+   4bf4e:	00
+   4bf4f:	48 39 c8             	cmp    rax,rcx
+   4bf52:	0f 83 47 03 00 00    	jae    4c29f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12af>
+   4bf58:	48 8b 94 24 98 00 00 	mov    rdx,QWORD PTR [rsp+0x98]
+   4bf5f:	00
+   4bf60:	44 8b 04 82          	mov    r8d,DWORD PTR [rdx+rax*4]
+   4bf64:	49 ff 82 c0 0a 00 00 	inc    QWORD PTR [r10+0xac0]
+   4bf6b:	48 ff c0             	inc    rax
+   4bf6e:	48 89 84 24 a8 00 00 	mov    QWORD PTR [rsp+0xa8],rax
+   4bf75:	00
+   4bf76:	41 83 ba c0 00 00 00 	cmp    DWORD PTR [r10+0xc0],0x1
+   4bf7d:	01
+   4bf7e:	75 1a                	jne    4bf9a <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xfaa>
+   4bf80:	49 8b 92 c8 00 00 00 	mov    rdx,QWORD PTR [r10+0xc8]
+   4bf87:	48 85 d2             	test   rdx,rdx
+   4bf8a:	0f 84 07 03 00 00    	je     4c297 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12a7>
+   4bf90:	48 ff ca             	dec    rdx
+   4bf93:	49 89 92 c8 00 00 00 	mov    QWORD PTR [r10+0xc8],rdx
+   4bf9a:	4d 85 c0             	test   r8,r8
+   4bf9d:	74 31                	je     4bfd0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xfe0>
+   4bf9f:	49 8b b2 e8 05 00 00 	mov    rsi,QWORD PTR [r10+0x5e8]
+   4bfa6:	49 8d 78 ff          	lea    rdi,[r8-0x1]
+   4bfaa:	48 39 f7             	cmp    rdi,rsi
+   4bfad:	0f 83 be 03 00 00    	jae    4c371 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1381>
+   4bfb3:	49 8b 82 e0 05 00 00 	mov    rax,QWORD PTR [r10+0x5e0]
+   4bfba:	42 8b 7c 80 fc       	mov    edi,DWORD PTR [rax+r8*4-0x4]
+   4bfbf:	49 8b b2 00 06 00 00 	mov    rsi,QWORD PTR [r10+0x600]
+   4bfc6:	4c 39 c6             	cmp    rsi,r8
+   4bfc9:	77 17                	ja     4bfe2 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xff2>
+   4bfcb:	e9 c8 03 00 00       	jmp    4c398 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13a8>
+   4bfd0:	31 ff                	xor    edi,edi
+   4bfd2:	49 8b b2 00 06 00 00 	mov    rsi,QWORD PTR [r10+0x600]
+   4bfd9:	4c 39 c6             	cmp    rsi,r8
+   4bfdc:	0f 86 b6 03 00 00    	jbe    4c398 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13a8>
+   4bfe2:	49 8b 82 f8 05 00 00 	mov    rax,QWORD PTR [r10+0x5f8]
+   4bfe9:	42 8b 04 80          	mov    eax,DWORD PTR [rax+r8*4]
+   4bfed:	48 8d 34 07          	lea    rsi,[rdi+rax*1]
+   4bff1:	49 8b 92 18 06 00 00 	mov    rdx,QWORD PTR [r10+0x618]
+   4bff8:	48 39 d6             	cmp    rsi,rdx
+   4bffb:	0f 87 de 02 00 00    	ja     4c2df <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12ef>
+   4c001:	49 8b b2 30 06 00 00 	mov    rsi,QWORD PTR [r10+0x630]
+   4c008:	4c 39 c6             	cmp    rsi,r8
+   4c00b:	0f 86 96 03 00 00    	jbe    4c3a7 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13b7>
+   4c011:	4c 89 ed             	mov    rbp,r13
+   4c014:	49 8b 8a 28 06 00 00 	mov    rcx,QWORD PTR [r10+0x628]
+   4c01b:	4c 89 44 24 20       	mov    QWORD PTR [rsp+0x20],r8
+   4c020:	4b 8d 14 40          	lea    rdx,[r8+r8*2]
+   4c024:	48 8b 5c d1 08       	mov    rbx,QWORD PTR [rcx+rdx*8+0x8]
+   4c029:	48 89 54 24 70       	mov    QWORD PTR [rsp+0x70],rdx
+   4c02e:	48 8b 4c d1 10       	mov    rcx,QWORD PTR [rcx+rdx*8+0x10]
+   4c033:	48 89 4c 24 10       	mov    QWORD PTR [rsp+0x10],rcx
+   4c038:	48 85 c0             	test   rax,rax
+   4c03b:	74 54                	je     4c091 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10a1>
+   4c03d:	49 8b 8a 10 06 00 00 	mov    rcx,QWORD PTR [r10+0x610]
+   4c044:	4c 8d 24 f9          	lea    r12,[rcx+rdi*8]
+   4c048:	4d 8d 2c c4          	lea    r13,[r12+rax*8]
+   4c04c:	eb 0b                	jmp    4c059 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1069>
+   4c04e:	66 90                	xchg   ax,ax
+   4c050:	49 83 c4 08          	add    r12,0x8
+   4c054:	4d 39 ec             	cmp    r12,r13
+   4c057:	74 38                	je     4c091 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10a1>
+   4c059:	45 8b 3c 24          	mov    r15d,DWORD PTR [r12]
+   4c05d:	41 8b 54 24 04       	mov    edx,DWORD PTR [r12+0x4]
+   4c062:	43 80 3c 3e 00       	cmp    BYTE PTR [r14+r15*1],0x0
+   4c067:	0f 88 b2 01 00 00    	js     4c21f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x122f>
+   4c06d:	75 e1                	jne    4c050 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1060>
+   4c06f:	48 8d 7c 24 78       	lea    rdi,[rsp+0x78]
+   4c074:	44 89 fe             	mov    esi,r15d
+   4c077:	e8 34 80 01 00       	call   640b0 <nixie_sat::trail::propagation::PropagationQueue::append>
+   4c07c:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4c081:	43 c6 04 3e 01       	mov    BYTE PTR [r14+r15*1],0x1
+   4c086:	49 83 f7 01          	xor    r15,0x1
+   4c08a:	43 c6 04 3e ff       	mov    BYTE PTR [r14+r15*1],0xff
+   4c08f:	eb bf                	jmp    4c050 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1060>
+   4c091:	48 8b 44 24 10       	mov    rax,QWORD PTR [rsp+0x10]
+   4c096:	48 85 c0             	test   rax,rax
+   4c099:	49 89 ed             	mov    r13,rbp
+   4c09c:	74 50                	je     4c0ee <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10fe>
+   4c09e:	4c 8d 24 c3          	lea    r12,[rbx+rax*8]
+   4c0a2:	eb 15                	jmp    4c0b9 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10c9>
+   4c0a4:	66 66 66 2e 0f 1f 84 	data16 data16 cs nop WORD PTR [rax+rax*1+0x0]
+   4c0ab:	00 00 00 00 00
+   4c0b0:	48 83 c3 08          	add    rbx,0x8
+   4c0b4:	4c 39 e3             	cmp    rbx,r12
+   4c0b7:	74 35                	je     4c0ee <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10fe>
+   4c0b9:	44 8b 3b             	mov    r15d,DWORD PTR [rbx]
+   4c0bc:	8b 53 04             	mov    edx,DWORD PTR [rbx+0x4]
+   4c0bf:	43 80 3c 3e 00       	cmp    BYTE PTR [r14+r15*1],0x0
+   4c0c4:	0f 88 55 01 00 00    	js     4c21f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x122f>
+   4c0ca:	75 e4                	jne    4c0b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10c0>
+   4c0cc:	48 8d 7c 24 78       	lea    rdi,[rsp+0x78]
+   4c0d1:	44 89 fe             	mov    esi,r15d
+   4c0d4:	e8 d7 7f 01 00       	call   640b0 <nixie_sat::trail::propagation::PropagationQueue::append>
+   4c0d9:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4c0de:	43 c6 04 3e 01       	mov    BYTE PTR [r14+r15*1],0x1
+   4c0e3:	49 83 f7 01          	xor    r15,0x1
+   4c0e7:	43 c6 04 3e ff       	mov    BYTE PTR [r14+r15*1],0xff
+   4c0ec:	eb c2                	jmp    4c0b0 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x10c0>
+   4c0ee:	4c 8b 44 24 20       	mov    r8,QWORD PTR [rsp+0x20]
+   4c0f3:	4c 39 44 24 18       	cmp    QWORD PTR [rsp+0x18],r8
+   4c0f8:	0f 86 b8 02 00 00    	jbe    4c3b6 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x13c6>
+   4c0fe:	4c 8b 64 24 70       	mov    r12,QWORD PTR [rsp+0x70]
+   4c103:	4b 8b 44 e5 00       	mov    rax,QWORD PTR [r13+r12*8+0x0]
+   4c108:	4f 8b 7c e5 08       	mov    r15,QWORD PTR [r13+r12*8+0x8]
+   4c10d:	4b 8b 5c e5 10       	mov    rbx,QWORD PTR [r13+r12*8+0x10]
+   4c112:	4b c7 44 e5 00 00 00 	mov    QWORD PTR [r13+r12*8+0x0],0x0
+   4c119:	00 00
+   4c11b:	4b c7 44 e5 08 04 00 	mov    QWORD PTR [r13+r12*8+0x8],0x4
+   4c122:	00 00
+   4c124:	4b c7 44 e5 10 00 00 	mov    QWORD PTR [r13+r12*8+0x10],0x0
+   4c12b:	00 00
+   4c12d:	4c 39 44 24 48       	cmp    QWORD PTR [rsp+0x48],r8
+   4c132:	48 89 44 24 10       	mov    QWORD PTR [rsp+0x10],rax
+   4c137:	76 0b                	jbe    4c144 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1154>
+   4c139:	48 8b 44 24 30       	mov    rax,QWORD PTR [rsp+0x30]
+   4c13e:	42 8b 04 80          	mov    eax,DWORD PTR [rax+r8*4]
+   4c142:	eb 02                	jmp    4c146 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1156>
+   4c144:	31 c0                	xor    eax,eax
+   4c146:	48 01 d8             	add    rax,rbx
+   4c149:	48 83 c0 0f          	add    rax,0xf
+   4c14d:	48 c1 e8 04          	shr    rax,0x4
+   4c151:	48 ff c0             	inc    rax
+   4c154:	48 8b 8c 24 d8 00 00 	mov    rcx,QWORD PTR [rsp+0xd8]
+   4c15b:	00
+   4c15c:	49 03 04 0a          	add    rax,QWORD PTR [r10+rcx*1]
+   4c160:	48 c7 c2 ff ff ff ff 	mov    rdx,0xffffffffffffffff
+   4c167:	48 0f 42 c2          	cmovb  rax,rdx
+   4c16b:	49 89 04 0a          	mov    QWORD PTR [r10+rcx*1],rax
+   4c16f:	48 85 db             	test   rbx,rbx
+   4c172:	0f 84 8d 00 00 00    	je     4c205 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x1215>
+   4c178:	41 83 f0 01          	xor    r8d,0x1
+   4c17c:	49 8d 34 df          	lea    rsi,[r15+rbx*8]
+   4c180:	48 83 ec 08          	sub    rsp,0x8
+   4c184:	4c 89 ff             	mov    rdi,r15
+   4c187:	44 89 c2             	mov    edx,r8d
+   4c18a:	4c 89 f1             	mov    rcx,r14
+   4c18d:	4c 8b 84 24 d8 00 00 	mov    r8,QWORD PTR [rsp+0xd8]
+   4c194:	00
+   4c195:	4c 8d 8c 24 80 00 00 	lea    r9,[rsp+0x80]
+   4c19c:	00
+   4c19d:	ff 74 24 20          	push   QWORD PTR [rsp+0x20]
+   4c1a1:	41 55                	push   r13
+   4c1a3:	ff b4 24 e0 00 00 00 	push   QWORD PTR [rsp+0xe0]
+   4c1aa:	e8 51 7f 01 00       	call   64100 <nixie_sat::solver::propagate::list_kernel::scan>
+   4c1af:	48 83 c4 20          	add    rsp,0x20
+   4c1b3:	48 89 c5             	mov    rbp,rax
+   4c1b6:	4c 29 fd             	sub    rbp,r15
+   4c1b9:	48 c1 fd 03          	sar    rbp,0x3
+   4c1bd:	48 39 dd             	cmp    rbp,rbx
+   4c1c0:	48 0f 43 eb          	cmovae rbp,rbx
+   4c1c4:	4a 8d 1c e5 00 00 00 	lea    rbx,[r12*8+0x0]
+   4c1cb:	00
+   4c1cc:	4c 01 eb             	add    rbx,r13
+   4c1cf:	48 83 3b 00          	cmp    QWORD PTR [rbx],0x0
+   4c1d3:	74 10                	je     4c1e5 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x11f5>
+   4c1d5:	48 8b 7b 08          	mov    rdi,QWORD PTR [rbx+0x8]
+   4c1d9:	41 89 d4             	mov    r12d,edx
+   4c1dc:	ff 15 7e 54 0d 00    	call   QWORD PTR [rip+0xd547e]        # 121660 <free@GLIBC_2.2.5>
+   4c1e2:	44 89 e2             	mov    edx,r12d
+   4c1e5:	48 8b 44 24 10       	mov    rax,QWORD PTR [rsp+0x10]
+   4c1ea:	48 89 03             	mov    QWORD PTR [rbx],rax
+   4c1ed:	4c 89 7b 08          	mov    QWORD PTR [rbx+0x8],r15
+   4c1f1:	48 89 6b 10          	mov    QWORD PTR [rbx+0x10],rbp
+   4c1f5:	83 fa ff             	cmp    edx,0xffffffff
+   4c1f8:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4c1fd:	0f 84 3c fd ff ff    	je     4bf3f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xf4f>
+   4c203:	eb 1a                	jmp    4c21f <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x122f>
+   4c205:	ba ff ff ff ff       	mov    edx,0xffffffff
+   4c20a:	31 ed                	xor    ebp,ebp
+   4c20c:	4a 8d 1c e5 00 00 00 	lea    rbx,[r12*8+0x0]
+   4c213:	00
+   4c214:	4c 01 eb             	add    rbx,r13
+   4c217:	48 83 3b 00          	cmp    QWORD PTR [rbx],0x0
+   4c21b:	75 b8                	jne    4c1d5 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x11e5>
+   4c21d:	eb c6                	jmp    4c1e5 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x11f5>
+   4c21f:	89 d6                	mov    esi,edx
+   4c221:	48 8b 84 24 a8 00 00 	mov    rax,QWORD PTR [rsp+0xa8]
+   4c228:	00
+   4c229:	48 83 f8 01          	cmp    rax,0x1
+   4c22d:	48 83 d0 ff          	adc    rax,0xffffffffffffffff
+   4c231:	48 8b 4c 24 78       	mov    rcx,QWORD PTR [rsp+0x78]
+   4c236:	48 8b 94 24 a0 00 00 	mov    rdx,QWORD PTR [rsp+0xa0]
+   4c23d:	00
+   4c23e:	48 89 51 10          	mov    QWORD PTR [rcx+0x10],rdx
+   4c242:	48 8b 8c 24 80 00 00 	mov    rcx,QWORD PTR [rsp+0x80]
+   4c249:	00
+   4c24a:	48 89 01             	mov    QWORD PTR [rcx],rax
+   4c24d:	41 80 ba 5f 13 00 00 	cmp    BYTE PTR [r10+0x135f],0x0
+   4c254:	00
+   4c255:	74 07                	je     4c25e <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x126e>
+   4c257:	49 ff 82 68 0c 00 00 	inc    QWORD PTR [r10+0xc68]
+   4c25e:	41 8b 82 68 02 00 00 	mov    eax,DWORD PTR [r10+0x268]
+   4c265:	48 8d 0c c5 00 00 00 	lea    rcx,[rax*8+0x0]
+   4c26c:	00
+   4c26d:	49 03 8a 50 02 00 00 	add    rcx,QWORD PTR [r10+0x250]
+   4c274:	49 39 82 58 02 00 00 	cmp    QWORD PTR [r10+0x258],rax
+   4c27b:	48 8b 44 24 38       	mov    rax,QWORD PTR [rsp+0x38]
+   4c280:	48 0f 47 c1          	cmova  rax,rcx
+   4c284:	48 8b 00             	mov    rax,QWORD PTR [rax]
+   4c287:	49 89 82 a8 0d 00 00 	mov    QWORD PTR [r10+0xda8],rax
+   4c28e:	b8 01 00 00 00       	mov    eax,0x1
+   4c293:	89 f2                	mov    edx,esi
+   4c295:	eb 36                	jmp    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4c297:	41 c6 82 5e 13 00 00 	mov    BYTE PTR [r10+0x135e],0x1
+   4c29e:	01
+   4c29f:	48 8b 54 24 78       	mov    rdx,QWORD PTR [rsp+0x78]
+   4c2a4:	48 89 4a 10          	mov    QWORD PTR [rdx+0x10],rcx
+   4c2a8:	48 8b 8c 24 80 00 00 	mov    rcx,QWORD PTR [rsp+0x80]
+   4c2af:	00
+   4c2b0:	48 89 01             	mov    QWORD PTR [rcx],rax
+   4c2b3:	31 c0                	xor    eax,eax
+   4c2b5:	41 80 ba 5e 13 00 00 	cmp    BYTE PTR [r10+0x135e],0x0
+   4c2bc:	00
+   4c2bd:	75 0e                	jne    4c2cd <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0x12dd>
+   4c2bf:	49 8b 8a 10 02 00 00 	mov    rcx,QWORD PTR [r10+0x210]
+   4c2c6:	49 89 8a a8 0d 00 00 	mov    QWORD PTR [r10+0xda8],rcx
+   4c2cd:	48 81 c4 18 01 00 00 	add    rsp,0x118
+   4c2d4:	5b                   	pop    rbx
+   4c2d5:	41 5c                	pop    r12
+   4c2d7:	41 5d                	pop    r13
+   4c2d9:	41 5e                	pop    r14
+   4c2db:	41 5f                	pop    r15
+   4c2dd:	5d                   	pop    rbp
+   4c2de:	c3                   	ret
+   4c2df:	48 8d 0d 72 3d 0d 00 	lea    rcx,[rip+0xd3d72]        # 120058 <__frame_dummy_init_array_entry+0x5368>
+   4c2e6:	e8 a5 0b ff ff       	call   3ce90 <core::slice::index::slice_index_fail>
+   4c2eb:	b9 04 00 00 00       	mov    ecx,0x4
+   4c2f0:	41 b8 04 00 00 00    	mov    r8d,0x4
+   4c2f6:	4c 89 ff             	mov    rdi,r15
+   4c2f9:	e8 f2 2a 00 00       	call   4edf0 <alloc::raw_vec::RawVecInner<A>::reserve::do_reserve_and_handle>
+   4c2fe:	4c 8b 54 24 08       	mov    r10,QWORD PTR [rsp+0x8]
+   4c303:	49 8b b2 10 02 00 00 	mov    rsi,QWORD PTR [r10+0x210]
+   4c30a:	49 8b 92 40 02 00 00 	mov    rdx,QWORD PTR [r10+0x240]
+   4c311:	49 8b 82 60 02 00 00 	mov    rax,QWORD PTR [r10+0x260]
+   4c318:	e9 5c fb ff ff       	jmp    4be79 <nixie_sat::solver::propagate::<impl nixie_sat::solver::Solver>::propagate+0xe89>
+   4c31d:	48 8d 15 ac 01 0d 00 	lea    rdx,[rip+0xd01ac]        # 11c4d0 <__frame_dummy_init_array_entry+0x17e0>
+   4c324:	4c 89 f7             	mov    rdi,r14
+   4c327:	e8 6b 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c32c:	48 8d 15 c5 2a 0d 00 	lea    rdx,[rip+0xd2ac5]        # 11edf8 <__frame_dummy_init_array_entry+0x4108>
+   4c333:	e8 5f 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c338:	48 8d 15 a1 2a 0d 00 	lea    rdx,[rip+0xd2aa1]        # 11ede0 <__frame_dummy_init_array_entry+0x40f0>
+   4c33f:	e8 53 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c344:	48 8d 15 25 3d 0d 00 	lea    rdx,[rip+0xd3d25]        # 120070 <__frame_dummy_init_array_entry+0x5380>
+   4c34b:	48 89 cf             	mov    rdi,rcx
+   4c34e:	e8 44 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c353:	48 8d 15 fe 18 0d 00 	lea    rdx,[rip+0xd18fe]        # 11dc58 <__frame_dummy_init_array_entry+0x2f68>
+   4c35a:	48 89 cf             	mov    rdi,rcx
+   4c35d:	e8 35 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c362:	48 8d 15 ff 29 0d 00 	lea    rdx,[rip+0xd29ff]        # 11ed68 <__frame_dummy_init_array_entry+0x4078>
+   4c369:	48 89 cf             	mov    rdi,rcx
+   4c36c:	e8 26 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c371:	48 8d 15 30 17 0d 00 	lea    rdx,[rip+0xd1730]        # 11daa8 <__frame_dummy_init_array_entry+0x2db8>
+   4c378:	e8 1a 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c37d:	48 8d 15 7c 3d 0d 00 	lea    rdx,[rip+0xd3d7c]        # 120100 <__frame_dummy_init_array_entry+0x5410>
+   4c384:	e8 0e 0e ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c389:	48 8d 15 70 3d 0d 00 	lea    rdx,[rip+0xd3d70]        # 120100 <__frame_dummy_init_array_entry+0x5410>
+   4c390:	48 89 cf             	mov    rdi,rcx
+   4c393:	e8 ff 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c398:	48 8d 15 b9 18 0d 00 	lea    rdx,[rip+0xd18b9]        # 11dc58 <__frame_dummy_init_array_entry+0x2f68>
+   4c39f:	4c 89 c7             	mov    rdi,r8
+   4c3a2:	e8 f0 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c3a7:	48 8d 15 7a 3c 0d 00 	lea    rdx,[rip+0xd3c7a]        # 120028 <__frame_dummy_init_array_entry+0x5338>
+   4c3ae:	4c 89 c7             	mov    rdi,r8
+   4c3b1:	e8 e1 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c3b6:	48 8d 15 83 3c 0d 00 	lea    rdx,[rip+0xd3c83]        # 120040 <__frame_dummy_init_array_entry+0x5350>
+   4c3bd:	4c 89 c7             	mov    rdi,r8
+   4c3c0:	48 8b 74 24 18       	mov    rsi,QWORD PTR [rsp+0x18]
+   4c3c5:	e8 cd 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c3ca:	bf 04 00 00 00       	mov    edi,0x4
+   4c3cf:	4c 89 ee             	mov    rsi,r13
+   4c3d2:	e8 0d e4 fe ff       	call   3a7e4 <alloc::raw_vec::handle_error>
+   4c3d7:	48 8d 15 1a 18 0d 00 	lea    rdx,[rip+0xd181a]        # 11dbf8 <__frame_dummy_init_array_entry+0x2f08>
+   4c3de:	4c 89 ef             	mov    rdi,r13
+   4c3e1:	e8 b1 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
+   4c3e6:	48 8d 15 0b 18 0d 00 	lea    rdx,[rip+0xd180b]        # 11dbf8 <__frame_dummy_init_array_entry+0x2f08>
+   4c3ed:	48 89 ef             	mov    rdi,rbp
+   4c3f0:	e8 a2 0d ff ff       	call   3d197 <core::panicking::panic_bounds_check>
