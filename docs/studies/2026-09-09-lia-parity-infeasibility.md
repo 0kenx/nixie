@@ -126,11 +126,24 @@ variants (i_4+) still time out — the cost lives elsewhere.  A 12 s
 in a per-round loop the stripped binary cannot name (~4 % self, ~10 %
 children on anonymous frames; no `instantiate_arith_axioms` frame in
 evidence).  **Reverted** (measured neutral, added state).  Resume: build
-a symbols release, profile i_4, and look at MBQI round internals —
-candidate loop shapes are the completed-model clone per round
-(`assignments` reaches ~1150 entries on Rodin-class files), the
-candidate-cache rebuild, or SAT-clause re-addition of duplicate
-instantiations across rounds.
+a symbols release, profile i_4, and look at MBQI round internals.
+
+**Profiled (same session, symbols build): all three MBQI-loop hypotheses
+refuted.**  A `line-tables-only` symbols release under `perf record`
+names the cost — it is **simplex-bound, not MBQI-bound**:
+`Simplex::pivot` 21 % self (22 % children), `column_drop_known` 9 %,
+`checked_mul_r64` 8 %, `make_feasible`/`find_violating` 7 %.  The deep
+unrollings burn their budget inside the arithmetic simplex re-solving
+after each instantiation batch adds rows (N rounds x O(tableau) pivots,
+quadratic in aggregate).  The `memmove` signature was the pivot's row
+shuffling.  Fix directions, in increasing ambition: (1) warm-start the
+per-round re-check from the previous basis instead of re-deriving
+feasibility (the simplex already keeps `assignment_current` incremental
+state for `add_le` — the per-round path may not be using it); (2) batch
+instantiations across rounds before re-solving (fewer, larger theory
+checks); (3) scoped incremental rows without full re-pivot.  All are
+arithmetic-layer projects, out of the quantifier campaign's scope —
+recorded here because the jain family is the motivating corpus.
 
 **Remaining (k9, four-plus free vars):** the split leaves close some
 branches with real unsat cores but the rest churn — the leaf cut loops
