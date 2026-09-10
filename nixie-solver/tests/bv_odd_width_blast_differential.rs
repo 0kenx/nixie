@@ -260,11 +260,14 @@ fn gen_case(seed: u64) -> IdentityCase {
     let var_syms: Vec<&str> = var_refs.iter().map(String::as_str).collect();
 
     // Template pick.  Every template is a mathematical identity, valid for
-    // all values of the free variables.
+    // all values of the free variables.  Each historical bug class in the
+    // blaster has a template aimed at it: signed division (the
+    // `(bvsdiv s 0)` bug), wide bignum constants (nlzbs128), extension
+    // encoders, associativity at limb boundaries.
     let mut lhs = String::new();
     let mut rhs = String::new();
     let what: &'static str;
-    match rng.below(7) {
+    match rng.below(15) {
         // 1. Double negation: `~~T ≡ T`.
         0 => {
             lhs.push_str("(bvnot (bvnot ");
@@ -345,6 +348,129 @@ fn gen_case(seed: u64) -> IdentityCase {
             );
             what = "udiv/urem reconstruction";
         }
+        // 8. Signed division reconstruction: `a = (a sdiv c)·c + (a srem c)`
+        //    for a nonzero constant divisor (truncation toward zero keeps
+        //    the equation exact — this is the template aimed at the
+        //    historical `(bvsdiv s 0)` encoding bug class).
+        7 if width <= 33 => {
+            let c = rng.below(15) * 2 + 1;
+            t.emit(&var_syms, &mut lhs);
+            rhs = format!(
+                "(bvadd (bvmul (bvsdiv {lhs} (_ bv{c} {width})) (_ bv{c} {width})) (bvsrem {lhs} (_ bv{c} {width})))"
+            );
+            what = "sdiv/srem reconstruction";
+        }
+        // 9. `bvcomp(T, T) ≡ 1` (width-1 result).
+        8 => {
+            t.emit(&var_syms, &mut lhs);
+            lhs = format!("(bvcomp {lhs} {lhs})");
+            rhs = "(_ bv1 1)".to_string();
+            what = "bvcomp self";
+        }
+        // 10. `ite(c, T, T) ≡ T` for a comparison-valued selector.
+        9 => {
+            let cmp_w = *rng.pick(&[1u32, 2, 5, 17, 33]);
+            let ca = gen_term(&mut rng, cmp_w, &[], 1, &mut vars);
+            let cb = gen_term(&mut rng, cmp_w, &[], 1, &mut vars);
+            let vr: Vec<String> = vars.iter().map(|(n, _)| n.clone()).collect();
+            let vs: Vec<&str> = vr.iter().map(String::as_str).collect();
+            let mut a = String::new();
+            let mut b = String::new();
+            ca.emit(&vs, &mut a);
+            cb.emit(&vs, &mut b);
+            t.emit(&var_syms, &mut rhs);
+            lhs = format!("(ite (bvult {a} {b}) {rhs} {rhs})");
+            what = "ite same branch";
+        }
+        // 11. `ite(¬c, X, Y) ≡ ite(c, Y, X)` — selector negation commutes
+        //     the branches.
+        10 => {
+            let cmp_w = *rng.pick(&[1u32, 3, 9, 33]);
+            let ca = gen_term(&mut rng, cmp_w, &[], 1, &mut vars);
+            let cb = gen_term(&mut rng, cmp_w, &[], 1, &mut vars);
+            let x = gen_term(&mut rng, width, &[], 1, &mut vars);
+            let y = gen_term(&mut rng, width, &[], 1, &mut vars);
+            let vr: Vec<String> = vars.iter().map(|(n, _)| n.clone()).collect();
+            let vs: Vec<&str> = vr.iter().map(String::as_str).collect();
+            let (mut a, mut b, mut xe, mut ye) =
+                (String::new(), String::new(), String::new(), String::new());
+            ca.emit(&vs, &mut a);
+            cb.emit(&vs, &mut b);
+            x.emit(&vs, &mut xe);
+            y.emit(&vs, &mut ye);
+            lhs = format!("(ite (not (bvult {a} {b})) {xe} {ye})");
+            rhs = format!("(ite (bvult {a} {b}) {ye} {xe})");
+            what = "ite selector negation";
+        }
+        // 12. Sign extension identity:
+        //     `sign_extend(k, T) ≡ ite(msb(T), zero_ext(T) | HIGHMASK, zero_ext(T))`
+        //     — the extension encoders at limb-crossing widths.
+        11 if width <= 96 => {
+            let k = (rng.below(8) as u32) + 1;
+            let wide = width + k;
+            t.emit(&var_syms, &mut lhs);
+            let mut ze = format!("((_ zero_extend {k}) {lhs})");
+            // HIGHMASK: bits width..width+k-1 set at width `wide`.
+            let mut mask = num_bigint::BigUint::from(0u8);
+            for i in width..wide {
+                mask.set_bit(u64::from(i), true);
+            }
+            lhs = format!("((_ sign_extend {k}) {lhs})");
+            let mut ts = String::new();
+            t.emit(&var_syms, &mut ts);
+            rhs = format!(
+                "(ite (= ((_ extract {} {}) {ts}) (_ bv1 1)) (bvor {ze} (_ bv{mask} {wide})) {ze})",
+                width - 1,
+                width - 1
+            );
+            ze.clear();
+            what = "sign extension";
+        }
+        // 13. Concat associativity: `(A ++ B) ++ C ≡ A ++ (B ++ C)` — the
+        //     seam-splitting encoders.
+        12 => {
+            let wa = (rng.below(u64::from(width.saturating_sub(2))) as u32).max(1);
+            let wb = (rng.below(u64::from(width - wa - 1)) as u32).max(1);
+            let wc = width - wa - wb;
+            let ta = gen_term(&mut rng, wa, &[], 1, &mut vars);
+            let tb = gen_term(&mut rng, wb, &[], 1, &mut vars);
+            let tc = gen_term(&mut rng, wc, &[], 1, &mut vars);
+            let vr: Vec<String> = vars.iter().map(|(n, _)| n.clone()).collect();
+            let vs: Vec<&str> = vr.iter().map(String::as_str).collect();
+            let (mut a, mut b, mut c) = (String::new(), String::new(), String::new());
+            ta.emit(&vs, &mut a);
+            tb.emit(&vs, &mut b);
+            tc.emit(&vs, &mut c);
+            lhs = format!("(concat (concat {a} {b}) {c})");
+            rhs = format!("(concat {a} (concat {b} {c}))");
+            what = "concat associativity";
+        }
+        // 14. Add associativity at limb boundaries:
+        //     `(A + B) + C ≡ A + (B + C)` (carry-chain regrouping).
+        13 if width <= 33 => {
+            let ta = gen_term(&mut rng, width, &[], 1, &mut vars);
+            let tb = gen_term(&mut rng, width, &[], 1, &mut vars);
+            let tc = gen_term(&mut rng, width, &[], 1, &mut vars);
+            let vr: Vec<String> = vars.iter().map(|(n, _)| n.clone()).collect();
+            let vs: Vec<&str> = vr.iter().map(String::as_str).collect();
+            let (mut a, mut b, mut c) = (String::new(), String::new(), String::new());
+            ta.emit(&vs, &mut a);
+            tb.emit(&vs, &mut b);
+            tc.emit(&vs, &mut c);
+            lhs = format!("(bvadd (bvadd {a} {b}) {c})");
+            rhs = format!("(bvadd {a} (bvadd {b} {c}))");
+            what = "add associativity";
+        }
+        // 15. Wide-constant XOR: `xor(xor(T, HUGE), HUGE) ≡ T` with HUGE
+        //     spanning the top limb (≥ 2^64) — the bignum constant paths.
+        14 if width >= 65 => {
+            let mut huge = num_bigint::BigUint::from(1u8) << (width - 1);
+            huge += num_bigint::BigUint::from(7u8) << 32;
+            huge += 3u8;
+            t.emit(&var_syms, &mut rhs);
+            lhs = format!("(bvxor (bvxor {rhs} (_ bv{huge} {width})) (_ bv{huge} {width}))");
+            what = "wide-limb xor";
+        }
         // Wide widths keep the expensive division circuit out of the test
         // budget: fall back to the cheapest template.
         _ => {
@@ -396,7 +522,7 @@ fn script(case: &IdentityCase, negate: bool) -> String {
 /// The differential pair over random identities at boundary widths.
 #[test]
 fn odd_width_identity_pairs_hold() {
-    let cases = 80;
+    let cases = 150;
     for seed in 1..=cases {
         let case = gen_case(seed * 7919);
         let neg = verdict(&script(&case, true));
