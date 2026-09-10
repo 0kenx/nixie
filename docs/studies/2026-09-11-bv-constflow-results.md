@@ -302,10 +302,15 @@ and full model are z3-validated by pinning, the parity suite is
 question is *which era's clause set* the stored `term_to_bv` entries
 reference when a unified generation spans pending-atom link rounds.
 
-**Next step for whoever picks this up:** add a debug API that dumps every
-clause of the main core containing a given var (watch-list walk), run
-`RWS/Example_7` under the net, and check whether `out ⇔ p ∧ q` exists at
-all and under which var indices.  That single observation separates
-"clauses never emitted into the caller's core" (an era-crossing bug in
-the window protocol) from "clauses emitted and later removed" (a pop /
-rewrite interaction).
+**RESOLVED (57e9fb7e).**  The prescribed debug API landed
+(`Solver::debug_clauses_containing`, full arena scan + binary-graph
+edges) and the dump ran: the mismatching `bvand` bit had **zero live
+clauses** — not "never emitted", but *eliminated*: BVE/ELS preprocessing
+(2.98M substitutions, 44.9k eliminations on that file) had resolved its
+defining clauses away, and `save_model`'s reconstructed values satisfy
+the **rewritten** formula, which need not satisfy the original (deleted)
+circuit clauses.  The net was comparing raw post-elimination reads
+against original-circuit semantics — a category error, not a solver bug
+(verdict correctness was never in question).  The net now stands down
+loudly whenever eliminations ran (`bv_unified`'s stand-down gate), and
+`NIXIE_NET_DUMP_CLAUSES` remains wired for the next incident.
