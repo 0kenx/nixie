@@ -1831,7 +1831,7 @@ impl TermManager {
         {
             if c == BigInt::ZERO {
                 // x udiv 0 = all ones.
-                let ones = (BigInt::from(2u8).pow(width) - BigInt::from(1u8));
+                let ones = BigInt::from(2u8).pow(width) - BigInt::from(1u8);
                 return self.mk_bitvec(ones, width);
             }
             if c == BigInt::from(1u8) {

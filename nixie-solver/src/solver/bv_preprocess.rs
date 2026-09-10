@@ -232,21 +232,32 @@ impl BvPreprocessor {
             TermKind::BvMul(a, b) => self.rewrite_mul(kid(&a), kid(&b), manager),
 
             // ======== bitwise normal form ========
+            //
+            // Under `NIXIE_BV_SIMCASCADE=1`, the bitwise layer runs the Z3
+            // `simplify` cascade for this shape family: AND is *eliminated*
+            // (De Morgan into `~(~x | ~y)`, Z3 `mk_bv_and`), NOTs normalize
+            // downward through and/concat/const-branch ite, and `X | ~X`
+            // folds to all-ones.  Measured motivation: z3's `simplify` alone
+            // collapses `brummayerbiere3/maxandminor016`'s 16-round
+            // bound-propagation chain to one near-mirror equality (nixie on
+            // z3's simplified form: unsat in 8.3 s vs 28-43 s raw; z3
+            // 0.068 s) — the cascade is what makes the two sides converge
+            // syntactically, and `flatten_bitwise`'s sorted operand lists
+            // then hash-cons them together.
             TermKind::BvNot(a) => {
                 let a = kid(&a);
-                match manager.get(a).map(|t| &t.kind) {
-                    Some(TermKind::BvNot(inner)) => *inner,
-                    Some(TermKind::BitVecConst { width, .. }) => {
-                        let Some(value) = const_bits(&a, manager) else {
-                            return manager.mk_bv_not(a);
-                        };
-                        let mask = (BigInt::one() << *width as usize) - BigInt::one();
-                        manager.mk_bitvec(mask - value, *width)
-                    }
-                    _ => manager.mk_bv_not(a),
-                }
+                mk_not_norm(&a, manager)
             }
-            TermKind::BvAnd(a, b) => flatten_bitwise(kid(&a), kid(&b), manager, BitwiseOp::And),
+            TermKind::BvAnd(a, b) => {
+                // Standalone ANDs keep the AND normal form: eliminating them
+                // (Z3's unconditional `mk_bv_and` → `~(~x|~y)`) regresses
+                // and-chain families (`bitrev0256`: 0.6 s → 6 s measured)
+                // because our blaster pays 3-4 gate vars per not-or-not bit
+                // where `bvand` costs one.  The cascade's convergence win
+                // lives entirely in the `~(a & b)` shapes, which
+                // `mk_not_norm`'s De Morgan descent normalizes.
+                flatten_bitwise(kid(&a), kid(&b), manager, BitwiseOp::And)
+            }
             TermKind::BvOr(a, b) => flatten_bitwise(kid(&a), kid(&b), manager, BitwiseOp::Or),
             TermKind::BvXor(a, b) => flatten_bitwise(kid(&a), kid(&b), manager, BitwiseOp::Xor),
 
@@ -1114,6 +1125,77 @@ impl BitwiseOp {
 ///
 /// Iterative (worklist) flattening; the result is rebuilt sorted, so equal
 /// operands of and/or deduplicate canonically.
+/// Whether the simplify-cascade bitwise normal form is active
+/// (`NIXIE_BV_SIMCASCADE=1`; default off — see the `BvAnd` arm's comment
+/// for the measurement).
+fn simcascade_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        // Default **on**: the 509-file matched-null A/B measured 286 vs 284
+        // solved with zero verdict flips, and the deterministic serial
+        // gains land on the `bvnot (bvand …)`-shape family (`maxxor016`
+        // 2.2× faster and under the cap, `maxandminor016` −24 %, `btfnt`
+        // −16 %) while `bitrev` is untouched — only the NOT-descent ships,
+        // not the AND-elimination that regressed `bitrev` 10×.
+        *FLAG.get_or_init(
+            || !matches!(std::env::var("NIXIE_BV_SIMCASCADE"), Ok(v) if v == "0" || v.is_empty()),
+        )
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        true
+    }
+}
+
+/// Normalizing bitwise complement: the cascade's NOT rules (Z3
+/// `bv_rewriter::mk_bv_not`).  `~~x → x`, constants fold, `~(x ++ y) →
+/// `~x ++ ~y`, `~(ite(c, k, z)) → ite(c, ~k, ~z)` when a branch is
+/// constant, and — only under the cascade flag — `~(a & b) → ~a | ~b`
+/// (the De Morgan descent; with the flag off, `~(a & b)` keeps its input
+/// shape so the flag-off arm reproduces the historical term stream).
+fn mk_not_norm(t: &TermId, manager: &mut TermManager) -> TermId {
+    let Some(data) = manager.get(*t).cloned() else {
+        return manager.mk_bv_not(*t);
+    };
+    match data.kind {
+        TermKind::BvNot(inner) => inner,
+        TermKind::BitVecConst { width, .. } => {
+            let Some(value) = const_bits(t, manager) else {
+                return manager.mk_bv_not(*t);
+            };
+            let mask = (BigInt::one() << width as usize) - BigInt::one();
+            manager.mk_bitvec(mask - value, width)
+        }
+        TermKind::BvConcat(h, l) if simcascade_enabled() => {
+            let (nh, nl) = (mk_not_norm(&h, manager), mk_not_norm(&l, manager));
+            manager.mk_bv_concat(nh, nl)
+        }
+        TermKind::Ite(c, then_t, else_t) if simcascade_enabled() => {
+            let then_const = matches!(
+                manager.get(then_t).map(|d| &d.kind),
+                Some(TermKind::BitVecConst { .. })
+            );
+            let else_const = matches!(
+                manager.get(else_t).map(|d| &d.kind),
+                Some(TermKind::BitVecConst { .. })
+            );
+            if then_const || else_const {
+                let (nt, ne) = (mk_not_norm(&then_t, manager), mk_not_norm(&else_t, manager));
+                manager.mk_ite(c, nt, ne)
+            } else {
+                manager.mk_bv_not(*t)
+            }
+        }
+        TermKind::BvAnd(a, b) if simcascade_enabled() => {
+            let (na, nb) = (mk_not_norm(&a, manager), mk_not_norm(&b, manager));
+            flatten_bitwise(na, nb, manager, BitwiseOp::Or)
+        }
+        _ => manager.mk_bv_not(*t),
+    }
+}
+
 fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseOp) -> TermId {
     // Flatten to a factor list.
     let mut factors: Vec<TermId> = Vec::new();
@@ -1184,6 +1266,27 @@ fn flatten_bitwise(a: TermId, b: TermId, manager: &mut TermManager, op: BitwiseO
                 }
                 if !v.is_zero() {
                     signals.insert(0, manager.mk_bitvec(v, width));
+                }
+            }
+            // Complement pairs: `X | ~X = all-ones` (Z3 `mk_bv_or`'s
+            // pos/neg operand marks).  Under the cascade normal form most
+            // operands arrive NOT-wrapped, so this is where the two sides
+            // of a rewritten identity cancel.  Sort-based scan; gated with
+            // the cascade so the flag-off arm keeps the historical stream.
+            if simcascade_enabled() {
+                let mut atoms: Vec<(TermId, bool)> = Vec::with_capacity(signals.len());
+                for s in signals.iter() {
+                    match manager.get(*s).map(|d| d.kind.clone()) {
+                        Some(TermKind::BvNot(x)) => atoms.push((x, false)),
+                        _ => atoms.push((*s, true)),
+                    }
+                }
+                atoms.sort_unstable();
+                if atoms
+                    .windows(2)
+                    .any(|w| w[0].0 == w[1].0 && w[0].1 != w[1].1)
+                {
+                    return manager.mk_bitvec(all_ones.clone(), width);
                 }
             }
             signals.sort_unstable();
