@@ -52,3 +52,85 @@ this audit alone cannot qualify production source or a new policy.
 Commit the findings and reproducible offline analysis on main. Preserve raw
 and canonical result-store evidence and the existing binary cache; remove
 owned disposable artifacts. No production solver source is modified here.
+
+## Result: tail classification and loop exits, not header misprediction
+
+The single invocation produced record **73f875a5c9bd11b0** with byte-identical
+stdout: 330,565 conflicts, 323,390,316 propagations and 695,639,361 ticks.
+All **10,315** samples have the precise-IP flag, user mode and CPU 15. PMU
+coverage is 100%, with zero loss or throttle; constrained sleepers retain
+their runtime and identity. Whole output remains unchecked UNSAT, recorded
+as unknown/unverified. The sampled prefix contains 2,063,042,052 branch
+misses and 195,672,345,249 instructions. These are diagnostic prefix counts,
+not a replacement for the prior cost cell. No new timing result is claimed.
+
+The complete engine accounts for **8,340 / 10,315 (80.85%)** of precise
+branch-miss sample IPs. Its sampled IPs resolve to branch instructions in
+the exact cached binary. The following nonoverlapping groups include all
+three generated long-scan bodies, including the rare deleted-prefix entry.
+
+| Branch group | Samples | Share of all branch-miss samples |
+| --- | ---: | ---: |
+| Tail false versus undefined | 2,054 | **19.91%** |
+| Long blocker truth | 1,886 | **18.28%** |
+| Long-list loop end | 1,069 | **10.36%** |
+| Binary-loop end | 726 | **7.04%** |
+| Binary truth/conflict | 630 | **6.11%** |
+| Tail positive test | 563 | **5.46%** |
+| Tail length bound | 451 | **4.37%** |
+| Empty long list | 430 | **4.17%** |
+| Empty binary span | 379 | **3.67%** |
+| Other watched literal truth | 137 | **1.33%** |
+| Header null/deleted guards | **0** | **0 observed** |
+| Destination capacity | **1** | **0.010%** |
+
+Two samples are at long unit/conflict selection; twelve engine samples lie
+outside the displayed categories. This is event attribution, not per-site
+miss rates or exclusive stall costs. Zero observations do not prove zero
+misses. In particular, the older 8.291% cycle-site share around deleted-header
+tests cannot be called an 8.291% branch-misprediction opportunity. The current
+measurement does not identify the underlying load latency at those sites.
+
+Of the samples, **5,618 (54.46%)** have IP exactly equal to the newest
+M-flagged LBR source. The other **4,697** IP/history associations stay
+unassigned. Taken-branch history need not contain a missed not-taken branch;
+its absence does not invalidate an exact sampled IP. No overlapping branch
+histories are counted as additional independent samples. External-library
+IPs are retained separately; no executable IP is unresolved. See the
+[address/group report](assets/2026-09-10-propagation-branch-attribution.json),
+[interactive event distribution](assets/2026-09-10-propagation-branch-attribution.svg)
+and [offline decoder](assets/2026-09-10-propagation-branch-attribution.py).
+The visualization is a function/IP distribution, explicitly not a cycle
+flamegraph or a reconstructed call stack.
+
+## Consequence for the next implementation
+
+The strongest local target is the **two-stage tail classifier**: 25.37% of
+all observed branch misses occur at its positive and false/undefined tests.
+The current loop checks `value > 0`, then `value == 0`, for every inspected
+tail literal. A false literal passes through both tests. Local Kissat
+`src/proplit.h` instead searches for the first value >=0, then handles the
+result outside that loop. Nixie must retain its own true-literal parking
+semantics, first-undefined choice, eager watched-pair normalization and
+stored order; copying Kissat's true-literal move would change search.
+
+A follow-on should isolate the false-prefix scan from classification of the
+single selected literal. This removes a repeated classifier, whereas the
+earlier header pipeline added state without removing a visit and packed
+truth added mask/RMW work. The tail still needs a truth branch and a length
+bound; the positive/undefined distinction still exists at its result. The
+25.37% event share is **not** a predicted reduction in misses or wall, and
+short false prefixes limit removed instruction work. Exact assembly and a
+whole-solve screen must price the changed control flow. List-end branches
+are also substantial, but this does not yet justify sentinel storage or
+merging binary and long lists: both need separate correctness/cost arguments.
+
+The decoder passed five synthetic cases: precise source association, target
+association kept separate, absent precision rejected, wrong CPU rejected,
+and unrelated history kept unassigned. Exact grouping recomputes the saved
+report. Both event/precision preflights used only a short Python workload;
+the registered solver diagnostic ran once. Raw data, runner, metadata,
+disassembly and canonical record remain under
+`precompile/7100112/benchmark/propagation-branch-attribution/` and its sibling
+`runs/propagation-branch-attribution/`. Production source was not modified;
+workspace solver qualification is not claimed or needed for this diagnostic.
