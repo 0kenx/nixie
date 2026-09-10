@@ -1,5 +1,13 @@
 # Wider sweep of the long-list assignment kernel
 
+**Scope correction:** both Nixie arms below explicitly disable sweeping with
+`NIXIE_SWEEP=0`; "production" identifies the production binary under that
+configuration. Nixie's default is sweeping enabled. These results must not
+be presented as a continuation of the user's e6d1ddda benchmark
+without reconciling the changed search trajectories. See the
+[historical-baseline reconciliation](2026-09-10-wide-sweep-baseline-reconciliation.md).
+The kernel rejection within this study's fixed configuration still stands.
+
 ## Registration
 
 The user requested a wider sweep after the two-input rejection recorded in

@@ -1,0 +1,355 @@
+{
+  "kind": "Historical configuration reconciliation; no default-mode performance recovery claimed.",
+  "registration": "bb30724e",
+  "historical_jsonl_sha256": "f7446314894d21bb94de1727a8638e9ca20ea92a300770f6b9caa182769256b7",
+  "historical_source_label": "e6d1ddda091800444398d9bcaa05b2051456f905",
+  "historical_binary_hash": null,
+  "historical_environment": null,
+  "identical_sat_tree": "a3c6c5b0662ac46b7b15317694d7b91c279c9956",
+  "production_source": "fd01d0b596d4640ab63e4b126bd62595d1c24016",
+  "production_binary_sha256": "8c18517990b8e9aad3273fc0acd354362599c806ce6f9a596e231d98851bacde",
+  "inputs": {
+    "constraints": {
+      "path": "nixie-sat/tests/fixtures/constraints_17_0.4_1.sanitized.cnf",
+      "sha256": "c6cf6b1b83ab83cf92e35590b12c9739fa1d606acc8fa4d0bad6ee01703d1892",
+      "sat": true
+    },
+    "noL": {
+      "path": "nixie-sat/tests/fixtures/noL_11_14.cnf",
+      "sha256": "04fa242c31eb4b487c776adb647f03cc2486afbc7a4bbdc902b227ba96dc8b68",
+      "sat": true
+    }
+  },
+  "records": [
+    {
+      "instance": "constraints",
+      "canonical_path": "precompile/fd01d0b/benchmark/runs/sweep-mode-reconciliation/constraints_17_0.4_1.sanitized.cnf__c6cf6b1b__c76be5c7593d91b89__s0.json",
+      "record": {
+        "arm": {
+          "role": "baseline"
+        },
+        "binary": {
+          "path": "precompile/fd01d0b/stats_solve",
+          "sha256": "8c18517990b8e9aad3273fc0acd354362599c806ce6f9a596e231d98851bacde"
+        },
+        "config": {
+          "cmdline": [
+            "taskset",
+            "-c",
+            "15",
+            "perf",
+            "stat",
+            "--no-big-num",
+            "-x",
+            ";",
+            "-o",
+            "/proc/self/fd/6",
+            "-e",
+            "{cpu_atom/cycles/u,cpu_atom/instructions/u,cpu_atom/branches/u,cpu_atom/branch-misses/u}",
+            "--",
+            "/nix/store/06qpr282bk5xzizypgrh99adjgb96yl1-time-1.10/bin/time",
+            "-f",
+            "NIXIE_TIMING {\"wall_s\":%e,\"user_s\":%U,\"system_s\":%S,\"major_faults\":%F,\"peak_rss_kb\":%M,\"involuntary_switches\":%c,\"voluntary_switches\":%w,\"exit\":%x}",
+            "--",
+            "precompile/fd01d0b/stats_solve",
+            "nixie-sat/tests/fixtures/constraints_17_0.4_1.sanitized.cnf"
+          ],
+          "features": [],
+          "flags": {
+            "cpu": 15,
+            "max_conflicts": 10000000,
+            "measurement": "sweep-mode-reconciliation-v1",
+            "output": "anonymous-tmpfs",
+            "pmu": "{cpu_atom/cycles/u,cpu_atom/instructions/u,cpu_atom/branches/u,cpu_atom/branch-misses/u}",
+            "print_model": true,
+            "profile": "release",
+            "seed": 0,
+            "solver_options": [
+              "CaDiCaL-preset",
+              "NIXIE_SWEEP=1",
+              "NIXIE_DEFINITIONS=0"
+            ],
+            "timeout_s": 300,
+            "timer": "GNU-time-1.10",
+            "warm_binary": true,
+            "warm_input": true
+          },
+          "id": "control"
+        },
+        "config_hash": "76be5c7593d91b89",
+        "created_utc": "2026-09-10T10:56:03.624525+00:00",
+        "git": {
+          "dirty": false,
+          "sha_long": "fd01d0b596d4640ab63e4b126bd62595d1c24016",
+          "sha_short": "fd01d0b"
+        },
+        "host": {
+          "cpu": "Intel Core Ultra 7 265K; CPU 15 atom",
+          "id": "workstation",
+          "os": "Linux-7.2.2-x86_64-with-glibc2.42"
+        },
+        "instance": {
+          "family": "constraints",
+          "name": "constraints_17_0.4_1.sanitized.cnf",
+          "sat_expected": true,
+          "sha256": "c6cf6b1b83ab83cf92e35590b12c9739fa1d606acc8fa4d0bad6ee01703d1892"
+        },
+        "metrics": {
+          "counter_coverage_verified": true,
+          "primary": {
+            "name": "whole_process_user_instructions",
+            "value": 53147102832
+          },
+          "secondary": {
+            "branch-misses": 283194405,
+            "branches": 12973909268,
+            "complete_solve": true,
+            "conflicts": 40004,
+            "cycles": 45156742562,
+            "cycles_per_conflict": 1128805.6834816518,
+            "exit": 0,
+            "instructions": 53147102832,
+            "involuntary_switches": 59,
+            "major_faults": 0,
+            "minimum_counter_coverage_pct": 100.0,
+            "off_cpu_fraction": 0.004995004995004966,
+            "peak_rss_kb": 94888,
+            "propagations": 6060215,
+            "system_s": 0.13,
+            "timeout": false,
+            "user_s": 9.83,
+            "voluntary_switches": 1,
+            "wall_per_conflict": 0.0002502249775022498,
+            "wall_quality_passed": true,
+            "wall_s": 10.01
+          },
+          "wall_clock_s": 10.01
+        },
+        "observations": {
+          "extension_registration": "bb30724e",
+          "full_process_counter_scope": true,
+          "perf": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/constraints-control/perf",
+          "proof_checked": false,
+          "reported_answer": "sat",
+          "stderr": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/constraints-control/stderr",
+          "stdout": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/constraints-control/stdout",
+          "stdout_sha256": "95145cfe0af92a68a7833df52378af76b12ec61c4b69b433906c60a66f422a61"
+        },
+        "record_id": "14d6f38d3c5c5cb9",
+        "schema": "nixie-bench-record/1",
+        "seed": 0,
+        "suite": "sweep-mode-reconciliation",
+        "verdict": {
+          "answer": "sat",
+          "verified_model_or_proof": true
+        }
+      },
+      "comparison": {
+        "historical_diagnostics": [
+          "avg_lbd=28.86 chrono_bt=21 non_chrono_bt=39983",
+          "bve_eliminated=852 substitutions=5 units=38",
+          "conflicts=40004 decisions=198373 propagations=6060215 restarts=2854 (stable 13)",
+          "learned=40004 deleted=51081 net_db=0",
+          "result=Sat",
+          "stable_conflicts=23389 reused_trails=1841 stabphases=30",
+          "subsumed_removed=5126 self_subsumed=0 shrunken=4266845",
+          "ticks: focused=20760009 stable=22487543 total=43247552 per_conflict=1081",
+          "walk: count=1 flips=284 minimum=0 broken=1287 ticks=379442"
+        ],
+        "key": "constraints",
+        "matched": true,
+        "new_diagnostics": [
+          "avg_lbd=28.86 chrono_bt=21 non_chrono_bt=39983",
+          "bve_eliminated=852 substitutions=5 units=38",
+          "conflicts=40004 decisions=198373 propagations=6060215 restarts=2854 (stable 13)",
+          "learned=40004 deleted=51081 net_db=0",
+          "result=Sat",
+          "stable_conflicts=23389 reused_trails=1841 stabphases=30",
+          "subsumed_removed=5126 self_subsumed=0 shrunken=4266845",
+          "ticks: focused=20760009 stable=22487543 total=43247552 per_conflict=1081",
+          "walk: count=1 flips=284 minimum=0 broken=1287 ticks=379442"
+        ],
+        "record_id": "14d6f38d3c5c5cb9"
+      }
+    },
+    {
+      "instance": "noL",
+      "canonical_path": "precompile/fd01d0b/benchmark/runs/sweep-mode-reconciliation/noL_11_14.cnf__04fa242c__c76be5c7593d91b89__s0.json",
+      "record": {
+        "arm": {
+          "role": "baseline"
+        },
+        "binary": {
+          "path": "precompile/fd01d0b/stats_solve",
+          "sha256": "8c18517990b8e9aad3273fc0acd354362599c806ce6f9a596e231d98851bacde"
+        },
+        "config": {
+          "cmdline": [
+            "taskset",
+            "-c",
+            "15",
+            "perf",
+            "stat",
+            "--no-big-num",
+            "-x",
+            ";",
+            "-o",
+            "/proc/self/fd/6",
+            "-e",
+            "{cpu_atom/cycles/u,cpu_atom/instructions/u,cpu_atom/branches/u,cpu_atom/branch-misses/u}",
+            "--",
+            "/nix/store/06qpr282bk5xzizypgrh99adjgb96yl1-time-1.10/bin/time",
+            "-f",
+            "NIXIE_TIMING {\"wall_s\":%e,\"user_s\":%U,\"system_s\":%S,\"major_faults\":%F,\"peak_rss_kb\":%M,\"involuntary_switches\":%c,\"voluntary_switches\":%w,\"exit\":%x}",
+            "--",
+            "precompile/fd01d0b/stats_solve",
+            "nixie-sat/tests/fixtures/noL_11_14.cnf"
+          ],
+          "features": [],
+          "flags": {
+            "cpu": 15,
+            "max_conflicts": 10000000,
+            "measurement": "sweep-mode-reconciliation-v1",
+            "output": "anonymous-tmpfs",
+            "pmu": "{cpu_atom/cycles/u,cpu_atom/instructions/u,cpu_atom/branches/u,cpu_atom/branch-misses/u}",
+            "print_model": true,
+            "profile": "release",
+            "seed": 0,
+            "solver_options": [
+              "CaDiCaL-preset",
+              "NIXIE_SWEEP=1",
+              "NIXIE_DEFINITIONS=0"
+            ],
+            "timeout_s": 300,
+            "timer": "GNU-time-1.10",
+            "warm_binary": true,
+            "warm_input": true
+          },
+          "id": "control"
+        },
+        "config_hash": "76be5c7593d91b89",
+        "created_utc": "2026-09-10T10:56:14.354324+00:00",
+        "git": {
+          "dirty": false,
+          "sha_long": "fd01d0b596d4640ab63e4b126bd62595d1c24016",
+          "sha_short": "fd01d0b"
+        },
+        "host": {
+          "cpu": "Intel Core Ultra 7 265K; CPU 15 atom",
+          "id": "workstation",
+          "os": "Linux-7.2.2-x86_64-with-glibc2.42"
+        },
+        "instance": {
+          "family": "noL",
+          "name": "noL_11_14.cnf",
+          "sat_expected": true,
+          "sha256": "04fa242c31eb4b487c776adb647f03cc2486afbc7a4bbdc902b227ba96dc8b68"
+        },
+        "metrics": {
+          "counter_coverage_verified": true,
+          "primary": {
+            "name": "whole_process_user_instructions",
+            "value": 389171744416
+          },
+          "secondary": {
+            "branch-misses": 3317357263,
+            "branches": 84839035254,
+            "complete_solve": true,
+            "conflicts": 1727396,
+            "cycles": 231268638827,
+            "cycles_per_conflict": 133882.81484210916,
+            "exit": 0,
+            "instructions": 389171744416,
+            "involuntary_switches": 335,
+            "major_faults": 0,
+            "minimum_counter_coverage_pct": 100.0,
+            "off_cpu_fraction": 0.003922337713277185,
+            "peak_rss_kb": 57360,
+            "propagations": 70174865,
+            "system_s": 0.46,
+            "timeout": false,
+            "user_s": 50.33,
+            "voluntary_switches": 1,
+            "wall_per_conflict": 2.9518419632788313e-05,
+            "wall_quality_passed": true,
+            "wall_s": 50.99
+          },
+          "wall_clock_s": 50.99
+        },
+        "observations": {
+          "extension_registration": "bb30724e",
+          "full_process_counter_scope": true,
+          "perf": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/noL-control/perf",
+          "proof_checked": false,
+          "reported_answer": "sat",
+          "stderr": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/noL-control/stderr",
+          "stdout": "precompile/fd01d0b/benchmark/sweep-mode-reconciliation/noL-control/stdout",
+          "stdout_sha256": "f836e8d0d270ccc4a7131816330c46bb0751e0861c0b1f3edcd2a3da21ca4b4d"
+        },
+        "record_id": "36990e8006fa9aac",
+        "schema": "nixie-bench-record/1",
+        "seed": 0,
+        "suite": "sweep-mode-reconciliation",
+        "verdict": {
+          "answer": "sat",
+          "verified_model_or_proof": true
+        }
+      },
+      "comparison": {
+        "historical_diagnostics": [
+          "avg_lbd=22.84 chrono_bt=12 non_chrono_bt=1727384",
+          "bve_eliminated=357 substitutions=0 units=0",
+          "conflicts=1727396 decisions=6216502 propagations=70174865 restarts=75897 (stable 394)",
+          "learned=1727396 deleted=1706531 net_db=20865",
+          "result=Sat",
+          "stable_conflicts=761087 reused_trails=12821 stabphases=63",
+          "subsumed_removed=2792 self_subsumed=0 shrunken=5158196",
+          "ticks: focused=208394434 stable=206852236 total=415246670 per_conflict=240",
+          "walk: count=18 flips=253971 minimum=0 broken=30377787 ticks=31898797"
+        ],
+        "key": "noL",
+        "matched": true,
+        "new_diagnostics": [
+          "avg_lbd=22.84 chrono_bt=12 non_chrono_bt=1727384",
+          "bve_eliminated=357 substitutions=0 units=0",
+          "conflicts=1727396 decisions=6216502 propagations=70174865 restarts=75897 (stable 394)",
+          "learned=1727396 deleted=1706531 net_db=20865",
+          "result=Sat",
+          "stable_conflicts=761087 reused_trails=12821 stabphases=63",
+          "subsumed_removed=2792 self_subsumed=0 shrunken=5158196",
+          "ticks: focused=208394434 stable=206852236 total=415246670 per_conflict=240",
+          "walk: count=18 flips=253971 minimum=0 broken=30377787 ticks=31898797"
+        ],
+        "record_id": "36990e8006fa9aac"
+      }
+    }
+  ],
+  "checks": {
+    "new_solver_cells": 2,
+    "reused_new_configuration_cells": 0,
+    "new_sat_models_verified": 2,
+    "exact_historical_diagnostic_matches": 2,
+    "canonical_records_validated": 2,
+    "new_builds": 0,
+    "reference_runs": 0
+  },
+  "limitations": [
+    "Historical Nixie binary hash, build flags, environment and core placement are missing.",
+    "Two reproduced printed trajectories identify the mode mismatch on those inputs, not all eight.",
+    "New sweep-enabled wall remains slower than historical wall; cause unresolved.",
+    "The sweep-disabled candidate remains rejected; no candidate sweep-enabled run was made."
+  ],
+  "retained_artifact_sha256": {
+    "precompile/fd01d0b/sweep-reconciliation/run.py": "4468ddeba075c53399ba65e1a720a54fd08085ab6bcadd10afd636efda5aeba1",
+    "precompile/fd01d0b/sweep-reconciliation/plan.json": "9df67ee268b87d03f156a977520861175fc9e85040c19e06017c0f971225040d",
+    "precompile/fd01d0b/sweep-reconciliation/manifest-control.json": "7d9f377a42caf108e0722843e43a1a9a62588eee26f0be9282a8073fb4eb5353",
+    "precompile/fd01d0b/sweep-reconciliation/inputs.json": "8779ee08ee5e19debfcea894d6acba4779d7625c1d3a32f32ec16c8689e73dbb",
+    "precompile/fd01d0b/sweep-reconciliation/reuse.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+    "precompile/fd01d0b/sweep-reconciliation/run.log": "7f40df33bb49965ffc29f4a28de9274d3487941d4caa007772c4d7e99e34398b",
+    "precompile/fd01d0b/sweep-reconciliation/constraints-comparison.json": "55392c1f089b769fdff8073d92cba8f9e085b387083134bdc85a00eac3e8bb85",
+    "precompile/fd01d0b/sweep-reconciliation/noL-comparison.json": "a8c5fb667d63eaa64a0ef5934e0622fbf5bb9f9906e9da5bc77bf912a7ebcd5a",
+    "precompile/fd01d0b/sweep-reconciliation/historic/constraints.nixie.log": "c30b12ee6d0a63bde88d2dee9eeeed5001b9c40c2ac8a3eed25aca59f0a1a7f3",
+    "precompile/fd01d0b/sweep-reconciliation/historic/noL.nixie.log": "2b7bc63ff0f9f6dbd632745e98f0225055da61d0cd7182b77f4853b410143d2a",
+    "precompile/fd01d0b/sweep-reconciliation/historic/mini_bench_3arm_e6d1ddda.jsonl": "f7446314894d21bb94de1727a8638e9ca20ea92a300770f6b9caa182769256b7"
+  }
+}
