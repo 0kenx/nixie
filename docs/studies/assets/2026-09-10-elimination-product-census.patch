@@ -1,0 +1,772 @@
+diff --git a/bench/suite/scripts/elimination_product_analyze.py b/bench/suite/scripts/elimination_product_analyze.py
+new file mode 100644
+index 00000000..17d7af1d
+--- /dev/null
++++ b/bench/suite/scripts/elimination_product_analyze.py
+@@ -0,0 +1,204 @@
++#!/usr/bin/env python3
++"""Direct-output, within-list consumer counts, not persistent savings or cycles."""
++
++import argparse
++from collections import Counter, defaultdict
++from itertools import groupby
++import json
++from pathlib import Path
++
++
++FIELDS = ('lists', 'visits', 'hits', 'product_visits', 'product_hits',
++          'both_sides_screen', 'one_side_screen')
++
++
++def integer(value, minimum=0):
++    assert type(value) is int and value >= minimum, 'invalid nonnegative integer'
++    return value
++
++
++def validate(report):
++    assert report['schema'] == 'nixie-watch-groups/1'
++    p = report['products']
++    assert p['schema'] == 'nixie-elimination-products/1'
++    for key in ('skipped_lists', 'skipped_entries'):
++        assert integer(report[key]) == 0, 'omitted watch samples'
++    for key in ('omitted_batches', 'omitted_outputs', 'omitted_lists', 'omitted_entries'):
++        assert integer(p[key]) == 0, 'incomplete product census'
++    stride = integer(report['stride'], 1)
++    assert integer(p['batches']) <= integer(p['batch_limit'], 1)
++    assert len(p['lists']) == integer(report['samples']) <= integer(p['trace_list_limit'], 1)
++    assert len(p['lists']) == (integer(report['lists_seen']) + stride - 1) // stride
++    seen = set()
++    previous = -1
++    for row in p['births']:
++        assert len(row) == 5
++        output, batch, left, right, width = map(integer, row)
++        assert previous < output < integer(p['origin_slot_limit'], 1)
++        assert output not in seen and batch < p['batches']
++        assert left < output and right < output and left != right and width >= 2
++        seen.add(output)
++        previous = output
++    visits = hits = 0
++    bins = [0] * 4
++    for index, row in enumerate(p['lists']):
++        assert len(row) == 3
++        ordinal, conflict_bin, entries = row
++        assert integer(ordinal) == index * stride
++        assert integer(conflict_bin) < 4
++        for entry in entries:
++            assert len(entry) == 2
++            clause, hit = map(integer, entry)
++            assert clause < 2**32 and hit in (0, 1)
++            hits += hit
++        visits += len(entries)
++        bins[conflict_bin] += len(entries)
++    assert visits == integer(p['trace_entries']) == integer(report['visited'])
++    assert visits <= integer(p['trace_entry_limit'], 1)
++    assert hits == integer(report['hits'])
++    assert len(report['by_conflicts']) == 4
++    assert bins == [integer(row[0]) for row in report['by_conflicts']]
++    return p
++
++
++def analyze(report):
++    p = validate(report)
++    origins = {row[0]: row[1:] for row in p['births']}
++    totals = {name: Counter(dict.fromkeys(FIELDS, 0)) for name in ('all', 'early', 'late')}
++    births = defaultdict(list)
++    for _, batch, left, right, width in p['births']:
++        births[batch].append((left, right, width))
++    shapes = Counter()
++    for batch in range(p['batches']):
++        rows = births[batch]
++        shapes[len({r[0] for r in rows}), len({r[1] for r in rows}), len(rows)] += 1
++    widths = Counter(row[4] for row in p['births'])
++    traffic_shapes = Counter()
++    for _, conflict_bin, entries in p['lists']:
++        counts = Counter(lists=1, visits=len(entries), hits=sum(hit for _, hit in entries))
++        groups = defaultdict(list)
++        for clause, hit in entries:
++            if clause in origins:
++                batch, left, right, _ = origins[clause]
++                groups[batch].append((left, right))
++                counts['product_visits'] += 1
++                counts['product_hits'] += hit
++        for rows in groups.values():
++            left = len({r[0] for r in rows})
++            right = len({r[1] for r in rows})
++            counts['both_sides_screen'] += max(len(rows) - left - right, 0)
++            counts['one_side_screen'] += len(rows) - min(left, right)
++            traffic_shapes[left, right, len(rows)] += 1
++        for name in ('all', 'late' if conflict_bin == 3 else 'early'):
++            totals[name].update(counts)
++    gates = {name: c['lists'] >= 1000 and c['visits'] > 0
++             and 5 * c['product_visits'] >= c['visits']
++             and 10 * c['both_sides_screen'] >= c['visits']
++             for name, c in totals.items() if name != 'early'}
++    return dict(totals=totals, gates=gates,
++                insertion_shapes=[[*shape, n] for shape, n in sorted(shapes.items())],
++                traffic_shapes=[[*shape, n] for shape, n in sorted(traffic_shapes.items())],
++                insertion_widths=sorted(widths.items()),
++                interpretation='Birth coverage and optimistic within-list counts only; '
++                'no cofactor state, completeness, maintenance, explanation or cycle claim.')
++
++
++def audit(report):
++    """Independent sorted merge join and run-length grouping (no analyze call)."""
++    births = sorted(report['products']['births'])
++    visits = sorted((clause, index, hit) for index, (_, _, entries) in
++                    enumerate(report['products']['lists']) for clause, hit in entries)
++    joined = []
++    birth_index = 0
++    for clause, index, hit in visits:
++        while birth_index < len(births) and births[birth_index][0] < clause:
++            birth_index += 1
++        if birth_index < len(births) and births[birth_index][0] == clause:
++            _, batch, left, right, _ = births[birth_index]
++            joined.append((index, batch, left, right, hit))
++    totals = {name: dict.fromkeys(FIELDS, 0) for name in ('all', 'early', 'late')}
++    lists = report['products']['lists']
++    for _, bin_id, entries in lists:
++        for name in ('all', 'late' if bin_id == 3 else 'early'):
++            totals[name]['lists'] += 1
++            totals[name]['visits'] += len(entries)
++            totals[name]['hits'] += sum(entry[1] for entry in entries)
++    traffic = Counter()
++    for (index, _), group in groupby(sorted(joined), key=lambda row: row[:2]):
++        rows = list(group)
++        # Distinct counts use sorted runs, independently of the set-based path.
++        left = sum(1 for _ in groupby(sorted(row[2] for row in rows)))
++        right = sum(1 for _ in groupby(sorted(row[3] for row in rows)))
++        traffic[left, right, len(rows)] += 1
++        for name in ('all', 'late' if lists[index][1] == 3 else 'early'):
++            c = totals[name]
++            c['product_visits'] += len(rows)
++            c['product_hits'] += sum(row[4] for row in rows)
++            c['both_sides_screen'] += max(0, len(rows) - (left + right))
++            c['one_side_screen'] += max(len(rows) - left, len(rows) - right)
++    shapes = Counter()
++    nonempty = 0
++    for _, group in groupby(sorted(births, key=lambda row: row[1]), key=lambda row: row[1]):
++        rows = list(group)
++        left = sum(1 for _ in groupby(sorted(row[2] for row in rows)))
++        right = sum(1 for _ in groupby(sorted(row[3] for row in rows)))
++        shapes[left, right, len(rows)] += 1
++        nonempty += 1
++    empty = report['products']['batches'] - nonempty
++    if empty:
++        shapes[0, 0, 0] = empty
++    widths = [[width, sum(1 for _ in rows)] for width, rows in
++              groupby(sorted(row[4] for row in births))]
++    return dict(totals=totals, insertion_shapes=[[*s, n] for s, n in sorted(shapes.items())],
++                traffic_shapes=[[*s, n] for s, n in sorted(traffic.items())],
++                insertion_widths=widths)
++
++
++def check_prior_trace(report, path):
++    """Compare every visited ID, hit and epoch with the retained independent trace."""
++    from itertools import zip_longest
++    with path.open() as stream:
++        header = json.loads(next(stream))
++        assert header['schema'] == 'nixie-residual-trace/1'
++        assert header['stride'] == report['stride']
++        count = 0
++        for current, line in zip_longest(report['products']['lists'], stream):
++            assert current is not None and line is not None, 'trace length differs'
++            old = json.loads(line)
++            assert not old['overflow']
++            conflicts = old['conflicts']
++            bin_id = 0 if conflicts == 0 else 1 if conflicts < 1024 else 2 if conflicts < 16384 else 3
++            assert current == [old['ordinal'], bin_id,
++                               [[entry['id'], int(entry['hit'])] for entry in old['entries']]]
++            count += 1
++    return count
++
++
++def read_report(path):
++    reports = [json.loads(line) for line in path.read_text().splitlines()
++               if line.startswith('{"schema":"nixie-watch-groups/1"')]
++    assert len(reports) == 1, 'expected exactly one completed report'
++    return reports[0]
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('stderr', type=Path)
++    parser.add_argument('output', type=Path)
++    parser.add_argument('--prior-trace', type=Path)
++    args = parser.parse_args()
++    report = read_report(args.stderr)
++    result = analyze(report)
++    independent = audit(report)
++    for key, expected in independent.items():
++        assert json.loads(json.dumps(result[key])) == expected, ('audit mismatch', key)
++    result['independent_audit'] = True
++    if args.prior_trace:
++        result['identical_prior_lists'] = check_prior_trace(report, args.prior_trace)
++    with args.output.open('x') as stream:
++        json.dump(result, stream, indent=2, sort_keys=True)
++    print(json.dumps(dict(totals=result['totals'], gates=result['gates']), indent=2))
++
++
++if __name__ == '__main__':
++    main()
+diff --git a/bench/suite/scripts/test_elimination_product_analyze.py b/bench/suite/scripts/test_elimination_product_analyze.py
+new file mode 100644
+index 00000000..14932658
+--- /dev/null
++++ b/bench/suite/scripts/test_elimination_product_analyze.py
+@@ -0,0 +1,87 @@
++import copy
++import json
++import unittest
++
++from elimination_product_analyze import analyze, audit
++
++
++def report():
++    # Three-by-three complete product, then an unrelated visit and a duplicate.
++    births = [[10 + 3 * left + right, 0, left, right + 3, 4]
++              for left in range(3) for right in range(3)]
++    entries = [[row[0], row[0] % 2] for row in births] + [[100, 1], [10, 0]]
++    return dict(schema='nixie-watch-groups/1', stride=4096, samples=2, lists_seen=4097,
++                skipped_lists=0, skipped_entries=0, visited=12, hits=5,
++                by_conflicts=[[11, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [1, 0, 0, 0]],
++                products=dict(schema='nixie-elimination-products/1', batches=2,
++                              omitted_batches=0, omitted_outputs=0, omitted_lists=0,
++                              omitted_entries=0, trace_entries=12, origin_slot_limit=1000,
++                              batch_limit=100, trace_entry_limit=100, trace_list_limit=10,
++                              births=births, lists=[[0, 0, entries], [4096, 3, [[10, 0]]]]))
++
++
++class EliminationProductTests(unittest.TestCase):
++    def test_join_counts_multiplicity_and_keeps_unrelated_denominator(self):
++        r = report()
++        result = analyze(r)
++        all_counts = result['totals']['all']
++        self.assertEqual(all_counts['product_visits'], 11)
++        self.assertEqual(all_counts['visits'], 12)
++        self.assertEqual(all_counts['both_sides_screen'], 4)
++        self.assertEqual(all_counts['one_side_screen'], 7)
++        self.assertEqual(result['totals']['late']['both_sides_screen'], 0)
++        self.assertEqual(result['insertion_shapes'], [[0, 0, 0, 1], [3, 3, 9, 1]])
++        self.assertFalse(any(result['gates'].values()))
++        for key, expected in audit(r).items():
++            self.assertEqual(json.loads(json.dumps(result[key])), expected)
++
++    def test_omissions_missing_lists_stale_ids_and_bad_counts_fail_closed(self):
++        changes = [lambda r: r['products'].update(omitted_outputs=1),
++                   lambda r: r['products']['lists'][1].__setitem__(0, 8192),
++                   lambda r: r['products']['births'].append(r['products']['births'][0]),
++                   lambda r: r.update(visited=13),
++                   lambda r: r['products']['lists'][0][2][0].__setitem__(1, 2),
++                   lambda r: r['products']['births'][0].__setitem__(2, 10)]
++        for change in changes:
++            with self.subTest(change=change):
++                r = copy.deepcopy(report())
++                change(r)
++                with self.assertRaises(AssertionError):
++                    analyze(r)
++
++    def test_no_births_is_valid_but_no_candidate_pass(self):
++        r = report()
++        r['products']['births'] = []
++        result = analyze(r)
++        self.assertEqual(result['totals']['all']['product_visits'], 0)
++        self.assertEqual(result['insertion_shapes'], [[0, 0, 0, 2]])
++        for key, expected in audit(r).items():
++            self.assertEqual(json.loads(json.dumps(result[key])), expected)
++
++    def test_gate_requires_coverage_consumer_count_and_late_samples(self):
++        r = report()
++        entries = r['products']['lists'][0][2]
++        r['products']['lists'] = [[i * 4096, 3, entries] for i in range(1000)]
++        r['products'].update(trace_list_limit=1000, trace_entry_limit=100000)
++        r.update(samples=1000, lists_seen=999 * 4096 + 1)
++
++        def recount():
++            r['visited'] = r['products']['trace_entries'] = 1000 * len(entries)
++            r['hits'] = 1000 * sum(hit for _, hit in entries)
++            r['by_conflicts'] = [[0, 0, 0, 0]] * 3 + [[r['visited'], 0, 0, 0]]
++
++        recount()
++        self.assertEqual(analyze(r)['gates'], dict(all=True, late=True))
++        entries.extend([[100, 0]] * 39)  # 20% coverage, only 8% consumer screen.
++        recount()
++        self.assertEqual(analyze(r)['gates'], dict(all=False, late=False))
++        entries[:] = entries[:11]
++        recount()
++        for row in r['products']['lists']:
++            row[1] = 2
++        r['by_conflicts'][2], r['by_conflicts'][3] = r['by_conflicts'][3], [0, 0, 0, 0]
++        self.assertEqual(analyze(r)['gates'], dict(all=True, late=False))
++
++
++if __name__ == '__main__':
++    unittest.main()
+diff --git a/nixie-sat/src/solver/eliminate.rs b/nixie-sat/src/solver/eliminate.rs
+index 893ec22e..77515b32 100644
+--- a/nixie-sat/src/solver/eliminate.rs
++++ b/nixie-sat/src/solver/eliminate.rs
+@@ -1421,6 +1421,11 @@ impl Solver {
+         ctx: &mut Eliminator,
+         collected: &[(SmallVec<[Lit; 8]>, ClauseId, ClauseId)],
+     ) {
++        #[cfg(feature = "bcp-groups")]
++        let product_family = self
++            .watch_group_stats
++            .as_mut()
++            .and_then(|s| s.begin_product());
+         for (r, pid, nid) in collected {
+             if self.trivially_unsat {
+                 return;
+@@ -1484,6 +1489,10 @@ impl Solver {
+                     }
+                     self.mark_subsume_lits(r.iter());
+                     let rid = self.clauses.add_original(r.iter().copied());
++                    #[cfg(feature = "bcp-groups")]
++                    if let Some(stats) = self.watch_group_stats.as_mut() {
++                        stats.record_product(product_family, rid, *pid, *nid, r.len());
++                    }
+                     self.proof_set_clause_id(rid, pfid);
+                     for &lit in r {
+                         if ctx.lit_val(lit) == 0 {
+@@ -1497,6 +1506,10 @@ impl Solver {
+                 }
+             } else {
+                 let rid = self.clauses.add_original(r.iter().copied());
++                #[cfg(feature = "bcp-groups")]
++                if let Some(stats) = self.watch_group_stats.as_mut() {
++                    stats.record_product(product_family, rid, *pid, *nid, r.len());
++                }
+                 for &lit in r {
+                     if ctx.lit_val(lit) == 0 {
+                         let code = lit.code() as usize;
+diff --git a/nixie-sat/src/solver/eliminate_safety_tests.rs b/nixie-sat/src/solver/eliminate_safety_tests.rs
+index 7f4218ee..ec9273db 100644
+--- a/nixie-sat/src/solver/eliminate_safety_tests.rs
++++ b/nixie-sat/src/solver/eliminate_safety_tests.rs
+@@ -1,6 +1,46 @@
+ use super::*;
+ use nixie_proof::lrat_check::check_lrat_proof;
+ 
++#[cfg(feature = "bcp-groups")]
++#[test]
++fn product_provenance_records_only_inserted_outputs_in_both_proof_paths() {
++    for proof in [false, true] {
++        for reverse in [false, true] {
++            let mut s = Solver::new();
++            s.ensure_vars(5);
++            s.enable_watch_group_stats(std::num::NonZeroU64::MIN);
++            if proof {
++                let _ = s.enable_lrat_transcript();
++            }
++            let [x, a, b, c, d] = std::array::from_fn(|i| Lit::from_code(i as u32 * 2));
++            let pivot = if reverse { !x } else { x };
++            s.add_clause([pivot, a, b]);
++            s.add_clause([!pivot, c, d]);
++            let ids: Vec<_> = s.clauses.iter_ids().collect();
++            assert_eq!(ids.len(), 2);
++            let collected = vec![(SmallVec::from_slice(&[a, b, c, d]), ids[0], ids[1])];
++            let mut ctx = Eliminator::new(5, &s.trail);
++            s.elim_add_resolvents(&mut ctx, &collected);
++            assert_eq!(ctx.backward.len(), 1);
++            let output = ctx.backward[0];
++            // Repeating the proposed insertion under a satisfying context
++            // does not create an output or record a fictitious birth.
++            s.trail.assign_unit_fact(a);
++            let mut ctx = Eliminator::new(5, &s.trail);
++            s.elim_add_resolvents(&mut ctx, &collected);
++            assert!(ctx.backward.is_empty());
++            let mut out = Vec::new();
++            s.write_watch_group_report(&mut out).expect("report");
++            let report: serde_json::Value = serde_json::from_slice(&out).expect("JSON");
++            assert_eq!(report["products"]["batches"], 2);
++            assert_eq!(
++                report["products"]["births"],
++                serde_json::json!([[output.0, 0, ids[0].0, ids[1].0, 4]])
++            );
++        }
++    }
++}
++
+ #[test]
+ fn freezing_after_marking_still_protects_every_scheduled_variable() {
+     for armed in [false, true] {
+diff --git a/nixie-sat/src/solver/mod.rs b/nixie-sat/src/solver/mod.rs
+index c052cb94..b15debb2 100644
+--- a/nixie-sat/src/solver/mod.rs
++++ b/nixie-sat/src/solver/mod.rs
+@@ -4776,6 +4776,8 @@ impl Solver {
+ 
+     /// Reset the solver
+     pub fn reset(&mut self) {
++        #[cfg(feature = "bcp-groups")]
++        self.reset_watch_group_database();
+         #[cfg(feature = "clause-traffic")]
+         if let Some(stats) = &mut self.clause_traffic {
+             stats.clear(0);
+diff --git a/nixie-sat/src/solver/watch_kernel_tests.rs b/nixie-sat/src/solver/watch_kernel_tests.rs
+index 81b45772..14e7ccd6 100644
+--- a/nixie-sat/src/solver/watch_kernel_tests.rs
++++ b/nixie-sat/src/solver/watch_kernel_tests.rs
+@@ -396,6 +396,8 @@ fn paired_solves_match_truth_models_and_independent_lrat() {
+         };
+         for proof in [false, true] {
+             let (mut a, mut b, pa, pb) = pair(8, &clauses, proof);
++            #[cfg(feature = "bcp-groups")]
++            a.enable_watch_group_stats(std::num::NonZeroU64::MIN);
+             // Exercise actual subsumption before ordinary CDCL and
+             // any further inprocessing rounds; both arms get the same budget.
+             a.stats.propagations = 100_000;
+diff --git a/nixie-sat/src/watch_groups.rs b/nixie-sat/src/watch_groups.rs
+index 3a11158b..aecd32b9 100644
+--- a/nixie-sat/src/watch_groups.rs
++++ b/nixie-sat/src/watch_groups.rs
+@@ -7,6 +7,9 @@ use rustc_hash::FxHashMap;
+ use std::io::{self, Write};
+ use std::num::NonZeroU64;
+ 
++mod products;
++use products::ProductCensus;
++
+ const MAX_SNAPSHOT_ENTRIES: usize = 262_144;
+ const MAX_HISTORY_ENTRIES: usize = 1_000_000;
+ const MAX_HISTORY_LISTS: usize = 65_536;
+@@ -88,6 +91,7 @@ pub(crate) struct Collector {
+     history: FxHashMap<u32, Previous>,
+     history_entries: usize,
+     history_limit: usize,
++    products: ProductCensus,
+ }
+ 
+ impl Collector {
+@@ -98,6 +102,7 @@ impl Collector {
+             history: FxHashMap::default(),
+             history_entries: 0,
+             history_limit: MAX_HISTORY_ENTRIES,
++            products: ProductCensus::default(),
+         }
+     }
+ 
+@@ -152,6 +157,7 @@ impl Collector {
+ 
+     pub(crate) fn finish(&mut self, sample: Sample, after: &[Watcher], conflict: bool) {
+         assert!(conflict || sample.hits.len() == sample.entries.len());
++        self.products.observe(&sample);
+         let mut at_entry = FxHashMap::<u32, u64>::default();
+         let mut actual = FxHashMap::<u32, u64>::default();
+         let mut previous_hit = None;
+@@ -308,11 +314,28 @@ impl Collector {
+             c.hits - c.actual_true_groups
+         )?;
+         // Debug formatting of fixed arrays of integers is also valid JSON.
+-        writeln!(
++        write!(
+             out,
+-            ",\"group_counts\":{:?},\"group_entries\":{:?},\"by_conflicts\":{:?}}}",
++            ",\"group_counts\":{:?},\"group_entries\":{:?},\"by_conflicts\":{:?},\"products\":",
+             c.group_counts, c.group_entries, c.by_conflicts
+-        )
++        )?;
++        self.products.write_json(&mut out)?;
++        writeln!(out, "}}")
++    }
++
++    pub(crate) fn begin_product(&mut self) -> Option<u32> {
++        self.products.begin_batch()
++    }
++
++    pub(crate) fn record_product(
++        &mut self,
++        family: Option<u32>,
++        output: crate::ClauseId,
++        left: crate::ClauseId,
++        right: crate::ClauseId,
++        width: usize,
++    ) {
++        self.products.record(family, output, left, right, width);
+     }
+ }
+ 
+@@ -360,6 +383,12 @@ impl Solver {
+             stats.clear_history();
+         }
+     }
++
++    pub(crate) fn reset_watch_group_database(&mut self) {
++        if let Some(stats) = &mut self.watch_group_stats {
++            **stats = Collector::new(stats.stride);
++        }
++    }
+ }
+ 
+ #[cfg(test)]
+@@ -367,6 +396,38 @@ mod tests {
+     use super::*;
+     use crate::{ClauseId, ConfigPreset, SolverResult, memory::ClauseRef};
+ 
++    #[test]
++    fn product_identity_survives_scopes_but_not_database_reset() {
++        let mut solver = Solver::new();
++        solver.enable_watch_group_stats(NonZeroU64::MIN);
++        let record = |solver: &mut Solver| {
++            let stats = solver.watch_group_stats.as_mut().expect("enabled");
++            let family = stats.begin_product();
++            stats.record_product(
++                family,
++                ClauseId::new(4),
++                ClauseId::new(1),
++                ClauseId::new(2),
++                3,
++            );
++        };
++        let births = |solver: &Solver| {
++            let mut out = Vec::new();
++            solver.write_watch_group_report(&mut out).expect("report");
++            let report: serde_json::Value = serde_json::from_slice(&out).expect("JSON");
++            report["products"]["births"].clone()
++        };
++        record(&mut solver);
++        let before = births(&solver);
++        solver.push();
++        solver.pop();
++        assert_eq!(births(&solver), before);
++        solver.reset();
++        assert_eq!(births(&solver), serde_json::json!([]));
++        record(&mut solver);
++        assert_eq!(births(&solver), before);
++    }
++
+     fn watches(blockers: &[u32]) -> Vec<Watcher> {
+         blockers
+             .iter()
+diff --git a/nixie-sat/src/watch_groups/products.rs b/nixie-sat/src/watch_groups/products.rs
+new file mode 100644
+index 00000000..75a62cab
+--- /dev/null
++++ b/nixie-sat/src/watch_groups/products.rs
+@@ -0,0 +1,226 @@
++//! Passive birth provenance and sampled visited prefixes. These records are
++//! neither complete products nor propagation certificates. Shrink/deletion
++//! deliberately retain birth membership, providing an optimistic coverage
++//! screen for direct elimination outputs. Never consulted by search.
++
++use super::Sample;
++use crate::ClauseId;
++use std::io::{self, Write};
++
++const MAX_ORIGIN_SLOTS: usize = 1_000_000;
++const MAX_BATCHES: u32 = 100_000;
++const MAX_TRACE_ENTRIES: usize = 4_000_000;
++const MAX_TRACE_LISTS: usize = 200_000;
++
++#[derive(Clone, Copy, Debug)]
++struct Origin {
++    family: u32,
++    left: u32,
++    right: u32,
++    width: usize,
++}
++
++#[derive(Debug)]
++struct TraceList {
++    ordinal: u64,
++    conflict_bin: usize,
++    // The hit flag is encoded as 0/1 so Debug prints valid nested JSON arrays.
++    entries: Vec<[u32; 2]>,
++}
++
++#[derive(Debug, Default)]
++pub(super) struct ProductCensus {
++    origins: Vec<Option<Origin>>,
++    batches: u32,
++    omitted_batches: u64,
++    omitted_outputs: u64,
++    omitted_lists: u64,
++    omitted_entries: u64,
++    trace_entries: usize,
++    lists: Vec<TraceList>,
++}
++
++impl ProductCensus {
++    pub(super) fn begin_batch(&mut self) -> Option<u32> {
++        if self.batches == MAX_BATCHES {
++            self.omitted_batches += 1;
++            return None;
++        }
++        let family = self.batches;
++        self.batches += 1;
++        Some(family)
++    }
++
++    pub(super) fn record(
++        &mut self,
++        family: Option<u32>,
++        output: ClauseId,
++        left: ClauseId,
++        right: ClauseId,
++        width: usize,
++    ) {
++        let Some(family) = family else {
++            self.omitted_outputs += 1;
++            return;
++        };
++        assert!(family < self.batches, "unregistered product batch");
++        if output.index() >= MAX_ORIGIN_SLOTS {
++            self.omitted_outputs += 1;
++            return;
++        }
++        self.origins
++            .resize(self.origins.len().max(output.index() + 1), None);
++        let slot = &mut self.origins[output.index()];
++        assert!(slot.is_none(), "clause identity reused in product census");
++        *slot = Some(Origin {
++            family,
++            left: left.0,
++            right: right.0,
++            width,
++        });
++    }
++
++    pub(super) fn observe(&mut self, sample: &Sample) {
++        assert!(sample.hits.len() <= sample.entries.len());
++        let n = sample.hits.len();
++        if self.lists.len() == MAX_TRACE_LISTS || n > MAX_TRACE_ENTRIES - self.trace_entries {
++            self.omitted_lists += 1;
++            self.omitted_entries += n as u64;
++            return;
++        }
++        self.trace_entries += n;
++        self.lists.push(TraceList {
++            ordinal: sample.ordinal,
++            conflict_bin: sample.conflict_bin,
++            entries: sample
++                .entries
++                .iter()
++                .zip(&sample.hits)
++                .map(|(entry, &hit)| [entry.clause, u32::from(hit)])
++                .collect(),
++        });
++    }
++
++    pub(super) fn write_json(&self, mut out: impl Write) -> io::Result<()> {
++        write!(
++            out,
++            "{{\"schema\":\"nixie-elimination-products/1\",\"origin_slot_limit\":{MAX_ORIGIN_SLOTS},\"batch_limit\":{MAX_BATCHES},\"trace_entry_limit\":{MAX_TRACE_ENTRIES},\"trace_list_limit\":{MAX_TRACE_LISTS},\"batches\":{},\"omitted_batches\":{},\"omitted_outputs\":{},\"omitted_lists\":{},\"omitted_entries\":{},\"trace_entries\":{},\"births\":[",
++            self.batches,
++            self.omitted_batches,
++            self.omitted_outputs,
++            self.omitted_lists,
++            self.omitted_entries,
++            self.trace_entries
++        )?;
++        let mut comma = "";
++        for (id, origin) in self.origins.iter().enumerate() {
++            let Some(origin) = origin else { continue };
++            write!(
++                out,
++                "{comma}[{id},{},{},{},{}]",
++                origin.family, origin.left, origin.right, origin.width
++            )?;
++            comma = ",";
++        }
++        write!(out, "],\"lists\":[")?;
++        comma = "";
++        for list in &self.lists {
++            write!(
++                out,
++                "{comma}[{},{},{:?}]",
++                list.ordinal, list.conflict_bin, list.entries
++            )?;
++            comma = ",";
++        }
++        write!(out, "]}}")
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::watch_groups::Entry;
++
++    #[test]
++    fn births_and_prefixes_preserve_ids_multiplicity_and_empty_tail() {
++        let mut census = ProductCensus::default();
++        let family = census.begin_batch();
++        census.record(
++            family,
++            ClauseId::new(12),
++            ClauseId::new(3),
++            ClauseId::new(8),
++            4,
++        );
++        let sample = Sample {
++            trigger: 2,
++            ordinal: 4096,
++            conflict_bin: 3,
++            entries: [12, 12, 99]
++                .map(|clause| Entry {
++                    clause,
++                    blocker: 0,
++                    true_at_entry: false,
++                })
++                .into(),
++            hits: vec![true, false],
++        };
++        census.observe(&sample);
++        let mut out = Vec::new();
++        census.write_json(&mut out).expect("report");
++        let report: serde_json::Value = serde_json::from_slice(&out).expect("JSON");
++        assert_eq!(report["births"], serde_json::json!([[12, 0, 3, 8, 4]]));
++        assert_eq!(
++            report["lists"],
++            serde_json::json!([[4096, 3, [[12, 1], [12, 0]]]])
++        );
++        assert_eq!(report["trace_entries"], 2);
++    }
++
++    #[test]
++    fn limits_and_writer_errors_are_explicit() {
++        let mut census = ProductCensus {
++            batches: MAX_BATCHES,
++            ..Default::default()
++        };
++        let family = census.begin_batch();
++        assert_eq!(family, None);
++        census.record(
++            family,
++            ClauseId::new(0),
++            ClauseId::new(1),
++            ClauseId::new(2),
++            2,
++        );
++        census.record(
++            Some(0),
++            ClauseId::new(MAX_ORIGIN_SLOTS as u32),
++            ClauseId::new(1),
++            ClauseId::new(2),
++            2,
++        );
++        census.trace_entries = MAX_TRACE_ENTRIES;
++        census.observe(&Sample {
++            trigger: 2,
++            ordinal: 0,
++            conflict_bin: 0,
++            entries: vec![Entry {
++                clause: 0,
++                blocker: 0,
++                true_at_entry: false,
++            }],
++            hits: vec![false],
++        });
++        assert_eq!(
++            (
++                census.omitted_batches,
++                census.omitted_outputs,
++                census.omitted_lists,
++                census.omitted_entries
++            ),
++            (1, 2, 1, 1)
++        );
++        let mut out = [0u8; 3];
++        assert!(census.write_json(&mut out[..]).is_err());
++    }
++}

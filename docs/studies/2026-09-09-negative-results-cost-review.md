@@ -483,3 +483,21 @@ the scanner call. This is a small bookkeeping opportunity, not a third of
 propagation cycles. Its overlap with the complete engine's ownership changes
 does not justify adding their instruction savings or another combined timing.
 The source is archived; production stays unchanged.
+
+## Elimination products: coverage without fewer two-side consumers
+
+The [one-capture product census](2026-09-10-elimination-product-traffic.md)
+joins actual inserted resolvent provenance to the previous sampled trajectory.
+Every list and complete stdout match. Direct outputs cover 24.69% of sampled
+long-watch visits, but the registered two-side consumer-count screen is zero,
+overall and late. Nearly every participating family is one-to-many; replacing
+k output consumers with both sets of parent consumers requires at least k+1
+cofactors. No native implementation or performance invocation follows.
+
+The state-unverified one-side count is 11.48% of all visits, not a saving.
+Conditional sharing still owes activation, singleton joins, reason construction
+and maintenance. Existing negative caches/kept spans do not remove the distinct
+leaf consumers. Learned clauses account for 70.56% of the retained executed
+visit/payload/tail proxy and lie outside this direct-output class. This closes
+the registered within-trigger design, not every product representation or a
+changed elimination policy. Source and the finding are archived on main.
