@@ -79,6 +79,7 @@ pub(crate) fn check_all_sat_invariants(solver: &Solver) -> Result<(), String> {
     check_reason_clauses_live(solver)?;
     check_implication_graph_acyclic(solver)?;
     check_binary_graph_backing(solver)?;
+    check_binary_trail_others(solver)?;
     check_binary_registration(solver)?;
     check_watcher_ref_consistency(solver)?;
     Ok(())
@@ -191,6 +192,53 @@ pub(crate) fn check_binary_graph_backing(solver: &Solver) -> Result<(), String> 
                 "binary-implication edge {from:?} => {to:?} references clause {cid:?} \
                  which is not a live binary clause with those literals; the BIG \
                  is authoritative for binary propagation"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Same-trail oracle for a Kissat-style binary reason: every trail fact
+/// whose `Propagation(cid)` names a live binary clause has the implied
+/// literal in that clause, the other literal false, and a BIG edge
+/// `other.negate() => implied` with that `cid`. Storing `Reason::Binary(other)`
+/// at assign time is then the same antecedent as loading `cid`.
+pub(crate) fn check_binary_trail_others(solver: &Solver) -> Result<(), String> {
+    for &lit in solver.trail.assignments() {
+        let Reason::Propagation(cid) = solver.trail.reason(lit.var()) else {
+            continue;
+        };
+        let Some(clause) = solver.clauses.get(cid) else {
+            continue;
+        };
+        if clause.deleted || clause.lits.len() != 2 {
+            continue;
+        }
+        if !clause.lits.contains(&lit) {
+            return Err(format!(
+                "binary reason {cid:?} of implied {lit:?} does not contain that literal"
+            ));
+        }
+        let other = if clause.lits[0] == lit {
+            clause.lits[1]
+        } else {
+            clause.lits[0]
+        };
+        if solver.trail.lit_val(other) >= 0 {
+            return Err(format!(
+                "binary reason {cid:?} other {other:?} is not false under implied {lit:?}"
+            ));
+        }
+        let trigger = other.negate();
+        let has_edge = solver
+            .binary_graph
+            .get(trigger)
+            .iter()
+            .any(|&(to, edge_cid)| to == lit && edge_cid == cid);
+        if !has_edge {
+            return Err(format!(
+                "binary reason {cid:?} implied {lit:?} other {other:?}: no BIG edge \
+                 {trigger:?} => {lit:?} with that id (Kissat would store Binary({other:?}))"
             ));
         }
     }
@@ -705,6 +753,22 @@ mod tests {
         }
 
         assert_eq!(solver.solve(), SolverResult::Unsat);
+        assert_eq!(check_all_sat_invariants(&solver), Ok(()));
+    }
+
+    #[test]
+    fn binary_trail_others_match_propagation_cid() {
+        let mut solver = Solver::new();
+        let a = solver.new_var();
+        let b = solver.new_var();
+        let c = solver.new_var();
+        solver.add_clause([Lit::pos(a)]);
+        solver.add_clause([Lit::neg(a), Lit::pos(b)]);
+        solver.add_clause([Lit::neg(b), Lit::pos(c)]);
+        assert_eq!(solver.solve(), SolverResult::Sat);
+        assert_eq!(solver.trail.lit_val(Lit::pos(b)), 1);
+        assert_eq!(solver.trail.lit_val(Lit::pos(c)), 1);
+        assert_eq!(check_binary_trail_others(&solver), Ok(()));
         assert_eq!(check_all_sat_invariants(&solver), Ok(()));
     }
 

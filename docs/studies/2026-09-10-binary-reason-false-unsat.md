@@ -26,3 +26,11 @@ circuit_48in64out Unsat at 7882 conflicts. Independent runs treat both as
 SAT. The false UNSAT is not the XOR-corrupt stale watcher. Do not enable
 Binary trail reasons until a same-trail oracle vs `Propagation(cid)`
 explains the 0-conflict root unit.
+
+The same-trail polarity oracle is `check_binary_trail_others` (wired into
+`check_all_sat_invariants`): every `Propagation(cid)` whose clause is binary
+has the implied lit in the clause, the other lit false, and a BIG edge
+`other.negate() => implied` with that id. That is the `Binary(other)` Kissat
+would store. It holds on production `Propagation` trails; the 0-conflict
+false UNSAT is therefore an analysis/control-flow bug, not assign-time
+polarity.
