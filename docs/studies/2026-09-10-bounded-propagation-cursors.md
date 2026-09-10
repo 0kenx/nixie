@@ -72,3 +72,56 @@ coverage, zero lost/throttled records and less than 1% unresolved weight.
 Its time is not a replacement cost cell. No measured repair or second
 profile. Archive any rejection with its source, generated code and causal
 limits on main; clean the owned worktree and build artifacts afterward.
+
+## Initial code generation and one preflight repair
+
+The bounded entry-token API scalarizes: no cursor-owner load remains in the
+watch loops. Prefix/suffix bodies are 620/577 bytes with 72/56 local stack
+bytes, plus six saved registers each. The suffix loads its three cursor
+coordinates once at entry; prefix passes it an aggregate only at the first
+hole. The tail iterator lowers to a moving slot pointer and remaining byte
+bound, two coordinates instead of base/length/index. It retains the same
+truth tests and selected-literal order.
+
+Both truth and arena bases now remain live on blocker, first-watch and
+true-tail paths. Prefix uses rcx/r14; suffix uses rdx/r9. The old suffix
+per-tail-entry derived-base stack load and ordinary true-tail arena restore
+are absent. Prefix still restores a destination-directory argument at
+0x64242 and recomputes arena+16 at 0x6424a after true tails. The suffix
+restores its derived base after a watch move, and assignment/growth calls
+still preserve state. Those remaining costs must be measured, not hidden
+behind the representation improvement.
+
+Use the single preflight repair on a newly exposed finish-path defect:
+LLVM emits memmove at 0x6509c after every completed suffix even though its
+remaining length is zero. Add an explicit read==end return before suffix
+copying. This is a specific failed empty-copy elimination, not a source
+encoding sweep or a measured repair. Preserve overlapping memmove for actual
+unvisited conflict tails and rerun the affected Miri/code-generation gates.
+No cost invocation has occurred.
+
+## Pre-cost amendment: withdraw the optional empty-copy change
+
+The explicit empty-copy exit grows the suffix to 584 bytes and does remove
+the zero-length memmove. It also changes register allocation: 0x64f67 now
+loads arena+16 from `[rsp+0x30]` on every miss reaching the tail. The original
+577-byte suffix held this derived base in r13. The main arena and truth
+bases remain direct in both versions, but the optional change violates the
+registered derived-base requirement. It is not eligible for the cost screen.
+
+Withdraw that optional repair and freeze the **original cursor implementation**,
+which already passed the required traversal shape. Retain its zero-length
+memmove as a cost to price. This explicitly amends the earlier instruction
+to stop after a failed repair: the failed repair is discarded before timing,
+and the already eligible initial implementation receives the single cost
+screen. Both source forms and their assembly are archived. No cost has run,
+no thresholds or instance order change, and neither timing both variants nor
+a further code-generation repair is permitted. Repeat affected final-source
+qualification, including the wider observer-layout Miri tests, before cost.
+
+An initial all-feature test build also found that the new fixture constructed
+Watcher directly without its observer-only identity field. Use the existing
+Watcher::new constructor; this changes test setup only. Native all-feature
+qualification then passes 1,054 tests, and the guarded-copy source passes
+eight focused Miri checks. These passes are labelled by source form rather
+than silently transferred to the selected unguarded-copy implementation.
