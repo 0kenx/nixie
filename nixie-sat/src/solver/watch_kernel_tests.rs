@@ -403,12 +403,10 @@ fn delayed_moves_cross_units_and_flush_before_next_literal_and_conflict() {
             assert_state(&a, &b);
             assert!(a.trail.lit_val(Lit::from_code(6)) > 0);
             assert!(a.trail.lit_val(Lit::from_code(8)) > 0);
-            assert!(a.watches.move_capacity_bytes() > 0);
             let snapshot = a.watches.packed_snapshot();
             a.watches.restore(snapshot);
             assert_state(&a, &b);
             let cloned = a.watches.clone();
-            assert_eq!(cloned.move_capacity_bytes(), 0);
             assert_eq!(format!("{cloned:?}"), format!("{:?}", a.watches));
             for s in [&mut a, &mut b] {
                 s.trail.backtrack_to(0);

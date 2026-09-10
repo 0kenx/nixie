@@ -12,7 +12,7 @@ impl Solver {
         let values = session.values;
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
-        let (destinations, phantom, ghost_debt, delayed) = self.watches.propagation_parts();
+        let (destinations, phantom, ghost_debt) = self.watches.propagation_parts();
         let graph = &self.binary_graph;
         let ticks = if self.stable {
             &mut self.ticks_stable
@@ -119,7 +119,6 @@ impl Solver {
                     &mut queue,
                     arena.reborrow(),
                     destinations,
-                    delayed,
                 )
             };
             #[cfg(feature = "bcp-work")]

@@ -5,7 +5,6 @@ use super::{ClauseId, Lit, Watcher};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::trail::{PropagationQueue, assign_undefined, prefetch_watch_payload, propagation_value};
-use crate::watched::{MoveBuffer, MoveWriter, Moves};
 
 #[path = "watch_cursor.rs"]
 mod watch_cursor;
@@ -15,9 +14,6 @@ pub(super) struct ScanResult {
     #[cfg(feature = "bcp-work")]
     pub(super) work: super::super::PropagationWork,
     pub(super) write: usize,
-    // Live arena identities exclude NULL. Keeping this result to two
-    // scalars keeps the driver-facing result compact. Internal scans also
-    // return their initialized move slice.
     pub(super) conflict: ClauseId,
 }
 
@@ -40,10 +36,8 @@ pub(super) fn scan_list(
     queue: &mut PropagationQueue<'_>,
     clauses: crate::memory::PropagationArena<'_>,
     destinations: &mut [Vec<Watcher>],
-    delayed: &mut MoveBuffer,
 ) -> ScanResult {
     let begin = watches.as_mut_ptr();
-    let moves = delayed.prepare(watches.len());
     let result = scan::<false>(
         WatchCursor::new(watches),
         false_lit,
@@ -51,7 +45,6 @@ pub(super) fn scan_list(
         queue,
         clauses,
         destinations,
-        moves,
         #[cfg(feature = "bcp-work")]
         super::super::PropagationWork::default(),
     );
@@ -59,9 +52,6 @@ pub(super) fn scan_list(
     // this same borrowed slice (possibly its beginning/end for an empty list).
     #[allow(unsafe_code)]
     let write = unsafe { result.end.offset_from(begin) as usize };
-    if !result.moves.is_empty() {
-        result.moves.flush(destinations);
-    }
     ScanResult {
         write,
         conflict: result.conflict,
@@ -70,10 +60,9 @@ pub(super) fn scan_list(
     }
 }
 
-struct ScanEnd<'a> {
+struct ScanEnd {
     end: *mut Watcher,
     conflict: ClauseId,
-    moves: Moves<'a>,
     #[cfg(feature = "bcp-work")]
     work: super::super::PropagationWork,
 }
@@ -81,28 +70,29 @@ struct ScanEnd<'a> {
 /// Only the prefix can call the suffix, once at its first removal. The suffix
 /// never recurses; no input can increase native call depth beyond these two.
 /// A phase returns its final state; no caller-owned cursor stays live in it.
-#[inline(never)]
-#[allow(clippy::too_many_arguments)] // Disjoint fixed stores are explicit borrows.
 fn push_watch(destinations: &mut [Vec<Watcher>], key: Lit, watcher: Watcher) {
-    let Some(list) = destinations.get_mut(key.index()) else {
-        return;
-    };
+    destinations[key.index()].push(watcher);
+}
+
+fn push_watch_unique(destinations: &mut [Vec<Watcher>], key: Lit, watcher: Watcher) {
+    let list = &mut destinations[key.index()];
     if list.iter().any(|w| w.r == watcher.r) {
         return;
     }
     list.push(watcher);
 }
 
-fn scan<'a, const COMPACT: bool>(
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn scan<const COMPACT: bool>(
     watches: WatchCursor<'_, COMPACT>,
     false_lit: Lit,
     values: &mut [i8],
     queue: &mut PropagationQueue<'_>,
     mut clauses: crate::memory::PropagationArena<'_>,
     destinations: &mut [Vec<Watcher>],
-    moves: MoveWriter<'a>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
-) -> ScanEnd<'a> {
+) -> ScanEnd {
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
@@ -134,7 +124,6 @@ fn scan<'a, const COMPACT: bool>(
                 queue,
                 clauses,
                 destinations,
-                moves,
                 #[cfg(feature = "bcp-work")]
                 work,
             );
@@ -152,8 +141,8 @@ fn scan<'a, const COMPACT: bool>(
         };
         if let Some(pair) = repair {
             if let Some((a, b)) = pair {
-                push_watch(destinations, a.negate(), Watcher::new(cid, watcher.r, b));
-                push_watch(destinations, b.negate(), Watcher::new(cid, watcher.r, a));
+                push_watch_unique(destinations, a.negate(), Watcher::new(cid, watcher.r, b));
+                push_watch_unique(destinations, b.negate(), Watcher::new(cid, watcher.r, a));
             }
             entry.remove();
             if COMPACT {
@@ -166,7 +155,6 @@ fn scan<'a, const COMPACT: bool>(
                 queue,
                 clauses,
                 destinations,
-                moves,
                 #[cfg(feature = "bcp-work")]
                 work,
             );
@@ -246,7 +234,6 @@ fn scan<'a, const COMPACT: bool>(
                         queue,
                         clauses,
                         destinations,
-                        moves,
                         #[cfg(feature = "bcp-work")]
                         work,
                     );
@@ -263,7 +250,6 @@ fn scan<'a, const COMPACT: bool>(
             return ScanEnd {
                 end: watches.finish(),
                 conflict: live.reason(),
-                moves: moves.finish(),
                 #[cfg(feature = "bcp-work")]
                 work,
             };
@@ -287,7 +273,6 @@ fn scan<'a, const COMPACT: bool>(
     ScanEnd {
         end: watches.finish(),
         conflict: ClauseId::NULL,
-        moves: moves.finish(),
         #[cfg(feature = "bcp-work")]
         work,
     }

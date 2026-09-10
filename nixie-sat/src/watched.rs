@@ -8,10 +8,6 @@ use crate::prelude::*;
 #[allow(unused_imports)]
 use smallvec::SmallVec;
 
-#[path = "watched_moves.rs"]
-mod moves;
-pub(crate) use moves::{MoveBuffer, MoveWriter, Moves};
-
 /// A watcher entry
 ///
 /// Ordinary entries occupy eight bytes: a direct arena reference and a blocker.
@@ -105,8 +101,6 @@ pub struct WatchLists {
     /// Deleted long-watchers stripped at arena compact. Charged once on the
     /// next propagate of that literal, matching lazy ghost removal ticks.
     ghost_debt: Vec<u32>,
-    /// Allocation scratch only; no initialized move escapes a list scan.
-    delayed: MoveBuffer,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -130,19 +124,12 @@ pub struct WatchSnapshot {
 }
 
 impl WatchLists {
-    pub(crate) fn propagation_parts(
-        &mut self,
-    ) -> (&mut [Vec<Watcher>], &[u32], &mut [u32], &mut MoveBuffer) {
-        (
-            &mut self.watches,
-            &self.bin_phantom,
-            &mut self.ghost_debt,
-            &mut self.delayed,
-        )
+    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut [u32]) {
+        (&mut self.watches, &self.bin_phantom, &mut self.ghost_debt)
     }
 
     pub(crate) fn move_capacity_bytes(&self) -> usize {
-        self.delayed.capacity_bytes()
+        0
     }
 
     /// Create new watch lists for n variables
@@ -152,7 +139,6 @@ impl WatchLists {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
-            delayed: MoveBuffer::default(),
         }
     }
 
