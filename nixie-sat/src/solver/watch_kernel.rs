@@ -80,16 +80,96 @@ impl Cursor {
                 self.write = read;
                 return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
             };
-            let repair = {
+            let searched = live.searched();
+            let mut found = false;
+            let mut new_searched = searched;
+            let mut repair = None;
+            let first;
+            {
                 let clause = live.lits();
                 if clause.len() < 2 {
-                    Some(None)
+                    repair = Some(None);
+                    first = false_lit;
                 } else if clause[0] != false_lit && clause[1] != false_lit {
-                    Some(Some((clause[0], clause[1])))
+                    repair = Some(Some((clause[0], clause[1])));
+                    first = false_lit;
                 } else {
-                    None
+                    debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
+                    first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
+                    // Even satisfied exits keep the original eager normalization:
+                    // subsequent inprocessing observes literal order.
+                    clause[0] = first;
+                    clause[1] = false_lit;
+                    if trail.lit_val_hot(first) > 0 {
+                        #[cfg(feature = "bcp-work")]
+                        {
+                            self.work.first_satisfied += 1;
+                        }
+                        let kept = if COMPACT { write } else { read };
+                        if COMPACT {
+                            watches[kept] = watcher;
+                            write += 1;
+                        }
+                        watches[kept].blocker = first;
+                        found = true;
+                    } else {
+                        let (pair, tail) = clause.split_at_mut(2);
+                        let hit = crate::memory::find_saved_pos_hit(
+                            tail,
+                            searched,
+                            |lit| trail.lit_val_hot(lit),
+                            || {
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    self.work.tail_probes += 1;
+                                }
+                            },
+                        );
+                        if let Some((i, literal, value)) = hit {
+                            new_searched = crate::memory::saved_pos_store(i);
+                            if value > 0 {
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    self.work.tail_satisfied += 1;
+                                }
+                                let kept = if COMPACT { write } else { read };
+                                if COMPACT {
+                                    watches[kept] = watcher;
+                                    write += 1;
+                                }
+                                watches[kept].blocker = literal;
+                                found = true;
+                            } else {
+                                core::mem::swap(&mut pair[1], &mut tail[i]);
+                                #[cfg(feature = "bcp-work")]
+                                {
+                                    self.work.watch_moves += 1;
+                                }
+                                destinations.add(
+                                    pair[1].negate(),
+                                    Watcher {
+                                        blocker: first,
+                                        ..watcher
+                                    },
+                                );
+                                if !COMPACT {
+                                    live.set_searched(new_searched);
+                                    self.read = read + 1;
+                                    self.write = read;
+                                    return self.scan::<true>(
+                                        watches,
+                                        false_lit,
+                                        trail,
+                                        clauses,
+                                        destinations,
+                                    );
+                                }
+                                found = true;
+                            }
+                        }
+                    }
                 }
-            };
+            }
             if let Some(pair) = repair {
                 if let Some((a, b)) = pair {
                     let r = watcher.r;
@@ -118,87 +198,6 @@ impl Cursor {
                 self.read = read + 1;
                 self.write = read;
                 return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
-            }
-            let searched = live.searched();
-            let mut found = false;
-            let mut new_searched = searched;
-            let first;
-            {
-                let clause = live.lits();
-                debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
-                first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
-                // Even satisfied exits keep the original eager normalization:
-                // subsequent inprocessing observes literal order.
-                clause[0] = first;
-                clause[1] = false_lit;
-                if trail.lit_val_hot(first) > 0 {
-                    #[cfg(feature = "bcp-work")]
-                    {
-                        self.work.first_satisfied += 1;
-                    }
-                    let kept = if COMPACT { write } else { read };
-                    if COMPACT {
-                        watches[kept] = watcher;
-                        write += 1;
-                    }
-                    watches[kept].blocker = first;
-                    found = true;
-                } else {
-                    let (pair, tail) = clause.split_at_mut(2);
-                    let hit = crate::memory::find_saved_pos_hit(
-                        tail,
-                        searched,
-                        |lit| trail.lit_val_hot(lit),
-                        || {
-                            #[cfg(feature = "bcp-work")]
-                            {
-                                self.work.tail_probes += 1;
-                            }
-                        },
-                    );
-                    if let Some((i, literal, value)) = hit {
-                        new_searched = crate::memory::saved_pos_store(i);
-                        if value > 0 {
-                            #[cfg(feature = "bcp-work")]
-                            {
-                                self.work.tail_satisfied += 1;
-                            }
-                            let kept = if COMPACT { write } else { read };
-                            if COMPACT {
-                                watches[kept] = watcher;
-                                write += 1;
-                            }
-                            watches[kept].blocker = literal;
-                            found = true;
-                        } else {
-                            core::mem::swap(&mut pair[1], &mut tail[i]);
-                            #[cfg(feature = "bcp-work")]
-                            {
-                                self.work.watch_moves += 1;
-                            }
-                            destinations.add(
-                                pair[1].negate(),
-                                Watcher {
-                                    blocker: first,
-                                    ..watcher
-                                },
-                            );
-                            if !COMPACT {
-                                live.set_searched(new_searched);
-                                self.read = read + 1;
-                                self.write = read;
-                                return self.scan::<true>(
-                                    watches,
-                                    false_lit,
-                                    trail,
-                                    clauses,
-                                    destinations,
-                                );
-                            }
-                            found = true;
-                        }
-                    }
-                }
             }
             if new_searched != searched {
                 live.set_searched(new_searched);

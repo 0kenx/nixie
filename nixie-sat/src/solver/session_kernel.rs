@@ -48,6 +48,9 @@ impl Solver {
             // No graph mutation is possible in this callback-free session.
             // Preserve primary-before-overflow and binary-before-long order.
             for (is_primary, span) in [(true, primary), (false, extra)] {
+                if span.is_empty() {
+                    continue;
+                }
                 #[cfg(not(feature = "bcp-work"))]
                 let _ = is_primary;
                 for &(implied, reason) in span {
