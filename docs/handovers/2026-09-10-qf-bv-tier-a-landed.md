@@ -115,3 +115,42 @@ box, which regularly runs at load 30+).
   control before believing a flip.
 - Worktrees need the corpus symlinks (`smt-lib`, `satcomp2024/25`,
   `satlib`); delete them when done.
+
+## Addendum (2026-09-11): option 1 resolved — no AIG pass to wire; constants re-opacified at op boundaries
+
+The option-1 premise ("check whether an AIG simplification pass exists but
+isn't wired") is answered: `bv/aig.rs`, `aig_builder.rs`, and
+`bitblast_advanced.rs` are standalone test-only modules — nothing to wire.
+Z3's own win on `maxandminor016` happens **inside `bit-blast`** (verified
+with `(apply …)` stage probes: the blaster alone closes the goal); its
+post-blast `simplifier → solve-eqs → aig` lines ran on an already-refuted
+goal.  The gap it exploits: folded constants stay constants through the
+whole DAG in z3's rewriting layer, while nixie's op results re-opacified
+them into pinned fresh variables.
+
+Landed (see `docs/studies/2026-09-11-bv-constflow-results.md`):
+
+- **Op encoders over signals** (default-on): `bv_sub`/`bv_neg` single-pass
+  ripple (`a + ~b + 1`, no temp vectors), barrel shifters composed through
+  the folding gates (constant shift-amount bits select branches at build
+  time), `bv_shl_const` through `wire`.  Measured neutral-to-positive
+  (corpus 285 ≥ banked 283 in the null arm; byte-identical time on
+  `maxandminor016` vs the previous binary under matched serial runs), zero
+  verdict flips across the 509-file A/B, Z3 parity 175/175.
+- **Constant-flow result canonicalization** (`NIXIE_BV_CONST_FLOW=1`,
+  default off): installs the reserved constant variables as op-result
+  bits.  Sound (zero flips), deterministic 1.3–2× wins across the whole
+  `bitrev` family (256–4096), but −1 aggregate cell at the 25 s cap
+  (`std_bv_formula` 20 s → 33 s, deterministic) — ships off.
+- Side unlock: the rewrite makes `RWS/Example_7` solvable (~43 s; previous
+  binary > 390 s; z3 times out) — `sat` + full model validated by pinning
+  the model back into the formula and re-checking with z3.
+- The debug model-validity net gained an undetermined-bit filter (vars
+  past the adopted snapshot previously read as `false` and fabricated
+  mismatches); its residual false-positive mode on multi-round unified
+  solves is documented in the study with the evidence trail.
+
+Next-lever finding for the Tier-B near-misses: the `maxandminor` collapse
+needs constants/substitution through the **`ite` selector layer** (boolean
+`solve-eqs`-style substitution at the Tseitin boundary), not BV-operand
+constants; ELS already folds 45 k literals there without closing the file.

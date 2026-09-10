@@ -304,6 +304,22 @@ pub struct BvSolver {
     /// in a unified generation every bit var belongs to the caller's var
     /// space, and only the caller's model assigns them.
     adopted_model: Vec<LBool>,
+    /// Bit variables that the current operation's encoding wired to constants
+    /// (see [`Self::wire`]), keyed by the bit's variable.  Drained by
+    /// [`Self::finish_result`], which installs the reserved constant
+    /// variables in place of freshly-pinned bits so the constant keeps
+    /// propagating through every consumer — when the layer is enabled.
+    const_pinned: FxHashMap<Var, bool>,
+    /// Whether constant-flow result canonicalization is active
+    /// (`NIXIE_BV_CONST_FLOW=1` enables; default **off**).
+    ///
+    /// The layer is sound (zero verdict flips over the 509-file QF_BV sample,
+    /// same binary, on/off A/B) and wins deterministically on constant-heavy
+    /// families — the `bitrev` chain: 1.3–2× faster at every width 256–4096 —
+    /// but the campaign aggregate measured −1 cell at the 25 s cap
+    /// (`uclid/std_bv_formula` 20 s → 33 s), so it ships off by default.
+    /// See `docs/studies/2026-09-11-bv-constflow-results.md`.
+    const_flow_enabled: bool,
 }
 
 impl Default for BvSolver {
@@ -358,6 +374,8 @@ impl BvSolver {
             unified_atoms: FxHashSet::default(),
             pending_unlinked: Vec::new(),
             adopted_model: Vec::new(),
+            const_pinned: FxHashMap::default(),
+            const_flow_enabled: Self::const_flow_default(),
             const_true,
             const_false,
         }
@@ -571,6 +589,21 @@ impl BvSolver {
     #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub fn debug_bits(&self, term: TermId) -> Option<&[nixie_sat::Var]> {
         self.term_to_bv.get(&term).map(|v| v.bits.as_slice())
+    }
+
+    /// Structural probe for tests: whether `var` is one of the two reserved
+    /// constant-bit variables, and if so which value it carries.  Used by the
+    /// constant-flow regression tests to assert that folded results *are*
+    /// the constants (not fresh variables pinned to them).
+    #[cfg(test)]
+    pub fn const_bit_value(&self, var: nixie_sat::Var) -> Option<bool> {
+        if var == self.const_true {
+            Some(true)
+        } else if var == self.const_false {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     /// Record that the theory manager saw BV atom `term` assigned with no
@@ -1091,6 +1124,7 @@ impl BvSolver {
         for i in 0..vt.width as usize {
             self.encode_mux(r.bits[i], sel, vt.bits[i], ve.bits[i]);
         }
+        self.finish_result(result);
     }
 
     /// Fix a Bool-sorted term's truth value from the *enclosing* CDCL(T) search.
@@ -1665,6 +1699,7 @@ impl BvSolver {
                 // r[i] = ~a[i]
                 self.encode_not(r.bits[i], va.bits[i]);
             }
+            self.finish_result(result);
             return true;
         }
         false
@@ -1684,6 +1719,7 @@ impl BvSolver {
             for i in 0..va.width as usize {
                 self.encode_and(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            self.finish_result(result);
             return true;
         }
         false
@@ -1703,6 +1739,7 @@ impl BvSolver {
             for i in 0..va.width as usize {
                 self.encode_or(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            self.finish_result(result);
             return true;
         }
         false
@@ -1722,6 +1759,7 @@ impl BvSolver {
             for i in 0..va.width as usize {
                 self.encode_xor(r.bits[i], va.bits[i], vb.bits[i]);
             }
+            self.finish_result(result);
             return true;
         }
         false
@@ -1731,22 +1769,28 @@ impl BvSolver {
     ///
     /// Returns `false` – encoding nothing – when `a` has not been bit-blasted
     /// or `result` already has a different width.
+    ///
+    /// Composed over *signals* (the folding gate layer's representation):
+    /// `~a` per-bit through the folding NOT gate, then an adder with
+    /// constant carry-in 1, so a constant operand collapses the whole
+    /// computation without a single intermediate variable — the
+    /// temp-variable construction re-opacified each folded bit into a
+    /// pinned variable the next gate could not see through.
     pub fn bv_neg(&mut self, result: TermId, a: TermId) -> bool {
         if let Some(va) = self.term_to_bv.get(&a).cloned() {
             let Some(r) = self.result_bits(result, va.width) else {
                 return false;
             };
-
-            // First compute ~a
-            let mut not_bits: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &va.bits {
-                let not_bit = self.sat.new_var();
-                self.encode_not(not_bit, bit);
-                not_bits.push(not_bit);
+            let not_bits: SmallVec<[Sig; 32]> = va
+                .bits
+                .iter()
+                .map(|&b| self.gate_not(self.sig(b)))
+                .collect();
+            let sums = self.add_const_sigs(&not_bits, 1);
+            for (i, s) in sums.iter().enumerate() {
+                self.wire(r.bits[i], *s);
             }
-
-            // Then add 1 using a ripple-carry adder
-            self.encode_add_const(&r.bits, &not_bits, 1);
+            self.finish_result(result);
             return true;
         }
         false
@@ -1764,6 +1808,7 @@ impl BvSolver {
             };
 
             self.encode_adder(&r.bits, &va.bits, &vb.bits);
+            self.finish_result(result);
             return true;
         }
         false
@@ -1774,29 +1819,23 @@ impl BvSolver {
     /// Returns `false` – encoding nothing – when an operand has not been
     /// bit-blasted, the two operands have different widths, or `result`
     /// already has a different width.
+    ///
+    /// One ripple-carry pass over *signals* with `~b` bits and carry-in 1 —
+    /// exactly `a + ~b + 1` — so constant operand bits fold through the full
+    /// adders instead of dying at temp variables (see [`Self::bv_neg`]).
     pub fn bv_sub(&mut self, result: TermId, a: TermId, b: TermId) -> bool {
         if let Some((va, vb)) = self.binop_bits(a, b) {
             let Some(r) = self.result_bits(result, va.width) else {
                 return false;
             };
-
-            // Compute -b (two's complement)
-            let mut neg_b: SmallVec<[Var; 32]> = SmallVec::new();
-            for &bit in &vb.bits {
-                let not_bit = self.sat.new_var();
-                self.encode_not(not_bit, bit);
-                neg_b.push(not_bit);
+            let mut carry = Sig::True;
+            for i in 0..va.width as usize {
+                let not_b = self.gate_not(self.sig(vb.bits[i]));
+                let (sum, next_carry) = self.gate_full_adder(self.sig(va.bits[i]), not_b, carry);
+                self.wire(r.bits[i], sum);
+                carry = next_carry;
             }
-
-            // Create temp variables for -b
-            let mut neg_b_with_one: SmallVec<[Var; 32]> = SmallVec::new();
-            for _ in 0..va.width {
-                neg_b_with_one.push(self.sat.new_var());
-            }
-            self.encode_add_const(&neg_b_with_one, &neg_b, 1);
-
-            // Add a + (-b)
-            self.encode_adder(&r.bits, &va.bits, &neg_b_with_one);
+            self.finish_result(result);
             return true;
         }
         false
@@ -1813,6 +1852,7 @@ impl BvSolver {
                 return false;
             };
             self.encode_mul(&r.bits, &va.bits, &vb.bits);
+            self.finish_result(result);
             return true;
         }
         false
@@ -2271,11 +2311,12 @@ impl BvSolver {
             };
             for k in 0..width as usize {
                 if shift >= width || k < shift as usize {
-                    self.sat.add_clause([Lit::neg(r.bits[k])]);
+                    self.wire(r.bits[k], Sig::False);
                 } else {
-                    self.encode_bit_eq(r.bits[k], va.bits[k - shift as usize]);
+                    self.wire(r.bits[k], self.sig(va.bits[k - shift as usize]));
                 }
             }
+            self.finish_result(result);
             return true;
         }
         false
@@ -2425,9 +2466,11 @@ impl BvSolver {
     fn wire(&mut self, out: Var, s: Sig) {
         match s {
             Sig::True => {
+                self.const_pinned.insert(out, true);
                 self.sat.add_clause([Lit::pos(out)]);
             }
             Sig::False => {
+                self.const_pinned.insert(out, false);
                 self.sat.add_clause([Lit::neg(out)]);
             }
             Sig::Var(v) => {
@@ -2436,6 +2479,73 @@ impl BvSolver {
                 }
             }
         }
+    }
+
+    /// Finish building `result`: when the constant-flow layer is enabled
+    /// ([`Self::const_flow_enabled`]), install reserved constant variables in
+    /// place of the bits this operation pinned to constants, so that every
+    /// consumer of `result` folds on them.
+    ///
+    /// This is the constant-propagation chain Z3's bit-blaster gets for free
+    /// by building every circuit through its hash-consed, constant-folding
+    /// rewriting layer (`bit_blaster_tpl_def.h` composes `mk_and`/`mk_xor`/
+    /// … over exprs, so an intermediate that folds to `true`/`false` *stays*
+    /// a constant node for the whole downstream DAG).  Our emitters write
+    /// into pre-allocated bit variables, which re-opacifies each folded
+    /// constant into a pinned fresh variable; downstream gates then see an
+    /// ordinary signal and the chain dies.  Recording the pins in
+    /// [`Self::wire`] and rewriting the stored vector here restores the
+    /// chain at the layer that owns the vectors.
+    ///
+    /// Active only while [`Self::is_unified`]: the rewritten entry claims
+    /// the bit is *permanently* constant, which is exactly true for
+    /// base-scope, never-popped clauses (unified generations), and false
+    /// under the embedded path's scoped pins — a popped pin would leave the
+    /// entry asserting a constant the retracted scope alone justified.  The
+    /// lazy path keeps its historical byte-identical behaviour.
+    ///
+    /// The map is cleared unconditionally: entries never match a later
+    /// operation's bits (variables are never re-indexed), so stale entries
+    /// are inert.
+    fn finish_result(&mut self, result: TermId) {
+        if self.unified
+            && self.const_flow_enabled
+            && !self.const_pinned.is_empty()
+            && let Some(bv) = self.term_to_bv.get_mut(&result)
+        {
+            for bit in bv.bits.iter_mut() {
+                if let Some(&value) = self.const_pinned.get(bit) {
+                    *bit = if value {
+                        self.const_true
+                    } else {
+                        self.const_false
+                    };
+                }
+            }
+        }
+        self.const_pinned.clear();
+    }
+
+    /// Default for constant-flow canonicalization (`NIXIE_BV_CONST_FLOW=1`
+    /// enables; default off — see the field doc for the measurement).  Read
+    /// once per `BvSolver` construction so tests can construct either mode.
+    fn const_flow_default() -> bool {
+        #[cfg(feature = "std")]
+        {
+            matches!(std::env::var("NIXIE_BV_CONST_FLOW"), Ok(v) if v == "1")
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Test-only override of the constant-flow layer (the env default is
+    /// read at construction, which parallel tests in one process cannot
+    /// flip per-solver).
+    #[cfg(test)]
+    pub fn enable_const_flow_for_test(&mut self) {
+        self.const_flow_enabled = true;
     }
 
     /// Emit the raw equivalence clauses `a <=> b` for two distinct signals.
@@ -2727,35 +2837,30 @@ impl BvSolver {
         }
     }
 
-    /// Encode addition with constant: result = a + const
+    /// Ripple-carry addition of a constant into a [`Sig`] vector, returning
+    /// the sum signals (the caller wires or installs them).
     ///
-    /// The constant enters the full adders as [`Sig`] constants, so each bit
-    /// position degenerates to a half adder (or a bare wire) with no extra
-    /// pinned variables or clauses.
-    fn encode_add_const(&mut self, result: &[Var], a: &[Var], constant: u64) {
-        assert_eq!(result.len(), a.len());
-
-        let width = result.len();
+    /// Pure signal-level (no result variables are allocated), so a constant
+    /// operand collapses the whole chain to constants — the encoding-side
+    /// twin of [`Self::encode_add_const`], which delegates here.
+    fn add_const_sigs(&mut self, a: &[Sig], constant: u64) -> SmallVec<[Sig; 32]> {
+        let mut sums: SmallVec<[Sig; 32]> = SmallVec::with_capacity(a.len());
         let mut carry = Sig::False;
-
-        for i in 0..width {
+        for (i, &ai) in a.iter().enumerate() {
             // `constant` is u64: bit positions >= 64 are structurally zero.
             // Reading `(constant >> i)` there overflows in debug and WRAPS
             // in release (`>> i` masks the shift amount modulo 64), which
             // re-read bit `i % 64` of the constant — a silent wrong-bit
-            // encode. This was the nlzbs128 false-sat: `bvsub` at width 128
+            // encode.  This was the nlzbs128 false-sat: `bvsub` at width 128
             // encoded `-b = ~b + 2^64 + 1` instead of `~b + 1`
             // (docs/handovers/2026-09-09-bv-false-sat.md).
             let const_bit = i < 64 && ((constant >> i) & 1) == 1;
-            // Overflow carry of the top bit is ignored: width-only wrapping.
-            let (sum, next_carry) = self.gate_full_adder(
-                self.sig(a[i]),
-                if const_bit { Sig::True } else { Sig::False },
-                carry,
-            );
-            self.wire(result[i], sum);
+            let (sum, next_carry) =
+                self.gate_full_adder(ai, if const_bit { Sig::True } else { Sig::False }, carry);
+            sums.push(sum);
             carry = next_carry;
         }
+        sums
     }
 
     /// Encode unsigned less than and store result in a variable

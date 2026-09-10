@@ -11,11 +11,23 @@
 //! amount whose only set bits are above `num_stages` (e.g. `#x10` for width 8)
 //! would be silently treated as a shift by 0, encoding `bvshl x #x10` as `x`
 //! instead of `0`.
+//!
+//! Every stage is composed over [`super::Sig`] through the folding gate
+//! constructors, exactly like Z3's bit-blaster composes its muxes over the
+//! rewriting layer: a constant shift-amount bit selects a branch at build
+//! time (the whole stage becomes a wire), and constant value bits stay
+//! constants through every stage.  The historical variable-per-stage chain
+//! re-opacified each folded mux into a pinned variable the next stage's mux
+//! could not see through, which is what kept a shift by a symbolic amount
+//! over a partially-constant value from collapsing.
 
 use super::BvSolver;
 use nixie_core::ast::TermId;
-use nixie_sat::{Lit, Var};
+use nixie_sat::Var;
 use smallvec::SmallVec;
+
+/// A signal-level shift stage: `sel ? if_true : if_false`, folded.
+type SigVec = SmallVec<[super::Sig; 32]>;
 
 impl BvSolver {
     /// Number of mux stages a barrel shifter needs for a given width.
@@ -29,52 +41,78 @@ impl BvSolver {
         width.ilog2() + 1
     }
 
-    /// OR together a slice of SAT variables, returning a variable that is true
-    /// iff any input is true. Returns `None` for an empty slice (no over-shift
-    /// bits exist for this width).
-    fn encode_or_bits(&mut self, bits: &[Var]) -> Option<Var> {
-        let mut acc: Option<Var> = None;
+    /// OR together the over-shift detector bits as a signal (`None` when the
+    /// slice is empty: no shift-amount bit can reach past the width).
+    fn overshift_sig(&mut self, bits: &[Var]) -> Option<super::Sig> {
+        let mut acc: Option<super::Sig> = None;
         for &b in bits {
+            let bs = self.sig(b);
             acc = Some(match acc {
-                None => b,
-                Some(prev) => {
-                    let v = self.sat.new_var();
-                    self.encode_or(v, prev, b);
-                    v
-                }
+                None => bs,
+                Some(prev) => self.gate_or(prev, bs),
             });
         }
         acc
     }
 
-    /// A fresh SAT variable forced to constant 0.
-    fn fresh_zero(&mut self) -> Var {
-        let zero = self.sat.new_var();
-        self.sat.add_clause([Lit::neg(zero)]);
-        zero
-    }
-
-    /// Wire `result` bits from `current`, but force the SMT-LIB `fill` value
-    /// when `overshift` is set (shift amount >= width). When `overshift` is
-    /// `None` (no high bits exist) the result is copied through directly.
+    /// Commit the final stage signals into the result bits, applying the
+    /// SMT-LIB over-shift fill (`fill`) when any high shift bit is set.
+    /// `overshift` is `None` when no bit can express an over-shift at this
+    /// width.
     fn commit_shift_result(
         &mut self,
         result: &[Var],
-        current: &[Var],
-        overshift: Option<Var>,
-        fill: Var,
+        current: &SigVec,
+        overshift: Option<super::Sig>,
+        fill: super::Sig,
     ) {
-        for i in 0..result.len() {
-            match overshift {
-                Some(ov) => {
-                    let out = self.sat.new_var();
-                    // out = overshift ? fill : current[i]
-                    self.encode_mux(out, ov, fill, current[i]);
-                    self.encode_bit_eq(result[i], out);
+        match overshift {
+            Some(ov) => {
+                for (i, &cur) in current.iter().enumerate() {
+                    let muxed = self.gate_mux(ov, fill, cur);
+                    self.wire(result[i], muxed);
                 }
-                None => self.encode_bit_eq(result[i], current[i]),
+            }
+            None => {
+                for (i, &cur) in current.iter().enumerate() {
+                    self.wire(result[i], cur);
+                }
             }
         }
+    }
+
+    /// One barrel-shifter pass over `value`: `num_stages` mux stages steered
+    /// by the low bits of `amount`, each stage shifting by `2^s` according to
+    /// `steer` (which supplies, per stage `s`, the index transform and fill).
+    /// Returns the final stage's signals (over-shift fill still to apply).
+    ///
+    /// `shifted_index(i, shift_by)` gives the source index feeding result bit
+    /// `i` when the stage shifts by `shift_by` (`None` = fill).
+    #[allow(clippy::too_many_arguments)]
+    fn barrel_pass(
+        &mut self,
+        value: &SigVec,
+        amount_bits: &[Var],
+        num_stages: u32,
+        width: usize,
+        fill: super::Sig,
+        shifted_index: impl Fn(usize, usize) -> Option<usize>,
+    ) -> SigVec {
+        let mut current: SigVec = SmallVec::from_slice(value);
+        for s in 0..num_stages {
+            let shift_by = 1usize << s;
+            let sel = self.sig(amount_bits[s as usize]);
+            let mut next: SigVec = SmallVec::with_capacity(width);
+            for i in 0..width {
+                let next_sig = match shifted_index(i, shift_by) {
+                    Some(src) => self.gate_mux(sel, current[src], current[i]),
+                    None => self.gate_mux(sel, fill, current[i]),
+                };
+                next.push(next_sig);
+            }
+            current = next;
+        }
+        current
     }
 
     /// Left shift: result = a << b (SMT-LIB `bvshl`).
@@ -92,34 +130,21 @@ impl BvSolver {
             };
             let num_stages = Self::barrel_stages(width);
 
-            let mut current = va.bits.clone();
-            for s in 0..num_stages {
-                let shift_by = 1usize << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-                    if i >= shift_by {
-                        // next_bit = shift[s] ? current[i - shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i - shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? 0 : current[i]
-                        let zero = self.fresh_zero();
-                        self.encode_mux(next_bit, shift.bits[s as usize], zero, current[i]);
-                    }
-                    next.push(next_bit);
-                }
-                current = next;
-            }
+            let value: SigVec = va.bits.iter().map(|&b| self.sig(b)).collect();
+            // Bit `i` of the shifted-out value comes from `i - shift_by`.
+            let current = self.barrel_pass(
+                &value,
+                &shift.bits,
+                num_stages,
+                width,
+                super::Sig::False,
+                |i, shift_by| i.checked_sub(shift_by),
+            );
 
             // Any shift bit at or above num_stages means shift >= width -> 0.
-            let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
-            let fill = self.fresh_zero();
-            self.commit_shift_result(&r.bits, &current, overshift, fill);
+            let overshift = self.overshift_sig(&shift.bits[num_stages as usize..]);
+            self.commit_shift_result(&r.bits, &current, overshift, super::Sig::False);
+            self.finish_result(result);
             true
         } else {
             false
@@ -141,33 +166,24 @@ impl BvSolver {
             };
             let num_stages = Self::barrel_stages(width);
 
-            let mut current = va.bits.clone();
-            for s in 0..num_stages {
-                let shift_by = 1usize << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-                    if i + shift_by < width {
-                        // next_bit = shift[s] ? current[i + shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i + shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? 0 : current[i]
-                        let zero = self.fresh_zero();
-                        self.encode_mux(next_bit, shift.bits[s as usize], zero, current[i]);
-                    }
-                    next.push(next_bit);
-                }
-                current = next;
-            }
+            let value: SigVec = va.bits.iter().map(|&b| self.sig(b)).collect();
+            // Bit `i` of the shifted value comes from `i + shift_by` when in
+            // range; past the top, the shift feeds zeros.
+            let current = self.barrel_pass(
+                &value,
+                &shift.bits,
+                num_stages,
+                width,
+                super::Sig::False,
+                |i, shift_by| {
+                    let src = i + shift_by;
+                    (src < width).then_some(src)
+                },
+            );
 
-            let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
-            let fill = self.fresh_zero();
-            self.commit_shift_result(&r.bits, &current, overshift, fill);
+            let overshift = self.overshift_sig(&shift.bits[num_stages as usize..]);
+            self.commit_shift_result(&r.bits, &current, overshift, super::Sig::False);
+            self.finish_result(result);
             true
         } else {
             false
@@ -192,33 +208,26 @@ impl BvSolver {
             let num_stages = Self::barrel_stages(width);
 
             // Sign bit is the fill for both in-range and over-shift cases.
-            let sign = va.bits[width - 1];
+            let sign = self.sig(va.bits[width - 1]);
 
-            let mut current = va.bits.clone();
-            for s in 0..num_stages {
-                let shift_by = 1usize << s;
-                let mut next: SmallVec<[Var; 32]> = SmallVec::new();
-                for i in 0..width {
-                    let next_bit = self.sat.new_var();
-                    if i + shift_by < width {
-                        // next_bit = shift[s] ? current[i + shift_by] : current[i]
-                        self.encode_mux(
-                            next_bit,
-                            shift.bits[s as usize],
-                            current[i + shift_by],
-                            current[i],
-                        );
-                    } else {
-                        // next_bit = shift[s] ? sign : current[i]
-                        self.encode_mux(next_bit, shift.bits[s as usize], sign, current[i]);
-                    }
-                    next.push(next_bit);
-                }
-                current = next;
-            }
+            let value: SigVec = va.bits.iter().map(|&b| self.sig(b)).collect();
+            // Bit `i` of the shifted value comes from `i + shift_by` when in
+            // range; past the top, the shift replicates the sign bit.
+            let current = self.barrel_pass(
+                &value,
+                &shift.bits,
+                num_stages,
+                width,
+                sign,
+                |i, shift_by| {
+                    let src = i + shift_by;
+                    (src < width).then_some(src)
+                },
+            );
 
-            let overshift = self.encode_or_bits(&shift.bits[num_stages as usize..]);
+            let overshift = self.overshift_sig(&shift.bits[num_stages as usize..]);
             self.commit_shift_result(&r.bits, &current, overshift, sign);
+            self.finish_result(result);
             true
         } else {
             false

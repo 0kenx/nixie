@@ -1,0 +1,177 @@
+# BV constant-flow results & the gate-layer AIG screen — what z3's `aig` tactic actually does on this corpus
+
+**Date:** 2026-09-11. **Task:** handover option 1
+(`docs/handovers/2026-09-10-qf-bv-tier-a-landed.md`) — "AIG/pre-blast
+simplification in the unified path": check whether an AIG simplification
+pass exists but is unwired between blasting and CNF emission in the unified
+path, and wire it if so.
+
+**Verdict (three findings, two landed):**
+
+1. **There is no AIG pass to wire.** `nixie-theories/src/bv/aig.rs`,
+   `aig_builder.rs`, and `bitblast_advanced.rs` are standalone, test-only
+   modules; nothing in the unified or lazy path constructs them.  Wiring
+   them in is not "cheap" — the real work is building the layer they
+   presuppose.
+2. **Gate-level structural hashing has nothing to hash on this corpus**
+   (measured, then reverted): term-level hash-consing already dedups every
+   gate the memo would have caught — 0 memo hits in ~20–60k gate requests
+   per file across `maxandminor016`, `bitrev1024`, and the mul/shift
+   families.
+3. **The real gap is constants re-opacifying at operation boundaries.**
+   Landed: (a) the op encoders (`bv_sub`, `bv_neg`, the barrel shifters)
+   rewritten to compose over signals with no temp variables — measured
+   neutral-to-positive, strictly fewer vars/clauses on constant operands;
+   (b) a constant-flow canonicalization layer that installs reserved
+   constant *variables* as operation-result bits — sound (zero verdict
+   flips over the 509-file A/B) and a deterministic 1.3–2× win on the
+   `bitrev` family, but −1 cell on the campaign aggregate, so it ships
+   **default-off** behind `NIXIE_BV_CONST_FLOW=1`.
+
+## What z3 actually does on maxandminor016
+
+The handover's premise ("z3's trace shows its aig tactic deciding the file
+after blasting") is true but the attribution is wrong.  Stage-by-stage
+reconstruction with `z3 -v:10` and `(apply …)` probes:
+
+| stage prefix applied | outcome |
+|---|---|
+| `bit-blast` **alone** | goal **closed** (unsat, no search) |
+| `then bit-blast simplify` | closed |
+| `… solve-eqs`, `… aig` | closed (goal already trivial) |
+
+z3 decides the file *inside the bit-blaster*: every gate is built through
+its hash-consed, constant-folding rewriting layer, so a bit that folds to
+`true`/`false` **stays** a constant node for the whole downstream DAG, and
+the `minOR/maxAND` bound-propagation chains collapse structurally.  The
+`simplifier → solve-eqs → aig` stages in the trace ran on an
+already-refuted goal (their `:num-exprs 1` report is a closed goal, not a
+1-expression encoding).
+
+Nixie's `Sig` gate layer folds constants too — but each *operation result*
+was written into pre-allocated fresh variables, and `wire` re-opacified
+each folded constant into a pinned variable the next gate could not see
+through.  The chain died at every operation boundary.
+
+## What was measured
+
+### Gate structural hashing (reverted)
+
+Implemented a `(kind, canonical operands) → var` memo over the six gate
+constructors (`Not`/`And`/`Or`/`Xor`/`Mux`/`AndNotA`), journaled per
+embedded scope for pop-retraction, cleared on unified-generation
+boundaries — Z3 `aig.cpp`'s `aig_table` in miniature.  Measured hit rate:
+**0.0 %** on every family tried (trace counters, `NIXIE_BV_GATE_TRACE`).
+Term-level hash-consing (plus `canonical_pair` commutative normalization
+in the term builder) already shares everything structural.  Reverted
+without landing; do not retry as a standalone win.
+
+### Constant-flow results (landed, default-off)
+
+`finish_result` + `const_pinned`: when an operation's encoding wires a
+result bit to a constant, the stored bit becomes the reserved
+`const_true`/`const_false` variable instead of a fresh pinned one, so
+downstream gates fold.  Active only in unified generations (base-scope,
+never-popped clauses make "permanently constant" true); the lazy path is
+byte-identical to before.
+
+Matched-null A/B over the 509-file stratified sample (same binary
+`md5 16964ebd…` lineage, `NIXIE_BV_CONST_FLOW` 0 vs 1, 25 s cap, 4 pinned
+cores, load 5–13):
+
+| arm | solved of 509 |
+|---|---|
+| null (off) | 285 |
+| treat (on) | 284 |
+
+Zero verdict flips (the soundness bar); 3 differing cells, all
+sat/unsat↔unknown boundary moves.  Serial per-file re-verification
+(pinned core, repeated):
+
+| file | null | treat | class |
+|---|---|---|---|
+| `brummayerbiere/bitrev1024` | 15–21 s | 7–10 s | deterministic 2× win |
+| `bitrev0256/0512/2048/4096` | — | 1.3–2× faster each | deterministic family win |
+| `brummayerbiere3/maxandminor016` | 28 s | 43 s | deterministic 1.5× loss |
+| `uclid/std_bv_formula` | 19–22 s | 32–33 s | deterministic 1.6× loss (crosses the 25 s cap) |
+| `bruttomesso/lfsr_004_015_112` | 20.5 s | 20.5 s | load artifact |
+
+The shape split is clean: const-mask-dominated encodings (the `bitrev`
+`x ^ (x << const)` chains) shrink structurally and speed up 1.3–2×;
+symbolic-bound-propagation files (`maxandminor`, `std_bv_formula`) only
+get their variable allocation order reshuffled, and CDCL trajectory luck
+goes the other way.  Aggregate −1 cell ⇒ ships off; the family win and
+the z3-parity design (constants stay constants) are why the layer stays
+in the tree behind the flag.
+
+### The emitter rewrite (landed, default-on, no flag)
+
+`bv_sub` and `bv_neg` now compute one ripple-carry pass over signals
+(`a + ~b + 1` with carry-in true) — the old versions built temp variable
+vectors (`~b` bits, `-b = ~b+1` bits) whose pinned constants died at the
+temp boundary.  The barrel shifters (`shifts.rs`) build their mux stages
+over signals, so a constant shift-amount bit selects the branch at build
+time and constant value bits stay constants through every stage (the old
+per-stage fresh variables re-opacified each folded mux).  `bv_shl_const`
+pins through `wire` so its constants are recordable.
+
+Measured: byte-identical solve time on `maxandminor016` vs the previous
+binary under matched serial conditions (28.1–28.5 s both); corpus null
+arm 285 ≥ the banked 283; zero verdict flips in the A/B (both arms carry
+the rewrite).  Regression tests pin the wide-`bvsub` semantics
+(`bvsub_wide_matches_exact_semantics`), over-shift forcing
+(`lshr_const64_forces_zero_high_bits`), and the new const-chain behavior
+(`unified_const_results_flow_as_reserved_constants`,
+`unified_const_chain_preserves_semantics`,
+`unified_const_shift_collapses_to_constants`,
+`embedded_const_results_stay_pinned_variables`).
+
+## Side finding: the rewrite unlocked RWS/Example_7 — and validated it
+
+The emitter rewrite makes `RWS/Example_7.txt.smt2` solvable (~43 s; the
+previous binary needs > 390 s; z3 4.16.0 times out at 60 s).  Its `sat`
+verdict and full model were validated externally: nixie's model (24
+`define-fun`s) pinned back into the original formula is accepted `sat` by
+z3.  This is the differential-validation recipe for any future `sat` on
+files z3 cannot decide: dump the model through a `Context::execute_script`
+driver, pin it, cross-check.
+
+The debug model-validity net fires spuriously on this file, in both arms.
+Root-cause narrowed but not closed: the adopted main-core snapshot is
+complete-with-reconstruction (41 k of 154 k vars are ELS/BVE-eliminated
+and reconstructed by `save_model`), every bit the net reads is *defined*,
+yet raw gate-variable reads contradict definitional clauses that a true
+model of the final clause set cannot violate — pointing at clauses
+missing from, or redirected away from, the core the snapshot came from
+for late-minted round-boundary circuits.  Two net hardenings landed:
+undetermined bits (vars past the snapshot) now suppress the comparison
+instead of reading as `false`, and the residual false-positive mode is
+recorded here.  The net is debug-only; user-facing models ride frozen
+(theory-mapped) variables, which ELS/BVE never fold.
+
+## What NOT to retry
+
+- Gate-level structural hashing as a standalone win — 0 % hit rate on
+  this corpus; the sharing already exists one level up.
+- "Wiring `aig.rs` into the unified path" — it is a self-contained toy
+  (u64-only constants, default width 32, no BV-op encoders); the unified
+  path's own `Sig` layer is strictly closer to Z3's design.
+- Treating z3's `simplifier → solve-eqs → aig` trace lines as the win —
+  on this corpus the file is already closed at `bit-blast`; post-blast
+  tactic work is a red herring for `maxandminor`.
+
+## Where the next lever is (if this family is picked up again)
+
+The `maxandminor` collapse needs constants to flow through the **`ite`
+selector layer**: the recurring shape `(= #b1 (bvnot (ite (= (bvand …) 0)
+#b1 #b0)))` makes selector-equalities that z3 substitutes symbolically
+(its blaster's muxes fold when the *condition* folds).  Our selectors are
+atom variables pinned by units — the SAT search must *propagate* what z3
+*rewrites*.  Closing that gap means boolean-level value-substitution at
+the Tseitin layer (a real AIG IR between term blast and clause emission),
+which is the principled version of this whole exercise and a bigger build
+than a wiring job.  The measured ELS data point: the main core's
+equivalence substitution already folds 45 k literals on `maxandminor016`
+(first round) without collapsing the file — clause-level equivalence
+reasoning is not the bottleneck; substitution *into selector positions*
+is.

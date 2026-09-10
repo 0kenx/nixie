@@ -750,8 +750,25 @@ pub(super) fn debug_verify_bv_circuits(bv: &BvSolver, root: TermId, mgr: &TermMa
 
         let width = mgr.sorts.get(term.sort).and_then(|s| s.bitvec_width());
         // The circuit's own answer for this node, as read back from the model.
-        let modelled = bv.get_value(tid);
-        let child = |t: &TermId| values.get(t).copied().flatten();
+        //
+        // A bit the model snapshot leaves *undefined* (for instance a
+        // circuit variable minted after the last `adopt_model_snapshot`, so
+        // its index is past the snapshot's end) reads as `false` by default —
+        // a fabricated value.  A node with any undetermined bit has no
+        // comparable model value and is skipped (`None`), exactly like a
+        // node of an unmodelled kind; comparing defaulted zeros against the
+        // reference semantics fabricates mismatches (observed on
+        // RWS/Example_7: a round-boundary circuit whose vars post-date the
+        // snapshot read as all-zero while its operands' older vars read
+        // their real values).
+        let modelled = bv.get_value(tid).filter(|_| bv.bits_all_determined(tid));
+        let child = |t: &TermId| {
+            values
+                .get(t)
+                .copied()
+                .flatten()
+                .filter(|_| bv.bits_all_determined(*t))
+        };
 
         let expected = match (&term.kind, width) {
             (TermKind::BvNot(a), Some(w)) => child(a).map(|v| !v & width_mask(w)),

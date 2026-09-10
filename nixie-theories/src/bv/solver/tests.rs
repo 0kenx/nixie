@@ -526,3 +526,136 @@ fn bvsub_wide_matches_exact_semantics() {
         }
     }
 }
+
+/// Constant-flow results (unified mode): an operation over constant operands
+/// must install the *reserved* constant variables as the result bits, not
+/// fresh variables pinned by units.  This is the propagation chain Z3's
+/// bit-blaster gets from building through its hash-consed rewriting layer:
+/// with it, `bvadd(2, 3)`'s consumer sees constant bits and folds; without
+/// it, every consumer of the result sees an opaque pinned variable and the
+/// chain dies at the first operation.
+#[test]
+fn unified_const_results_flow_as_reserved_constants() {
+    use nixie_sat::Solver as SatSolver;
+    let mut bv = super::BvSolver::new();
+    bv.enable_const_flow_for_test();
+    bv.enter_unified();
+    let mut sat = SatSolver::new();
+    let two = nixie_core::ast::TermId::new(1);
+    let three = nixie_core::ast::TermId::new(2);
+    let five = nixie_core::ast::TermId::new(3);
+    bv.build_with(&mut sat, |bv| {
+        assert!(bv.assert_const(two, 2, 8));
+        assert!(bv.assert_const(three, 3, 8));
+        assert!(bv.bv_add(five, two, three));
+    });
+    // Every bit of the sum must be a reserved constant (5 = 0b101).
+    let bits = bv.debug_bits(five).expect("sum must be blasted").to_vec();
+    assert_eq!(bits.len(), 8);
+    for (i, bit) in bits.iter().enumerate() {
+        let want = (5u64 >> i) & 1 == 1;
+        assert_eq!(
+            bv.const_bit_value(*bit),
+            Some(want),
+            "bit {i} of 2+3 must be the reserved constant {want}"
+        );
+    }
+}
+
+/// The same chain through a subtraction and a bitwise op, checked against
+/// exact arithmetic — the semantics must be untouched by the canonicalization.
+#[test]
+fn unified_const_chain_preserves_semantics() {
+    use nixie_sat::Solver as SatSolver;
+    // (0xF0 - 0x23) & 0x23 = 0xCD & 0x23 = 0x01: the core must accept the
+    // correct constant and refute a neighbouring one.
+    let build = |claim: u64| {
+        let (a, b, s, m, k) = (
+            nixie_core::ast::TermId::new(11),
+            nixie_core::ast::TermId::new(12),
+            nixie_core::ast::TermId::new(13),
+            nixie_core::ast::TermId::new(14),
+            nixie_core::ast::TermId::new(15),
+        );
+        let mut bv = super::BvSolver::new();
+        bv.enable_const_flow_for_test();
+        bv.enter_unified();
+        let mut sat = SatSolver::new();
+        bv.build_with(&mut sat, |bv| {
+            assert!(bv.assert_const(a, 0xF0, 8));
+            assert!(bv.assert_const(b, 0x23, 8));
+            assert!(bv.bv_sub(s, a, b));
+            assert!(bv.bv_and(m, s, b));
+            assert!(bv.assert_const(k, claim, 8));
+            assert!(bv.assert_eq(m, k));
+        });
+        let mut dummy = SatSolver::new();
+        core::mem::swap(&mut sat, &mut dummy);
+        dummy.solve()
+    };
+    assert_eq!(build(0x01), nixie_sat::SolverResult::Sat);
+    assert_eq!(build(0x02), nixie_sat::SolverResult::Unsat);
+}
+
+/// Embedded (lazy) path must be untouched: constant operation results stay
+/// fresh pinned variables there, exactly as before the change (the pins are
+/// scoped to the embedded assertion level and must not be canonicalized).
+#[test]
+fn embedded_const_results_stay_pinned_variables() {
+    let mut bv = super::BvSolver::new();
+    let two = nixie_core::ast::TermId::new(1);
+    let three = nixie_core::ast::TermId::new(2);
+    let five = nixie_core::ast::TermId::new(3);
+    assert!(bv.assert_const(two, 2, 8));
+    assert!(bv.assert_const(three, 3, 8));
+    assert!(bv.bv_add(five, two, three));
+    // Bits exist as *pinned fresh variables* — not the reserved constants —
+    // and the embedded solver agrees the sum is exactly 5: asserting 6
+    // instead is unsat.
+    let bits = bv.debug_bits(five).expect("sum must be blasted").to_vec();
+    assert!(bits.iter().all(|b| bv.const_bit_value(*b).is_none()));
+    let six = nixie_core::ast::TermId::new(4);
+    assert!(bv.assert_const(six, 6, 8));
+    assert!(
+        !bv.assert_eq(five, six) || {
+            // assert_eq returns true after emitting the (refuting) clauses; the
+            // contradiction must show up at the next check.
+            matches!(bv.check_embedded_for_test(), nixie_sat::SolverResult::Unsat)
+        }
+    );
+}
+
+/// A constant shift amount over a constant value collapses through the
+/// signal-level barrel shifter: `0x80 >>l 4` is the constant `0x08`, and the
+/// overshift case (`>> 12` at width 8) is the constant 0.
+#[test]
+fn unified_const_shift_collapses_to_constants() {
+    use nixie_sat::Solver as SatSolver;
+    let mut bv = super::BvSolver::new();
+    bv.enable_const_flow_for_test();
+    bv.enter_unified();
+    let mut sat = SatSolver::new();
+    let val = nixie_core::ast::TermId::new(1);
+    let amt = nixie_core::ast::TermId::new(2);
+    let res = nixie_core::ast::TermId::new(3);
+    let res2 = nixie_core::ast::TermId::new(4);
+    bv.build_with(&mut sat, |bv| {
+        assert!(bv.assert_const(val, 0x80, 8));
+        assert!(bv.assert_const(amt, 4, 8));
+        assert!(bv.bv_lshr(res, val, amt));
+        assert!(bv.assert_const(amt2(), 12, 8));
+        assert!(bv.bv_lshr(res2, val, amt2()));
+    });
+    for (i, bit) in bv.debug_bits(res).unwrap().iter().enumerate() {
+        let want = (0x08u64 >> i) & 1 == 1;
+        assert_eq!(bv.const_bit_value(*bit), Some(want), "lshr bit {i}");
+    }
+    for bit in bv.debug_bits(res2).unwrap() {
+        assert_eq!(bv.const_bit_value(*bit), Some(false), "overshift bit");
+    }
+}
+
+/// Test helper: the TermId used for the second (overshift) amount above.
+fn amt2() -> nixie_core::ast::TermId {
+    nixie_core::ast::TermId::new(5)
+}
