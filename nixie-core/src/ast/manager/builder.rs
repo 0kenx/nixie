@@ -1806,25 +1806,93 @@ impl TermManager {
     ///
     /// Folds two literals, including the **total** division-by-zero case
     /// `(bvudiv s (_ bv0 m))` = all ones.
+    /// Create an unsigned bit vector division.
+    ///
+    /// Besides folding two literals (the total `bvudiv` semantics), the
+    /// **constant-divisor identities** of Z3's `bv_rewriter::mk_bv_udiv_core`
+    /// fire here so every layer (parser, preprocessing, rewriting) sees the
+    /// already-collapsed form:
+    ///
+    /// * `x udiv 0` → all-ones (SMT-LIB hardware reading, matching
+    ///   [`bv_fold::bv_udiv`]'s constant case);
+    /// * `x udiv 1` → `x`;
+    /// * `x udiv 2^k` → `x >>l k` — the rule that collapses the
+    ///   quantization chains (`Sydr/cjpeg`: JPEG dequantization by powers
+    ///   of two, where the width-64 divider networks were the entire
+    ///   circuit budget) into a wire permutation with no divider at all.
     pub fn mk_bv_udiv(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if let Some(width) = self.bv_binop_width(lhs, rhs)
             && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
         {
             return self.mk_bitvec(bv_fold::bv_udiv(&lhs_value, &rhs_value, width), width);
         }
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some(c) = self.bv_const_unsigned(rhs, width)
+        {
+            if c == BigInt::ZERO {
+                // x udiv 0 = all ones.
+                let ones = (BigInt::from(2u8).pow(width) - BigInt::from(1u8));
+                return self.mk_bitvec(ones, width);
+            }
+            if c == BigInt::from(1u8) {
+                return lhs;
+            }
+            if let Some(shift) = Self::power_of_two_exponent(&c, width) {
+                let dist = self.mk_bitvec(BigInt::from(shift), width);
+                return self.mk_bv_lshr(lhs, dist);
+            }
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvUdiv(lhs, rhs), sort)
+    }
+
+    /// Exponent `k` when `c` is a power of two with `1 <= 2^k < 2^width`
+    /// (`k < width`; `2^width` itself is out of range after constant
+    /// normalization).  `None` for non-powers, zero, and one (a shift by 0
+    /// would be the identity and is handled by the callers).
+    fn power_of_two_exponent(c: &BigInt, width: u32) -> Option<u32> {
+        debug_assert!(*c != BigInt::ZERO);
+        if *c == BigInt::from(1u8) {
+            return None;
+        }
+        let bits = c.bits();
+        let candidate = BigInt::from(1u8) << (bits - 1) as usize;
+        if *c == candidate && bits > 1 && bits - 1 < u64::from(width) {
+            Some(bits as u32 - 1)
+        } else {
+            None
+        }
     }
 
     /// Create a signed bit vector division.
     ///
     /// Folds two literals, including the **total** division-by-zero case
     /// `(bvsdiv s (_ bv0 m))` = `-1` for non-negative `s` and `1` otherwise.
+    /// For a symbolic dividend the divisor identities of Z3's
+    /// `mk_bv_sdiv_core` fire: `x sdiv 1 = x` and `x sdiv 0 =
+    /// ite(x <s 0, 1, all-ones)` (the same total semantics the constant
+    /// folder applies).
     pub fn mk_bv_sdiv(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if let Some(width) = self.bv_binop_width(lhs, rhs)
             && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
         {
             return self.mk_bitvec(bv_fold::bv_sdiv(&lhs_value, &rhs_value, width), width);
+        }
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some(c) = self.bv_const_unsigned(rhs, width)
+        {
+            if c == BigInt::ZERO {
+                // x sdiv 0 = ite(x <s 0, 1, all-ones).
+                let one = self.mk_bitvec(1, width);
+                let ones = BigInt::from(2u8).pow(width) - BigInt::from(1u8);
+                let ones_term = self.mk_bitvec(ones, width);
+                let zero = self.mk_bitvec(0, width);
+                let negative = self.mk_bv_slt(lhs, zero);
+                return self.mk_ite(negative, one, ones_term);
+            }
+            if c == BigInt::from(1u8) {
+                return lhs;
+            }
         }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvSdiv(lhs, rhs), sort)
@@ -1840,6 +1908,24 @@ impl TermManager {
         {
             return self.mk_bitvec(bv_fold::bv_urem(&lhs_value, &rhs_value, width), width);
         }
+        // Constant-divisor identities (Z3 `mk_bv_urem_core`):
+        // `x urem 0 = x`, `x urem 1 = 0`, `x urem 2^k = x & (2^k - 1)`.
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some(c) = self.bv_const_unsigned(rhs, width)
+        {
+            if c == BigInt::ZERO {
+                return lhs;
+            }
+            if c == BigInt::from(1u8) {
+                return self.mk_bitvec(0, width);
+            }
+            if let Some(shift) = Self::power_of_two_exponent(&c, width) {
+                let mask = BigInt::from(1u8) << shift as usize;
+                let mask = mask - BigInt::from(1u8);
+                let mask_term = self.mk_bitvec(mask, width);
+                return self.mk_bv_and(lhs, mask_term);
+            }
+        }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvUrem(lhs, rhs), sort)
     }
@@ -1847,12 +1933,24 @@ impl TermManager {
     /// Create a signed bit vector remainder.
     ///
     /// Folds two literals, including the **total** remainder-by-zero case
-    /// `(bvsrem s (_ bv0 m))` = `s`.
+    /// `(bvsrem s (_ bv0 m))` = `s`; for a symbolic dividend the divisor
+    /// identities of Z3's `mk_bv_srem_core` fire: `x srem 1 = 0`,
+    /// `x srem 0 = x`.
     pub fn mk_bv_srem(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         if let Some(width) = self.bv_binop_width(lhs, rhs)
             && let Some((lhs_value, rhs_value)) = self.bv_const_pair(lhs, rhs, width)
         {
             return self.mk_bitvec(bv_fold::bv_srem(&lhs_value, &rhs_value, width), width);
+        }
+        if let Some(width) = self.bv_binop_width(lhs, rhs)
+            && let Some(c) = self.bv_const_unsigned(rhs, width)
+        {
+            if c == BigInt::ZERO {
+                return lhs;
+            }
+            if c == BigInt::from(1u8) {
+                return self.mk_bitvec(0, width);
+            }
         }
         let sort = self.get(lhs).map_or(self.sorts.bool_sort, |t| t.sort);
         self.intern(TermKind::BvSrem(lhs, rhs), sort)
