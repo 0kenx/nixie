@@ -77,7 +77,23 @@ suspect: the bit-blaster's concat/extract encoders, or a >64-bit-width
 assumption in a rule interaction) and moves to n-ary concat piece lists
 — the binary-spine seam splits are what keep bitrev0512+ from closing.
 
-## Tier B (the real remaining gap, ~27 files)
+## Tier B triage (2026-09-10 night session)
+
+The near-misses (solved 30-47 s against the 25 s cap: `maxandminor016`
+30 s, `bv-term-small-rw_1300` 34 s, `ex7_prime` 41 s — unified path
+fastest on all three) need ~2x search speed, not routing.  BuchwaldFried
+needs z3's propagate-values/solve-eqs rewrite chain (the screened-out
+structural family).  `smulov1bw12` is resolution-hard for our CNF (kissat
+needs 31 s; z3's own encoding+inprocessing wins 40x) — an encoding-level
+problem.  **Routing is ruled out as a lever**: the wide-`bvmul` flag that
+should divert mul-heavy goals to the eager CEGAR dispatch has been dead
+since stage 4 (its only setter cannot fire on well-typed input), and
+reviving it measured −6 files (see
+`docs/studies/2026-09-10-wide-mul-routing-flag.md`).  The remaining
+Sydr/s3_clnt/spear cluster needs the CEGAR refinement tiers or the
+unified path's word-level reasoning improved *in place*.
+
+## Tier B (the original framing)
 
 Search-class losses where z3 needs 1–24 s: `Sydr/master/cjpeg`
 predicates (5 — bvmul CEGAR territory), `bmc-bv-svcomp14/s3_clnt*` (4),
