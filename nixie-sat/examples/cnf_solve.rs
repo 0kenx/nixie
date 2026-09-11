@@ -596,16 +596,21 @@ fn main() {
     };
 
     // Portfolio mode (see module docs).
-    let parse_arm = |t: &str| -> (Option<u64>, bool, bool) {
+    // Arm tuple: (seed, chrono, els, maxgap).  `maxgap-<n>[:<seed>]`
+    // carries the max-gap restart floor as a per-arm config (the corpus
+    // flip failed the solved-at-cap bar, the portfolio conversion is the
+    // studied exit — 2026-09-07 campaign, T1/max-gap follow-up).
+    #[allow(clippy::type_complexity)]
+    let parse_arm = |t: &str| -> (Option<u64>, bool, bool, Option<u64>) {
         let t = t.trim();
         if t.is_empty() || t == "default" {
-            return (None, false, false);
+            return (None, false, false, None);
         }
         if let Some(rest) = t.strip_prefix("chrono") {
             let seed = rest
                 .strip_prefix(':')
                 .and_then(|s| s.trim().parse::<u64>().ok());
-            return (seed, true, false);
+            return (seed, true, false, None);
         }
         if let Some(rest) = t.strip_prefix("els") {
             // ELS portfolio arm (2026-09-07 campaign, T3 portfolio
@@ -616,13 +621,27 @@ fn main() {
             let seed = rest
                 .strip_prefix(':')
                 .and_then(|s| s.trim().parse::<u64>().ok());
-            return (seed, false, true);
+            return (seed, false, true, None);
         }
-        (t.parse::<u64>().ok(), false, false)
+        if let Some(rest) = t.strip_prefix("maxgap-") {
+            // Max-gap restart floor arm: default config + a flat restart-gap
+            // floor at `n` conflicts.  `maxgap-1000` is the measured
+            // operating point (worker_550 2.18x, 6s167 0.99x).  Optional
+            // seed suffix after the floor: `maxgap-1000:3`.
+            let (gap_tok, seed) = match rest.split_once(':') {
+                Some((g, s)) => (g, s.trim().parse::<u64>().ok()),
+                None => (rest, None),
+            };
+            let gap = gap_tok.trim().parse::<u64>().ok().filter(|n| *n > 0);
+            if gap.is_some() {
+                return (seed, false, false, gap);
+            }
+        }
+        (t.parse::<u64>().ok(), false, false, None)
     };
-    let arms: Vec<(Option<u64>, bool, bool)> = match std::env::var("SEEDS") {
+    let arms: Vec<(Option<u64>, bool, bool, Option<u64>)> = match std::env::var("SEEDS") {
         Ok(v) if !v.trim().is_empty() => v.split(',').map(&parse_arm).collect(),
-        _ => vec![(None, false, false)],
+        _ => vec![(None, false, false, None)],
     };
     let arm_budgets: Vec<Option<u64>> = match std::env::var("ARM_CONFLICTS") {
         Ok(v) if v.contains(',') => v.split(',').map(|t| t.trim().parse().ok()).collect(),
@@ -638,7 +657,7 @@ fn main() {
     let maxc = env_u64_strict("MAXC");
     let env_seed = env_u64_strict("SEED");
 
-    for (arm, (seed_token, chrono, els_arm)) in arms.iter().enumerate() {
+    for (arm, (seed_token, chrono, els_arm, maxgap_arm)) in arms.iter().enumerate() {
         let mut arm_config = config.clone();
         if *chrono {
             arm_config.chrono_reuse = true;
@@ -646,6 +665,9 @@ fn main() {
         }
         if *els_arm {
             arm_config.enable_equiv_substitution = true;
+        }
+        if let Some(gap) = *maxgap_arm {
+            arm_config.restart_maxgap = Some(gap);
         }
         let mut solver = Solver::with_config(arm_config);
         if let Some(n) = maxc {

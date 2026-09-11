@@ -99,6 +99,7 @@ impl ConfigPreset {
     /// - LRB branching heuristic
     fn industrial_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -162,6 +163,7 @@ impl ConfigPreset {
     /// - Higher random polarity
     fn random_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -225,6 +227,7 @@ impl ConfigPreset {
     /// - Heavy clause minimization
     fn cryptographic_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -288,6 +291,7 @@ impl ConfigPreset {
     /// - Frequent restarts
     fn hardware_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -351,6 +355,7 @@ impl ConfigPreset {
     /// - Less preprocessing
     fn aggressive_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -414,6 +419,7 @@ impl ConfigPreset {
     /// - Extensive preprocessing
     fn conservative_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -473,6 +479,7 @@ impl ConfigPreset {
     /// Based on Glucose SAT solver parameters
     fn glucose_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -532,6 +539,7 @@ impl ConfigPreset {
     /// Based on classic MiniSAT parameters
     fn minisat_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -591,6 +599,7 @@ impl ConfigPreset {
     /// Based on CaDiCaL SAT solver parameters
     fn cadical_config() -> SolverConfig {
         SolverConfig {
+            restart_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,

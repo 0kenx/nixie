@@ -628,6 +628,16 @@ pub struct SolverConfig {
     /// docs/studies/2026-08-chronoreusetrail-rejected.md.  Revisit with a
     /// full multi-seed study before flipping.
     pub chrono_reuse: bool,
+    /// Per-solver max-gap restart floor (the portfolio arm's config-level
+    /// form of `NIXIE_RESTART_MAXGAP`; `None` = off).  Fires a focused
+    /// restart whenever the gap since the last restart reaches this many
+    /// conflicts — the flat MiniSAT-lineage floor whose measured operating
+    /// point is 1000 (tail geomean 1.46×, worker_550 2.18× 10/10, 6s167
+    /// 0.99×; 2026-09-07 campaign max-gap matrix).  A default flip failed
+    /// the solved-at-cap bar corpus-wide, so this stays per-arm /
+    /// env-gated; the config field exists so portfolio arms can carry it
+    /// without process-global env.
+    pub restart_maxgap: Option<u64>,
     /// Late-enable gate for `chrono_reuse` (cadical `chronoreusetrail`):
     /// reuse stops fire only once the search has seen this many conflicts.
     /// **Measured dead as a default** (standing-gap study, 2026-08-21):
@@ -896,6 +906,7 @@ impl Default for SolverConfig {
             enable_chronological_backtrack: true,
             chrono_always: std::env::var("NIXIE_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
             chrono_reuse: std::env::var("NIXIE_CHRONO_REUSE").is_ok_and(|v| v == "1"),
+            restart_maxgap: None,
             chrono_reuse_after: 0,
             chrono_backtrack_threshold: 100,
             luby_cap: 64,

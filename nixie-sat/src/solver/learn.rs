@@ -1667,7 +1667,11 @@ impl Solver {
         // the restart gap, independent of any EMA. Checked before the
         // stall trigger so the two arms compose predictably when both are
         // set (the tighter bound wins).
-        let stall_restart = crate::restart_maxgap().is_some_and(|n| gap >= n)
+        // Config field (portfolio arm) wins; the process-global env is the
+        // fallback. Both unset (the default) leaves the trigger inert —
+        // bit-identical to the pre-field behaviour.
+        let maxgap = self.config.restart_maxgap.or_else(crate::restart_maxgap);
+        let stall_restart = maxgap.is_some_and(|n| gap >= n)
             || stall_k.is_some_and(|k| {
                 // Null arm: threshold from the scrambled-history EMA (same gap
                 // magnitudes, no stall information); treatment: the real one.
