@@ -61,6 +61,9 @@ pub struct BoolIr {
     nodes: Vec<IrNode>,
     /// Hash-cons table: node → index.
     table: FxHashMap<IrNode, u32>,
+    /// Gate-construction requests (activity study: requests vs allocated
+    /// nodes measures the sharing the layer actually achieved).
+    pub requests: u64,
     /// Vars pinned to a constant after blasting (`refold_consts` input):
     /// var → its forced truth value.
     pinned: FxHashMap<Var, bool>,
@@ -99,6 +102,7 @@ impl BoolIr {
         let mut ir = Self {
             nodes: Vec::new(),
             table: FxHashMap::default(),
+            requests: 0,
             pinned: FxHashMap::default(),
             folded: FxHashMap::default(),
         };
@@ -157,6 +161,7 @@ impl BoolIr {
 
     /// `and(a, b)` with construction-time folding and canonicalization.
     pub fn and(&mut self, a: u32, b: u32) -> u32 {
+        self.requests += 1;
         let (a, b) = (self.canonical(a), self.canonical(b));
         if a == lit::FALSE || b == lit::FALSE {
             return lit::FALSE;
@@ -185,6 +190,7 @@ impl BoolIr {
 
     /// `xor(a, b)` with folding: xor(x, ¬y) = ¬xor(x, y).
     pub fn xor(&mut self, a: u32, b: u32) -> u32 {
+        self.requests += 1;
         let (a, b) = (self.canonical(a), self.canonical(b));
         if a == lit::FALSE {
             return b;

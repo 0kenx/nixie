@@ -474,3 +474,29 @@ removes branchable Tseitin variables that refutation never needed but
 model-finding exploited.  A gate on that observation needs a blast-time
 predictor (no verdict exists yet at blast time), so it stays a study
 hypothesis; the corpus decision remains default-off.
+
+## Gate study (2026-09-12, evening): no blast-time separator — recorded negative
+
+Question: can a blast-time observable gate `NIXIE_BV_IR` so the 17 A/B
+movers' gains fire and losses don't?  Instrumented `materialize_ir`
+(`NIXIE_BV_IR_STATS=1`): defs materialized, allocated nodes, gate
+requests, **sharing %** (requests − nodes / requests), **pins** (level-0
+constants seeded into the re-fold).
+
+**Movers**: gains cluster on high activity (ex7_prime 62.9 % sharing;
+bitrev1024 16 388 pins; mcm/87 62.9 %) and losses on low (catchconv
+0 %, simple_processor 0 %) — but lfsr gains at 0 %/0 pins, and
+VS3-A7 (12.5 %), mcm/54 (36.7 %) and maxxor016 (240 pins) lose at
+moderate activity.  No single threshold.
+
+**Decisive check — 40 random *stable* files** (cells that did not move):
+their activity spans the winners' entire range (`smulov2bw256` 33.3 %
+sharing, `rubik/6moves` 32.3 %, `ex34` 38.8 %, string-matching 64 % —
+all stable at winner-level activity).  Activity does not predict
+benefit; a gate on it fires broadly and reproduces the wash, losses
+included.
+
+The only clean separator remains the verdict itself (gains-on-unsat /
+losses-on-sat) — not computable at blast time.  **Default stays off.**
+The instrumentation is kept (`NIXIE_BV_IR_STATS=1`, two counter lines)
+so the next gate idea re-runs this study in minutes.

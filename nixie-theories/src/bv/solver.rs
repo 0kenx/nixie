@@ -2677,6 +2677,22 @@ impl BvSolver {
                     .add_clause([if val { Lit::pos(v) } else { Lit::neg(v) }]);
             }
         }
+        let defs_len = self.ir_defs.len();
+        // Activity diagnostics for the gate study: sharing = gate requests
+        // minus allocated nodes over requests; pins = constants seeded
+        // from level-0 units (the fold fixpoint's input).
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_BV_IR_STATS").is_ok() {
+            let (req, nodes) = match self.ir.as_ref() {
+                Some(ir) => (ir.requests, ir.len()),
+                None => (0, 0),
+            };
+            eprintln!(
+                "[ir-stats] defs={defs_len} nodes={nodes} req={req} sharing={:.1}% pins={}",
+                100.0 * (req.saturating_sub(nodes as u64)) as f64 / req.max(1) as f64,
+                seeded_pins.len()
+            );
+        }
         self.ir_defs.clear();
         self.ir_defs_journal.clear();
         // Snapshots consumed: drop the pins and folds so no later scope
