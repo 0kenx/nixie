@@ -215,3 +215,39 @@ Four of the remaining gap cells (`maxandminor016`, `bitrev2048`,
   principled fix is parser-level macro handling — a well-scoped project,
   not a patch), and `maxandminor016`/`bitrev2048`/`ex7_prime`/`rubik`
   (IR-gated; see above).
+
+## Follow-up (2026-09-12, morning): the multiplier cluster scoped — two findings, one open
+
+The remaining `2017-BuchwaldFried/Mul32·Mulh_u32` cell (z3 0.07 s) is a
+  **structural-sharing** case, and the mechanism is now measured
+  end-to-end:
+
+1. z3 closes it *pre-SAT*: `(then … bit-blast simplify)` reduces the
+   goal to `(goal false)` — the two sides (high-half of a 96-bit mul of
+   zero-extended operands vs a 64-bit mul of the same operands) blast to
+   expression DAGs whose partial products hash-cons together, and the
+   equality folds.
+2. Our cascade already normalizes both sides to *identical shapes*
+   (same operand terms, same bvor masks) — `NIXIE_BV_DUMP_PRE` shows it.
+   A micro-reproducer of the exact shape (mul-of-zeroext × mul-of-
+   zeroext, `concat`-spelled, with extract-of-bvor operands) closes in
+   **0.022 s with `NIXIE_BV_IR=1`** (sharing 49.4 %) and times out with
+   IR=0 — the IR layer reproduces z3's mechanism exactly.
+3. The real file does **not** close under IR=1 on the default route —
+   because the unified path materializes the IR **five times** (window
+   closes between assert-link rounds; `[ir-stats]` shows one round at
+   0.0 % sharing), and eras do not share across materializations.  With
+   `NIXIE_BV_DISPATCH_UNIFIED=0 NIXIE_BV_IR=1` (one embedded
+   materialization) the real file closes in **0.025 s**.
+
+So the lever is *not* a new multiplier encoding — it is cross-round IR
+  sharing on the unified path (or a routing gate that sends
+  shared-mul goals to the eager one-shot blast).  Both are architectural;
+  with the IR layer default-off (this session's re-screen: 285 vs 301),
+  neither is actionable until an IR gate exists.  `smulov1bw12` (z3
+  6.69 s, genuine search) remains the separate partial-product encoding
+  item, untouched.
+
+Micro-reproducers: `/tmp` scratch lost — regenerate with
+  `mulshare*.smt2` shapes above (two zero-extended muls, extract-high
+  equality; each is ~6 lines).
