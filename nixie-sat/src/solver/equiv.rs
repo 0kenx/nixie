@@ -197,6 +197,18 @@ impl Solver {
         let mut new_units: SmallVec<[Lit; 64]> = SmallVec::new();
         let mut eliminated = 0usize;
 
+        // Reusable per-clause buffers (perf, 2026-09-11): this loop is one
+        // pass over every live clause per substitution round, and the
+        // per-iteration `SmallVec` collect plus `Vec::with_capacity` were
+        // two heap allocations per clause — on wide-uniform formulas
+        // (si2-b03m: 600k clauses × width 20, the SmallVec also spills its
+        // inline 8) that is >1 M malloc/free pairs per round and showed up
+        // as the `_int_malloc`/`realloc`/`memmove` cluster under `perf
+        // record`. Clear-and-refill keeps contents and processing order
+        // bit-identical; only allocation identity changes.
+        let mut mapped: SmallVec<[Lit; 8]> = SmallVec::new();
+        let mut lits: Vec<Lit> = Vec::new();
+
         for cid in live_ids {
             // Rewrite semantics follow cadical `decompose.cpp` exactly:
             // evaluate every literal (and its representative) against the
@@ -222,16 +234,20 @@ impl Solver {
             // `enable_equiv_substitution` returned Unknown via
             // `trail_falsifies_live_clause`; debug invariant:
             // `check_unit_propagation_complete` hanging-unit violations).
-            let mapped: SmallVec<[Lit; 8]> = match self.clauses.get(cid) {
-                Some(c) if !c.deleted => c.lits.iter().map(|&l| sub[l.code() as usize]).collect(),
-                _ => continue,
-            };
+            mapped.clear();
+            if let Some(c) = self.clauses.get(cid)
+                && !c.deleted
+            {
+                mapped.extend(c.lits.iter().map(|&l| sub[l.code() as usize]));
+            } else {
+                continue;
+            }
             if mapped.is_empty() {
                 continue;
             }
 
             let mut satisfied = false;
-            let mut lits: Vec<Lit> = Vec::with_capacity(mapped.len());
+            lits.clear();
             'lits: for &l in &mapped {
                 match self.trail.lit_value(l) {
                     LBool::True => {
