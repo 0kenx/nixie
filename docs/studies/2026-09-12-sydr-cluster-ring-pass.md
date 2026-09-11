@@ -160,10 +160,11 @@ Cluster state at close (all z3-consistent, serial pinned):
 
 The two remaining s3_clnt cells now reach the search with the right
 structure; their gap to z3 is search speed — a different work item from
-ingestion.  `maxandminor032`: decided `unsat` with `NIXIE_BV_IR=1` in
-~17 min under load (016: 16 s) — the family scales past the 25 s cap;
-the next width rung needs the IR layer default-on or further cascade
-work, not a new mechanism.
+ingestion.  `maxandminor032`: decided `unsat` with `NIXIE_BV_IR=1` in **~870 s at
+settled load** (serial, pinned; 008: 0.5 s, 016: 16 s — ~55× per width
+doubling at the top rung) — the family scales far past the 25 s cap;
+the next width rung needs either the IR layer default-on (this session's
+re-screen says no) or further cascade work, not a new mechanism.
 
 ### The goal2smt verdict-flip artifact — recorded for the next session
 
