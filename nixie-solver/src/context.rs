@@ -138,6 +138,17 @@ pub struct Context {
     const_stack: Vec<usize>,
     /// Mapping from constant names to indices (for efficient removal)
     const_name_to_index: crate::prelude::HashMap<String, usize>,
+    /// Nullary `define-fun` aliases `(named constant, defining body)`.  The
+    /// parser inlines every in-script use of the name as the body, so these
+    /// add no constraint; they exist so `(get-model)` lists the name with
+    /// its defined value (resolved under the current model at each `sat`
+    /// verdict — see [`Self::resolve_define_fun_aliases`]).
+    define_fun_aliases: Vec<(TermId, TermId)>,
+    /// Body values of [`Self::define_fun_aliases`] under the model of the
+    /// most recent `sat` verdict (`TermId`s of closed constants; cleared on
+    /// every check).  Entries exist only where the evaluation reduced to a
+    /// constant — an unevaluable body keeps the default listing.
+    alias_model_values: crate::prelude::FxHashMap<TermId, TermId>,
     /// Declared functions
     declared_funs: Vec<DeclaredFun>,
     /// Declared functions stack for push/pop
@@ -195,6 +206,8 @@ impl Context {
             declared_consts: Vec::new(),
             const_stack: Vec::new(),
             const_name_to_index: crate::prelude::HashMap::new(),
+            define_fun_aliases: Vec::new(),
+            alias_model_values: crate::prelude::FxHashMap::default(),
             declared_funs: Vec::new(),
             fun_stack: Vec::new(),
             fun_name_to_index: crate::prelude::HashMap::new(),
@@ -459,6 +472,11 @@ impl Context {
             self.check_sat_recfun()
         };
 
+        // Resolve nullary define-fun aliases under the fresh model so the
+        // `sat` verdict's `(get-model)` lists each name at its defined
+        // value (see `Self::define_fun_aliases`).
+        self.resolve_define_fun_aliases(result);
+
         // A plain check-sat clears any assumption context from a prior
         // check-sat-assuming, so a following get-unsat-assumptions does not
         // report stale assumptions.
@@ -477,6 +495,69 @@ impl Context {
         }
 
         result
+    }
+
+    /// Evaluate every nullary `define-fun` body under the model of a fresh
+    /// `sat` verdict, recording closed values for `get-model` listing
+    /// ([`Self::define_fun_aliases`]).  Non-`sat` verdicts clear the table
+    /// (their models are stale); a body the evaluator cannot reduce to a
+    /// constant is left out, so the listing falls back to the ordinary
+    /// completion arms instead of echoing the body.
+    fn resolve_define_fun_aliases(&mut self, result: SolverResult) {
+        self.alias_model_values.clear();
+        if result != SolverResult::Sat || self.define_fun_aliases.is_empty() {
+            return;
+        }
+        // Owned model: `Model::eval` takes `&mut TermManager` (see
+        // `format_get_value` for the same borrow dance).
+        let Some(model) = self.solver.model().cloned() else {
+            // An empty assertion stack solves `sat` without building a
+            // model; bodies then evaluate under the sort-default completion
+            // (`Model::new`), which `Model::eval` applies to free constants.
+            if self.assertions.is_empty() {
+                let empty = crate::solver::Model::new();
+                self.eval_alias_bodies(&empty);
+            }
+            return;
+        };
+        self.eval_alias_bodies(&model);
+    }
+
+    fn eval_alias_bodies(&mut self, model: &crate::solver::Model) {
+        let aliases = std::mem::take(&mut self.define_fun_aliases);
+        for (name, body) in &aliases {
+            // Substitute the model's assignments for the body's free
+            // variables, then fold (`Model::eval` has no bit-vector operator
+            // arms, so compound BV bodies would echo unreduced through it —
+            // the same reason `get-value` substitutes first).  A body whose
+            // variables are not all pinned stays open and is skipped.
+            let mut vars = nixie_core::ast::traversal::collect_free_vars(*body, &self.terms);
+            let map: crate::prelude::FxHashMap<TermId, TermId> = vars
+                .drain()
+                .filter_map(|v| model.get(v).map(|val| (v, val)))
+                .collect();
+            let substituted = if map.is_empty() {
+                *body
+            } else {
+                self.terms.substitute(*body, &map)
+            };
+            let simplified = self.terms.simplify(substituted);
+            // Keep only real values: a constant body (whose evaluation is
+            // itself) is a perfectly good value, while a body still
+            // mentioning free variables is neither a value nor honest to
+            // echo — the listing then falls back to the ordinary completion
+            // arms.
+            if self.is_closed_constant(simplified) {
+                self.alias_model_values.insert(*name, simplified);
+            }
+        }
+        self.define_fun_aliases = aliases;
+    }
+
+    /// Whether `term` is a constant leaf (no free variables) — the only
+    /// shape admissible as a `get-model` value.
+    fn is_closed_constant(&self, term: TermId) -> bool {
+        nixie_core::ast::traversal::collect_free_vars(term, &self.terms).is_empty()
     }
 
     /// Serialise a proof log entry for the given result.
@@ -658,6 +739,8 @@ impl Context {
         self.declared_consts.clear();
         self.const_stack.clear();
         self.const_name_to_index.clear();
+        self.define_fun_aliases.clear();
+        self.alias_model_values.clear();
         self.declared_funs.clear();
         self.fun_stack.clear();
         self.fun_name_to_index.clear();
@@ -1413,6 +1496,9 @@ impl Context {
                     {
                         result = SolverResult::Unknown;
                     }
+                    // Same alias resolution as `check_sat` (assumption-guarded
+                    // models serve `get-model` identically).
+                    self.resolve_define_fun_aliases(result);
                     self.last_result = Some(result);
                     output.push(match result {
                         SolverResult::Sat => "sat".to_string(),
@@ -1525,19 +1611,27 @@ impl Context {
                     if params.is_empty() {
                         // The parser already inlined every in-script
                         // reference to `name` directly as `body` (see
-                        // `nixie_core`'s `define-fun` handling), so this
-                        // doesn't change what gets solved. Declaring a real
-                        // constant provably equal to `body` -- rather than
-                        // doing nothing -- makes `name` show up correctly
-                        // (with its actual value) in `get-model`/`get-value`
-                        // output instead of silently vanishing, without
-                        // introducing any constraint that could change
-                        // satisfiability (the equality is trivially
-                        // satisfiable for any assignment to `body`'s free
-                        // variables).
+                        // `nixie_core`'s `define-fun` handling), so the
+                        // definition adds no constraint — z3 treats nullary
+                        // `define-fun` as a pure macro.  The historical
+                        // implementation asserted `(= name body)` here so the
+                        // name would appear in `get-model`; on macro-heavy
+                        // inputs (the `goto_symex`/Sydr files declare tens
+                        // of thousands of nullary definitions, each body
+                        // referencing earlier bodies) that ran the full
+                        // per-assert preprocessing+blasting pipeline over
+                        // every chained body — quadratic ingestion — and
+                        // left the unified core carrying tens of thousands
+                        // of definitional clauses the search never needed.
+                        // Instead: declare the constant (so introspection
+                        // and `get-model` still list it), record the alias
+                        // for model resolution, and keep the solver-side
+                        // unit-eq alias (define-fun bodies fold to their
+                        // named representative) without asserting anything.
                         let const_term = self.declare_const(&name, sort);
-                        let eq = self.terms.mk_eq(const_term, body);
-                        self.assert(eq);
+                        self.solver
+                            .note_define_fun_alias(const_term, body, &mut self.terms);
+                        self.define_fun_aliases.push((const_term, body));
                     } else {
                         // Functions with parameters are macros: call sites
                         // are meant to be substituted with `body` at parse

@@ -263,6 +263,12 @@ impl Context {
             // number satisfying none of its assertions.
             let value = if let Some(exact) = self.solver.nl_algebraic_value(decl.term) {
                 render_nl_witness_value(exact)
+            } else if let Some(defined) = self.alias_model_values.get(&decl.term) {
+                // A nullary `define-fun`: its named constant carries no
+                // constraint (the parser inlined every use), so the value is
+                // the defining body evaluated under this model at the
+                // `sat` verdict (`Context::resolve_define_fun_aliases`).
+                self.format_value(*defined)
             } else if let Some(val) = solver_model.get(decl.term) {
                 self.format_value(val)
             } else if self.is_uninterpreted_sort(decl.sort) {

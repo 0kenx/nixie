@@ -193,6 +193,18 @@ pub struct Solver {
     pub(super) logic: Option<String>,
     /// Assertions
     pub(super) assertions: Vec<TermId>,
+    /// Nullary `define-fun` equations `(= name body)` (script order).  They
+    /// are *not* real assertions — the parser inlines every use of `name`,
+    /// so the equation is definitionally satisfiable and asserting it ran
+    /// the full per-assert encode/blast pipeline over every chained body
+    /// (quadratic on macro-heavy inputs).  [`Self::bv_preprocess_assertions`]
+    /// seeds them into its working set so `solve_equations` substitutes the
+    /// definitions exactly as the historical asserted form did — keeping
+    /// bodies short for the cascade (the `challenge/integerOverflow` class:
+    /// an inlined `sign_extend` is a concat tree the cascade cannot fold,
+    /// the named definition substitutes in one step) — while nothing
+    /// downstream ever encodes or blasts them.
+    pub(super) define_fun_equations: Vec<TermId>,
     /// Untouched caller assertions used only by the independent certificate gate.
     pub(super) certificate_assertions: Vec<TermId>,
     /// Named assertions for unsat core tracking
@@ -261,8 +273,11 @@ pub struct Solver {
     /// assertion count it was computed at (see
     /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
     /// count can never alias a different assertion set.
-    pub(super) bv_preprocess_cache:
-        Option<(usize, crate::solver::bv_preprocess::PreprocessOutcome)>,
+    pub(super) bv_preprocess_cache: Option<(
+        usize,
+        usize,
+        crate::solver::bv_preprocess::PreprocessOutcome,
+    )>,
     /// Whether a UF application returning a bit-vector (including datatype
     /// selectors over BV carriers) has been seen.  Sticky input to the
     /// unified-blasting gate: congruence merges of such applications cannot
@@ -786,6 +801,22 @@ impl Drop for DeadlineGuard {
 }
 
 impl Solver {
+    /// Record a nullary `define-fun` alias (`name ≡ body`) for the solver's
+    /// unit-equality representative machinery, without asserting anything.
+    ///
+    /// The Context no longer asserts `(= name body)` (quadratic ingestion on
+    /// macro-heavy inputs; the equality is definitionally satisfiable and the
+    /// parser inlines every use), but the unit-equality representative
+    /// fold (`fold_unit_eq_reps`) still
+    /// wants later assertions that carry the raw `body` DAG to fold onto the
+    /// named representative — this feeds it exactly the entry the asserted
+    /// equality used to produce.
+    pub fn note_define_fun_alias(&mut self, name: TermId, body: TermId, manager: &mut TermManager) {
+        let eq = manager.mk_eq(name, body);
+        self.note_unit_eq_alias(eq, manager);
+        self.define_fun_equations.push(eq);
+    }
+
     /// Create a new solver
     #[must_use]
     pub fn new() -> Self {
@@ -901,6 +932,7 @@ impl Solver {
             var_to_parsed_arith: FxHashMap::default(),
             logic: None,
             assertions: Vec::new(),
+            define_fun_equations: Vec::new(),
             certificate_assertions: Vec::new(),
             named_assertions: Vec::new(),
             assumption_vars: FxHashMap::default(),
@@ -4235,6 +4267,7 @@ impl Solver {
         self.var_to_constraint.clear();
         self.var_to_parsed_arith.clear();
         self.assertions.clear();
+        self.define_fun_equations.clear();
         self.certificate_assertions.clear();
         self.named_assertions.clear();
         self.invalidate_results();

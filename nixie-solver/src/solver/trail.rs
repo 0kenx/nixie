@@ -196,6 +196,8 @@ impl super::Solver {
             // re-runs an idempotent (implied-clause) pass.
             bv_preprocess_cache: _, // NOT trailed: `push`/`pop` clear it, so
             // a stale value cannot outlive its scope's assertions.
+            define_fun_equations: _, // NOT trailed: script-level (SMT-LIB
+            // definitions persist across push/pop); cleared on `reset`.
             has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
             // conservative direction (keeps the dispatch).
             bv_elim_var_occurrences: _, // NOT trailed: routing hint only;

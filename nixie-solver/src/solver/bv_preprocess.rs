@@ -1399,17 +1399,19 @@ impl Solver {
         &mut self,
         manager: &mut TermManager,
     ) -> PreprocessOutcome {
-        // Memoize the outcome for the current assertion set: the eager
+        // Memoize the outcome for the current input set: the eager
         // dispatch computes it for its routing trial and — when it declines
         // in favor of the unified path — the stage-4 preprocessing-parity
         // pass used to recompute the identical outcome from scratch (on the
         // Sydr predicate files, seconds of duplicated ring elimination),
         // and dispatch retries (`allow_elim=false`) likewise.  Fresh when
-        // the assertion count moved (assertions only grow between checks;
-        // push/pop/reset clear the cache below, so a count can never alias
-        // a *different* assertion set).
-        if let Some((count, cached)) = &self.bv_preprocess_cache
-            && *count == self.assertions.len()
+        // the assertion count *or* the define-equation count moved (a
+        // script may add definitions between checks without asserting);
+        // `push`/`pop`/`reset` clear the cache below, so a count can never
+        // alias a *different* input set.
+        if let Some((assert_count, def_count, cached)) = &self.bv_preprocess_cache
+            && *assert_count == self.assertions.len()
+            && *def_count == self.define_fun_equations.len()
         {
             return cached.clone();
         }
@@ -1417,7 +1419,21 @@ impl Solver {
         // (a top-level `and` of equations) or drop solved ones, and the
         // dispatch needs each surviving assertion's *original* for its
         // constraint-term bookkeeping (unsat cores name the user's input).
-        let mut pairs: Vec<(TermId, TermId)> = self.assertions.iter().map(|&a| (a, a)).collect();
+        // Nullary `define-fun` equations come first (script order): they
+        // are definitionally satisfiable and never user asserts, but
+        // `solve_equations` substitutes them into the real assertions —
+        // the named form keeps bodies short where parse-time inlining
+        // would expand (`sign_extend` → concat trees the cascade cannot
+        // fold; see `Self::define_fun_equations`).  The historical
+        // implementation carried these as real assertions, which also ran
+        // the full per-assert encode/blast pipeline over every chained
+        // body — quadratic on macro-heavy inputs.
+        let mut pairs: Vec<(TermId, TermId)> = self
+            .define_fun_equations
+            .iter()
+            .map(|&eq| (eq, eq))
+            .chain(self.assertions.iter().map(|&a| (a, a)))
+            .collect();
         let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
         let t0 = std::time::Instant::now();
         if tr {
@@ -1427,7 +1443,7 @@ impl Solver {
         if tr {
             eprintln!("[pre] stage1 normalize {:?}", t0.elapsed());
         }
-        let plain = solve_equations(&mut pairs, manager);
+        let plain = solve_equations(&mut pairs, self.define_fun_equations.len(), manager);
         if tr {
             eprintln!(
                 "[pre] stage2 solve_eqs {:?} plain={}",
@@ -1515,7 +1531,11 @@ impl Solver {
             origins,
             used_ring_elimination,
         };
-        self.bv_preprocess_cache = Some((self.assertions.len(), outcome.clone()));
+        self.bv_preprocess_cache = Some((
+            self.assertions.len(),
+            self.define_fun_equations.len(),
+            outcome.clone(),
+        ));
         outcome
     }
 
@@ -1636,6 +1656,7 @@ fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager
 /// at least one assertion, so the loop terminates.
 fn solve_equations(
     pairs: &mut Vec<(TermId, TermId)>,
+    n_define_pairs: usize,
     manager: &mut TermManager,
 ) -> Vec<(TermId, TermId)> {
     // Hard bound on outer rounds: each round drops ≥ 1 assertion, so this
@@ -1646,7 +1667,9 @@ fn solve_equations(
     // *before* it (or none), so replaying the list in order under a model
     // reconstructs every eliminated variable's value.
     let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
-    for _ in 0..MAX_ROUNDS {
+    for round in 0..MAX_ROUNDS {
+        let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
+        let rt0 = std::time::Instant::now();
         // ---- collect candidate definitions ----
         let mut defs: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
         let mut conflicted: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
@@ -1661,6 +1684,9 @@ fn solve_equations(
         }
         if defs.is_empty() {
             return eliminations;
+        }
+        if tr {
+            eprintln!("[eqs] round {} collect {:?}", round, rt0.elapsed());
         }
 
         // ---- Kahn resolution (occurrence-list worklist, linear in edges) ----
@@ -1685,27 +1711,53 @@ fn solve_equations(
             rustc_hash::FxHashMap::default();
         // Distinct-pending-variable reference count per body; 0 = ready.
         let mut unmet: Vec<usize> = vec![0; pending.len()];
+        // Per-round memo of subtree nodes proven free of tracked variables
+        // (see `collect_var_mentions`): with chained definitions the
+        // bodies share the entire inlined prefix, and re-walking that
+        // prefix per body is quadratic.
+        let mut clean: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
         for (i, (_, t)) in pending.iter().enumerate() {
             let mut seen_here = rustc_hash::FxHashSet::default();
-            collect_var_mentions(*t, &index_of, manager, &mut seen_here);
+            collect_var_mentions(*t, &index_of, manager, &mut seen_here, &mut clean);
             unmet[i] = seen_here.len();
             for v in seen_here {
                 occurrences.entry(v).or_default().push(i);
             }
         }
+        // Deterministic substitution budget: chained definitions share the
+        // whole inlined prefix, and every resolution substitutes into each
+        // mentioning body — on macro-heavy inputs (the `goto_symex` files
+        // feed ~40k chained equations) that is quadratic in bodies walked.
+        // The budget bounds the work; unresolved definitions simply stay
+        // as equations (sound either way — see the apply phase below).
+        const MAX_SUBSTITUTIONS: usize = 100_000;
+        let mut substitutions = 0usize;
+        // Whether pending body `i` has been substituted into since
+        // collection: only a substituted body can mention the variable it
+        // is being resolved to (its collection-time mention set — possibly
+        // empty — changes only through substitution).  Skipping the
+        // self-check for untouched bodies keeps the giant inlined bodies of
+        // definition chains from being re-walked per resolution.
+        let mut touched = vec![false; pending.len()];
         // Deterministic FIFO worklist of ready bodies (initial pass in
         // index order).
         let mut worklist: std::collections::VecDeque<usize> =
             (0..pending.len()).filter(|&i| unmet[i] == 0).collect();
+        if tr {
+            eprintln!("[eqs] round {} mentions {:?}", round, rt0.elapsed());
+        }
         // Eliminations in worklist (topological) order: a body's pending
         // dependencies are always resolved before it becomes ready, so
         // replaying this list under a model evaluates each definition with
         // its dependencies already assigned.  (Recording `resolved.iter()`
         // instead — HashMap order — broke exactly that.)
         let mut round_elims: Vec<(TermId, TermId)> = Vec::new();
+        if tr {
+            eprintln!("[eqs] round {} worklist-ready n={}", round, worklist.len());
+        }
         while let Some(i) = worklist.pop_front() {
             let (x, t) = pending[i];
-            if mentions(t, x, manager) {
+            if touched[i] && mentions(t, x, manager) {
                 // Self-referential after substitution: unresolvable.
                 continue;
             }
@@ -1718,9 +1770,17 @@ fn solve_equations(
             // the pass the naive version did for *every* pending body.
             let single = std::iter::once((x, t)).collect::<rustc_hash::FxHashMap<_, _>>();
             for j in affected {
+                if substitutions >= MAX_SUBSTITUTIONS {
+                    // Budget exhausted: leave the remaining dependencies
+                    // unresolved.  Their equations stay in `pairs` below
+                    // (implied constraints, never dropped silently).
+                    break;
+                }
                 unmet[j] -= 1;
                 let (_, tj) = pending[j];
                 pending[j].1 = manager.substitute(tj, &single);
+                substitutions += 1;
+                touched[j] = true;
                 if unmet[j] == 0 {
                     worklist.push_back(j);
                 }
@@ -1729,10 +1789,20 @@ fn solve_equations(
         if resolved.is_empty() {
             return eliminations;
         }
-
         // ---- apply: substitute everywhere, drop resolved definitions ----
         let resolved_vars: rustc_hash::FxHashSet<TermId> = resolved.keys().copied().collect();
         let mut def_indices: rustc_hash::FxHashSet<usize> = rustc_hash::FxHashSet::default();
+        // Nullary define-fun equations are definitionally satisfiable (the
+        // named constant occurs nowhere in the user assertions — the parser
+        // inlines every use), so dropping them is answer-preserving in both
+        // directions; they are never handed downstream.  They occupy the
+        // head of `pairs` in round 0 only (the apply phase rebuilds the
+        // list without them).
+        if round == 0 {
+            for idx in 0..n_define_pairs.min(pairs.len()) {
+                def_indices.insert(idx);
+            }
+        }
         for (idx, &(a, _)) in pairs.iter().enumerate() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind) {
                 let lhs = *lhs;
@@ -2163,25 +2233,39 @@ fn collect_var_mentions(
     tracked: &rustc_hash::FxHashMap<TermId, usize>,
     manager: &TermManager,
     out: &mut rustc_hash::FxHashSet<TermId>,
+    clean: &mut rustc_hash::FxHashSet<TermId>,
 ) {
     if tracked.is_empty() {
         return;
     }
     let mut seen = rustc_hash::FxHashSet::default();
     let mut stack = vec![term];
+    let mut hits = false;
     while let Some(t) = stack.pop() {
         if tracked.contains_key(&t) {
             // A tracked variable's own structure is opaque here: its body
             // is accounted for by its own pending entry.
             out.insert(t);
+            hits = true;
             continue;
         }
-        if !seen.insert(t) {
+        // `clean` holds nodes whose subtree provably contains no tracked
+        // variable (proven by an earlier body's complete walk this round).
+        // Chained definitions inline every earlier body (hash-consed but
+        // structurally present), so without this memo each body re-walks
+        // the whole prefix: quadratic on macro-heavy inputs (the
+        // `goto_symex` files feed ~40k such bodies through one round).
+        if clean.contains(&t) || !seen.insert(t) {
             continue;
         }
         if let Some(data) = manager.get(t) {
             stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
         }
+    }
+    if !hits {
+        // No tracked variable anywhere in this walk: every node it reached
+        // (including clean-skipped ones, already free) is tracked-free.
+        clean.extend(seen);
     }
 }
 
