@@ -1,0 +1,166 @@
+diff --git a/nixie-sat/src/solver/list_kernel.rs b/nixie-sat/src/solver/list_kernel.rs
+index 7769916e..1c36e5b3 100644
+--- a/nixie-sat/src/solver/list_kernel.rs
++++ b/nixie-sat/src/solver/list_kernel.rs
+@@ -146,8 +146,13 @@ fn scan<const COMPACT: bool>(
+                 } else {
+                     debug_assert!(pair[0] == false_lit || pair[1] == false_lit);
+                     first = Lit::from_code(pair[0].code() ^ pair[1].code() ^ false_lit.code());
+-                    pair[0] = first;
+-                    pair[1] = false_lit;
++                    // Store only when not already normalized (re-fired
++                    // parked watchers carry `false_lit` at [1]; arena
++                    // contents identical either way).
++                    if pair[1] != false_lit {
++                        pair[0] = first;
++                        pair[1] = false_lit;
++                    }
+                     if propagation_value(values, first) > 0 {
+                         #[cfg(feature = "bcp-work")]
+                         {
+diff --git a/nixie-sat/src/solver/subsume.rs b/nixie-sat/src/solver/subsume.rs
+index a9871b97..bddd7251 100644
+--- a/nixie-sat/src/solver/subsume.rs
++++ b/nixie-sat/src/solver/subsume.rs
+@@ -220,8 +220,48 @@ impl ConnectedPayloads {
+ 
+     #[inline]
+     fn get(&self, connection: Connection) -> (ClauseId, &[u32]) {
+-        let (header, tail) = self.words[connection.0 as usize..].split_at(2);
+-        (ClauseId::new(header[1]), &tail[..header[0] as usize])
++        // SAFETY (single invariant, by construction): connections are minted
++        // only by `connect`, which appends `[residual_len, database_id,
++        // residual_len × codes]` at the offset it returns; `words` only ever
++        // grows and payload entries are immutable once written, so the header
++        // and the `residual_len`-bounded tail are in-bounds for every live
++        // connection. No callback or re-entrancy can run between mint and
++        // read (the round owns the scratch exclusively).
++        #[allow(unsafe_code)]
++        unsafe {
++            let base = self.words.as_ptr().add(connection.0 as usize);
++            let len = *base as usize;
++            debug_assert!(connection.0 as usize + 2 + len <= self.words.len());
++            let tail = core::slice::from_raw_parts(base.add(2), len);
++            (ClauseId::new(*base.add(1)), tail)
++        }
++    }
++}
++
++/// Unchecked signed-mark read for the subsumption kernels.
++///
++/// # Safety (caller contract, single invariant)
++/// `code < mark.len()`. Every caller derives the index from `Lit::code()` of
++/// a literal read out of a live clause in `self.clauses`, whose variable
++/// indices are `< num_vars`; the mark vector is sized `2 * num_vars` before
++/// the round starts and never shrinks mid-round. Release builds drop the
++/// checked index (the subsumption check loop's dominant per-candidate cost
++/// after the 2026-09-11 profile; see the study of that date). Single pass,
++/// callback-free: no aliasing between index derivation and access.
++#[inline(always)]
++#[allow(unsafe_code)]
++unsafe fn mark_read(mark: &[i8], code: u32) -> i8 {
++    debug_assert!((code as usize) < mark.len());
++    unsafe { *mark.get_unchecked(code as usize) }
++}
++
++/// Unchecked signed-mark write; same contract as [`mark_read`].
++#[inline(always)]
++#[allow(unsafe_code)]
++unsafe fn mark_write(mark: &mut [i8], code: u32, value: i8) {
++    debug_assert!((code as usize) < mark.len());
++    unsafe {
++        *mark.get_unchecked_mut(code as usize) = value;
+     }
+ }
+ 
+@@ -235,7 +275,10 @@ fn check_connected(
+     mut flipped: Option<Lit>,
+ ) -> ConnectedCheck {
+     for lit in lits {
+-        let m = mark[lit.code() as usize];
++        // SAFETY: literal codes of live clauses are `< mark.len()`
++        // (`2 * num_vars` sizing; see `mark_read`).
++        #[allow(unsafe_code)]
++        let m = unsafe { mark_read(mark, lit.code()) };
+         if m == 0 {
+             return ConnectedCheck::Mismatch;
+         }
+@@ -815,9 +858,14 @@ impl Solver {
+             // Signed-mark the candidate's literals: `l ∈ c` marks +1 on
+             // `l.code()` and -1 on `l.negate().code()`, so a connected clause
+             // literal `d` reads mark +1 iff `d ∈ c` and -1 iff `¬d ∈ c`.
++            // SAFETY (mark_write): live-clause literal codes are `<
++            // mark.len()` (`2 * num_vars` sizing).
++            #[allow(unsafe_code)]
+             for &l in &lits {
+-                mark[l.code() as usize] = 1;
+-                mark[l.negate().code() as usize] = -1;
++                unsafe {
++                    mark_write(&mut mark, l.code(), 1);
++                    mark_write(&mut mark, l.negate().code(), -1);
++                }
+             }
+ 
+             let mut outcome: Option<SubCheck> = None;
+@@ -848,7 +896,10 @@ impl Solver {
+                     if self.clauses.get(bin_id).is_none_or(|c| c.deleted) {
+                         continue;
+                     }
+-                    let m = mark[other.code() as usize];
++                    // SAFETY (mark_read): `other` is a live binary-graph
++                    // literal; codes are `< mark.len()`.
++                    #[allow(unsafe_code)]
++                    let m = unsafe { mark_read(&mark, other.code()) };
+                     if m > 0 {
+                         outcome = Some(SubCheck::Subsumed { subsumer: bin_id });
+                         break 'candidate;
+@@ -866,7 +917,10 @@ impl Solver {
+                 // A scheduled ID is processed once, then connected. The only
+                 // clause mutated below is the current candidate; promotion of
+                 // a previous subsumer does not change its copied literals.
+-                let key_mark = mark[l.code() as usize];
++                // SAFETY (mark_read): `l` is a live-clause literal of the
++                // current candidate.
++                #[allow(unsafe_code)]
++                let key_mark = unsafe { mark_read(&mark, l.code()) };
+                 let key_flipped = (key_mark < 0).then_some(l);
+                 for &connection in occs[l.code() as usize].iter() {
+                     let (did, check) = if CACHED {
+@@ -937,9 +991,13 @@ impl Solver {
+             }
+ 
+             // Unmark (both polarities).
++            // SAFETY (mark_write): same code-boundedness as the marking pass.
++            #[allow(unsafe_code)]
+             for &l in &lits {
+-                mark[l.code() as usize] = 0;
+-                mark[l.negate().code() as usize] = 0;
++                unsafe {
++                    mark_write(&mut mark, l.code(), 0);
++                    mark_write(&mut mark, l.negate().code(), 0);
++                }
+             }
+ 
+             match outcome {
+diff --git a/nixie-sat/src/solver/watch_kernel.rs b/nixie-sat/src/solver/watch_kernel.rs
+index 65610825..ae083970 100644
+--- a/nixie-sat/src/solver/watch_kernel.rs
++++ b/nixie-sat/src/solver/watch_kernel.rs
+@@ -97,9 +97,14 @@ impl Cursor {
+                     debug_assert!(clause[0] == false_lit || clause[1] == false_lit);
+                     first = Lit::from_code(clause[0].code() ^ clause[1].code() ^ false_lit.code());
+                     // Even satisfied exits keep the original eager normalization:
+-                    // subsequent inprocessing observes literal order.
+-                    clause[0] = first;
+-                    clause[1] = false_lit;
++                    // subsequent inprocessing observes literal order. The store
++                    // is guarded: a re-fired parked watcher already carries
++                    // `false_lit` at [1]; re-storing the same two words
++                    // changes nothing observable.
++                    if clause[1] != false_lit {
++                        clause[0] = first;
++                        clause[1] = false_lit;
++                    }
+                     if trail.lit_val_hot(first) > 0 {
+                         #[cfg(feature = "bcp-work")]
+                         {
