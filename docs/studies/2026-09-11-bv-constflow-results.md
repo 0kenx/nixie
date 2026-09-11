@@ -429,3 +429,36 @@ De Morgan-keyed SH, and a correct complement-edge implementation with
 two-level rules.  If the maxandminor/cjpeg class is ever closed, it is
 by goal-level semantic propagation over a boolean expression IR —
 a different architecture, not a better gate memo.
+
+## Session close (2026-09-12, afternoon): the expression IR built and landed default-off (8f8f5683)
+
+The "remaining architecture" is in: `nixie-theories/src/bv/bool_ir.rs`
+(hash-consed boolean-expression DAG: and/or/xor/mux nodes over
+complement-encoded literals, construction-time folding, constant
+re-fold fixpoint, deferred Tseitin with dead-structure elimination) +
+the gate-layer integration (`Sig::Ir`, definition recording,
+`materialize_ir` at check entry and window close).  `NIXIE_BV_IR=1`.
+
+**It closes the blast-vs-z3 gap on the maxandminor family**: the
+z3-simplified form drops 6.1 s → **0.18 s** (34×; z3 itself 0.028 s),
+the original 29.2 → 12.5 s, `ex7_prime` timeout → 3.4 s, bitrev1024/2048
+3×.  The mechanism is exactly what z3's post-blast passes exploit:
+definitions inline (result bits enter the CNF only at materialization),
+nodes hash-cons across terms, constants refold through shared structure
+— measured over three structural kills, this *semantic* layer is the
+one that pays.
+
+Two soundness bugs caught by the nets pre-commit (raw-equality in the
+mixed `encode_eq_node` arm — false `unsat`, minimized by delta-debugging
+RWS to a 2-bit probe; `debug_assert`-guarded node-0 reservation —
+release-only false `sat` on all of bitrev, found by model-pinning
+against z3).  Both are the collision class the study keeps warning
+about; both are now regression-covered by the probes that found them.
+
+Corpus A/B: 289 vs 288, **zero verdict flips**, 17 cells split evenly —
+real deterministic wins (maxandminor/ex7/bitrev/mcm-87/lfsr) AND real
+cap-crossing losses (VS3-A7, mcm/54, catchconv-1568).  Default OFF; the
+follow-up that would justify default-on is a per-class gate (the losses
+are mul-chain/catchconv shapes whose trajectories the deferred encoding
+hurts) and seeding `refold_consts` from level-0 units (the machinery is
+in, unwired).  Binary + both A/B arms: `precompile/8f8f5683/`.
