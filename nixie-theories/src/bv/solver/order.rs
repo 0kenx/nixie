@@ -318,6 +318,13 @@ impl BvSolver {
     /// phases are simply left as far as propagation got before the
     /// conflict: phases are guidance, never constraints.
     fn hint_identity_arrangement(&mut self, first_network_var: usize, inputs: &[Wire]) {
+        // The guidance propagates the identity arrangement through the
+        // *clauses* of the network; with deferred IR circuits those do not
+        // exist yet, and the hint derives nothing (measured: the n=9
+        // descent thrashed).  Materialize first — the clauses land in the
+        // current build target, and defs created later re-materialize at
+        // the window close.
+        self.materialize_ir_pub();
         let snapshot = self.sat.trail_size();
         let mut lits: SmallVec<[Lit; 32]> = SmallVec::new();
         for (i, wire) in inputs.iter().enumerate() {

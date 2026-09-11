@@ -44,6 +44,14 @@ enum Sig {
     False,
     /// An ordinary signal variable.
     Var(Var),
+    /// A deferred boolean-expression-IR node literal (see [`BoolIr`]):
+    /// the signal's clauses do not exist yet.  Produced by the gate
+    /// constructors while IR mode is on (`NIXIE_BV_IR=1`); `wire`
+    /// records it as the definition of the result bit, and
+    /// [`Self::materialize_ir`] Tseitin-encodes the whole live DAG at
+    /// solve time (constants refolded, nodes hash-consed and emitted
+    /// once, dead structure never emitted).
+    Ir(u32),
 }
 
 /// Which SAT instance receives the clauses and variables that the circuit
@@ -304,6 +312,18 @@ pub struct BvSolver {
     /// in a unified generation every bit var belongs to the caller's var
     /// space, and only the caller's model assigns them.
     adopted_model: Vec<LBool>,
+    /// Boolean-expression IR (the deferred circuit layer).  `Some` iff
+    /// IR mode is on (`NIXIE_BV_IR=1`, read at construction).
+    ir: Option<crate::bv::bool_ir::BoolIr>,
+    /// Result-bit definitions in IR mode: bit var → IR literal.  These
+    /// are the *deferred* wires — consumers reading the bit through
+    /// [`Self::sig`] inline the definition's node, so intermediate bits
+    /// enter the CNF only at materialization.
+    ir_defs: FxHashMap<Var, u32>,
+    /// Journal of `ir_defs` insertions for scope retraction (embedded
+    /// `pop` removes the materialized clauses; a stale def would name a
+    /// clause that no longer exists).
+    ir_defs_journal: Vec<Var>,
     /// Bit variables that the current operation's encoding wired to constants
     /// (see [`Self::wire`]), keyed by the bit's variable.  Drained by
     /// [`Self::finish_result`], which installs the reserved constant
@@ -375,6 +395,13 @@ impl BvSolver {
             pending_unlinked: Vec::new(),
             adopted_model: Vec::new(),
             const_pinned: FxHashMap::default(),
+            ir: if Self::ir_mode_default() {
+                Some(crate::bv::bool_ir::BoolIr::new())
+            } else {
+                None
+            },
+            ir_defs: FxHashMap::default(),
+            ir_defs_journal: Vec::new(),
             const_flow_enabled: Self::const_flow_default(),
             const_true,
             const_false,
@@ -441,6 +468,9 @@ impl BvSolver {
         self.const_false = f_;
         self.build_target = BuildTarget::External;
         let result = f(self);
+        // Materialize deferred IR circuits while the caller's core is
+        // still installed (their clauses belong to it).
+        self.materialize_ir();
         // Close the window: hand the caller's core back and restore the
         // embedded instance (and its constant pair) exactly.
         core::mem::swap(&mut self.sat, sat);
@@ -528,6 +558,12 @@ impl BvSolver {
         // from driving it, which only the lazy path does).
     }
 
+    /// Crate-internal materialization entry for sibling modules (the
+    /// order encoder's guidance pass needs the clauses before hinting).
+    pub(crate) fn materialize_ir_pub(&mut self) {
+        self.materialize_ir();
+    }
+
     /// Whether a unified generation is active.
     #[must_use]
     pub fn is_unified(&self) -> bool {
@@ -565,6 +601,12 @@ impl BvSolver {
     /// Worktree test accessor: solve the embedded instance.
     #[cfg(test)]
     pub fn check_embedded_for_test(&mut self) -> nixie_sat::SolverResult {
+        // Mirror check_body's entry: deferred IR circuits must become
+        // clauses before the solve (this entry bypasses check(), so the
+        // blast-only tests under NIXIE_BV_IR=1 were solving an instance
+        // whose definitions had never been emitted — result bits free,
+        // pins on operands vacuous).
+        self.materialize_ir();
         self.sat.solve()
     }
 
@@ -818,6 +860,15 @@ impl BvSolver {
     /// not exist, and the honest answer is "not encodable" – not an
     /// `assert_eq!` that aborts the process, and not a circuit wired from the
     /// bits that happen to line up.
+    /// Anchor an IR node to a fresh variable (definition recorded; the
+    /// clauses arrive at materialization, before any solve).
+    fn anchor(s: Sig, slf: &mut Self) -> Sig {
+        match s {
+            Sig::Ir(_) => Sig::Var(slf.sig_var(s)),
+            other => other,
+        }
+    }
+
     fn binop_bits(&self, a: TermId, b: TermId) -> Option<(BvVar, BvVar)> {
         let va = self.term_to_bv.get(&a)?.clone();
         let vb = self.term_to_bv.get(&b)?.clone();
@@ -865,13 +916,19 @@ impl BvSolver {
             let mut diff_lits: SmallVec<[Lit; 32]> = SmallVec::new();
 
             for i in 0..va.width as usize {
-                match self.gate_xor(self.sig(va.bits[i]), self.sig(vb.bits[i])) {
+                let xored = self.gate_xor(self.sig(va.bits[i]), self.sig(vb.bits[i]));
+                let xored = match xored {
+                    Sig::Ir(_) => Sig::Var(self.sig_var(xored)),
+                    other => other,
+                };
+                match xored {
                     Sig::True => {
                         // This bit is provably different: a != b already holds.
                         return true;
                     }
                     Sig::False => {}
                     Sig::Var(v) => diff_lits.push(Lit::pos(v)),
+                    Sig::Ir(_) => unreachable!("anchored above"),
                 }
             }
 
@@ -1436,6 +1493,73 @@ impl BvSolver {
             let l = self.sig(va.bits[i]);
             let r = self.sig(vb.bits[i]);
             match (l, r) {
+                (Sig::Ir(x), Sig::Ir(y)) => {
+                    // Node-identity folding: the two bits are the same
+                    // signal (or complements) — the check the clause
+                    // layer cannot do, and the reason blast-to-IR exists.
+                    if let Some(ir) = self.ir.as_ref()
+                        && let Some(equal) = ir.same_signal(x, y)
+                    {
+                        if equal {
+                            continue;
+                        }
+                        let _ = self.sat.add_clause([Lit::neg(out)]);
+                        return Some(out);
+                    }
+                    // Unrelated nodes: anchor both and LINK the equality's
+                    // truth through a diff variable (never a raw
+                    // bit-equality — that would *force* the bits equal).
+                    let (lx, ly) = (self.sig_var(Sig::Ir(x)), self.sig_var(Sig::Ir(y)));
+                    let d = self.sat.new_var();
+                    self.emit_xor(d, lx, ly);
+                    let _ = self.sat.add_clause([Lit::neg(out), Lit::neg(d)]);
+                    diff_lits.push(Lit::pos(d));
+                }
+                (l, r) if matches!(l, Sig::Ir(_)) || matches!(r, Sig::Ir(_)) => {
+                    // Mixed IR/other: anchor the node(s) to variables and
+                    // recurse into the classic arms — the equality's truth
+                    // must LINK to the bits (out → diff), never force them
+                    // equal unconditionally (that was the false-unsat bug
+                    // the RWS minimization caught: a raw lx ⇔ ly here
+                    // *asserts* the bits equal).
+                    let l = match l {
+                        Sig::Ir(_) => Sig::Var(self.sig_var(l)),
+                        o => o,
+                    };
+                    let r = match r {
+                        Sig::Ir(_) => Sig::Var(self.sig_var(r)),
+                        o => o,
+                    };
+                    match (l, r) {
+                        (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
+                        (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
+                            let _ = self.sat.add_clause([Lit::neg(out)]);
+                            return Some(out);
+                        }
+                        (Sig::True, Sig::Var(v)) | (Sig::Var(v), Sig::True) => {
+                            let lit = Lit::pos(v);
+                            let _ = self.sat.add_clause([Lit::neg(out), lit]);
+                            diff_lits.push(lit.negate());
+                        }
+                        (Sig::False, Sig::Var(v)) | (Sig::Var(v), Sig::False) => {
+                            let lit = Lit::neg(v);
+                            let _ = self.sat.add_clause([Lit::neg(out), lit]);
+                            diff_lits.push(lit.negate());
+                        }
+                        (Sig::Var(x), Sig::Var(y)) => {
+                            if x == y {
+                                continue;
+                            }
+                            let d = self.sat.new_var();
+                            self.emit_xor(d, x, y);
+                            let _ = self.sat.add_clause([Lit::neg(out), Lit::neg(d)]);
+                            diff_lits.push(Lit::pos(d));
+                        }
+                        (Sig::Ir(_), _) | (_, Sig::Ir(_)) => {
+                            unreachable!("normalized above")
+                        }
+                    }
+                }
                 (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
                 (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
                     // Constant-unequal bits falsify the equality outright.
@@ -1466,6 +1590,9 @@ impl BvSolver {
                     self.sat.add_clause([Lit::neg(out), Lit::neg(d)]);
                     diff_lits.push(Lit::pos(d));
                 }
+                // Both-Ir pairs were normalized or folded above; the
+                // compiler needs the pair space covered.
+                (Sig::Ir(_), _) | (_, Sig::Ir(_)) => unreachable!("handled above"),
             }
         }
         // Reverse direction: any differing bit must be able to falsify `out`.
@@ -1940,12 +2067,14 @@ impl BvSolver {
             let not_b = self.gate_not(b_sig);
             zero_a = self.gate_and(zero_a, not_b);
         }
+        let zero_a = Self::anchor(zero_a, self);
         let mut zero_b = Sig::True;
         for &bit in &vb.bits {
             let b_sig = self.sig(bit);
             let not_b = self.gate_not(b_sig);
             zero_b = self.gate_and(zero_b, not_b);
         }
+        let zero_b = Self::anchor(zero_b, self);
         // one-detect(x): x == 1 (bit 0 set, the rest clear).
         let one_of = |bits: &[Var], slf: &mut Self| -> Sig {
             let first = slf.sig(bits[0]);
@@ -1957,8 +2086,8 @@ impl BvSolver {
             }
             acc
         };
-        let one_a = one_of(&va.bits, self);
-        let one_b = one_of(&vb.bits, self);
+        let one_a = Self::anchor(one_of(&va.bits, self), self);
+        let one_b = Self::anchor(one_of(&vb.bits, self), self);
 
         // Emit the identity lemmas, one pair of implications per result bit.
         // `lit_true_of(s)` is the literal asserting `s`.
@@ -1970,6 +2099,7 @@ impl BvSolver {
                 return false;
             };
             // a = 0 -> m_i = 0  (¬zero_a ∨ ¬m_i)
+            let zero_a = Self::anchor(zero_a, self);
             match zero_a {
                 Sig::True => {
                     self.sat.add_clause([Lit::neg(mm)]);
@@ -1978,8 +2108,10 @@ impl BvSolver {
                     self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
                 }
                 Sig::False => {}
+                Sig::Ir(_) => unreachable!("anchored"),
             }
             // b = 0 -> m_i = 0
+            let zero_b = Self::anchor(zero_b, self);
             match zero_b {
                 Sig::True => {
                     self.sat.add_clause([Lit::neg(mm)]);
@@ -1988,10 +2120,12 @@ impl BvSolver {
                     self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
                 }
                 Sig::False => {}
+                Sig::Ir(_) => unreachable!("anchored"),
             }
             // a = 1 -> m_i = b_i   (¬one_a ∨ ¬m_i ∨ b_i) ∧ (¬one_a ∨ m_i ∨ ¬b_i)
             let idx = r.bits.iter().position(|&x| x == m_bit).unwrap_or(0);
             if let Some(&bvar) = vb.bits.get(idx) {
+                let one_a = Self::anchor(one_a, self);
                 match one_a {
                     Sig::True => {
                         self.sat.add_clause([Lit::neg(mm), Lit::pos(bvar)]);
@@ -2003,10 +2137,12 @@ impl BvSolver {
                         self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(bvar)]);
                     }
                     Sig::False => {}
+                    Sig::Ir(_) => unreachable!("anchored"),
                 }
             }
             // b = 1 -> m_i = a_i
             if let Some(&avar) = va.bits.get(idx) {
+                let one_b = Self::anchor(one_b, self);
                 match one_b {
                     Sig::True => {
                         self.sat.add_clause([Lit::neg(mm), Lit::pos(avar)]);
@@ -2017,6 +2153,7 @@ impl BvSolver {
                             .add_clause([Lit::neg(o), Lit::neg(mm), Lit::pos(avar)]);
                         self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(avar)]);
                     }
+                    Sig::Ir(_) => unreachable!("anchored"),
                     Sig::False => {}
                 }
             }
@@ -2092,6 +2229,7 @@ impl BvSolver {
             let m_neg = m_pos.negate();
             // EXACT zero-divisor semantics.
             match zero_b {
+                Sig::Ir(_) => unreachable!("anchored before the loop"),
                 Sig::True => {
                     // b provably 0: pin the whole result.
                     if urem {
@@ -2118,6 +2256,7 @@ impl BvSolver {
             }
             // b = 1 lemmas.
             match one_b {
+                Sig::Ir(_) => unreachable!("anchored before the loop"),
                 Sig::True => {
                     if urem {
                         self.sat.add_clause([m_neg]);
@@ -2349,11 +2488,16 @@ impl BvSolver {
             self.encode_ult_result(&va.bits, &vb.bits, ult_result);
 
             let result = self.gate_mux(diff_sign, sign_a, Sig::Var(ult_result));
+            let result = match result {
+                Sig::Ir(_) => Sig::Var(self.sig_var(result)),
+                other => other,
+            };
             match result {
                 Sig::True => {}
                 Sig::False => {
                     self.sat.add_clause([]);
                 }
+                Sig::Ir(_) => unreachable!("anchored above"),
                 Sig::Var(v) => {
                     self.sat.add_clause([Lit::pos(v)]);
                 }
@@ -2432,6 +2576,81 @@ impl BvSolver {
     // ordinary signal variables and never emit a clause that unit propagation
     // would immediately subsume.
 
+    /// Whether IR mode is on (`NIXIE_BV_IR=1`; default off — experiment).
+    fn ir_mode_default() -> bool {
+        #[cfg(feature = "std")]
+        {
+            use std::sync::OnceLock;
+            static FLAG: OnceLock<bool> = OnceLock::new();
+            *FLAG.get_or_init(|| matches!(std::env::var("NIXIE_BV_IR"), Ok(v) if v == "1"))
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// The IR literal of a bit variable: its recorded definition's node
+    /// (inlined — the var itself disappears from the circuit) or a fresh
+    /// leaf node.
+    fn ir_of_var(&mut self, v: Var) -> u32 {
+        if let Some(&code) = self.ir_defs.get(&v) {
+            return code;
+        }
+        let Some(ir) = self.ir.as_mut() else {
+            unreachable!("ir_of_var without IR mode")
+        };
+        ir.var(v)
+    }
+
+    /// Materialize the deferred IR circuits into the current SAT target:
+    /// refold pinned constants through the DAG, Tseitin-encode every node
+    /// reachable from a definition, then link each defined bit var to its
+    /// encoded literal.  After this, the clause database is equivalent to
+    /// what eager emission would have produced (smaller: shared nodes
+    /// encode once, dead structure not at all).
+    ///
+    /// Idempotent within a solve (defs are consumed); safe to call at
+    /// every window close and solve entry.
+    fn materialize_ir(&mut self) {
+        let Some(ir) = self.ir.as_mut() else {
+            return;
+        };
+        if self.ir_defs.is_empty() {
+            return;
+        }
+        ir.refold_consts();
+        let roots: Vec<u32> = self.ir_defs.values().copied().collect();
+        let const_true = Lit::pos(self.const_true);
+        let sat = &mut self.sat;
+        let encoded = ir.tseitin(sat, const_true, &roots);
+        for ((&v, &_), lit) in self.ir_defs.iter().zip(encoded.iter()) {
+            match lit.is_pos() {
+                true => {
+                    if lit.var() != v {
+                        self.sat.add_clause([Lit::neg(v), Lit::pos(lit.var())]);
+                        self.sat.add_clause([Lit::pos(v), Lit::neg(lit.var())]);
+                    }
+                }
+                false => {
+                    // v ⇔ ¬u.
+                    self.sat.add_clause([Lit::pos(v), Lit::pos(lit.var())]);
+                    self.sat.add_clause([Lit::neg(v), Lit::neg(lit.var())]);
+                }
+            }
+        }
+        // A definition that folded to an IR constant: pin the var with a
+        // unit (same as eager `wire` on a constant signal).
+        for (&v, &code) in self.ir_defs.iter() {
+            if let Some(val) = self.ir.as_ref().and_then(|ir| ir.as_const(code)) {
+                self.sat
+                    .add_clause([if val { Lit::pos(v) } else { Lit::neg(v) }]);
+            }
+        }
+        self.ir_defs.clear();
+        self.ir_defs_journal.clear();
+    }
+
     /// Classify a bit variable as one of the reserved constants or a signal.
     #[inline]
     fn sig(&self, v: Var) -> Sig {
@@ -2439,18 +2658,33 @@ impl BvSolver {
             Sig::True
         } else if v == self.const_false {
             Sig::False
+        } else if let Some(&code) = self.ir_defs.get(&v) {
+            // Inline the deferred definition: the consumer builds on the
+            // node, and the var never enters the circuit.
+            Sig::Ir(code)
         } else {
             Sig::Var(v)
         }
     }
 
-    /// The variable carrying `s` (`const_true` / `const_false` for constants).
+    /// The variable carrying `s` (`const_true` / `const_false` for
+    /// constants).  An IR node is *anchored*: a fresh variable whose IR
+    /// definition is recorded (clauses arrive at materialization, before
+    /// any solve), so callers can emit clauses over the variable now.
     #[inline]
-    fn sig_var(&self, s: Sig) -> Var {
+    fn sig_var(&mut self, s: Sig) -> Var {
         match s {
             Sig::True => self.const_true,
             Sig::False => self.const_false,
             Sig::Var(v) => v,
+            Sig::Ir(code) => {
+                let v = self.sat.new_var();
+                if !self.ir_defs.contains_key(&v) {
+                    self.ir_defs_journal.push(v);
+                }
+                self.ir_defs.insert(v, code);
+                v
+            }
         }
     }
 
@@ -2465,6 +2699,14 @@ impl BvSolver {
     /// can never contradict a prior definition of `out` itself.
     fn wire(&mut self, out: Var, s: Sig) {
         match s {
+            Sig::Ir(code) => {
+                // Deferred: record the definition; the clauses appear at
+                // materialization.
+                if !self.ir_defs.contains_key(&out) {
+                    self.ir_defs_journal.push(out);
+                }
+                self.ir_defs.insert(out, code);
+            }
             Sig::True => {
                 self.const_pinned.insert(out, true);
                 self.sat.add_clause([Lit::pos(out)]);
@@ -2564,9 +2806,34 @@ impl BvSolver {
     fn encode_bit_eq(&mut self, a: Var, b: Var) {
         match (self.sig(a), self.sig(b)) {
             (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
+            (Sig::Ir(x), Sig::Ir(y)) => {
+                // Node-identity folding: identical nodes are trivially
+                // equal; complementary nodes make the equality unsat.
+                if let Some(ir) = self.ir.as_ref()
+                    && let Some(equal) = ir.same_signal(x, y)
+                {
+                    if !equal {
+                        let _ = self.sat.add_clause([]);
+                    }
+                } else {
+                    let (lx, ly) = (self.sig_var(Sig::Ir(x)), self.sig_var(Sig::Ir(y)));
+                    if lx != ly {
+                        self.emit_bit_eq(lx, ly);
+                    }
+                }
+            }
             (Sig::Var(x), Sig::Var(y)) => {
                 if x != y {
                     self.emit_bit_eq(x, y);
+                }
+            }
+            (l @ (Sig::True | Sig::False | Sig::Var(_)), r @ Sig::Ir(_))
+            | (l @ Sig::Ir(_), r @ (Sig::True | Sig::False | Sig::Var(_))) => {
+                // Mixed IR/other: anchor the node and emit the equivalence
+                // (definitions arrive at materialization).
+                let (lx, ly) = (self.sig_var(l), self.sig_var(r));
+                if lx != ly {
+                    self.emit_bit_eq(lx, ly);
                 }
             }
             (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
@@ -2587,12 +2854,17 @@ impl BvSolver {
         self.sat.add_clause([Lit::neg(out), Lit::neg(input)]);
     }
 
-    /// NOT with constant folding.
+    /// NOT with constant folding.  IR mode: a free polarity flip on the
+    /// node literal.
     fn gate_not(&mut self, a: Sig) -> Sig {
         match a {
             Sig::True => Sig::False,
             Sig::False => Sig::True,
+            Sig::Ir(c) => Sig::Ir(c ^ 1),
             Sig::Var(v) => {
+                if self.ir.is_some() {
+                    return Sig::Ir(self.ir_of_var(v) ^ 1);
+                }
                 let out = self.sat.new_var();
                 self.emit_not(out, v);
                 Sig::Var(out)
@@ -2616,11 +2888,20 @@ impl BvSolver {
             .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
     }
 
-    /// AND with constant folding.
+    /// AND with constant folding.  IR mode: hash-consed node (folding
+    /// and canonicalization inside [`BoolIr::and`]).
     fn gate_and(&mut self, a: Sig, b: Sig) -> Sig {
         match (a, b) {
             (Sig::False, _) | (_, Sig::False) => Sig::False,
             (Sig::True, x) | (x, Sig::True) => x,
+            _ if self.ir.is_some() => {
+                let x = self.ir_code(a);
+                let y = self.ir_code(b);
+                let Some(ir) = self.ir.as_mut() else {
+                    unreachable!("checked")
+                };
+                Sig::Ir(ir.and(x, y))
+            }
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     a
@@ -2630,6 +2911,19 @@ impl BvSolver {
                     Sig::Var(out)
                 }
             }
+            // IR nodes only exist in IR mode; the guarded arm above
+            // consumed them.  (Rust requires the match exhaustive.)
+            _ => unreachable!("Sig::Ir outside IR mode"),
+        }
+    }
+
+    /// IR literal of a one-signal `Sig` (leaf var or node).
+    fn ir_code(&mut self, s: Sig) -> u32 {
+        match s {
+            Sig::Ir(c) => c,
+            Sig::Var(v) => self.ir_of_var(v),
+            Sig::True => 1,
+            Sig::False => 0,
         }
     }
 
@@ -2648,11 +2942,20 @@ impl BvSolver {
         self.sat.add_clause([Lit::pos(out), Lit::neg(b)]);
     }
 
-    /// OR with constant folding.
+    /// OR with constant folding.  IR mode: `or = ¬and(¬x, ¬y)` — a
+    /// complement edge of the shared and node.
     fn gate_or(&mut self, a: Sig, b: Sig) -> Sig {
         match (a, b) {
             (Sig::True, _) | (_, Sig::True) => Sig::True,
             (Sig::False, x) | (x, Sig::False) => x,
+            _ if self.ir.is_some() => {
+                let x = self.ir_code(a);
+                let y = self.ir_code(b);
+                let Some(ir) = self.ir.as_mut() else {
+                    unreachable!("checked")
+                };
+                Sig::Ir(ir.or(x, y))
+            }
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     a
@@ -2662,6 +2965,7 @@ impl BvSolver {
                     Sig::Var(out)
                 }
             }
+            _ => unreachable!("Sig::Ir outside IR mode"),
         }
     }
 
@@ -2684,11 +2988,20 @@ impl BvSolver {
             .add_clause([Lit::pos(out), Lit::pos(a), Lit::neg(b)]);
     }
 
-    /// XOR with constant folding.
+    /// XOR with constant folding.  IR mode: hash-consed node with
+    /// input-complement parity folded into the result polarity.
     fn gate_xor(&mut self, a: Sig, b: Sig) -> Sig {
         match (a, b) {
             (Sig::False, x) | (x, Sig::False) => x,
             (Sig::True, x) | (x, Sig::True) => self.gate_not(x),
+            _ if self.ir.is_some() => {
+                let x = self.ir_code(a);
+                let y = self.ir_code(b);
+                let Some(ir) = self.ir.as_mut() else {
+                    unreachable!("checked")
+                };
+                Sig::Ir(ir.xor(x, y))
+            }
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     Sig::False
@@ -2698,6 +3011,7 @@ impl BvSolver {
                     Sig::Var(out)
                 }
             }
+            _ => unreachable!("Sig::Ir outside IR mode"),
         }
     }
 
@@ -2713,8 +3027,17 @@ impl BvSolver {
         self.gate_not(x)
     }
 
-    /// `~a & b` with constant folding.
+    /// `~a & b` with constant folding.  IR mode: the and node over
+    /// `(¬a, b)`.
     fn gate_and_not_a(&mut self, a: Sig, b: Sig) -> Sig {
+        if self.ir.is_some() {
+            let x = self.ir_code(a) ^ 1;
+            let y = self.ir_code(b);
+            let Some(ir) = self.ir.as_mut() else {
+                unreachable!("checked")
+            };
+            return Sig::Ir(ir.and(x, y));
+        }
         match (a, b) {
             (Sig::True, _) | (_, Sig::False) => Sig::False,
             (Sig::False, x) => x,
@@ -2733,6 +3056,7 @@ impl BvSolver {
                     Sig::Var(out)
                 }
             }
+            _ => unreachable!("Sig::Ir outside IR mode"),
         }
     }
 
@@ -2749,8 +3073,28 @@ impl BvSolver {
             .add_clause([Lit::pos(sel), Lit::pos(if_false), Lit::neg(out)]);
     }
 
-    /// Multiplexer with constant folding.
+    /// Multiplexer with constant folding.  IR mode: decomposed through
+    /// the shared and/or nodes (`(s∧t) ∨ (¬s∧f)`) so every input
+    /// polarity is carried by construction — no dedicated mux node, no
+    /// polarity bookkeeping to get wrong.
     fn gate_mux(&mut self, sel: Sig, if_true: Sig, if_false: Sig) -> Sig {
+        if self.ir.is_some() && !matches!(sel, Sig::True | Sig::False) {
+            if if_true == if_false {
+                return if_true;
+            }
+            let (sc, t, f) = (
+                self.ir_code(sel),
+                self.ir_code(if_true),
+                self.ir_code(if_false),
+            );
+            let Some(ir) = self.ir.as_mut() else {
+                unreachable!("checked")
+            };
+            let a1 = ir.and(sc, t);
+            let a2 = ir.and(sc ^ 1, f);
+            let o = ir.or(a1, a2);
+            return Sig::Ir(o);
+        }
         match sel {
             Sig::True => if_true,
             Sig::False => if_false,
@@ -2761,13 +3105,16 @@ impl BvSolver {
                 match (if_true, if_false) {
                     (Sig::True, Sig::False) => Sig::Var(s),
                     (Sig::False, Sig::True) => self.gate_not(Sig::Var(s)),
-                    _ => {
+                    (t, f) => {
                         let out = self.sat.new_var();
-                        self.emit_mux(out, s, self.sig_var(if_true), self.sig_var(if_false));
+                        let tl = self.sig_var(t);
+                        let fl = self.sig_var(f);
+                        self.emit_mux(out, s, tl, fl);
                         Sig::Var(out)
                     }
                 }
             }
+            Sig::Ir(_) => unreachable!("handled above"),
         }
     }
 
@@ -2826,11 +3173,13 @@ impl BvSolver {
     /// the clause vanishes when `s` is false and degenerates to the unit
     /// `guard` when `s` is true.
     fn add_guarded_not(&mut self, guard: Var, s: Sig) {
+        let s = Self::anchor(s, self);
         match s {
             Sig::False => {}
             Sig::True => {
                 self.sat.add_clause([Lit::pos(guard)]);
             }
+            Sig::Ir(_) => unreachable!("anchored"),
             Sig::Var(v) => {
                 self.sat.add_clause([Lit::pos(guard), Lit::neg(v)]);
             }
@@ -2916,7 +3265,8 @@ impl BvSolver {
     fn encode_all_zero(&mut self, out: Var, bits: &[Var]) {
         let mut signals: SmallVec<[Var; 32]> = SmallVec::new();
         for &bit in bits {
-            match self.sig(bit) {
+            let s = Self::anchor(self.sig(bit), self);
+            match s {
                 Sig::True => {
                     // One true bit falsifies "all zero" unconditionally.
                     self.sat.add_clause([Lit::neg(out)]);
@@ -2924,6 +3274,7 @@ impl BvSolver {
                 }
                 Sig::False => {}
                 Sig::Var(v) => signals.push(v),
+                Sig::Ir(_) => unreachable!("anchored"),
             }
         }
         if signals.is_empty() {
@@ -3475,6 +3826,8 @@ impl TheoryCombination for BvSolver {
 impl BvSolver {
     /// Body of [`Theory::check`].
     fn check_body(&mut self) -> Result<TheoryResult> {
+        // Deferred IR circuits become clauses before any solve.
+        self.materialize_ir();
         // `BvSolver::check()` is driven incrementally by the theory manager:
         // assert more clauses, then `check()` again.  Each `check()` runs a full
         // `solve()`, but the embedded SAT solver does NOT reset its persisted

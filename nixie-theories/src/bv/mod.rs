@@ -18,6 +18,7 @@ use crate::prelude::*;
 mod aig;
 mod aig_builder;
 mod bitblast_advanced;
+mod bool_ir;
 mod division_opt;
 mod propagator;
 pub mod simd_ops;
