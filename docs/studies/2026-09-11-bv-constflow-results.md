@@ -365,3 +365,24 @@ Z3 `mk_bv_shl`/`mk_bv_lshr` numeral cases) — is in, behind
   **43.5 → 7.1 s, 6.1×**, the shift-add multiplier chains collapsing
   under the wiring).  **Default flipped on** in `53246010`; cells +
   binary in `precompile/53246010/`; parity 175/175 (0 disagreements).
+
+## Appendix (final): gate-level structural sharing is dead for this family — measured twice, now with complements
+
+The question "would an AIG-style gate layer (structural hashing with
+complement edges) collapse maxandminor?" is answered **no**, definitively:
+
+- The first probe (var-keyed SH memo, pre-cascade): **0 hits** across
+  every family tried.
+- The second probe (2026-09-12, post-cascade): De Morgan-normal literal
+  keys — `OR(x,y)` keyed identically to `AND(¬x,¬y)`, operands sorted —
+  on `maxandminor016` with the full cascade landed: **0.0 % collisions**
+  (≈6 k gate requests, zero repeats).
+
+The two sides' boolean circuits share no structurally-identical gates
+because their *leaves* differ (operand bits of distinct, non-convergent
+TermIds) — the trees cannot collide at any level.  Z3's collapse on this
+family is therefore **semantic** (its post-blast goal passes do
+value-propagation and definition substitution, not structural sharing).
+Any future "AIG layer" for this family must propagate values through the
+DAG — hash-consing alone, however canonical, cannot close it.  Do not
+re-try structural gate sharing for the bound-propagation family.
