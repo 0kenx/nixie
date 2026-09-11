@@ -462,3 +462,15 @@ follow-up that would justify default-on is a per-class gate (the losses
 are mul-chain/catchconv shapes whose trajectories the deferred encoding
 hurts) and seeding `refold_consts` from level-0 units (the machinery is
 in, unwired).  Binary + both A/B arms: `precompile/8f8f5683/`.
+
+**Update (beb6cadc)**: the level-0 seeding is wired — `materialize_ir`
+pins every IR leaf var the SAT core has permanently assigned at
+decision level 0 and re-folds before Tseitin (snapshots cleared per
+materialization, so pops can't read stale folds).  Every measured win
+holds or improves (ex7_prime → 6.6 s, bitrev1024 → 4.4 s).  The losses
+persist, and the pattern sharpened: **gains concentrate on UNSAT-verdict
+files, losses on SAT-verdict files** — plausibly the deferred emission
+removes branchable Tseitin variables that refutation never needed but
+model-finding exploited.  A gate on that observation needs a blast-time
+predictor (no verdict exists yet at blast time), so it stays a study
+hypothesis; the corpus decision remains default-off.
