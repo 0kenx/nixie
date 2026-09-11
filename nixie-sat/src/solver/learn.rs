@@ -20,6 +20,23 @@ pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 /// Same `OnceLock` pattern as [`super::decide::trace_decisions_enabled`]: one
 /// cached bool load when off, no search-path effect either way.
 #[cfg(feature = "std")]
+/// Fast-glue-EMA threshold arming the drought-gated max-gap floor: above
+/// this the learned-clause glue stream is "uniform huge" (the
+/// restart-drought class where the focused Glucose condition goes silent).
+/// Measured separation 2026-09-11: worker_550 avg LBD 762, qwh 224 — the
+/// class the floor fixes; noL 21 / mdp 15 / rbsat 10 / 6s167 11 — the
+/// files the ungated floor costs verdicts.  100 sits in the empty band
+/// between 26 and 224 with ~4x margin on both sides.
+pub(super) const DROUGHT_GLUE_GATE: f64 = 500.0;
+
+/// Conflicts before the drought gate may arm.  Early-search glue transients
+/// (a warm-up spike of the fast EMA on files whose steady glue is normal —
+/// measured: rbsat avg LBD 10, yet its first ~hundreds of learned clauses
+/// pushed the EMA past the 2026-09-11 round-one gate of 100 and the floor
+/// fired) must not arm the floor; the real drought class stays huge well
+/// past any warmup.
+pub(super) const DROUGHT_WARMUP: u64 = 1_000;
+
 pub(super) fn inproc_round_trace_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1671,7 +1688,23 @@ impl Solver {
         // fallback. Both unset (the default) leaves the trigger inert —
         // bit-identical to the pre-field behaviour.
         let maxgap = self.config.restart_maxgap.or_else(crate::restart_maxgap);
+        // Drought-gated floor (2026-09-11 conflicts program): the flat floor
+        // is armed only while the fast glue EMA shows the uniform-huge-glue
+        // signature — measured class avg LBD 762 (worker_550) / 224 (qwh),
+        // everything the ungated floor breaks sits at <= 26 (noL 21, mdp 15,
+        // rbsat 10).  The fast EMA (tau 33) reaches the class level within
+        // ~10 conflicts, so the gate opens as early as the drought can bite.
+        let drought = self
+            .config
+            .restart_drought_maxgap
+            .or_else(crate::restart_drought_maxgap);
+        let drought_restart = drought.is_some_and(|n| {
+            gap >= n
+                && self.stats.conflicts >= DROUGHT_WARMUP
+                && self.glue_current.fast.value() > DROUGHT_GLUE_GATE
+        });
         let stall_restart = maxgap.is_some_and(|n| gap >= n)
+            || drought_restart
             || stall_k.is_some_and(|k| {
                 // Null arm: threshold from the scrambled-history EMA (same gap
                 // magnitudes, no stall information); treatment: the real one.

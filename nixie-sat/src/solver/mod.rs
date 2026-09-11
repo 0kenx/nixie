@@ -638,6 +638,13 @@ pub struct SolverConfig {
     /// env-gated; the config field exists so portfolio arms can carry it
     /// without process-global env.
     pub restart_maxgap: Option<u64>,
+    /// Drought-gated max-gap floor (config form of
+    /// `NIXIE_RESTART_DROUGHT_MAXGAP`; `None` = off).  Same flat floor as
+    /// [`SolverConfig::restart_maxgap`] but armed only while the fast glue
+    /// EMA is above the drought glue gate (see learn.rs) — the uniform-huge-glue
+    /// signature (measured class: avg LBD 224-762; everything the ungated
+    /// floor hurts sits at ≤26).  Inert by construction off the class.
+    pub restart_drought_maxgap: Option<u64>,
     /// Late-enable gate for `chrono_reuse` (cadical `chronoreusetrail`):
     /// reuse stops fire only once the search has seen this many conflicts.
     /// **Measured dead as a default** (standing-gap study, 2026-08-21):
@@ -907,6 +914,7 @@ impl Default for SolverConfig {
             chrono_always: std::env::var("NIXIE_CHRONO_ALWAYS").is_ok_and(|v| v == "1"),
             chrono_reuse: std::env::var("NIXIE_CHRONO_REUSE").is_ok_and(|v| v == "1"),
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             chrono_reuse_after: 0,
             chrono_backtrack_threshold: 100,
             luby_cap: 64,

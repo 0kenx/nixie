@@ -882,6 +882,27 @@ pub fn restart_stall_multiplier() -> Option<f64> {
 /// 1.46× — equal to the stall trigger — with a better per-file profile
 /// (worker_550 2.18×, 6s167 0.99×). Default off; see the study for the
 /// no-flip differential.
+/// Drought-gated max-gap floor (`NIXIE_RESTART_DROUGHT_MAXGAP=<n>`; config
+/// field `restart_drought_maxgap` for portfolio arms).  Fires the flat
+/// restart floor at `n` conflicts **only while the fast glue EMA exceeds
+/// the drought glue gate (fast glue EMA above 100)** — the uniform-huge-glue
+/// signature of the restart-drought class.  Measured separation
+/// (2026-09-11 conflicts program): avg learned LBD 762 (worker_550) and
+/// 224 (qwh) on the class the floor fixes, ≤26 on every file the ungated
+/// floor hurts (noL 21, mdp 15, rbsat 10, 6s167 11).  Inert by
+/// construction off the class; default off.
+#[doc(hidden)]
+pub fn restart_drought_maxgap() -> Option<u64> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<u64>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_RESTART_DROUGHT_MAXGAP")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|n| *n > 0)
+    })
+}
+
 #[doc(hidden)]
 pub fn restart_maxgap() -> Option<u64> {
     use std::sync::OnceLock;

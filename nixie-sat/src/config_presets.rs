@@ -100,6 +100,7 @@ impl ConfigPreset {
     fn industrial_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -164,6 +165,7 @@ impl ConfigPreset {
     fn random_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -228,6 +230,7 @@ impl ConfigPreset {
     fn cryptographic_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -292,6 +295,7 @@ impl ConfigPreset {
     fn hardware_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -356,6 +360,7 @@ impl ConfigPreset {
     fn aggressive_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -420,6 +425,7 @@ impl ConfigPreset {
     fn conservative_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -480,6 +486,7 @@ impl ConfigPreset {
     fn glucose_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -540,6 +547,7 @@ impl ConfigPreset {
     fn minisat_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
@@ -600,6 +608,7 @@ impl ConfigPreset {
     fn cadical_config() -> SolverConfig {
         SolverConfig {
             restart_maxgap: None,
+            restart_drought_maxgap: None,
             enable_shrink: true,
             chrono_always: false,
             chrono_reuse: false,
