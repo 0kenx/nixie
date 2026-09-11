@@ -194,6 +194,8 @@ impl super::Solver {
             // `true` after pop only keeps the lazy route.
             bv_preprocess_at_count: _, // NOT trailed: a stale value only
             // re-runs an idempotent (implied-clause) pass.
+            bv_preprocess_cache: _, // NOT trailed: `push`/`pop` clear it, so
+            // a stale value cannot outlive its scope's assertions.
             has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
             // conservative direction (keeps the dispatch).
             bv_elim_var_occurrences: _, // NOT trailed: routing hint only;

@@ -1355,7 +1355,8 @@ fn bool_const(term: &TermId, manager: &TermManager) -> Option<bool> {
 }
 
 /// Result of [`Self::bv_preprocess_assertions`].
-pub(super) struct PreprocessOutcome {
+#[derive(Clone, Debug)]
+pub(crate) struct PreprocessOutcome {
     /// The rewritten assertion list.  Every rewrite is *implied* by the
     /// originals (plain solve-eqs substitutes definitions; the ring pass
     /// isolates variables over odd — unit — coefficients in equations
@@ -1398,13 +1399,42 @@ impl Solver {
         &mut self,
         manager: &mut TermManager,
     ) -> PreprocessOutcome {
+        // Memoize the outcome for the current assertion set: the eager
+        // dispatch computes it for its routing trial and — when it declines
+        // in favor of the unified path — the stage-4 preprocessing-parity
+        // pass used to recompute the identical outcome from scratch (on the
+        // Sydr predicate files, seconds of duplicated ring elimination),
+        // and dispatch retries (`allow_elim=false`) likewise.  Fresh when
+        // the assertion count moved (assertions only grow between checks;
+        // push/pop/reset clear the cache below, so a count can never alias
+        // a *different* assertion set).
+        if let Some((count, cached)) = &self.bv_preprocess_cache
+            && *count == self.assertions.len()
+        {
+            return cached.clone();
+        }
         // (assertion, origin) pairs: preprocessing may split an assertion
         // (a top-level `and` of equations) or drop solved ones, and the
         // dispatch needs each surviving assertion's *original* for its
         // constraint-term bookkeeping (unsat cores name the user's input).
         let mut pairs: Vec<(TermId, TermId)> = self.assertions.iter().map(|&a| (a, a)).collect();
+        let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
+        let t0 = std::time::Instant::now();
+        if tr {
+            eprintln!("[pre] stage0 pairs={} t0", pairs.len());
+        }
         normalize_assertions(&mut pairs, manager);
+        if tr {
+            eprintln!("[pre] stage1 normalize {:?}", t0.elapsed());
+        }
         let plain = solve_equations(&mut pairs, manager);
+        if tr {
+            eprintln!(
+                "[pre] stage2 solve_eqs {:?} plain={}",
+                t0.elapsed(),
+                plain.len()
+            );
+        }
         // Ring (Gaussian) elimination runs after the plain pass (whose
         // substitutions it would otherwise redo).  Replay order for model
         // reconstruction: a ring definition never mentions an *earlier*
@@ -1413,22 +1443,80 @@ impl Solver {
         // variables (the ring pass runs later), so the plain list replays
         // *after* the ring list, in its forward (Kahn) order.  The dispatch
         // additionally retries unresolved definitions to a fixpoint.
+        if tr {
+            eprintln!("[pre] stage3 ring-enter");
+        }
         let mut ring = solve_ring_equations(&mut pairs, manager);
+        if tr {
+            eprintln!(
+                "[pre] stage4 ring-done {:?} elims={}",
+                t0.elapsed(),
+                ring.len()
+            );
+        }
         let used_ring_elimination = !ring.is_empty();
         ring.reverse();
         let eliminations: Vec<(TermId, TermId)> = ring.into_iter().chain(plain).collect();
         let mut preprocessor = BvPreprocessor::new();
+        let mut ri = 0usize;
         let rewritten = pairs
             .iter()
-            .map(|&(a, _)| preprocessor.rewrite(a, manager))
+            .map(|&(a, _)| {
+                if tr {
+                    ri += 1;
+                    if ri.is_multiple_of(500) {
+                        eprintln!(
+                            "[pre] stage5 rewrite {}/{} {:?}",
+                            ri,
+                            pairs.len(),
+                            t0.elapsed()
+                        );
+                    }
+                }
+                preprocessor.rewrite(a, manager)
+            })
             .collect();
+        // Debug sidecar: `NIXIE_BV_DUMP_PRE=<path>` writes the post-cascade
+        // assertions in SMT2 (one `(assert ...)` per line, declarations
+        // included) so the term stream can be diffed against z3's
+        // `(apply (then simplify) :print true)` output rule-by-rule.
+        #[cfg(feature = "std")]
+        if let Ok(path) = std::env::var("NIXIE_BV_DUMP_PRE") {
+            use std::fmt::Write as _;
+            let printer = nixie_core::smtlib::Printer::new(manager);
+            let mut out = String::from("; nixie post-cascade assertions\n");
+            let mut vars: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+            for &a in &rewritten {
+                vars.extend(nixie_core::ast::traversal::collect_free_vars(a, manager));
+            }
+            let mut vars = vars.into_iter().collect::<Vec<_>>();
+            vars.sort();
+            for t in vars {
+                let Some(data) = manager.get(t) else { continue };
+                if !matches!(data.kind, TermKind::Var(_)) {
+                    continue;
+                }
+                let _ = writeln!(
+                    out,
+                    "(declare-fun {} () {})",
+                    printer.print_term(t),
+                    printer.print_sort(data.sort)
+                );
+            }
+            for &a in &rewritten {
+                let _ = writeln!(out, "(assert {})", printer.print_term(a));
+            }
+            let _ = std::fs::write(&path, out);
+        }
         let origins = pairs.iter().map(|&(_, o)| o).collect();
-        PreprocessOutcome {
+        let outcome = PreprocessOutcome {
             rewritten,
             eliminations,
             origins,
             used_ring_elimination,
-        }
+        };
+        self.bv_preprocess_cache = Some((self.assertions.len(), outcome.clone()));
+        outcome
     }
 
     /// Reconstruct the model values of preprocess-eliminated variables by
@@ -1708,64 +1796,106 @@ fn solve_ring_equations(
     /// defining equation.
     const MAX_OTHER_OCCS: usize = 2;
 
+    /// Polynomial difference `lhs - rhs` of an asserted equality, `None` for
+    /// pairs that are not ring equations (non-equalities, width mismatches,
+    /// non-polynomial sides, over-cap monomial counts).
+    fn poly_diff(
+        a: TermId,
+        manager: &TermManager,
+        memo: &mut rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>>,
+    ) -> Option<(u32, Vec<Mono>)> {
+        let Some(TermKind::Eq(l, r)) = manager.get(a).map(|t| t.kind.clone()) else {
+            return None;
+        };
+        let (Some(wl), Some(wr)) = (bv_width_opt(manager, &l), bv_width_opt(manager, &r)) else {
+            return None;
+        };
+        if wl != wr {
+            return None;
+        }
+        let (Some(pl), Some(pr)) = (
+            ring_poly(l, wl, manager, memo),
+            ring_poly(r, wl, manager, memo),
+        ) else {
+            return None;
+        };
+        let modulus = modulus(wl);
+        let mut diff = pl;
+        for mut m in pr {
+            m.coeff = (&modulus - &m.coeff) % &modulus;
+            diff.push(m);
+        }
+        diff.sort_by(|a, b| a.factors.cmp(&b.factors));
+        let diff = combine_like(diff, &modulus);
+        if diff.len() > MAX_DEF_MONOS + 1 {
+            return None;
+        }
+        Some((wl, diff))
+    }
+
     let mut eliminations: Vec<(TermId, TermId)> = Vec::new();
     let mut memo: rustc_hash::FxHashMap<TermId, Option<Vec<Mono>>> =
         rustc_hash::FxHashMap::default();
+
+    // ---- incremental index over the working set ----
+    //
+    // The historical implementation rebuilt, on *every* elimination round,
+    // the polynomial of every equality and the variable-occurrence table of
+    // every assertion (a full DAG walk each).  On definition-dense
+    // industrial inputs — the Sydr/Triton `predicate_*` files assert
+    // thousands of near-linear equations — one variable is eliminable per
+    // round, so thousands of rounds each rescanning thousands of deep
+    // assertions made the pass the *entire* solve: `master/cjpeg/
+    // predicate_2636` burned >390 s inside it and never reached bit-blast.
+    // The structures below are maintained incrementally instead: one
+    // initial full pass, then per elimination only the <= MAX_OTHER_OCCS
+    // substituted assertions are walked again.  The elimination *sequence*
+    // (candidate rule, tie-breaks, swap-remove pair order, substitution
+    // order) is bit-identical to the historical algorithm — this is a
+    // complexity change, not a policy change.
+    //
+    // `pair_poly`/`pair_vars` are index-parallel to `pairs` and swap with it
+    // on removal; `mentions[v]` is the set of pair indices whose assertion
+    // contains free BV variable `v` (an occurrence count of assertions, the
+    // same quantity the historical per-round recount computed).
+    let mut pair_poly: Vec<Option<(u32, Vec<Mono>)>> = Vec::with_capacity(pairs.len());
+    let mut pair_vars: Vec<rustc_hash::FxHashSet<TermId>> = Vec::with_capacity(pairs.len());
+    let mut mentions: rustc_hash::FxHashMap<TermId, rustc_hash::FxHashSet<usize>> =
+        rustc_hash::FxHashMap::default();
+    for (idx, &(a, _)) in pairs.iter().enumerate() {
+        pair_poly.push(poly_diff(a, manager, &mut memo));
+        let mut vars = rustc_hash::FxHashSet::default();
+        collect_free_bv_vars(a, manager, &mut vars);
+        for v in &vars {
+            mentions.entry(*v).or_default().insert(idx);
+        }
+        pair_vars.push(vars);
+    }
+
+    let mut trace_rounds = std::env::var("NIXIE_PRE_TRACE").is_ok();
+    let _ = &mut trace_rounds;
+    let trace_t0 = std::time::Instant::now();
+    let mut trace_n = 0usize;
     loop {
         if eliminations.len() >= MAX_ELIMS {
             break;
         }
-        // ---- polynomial difference of every asserted BV equality ----
-        let mut equations: Vec<(usize, u32, Vec<Mono>)> = Vec::new();
-        for (idx, &(a, _)) in pairs.iter().enumerate() {
-            let Some(TermKind::Eq(l, r)) = manager.get(a).map(|t| t.kind.clone()) else {
-                continue;
-            };
-            let (Some(wl), Some(wr)) = (bv_width_opt(manager, &l), bv_width_opt(manager, &r))
-            else {
-                continue;
-            };
-            if wl != wr {
-                continue;
-            }
-            let (Some(pl), Some(pr)) = (
-                ring_poly(l, wl, manager, &mut memo),
-                ring_poly(r, wl, manager, &mut memo),
-            ) else {
-                continue;
-            };
-            let modulus = modulus(wl);
-            let mut diff = pl;
-            for mut m in pr {
-                m.coeff = (&modulus - &m.coeff) % &modulus;
-                diff.push(m);
-            }
-            diff.sort_by(|a, b| a.factors.cmp(&b.factors));
-            let diff = combine_like(diff, &modulus);
-            equations.push((idx, wl, diff));
+        if trace_rounds && eliminations.len().is_multiple_of(100) {
+            eprintln!(
+                "[ring] elims={} pairs={} t={:?}",
+                eliminations.len(),
+                pairs.len(),
+                trace_t0.elapsed()
+            );
         }
-        if equations.is_empty() {
-            break;
-        }
-
-        // ---- per-variable assertion occurrence counts ----
-        let mut occurrences: rustc_hash::FxHashMap<TermId, usize> =
-            rustc_hash::FxHashMap::default();
-        for &(a, _) in pairs.iter() {
-            let mut vars = rustc_hash::FxHashSet::default();
-            collect_free_bv_vars(a, manager, &mut vars);
-            for v in vars {
-                *occurrences.entry(v).or_insert(0) += 1;
-            }
-        }
-
+        trace_n += 1;
         // ---- pick the elimination (fewest other occurrences, then the
         //      smallest TermId for determinism) ----
         let mut best: Option<(usize, u32, TermId, BigInt, usize)> = None;
-        for (slot, &(_, width, ref poly)) in equations.iter().enumerate() {
-            if poly.len() > MAX_DEF_MONOS + 1 {
+        for (idx, poly) in pair_poly.iter().enumerate() {
+            let Some((width, poly)) = poly else {
                 continue;
-            }
+            };
             for m in poly {
                 let [v] = m.factors.as_slice() else {
                     continue;
@@ -1793,25 +1923,28 @@ fn solve_ring_equations(
                 {
                     continue;
                 }
-                let other = occurrences.get(v).copied().unwrap_or(1).saturating_sub(1);
+                let other = mentions.get(v).map_or(1, |s| s.len()).saturating_sub(1);
                 if other > MAX_OTHER_OCCS {
                     continue;
                 }
                 match best {
-                    None => best = Some((slot, width, *v, m.coeff.clone(), other)),
+                    None => best = Some((idx, *width, *v, m.coeff.clone(), other)),
                     Some((_, _, b_var, _, b_other)) => {
                         let strictly_better = other < b_other || (other == b_other && *v < b_var);
                         if strictly_better {
-                            best = Some((slot, width, *v, m.coeff.clone(), other));
+                            best = Some((idx, *width, *v, m.coeff.clone(), other));
                         }
                     }
                 }
             }
         }
-        let Some((slot, width, var, coeff, _)) = best else {
+        let Some((eq_idx, width, var, coeff, _)) = best else {
             break;
         };
-        let (eq_idx, _, poly) = equations.swap_remove(slot);
+        // The candidate scan only picks pairs that carry a polynomial; the
+        // `unwrap_or` keeps a malformed state from panicking instead of
+        // solving (the pair is then dropped as the defining equation).
+        let (_, poly) = pair_poly[eq_idx].take().unwrap_or((0u32, Vec::new()));
 
         // ---- solve: v = c⁻¹ · (−(P − c·v)) at width w ----
         let modulus = modulus(width);
@@ -1833,21 +1966,88 @@ fn solve_ring_equations(
             });
         }
         if def_monos.len() > MAX_DEF_MONOS {
+            // Unreachable given the `MAX_DEF_MONOS + 1` cap on the poly (the
+            // definition drops the var monomial); blacklist so a future cap
+            // change cannot turn this into a spin.
+            pair_poly[eq_idx] = None;
             continue;
         }
         let def = build_sum(def_monos, manager, width);
 
         // ---- drop the solved equation, substitute everywhere else ----
-        pairs.swap_remove(eq_idx);
+        drop_pair(eq_idx, pairs, &mut pair_poly, &mut pair_vars, &mut mentions);
         let single = std::iter::once((var, def)).collect::<rustc_hash::FxHashMap<TermId, TermId>>();
-        for (a, _) in pairs.iter_mut() {
-            if mentions(*a, var, manager) {
-                *a = manager.substitute(*a, &single);
+        // Substitute into exactly the assertions that mention `var` (the
+        // defining equation was just dropped).  Iterate over a snapshot:
+        // the substitution rewrites existing indices' terms but never adds
+        // or removes pairs.
+        let affected: Vec<usize> = mentions
+            .get(&var)
+            .map_or(Vec::new(), |s| s.iter().copied().collect());
+        for j in affected {
+            let (a_j, _) = pairs[j];
+            let new_a = manager.substitute(a_j, &single);
+            pairs[j].0 = new_a;
+            // Refresh the index for the rewritten assertion only.
+            let mut new_vars = rustc_hash::FxHashSet::default();
+            collect_free_bv_vars(new_a, manager, &mut new_vars);
+            let old_vars = std::mem::replace(&mut pair_vars[j], new_vars);
+            for v in old_vars.difference(&pair_vars[j]) {
+                if let Some(s) = mentions.get_mut(v) {
+                    s.remove(&j);
+                }
             }
+            for v in pair_vars[j].difference(&old_vars) {
+                mentions.entry(*v).or_default().insert(j);
+            }
+            pair_poly[j] = poly_diff(new_a, manager, &mut memo);
         }
+        debug_assert!(mentions.get(&var).is_none_or(|s| s.is_empty()));
         eliminations.push((var, def));
     }
+    if trace_rounds {
+        eprintln!(
+            "[ring] done rounds={} elims={} t={:?}",
+            trace_n,
+            eliminations.len(),
+            trace_t0.elapsed()
+        );
+    }
     eliminations
+}
+
+/// Remove `idx` from the parallel working set, swap-repairing the index so
+/// `mentions` stays aligned with `pairs`' indices (the moved-down pair keeps
+/// its polynomial and variable set).
+fn drop_pair(
+    idx: usize,
+    pairs: &mut Vec<(TermId, TermId)>,
+    pair_poly: &mut Vec<Option<(u32, Vec<Mono>)>>,
+    pair_vars: &mut Vec<rustc_hash::FxHashSet<TermId>>,
+    mentions: &mut rustc_hash::FxHashMap<TermId, rustc_hash::FxHashSet<usize>>,
+) {
+    let last = pairs.len() - 1;
+    // Un-index the dropped pair's variables.
+    for v in &pair_vars[idx] {
+        if let Some(s) = mentions.get_mut(v) {
+            s.remove(&idx);
+        }
+    }
+    if idx != last {
+        // The pair at `last` moves into `idx`; redirect its mentions.
+        for v in &pair_vars[last] {
+            if let Some(s) = mentions.get_mut(v) {
+                s.remove(&last);
+                s.insert(idx);
+            }
+        }
+        pairs.swap(idx, last);
+        pair_poly.swap(idx, last);
+        pair_vars.swap(idx, last);
+    }
+    pairs.truncate(last);
+    pair_poly.truncate(last);
+    pair_vars.truncate(last);
 }
 
 /// Modular inverse of an odd `c` modulo `2ʷ` (Newton iteration: each step

@@ -257,6 +257,12 @@ pub struct Solver {
     /// Assertion count at which the stage-4 preprocessing-parity pass last
     /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
     pub(super) bv_preprocess_at_count: usize,
+    /// Memoized [`PreprocessOutcome`] of the current assertion set, with the
+    /// assertion count it was computed at (see
+    /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
+    /// count can never alias a different assertion set.
+    pub(super) bv_preprocess_cache:
+        Option<(usize, crate::solver::bv_preprocess::PreprocessOutcome)>,
     /// Whether a UF application returning a bit-vector (including datatype
     /// selectors over BV carriers) has been seen.  Sticky input to the
     /// unified-blasting gate: congruence merges of such applications cannot
@@ -922,6 +928,7 @@ impl Solver {
             bv_elim_var_occurrences: rustc_hash::FxHashMap::default(),
             bv_elim_deferred: Vec::new(),
             bv_preprocess_at_count: usize::MAX,
+            bv_preprocess_cache: None,
             has_bv_result_uf: false,
             bv_unified: false,
             bv_order_specs: Vec::new(),
@@ -3852,6 +3859,7 @@ impl Solver {
 
     /// Push a context level
     pub fn push(&mut self) {
+        self.bv_preprocess_cache = None;
         // A `push` opens a scope the previous verdict knew nothing about.  It
         // adds no assertion by itself, so the old model would still satisfy the
         // stack *at this instant* – but the only way to observe it is to ask
@@ -3910,6 +3918,7 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
+        self.bv_preprocess_cache = None;
         // Retracting a scope changes the parity-lemma basis (assertions of
         // the scope disappear; their rows and lemmas go with the trail ops).
         self.parity_generation = self.parity_generation.wrapping_add(1);
@@ -4196,6 +4205,7 @@ impl Solver {
         self.bv.reset();
         self.bv_unified = false;
         self.bv_preprocess_at_count = usize::MAX;
+        self.bv_preprocess_cache = None;
         self.bv_order_specs.clear();
         self.distinct_guard_clauses.clear();
         self.bv_order_built.clear();
