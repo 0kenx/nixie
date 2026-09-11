@@ -1671,10 +1671,30 @@ fn solve_equations(
         let tr = std::env::var("NIXIE_PRE_TRACE").is_ok();
         let rt0 = std::time::Instant::now();
         // ---- collect candidate definitions ----
+        // Variables defined by the nullary define-fun equations (the head
+        // of `pairs` in round 0).  Their bodies are fully inlined chains
+        // (the parser expanded every reference, bounded only by the parse
+        // depth guard), so substituting into them walks meganode terms —
+        // and the result is never read: the equations are dropped at
+        // apply, and model replay evaluates each definition with its
+        // dependencies already assigned (the worklist resolves them in
+        // topological order).  They still serve as definition *sources*.
+        let mut define_vars: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+        let define_pair_end = if round == 0 {
+            n_define_pairs.min(pairs.len())
+        } else {
+            0
+        };
         let mut defs: rustc_hash::FxHashMap<TermId, TermId> = rustc_hash::FxHashMap::default();
         let mut conflicted: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
-        for &(a, _) in pairs.iter() {
+        for (idx, &(a, _)) in pairs.iter().enumerate() {
             if let Some(TermKind::Eq(lhs, rhs)) = manager.get(a).map(|t| &t.kind).cloned() {
+                if idx < define_pair_end
+                    && let Some((v, _)) = var_def_operand(lhs, rhs, manager)
+                        .or_else(|| var_def_operand(rhs, lhs, manager))
+                {
+                    define_vars.insert(v);
+                }
                 collect_def_candidates(lhs, rhs, &mut defs, &mut conflicted, manager);
                 collect_def_candidates(rhs, lhs, &mut defs, &mut conflicted, manager);
             }
@@ -1731,7 +1751,19 @@ fn solve_equations(
         // The budget bounds the work; unresolved definitions simply stay
         // as equations (sound either way — see the apply phase below).
         const MAX_SUBSTITUTIONS: usize = 100_000;
+        /// Bodies larger than this many DAG nodes are left whole: the
+        /// parse-time inlining of `define-fun` chains stuffs every
+        /// referencing assertion with the callee's expansion, so user
+        /// equations on macro-heavy inputs are meganode terms —
+        /// substituting into one costs a full rebuild, and the equation
+        /// stays a valid constraint either way.
+        const MAX_SUBSTITUTION_BODY_NODES: usize = 1_000_000;
+        /// Total substituted-node budget: substitutions rebuild their
+        /// target body, so the real work is calls × body size.
+        const MAX_SUBSTITUTED_NODES: usize = 8_000_000;
         let mut substitutions = 0usize;
+        let mut substituted_nodes = 0usize;
+        let mut size_memo: rustc_hash::FxHashMap<TermId, usize> = rustc_hash::FxHashMap::default();
         // Whether pending body `i` has been substituted into since
         // collection: only a substituted body can mention the variable it
         // is being resolved to (its collection-time mention set — possibly
@@ -1770,15 +1802,38 @@ fn solve_equations(
             // the pass the naive version did for *every* pending body.
             let single = std::iter::once((x, t)).collect::<rustc_hash::FxHashMap<_, _>>();
             for j in affected {
-                if substitutions >= MAX_SUBSTITUTIONS {
+                unmet[j] -= 1;
+                let (xj, tj) = pending[j];
+                if define_vars.contains(&xj) {
+                    // A define-fun equation body: dropping-in at apply, and
+                    // the replay evaluates it under dependencies already
+                    // assigned — substituting into the inlined chain is
+                    // pure cost (meganode bodies × resolutions).
+                    if unmet[j] == 0 {
+                        worklist.push_back(j);
+                    }
+                    continue;
+                }
+                if substitutions >= MAX_SUBSTITUTIONS || substituted_nodes >= MAX_SUBSTITUTED_NODES
+                {
                     // Budget exhausted: leave the remaining dependencies
                     // unresolved.  Their equations stay in `pairs` below
                     // (implied constraints, never dropped silently).
                     break;
                 }
-                unmet[j] -= 1;
-                let (_, tj) = pending[j];
+                let body_size = dag_size(tj, manager, &mut size_memo);
+                if body_size > MAX_SUBSTITUTION_BODY_NODES {
+                    // Meganode body (parse-inlined definition chain):
+                    // substituting costs a full rebuild for a definition
+                    // the search can consume whole.  Readiness still
+                    // advances so dependents resolve.
+                    if unmet[j] == 0 {
+                        worklist.push_back(j);
+                    }
+                    continue;
+                }
                 pending[j].1 = manager.substitute(tj, &single);
+                substituted_nodes += body_size;
                 substitutions += 1;
                 touched[j] = true;
                 if unmet[j] == 0 {
@@ -2228,6 +2283,66 @@ fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
 /// Collect, in one DAG walk, which of the `tracked` variables `term`
 /// mentions (shared subterms visited once).  Used by the Kahn worklist to
 /// build occurrence lists and reference counts without re-walking bodies.
+/// DAG node count of `term`, memoized on `memo` (hash-consed terms are
+/// immutable, so with chained definitions sharing the whole inlined prefix
+/// every shared subtree is measured once — unlike a per-call visited set,
+/// which re-walks the prefix per body and is quadratic on macro-heavy
+/// inputs).
+fn dag_size(
+    term: TermId,
+    manager: &TermManager,
+    memo: &mut rustc_hash::FxHashMap<TermId, usize>,
+) -> usize {
+    use nixie_core::ast::traversal::get_children;
+    enum Step {
+        Enter(TermId),
+        Exit(TermId, usize),
+    }
+    let mut stack = vec![Step::Enter(term)];
+    while let Some(step) = stack.pop() {
+        match step {
+            Step::Enter(t) => {
+                if let Some(&n) = memo.get(&t) {
+                    let _ = n;
+                    continue;
+                }
+                let Some(data) = manager.get(t) else {
+                    memo.insert(t, 1);
+                    continue;
+                };
+                let kids = get_children(&data.kind);
+                if kids.is_empty() {
+                    memo.insert(t, 1);
+                    continue;
+                }
+                // Re-push self as Exit with kids pending; accumulate below.
+                stack.push(Step::Exit(t, kids.len()));
+                for k in kids {
+                    stack.push(Step::Enter(k));
+                }
+            }
+            Step::Exit(t, _nkids) => {
+                if memo.contains_key(&t) {
+                    continue;
+                }
+                let Some(data) = manager.get(t) else {
+                    memo.insert(t, 1);
+                    continue;
+                };
+                let total: usize = std::iter::once(1usize)
+                    .chain(
+                        get_children(&data.kind)
+                            .iter()
+                            .map(|k| memo.get(k).copied().unwrap_or(1)),
+                    )
+                    .sum();
+                memo.insert(t, total);
+            }
+        }
+    }
+    memo.get(&term).copied().unwrap_or(1)
+}
+
 fn collect_var_mentions(
     term: TermId,
     tracked: &rustc_hash::FxHashMap<TermId, usize>,
