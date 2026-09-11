@@ -190,3 +190,45 @@ was the closing fix).  Note for future triage: some of my intermediate
 "failures at clean HEAD" observations were a worktree artifact — those
 tests read `smt-lib/...` relative paths, so any worktree verification
 needs the corpus symlink first (the AGENTS.md rule, now twice bitten).
+
+## Session close (2026-09-12): 288/509 — the ledger and what bought it
+
+Settled-load full screen at `53246010` (md5 b431ed0f, load ≈ 2, cells in
+`precompile/53246010/benchmark/bv_gap/final_rescreen.jsonl`):
+
+| milestone | solved of 509 |
+|---|---|
+| pre-campaign baseline | 266 |
+| Tier A + frontier fix (banked) | 283 |
+| session start (settled null arm) | 285 |
+| + NOT-descent cascade | 286 |
+| + shift wiring (default-on) | **288** |
+| z3 4.16.0 | 281 |
+
+Zero verdict flips vs the session-start baseline at every step; parity
+175/175 throughout.  The seven cell moves: **gained** `mcm/54` (6.1×,
+shift wiring), `pspace/shift1add.23958`, `bitrev1024`, `VS3-A7`,
+`ext_con_028_008_1024` (a structural-revival target, closed by the
+cascade+wiring composition rather than by the reverted rewriting rules);
+**lost** `lfsr_004_015_112` and `uclid/std_bv_formula` (individually
+measured cascade trajectory costs; aggregate keeps the trade).
+
+Landed this session (all on main): the out-of-range-constant **false-sat
+fix** (`37551372`), the **odd-width identity fuzzer** (found it; 15
+template families), the **model-net root-cause** + clause-dump
+diagnostics (`57e9fb7e`), the **divisor identities** (`e8c986da`), the
+**NOT-descent cascade** (`4292c427`), and **shift wiring**
+(`797a6bf0`/`53246010`).  `NIXIE_BV_CONST_FLOW=1` remains available
+(bitrev family, default-off at −1 aggregate).
+
+**Where the remaining gap lives** (measured, not guessed): on the
+z3-simplified maxandminor form — same formula, both solvers — nixie
+needs 518k decisions / 254k conflicts where z3's post-blast
+`simplifier + solve-eqs` refutes with essentially no search (0.028 s).
+The missing layer is **expression-DAG simplification between blasting
+and CNF emission** (z3's `k!N`-definition solve-eqs), not SAT-core
+quality and not encoding size.  That is the next multi-hour build, and
+it is the same lever for the cjpeg cluster.  Also open: the unified
+path blasts original *and* rewritten assertions (the dispatch path
+already solves rewritten-only); generalizing the deferral would halve
+pure-BV instances on the default route.
