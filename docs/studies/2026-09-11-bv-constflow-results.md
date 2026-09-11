@@ -359,5 +359,9 @@ Z3 `mk_bv_shl`/`mk_bv_lshr` numeral cases) — is in, behind
 - 4476/4477 solver+core tests green with the flag forced on; the single
   failure is the printer structural-contract test that pins "bvshl x 3
   stays BvShl" — the exact contract this flag changes when enabled.
-- The 509-file screen: run settled, not under load-30+ (the lesson from
-  this session's early screens).  Cells + binary: `precompile/797a6bf0/`.
+- The 509-file screen ran settled: **287 vs 286, zero verdict flips**
+  (all three differing cells are z3-unknown boundary files; two measure
+  identical serially, the third — `mcm/54` — is the real win:
+  **43.5 → 7.1 s, 6.1×**, the shift-add multiplier chains collapsing
+  under the wiring).  **Default flipped on** in `53246010`; cells +
+  binary in `precompile/53246010/`; parity 175/175 (0 disagreements).
