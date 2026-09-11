@@ -2023,7 +2023,7 @@ impl TermManager {
     /// Create a bit vector shift left.
     ///
     /// Folds two literals; a zero distance is the identity; and, under
-    /// [`Self::shift_wiring_enabled`], a constant distance `0 < k < w`
+    /// (the `NIXIE_BV_SHIFT_WIRING` gate), a constant distance `0 < k < w`
     /// rewires to `concat(x[w-1-k:0], 0^k)` (Z3 `mk_bv_shl`'s numeral
     /// case — the syntactic convergence piece for shift-heavy identities).
     pub fn mk_bv_shl(&mut self, lhs: TermId, rhs: TermId) -> TermId {
