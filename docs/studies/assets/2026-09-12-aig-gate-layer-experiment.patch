@@ -1,0 +1,847 @@
+diff --git a/nixie-theories/src/bv/solver.rs b/nixie-theories/src/bv/solver.rs
+index 0cc5867f..a4f05b78 100644
+--- a/nixie-theories/src/bv/solver.rs
++++ b/nixie-theories/src/bv/solver.rs
+@@ -42,8 +42,26 @@ enum Sig {
+     True,
+     /// The reserved constant-false variable.
+     False,
+-    /// An ordinary signal variable.
+-    Var(Var),
++    /// An ordinary signal: a SAT literal (variable **and polarity**).
++    ///
++    /// Polarity-carrying signals are the AIG-with-complement-edges
++    /// representation: `not` of a literal is a flip (free, no variable, no
++    /// clauses), `or` is a complemented `and` (De Morgan collisions), and
++    /// gates memoize on canonical literal pairs.  Positive literals are the
++    /// historical `Var(v)` case; every consumer that needs the bare
++    /// variable reads `.var()`.
++    Var(Lit),
++}
++
++/// Journal key for one AIG-memo insertion (see [`BvSolver::gate_journal`]):
++/// the embedded path's `pop` retracts memo entries whose clauses die with
++/// the scope, so a stale entry can never hand out a variable whose
++/// definition no longer exists.
++#[derive(Clone, Copy, Debug)]
++enum GateKey {
++    And((u64, u64)),
++    Xor((u64, u64)),
++    Mux((u64, u64, u64)),
+ }
+ 
+ /// Which SAT instance receives the clauses and variables that the circuit
+@@ -107,6 +125,10 @@ struct ContextMark {
+     guard_terms_len: usize,
+     /// Length of `outer_bool_journal`.
+     outer_bool_len: usize,
++    /// Length of the AIG-memo insertion journal (`gate_journal`): a `pop`
++    /// removes the clauses added at this level, so the memo entries
++    /// naming those clauses must be retracted with them.
++    gate_journal_len: usize,
+ }
+ 
+ /// Which expensive operator one abstraction stands for (CEGAR; see
+@@ -304,6 +326,21 @@ pub struct BvSolver {
+     /// in a unified generation every bit var belongs to the caller's var
+     /// space, and only the caller's model assigns them.
+     adopted_model: Vec<LBool>,
++    /// AIG node memos (see the `Sig` doc and the gate constructors):
++    /// literal-keyed hash-consing with complement edges, so identical
++    /// gates share one variable and one clause set, `or` is a complemented
++    /// `and` (De Morgan collisions), and `not` is free.
++    ///
++    /// `and_memo`/`xor_memo`/`mux_memo`: canonical input-literal codes to
++    /// the node's representative literal.  `and_children`: node var to its
++    /// defining input literals (for the two-level minimization rules).
++    /// Insertion order is journaled (`gate_journal`) so the embedded
++    /// path's `pop` retracts entries whose clauses die with the scope.
++    and_memo: FxHashMap<(u64, u64), Lit>,
++    xor_memo: FxHashMap<(u64, u64), Lit>,
++    mux_memo: FxHashMap<(u64, u64, u64), Lit>,
++    and_children: FxHashMap<Var, (Lit, Lit)>,
++    gate_journal: Vec<GateKey>,
+     /// Bit variables that the current operation's encoding wired to constants
+     /// (see [`Self::wire`]), keyed by the bit's variable.  Drained by
+     /// [`Self::finish_result`], which installs the reserved constant
+@@ -375,6 +412,11 @@ impl BvSolver {
+             pending_unlinked: Vec::new(),
+             adopted_model: Vec::new(),
+             const_pinned: FxHashMap::default(),
++            and_memo: FxHashMap::default(),
++            xor_memo: FxHashMap::default(),
++            mux_memo: FxHashMap::default(),
++            and_children: FxHashMap::default(),
++            gate_journal: Vec::new(),
+             const_flow_enabled: Self::const_flow_default(),
+             const_true,
+             const_false,
+@@ -871,7 +913,7 @@ impl BvSolver {
+                         return true;
+                     }
+                     Sig::False => {}
+-                    Sig::Var(v) => diff_lits.push(Lit::pos(v)),
++                    Sig::Var(v) => diff_lits.push(v),
+                 }
+             }
+ 
+@@ -1443,25 +1485,28 @@ impl BvSolver {
+                     return Some(out);
+                 }
+                 (Sig::True, Sig::Var(v)) | (Sig::Var(v), Sig::True) => {
+-                    // This bit is equal to `v`'s value: out -> v, and `!v`
+-                    // is a "differing bit" for the reverse direction.
+-                    let lit = Lit::pos(v);
+-                    let _ = self.sat.add_clause([Lit::neg(out), lit]);
+-                    diff_lits.push(lit.negate());
++                    // This bit is equal to `v`: out -> v, and `!v` is a
++                    // "differing bit" for the reverse direction.
++                    let _ = self.sat.add_clause([Lit::neg(out), v]);
++                    diff_lits.push(v.negate());
+                 }
+                 (Sig::False, Sig::Var(v)) | (Sig::Var(v), Sig::False) => {
+                     // This bit is equal to `!v`: out -> !v, and `v` differs.
+-                    let lit = Lit::neg(v);
+-                    let _ = self.sat.add_clause([Lit::neg(out), lit]);
+-                    diff_lits.push(lit.negate());
++                    let _ = self.sat.add_clause([Lit::neg(out), v.negate()]);
++                    diff_lits.push(v);
+                 }
+                 (Sig::Var(x), Sig::Var(y)) => {
+                     if x == y {
+                         continue;
+                     }
++                    if x == y.negate() {
++                        // Constantly-unequal bits falsify the equality.
++                        let _ = self.sat.add_clause([Lit::neg(out)]);
++                        return Some(out);
++                    }
+                     // d_i <=> (x XOR y); collected for the big clause below.
+                     let d = self.sat.new_var();
+-                    self.emit_xor(d, x, y);
++                    self.emit_xor(d, x.var(), y.var());
+                     // out -> bits equal at i: !out or !d_i
+                     self.sat.add_clause([Lit::neg(out), Lit::neg(d)]);
+                     diff_lits.push(Lit::pos(d));
+@@ -1653,7 +1698,7 @@ impl BvSolver {
+             let ult = self.sat.new_var();
+             self.encode_ult_result(&va.bits, &vb.bits, ult);
+ 
+-            let folded = self.gate_mux(diff_sign, sign_a, Sig::Var(ult));
++            let folded = self.gate_mux(diff_sign, sign_a, Sig::Var(Lit::pos(ult)));
+             self.wire(result, folded);
+         } else {
+             self.encode_ult_result(&va.bits, &vb.bits, result);
+@@ -1972,20 +2017,20 @@ impl BvSolver {
+             // a = 0 -> m_i = 0  (¬zero_a ∨ ¬m_i)
+             match zero_a {
+                 Sig::True => {
+-                    self.sat.add_clause([Lit::neg(mm)]);
++                    self.sat.add_clause([mm.negate()]);
+                 }
+                 Sig::Var(z) => {
+-                    self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
++                    self.sat.add_clause([z.negate(), mm.negate()]);
+                 }
+                 Sig::False => {}
+             }
+             // b = 0 -> m_i = 0
+             match zero_b {
+                 Sig::True => {
+-                    self.sat.add_clause([Lit::neg(mm)]);
++                    self.sat.add_clause([mm.negate()]);
+                 }
+                 Sig::Var(z) => {
+-                    self.sat.add_clause([Lit::neg(z), Lit::neg(mm)]);
++                    self.sat.add_clause([z.negate(), mm.negate()]);
+                 }
+                 Sig::False => {}
+             }
+@@ -1994,13 +2039,13 @@ impl BvSolver {
+             if let Some(&bvar) = vb.bits.get(idx) {
+                 match one_a {
+                     Sig::True => {
+-                        self.sat.add_clause([Lit::neg(mm), Lit::pos(bvar)]);
++                        self.sat.add_clause([mm.negate(), Lit::pos(bvar)]);
+                         self.sat.add_clause([mm_pos, Lit::neg(bvar)]);
+                     }
+                     Sig::Var(o) => {
+                         self.sat
+-                            .add_clause([Lit::neg(o), Lit::neg(mm), Lit::pos(bvar)]);
+-                        self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(bvar)]);
++                            .add_clause([o.negate(), mm.negate(), Lit::pos(bvar)]);
++                        self.sat.add_clause([o.negate(), mm_pos, Lit::neg(bvar)]);
+                     }
+                     Sig::False => {}
+                 }
+@@ -2009,13 +2054,13 @@ impl BvSolver {
+             if let Some(&avar) = va.bits.get(idx) {
+                 match one_b {
+                     Sig::True => {
+-                        self.sat.add_clause([Lit::neg(mm), Lit::pos(avar)]);
++                        self.sat.add_clause([mm.negate(), Lit::pos(avar)]);
+                         self.sat.add_clause([mm_pos, Lit::neg(avar)]);
+                     }
+                     Sig::Var(o) => {
+                         self.sat
+-                            .add_clause([Lit::neg(o), Lit::neg(mm), Lit::pos(avar)]);
+-                        self.sat.add_clause([Lit::neg(o), mm_pos, Lit::neg(avar)]);
++                            .add_clause([o.negate(), mm.negate(), Lit::pos(avar)]);
++                        self.sat.add_clause([o.negate(), mm_pos, Lit::neg(avar)]);
+                     }
+                     Sig::False => {}
+                 }
+@@ -2085,11 +2130,11 @@ impl BvSolver {
+ 
+         for (idx, &m_bit) in r.bits.iter().enumerate() {
+             let m = self.sig(m_bit);
+-            let Sig::Var(mv) = m else {
++            let Sig::Var(ml) = m else {
+                 return false;
+             };
+-            let m_pos = Lit::pos(mv);
+-            let m_neg = m_pos.negate();
++            let m_pos = ml;
++            let m_neg = ml.negate();
+             // EXACT zero-divisor semantics.
+             match zero_b {
+                 Sig::True => {
+@@ -2104,7 +2149,7 @@ impl BvSolver {
+                     }
+                 }
+                 Sig::Var(z) => {
+-                    let z_neg = Lit::neg(z);
++                    let z_neg = z.negate();
+                     if urem {
+                         if let Some(&av) = va.bits.get(idx) {
+                             self.sat.add_clause([z_neg, m_neg, Lit::pos(av)]);
+@@ -2127,7 +2172,7 @@ impl BvSolver {
+                     }
+                 }
+                 Sig::Var(o) => {
+-                    let o_neg = Lit::neg(o);
++                    let o_neg = o.negate();
+                     if urem {
+                         self.sat.add_clause([o_neg, m_neg]);
+                     } else if let Some(&av) = va.bits.get(idx) {
+@@ -2140,26 +2185,26 @@ impl BvSolver {
+             // a = 0 ∧ b ≠ 0 → udiv = 0 / urem = 0.
+             if let Sig::Var(za) = zero_a
+                 && let Some(zb) = match zero_b {
+-                    Sig::Var(z) => Some(Lit::neg(z)),
++                    Sig::Var(z) => Some(z.negate()),
+                     _ => None,
+                 }
+             {
+-                self.sat.add_clause([Lit::neg(za), zb, m_neg]);
++                self.sat.add_clause([za.negate(), zb, m_neg]);
+             } else if zero_a == Sig::True && zero_b == Sig::False {
+                 self.sat.add_clause([m_neg]);
+             }
+             // a = b ∧ b ≠ 0 → udiv = (idx == 0) / urem = 0.
+             if let Sig::Var(e) = eq_ab
+                 && let Some(zb) = match zero_b {
+-                    Sig::Var(z) => Some(Lit::neg(z)),
++                    Sig::Var(z) => Some(z.negate()),
+                     _ => None,
+                 }
+             {
+                 let target = !urem && idx == 0;
+                 if target {
+-                    self.sat.add_clause([Lit::neg(e), zb, m_pos]);
++                    self.sat.add_clause([e.negate(), zb, m_pos]);
+                 } else {
+-                    self.sat.add_clause([Lit::neg(e), zb, m_neg]);
++                    self.sat.add_clause([e.negate(), zb, m_neg]);
+                 }
+             } else if eq_ab == Sig::True && zero_b == Sig::False {
+                 let target = !urem && idx == 0;
+@@ -2348,14 +2393,14 @@ impl BvSolver {
+             let ult_result = self.sat.new_var();
+             self.encode_ult_result(&va.bits, &vb.bits, ult_result);
+ 
+-            let result = self.gate_mux(diff_sign, sign_a, Sig::Var(ult_result));
++            let result = self.gate_mux(diff_sign, sign_a, Sig::Var(Lit::pos(ult_result)));
+             match result {
+                 Sig::True => {}
+                 Sig::False => {
+                     self.sat.add_clause([]);
+                 }
+                 Sig::Var(v) => {
+-                    self.sat.add_clause([Lit::pos(v)]);
++                    self.sat.add_clause([v]);
+                 }
+             }
+             return true;
+@@ -2440,7 +2485,7 @@ impl BvSolver {
+         } else if v == self.const_false {
+             Sig::False
+         } else {
+-            Sig::Var(v)
++            Sig::Var(Lit::pos(v))
+         }
+     }
+ 
+@@ -2450,7 +2495,7 @@ impl BvSolver {
+         match s {
+             Sig::True => self.const_true,
+             Sig::False => self.const_false,
+-            Sig::Var(v) => v,
++            Sig::Var(l) => l.var(),
+         }
+     }
+ 
+@@ -2473,12 +2518,57 @@ impl BvSolver {
+                 self.const_pinned.insert(out, false);
+                 self.sat.add_clause([Lit::neg(out)]);
+             }
+-            Sig::Var(v) => {
+-                if v != out {
+-                    self.emit_bit_eq(out, v);
++            Sig::Var(l) => {
++                if l.var() != out {
++                    if l.is_pos() {
++                        self.emit_bit_eq(out, l.var());
++                    } else {
++                        // out ⇔ ¬u: (out ∨ u) ∧ (¬out ∨ ¬u).
++                        self.sat.add_clause([Lit::pos(out), Lit::pos(l.var())]);
++                        self.sat.add_clause([Lit::neg(out), Lit::neg(l.var())]);
++                    }
++                } else if l.is_neg() {
++                    // out ⇔ ¬out is unsatisfiable.
++                    self.sat.add_clause([]);
++                }
++            }
++        }
++    }
++
++    /// Retract AIG-memo entries journaled after `len` (the embedded
++    /// `pop` path: those entries' defining clauses die with the scope).
++    fn retract_gate_memos_since(&mut self, len: usize) {
++        while self.gate_journal.len() > len {
++            match self.gate_journal.pop() {
++                Some(GateKey::And(k)) => {
++                    self.and_memo.remove(&k);
++                }
++                Some(GateKey::Xor(k)) => {
++                    self.xor_memo.remove(&k);
+                 }
++                Some(GateKey::Mux(k)) => {
++                    self.mux_memo.remove(&k);
++                }
++                None => break,
+             }
+         }
++        // Node-children entries follow the same lifetime as their memo
++        // entry (inserted together); drop those created after `len` by
++        // rebuilding lazily is not possible without a second journal —
++        // clear conservatively: a missing children entry only disables
++        // the two-level rules, never unsoundness.
++        self.and_children.clear();
++    }
++
++    /// Drop all AIG-memo state (reset / unified-generation boundaries:
++    /// entries name vars of one instance's space and must never leak into
++    /// another's).
++    fn clear_gate_memos(&mut self) {
++        self.and_memo.clear();
++        self.xor_memo.clear();
++        self.mux_memo.clear();
++        self.and_children.clear();
++        self.gate_journal.clear();
+     }
+ 
+     /// Finish building `result`: when the constant-flow layer is enabled
+@@ -2565,38 +2655,37 @@ impl BvSolver {
+         match (self.sig(a), self.sig(b)) {
+             (Sig::True, Sig::True) | (Sig::False, Sig::False) => {}
+             (Sig::Var(x), Sig::Var(y)) => {
+-                if x != y {
+-                    self.emit_bit_eq(x, y);
++                if x == y {
++                    // Identical literals: trivially equal.
++                } else if x == y.negate() {
++                    // Complementary literals: unsatisfiable.
++                    let _ = self.sat.add_clause([]);
++                } else {
++                    self.emit_bit_eq(x.var(), y.var());
+                 }
+             }
+             (Sig::True, Sig::False) | (Sig::False, Sig::True) => {
+                 let _ = self.sat.add_clause([]);
+             }
+             (Sig::True, Sig::Var(v)) | (Sig::Var(v), Sig::True) => {
+-                let _ = self.sat.add_clause([Lit::pos(v)]);
++                let _ = self.sat.add_clause([v]);
+             }
+             (Sig::False, Sig::Var(v)) | (Sig::Var(v), Sig::False) => {
+-                let _ = self.sat.add_clause([Lit::neg(v)]);
++                let _ = self.sat.add_clause([v.negate()]);
+             }
+         }
+     }
+ 
+-    /// Raw NOT emitter for two signals: `out <=> not input`.
+-    fn emit_not(&mut self, out: Var, input: Var) {
+-        self.sat.add_clause([Lit::pos(out), Lit::pos(input)]);
+-        self.sat.add_clause([Lit::neg(out), Lit::neg(input)]);
+-    }
+-
+-    /// NOT with constant folding.
++    /// NOT with constant folding: **free** — the literal's polarity flip
++    /// (an AIG complement edge; no variable, no clauses).  The pre-AIG
++    /// behaviour (a dedicated not-variable per call) is recoverable only
++    /// by materializing at the consumer, which the gate constructors do
++    /// when they need a positive variable.
+     fn gate_not(&mut self, a: Sig) -> Sig {
+         match a {
+             Sig::True => Sig::False,
+             Sig::False => Sig::True,
+-            Sig::Var(v) => {
+-                let out = self.sat.new_var();
+-                self.emit_not(out, v);
+-                Sig::Var(out)
+-            }
++            Sig::Var(v) => Sig::Var(v.negate()),
+         }
+     }
+ 
+@@ -2606,30 +2695,130 @@ impl BvSolver {
+         self.wire(out, folded);
+     }
+ 
+-    /// Raw AND emitter for two signals.
+-    fn emit_and(&mut self, out: Var, a: Var, b: Var) {
+-        // out <=> (a AND b)
+-        // out => a, out => b, (a AND b) => out
+-        self.sat.add_clause([Lit::neg(out), Lit::pos(a)]);
+-        self.sat.add_clause([Lit::neg(out), Lit::pos(b)]);
+-        self.sat
+-            .add_clause([Lit::pos(out), Lit::neg(a), Lit::neg(b)]);
+-    }
+ 
+-    /// AND with constant folding.
++
++    /// AND with constant folding, hash-consed over canonical literal
++    /// pairs (the AIG `and` node with complement edges).
+     fn gate_and(&mut self, a: Sig, b: Sig) -> Sig {
+         match (a, b) {
+             (Sig::False, _) | (_, Sig::False) => Sig::False,
+             (Sig::True, x) | (x, Sig::True) => x,
+-            (Sig::Var(x), Sig::Var(y)) => {
+-                if x == y {
+-                    a
+-                } else {
+-                    let out = self.sat.new_var();
+-                    self.emit_and(out, x, y);
+-                    Sig::Var(out)
++            (Sig::Var(x), Sig::Var(y)) => self.and_lit(x, y),
++        }
++    }
++
++    /// Key prefix marking the memo entry as a materialized not-variable
++    /// (see [`Self::materialize_not`]).
++    const NOT_KEY_PREFIX: u64 = 1 << 63;
++
++    /// The AIG `and` node constructor: constant/idempotence/
++    /// complementation folds, canonical (min, max) literal key, memo hit
++    /// → the shared node's literal, miss → allocate, emit the
++    /// polarity-aware Tseitin clauses, and run the two-level minimization
++    /// observations (Z3 `bv_rewriter`/`aig.cpp` `mk_node` rule block:
++    /// contradiction, substitution, subsumption on and-of-and shapes).
++    fn and_lit(&mut self, x: Lit, y: Lit) -> Sig {
++        if x == y {
++            return Sig::Var(x);
++        }
++        if x == y.negate() {
++            return Sig::False;
++        }
++        let key = (x.code() as u64, y.code() as u64);
++        let key = (key.0.min(key.1), key.0.max(key.1));
++        if let Some(&lit) = self.and_memo.get(&key) {
++            return Sig::Var(lit);
++        }
++        // Two-level rules: when one input is itself an and-node, the
++        // classic absorptions apply before any variable exists.
++        if let Some(reduced) = self.and_two_level(x, y) {
++            return reduced;
++        }
++        let out = self.sat.new_var();
++        // out <=> (x AND y), polarity-aware:
++        self.sat.add_clause([Lit::neg(out), x]);
++        self.sat.add_clause([Lit::neg(out), y]);
++        self.sat.add_clause([Lit::pos(out), x.negate(), y.negate()]);
++        let node_lit = Lit::pos(out);
++        self.and_memo.insert(key, node_lit);
++        self.and_children.insert(out, (x, y));
++        self.gate_journal.push(GateKey::And(key));
++        Sig::Var(node_lit)
++    }
++
++    /// Z3 `aig.cpp`'s two-level `mk_node` rules: `(a ∧ b) ∧ r` shapes.
++    /// Returns the reduced literal when a rule fires, `None` otherwise.
++    /// Purely syntactic on the node table — every rewrite is an
++    /// equivalence, so returning early is sound in both directions.
++    fn and_two_level(&mut self, x: Lit, y: Lit) -> Option<Sig> {
++        // Inspect one and-node input at a time (the rules are symmetric).
++        for (node, other) in [(x, y), (y, x)] {
++            let children = self.and_children.get(&node.var()).copied();
++            let Some((a, b)) = children else { continue };
++            let node_neg = node.is_neg();
++            let is_not = |l: Lit, r: Lit| l.var() == r.var() && l.is_pos() != r.is_pos();
++            // Contradiction: (a ∧ b) ∧ ¬a  or  (a ∧ b) ∧ ¬b  → false; and
++            // for the negated node: ¬(a ∧ b) ∧ (a ∧ b) → false (covered by
++            // the caller's complement check when shapes align exactly, but
++            // the child-level checks fire where they do not).
++            if !node_neg && (is_not(a, other) || is_not(b, other)) {
++                return Some(Sig::False);
++            }
++            // Substitution: (a ∧ b) ∧ a → (a ∧ b); ¬(a ∧ b) ∧ a → ¬b ∧ a.
++            if !node_neg && (a == other || b == other) {
++                return Some(Sig::Var(node));
++            }
++            if node_neg {
++                if a == other {
++                    // ¬(a ∧ b) ∧ a = a ∧ ¬b.
++                    let nb = self.materialize_not(b);
++                    let key_other = (other.code() as u64, nb.code() as u64);
++                    let key_other = (key_other.0.min(key_other.1), key_other.0.max(key_other.1));
++                    if let Some(&lit) = self.and_memo.get(&key_other) {
++                        return Some(Sig::Var(lit));
++                    }
++                    return None;
++                }
++                if b == other {
++                    let na = self.materialize_not(a);
++                    let key_other = (other.code() as u64, na.code() as u64);
++                    let key_other = (key_other.0.min(key_other.1), key_other.0.max(key_other.1));
++                    if let Some(&lit) = self.and_memo.get(&key_other) {
++                        return Some(Sig::Var(lit));
++                    }
++                    return None;
++                }
++            }
++        }
++        // Subsumption between two and-nodes: (a ∧ b) ∧ ¬(a ∧ c) → a ∧ b ∧ ¬c
++        // requires a shared child; the cheap syntactic case only.
++        None
++    }
++
++    /// A positive materialization helper for the two-level rules: the
++    /// complement of `l` as a *positive* literal (allocating the
++    /// not-variable only when no node carries it).  Used solely inside
++    /// the substitution rules; the general complement is free.
++    fn materialize_not(&mut self, l: Lit) -> Lit {
++        match l.is_pos() {
++            // l = v positive: the complement ¬v needs a positive carrier
++            // u with u ⇔ ¬v (memoized per v).
++            true => {
++                let v = l.var();
++                let key = (Self::NOT_KEY_PREFIX | v.index() as u64, 0);
++                if let Some(&lit) = self.and_memo.get(&key) {
++                    return lit;
+                 }
++                let out = self.sat.new_var();
++                self.sat.add_clause([Lit::pos(out), Lit::pos(v)]);
++                self.sat.add_clause([Lit::neg(out), Lit::neg(v)]);
++                let node_lit = Lit::pos(out);
++                self.and_memo.insert(key, node_lit);
++                self.gate_journal.push(GateKey::And(key));
++                node_lit
+             }
++            // l = ¬v negative: its complement is v, already positive.
++            false => Lit::pos(l.var()),
+         }
+     }
+ 
+@@ -2639,29 +2828,18 @@ impl BvSolver {
+         self.wire(out, folded);
+     }
+ 
+-    /// Raw OR emitter for two signals.
+-    fn emit_or(&mut self, out: Var, a: Var, b: Var) {
+-        // out <=> (a OR b)
+-        self.sat
+-            .add_clause([Lit::neg(out), Lit::pos(a), Lit::pos(b)]);
+-        self.sat.add_clause([Lit::pos(out), Lit::neg(a)]);
+-        self.sat.add_clause([Lit::pos(out), Lit::neg(b)]);
+-    }
+-
+-    /// OR with constant folding.
++    /// OR with constant folding: `or(x, y) = ¬and(¬x, ¬y)` — one AIG node
++    /// shared with the AND of the complements (De Morgan collision), the
++    /// result a complement edge of that node.
+     fn gate_or(&mut self, a: Sig, b: Sig) -> Sig {
+         match (a, b) {
+             (Sig::True, _) | (_, Sig::True) => Sig::True,
+             (Sig::False, x) | (x, Sig::False) => x,
+-            (Sig::Var(x), Sig::Var(y)) => {
+-                if x == y {
+-                    a
+-                } else {
+-                    let out = self.sat.new_var();
+-                    self.emit_or(out, x, y);
+-                    Sig::Var(out)
+-                }
+-            }
++            (Sig::Var(x), Sig::Var(y)) => match self.and_lit(x.negate(), y.negate()) {
++                Sig::Var(l) => Sig::Var(l.negate()),
++                Sig::True => Sig::False,
++                Sig::False => Sig::True,
++            },
+         }
+     }
+ 
+@@ -2684,7 +2862,10 @@ impl BvSolver {
+             .add_clause([Lit::pos(out), Lit::pos(a), Lit::neg(b)]);
+     }
+ 
+-    /// XOR with constant folding.
++    /// XOR with constant folding, hash-consed: the node is keyed on the
++    /// *positive* operand variables, with input complement parities
++    /// folded into the returned literal's polarity (`xor(¬x, y) =
++    /// ¬xor(x, y)`).
+     fn gate_xor(&mut self, a: Sig, b: Sig) -> Sig {
+         match (a, b) {
+             (Sig::False, x) | (x, Sig::False) => x,
+@@ -2692,10 +2873,26 @@ impl BvSolver {
+             (Sig::Var(x), Sig::Var(y)) => {
+                 if x == y {
+                     Sig::False
++                } else if x == y.negate() {
++                    Sig::True
+                 } else {
+-                    let out = self.sat.new_var();
+-                    self.emit_xor(out, x, y);
+-                    Sig::Var(out)
++                    let (xv, yv) = (x.var(), y.var());
++                    let parity = x.is_neg() != y.is_neg();
++                    let mut key = (xv.index() as u64, yv.index() as u64);
++                    if key.0 > key.1 {
++                        core::mem::swap(&mut key.0, &mut key.1);
++                    }
++                    let base = if let Some(&lit) = self.xor_memo.get(&key) {
++                        lit
++                    } else {
++                        let out = self.sat.new_var();
++                        self.emit_xor(out, xv, yv);
++                        let node_lit = Lit::pos(out);
++                        self.xor_memo.insert(key, node_lit);
++                        self.gate_journal.push(GateKey::Xor(key));
++                        node_lit
++                    };
++                    Sig::Var(if parity { base.negate() } else { base })
+                 }
+             }
+         }
+@@ -2713,26 +2910,15 @@ impl BvSolver {
+         self.gate_not(x)
+     }
+ 
+-    /// `~a & b` with constant folding.
++    /// `~a & b` with constant folding: exactly the AIG and-node over
++    /// `(¬a, b)` — the same memo entry `gate_and` would create for those
++    /// literals, so `~a & b` and `~(a | ~b)` collide.
+     fn gate_and_not_a(&mut self, a: Sig, b: Sig) -> Sig {
+         match (a, b) {
+             (Sig::True, _) | (_, Sig::False) => Sig::False,
+             (Sig::False, x) => x,
+             (Sig::Var(x), Sig::True) => self.gate_not(Sig::Var(x)),
+-            (Sig::Var(x), Sig::Var(y)) => {
+-                if x == y {
+-                    // a & ~a = 0
+-                    Sig::False
+-                } else {
+-                    let out = self.sat.new_var();
+-                    // out <=> (~a & b)
+-                    self.sat.add_clause([Lit::neg(out), Lit::neg(x)]);
+-                    self.sat.add_clause([Lit::neg(out), Lit::pos(y)]);
+-                    self.sat
+-                        .add_clause([Lit::pos(out), Lit::pos(x), Lit::neg(y)]);
+-                    Sig::Var(out)
+-                }
+-            }
++            (Sig::Var(x), Sig::Var(y)) => self.and_lit(x.negate(), y),
+         }
+     }
+ 
+@@ -2749,7 +2935,16 @@ impl BvSolver {
+             .add_clause([Lit::pos(sel), Lit::pos(if_false), Lit::neg(out)]);
+     }
+ 
+-    /// Multiplexer with constant folding.
++    /// Multiplexer with constant folding, hash-consed on the exact
++    /// (sel, if_true, if_false) literal codes.  Two sound normalizations:
++    /// `mux(s, ¬t, ¬f) = ¬mux(s, t, f)` (both branches negated flips the
++    /// result), and the constant arms.  **No** branch-swap or
++    /// sel-inversion normalization: `mux(¬s, t, f) = mux(s, f, t)` would
++    /// be sound, but mixing it into the key while emitting the
++    /// un-swapped node is the classic collision bug (two different
++    /// functions, one memo entry) — measured as an under-constrained
++    /// order network; correctness first, canonicalization later if the
++    /// corpus wants it.
+     fn gate_mux(&mut self, sel: Sig, if_true: Sig, if_false: Sig) -> Sig {
+         match sel {
+             Sig::True => if_true,
+@@ -2759,12 +2954,59 @@ impl BvSolver {
+                     return if_true;
+                 }
+                 match (if_true, if_false) {
+-                    (Sig::True, Sig::False) => Sig::Var(s),
+-                    (Sig::False, Sig::True) => self.gate_not(Sig::Var(s)),
+-                    _ => {
++                    (Sig::True, Sig::False) => return Sig::Var(s),
++                    (Sig::False, Sig::True) => return self.gate_not(Sig::Var(s)),
++                    (Sig::Var(t), Sig::Var(f)) => {
++                        // Both-branches-negative: strip and flip.
++                        let (t, f, flip) = if t.is_neg() && f.is_neg() {
++                            (t.negate(), f.negate(), true)
++                        } else {
++                            (t, f, false)
++                        };
++                        // Exact-code key; mixed single-branch polarities
++                        // are part of the key and the emit respects them
++                        // through the polarity-aware emitters below.
++                        let key = (
++                            s.code() as u64,
++                            t.code() as u64,
++                            f.code() as u64,
++                        );
++                        let base = if let Some(&lit) = self.mux_memo.get(&key) {
++                            lit
++                        } else {
++                            let out = self.sat.new_var();
++                            // out <=> (s ? t : f), polarity-aware:
++                            // s ∧ t → out; s ∧ ¬t → ¬out;
++                            // ¬s ∧ f → out; ¬s ∧ ¬f → ¬out.
++                            self.sat.add_clause([s.negate(), t.negate(), Lit::pos(out)]);
++                            self.sat.add_clause([s.negate(), t, Lit::neg(out)]);
++                            self.sat.add_clause([s, f.negate(), Lit::pos(out)]);
++                            self.sat.add_clause([s, f, Lit::neg(out)]);
++                            let node_lit = Lit::pos(out);
++                            self.mux_memo.insert(key, node_lit);
++                            self.gate_journal.push(GateKey::Mux(key));
++                            node_lit
++                        };
++                        Sig::Var(if flip { base.negate() } else { base })
++                    }
++                    // Mixed constant/data inputs: emit directly.
++                    (tt, ff) => {
+                         let out = self.sat.new_var();
+-                        self.emit_mux(out, s, self.sig_var(if_true), self.sig_var(if_false));
+-                        Sig::Var(out)
++                        let t_lit = match tt {
++                            Sig::True => Lit::pos(self.const_true),
++                            Sig::False => Lit::pos(self.const_false),
++                            Sig::Var(l) => l,
++                        };
++                        let f_lit = match ff {
++                            Sig::True => Lit::pos(self.const_true),
++                            Sig::False => Lit::pos(self.const_false),
++                            Sig::Var(l) => l,
++                        };
++                        self.sat.add_clause([s.negate(), t_lit.negate(), Lit::pos(out)]);
++                        self.sat.add_clause([s.negate(), t_lit, Lit::neg(out)]);
++                        self.sat.add_clause([s, f_lit.negate(), Lit::pos(out)]);
++                        self.sat.add_clause([s, f_lit, Lit::neg(out)]);
++                        Sig::Var(Lit::pos(out))
+                     }
+                 }
+             }
+@@ -2832,7 +3074,7 @@ impl BvSolver {
+                 self.sat.add_clause([Lit::pos(guard)]);
+             }
+             Sig::Var(v) => {
+-                self.sat.add_clause([Lit::pos(guard), Lit::neg(v)]);
++                self.sat.add_clause([Lit::pos(guard), v.negate()]);
+             }
+         }
+     }
+@@ -2914,7 +3156,8 @@ impl BvSolver {
+ 
+     /// Encode: out = 1 iff all bits in the list are 0
+     fn encode_all_zero(&mut self, out: Var, bits: &[Var]) {
+-        let mut signals: SmallVec<[Var; 32]> = SmallVec::new();
++        // (bit, polarity): the literal whose truth means "this bit is 1".
++        let mut signals: SmallVec<[Lit; 32]> = SmallVec::new();
+         for &bit in bits {
+             match self.sig(bit) {
+                 Sig::True => {
+@@ -2931,17 +3174,17 @@ impl BvSolver {
+             return;
+         }
+ 
+-        // out = AND(~bits[i] for all i)
+-        // out => ~bits[i] for all i
+-        for &bit in &signals {
+-            self.sat.add_clause([Lit::neg(out), Lit::neg(bit)]);
++        // out = AND(~bit_lits[i] for all i)
++        // out => ~lit for all i
++        for &lit in &signals {
++            self.sat.add_clause([Lit::neg(out), lit.negate()]);
+         }
+ 
+-        // (~bits[0] AND ... AND ~bits[n-1]) => out
++        // (~lits[0] AND ... AND ~lits[n-1]) => out
+         let mut clause: SmallVec<[Lit; 32]> = SmallVec::new();
+         clause.push(Lit::pos(out));
+-        for &bit in &signals {
+-            clause.push(Lit::pos(bit));
++        for &lit in &signals {
++            clause.push(lit);
+         }
+         self.sat.add_clause(clause);
+     }
+@@ -3298,6 +3541,7 @@ impl Theory for BvSolver {
+             assertions_len: self.assertions.len(),
+             guard_terms_len: self.assertion_guard_terms.len(),
+             outer_bool_len: self.outer_bool_journal.len(),
++            gate_journal_len: self.gate_journal.len(),
+         });
+         self.sat.push();
+     }
+@@ -3310,6 +3554,12 @@ impl Theory for BvSolver {
+         if let Some(mark) = self.context_stack.pop() {
+             self.assertions.truncate(mark.assertions_len);
+             self.assertion_guard_terms.truncate(mark.guard_terms_len);
++            // The embedded SAT solver's pop removes the clauses added at
++            // this level — including the defining clauses of every AIG
++            // memo entry journaled since the matching push.  Retract them
++            // in lockstep: a stale entry would hand out a variable whose
++            // definition no longer exists (an unconstrained signal).
++            self.retract_gate_memos_since(mark.gate_journal_len);
+             // Undo the outer-boolean links in reverse so a term fixed at
+             // several levels is restored to the value of the surviving one.
+             while self.outer_bool_journal.len() > mark.outer_bool_len {
+@@ -3352,6 +3602,7 @@ impl Theory for BvSolver {
+         self.bool_node.clear();
+         self.outer_bool.clear();
+         self.outer_bool_journal.clear();
++        self.clear_gate_memos();
+     }
+ 
+     fn get_model(&self) -> Vec<(TermId, TermId)> {
+diff --git a/nixie-theories/src/bv/solver/order.rs b/nixie-theories/src/bv/solver/order.rs
+index 91e3df7a..6d1177fc 100644
+--- a/nixie-theories/src/bv/solver/order.rs
++++ b/nixie-theories/src/bv/solver/order.rs
+@@ -147,7 +147,7 @@ impl BvSolver {
+         for gap in wires.windows(2) {
+             let strict = self.sat.new_var();
+             self.encode_ult_result(&gap[0], &gap[1], strict);
+-            level.push(Sig::Var(strict));
++            level.push(Sig::Var(Lit::pos(strict)));
+         }
+         while level.len() > 1 {
+             let mut next: Vec<Sig> = Vec::with_capacity(level.len() / 2 + 1);
+@@ -291,8 +291,8 @@ impl BvSolver {
+         let mut out_b: Wire = SmallVec::with_capacity(wa.len());
+         for j in 0..wa.len() {
+             // min = c ? b : a, max = c ? a : b.
+-            let min = self.gate_mux(Sig::Var(c), self.sig(wb[j]), self.sig(wa[j]));
+-            let max = self.gate_mux(Sig::Var(c), self.sig(wa[j]), self.sig(wb[j]));
++            let min = self.gate_mux(Sig::Var(Lit::pos(c)), self.sig(wb[j]), self.sig(wa[j]));
++            let max = self.gate_mux(Sig::Var(Lit::pos(c)), self.sig(wa[j]), self.sig(wb[j]));
+             if ascending {
+                 out_a.push(self.sig_var(min));
+                 out_b.push(self.sig_var(max));

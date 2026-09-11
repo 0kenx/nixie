@@ -386,3 +386,46 @@ value-propagation and definition substitution, not structural sharing).
 Any future "AIG layer" for this family must propagate values through the
 DAG — hash-consing alone, however canonical, cannot close it.  Do not
 re-try structural gate sharing for the bound-propagation family.
+
+## Appendix (2026-09-12): the AIG gate layer — implemented, debugged, measured, rejected
+
+"Implement z3's post-blast semantic passes" was taken literally: a full
+complement-edge AIG layer in the `Sig` gate constructors (`Sig::Var`
+became a SAT *literal* — `not` free, `or = ¬and(¬x,¬y)` De Morgan
+collision, literal-keyed hash-consing for and/xor/mux nodes, z3
+`aig.cpp`'s two-level substitution/subsumption/contradiction rules,
+scope-journaled memo retraction for embedded pops, era clears at unified
+boundaries).  Full patch preserved at
+`docs/studies/assets/2026-09-12-aig-gate-layer-experiment.patch`.
+
+**Two bugs found by the safety nets before any commit** (both exactly the
+collision class the implementation comments warn about):
+1. `gate_mux`'s branch-swap key normalization without the sel inversion
+   — `mux(s,a,b)` and `mux(s,b,a)` collided on one memo entry while the
+   emit built only one of the two functions (under-constrained order
+   network; caught by `order_dispatch_free_vars_sat`).
+2. `materialize_not` inverted polarity (returned `l` for positive `l`
+   instead of the materialized complement) — a **false `unsat`** on
+   `RWS/Example_1/5` caught by the RWS spot-check.
+
+After both fixes: correct everywhere (1939 theory tests, 4213
+solver tests, RWS 19/19 vs z3, all verdicts clean) — and **win-less**:
+
+| file | landed binary | AIG layer |
+|---|---|---|
+| maxandminor016 (original) | 28.1 s | 31.6 s |
+| maxandminor016 (z3-simplified) | **6.1 s** | 8.2 s |
+| Mann arbiter | 2.80 s | 2.78 s |
+| bitrev0256/0512/1024 | — | neutral |
+
+The structural collisions this family would need do not exist (the probe:
+0.0 % De Morgan-normal gate repeats, pre- and post-cascade), so the layer
+pays bookkeeping without sharing.  z3's `aig` tactic closes the
+simplified form through sharing that its *expression-level* blast DAG
+provides — sharing our *term-level* hash-consing already supplies — plus
+goal-level value propagation that has no local counterpart.  **Third and
+final structural kill**; the do-not-retry now covers: var-keyed SH,
+De Morgan-keyed SH, and a correct complement-edge implementation with
+two-level rules.  If the maxandminor/cjpeg class is ever closed, it is
+by goal-level semantic propagation over a boolean expression IR —
+a different architecture, not a better gate memo.
