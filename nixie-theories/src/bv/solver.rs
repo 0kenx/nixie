@@ -2619,6 +2619,36 @@ impl BvSolver {
         if self.ir_defs.is_empty() {
             return;
         }
+        // Seed the constant re-fold from the SAT core's permanent units:
+        // at decision level 0 the trail holds exactly the level-0 facts
+        // (asserted constants, top-level units), and a leaf var assigned
+        // there is a constant for the whole instance — every IR node over
+        // it can fold, and dead structure never reaches the Tseitin pass.
+        // Mid-search materialization (pending-atom windows) skips the
+        // seeding: assignments above level 0 are not permanent facts.
+        // Pins and folds are per-materialization snapshots (cleared below)
+        // so a later `pop` can never read a stale fold.
+        let mut seeded_pins: Vec<(Var, bool)> = Vec::new();
+        if self.sat.decision_level() == 0 {
+            let trail = self.sat.trail();
+            for i in 1..ir.len() as u32 {
+                if let crate::bv::bool_ir::IrNode::Var(v) = ir
+                    .node(i as usize)
+                    .unwrap_or(crate::bv::bool_ir::IrNode::ConstTrue)
+                    && !self.ir_defs.contains_key(&v)
+                {
+                    use nixie_sat::LBool;
+                    match trail.value(v) {
+                        LBool::True => seeded_pins.push((v, true)),
+                        LBool::False => seeded_pins.push((v, false)),
+                        LBool::Undef => {}
+                    }
+                }
+            }
+            for (v, val) in &seeded_pins {
+                ir.pin(*v, *val);
+            }
+        }
         ir.refold_consts();
         let roots: Vec<u32> = self.ir_defs.values().copied().collect();
         let const_true = Lit::pos(self.const_true);
@@ -2649,6 +2679,11 @@ impl BvSolver {
         }
         self.ir_defs.clear();
         self.ir_defs_journal.clear();
+        // Snapshots consumed: drop the pins and folds so no later scope
+        // state can canonicalize through facts that no longer hold.
+        if let Some(ir) = self.ir.as_mut() {
+            ir.clear_fold_snapshot();
+        }
     }
 
     /// Classify a bit variable as one of the reserved constants or a signal.

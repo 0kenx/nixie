@@ -119,6 +119,20 @@ impl BoolIr {
         self.nodes.len()
     }
 
+    /// Read-only view of node `idx` (the pin-seeding pass walks leaf vars).
+    pub fn node(&self, idx: usize) -> Option<IrNode> {
+        self.nodes.get(idx).copied()
+    }
+
+    /// Drop the per-materialization snapshot (pins + fold table): the
+    /// materializer re-seeds from the *current* level-0 units each time,
+    /// so a stale fold from a previous (possibly popped) scope can never
+    /// canonicalize a later circuit.
+    pub fn clear_fold_snapshot(&mut self) {
+        self.pinned.clear();
+        self.folded.clear();
+    }
+
     fn intern(&mut self, node: IrNode) -> u32 {
         if let Some(&idx) = self.table.get(&node) {
             return idx;
@@ -422,9 +436,7 @@ impl BoolIr {
             };
             let v = match node {
                 IrNode::Var(v) => v, // a leaf: reuse the term bit's own var
-                _ => {
-                    sat.new_var()
-                }
+                _ => sat.new_var(),
             };
             slot[idx as usize] = Some(Lit::pos(v));
             match node {
