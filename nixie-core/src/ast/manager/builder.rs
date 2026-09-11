@@ -2003,12 +2003,20 @@ impl TermManager {
         {
             use std::sync::OnceLock;
             static FLAG: OnceLock<bool> = OnceLock::new();
-            *FLAG
-                .get_or_init(|| matches!(std::env::var("NIXIE_BV_SHIFT_WIRING"), Ok(v) if v == "1"))
+            // Default **on** (2026-09-12): the 509-file matched-null A/B
+            // measured 287 vs 286 with zero verdict flips, and the serial
+            // gains are deterministic — `mcm/54` 6.1× (43.5 → 7.1 s,
+            // crossing the cap), bitrev 1.5–2× at every width — with RWS
+            // verdicts identical across the family and the boundary movers
+            // measured as load noise (vlsat3_g00 21.0 vs 21.5 s,
+            // VS3-A7 15.8 vs 15.8 s serially).
+            *FLAG.get_or_init(|| {
+                !matches!(std::env::var("NIXIE_BV_SHIFT_WIRING"), Ok(v) if v == "0" || v.is_empty())
+            })
         }
         #[cfg(not(feature = "std"))]
         {
-            false
+            true
         }
     }
 

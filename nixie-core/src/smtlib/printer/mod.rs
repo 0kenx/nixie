@@ -951,7 +951,13 @@ mod tests {
             "extract"
         );
 
-        // One literal operand that is not an identity element: still no fold.
+        // One literal operand that is not an identity element: still no fold
+        // for every operation except the const-distance shift — under the
+        // shift-wiring default (`NIXIE_BV_SHIFT_WIRING`, on by default),
+        // `x << k` rewrites to `concat(x[w-1-k:0], 0^k)` (Z3's numeral
+        // case), so `bvshl x 3` legitimately IS a concat spine; with the
+        // wiring disabled it stays `BvShl`.  Accept either shape; the
+        // *symbolic*-distance pins below stay strict either way.
         assert_kind!(manager.mk_bv_add(x, three), TermKind::BvAdd(..), "bvadd 3");
         assert_kind!(manager.mk_bv_mul(x, three), TermKind::BvMul(..), "bvmul 3");
         assert_kind!(manager.mk_bv_and(x, three), TermKind::BvAnd(..), "bvand 3");
@@ -962,7 +968,14 @@ mod tests {
             TermKind::BvUdiv(..),
             "bvudiv 3"
         );
-        assert_kind!(manager.mk_bv_shl(x, three), TermKind::BvShl(..), "bvshl 3");
+        {
+            let shifted = manager.mk_bv_shl(x, three);
+            let kind = &manager.get(shifted).expect("term should exist").kind;
+            assert!(
+                matches!(kind, TermKind::BvShl(..) | TermKind::BvConcat(..)),
+                "bvshl 3 over symbolic operands must stay a shift or its concat wiring, got {kind:?}"
+            );
+        }
         assert_kind!(
             manager.mk_bv_ashr(x, three),
             TermKind::BvAshr(..),
