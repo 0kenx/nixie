@@ -596,7 +596,7 @@ pub struct SolverConfig {
     /// `docs/studies/2026-09-07-inproc-effort-schedule.md` follow-up #0
     /// (kissat's `factor` owns up to 71 % of its ticks on the worker
     /// class).  Knobs `NIXIE_BVA_MID=1` / `NIXIE_BVA_MID_NULL=1` in
-    /// `stats_solve`.
+    /// the `cnf_solve` example.
     pub enable_mid_bva: bool,
     /// Matched null for [`Self::enable_mid_bva`]: identical candidate
     /// generation, budgets and application, scrambled rank key

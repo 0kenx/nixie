@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Run the registered shared-blocker observation panel, reusing cached controls.
 
-Build stats_solve with --features bcp-groups, cache it at its source commit,
-then pass --binary and --sha. Observed timings are NOT throughput estimates.
+Build cnf_solve with --features bcp-groups, cache it at its source commit,
+then pass --binary and --sha. The observed runs need DIAG=1 (set by this
+script) for the stats_solve-style diagnostics stdout the controls were
+recorded with. Observed timings are NOT throughput estimates.
 See docs/studies/2026-09-07-nixie-propagation-redesign.md.
 """
 
@@ -126,7 +128,7 @@ def run_cell(args, name, cnf, cap, observed, control=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith((
         "NIXIE_", "ELS", "FACTOR", "NO_", "MAXC", "SEED", "INPROC", "STAB_",
         "REPHASE", "WALK", "RANDPOL", "PRINT_MODEL", "PHASE_HINT", "GATE_COUNT", "SCC_MASS"))}
-    env.update(MAXC=str(cap), SEED=str(args.seed), PRINT_MODEL="1", LC_ALL="C")
+    env.update(MAXC=str(cap), SEED=str(args.seed), DIAG="1", PRINT_MODEL="1", LC_ALL="C")
     if observed:
         env["NIXIE_WATCH_GROUPS"] = str(args.stride)
     stdout_path, stderr_path = Path(str(prefix) + ".stdout"), Path(str(prefix) + ".stderr")

@@ -58,7 +58,7 @@
 //!   `U_i` — exactly the propagation the encoding guarantees, so a
 //!   conflict there certifies Unsat against live clauses).
 //!   Default off; knobs `NIXIE_BVA_MID=1` / `NIXIE_BVA_MID_NULL=1` in
-//!   `stats_solve`.
+//!   the `cnf_solve` example.
 //!
 //! **Determinism**: candidate collection iterates the pair index in
 //! **sorted key order** (not `HashMap` iteration, whose `RandomState`

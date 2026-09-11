@@ -26,7 +26,8 @@ bcp-stats = []
 # global counters; feature-off builds contain none of this instrumentation.
 bcp-work = []
 # Read-only, sampled shared-blocker feasibility observations. Entirely absent
-# from ordinary builds; enable explicitly through Solver or stats_solve.
+# from ordinary builds; enable explicitly through Solver or the cnf_solve
+# example (NIXIE_WATCH_GROUPS=N).
 bcp-groups = ["std"]
 # Read-only sampled traffic through certified AND/XOR clause groups.
 bcp-regions = ["std"]

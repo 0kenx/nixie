@@ -56,11 +56,11 @@ match solver.solve() {
 ## Explicit relation-solving example
 
 For DIMACS inputs containing dense eight-variable functional relations,
-`stats_solve` can apply the existing exact relation transformer in memory:
+`cnf_solve` can apply the existing exact relation transformer in memory:
 
 ```bash
-cargo build --release -p nixie-sat --example stats_solve
-NIXIE_RELATION_FACTOR=1 target/release/examples/stats_solve input.cnf
+cargo build --release -p nixie-sat --example cnf_solve
+NIXIE_RELATION_FACTOR=1 target/release/examples/cnf_solve input.cnf
 ```
 
 This optional mode checks the transformation before solving and validates

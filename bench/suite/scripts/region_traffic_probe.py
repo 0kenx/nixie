@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Run the registered three-cell structured-region traffic census.
 
-Build stats_solve with bcp-regions and cache it at the committed source SHA.
+Build cnf_solve with bcp-regions and cache it at the committed source SHA.
+The observation runs set DIAG=1 for the stats_solve-style diagnostics
+stdout the pinned controls were recorded with.
 Reuses all controls; never runs a new baseline or repeats an existing cell.
 """
 import argparse
@@ -97,7 +99,7 @@ def run(args, name, cnf, cap, control):
     env = {k: v for k, v in os.environ.items() if not k.startswith((
         "NIXIE_", "ELS", "FACTOR", "NO_", "MAXC", "SEED", "INPROC", "STAB_",
         "REPHASE", "WALK", "RANDPOL", "PRINT_MODEL", "PHASE_HINT", "GATE_COUNT", "SCC_MASS"))}
-    env.update(MAXC=str(cap), SEED="1", PRINT_MODEL="1", NIXIE_REGION_STATS="256", LC_ALL="C")
+    env.update(MAXC=str(cap), SEED="1", DIAG="1", PRINT_MODEL="1", NIXIE_REGION_STATS="256", LC_ALL="C")
     stdout, stderr = Path(str(prefix) + ".stdout"), Path(str(prefix) + ".stderr")
     print("start", name, flush=True)
     with stdout.open("w") as out, stderr.open("w") as err:

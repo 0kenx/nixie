@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Registered two-input clause-cost census. Reuse controls, never repeat cells.
 
+The observed runs need the clause-traffic build of cnf_solve (build with
+`cargo build --release -p nixie-sat --example cnf_solve --features
+clause-traffic`, cache as precompile/<sha>/cnf_solve-traffic) and set
+DIAG=1 (this script does) for the stats_solve-style stdout the controls
+were recorded with.
 Instrumented timings do not measure throughput. See the registered protocol
 in docs/studies/2026-09-08-learned-clause-traffic.md.
 """
@@ -96,7 +101,7 @@ def summarize(report):
 
 
 def run(root, sha, cnf, control):
-    binary = root / "precompile" / sha[:7] / "stats_solve-traffic"
+    binary = root / "precompile" / sha[:7] / "cnf_solve-traffic"
     flags = dict(cpu=10, max_conflicts=40000, stride=16, epoch_conflicts=4096,
                  emergency_timeout_s=300, profile="release", preset="CaDiCaL",
                  measurement="learned-clause-traffic-v1", print_model=True)
@@ -129,7 +134,7 @@ def run(root, sha, cnf, control):
         env = {k: v for k, v in os.environ.items() if not k.startswith((
             "NIXIE_", "ELS", "FACTOR", "NO_", "MAXC", "SEED", "INPROC", "STAB_",
             "REPHASE", "WALK", "RANDPOL", "PRINT_MODEL", "PHASE_HINT", "GATE_COUNT", "SCC_MASS"))}
-        env.update(MAXC="40000", SEED="0", PRINT_MODEL="1", NIXIE_CLAUSE_TRAFFIC="16", LC_ALL="C")
+        env.update(MAXC="40000", SEED="0", DIAG="1", PRINT_MODEL="1", NIXIE_CLAUSE_TRAFFIC="16", LC_ALL="C")
         print("start", cnf.name, flush=True)
         start = time.monotonic()
         with files["stdout"].open("x") as out, files["stderr"].open("x") as err:

@@ -185,7 +185,7 @@ def main():
     assert subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() == sha
     assert not subprocess.check_output(["git", "status", "--porcelain"], text=True)
     cache = root / "precompile" / sha[:7]
-    factor, solver = cache / "relation_factor", cache / "stats_solve"
+    factor, solver = cache / "relation_factor", cache / "cnf_solve"
     inputs = list((root / "satcomp2024/bench").glob("*circuit*.cnf"))
     assert len(inputs) == 1 and digest(inputs[0]) == INPUT_HASH
     cnf = inputs[0]
@@ -227,7 +227,7 @@ def main():
     env = {k: v for k, v in os.environ.items() if not k.startswith((
         "NIXIE_", "ELS", "FACTOR", "NO_", "MAXC", "SEED", "INPROC", "STAB_",
         "REPHASE", "WALK", "RANDPOL", "PRINT_MODEL", "PHASE_HINT", "GATE_COUNT", "SCC_MASS"))}
-    env.update(MAXC="10000000", SEED="1", PRINT_MODEL="1", LC_ALL="C")
+    env.update(MAXC="10000000", SEED="1", DIAG="1", PRINT_MODEL="1", LC_ALL="C")
     print("start transformation", flush=True)
     transform = perf_run([factor, cnf, transformed, proof, mapping], "transform", directory, env)
     assert transform["status"] == 0 and not transform["timeout"]
