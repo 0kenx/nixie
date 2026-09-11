@@ -260,6 +260,13 @@ enum ConnectedCheck {
     Strengthen(Lit),
 }
 
+/// Work bound shared by [`Solver::presearch_backward_simplify`] and
+/// [`Solver::backward_subsume_round`]: pair checks per pre-search SSR round.
+/// Auto-gated runs skip the whole pass when the projected count exceeds it
+/// (a partial round is the measured-worst regime); explicitly forced runs
+/// (`NIXIE_PRESUB=1`) still truncate at it inside the round.
+const PRESEARCH_SSR_CHECK_CAP: u64 = 100_000_000;
+
 /// Outcome of one subsumption check of candidate `c` against connected `d`.
 enum SubCheck {
     /// Every literal of `d` occurs in `c`: `c` is subsumed by `d`.
@@ -286,12 +293,47 @@ impl Solver {
     /// of size≥3 originals, ≥1000 such clauses). One backward round by default
     /// (`NIXIE_PRESUB_ROUNDS`); extra rounds reshuffle this family. `NIXIE_PRESUB=1`
     /// forces it; `NIXIE_PRESUB=0` skips it.
+    ///
+    /// A round either runs to completion or not at all: when the projected
+    /// pair-check count exceeds [`PRESEARCH_SSR_CHECK_CAP`] the whole pass
+    /// (rounds and the follow-up probe) is skipped. A capped partial round is
+    /// the worst regime — `2026-09-10-z3-lut-ssr-presearch.md` measured extra
+    /// rounds and partial flattening as trajectory-negative, and on
+    /// `si2-b03m-m800-03` the old truncate-at-cap behaviour burned 7 s of
+    /// pre-search work for a 19 % conflict reduction that never paid for it
+    /// (the round there projects to 2.3e9 checks, 23× the cap, while the
+    /// demonstrated-win file `circuit_48in64out` projects 4.4e7 and completes
+    /// in 0.7 s). `NIXIE_PRESUB=1` (explicit force) bypasses the projection:
+    /// the operator asked for the round and gets all of it.
     pub(super) fn presearch_backward_simplify(&mut self) -> bool {
         if self.trail.decision_level() != 0 || self.trivially_unsat {
             return false;
         }
+        let forced = {
+            #[cfg(feature = "std")]
+            {
+                std::env::var("NIXIE_PRESUB")
+                    .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            }
+            #[cfg(not(feature = "std"))]
+            {
+                false
+            }
+        };
         if !self.presearch_backward_simplify_wanted() {
             return false;
+        }
+        if !forced {
+            let projected = self.presearch_backward_ssr_projection();
+            if projected > PRESEARCH_SSR_CHECK_CAP {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_PRESUB_TRACE").is_ok() {
+                    eprintln!(
+                        "c [presub] skip: projected_checks={projected} > cap={PRESEARCH_SSR_CHECK_CAP}"
+                    );
+                }
+                return false;
+            }
         }
         let max_rounds = {
             #[cfg(feature = "std")]
@@ -417,6 +459,67 @@ impl Solver {
         mode >= 6 && u64::from(best).saturating_mul(4) >= u64::from(n).saturating_mul(3)
     }
 
+    /// Pair-check upper bound for one [`Solver::backward_subsume_round`] over
+    /// the current original clause set: for every sched-eligible clause the
+    /// sum of the two polarity occurrence-list lengths of its minimum-
+    /// occurrence literal (the two lists the round scans). Mirrors the round's
+    /// occurrence construction exactly, so the bound is exact up to candidates
+    /// the round skips without counting (deleted clauses, size-filtered), and
+    /// the round can only stay under it. O(total literals), no allocation
+    /// beyond one flat counter array.
+    pub(super) fn presearch_backward_ssr_projection(&self) -> u64 {
+        let num_lits = 2 * self.num_vars;
+        if num_lits == 0 {
+            return 0;
+        }
+        let eligible = |c: &crate::memory::ClauseView<'_>| -> bool {
+            !c.deleted && !c.learned && c.lits.len() >= 2
+        };
+        let mut occ: Vec<u32> = vec![0; num_lits];
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if !eligible(&c) {
+                continue;
+            }
+            if c.lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
+                continue;
+            }
+            for &l in c.lits.iter() {
+                let code = l.code() as usize;
+                if code < occ.len() {
+                    occ[code] = occ[code].saturating_add(1);
+                }
+            }
+        }
+        let mut projected: u64 = 0;
+        for cid in self.clauses.iter_ids() {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if !eligible(&c) {
+                continue;
+            }
+            if c.lits.iter().any(|&l| self.trail.lit_val(l) != 0) {
+                continue;
+            }
+            let mut minlit = c.lits[0];
+            let mut minocc = occ[minlit.code() as usize];
+            for &l in &c.lits[1..] {
+                let o = occ[l.code() as usize];
+                if o < minocc {
+                    minlit = l;
+                    minocc = o;
+                }
+            }
+            let pos = occ[minlit.code() as usize] as u64;
+            let neg = occ[minlit.negate().code() as usize] as u64;
+            projected = projected.saturating_add(pos.saturating_add(neg));
+        }
+        projected
+    }
+
     /// One backward-subsumption / SSR round (Z3 `back_subsumption1` over all
     /// original clauses, small-first). Returns `(subsumed, strengthened)`.
     pub(super) fn backward_subsume_round(&mut self) -> (usize, usize) {
@@ -456,10 +559,9 @@ impl Solver {
         let mut subsumed = 0usize;
         let mut strengthened = 0usize;
         let mut checks: u64 = 0;
-        const CHECK_CAP: u64 = 100_000_000;
 
         for &(_, c1_id) in &sched {
-            if checks >= CHECK_CAP || self.trivially_unsat {
+            if checks >= PRESEARCH_SSR_CHECK_CAP || self.trivially_unsat {
                 break;
             }
             let c1_lits: SmallVec<[Lit; 8]> = match self.clauses.get(c1_id) {
@@ -484,9 +586,13 @@ impl Solver {
                 if list >= occs.len() {
                     continue;
                 }
-                let candidates = occs[list].clone();
-                for c2_id in candidates {
-                    if checks >= CHECK_CAP {
+                // The occurrence lists are frozen once the scan phase starts
+                // (clauses are only deleted/strengthened in the DB, never
+                // re-inserted here), so the candidate list is read in place —
+                // the pre-fix per-candidate `Vec` clone was pure allocation
+                // churn (multi-GB of memcpy on wide-uniform formulas).
+                for &c2_id in occs[list].iter() {
+                    if checks >= PRESEARCH_SSR_CHECK_CAP {
                         break;
                     }
                     if c2_id == c1_id {

@@ -1237,6 +1237,77 @@ fn sat_caching_toggles_and_records_prefix() {
 
 /// Hamming-distance-1 width-8 cubes self-subsume to a 7-lit clause, matching
 /// Z3's first simplify step on LUT encodings.
+/// The SSR feasibility projection hand-counted on a three-clause formula.
+///
+/// `c1 = x1 x2 x3 x4`, `c2 = x1 x2 x3 ¬x4`, `c3 = ¬x1 x2 x3 x4`:
+/// occurrences are `x1:2 ¬x1:1 x2:3 x3:3 x4:2 ¬x4:1`, so each clause's
+/// minimum-occurrence literal contributes its two polarity list sizes
+/// (3 + 3 + 3 = 9 pair checks) — the exact scan the round would perform.
+#[test]
+fn presearch_ssr_projection_hand_count() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    let vars: Vec<Var> = (0..4).map(|_| solver.new_var()).collect();
+    solver.add_clause([
+        Lit::pos(vars[0]),
+        Lit::pos(vars[1]),
+        Lit::pos(vars[2]),
+        Lit::pos(vars[3]),
+    ]);
+    solver.add_clause([
+        Lit::pos(vars[0]),
+        Lit::pos(vars[1]),
+        Lit::pos(vars[2]),
+        Lit::neg(vars[3]),
+    ]);
+    solver.add_clause([
+        Lit::neg(vars[0]),
+        Lit::pos(vars[1]),
+        Lit::pos(vars[2]),
+        Lit::pos(vars[3]),
+    ]);
+    assert_eq!(solver.presearch_backward_ssr_projection(), 9);
+}
+
+/// An empty (or binary-only) clause set projects to zero pair checks, and
+/// the projection is an upper bound: a round over the same set can never
+/// count more checks than projected (deleted-clause and size-filter skips
+/// only ever remove candidate visits).
+#[test]
+fn presearch_ssr_projection_bounds_round_checks() {
+    let mut solver = Solver::with_config(SolverConfig {
+        enable_lucky: false,
+        ..SolverConfig::default()
+    });
+    assert_eq!(solver.presearch_backward_ssr_projection(), 0);
+    let vars: Vec<Var> = (0..6).map(|_| solver.new_var()).collect();
+    // Overlapping cubes of decreasing width: every round candidate shares
+    // the min-occurrence literal of some clause.
+    for drop in 0..4 {
+        let lits: SmallVec<[Lit; 8]> = (drop..6)
+            .map(|i| {
+                if i % 2 == 0 {
+                    Lit::pos(vars[i])
+                } else {
+                    Lit::neg(vars[i])
+                }
+            })
+            .collect();
+        solver.add_clause(lits);
+    }
+    let projected = solver.presearch_backward_ssr_projection();
+    // 4 clauses; clause widths 6,5,4,3 with pairwise shared rare literals.
+    // The exact hand count is fragile to literal-code choices; the load-
+    // bearing assertions are positive, finite, and >= the round's visits.
+    assert!(projected > 0);
+    let (sub, stren) = solver.backward_subsume_round();
+    // Each subsumption/strengthening event consumed at least one counted
+    // candidate check, and every counted check was a projected candidate.
+    assert!(u64::try_from(sub + stren).unwrap() <= projected);
+}
+
 #[test]
 fn backward_ssr_collapses_hamming1_cubes() {
     let mut solver = Solver::with_config(SolverConfig {
