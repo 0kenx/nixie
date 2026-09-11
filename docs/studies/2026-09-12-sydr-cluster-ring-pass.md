@@ -174,3 +174,44 @@ answers the empty problem.  This produced two false "cascade changes
 the verdict" readings before the trivial-probe check caught it.
 `docs/studies/assets/goal2smt.py` carries the fixed recipe
 (declarations + `_i`-variant mapping).
+
+## Follow-up (2026-09-12, small hours): the s3 family completes (70a35000)
+
+The `solve_equations` Kahn worklist was the last quadratic on the
+  goto_symex inputs: each resolution substituted into every mentioning
+  body, and the bodies are meganode terms (parse-time `define-fun`
+  inlining expands every callee into every referencing assertion).
+  `s3_srvr_1_alt` burned 84 s in round 0.  Three bounds landed
+  (define-equation bodies never substituted into — they are dropped at
+  apply and model replay evaluates dependencies first; memoized
+  `dag_size` so body sizes are measured once over the hash-consed DAG;
+  the budget counts *nodes substituted*, not calls).  Result: **the
+  entire `bmc-bv-svcomp14` s3 family decides inside the 25 s cap, faster
+  than z3 4.16.0 on every cell** (s3_clnt 1/2/3 × true/false: 9.5–17.2 s
+  vs z3's 16.9–23.0; three `s3_srvr` cells additionally crossed on the
+  509-file screen).  Corpus: 308 vs 301, zero flips.
+
+### The `NIXIE_BV_IR` re-screen on the moved corpus: decisively negative
+
+Four of the remaining gap cells (`maxandminor016`, `bitrev2048`,
+  `ex7_prime`, `rubik/8moves_mti_9`) solve with `NIXIE_BV_IR=1` — so the
+  flag was re-screened on the current corpus (same binary, flag on/off):
+  **285 vs 301 of 509**.  The ring/define-fun fixes moved the corpus
+  under the IR layer's feet: it now costs sixteen cells net.  Default
+  stays off; do not re-screen without a per-class gate.
+
+### Remaining gap after this session (from the 509-cell screen)
+
+14 → 8 cells: `BuchwaldFried/Mul32·Mulh_u32` (z3 0.07 s — closed by z3's
+  *shared* blast DAG: the goal is one equality between two encodings of
+  the same product, 96-bit mul-of-zero-extended vs 64-bit; z3's partial
+  products hash-cons together and the goal folds pre-SAT, our
+  independent Tseitin multipliers must search it — the
+  multiplier-structural-sharing item), `smulov1bw12` (the encoding
+  item), `calypto` 14/19, `bv-term-small-rw_1300`, `s3_srvr_1_alt`
+  (0.15 s z3 — the residual architecture gap: our parser eagerly inlines
+  macros into meganode terms and every downstream pass pays; z3 keeps
+  macros as short equations and substitutes once in solve-eqs.  The
+  principled fix is parser-level macro handling — a well-scoped project,
+  not a patch), and `maxandminor016`/`bitrev2048`/`ex7_prime`/`rubik`
+  (IR-gated; see above).
