@@ -1,0 +1,6 @@
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 32))
+(declare-fun y () (_ BitVec 32))
+(assert (not (= ((_ extract 63 32) (bvmul ((_ zero_extend 32) x) ((_ zero_extend 32) y)))
+                ((_ extract 63 32) (bvmul ((_ zero_extend 64) x) ((_ zero_extend 64) y))))))
+(check-sat)

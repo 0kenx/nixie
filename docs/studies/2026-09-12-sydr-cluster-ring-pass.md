@@ -248,6 +248,8 @@ So the lever is *not* a new multiplier encoding — it is cross-round IR
   6.69 s, genuine search) remains the separate partial-product encoding
   item, untouched.
 
-Micro-reproducers: `/tmp` scratch lost — regenerate with
-  `mulshare*.smt2` shapes above (two zero-extended muls, extract-high
-  equality; each is ~6 lines).
+Micro-reproducers preserved: `docs/studies/assets/mulshare/`
+  (`mulshare.smt2` = zero_extend spelling, `mulshare2.smt2` = concat
+  spelling, `mulshare3.smt2` = extract-of-var operand, `mulshare4.smt2` =
+  extract-of-bvor operand — all close in ~0.02 s under IR=1, all time
+  out under IR=0).

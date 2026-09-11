@@ -1,0 +1,6 @@
+(set-logic QF_BV)
+(declare-fun x () (_ BitVec 32))
+(declare-fun y () (_ BitVec 32))
+(assert (not (= ((_ extract 63 32) (bvmul (concat #x00000000 x) (concat #x00000000 y)))
+                ((_ extract 63 32) (bvmul (concat #x0000000000000000 x) (concat #x0000000000000000 y))))))
+(check-sat)
