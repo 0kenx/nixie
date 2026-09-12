@@ -166,10 +166,20 @@ impl Loader {
                 .into_iter()
                 .map(|i| i.name.clone())
                 .collect();
+            // `INSTANCE` targets are loaded too, but are *not* dependencies
+            // for ordering or for imports: `INSTANCE` substitutes rather than
+            // importing, so its names must not become visible. They still have
+            // to be on hand, since a member cannot be resolved without the
+            // module that defines it.
+            let instantiated: Vec<String> = module
+                .instantiated()
+                .into_iter()
+                .map(|i| i.name.clone())
+                .collect();
             deps.insert(name.clone(), extends.clone());
             loaded.insert(name, module);
 
-            for dep in extends {
+            for dep in extends.iter().cloned().chain(instantiated) {
                 if loaded.contains_key(&dep) || deps.contains_key(&dep) {
                     continue;
                 }

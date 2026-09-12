@@ -601,6 +601,25 @@ impl Module {
             .collect()
     }
 
+    /// The modules this one instantiates, across every `INSTANCE` form.
+    ///
+    /// Distinct from [`Module::extends`]: `INSTANCE` substitutes for the
+    /// instantiated module's declarations, so its names are *not* imported.
+    /// It still has to be loaded, though — a member cannot be resolved
+    /// without it.
+    #[must_use]
+    pub fn instantiated(&self) -> Vec<&Ident> {
+        self.units
+            .iter()
+            .filter_map(|u| match &u.kind {
+                UnitKind::Instance { instance, .. } | UnitKind::ModuleDef { instance, .. } => {
+                    Some(&instance.module)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The declared constants, flattened across every `CONSTANT` unit.
     #[must_use]
     pub fn constants(&self) -> Vec<&OpDecl> {

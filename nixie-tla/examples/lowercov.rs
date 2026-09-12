@@ -45,7 +45,7 @@ fn main() {
             match low.lower_named(module, &name) {
                 Ok(k) => {
                     ok += 1;
-                    nodes += k.size();
+                    nodes += k.dag_size();
                 }
                 Err(e) => {
                     fail += 1;
@@ -86,7 +86,7 @@ fn main() {
     let total = ok + fail;
     let expr_total = total - structural;
     println!(
-        "{files} files, {total} definitions: {ok} lowered, {fail} rejected; {nodes} kernel nodes"
+        "{files} files, {total} definitions: {ok} lowered, {fail} rejected; {nodes} distinct kernel nodes"
     );
     println!("  {structural} are spec structure (temporal / action / ENABLED), correctly rejected");
     println!(

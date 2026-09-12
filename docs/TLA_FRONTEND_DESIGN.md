@@ -209,10 +209,24 @@ constant simplification → Keramelizer → priming → VC generation → transi
 assignment solving → analysis (skolemization / expansion / free-existential) → encode.
 
 **Status: the kernel and the lowering pass are landed** in `nixie-tla`. Measured over the
-corpora, 4 304 of 4 682 expression-level definitions lower (91.9%); a further 649 definitions
+corpora, 4 349 of 4 637 expression-level definitions lower (93.8%); a further 694 definitions
 are *spec structure* — `Spec == Init /\ [][Next]_vars`, fairness, `ENABLED`, temporal operators
 — which are correctly rejected because they are not kernel expressions at all. Snowcat typing
 and the rest of the pass pipeline are still open.
+
+**`INSTANCE` is resolved.** `I == INSTANCE M WITH v <- w` looks through `M` under that
+substitution, including unnamed instances, member arguments, and members that reach other
+members of the same module. The visibility rule is the load-bearing part: a module reached
+*only* through `INSTANCE` must not contribute to the flat name space, because its definitions
+mean something only under the substitution — resolving one directly would silently use the
+unsubstituted body and read the wrong module's variables. Only the root and its transitive
+`EXTENDS` closure are visible.
+
+The remaining ~1.3% is exponential inlining. Inlining re-lowers a body at each use, so
+`F(x) == G(x) + G(x)` over `G(x) == H(x) + H(x)` doubles per level. Memoising on the identity
+of already-lowered arguments collapses the common case, but misses when two structurally equal
+arguments are lowered separately. Hash-consing the kernel closes it properly; until then a work
+budget keeps the failure to a prompt diagnostic.
 
 **The parser recognises TLA+; it does not enforce the fragment.** Milestone 1 originally
 rejected `RECURSIVE` and structured proofs at parse time. Running the corpora showed that
@@ -429,7 +443,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 | # | Deliverable | Gate |
 |---|---|---|
 | 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
-| 2 | Surface IR + KerA *(landed)* + lowering *(landed, 91.9%)*; Snowcat typing, pass pipeline *(open)* | IR isomorphism on the same corpus |
+| 2 | Surface IR + KerA *(landed)* + lowering *(landed, 93.8%)* + `INSTANCE` *(landed)*; Snowcat typing, pass pipeline *(open)* | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |

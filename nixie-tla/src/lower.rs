@@ -37,8 +37,47 @@ use std::rc::Rc;
 
 /// Default maximum inlining depth.
 pub const DEFAULT_MAX_INLINE_DEPTH: usize = 64;
-/// Default maximum surface nesting depth.
-pub const DEFAULT_MAX_DEPTH: usize = 512;
+/// Default budget, in steps of the lowering walk.
+///
+/// Bounds total work rather than nesting: inlining splices a body in at every
+/// use, so a term can be enormous without being deep.
+///
+/// Set to fail *fast*. Inlining is memoised on the identity of an operator's
+/// already-lowered arguments, which collapses the common
+/// `F(x) == G(x) + G(x)` blowup, but the memo misses when two structurally
+/// equal arguments are lowered separately and so are not pointer-identical.
+/// A handful of corpus files (`test23.tla` and relatives, ~1.3% of
+/// definitions) still exhaust the budget. Hash-consing the kernel would close
+/// it properly; until then the budget keeps the failure to a prompt
+/// diagnostic instead of an apparent hang.
+pub const DEFAULT_STEP_BUDGET: usize = 100_000;
+
+/// A module instantiation: `I == INSTANCE M WITH a <- e`.
+///
+/// `EXTENDS` makes another module's definitions visible unchanged; `INSTANCE`
+/// makes them visible *after substituting* for the declared constants and
+/// variables of the instantiated module. That substitution is the whole
+/// difference, and it is why an instance member cannot simply be inlined the
+/// way an extended one can.
+#[derive(Debug, Clone)]
+struct Instantiation<'a> {
+    module: &'a Module,
+    /// Explicit `WITH` replacements, by the instantiated module's name.
+    with: Vec<(String, &'a Expr)>,
+    /// Parameters of a parameterised instance, `I(p) == INSTANCE M WITH …`.
+    params: Vec<String>,
+}
+
+/// The instance being looked through while lowering.
+///
+/// Names inside an instantiated module's definition resolve against *that*
+/// module and through *its* substitution, not against the module doing the
+/// instantiating.
+#[derive(Debug)]
+struct InstanceCtx<'a> {
+    module: &'a Module,
+    subst: HashMap<String, KeraRef>,
+}
 
 /// A user operator definition available for inlining.
 #[derive(Debug, Clone)]
@@ -48,6 +87,14 @@ struct Def<'a> {
     /// and the argument has to be bound as an operator to be applied.
     params: Vec<(String, usize)>,
     body: &'a Expr,
+    /// Whether the lowered form may be cached and shared.
+    ///
+    /// True for a module-level definition: TLA+ has no dynamic scoping, so a
+    /// top-level body can only mention other top-level names, declared
+    /// symbols and its own binders — its lowering does not depend on where it
+    /// is used. False for a `LET` definition, whose name is scoped and may be
+    /// shadowed.
+    cacheable: bool,
 }
 
 /// What a name is bound to while lowering.
@@ -72,6 +119,15 @@ enum Binding<'a> {
 /// Lowers surface expressions to the kernel.
 pub struct Lowerer<'a> {
     defs: HashMap<String, Def<'a>>,
+    /// Per-module definitions, so a name inside an instantiated module
+    /// resolves against that module rather than against the flat root view.
+    module_defs: HashMap<String, HashMap<String, Def<'a>>>,
+    /// Named instantiations, `I == INSTANCE M …`.
+    instances: HashMap<String, Instantiation<'a>>,
+    /// Unnamed `INSTANCE M …`, whose members are visible without a prefix.
+    open_instances: Vec<Instantiation<'a>>,
+    /// The instance contexts currently being looked through, innermost last.
+    ctx: Vec<Rc<InstanceCtx<'a>>>,
     /// Function definitions `f[x \in S] == e`, which denote a *value* rather
     /// than an operator and so are expanded as `[x \in S |-> e]` at use sites.
     funs: HashMap<String, (&'a [Bound], &'a Expr)>,
@@ -80,13 +136,23 @@ pub struct Lowerer<'a> {
     /// offset so that `build` can recover them. The walk visits each node's
     /// expand and build exactly once, so one entry per node suffices.
     binder_names: HashMap<u32, Vec<Name>>,
+    /// Lowered forms of nullary module-level definitions.
+    ///
+    /// Inlining re-lowers a body at every use, so `A == B + B` with
+    /// `B == C + C` doubles at each level and a chain of a dozen such
+    /// definitions is exponential. Sharing the `Rc` collapses that back to
+    /// linear, and is sound precisely because a top-level body's meaning does
+    /// not depend on where it is used.
+    cache: HashMap<String, KeraRef>,
+    /// Every loaded module by name, for resolving `INSTANCE`.
+    modules: HashMap<String, &'a Module>,
     /// Higher-order arguments resolved by `expand`, keyed by the application's
     /// start offset, waiting for the matching `Inline` frame.
     pending_ops: HashMap<u32, Vec<(String, Binding<'a>)>>,
     fresh: usize,
     inline_depth: usize,
     max_inline_depth: usize,
-    max_depth: usize,
+    step_budget: usize,
 }
 
 /// A step of the lowering walk.
@@ -109,6 +175,8 @@ enum Frame<'a> {
         params: Vec<(String, usize)>,
         body: &'a Expr,
         span: Span,
+        /// Cache the result under this name once the body is lowered.
+        cache_as: Option<String>,
     },
     /// Leave an inlined body: drop its scope and the depth it consumed.
     PopInline,
@@ -121,6 +189,22 @@ enum Frame<'a> {
     /// Push a ready-made kernel value (a record field name in an `EXCEPT`
     /// path, which has no surface expression of its own).
     PushLiteral(KeraRef),
+    /// Enter an instance: pop the lowered `WITH` replacements and the member's
+    /// arguments, and look through the instantiated module under them.
+    PushInstanceCtx {
+        module: &'a Module,
+        /// Names the popped substitution values belong to, in order.
+        subst_names: Vec<String>,
+        /// Declared names with no explicit `WITH`, substituted by the
+        /// same-named symbol of the instantiating module.
+        implicit: Vec<String>,
+        /// The member's own parameters, bound to the popped arguments.
+        member_params: Vec<(String, usize)>,
+    },
+    /// Leave an instance.
+    PopInstanceCtx,
+    /// Remember the lowered form of a nullary module-level definition.
+    CacheStore(String),
 }
 
 impl<'a> Lowerer<'a> {
@@ -129,14 +213,20 @@ impl<'a> Lowerer<'a> {
     pub fn new() -> Self {
         Self {
             defs: HashMap::new(),
+            module_defs: HashMap::new(),
+            instances: HashMap::new(),
+            open_instances: Vec::new(),
+            ctx: Vec::new(),
             funs: HashMap::new(),
             scopes: Vec::new(),
             binder_names: HashMap::new(),
+            cache: HashMap::new(),
+            modules: HashMap::new(),
             pending_ops: HashMap::new(),
             fresh: 0,
             inline_depth: 0,
             max_inline_depth: DEFAULT_MAX_INLINE_DEPTH,
-            max_depth: DEFAULT_MAX_DEPTH,
+            step_budget: DEFAULT_STEP_BUDGET,
         }
     }
 
@@ -145,8 +235,82 @@ impl<'a> Lowerer<'a> {
     /// Definitions are registered in source order, so a later definition can
     /// use an earlier one — which is all TLA+ permits anyway.
     pub fn add_module(&mut self, module: &'a Module) {
+        self.index_module(module);
         for unit in &module.units {
             self.add_unit(unit);
+        }
+    }
+
+    /// Index a module without making its definitions visible.
+    ///
+    /// Visibility is the whole point of the distinction. A module reached only
+    /// through `INSTANCE` must **not** contribute to the flat name space: its
+    /// definitions mean something only under that instance's substitution, and
+    /// letting them resolve directly would silently use the *unsubstituted*
+    /// body — reading the wrong module's variables.
+    pub fn index_module(&mut self, module: &'a Module) {
+        self.modules.insert(module.name.name.clone(), module);
+        for unit in &module.units {
+            self.add_instance_unit(module, unit);
+        }
+        // A per-module view, so that a definition reached through an instance
+        // resolves its own module's names rather than the root's.
+        let mut own: HashMap<String, Def<'a>> = HashMap::new();
+        for unit in &module.units {
+            if let UnitKind::OpDef {
+                name, params, body, ..
+            } = &unit.kind
+            {
+                own.insert(
+                    name.name.clone(),
+                    Def {
+                        params: params
+                            .iter()
+                            .map(|p| (p.name.name.clone(), p.arity))
+                            .collect(),
+                        body,
+                        cacheable: true,
+                    },
+                );
+            }
+        }
+        self.module_defs.insert(module.name.name.clone(), own);
+    }
+
+    fn add_instance_unit(&mut self, _module: &'a Module, unit: &'a Unit) {
+        let (name, params, instance) = match &unit.kind {
+            UnitKind::ModuleDef {
+                name,
+                params,
+                instance,
+                ..
+            } => (
+                Some(name.name.clone()),
+                params.iter().map(|p| p.name.name.clone()).collect(),
+                instance,
+            ),
+            UnitKind::Instance { instance, .. } => (None, Vec::new(), instance),
+            _ => return,
+        };
+        let Some(target) = self.modules.get(&instance.module.name).copied() else {
+            // The instantiated module was not loaded; a use of it will report
+            // that by name rather than silently resolving to something else.
+            return;
+        };
+        let inst = Instantiation {
+            module: target,
+            with: instance
+                .substitutions
+                .iter()
+                .map(|(n, e)| (n.name.clone(), e))
+                .collect(),
+            params,
+        };
+        match name {
+            Some(n) => {
+                self.instances.insert(n, inst);
+            }
+            None => self.open_instances.push(inst),
         }
     }
 
@@ -163,6 +327,7 @@ impl<'a> Lowerer<'a> {
                             .map(|p| (p.name.name.clone(), p.arity))
                             .collect(),
                         body,
+                        cacheable: true,
                     },
                 );
             }
@@ -197,8 +362,39 @@ impl<'a> Lowerer<'a> {
     /// own definitions are registered last and shadow anything it extends —
     /// which is what TLA+ means by overriding.
     pub fn add_spec(&mut self, spec: &'a nixie_tla_syntax::LoadedSpec) {
+        // Two passes: every module must be findable before any `INSTANCE` is
+        // resolved, since a module may instantiate one that appears later.
+        for (name, module) in &spec.modules {
+            self.modules.insert(name.clone(), module);
+        }
         for (_, module) in &spec.modules {
-            self.add_module(module);
+            self.index_module(module);
+        }
+        // Only the root and what it *extends* contribute visible names.
+        // `EXTENDS` re-exports, so the closure is taken transitively; an
+        // `INSTANCE` target reached along the way does not join it.
+        let mut visible: Vec<&str> = vec![spec.root.as_str()];
+        let mut i = 0;
+        while i < visible.len() {
+            let Some((_, m)) = spec.modules.iter().find(|(n, _)| n == visible[i]) else {
+                i += 1;
+                continue;
+            };
+            for dep in m.extends() {
+                if !visible.iter().any(|v| *v == dep.name) {
+                    visible.push(&dep.name);
+                }
+            }
+            i += 1;
+        }
+        // Dependency-first, so the root's own definitions are registered last
+        // and shadow anything it extends — which is what overriding means.
+        for (name, module) in &spec.modules {
+            if visible.iter().any(|v| *v == name) {
+                for unit in &module.units {
+                    self.add_unit(unit);
+                }
+            }
         }
     }
 
@@ -227,6 +423,13 @@ impl<'a> Lowerer<'a> {
     #[must_use]
     pub fn with_max_inline_depth(mut self, n: usize) -> Self {
         self.max_inline_depth = n;
+        self
+    }
+
+    /// Override the total work budget, in steps of the lowering walk.
+    #[must_use]
+    pub fn with_step_budget(mut self, n: usize) -> Self {
+        self.step_budget = n;
         self
     }
 
@@ -271,15 +474,18 @@ impl<'a> Lowerer<'a> {
     pub fn lower(&mut self, expr: &'a Expr) -> Result<KeraRef> {
         let mut stack: Vec<Frame<'a>> = vec![Frame::Expand(expr)];
         let mut values: Vec<KeraRef> = Vec::new();
+        let mut steps = 0usize;
 
         while let Some(frame) = stack.pop() {
-            // Inlining legitimately deepens a term -- a definition's body is
-            // spliced in wherever it is used -- so the budget is generous and
-            // exists only to keep a pathological input from exhausting memory.
-            if stack.len() > self.max_depth * 64 {
+            // Inlining splices a definition's body in at every use, so a term
+            // can be enormous without being deep. The budget bounds total work
+            // and exists only to keep a pathological input from exhausting
+            // memory.
+            steps += 1;
+            if steps > self.step_budget {
                 return Err(LowerError::new(
-                    LowerErrorKind::DepthLimit {
-                        limit: self.max_depth,
+                    LowerErrorKind::BudgetExhausted {
+                        limit: self.step_budget,
                     },
                     expr.span,
                 ));
@@ -312,11 +518,17 @@ impl<'a> Lowerer<'a> {
                     scope.insert("@".to_string(), Binding::Value(at));
                     self.scopes.push(scope);
                 }
+                Frame::CacheStore(name) => {
+                    if let Some(v) = values.last() {
+                        self.cache.insert(name, Rc::clone(v));
+                    }
+                }
                 Frame::Inline {
                     name,
                     params,
                     body,
                     span,
+                    cache_as,
                 } => {
                     if self.inline_depth >= self.max_inline_depth {
                         return Err(LowerError::new(
@@ -352,6 +564,9 @@ impl<'a> Lowerer<'a> {
                     }
                     self.inline_depth += 1;
                     self.scopes.push(scope);
+                    if let Some(key) = cache_as {
+                        stack.push(Frame::CacheStore(key));
+                    }
                     stack.push(Frame::PopInline);
                     stack.push(Frame::Expand(body));
                 }
@@ -360,6 +575,57 @@ impl<'a> Lowerer<'a> {
                     self.inline_depth = self.inline_depth.saturating_sub(1);
                 }
                 Frame::PushLiteral(v) => values.push(v),
+                Frame::PushInstanceCtx {
+                    module,
+                    subst_names,
+                    implicit,
+                    member_params,
+                } => {
+                    // Arguments were pushed last, so they come off first.
+                    let mut scope = HashMap::new();
+                    for (p, arity) in member_params.iter().rev() {
+                        if *arity > 0 {
+                            continue;
+                        }
+                        let Some(v) = values.pop() else {
+                            return Err(LowerError::unsupported(
+                                "an instance member application",
+                                "internal: missing argument",
+                                expr.span,
+                            ));
+                        };
+                        scope.insert(p.clone(), Binding::Value(v));
+                    }
+                    let mut subst = HashMap::new();
+                    for n in subst_names.iter().rev() {
+                        let Some(v) = values.pop() else {
+                            return Err(LowerError::unsupported(
+                                "an `INSTANCE` substitution",
+                                "internal: missing replacement",
+                                expr.span,
+                            ));
+                        };
+                        subst.insert(n.clone(), v);
+                    }
+                    // A declared name with no `WITH` clause is substituted by
+                    // the same-named symbol of the instantiating module --
+                    // resolved through the *enclosing* instance if there is
+                    // one, so that nested instantiations compose.
+                    for n in implicit {
+                        let v = self
+                            .ctx
+                            .last()
+                            .and_then(|c| c.subst.get(&n).cloned())
+                            .unwrap_or_else(|| Kera::Var(Name(n.clone())).rc());
+                        subst.insert(n, v);
+                    }
+                    self.ctx.push(Rc::new(InstanceCtx { module, subst }));
+                    self.scopes.push(scope);
+                }
+                Frame::PopInstanceCtx => {
+                    self.ctx.pop();
+                    self.scopes.pop();
+                }
                 Frame::PopLetDefs(saved) => {
                     for (name, prev) in saved {
                         match prev {
@@ -567,11 +833,124 @@ impl<'a> Lowerer<'a> {
             params: def.params.clone(),
             body: def.body,
             span,
+            cache_as: None,
         });
         for a in args.iter().rev() {
             stack.push(Frame::Expand(a));
         }
         Ok(())
+    }
+
+    /// Push the frames that look through `inst` at its member `member`,
+    /// applied to `args`.
+    fn push_instance_member(
+        &mut self,
+        inst_name: &str,
+        member: &str,
+        args: &[&'a Expr],
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let Some(inst) = self.instances.get(inst_name).cloned() else {
+            return Err(LowerError::unsupported(
+                &format!("`{inst_name}!{member}`"),
+                "no `INSTANCE` with that name is in scope, or the instantiated module was \
+                 not found on the search path",
+                span,
+            ));
+        };
+        if !inst.params.is_empty() {
+            return Err(LowerError::unsupported(
+                &format!("`{inst_name}!{member}`"),
+                "a parameterised instance must be applied, as `I(e)!Op`",
+                span,
+            ));
+        }
+        self.push_instance_body(&inst, member, args, span, stack)
+    }
+
+    fn push_instance_body(
+        &mut self,
+        inst: &Instantiation<'a>,
+        member: &str,
+        args: &[&'a Expr],
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let target = inst.module;
+        let Some(def) = self
+            .module_defs
+            .get(&target.name.name)
+            .and_then(|m| m.get(member))
+            .cloned()
+        else {
+            return Err(LowerError::unsupported(
+                &format!("`{member}`"),
+                &format!(
+                    "module `{}` has no operator definition with that name",
+                    target.name.name
+                ),
+                span,
+            ));
+        };
+        if def.params.len() != args.len() {
+            return Err(LowerError::new(
+                LowerErrorKind::Arity {
+                    name: member.to_string(),
+                    expected: def.params.len(),
+                    found: args.len(),
+                },
+                span,
+            ));
+        }
+
+        // Every constant and variable the instantiated module declares must be
+        // substituted: explicitly by `WITH`, or implicitly by the same-named
+        // symbol here. Leaving one unsubstituted would silently read the
+        // *wrong* module's symbol.
+        let declared: Vec<String> = target
+            .constants()
+            .iter()
+            .map(|d| d.name.name.clone())
+            .chain(target.variables().iter().map(|v| v.name.clone()))
+            .collect();
+        let mut subst_names: Vec<String> = Vec::new();
+        let mut subst_exprs: Vec<&'a Expr> = Vec::new();
+        for (n, e) in &inst.with {
+            subst_names.push(n.clone());
+            subst_exprs.push(e);
+        }
+        let implicit: Vec<String> = declared
+            .into_iter()
+            .filter(|d| !subst_names.iter().any(|s| s == d))
+            .collect();
+
+        stack.push(Frame::PopInstanceCtx);
+        stack.push(Frame::Expand(def.body));
+        stack.push(Frame::PushInstanceCtx {
+            module: target,
+            subst_names,
+            implicit,
+            member_params: def.params.clone(),
+        });
+        // Arguments last so they are on top of the value stack.
+        for a in args.iter().rev() {
+            stack.push(Frame::Expand(a));
+        }
+        for e in subst_exprs.into_iter().rev() {
+            stack.push(Frame::Expand(e));
+        }
+        Ok(())
+    }
+
+    /// Resolve a bare name through the instance being looked through, if any.
+    fn ctx_resolve(&self, name: &str) -> Option<CtxResolution<'a>> {
+        let ctx = self.ctx.last()?;
+        if let Some(v) = ctx.subst.get(name) {
+            return Some(CtxResolution::Value(Rc::clone(v)));
+        }
+        let def = self.module_defs.get(&ctx.module.name.name)?.get(name)?;
+        Some(CtxResolution::Def(def.clone()))
     }
 
     fn expand(
@@ -613,16 +992,56 @@ impl<'a> Lowerer<'a> {
             },
             ExprKind::Name(q) => {
                 if q.is_qualified() {
-                    return Err(LowerError::unsupported(
-                        "an instance-qualified name",
-                        "`INSTANCE` substitution is not applied yet, so `I!Op` cannot be \
-                         resolved; extend the module instead",
-                        span,
-                    ));
+                    let names: Vec<&str> = q.path.iter().map(|i| i.name.as_str()).collect();
+                    let (Some(inst), Some(member)) = (names.first(), names.get(1)) else {
+                        return Err(LowerError::unsupported(
+                            "an instance-qualified name",
+                            "internal: malformed path",
+                            span,
+                        ));
+                    };
+                    if names.len() > 2 {
+                        return Err(LowerError::unsupported(
+                            &format!("`{}`", names.join("!")),
+                            "chained instance qualifiers are not resolved yet",
+                            span,
+                        ));
+                    }
+                    return self.push_instance_member(inst, member, &[], span, stack);
                 }
                 let Some(id) = q.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
                 };
+                // Inside an instance, a bare name means the instantiated
+                // module's symbol under that instance's substitution -- never
+                // the instantiating module's same-named symbol.
+                if self.lookup(&id.name).is_none()
+                    && let Some(res) = self.ctx_resolve(&id.name)
+                {
+                    match res {
+                        CtxResolution::Value(v) => values.push(v),
+                        CtxResolution::Def(def) if def.params.is_empty() => {
+                            stack.push(Frame::Inline {
+                                name: id.name.clone(),
+                                params: Vec::new(),
+                                body: def.body,
+                                span,
+                                cache_as: None,
+                            });
+                        }
+                        CtxResolution::Def(def) => {
+                            return Err(LowerError::new(
+                                LowerErrorKind::Arity {
+                                    name: id.name.clone(),
+                                    expected: def.params.len(),
+                                    found: 0,
+                                },
+                                span,
+                            ));
+                        }
+                    }
+                    return Ok(());
+                }
                 match self.lookup(&id.name) {
                     Some(Binding::Value(v)) => values.push(v),
                     Some(Binding::Bound(n)) => values.push(Kera::Var(n).rc()),
@@ -640,11 +1059,20 @@ impl<'a> Lowerer<'a> {
                     }
                     None => match self.defs.get(&id.name).cloned() {
                         Some(def) if def.params.is_empty() => {
+                            // Only a module-level definition may be shared,
+                            // and only outside an instance, where the
+                            // substitution would change what the body means.
+                            let shareable = def.cacheable && self.ctx.is_empty();
+                            if shareable && let Some(v) = self.cache.get(&id.name) {
+                                values.push(Rc::clone(v));
+                                return Ok(());
+                            }
                             stack.push(Frame::Inline {
                                 name: id.name.clone(),
                                 params: Vec::new(),
                                 body: def.body,
                                 span,
+                                cache_as: shareable.then(|| id.name.clone()),
                             });
                         }
                         // An operator named but not applied: it is being
@@ -658,18 +1086,44 @@ impl<'a> Lowerer<'a> {
                         }
                         None => match self.funs.get(&id.name).cloned() {
                             Some((bounds, body)) => stack.push(Frame::ExpandFun(bounds, body)),
-                            None => values.push(Kera::Var(Name(id.name.clone())).rc()),
+                            None => {
+                                // An unnamed `INSTANCE M WITH …` makes M's
+                                // members visible without a prefix.
+                                let open = self.open_instances.iter().find(|i| {
+                                    self.module_defs
+                                        .get(&i.module.name.name)
+                                        .is_some_and(|d| d.contains_key(&id.name))
+                                });
+                                match open.cloned() {
+                                    Some(inst) => {
+                                        self.push_instance_body(&inst, &id.name, &[], span, stack)?;
+                                    }
+                                    None => values.push(Kera::Var(Name(id.name.clone())).rc()),
+                                }
+                            }
                         },
                     },
                 }
             }
             ExprKind::Apply { head, args } => {
                 if head.is_qualified() {
-                    return Err(LowerError::unsupported(
-                        "an instance-qualified application",
-                        "`INSTANCE` substitution is not applied yet",
-                        span,
-                    ));
+                    let names: Vec<&str> = head.path.iter().map(|i| i.name.as_str()).collect();
+                    let (Some(inst), Some(member)) = (names.first(), names.get(1)) else {
+                        return Err(LowerError::unsupported(
+                            "an instance-qualified application",
+                            "internal: malformed path",
+                            span,
+                        ));
+                    };
+                    if names.len() > 2 {
+                        return Err(LowerError::unsupported(
+                            &format!("`{}`", names.join("!")),
+                            "chained instance qualifiers are not resolved yet",
+                            span,
+                        ));
+                    }
+                    let arg_refs: Vec<&'a Expr> = args.iter().collect();
+                    return self.push_instance_member(inst, member, &arg_refs, span, stack);
                 }
                 let Some(id) = head.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
@@ -677,9 +1131,31 @@ impl<'a> Lowerer<'a> {
                 // A parameter bound to a value cannot be applied: higher-order
                 // parameters are inlined as values, and applying one needs the
                 // operator itself, not its level.
+                // Inside an instance, an application resolves against the
+                // instantiated module first.
+                if self.lookup(&id.name).is_none()
+                    && let Some(CtxResolution::Def(def)) = self.ctx_resolve(&id.name)
+                    && def.params.len() == args.len()
+                {
+                    stack.push(Frame::Inline {
+                        name: id.name.clone(),
+                        params: def.params.clone(),
+                        body: def.body,
+                        span,
+                        cache_as: None,
+                    });
+                    for a in args.iter().rev() {
+                        stack.push(Frame::Expand(a));
+                    }
+                    return Ok(());
+                }
                 // An operator *parameter* shadows a global definition.
                 let bound_op = match self.lookup(&id.name) {
-                    Some(Binding::Op { params, body }) => Some(Def { params, body }),
+                    Some(Binding::Op { params, body }) => Some(Def {
+                        params,
+                        body,
+                        cacheable: false,
+                    }),
                     _ => None,
                 };
                 let resolved = bound_op.or_else(|| self.defs.get(&id.name).cloned());
@@ -710,6 +1186,7 @@ impl<'a> Lowerer<'a> {
                             params: def.params.clone(),
                             body: def.body,
                             span,
+                            cache_as: None,
                         });
                         for a in value_args.into_iter().rev() {
                             stack.push(Frame::Expand(a));
@@ -854,6 +1331,7 @@ impl<'a> Lowerer<'a> {
                                     .map(|p| (p.name.name.clone(), p.arity))
                                     .collect(),
                                 body,
+                                cacheable: false,
                             };
                             saved.push((
                                 name.name.clone(),
@@ -949,6 +1427,14 @@ impl<'a> Lowerer<'a> {
         }
         Ok(())
     }
+}
+
+/// What a bare name means inside an instance.
+enum CtxResolution<'a> {
+    /// A declared name of the instantiated module, replaced by `WITH`.
+    Value(KeraRef),
+    /// A definition of the instantiated module, to be looked through as well.
+    Def(Def<'a>),
 }
 
 /// The children `Frame::Build` will find on the value stack, in order, for the

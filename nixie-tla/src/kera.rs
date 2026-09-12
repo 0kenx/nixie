@@ -375,21 +375,50 @@ impl Kera {
         }
     }
 
-    /// Number of nodes in the term, counting shared subterms once per
-    /// occurrence.
+    /// Number of **distinct** nodes in the term.
     ///
-    /// Walked with an explicit stack: a lowered term is user-controlled and
-    /// inlining can make it deep.
+    /// This is the size that matters for a shared term. Lowering inlines a
+    /// definition's body at every use and shares the result, so a term whose
+    /// tree has 2^n nodes may have only n distinct ones — and a naive walk
+    /// that does not deduplicate takes exponential time on exactly the inputs
+    /// where sharing is doing the most good. Counting by pointer identity is
+    /// what makes this linear.
+    ///
+    /// Walked with an explicit stack: a lowered term is user-controlled.
     #[must_use]
-    pub fn size(&self) -> usize {
+    pub fn dag_size(&self) -> usize {
+        let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+        let mut n = 1usize; // the root, which has no `Rc` to identify it by
+        let mut stack: Vec<&KeraRef> = self.children();
+        while let Some(e) = stack.pop() {
+            if !seen.insert(Rc::as_ptr(e)) {
+                continue;
+            }
+            n += 1;
+            stack.extend(e.children());
+        }
+        n
+    }
+
+    /// Number of nodes counting every occurrence separately.
+    ///
+    /// **This is exponential** on a shared term and is provided only for
+    /// comparing against a tree-shaped reference; use [`Kera::dag_size`] for
+    /// anything that runs over real input. Bounded by `limit`, returning
+    /// `None` when the count exceeds it, so a caller cannot accidentally hang.
+    #[must_use]
+    pub fn tree_size(&self, limit: usize) -> Option<usize> {
         let mut n = 0usize;
         let mut stack: Vec<&Kera> = vec![self];
         while let Some(e) = stack.pop() {
             n += 1;
+            if n > limit {
+                return None;
+            }
             for c in e.children() {
                 stack.push(c.as_ref());
             }
         }
-        n
+        Some(n)
     }
 }

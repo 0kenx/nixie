@@ -42,10 +42,15 @@ pub enum LowerErrorKind {
         limit: usize,
     },
 
-    /// Expression nesting beyond the configured limit.
-    #[error("expression nests deeper than the limit of {limit}")]
-    DepthLimit {
-        /// The configured limit.
+    /// Lowering did more work than the configured budget allows.
+    ///
+    /// Deliberately *not* called a depth limit: the budget counts steps of the
+    /// lowering walk, which grows with nesting, breadth and inlining alike.
+    /// Naming it after depth alone sent one investigation looking for deep
+    /// expressions in a file whose largest term had 128 nodes.
+    #[error("lowering exceeded its budget of {limit} steps")]
+    BudgetExhausted {
+        /// The configured budget.
         limit: usize,
     },
 }
