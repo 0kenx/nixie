@@ -560,6 +560,16 @@ impl Solver {
             self.attach_watchers(clause_id, lit0, lit1);
 
             self.assert_learned_clause(&learnt_clause, clause_id);
+
+            // Same eager-subsumption hook as the long-clause branch (the
+            // driving clause may be binary; `retire_clause` purges its BIG
+            // edges).
+            if self
+                .eager_sub_override
+                .unwrap_or_else(crate::eager_sub_enabled)
+            {
+                self.eagerly_subsume_recently_learned(clause_id);
+            }
         } else {
             let lbd = self.compute_lbd(&learnt_clause);
             self.note_learned_lbd(lbd);
@@ -631,18 +641,73 @@ impl Solver {
 
             self.assert_learned_clause(&learnt_clause, clause_id);
 
-            // NOTE: no per-learned-clause database subsumption scan here
-            // (cadical parity). The previous `check_subsumption` call walked
-            // the append-only `learned_clause_ids` table for *every* short
-            // low-glue learned clause – an O(learned) scan whose cost grows
-            // quadratically over the search (measured on `crn_11_99_u`:
-            // ~30% of all instructions were this scan's random-access id
-            // probes). CaDiCaL never scans the database per learned clause:
-            // bulk subsumption is the periodic `subsume` round (our
-            // `subsume_round`, run by the inprocessing schedule), and its
-            // on-the-fly strengthening only ever rewrites the conflict's own
-            // driving clause. Subsumed learned clauses that linger until the
-            // next reduction are cadical's behavior too.
+            // Eager subsumption (cadical `analyze.cpp::
+            // eagerly_subsume_recently_learned_clauses`, default ON there,
+            // `eagersubsumelim = 20`): walk the learned clauses NEWEST
+            // first for at most 20 candidates, retiring any subsumed by
+            // the fresh driving clause. Learned-by-learned only (both are
+            // consequences of the formula; the subsumer stays and is
+            // stronger — sound by definition). This is NOT the removed
+            // unbounded `check_subsumption` scan (see the NOTE below):
+            // that walked the whole `learned_clause_ids` table per short
+            // clause (~30 % of crn_11_99_u's instructions); this is a
+            // constant ≤ 20-probe newest-first walk — cadical's exact
+            // shape, measured at 51 672 retirements on Timetable_C (48 %
+            // of its total subsumed).
+            if self
+                .eager_sub_override
+                .unwrap_or_else(crate::eager_sub_enabled)
+            {
+                self.eagerly_subsume_recently_learned(clause_id);
+            }
+        }
+    }
+
+    /// cadical `eagerly_subsume_recently_learned_clauses`: retire learned
+    /// clauses subsumed by the freshly learned `cid`, walking newest-first
+    /// under the `EAGER_SUB_LIM` candidate budget. `retire_clause` handles
+    /// the watch/BIG purges and re-points any live trail reason to
+    /// `Decision` (the established sound degradation — a subsumed reason's
+    /// consequences remain justified by the surviving subsumer).
+    fn eagerly_subsume_recently_learned(&mut self, cid: ClauseId) {
+        const EAGER_SUB_LIM: u64 = 20; // cadical `eagersubsumelim`
+        let Some(c_lits): Option<SmallVec<[Lit; 32]>> = self
+            .clauses
+            .get(cid)
+            .filter(|c| !c.deleted)
+            .map(|c| c.lits.iter().copied().collect())
+        else {
+            return;
+        };
+        // The walk visits newest-first with every visit consuming budget
+        // (garbage/self entries included — cadical counts them), so it
+        // visits exactly the newest `min(len, LIM)` entries. Snapshot those
+        // ids first: `retire_clause` needs `&mut self`.
+        let take = (EAGER_SUB_LIM as usize).min(self.learned_clause_ids.len());
+        self.stats.eager_sub_tried += take as u64;
+        let ids: SmallVec<[ClauseId; 20]> = self.learned_clause_ids
+            [self.learned_clause_ids.len() - take..]
+            .iter()
+            .rev()
+            .copied()
+            .collect();
+        for did in ids {
+            if did == cid {
+                continue;
+            }
+            let Some(d) = self.clauses.get(did) else {
+                continue;
+            };
+            if d.deleted {
+                continue;
+            }
+            if c_lits.iter().all(|&cl| d.lits.contains(&cl)) {
+                // (end the `ClauseView` borrow before the mutable call)
+                let _ = d;
+                self.retire_clause(did);
+                self.stats.subsumed_removed += 1;
+                self.stats.eager_sub_removed += 1;
+            }
         }
     }
 

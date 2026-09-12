@@ -779,6 +779,19 @@ pub fn otfs_enabled() -> bool {
 /// eliminate through the restricted g×a + g×g resolvent products (a×a is
 /// entailed), so far more of them pass the elimination bound. Default off
 /// = bit-identical.
+/// Eager subsumption of recently learned clauses (`NIXIE_EAGER_SUB=1`):
+/// cadical `analyze.cpp::eagerly_subsume_recently_learned_clauses` (default
+/// ON there) — after each conflict, walk the learned clauses newest-first
+/// for at most `eagersubsumelim = 20` candidates and retire any subsumed by
+/// the fresh driving clause. Learned-by-learned only, constant cost.
+/// Default off = bit-identical.
+#[doc(hidden)]
+pub fn eager_sub_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_EAGER_SUB").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 #[doc(hidden)]
 pub fn and_gates_enabled() -> bool {
     use std::sync::OnceLock;

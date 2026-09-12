@@ -23,6 +23,8 @@ pub use propagation_work::PropagationWork;
 #[cfg(test)]
 mod and_gate_tests;
 #[cfg(test)]
+mod eager_sub_tests;
+#[cfg(test)]
 mod otfs_tests;
 mod search_ext;
 mod subsume;
@@ -1121,6 +1123,13 @@ pub struct SolverStats {
     /// Original conflict clauses deleted by the OTFS `resolved == 1`
     /// subsumption (cadical `stats.otfs.subsumed`).
     pub otfs_subsumed: u64,
+    /// Eager-subsumption candidate visits (`NIXIE_EAGER_SUB`; cadical
+    /// `stats.eagertried`): learned clauses probed by the newest-first
+    /// walk after each conflict.
+    pub eager_sub_tried: u64,
+    /// Learned clauses retired by eager subsumption (cadical
+    /// `stats.eagersub`).
+    pub eager_sub_removed: u64,
     /// Structural AND-gates recognized during elimination
     /// (`NIXIE_AND_GATES`; cadical `stats.elimgates`).
     pub and_gates_found: u64,
@@ -1398,6 +1407,8 @@ pub struct Solver {
     pub(crate) otfs_override: Option<bool>,
     /// Test/differential override for the AND-gate elimination arm.
     pub(crate) and_gates_override: Option<bool>,
+    /// Test/differential override for the eager-subsumption arm.
+    pub(crate) eager_sub_override: Option<bool>,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
     /// Seen flags for conflict analysis
@@ -2191,6 +2202,7 @@ impl Solver {
             otfs_analyzed: SmallVec::new(),
             otfs_override: None,
             and_gates_override: None,
+            eager_sub_override: None,
             learnt: SmallVec::new(),
             seen: Vec::new(),
             analyze_stack: Vec::new(),
@@ -2954,6 +2966,13 @@ impl Solver {
     #[doc(hidden)]
     pub fn set_and_gates(&mut self, on: bool) {
         self.and_gates_override = Some(on);
+    }
+
+    /// Test/differential override for the eager-subsumption arm
+    /// (`NIXIE_EAGER_SUB`) — same rationale as [`Self::set_otfs`].
+    #[doc(hidden)]
+    pub fn set_eager_sub(&mut self, on: bool) {
+        self.eager_sub_override = Some(on);
     }
 
     /// The current conflict budget ([`Self::set_max_conflicts`]); `None`
