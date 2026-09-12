@@ -772,6 +772,20 @@ pub fn otfs_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("NIXIE_OTFS").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Structural AND-gate recognition during elimination (`NIXIE_AND_GATES=1`):
+/// cadical `gates.cpp::find_and_gate` (SATeLite SAT'05) — the pivot is
+/// defined by `g ↔ x1∧…∧xk` when its occurrence lists contain the sides
+/// `(¬g ∨ xi)` and the base `(g ∨ ¬x1 ∨ … ∨ ¬xk)`; gate-defined variables
+/// eliminate through the restricted g×a + g×g resolvent products (a×a is
+/// entailed), so far more of them pass the elimination bound. Default off
+/// = bit-identical.
+#[doc(hidden)]
+pub fn and_gates_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_AND_GATES").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// Matched null for [`tiered_enabled`] (`NIXIE_TIERED_NULL=1`, implies the
 /// arm): the phase schedule runs exactly as the treatment, but each phase's
 /// policy set (restart rule, rephase eligibility, target consult, branching

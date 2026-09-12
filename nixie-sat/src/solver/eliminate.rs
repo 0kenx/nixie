@@ -994,6 +994,44 @@ impl Solver {
         // resolution proof has no cheap LRAT provenance here, so under an
         // attached proof the path stays off (weaker, sound — same policy
         // as the sweep).
+        // Structural AND-gate recognition (cadical `find_and_gate`): the
+        // cheap occurrence-pattern path to the same gate-aware bounded
+        // resolution the sub-solver definition path uses below. A hit means
+        // `pivot ↔ x1∧…∧xk` is definitional, so the a×a resolvent products
+        // are entailed and skipped — many more variables pass the
+        // elimination bound (the measured Timetable_C amplitude gap:
+        // cadical 147 478 vars eliminated vs our 80 862). Armed via
+        // `NIXIE_AND_GATES`, proof-free runs only (same policy as the
+        // definition path).
+        if self
+            .and_gates_override
+            .unwrap_or_else(crate::and_gates_enabled)
+            && self.proof.is_none()
+            && !self.lrat
+            && let Some((gates0, gates1)) = self.elim_find_and_gate(ctx, pivot)
+        {
+            self.stats.and_gates_found = self.stats.and_gates_found.saturating_add(1);
+            let mut collected: Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)> = Vec::new();
+            let bound = (pos + neg) as i64 + self.elim_bound;
+            if self.elim_definition_resolvents_bounded(
+                ctx,
+                pivot,
+                &gates0,
+                &gates1,
+                bound,
+                &mut collected,
+            ) {
+                self.elim_add_resolvents(ctx, &collected);
+                self.elim_retire_pivot_clauses(ctx, pivot);
+                self.elim_var_flag[pivot.var().index()] = true;
+                ctx.eliminated += 1;
+                self.stats.and_gate_eliminated = self.stats.and_gate_eliminated.saturating_add(1);
+                ctx.dirty = true;
+            }
+            self.elim_backward_clauses(ctx);
+            return;
+        }
+
         if crate::definitions_enabled() && self.proof.is_none() && !self.lrat {
             match self.elim_find_definition(ctx, pivot) {
                 DefOutcome::Unit(u) => {
@@ -2155,6 +2193,134 @@ enum DefOutcome {
 }
 
 impl Solver {
+    /// Structural AND-gate recognition (cadical `gates.cpp::
+    /// find_and_gate`, the SATeLite SAT'05 scheme): the pivot `g` is
+    /// **defined** by `g ↔ x1 ∧ … ∧ xk` exactly when its original
+    /// occurrence lists contain the sides `(¬g ∨ xi)` and the base
+    /// `(g ∨ ¬x1 ∨ … ∨ ¬xk)` (false literals dropped — the gate holds
+    /// modulo the level-0 assignment, which is all elimination needs).
+    /// Returns the gate sets for the bounded gate-aware resolution:
+    /// `gates0 = [base]` (contains `g`), `gates1 = [sides]` (contain
+    /// `¬g`). No sub-solver — this is pure occurrence-list pattern
+    /// matching, cheap enough to try for every scheduled variable
+    /// (cadical measured 17 009 gates on Timetable_C, the recorded
+    /// elimination-amplitude gap).
+    ///
+    /// Soundness of the downstream a×a-resolvent skip rests on the
+    /// equivalence above: sides ∧ base ⊨ g ↔ x1∧…∧xk, so every
+    /// non-gate×non-gate resolvent is entailed by the surviving gate
+    /// clauses (SATeLite's theorem; the same argument the sub-solver
+    /// definition path uses with a machine-proved `f`).
+    fn elim_find_and_gate(
+        &self,
+        ctx: &Eliminator,
+        pivot: Lit,
+    ) -> Option<(Vec<ClauseId>, Vec<ClauseId>)> {
+        // Both orientations: `elim_round` flips the pivot to its
+        // less-occurring polarity, so an AND gate `g ↔ x1∧…∧xk` reaches
+        // here either as `pivot = g` (sides in occs(¬pivot)) or as
+        // `pivot = ¬g` — the same clauses read as the OR gate
+        // `¬g ↔ ¬x1∨…∨¬xk` with sides in occs(pivot) and base in
+        // occs(¬pivot). Trying `base_lit = pivot` then `base_lit = ¬pivot`
+        // covers both; the returned sets are mapped back to the pivot's
+        // actual polarity split.
+        for base_lit in [pivot, pivot.negate()] {
+            if let Some((base, sides)) = self.elim_find_and_gate_orient(ctx, base_lit) {
+                if base_lit == pivot {
+                    return Some((vec![base], sides));
+                }
+                return Some((sides, vec![base]));
+            }
+        }
+        None
+    }
+
+    /// One orientation of the AND-gate pattern: `out ↔ x1∧…∧xk` with the
+    /// BASE containing `out` (and every side containing `¬out`).
+    fn elim_find_and_gate_orient(
+        &self,
+        ctx: &Eliminator,
+        out: Lit,
+    ) -> Option<(ClauseId, Vec<ClauseId>)> {
+        let neg = out.negate();
+        // Side scan over occs(¬g): live clauses whose non-pivot live
+        // literals reduce to exactly one unassigned `xi` are the sides
+        // `(¬g ∨ xi)` (an "actual binary": a longer clause with all other
+        // literals falsified counts, mirroring cadical's
+        // `second_literal_in_binary_clause`).
+        let mut side_of: rustc_hash::FxHashMap<u32, ClauseId> = rustc_hash::FxHashMap::default();
+        for cid in ctx.occs.iter(neg.code() as usize) {
+            let Some(c) = self.clauses.get(cid) else {
+                continue;
+            };
+            if c.deleted || c.learned {
+                continue;
+            }
+            let mut second: Option<Lit> = None;
+            let mut too_many = false;
+            for &lit in c.lits.iter() {
+                if lit == neg {
+                    continue;
+                }
+                match ctx.lit_val(lit) {
+                    1 => {
+                        too_many = true; // satisfied
+                        break;
+                    }
+                    -1 => continue,
+                    _ => {
+                        if second.is_some() {
+                            too_many = true;
+                            break;
+                        }
+                        second = Some(lit);
+                    }
+                }
+            }
+            if too_many {
+                continue;
+            }
+            let Some(x) = second else { continue };
+            side_of.entry(x.code()).or_insert(cid);
+        }
+        if side_of.is_empty() {
+            return None;
+        }
+        // Base scan over occs(g): a live size-≥3 clause whose every
+        // non-pivot live literal is the negation of some side's `xi`.
+        // The first match wins (cadical breaks after one base).
+        'bases: for bid in ctx.occs.iter(out.code() as usize) {
+            let Some(b) = self.clauses.get(bid) else {
+                continue;
+            };
+            if b.deleted || b.learned || b.lits.len() < 3 {
+                continue;
+            }
+            let mut sides: SmallVec<[ClauseId; 8]> = SmallVec::new();
+            for &lit in b.lits.iter() {
+                if lit == out {
+                    continue;
+                }
+                match ctx.lit_val(lit) {
+                    1 => continue 'bases, // satisfied: not a base
+                    -1 => continue,       // dropped modulo units
+                    _ => {}
+                }
+                let Some(&sid) = side_of.get(&lit.negate().code()) else {
+                    continue 'bases; // live literal without a side
+                };
+                if !sides.contains(&sid) {
+                    sides.push(sid);
+                }
+            }
+            if sides.is_empty() {
+                continue;
+            }
+            return Some((bid, sides.into_iter().collect()));
+        }
+        None
+    }
+
     /// Prove (or refute) a functional definition of `pivot` with the
     /// embedded sub-solver — kissat `kissat_find_definition` (definition.c).
     /// Exports both polarity occurrence clauses with the pivot-polarity
