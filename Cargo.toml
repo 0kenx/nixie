@@ -5,6 +5,7 @@ members = [
     "nixie-core",
     "nixie-time",
     "nixie-tla-syntax",
+    "nixie-tla",
     "nixie-math",
     "nixie-sat",
     "nixie-nlsat",
@@ -27,6 +28,7 @@ default-members = [
     "nixie-core",
     "nixie-time",
     "nixie-tla-syntax",
+    "nixie-tla",
     "nixie-math",
     "nixie-sat",
     "nixie-nlsat",
@@ -87,6 +89,8 @@ nixie-time = { version = "0.3.2", path = "nixie-time", default-features = false 
 # TLA+ front end: pure-Rust SANY replacement. Leaf crate, depends on no other
 # nixie crate (see docs/TLA_FRONTEND_DESIGN.md).
 nixie-tla-syntax = { version = "0.3.2", path = "nixie-tla-syntax" }
+# TLA+ IR: the KerA kernel and lowering from surface syntax.
+nixie-tla = { version = "0.3.2", path = "nixie-tla" }
 nixie-math = { version = "0.3.2", path = "nixie-math", default-features = false }
 nixie-sat = { version = "0.3.2", path = "nixie-sat", default-features = false }
 nixie-nlsat = { version = "0.3.2", path = "nixie-nlsat" }

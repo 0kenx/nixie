@@ -1,0 +1,18 @@
+[package]
+name = "nixie-tla"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "TLA+ intermediate representation: the KerA kernel language and lowering from surface syntax"
+keywords = ["tla", "verification", "smt", "model-checking", "ir"]
+categories = ["science", "compilers"]
+
+[dependencies]
+nixie-tla-syntax = { workspace = true }
+thiserror = { workspace = true, default-features = true }
+smallvec = { workspace = true }
+
+[lints.clippy]
+unwrap_used = "deny"

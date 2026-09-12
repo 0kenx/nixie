@@ -194,10 +194,25 @@ Two levels, and the second one is what makes the rest tractable:
   `_ =>` arm. This is the same discipline the solver core already runs on, and it is why the
   two-level IR is worth the extra pass rather than a convenience.
 
+**One deliberate divergence from Apalache's Keramelizer.** It expands set operations away:
+`A \cup B` becomes a comprehension, `\subseteq` becomes a quantifier. That is right when the
+backend is an opaque SMT solver with no set theory — the expansion is the only way to say it.
+Nixie has `nixie-theories/src/set`, so `\cup`, `\cap`, `\`, `SUBSET` and `UNION` stay *in* the
+kernel, which is what lets the encoder hand them to a set theory instead of blowing them into
+quantifiers first (O3). Expanding them here would destroy exactly the structure that
+optimisation needs, and it cannot be recovered afterwards. `\subseteq` is the one exception: it
+is a quantifier in every encoding, so nothing is lost.
+
 Pass pipeline, mirroring Apalache's: configuration (`Init`/`Next`/`Inv` from the `.cfg`) →
 desugaring → inlining (operators, `LET`-`IN`, `LAMBDA`) → Snowcat typing → normalisation and
 constant simplification → Keramelizer → priming → VC generation → transition split and
 assignment solving → analysis (skolemization / expansion / free-existential) → encode.
+
+**Status: the kernel and the lowering pass are landed** in `nixie-tla`. Measured over the
+corpora, 4 304 of 4 682 expression-level definitions lower (91.9%); a further 649 definitions
+are *spec structure* — `Spec == Init /\ [][Next]_vars`, fairness, `ENABLED`, temporal operators
+— which are correctly rejected because they are not kernel expressions at all. Snowcat typing
+and the rest of the pass pipeline are still open.
 
 **The parser recognises TLA+; it does not enforce the fragment.** Milestone 1 originally
 rejected `RECURSIVE` and structured proofs at parse time. Running the corpora showed that
@@ -414,7 +429,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 | # | Deliverable | Gate |
 |---|---|---|
 | 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
-| 2 | Surface IR + KerA + Snowcat typing + pass pipeline | IR isomorphism on the same corpus |
+| 2 | Surface IR + KerA *(landed)* + lowering *(landed, 91.9%)*; Snowcat typing, pass pipeline *(open)* | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
