@@ -291,3 +291,38 @@ Micro-reproducers preserved: `docs/studies/assets/mulshare/`
 Campaign scoreboard after three rounds: **285 → 311 of 509** effective
   (z3 4.16.0: 281), zero verdict flips at every step, parity suite
   clean at every commit.
+
+## Session round 4 (2026-09-12, afternoon): the multiplier cluster — one more cell down, one encoder landed default-off
+
+The remaining gap's multiplier cluster was opened up:
+
+* **`smulov1bw12` and `calypto/problem_19` are now closed** (with the
+  flag below): the encoding hypothesis was confirmed end-to-end —
+  cadical needs **~35 s** on our carry-save CNF for `smulov1bw12`
+  (3118 vars / 9167 clauses; `s UNSSATISFIABLE`), where z3 decides the
+  whole file in 6.7 s.  The CNF, not the search, is the bottleneck.
+* **Z3's multiplier is a row array** (`bit_blaster_tpl_def.h::
+  mk_multiplier`): diagonal accumulation with per-row carry ripple and
+  `mk_xor3` last rows — not our carry-save compressor tree.  Ported
+  behind `NIXIE_BV_MUL_ARRAY=1`, width-bounded at 64 bits (the
+  diagonal carry chain is O(w) deep; at 1024-bit multipliers
+  `smulov3bw0512/0768` the carry-save tree wins — a measured 4 s →
+  >25 s ungated regression).
+* **Flagged results**: `smulov1bw12` 2.8–4.5 s, `smulov1bw16` 23.6 s,
+  `calypto_19` 2.9 s — and the wide `smulov3/4` stay fast (3 s, gate
+  keeps them on carry-save).
+* **Default stays carry-save** (two matched 509-file screens: ungated
+  303 vs 306, gated 302 vs 310, zero verdict flips in both — enabling
+  costs 8 net cells: the 32-bit-mul `s3_*`/`calypto`/`float`/
+  `shift1add` families lose more than the narrow-mul cells gain).
+  Width is not the separator between winners and losers — the 32-bit
+  s3 muls regress while 32-bit smulov1bw16 wins; it is CNF-shape luck.
+  Landed as a tested, default-off research flag (`7c66dd21`), the same
+  posture as `NIXIE_BV_CONST_FLOW`.
+
+Remaining gap after this round: 6 cells — `smulov2bw064`,
+`calypto/problem_14`, `BuchwaldFried` (multiplier cluster),
+`s3_srvr_1_alt` (parser macros), and the IR-gated `maxandminor016` /
+`bitrev2048` / `ex7_prime` (+`rubik`).  Campaign scoreboard:
+**311 of 509** at the default configuration (z3 4.16.0: 281), zero
+verdict flips at every commit.
