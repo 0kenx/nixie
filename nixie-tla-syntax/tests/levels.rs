@@ -178,3 +178,92 @@ fn deep_expressions_do_not_overflow_the_stack() {
     let r = levels(&src);
     assert_eq!(r.level_of("A"), Some(Level::State));
 }
+
+// ---- rules found by the SANY parity run -----------------------------------
+
+#[test]
+fn fairness_is_temporal() {
+    // Missing this rule made every `Fairness == WF_vars(A)` come out action
+    // level; the SANY parity run caught it across ten specifications.
+    let r = levels(
+        "---- MODULE M ----\nVARIABLE v\nA == v' = v\nF == WF_v(A)\nG == SF_v(A) /\\ WF_v(A)\n====\n",
+    );
+    assert_eq!(r.level_of("F"), Some(Level::Temporal));
+    assert_eq!(r.level_of("G"), Some(Level::Temporal));
+}
+
+#[test]
+fn subscripted_actions_are_actions() {
+    let r = levels("---- MODULE M ----\nVARIABLE v\nA == v' = v\nB == [A]_v\nC == <<A>>_v\n====\n");
+    assert_eq!(r.level_of("B"), Some(Level::Action));
+    assert_eq!(r.level_of("C"), Some(Level::Action));
+}
+
+#[test]
+fn temporal_quantifiers_are_temporal() {
+    // `\AA` / `\EE` quantify over behaviours. Plain `\A` / `\E` do not and
+    // must keep preserving the body's level.
+    let r = levels(
+        "---- MODULE M ----\nVARIABLE v\nA == \\EE x : x = 1\nB == \\AA x : x = 1\nC == \\E x : x = v\n====\n",
+    );
+    assert_eq!(r.level_of("A"), Some(Level::Temporal));
+    assert_eq!(r.level_of("B"), Some(Level::Temporal));
+    assert_eq!(r.level_of("C"), Some(Level::State));
+}
+
+#[test]
+fn subscripted_action_violations() {
+    // The body of `[A]_v` must be an action, and the subscript a state
+    // expression. Both error kinds existed but were never wired up until the
+    // parity run made their absence visible.
+    let msg = violation("---- MODULE M ----\nVARIABLE v\nA == [[] (v = 0)]_v\n====\n");
+    assert!(msg.contains("subscripted action"), "got {msg}");
+
+    let msg = violation("---- MODULE M ----\nVARIABLE v\nA == [v' = v]_(v')\n====\n");
+    assert!(msg.contains("subscript"), "got {msg}");
+}
+
+#[test]
+fn fairness_of_a_temporal_formula_is_a_violation() {
+    let msg = violation("---- MODULE M ----\nVARIABLE v\nA == WF_v([] (v = 0))\n====\n");
+    assert!(msg.contains("WF_"), "got {msg}");
+}
+
+#[test]
+fn an_operator_that_lowers_its_argument_level_is_not_claimed() {
+    // `test57a.tla`: `B(d) == ENABLED d` has level *state* however high `d`
+    // goes, so `C == B(A)` is a state predicate even though `A` is an action.
+    // The max rule used at application sites gets this wrong, so the level is
+    // marked unknown rather than reported wrongly.
+    let r = levels(
+        "---- MODULE M ----\nVARIABLES u, v\n\
+         A == (u' = u) /\\ (v' = v)\nB(d) == ENABLED d\nC == B(A)\nD == ENABLED A\n====\n",
+    );
+    assert_eq!(
+        r.trusted_level_of("C"),
+        None,
+        "the max rule cannot establish C's level, so it must not be claimed"
+    );
+    // The direct form needs no argument reasoning and stays exact.
+    assert_eq!(r.trusted_level_of("D"), Some(Level::State));
+    // A parameterised operator with no level-lowering construct is unaffected.
+    let r = levels("---- MODULE M ----\nVARIABLE v\nF(d) == d /\\ (v' = v)\nG == F(TRUE)\n====\n");
+    assert_eq!(r.trusted_level_of("G"), Some(Level::Action));
+}
+
+#[test]
+fn untrusted_levels_are_distinguishable_from_established_ones() {
+    let r = levels("---- MODULE M ----\nEXTENDS Other\nVARIABLE v\nA == v = 1\nB == Foo\n====\n");
+    assert_eq!(r.trusted_level_of("A"), Some(Level::State));
+    assert_eq!(
+        r.trusted_level_of("B"),
+        None,
+        "B depends on an unresolved name"
+    );
+    assert_eq!(
+        r.level_of("B"),
+        Some(Level::Constant),
+        "best effort is still available"
+    );
+    assert_eq!(r.trusted_count(), 1);
+}

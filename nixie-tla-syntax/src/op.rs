@@ -201,6 +201,10 @@ pub fn infix_info(canonical: &str) -> Option<OpInfo> {
         "++" => infix("++", 10, 10, true),
         "\\oplus" => infix("\\oplus", 10, 10, true),
         "%" => infix("%", 10, 11, false),
+        // Not in SANY's table -- SANY rejects `u \mod v == u` -- but accepted
+        // here as an unambiguous superset extension, with its own identity
+        // rather than as an alias for `%`. Precedence mirrors `%`.
+        "\\mod" => infix("\\mod", 10, 11, false),
         "%%" => infix("%%", 10, 11, true),
         "|" => infix("|", 10, 11, true),
         "||" => infix("||", 10, 11, true),

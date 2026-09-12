@@ -50,9 +50,13 @@ pub fn canonical_sym(s: &str) -> &str {
         "\\circ" => "\\o",
         "\\times" => "\\X",
         "\\leadsto" => "~>",
-        // Aliases confirmed against the TLA+ test suite's own
-        // "definability of operators with aliases" cases.
-        "\\mod" => "%",
+        // `\exists` / `\forall` are genuine SANY aliases for `\E` / `\A`.
+        //
+        // `\mod` is deliberately NOT aliased to `%`. SANY rejects `\mod`
+        // outright (`test49b.tla` fails there), so accepting it is a superset
+        // extension -- but folding it onto `%` would mean `u \mod v == u`
+        // silently redefines `%`, conflating two operators a spec may use
+        // separately. It keeps its own identity instead; see `op::infix_info`.
         "\\exists" => "\\E",
         "\\forall" => "\\A",
         "(+)" => "\\oplus",

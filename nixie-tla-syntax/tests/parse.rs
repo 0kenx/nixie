@@ -916,9 +916,25 @@ fn reserved_words_are_legal_record_fields() {
     // positions that use it, so it is a legal field name after `.`.
     expr("bar.NEW");
     expr("[bar EXCEPT !.NEW = 0]");
-    // Deliberately *not* extended to record-literal field names
-    // (`[NEW |-> 1]`): nothing in either corpus writes that, and accepting
-    // more than SANY is a parity gap in the permissive direction.
+    // Also accepted in record literals and record sets. SANY reserves these
+    // words here, but the reading is unambiguous and the long-term target is a
+    // superset of what Apalache takes, so being more permissive is fine as
+    // long as nothing becomes ambiguous.
+    assert!(matches!(expr("[NEW |-> 1]").kind, ExprKind::RecordLit(_)));
+    assert!(matches!(
+        expr("[DOMAIN |-> 1]").kind,
+        ExprKind::RecordLit(_)
+    ));
+    assert!(matches!(expr("[NEW : S]").kind, ExprKind::RecordSet(_)));
+    // The surrounding forms must not be disturbed by that.
+    assert!(matches!(
+        expr("[IF p THEN a ELSE b]_v").kind,
+        ExprKind::Action { .. }
+    ));
+    assert!(matches!(
+        expr("[LET x == 1 IN x]_v").kind,
+        ExprKind::Action { .. }
+    ));
 }
 
 #[test]

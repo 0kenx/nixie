@@ -14,8 +14,9 @@ fn main() {
         };
         let r = nixie_tla_syntax::check_module(&p.module);
         println!("== {path}");
-        for (name, level) in &r.definitions {
-            println!("   {level:9} {name}");
+        for (name, lvl) in &r.definitions {
+            let mark = if lvl.unresolved { "?" } else { " " };
+            println!("   {}{:9} {name}", mark, lvl.level.to_string());
         }
         if !r.unresolved.is_empty() {
             println!("   unresolved: {}", r.unresolved.join(", "));

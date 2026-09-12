@@ -2264,7 +2264,16 @@ impl Parser {
                     in_case = true;
                     only_pattern_tokens = false;
                 }
-                TokenKind::Ident if depth == 0 => idents_in_group += 1,
+                // Anything word-shaped can be a record field name: `NEW`,
+                // `DOMAIN`. TLA+ reserves those only in the positions that use
+                // them, and `[NEW |-> 1]` has no competing reading, so
+                // accepting it costs nothing and the target is a superset.
+                TokenKind::Ident | TokenKind::Keyword(_) if depth == 0 => idents_in_group += 1,
+                TokenKind::Sym
+                    if depth == 0 && tok.text.chars().next().is_some_and(char::is_alphabetic) =>
+                {
+                    idents_in_group += 1;
+                }
                 TokenKind::Sym => match tok.text.as_str() {
                     "{" | "[" | "(" => {
                         depth += 1;

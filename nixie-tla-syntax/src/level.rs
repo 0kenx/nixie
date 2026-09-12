@@ -197,7 +197,13 @@ impl core::fmt::Display for LevelError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LevelReport {
     /// The level computed for each top-level definition, in source order.
-    pub definitions: Vec<(String, Level)>,
+    ///
+    /// Carries the [`Lvl::unresolved`] taint deliberately: a level that
+    /// depends on a name this crate could not resolve is a *guess*, and
+    /// presenting it as a fact is how a downstream pass silently builds on
+    /// sand. Use [`LevelReport::trusted_level_of`] when the answer has to be
+    /// right, and [`LevelReport::level_of`] only when a best effort will do.
+    pub definitions: Vec<(String, Lvl)>,
     /// Names that could not be resolved, typically imported via `EXTENDS`.
     ///
     /// Not an error: it is the reason some violations go unreported, and it
@@ -208,13 +214,38 @@ pub struct LevelReport {
 }
 
 impl LevelReport {
-    /// The level of a named top-level definition, if it has one.
+    /// The computed level of a named top-level definition, trusted or not.
     #[must_use]
     pub fn level_of(&self, name: &str) -> Option<Level> {
         self.definitions
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, l)| *l)
+            .map(|(_, l)| l.level)
+    }
+
+    /// The level of a named top-level definition, but only when it does not
+    /// depend on an unresolved name.
+    ///
+    /// Returns `None` both for an unknown definition and for one whose level
+    /// could not be established — the caller must handle "we do not know"
+    /// rather than receive a plausible default.
+    #[must_use]
+    pub fn trusted_level_of(&self, name: &str) -> Option<Level> {
+        self.definitions
+            .iter()
+            .find(|(n, _)| n == name)
+            .filter(|(_, l)| !l.unresolved)
+            .map(|(_, l)| l.level)
+    }
+
+    /// How many definitions have a level that does not depend on an
+    /// unresolved name.
+    #[must_use]
+    pub fn trusted_count(&self) -> usize {
+        self.definitions
+            .iter()
+            .filter(|(_, l)| !l.unresolved)
+            .count()
     }
 }
 
@@ -299,7 +330,7 @@ pub fn check_module(module: &Module) -> LevelReport {
 #[derive(Default)]
 struct Checker {
     scopes: Vec<HashMap<String, Lvl>>,
-    definitions: Vec<(String, Level)>,
+    definitions: Vec<(String, Lvl)>,
     unresolved: std::collections::BTreeSet<String>,
     errors: Vec<LevelError>,
 }
@@ -362,14 +393,14 @@ impl Checker {
             } => {
                 let lvl = self.level_of_definition(params, core::slice::from_ref(body), &[]);
                 self.bind(&name.name, lvl);
-                self.definitions.push((name.name.clone(), lvl.level));
+                self.definitions.push((name.name.clone(), lvl));
             }
             UnitKind::FnDef {
                 name, bounds, body, ..
             } => {
                 let lvl = self.level_of_definition(&[], core::slice::from_ref(body), bounds);
                 self.bind(&name.name, lvl);
-                self.definitions.push((name.name.clone(), lvl.level));
+                self.definitions.push((name.name.clone(), lvl));
             }
             UnitKind::Assume { name, body } => {
                 let lvl = self.eval(body);
@@ -419,6 +450,18 @@ impl Checker {
             acc = acc.join(self.eval(body));
         }
         self.scopes.pop();
+        if !params.is_empty() && bodies.iter().any(body_lowers_level) {
+            // This operator's level is not a maximum over its arguments'
+            // levels, so the rule used at application sites is wrong for it.
+            // `test57a.tla` is the case: `B(d) == ENABLED d` has level *state*
+            // however high `d` goes, so `C == B(A)` is a state predicate even
+            // though `A` is an action — but the max rule makes it an action.
+            //
+            // Rather than report a level we know the rule cannot compute, mark
+            // it unknown. Full TLA+ tracks per-parameter argument level
+            // constraints; implementing those is what makes this exact.
+            acc.unresolved = true;
+        }
         acc
     }
 
@@ -667,8 +710,27 @@ impl Checker {
     }
 
     /// Apply the level rule for `expr` to the `n` child levels on the stack.
+    ///
+    /// Children are returned in source order as well as joined, because the
+    /// subscripted-action and fairness rules constrain their parts
+    /// individually rather than only in aggregate.
     fn combine(&mut self, expr: &Expr, values: &mut Vec<Lvl>, n: usize) -> Lvl {
-        let joined = join_pop(values, n);
+        let mut kids: Vec<Lvl> = Vec::with_capacity(n);
+        for _ in 0..n {
+            match values.pop() {
+                Some(v) => kids.push(v),
+                // The walk pushes exactly one value per `Expand`, so a short
+                // stack is unreachable for a tree this module built. Treating
+                // it as unknown keeps the impossible case from becoming an
+                // `unwrap`, per AGENTS.md.
+                None => kids.push(Lvl::tainted(Level::Constant)),
+            }
+        }
+        kids.reverse();
+        let joined = kids
+            .iter()
+            .copied()
+            .fold(Lvl::known(Level::Constant), Lvl::join);
         match &expr.kind {
             ExprKind::Postfix { op, operand, .. } if op == "'" => {
                 if joined.level > Level::State {
@@ -704,6 +766,63 @@ impl Checker {
                 "[]" | "<>" => joined.at(Level::Temporal),
                 _ => joined,
             },
+            // `[A]_v` / `<<A>>_v`: the body must be an action, the subscript a
+            // state expression, and the result is an action.
+            ExprKind::Action {
+                body, subscript, ..
+            } => {
+                // `child_exprs` yields [body, subscript] for this node.
+                let body_lvl = kids.first().copied().unwrap_or_default();
+                let sub_lvl = kids.get(1).copied().unwrap_or_default();
+                if body_lvl.level > Level::Action {
+                    self.report(
+                        body_lvl,
+                        body.span,
+                        LevelErrorKind::SubscriptedTemporalAction(body_lvl.level),
+                    );
+                }
+                if sub_lvl.level > Level::State {
+                    self.report(
+                        sub_lvl,
+                        subscript.span,
+                        LevelErrorKind::SubscriptNotState(sub_lvl.level),
+                    );
+                }
+                joined.at(Level::Action)
+            }
+            // `WF_v(A)` / `SF_v(A)`: a fairness condition is temporal, whatever
+            // its parts are. Missing this rule made every `Fairness == WF_v(A)`
+            // come out action level, which the SANY parity run caught across
+            // ten specifications.
+            ExprKind::Fairness {
+                subscript, body, ..
+            } => {
+                // `child_exprs` yields [subscript, body] for this node.
+                let sub_lvl = kids.first().copied().unwrap_or_default();
+                let body_lvl = kids.get(1).copied().unwrap_or_default();
+                if sub_lvl.level > Level::State {
+                    self.report(
+                        sub_lvl,
+                        subscript.span,
+                        LevelErrorKind::SubscriptNotState(sub_lvl.level),
+                    );
+                }
+                if body_lvl.level > Level::Action {
+                    self.report(
+                        body_lvl,
+                        body.span,
+                        LevelErrorKind::FairnessOfTemporal(body_lvl.level),
+                    );
+                }
+                joined.at(Level::Temporal)
+            }
+            // `\AA` and `\EE` quantify over behaviours: temporal, whatever
+            // the body is. (Plain `\A` / `\E` preserve the body's level.)
+            ExprKind::Quant { kind, .. } | ExprKind::UnboundedQuant { kind, .. }
+                if matches!(kind, QuantKind::TemporalForall | QuantKind::TemporalExists) =>
+            {
+                joined.at(Level::Temporal)
+            }
             ExprKind::Infix { op, rhs, .. } => match op.as_str() {
                 "~>" | "-+->" => joined.at(Level::Temporal),
                 "\\cdot" => {
@@ -802,9 +921,76 @@ fn child_exprs(expr: &Expr) -> Vec<&Expr> {
             out.push(goal);
         }
         ExprKind::Paren(inner) => out.push(inner),
-        _ => {}
+        ExprKind::Quant { bounds, body, .. } => {
+            out.extend(bounds.iter().map(|b| &b.domain));
+            out.push(body);
+        }
+        ExprKind::UnboundedQuant { body, .. }
+        | ExprKind::Lambda { body, .. }
+        | ExprKind::Label { body, .. } => out.push(body),
+        ExprKind::Choose { domain, body, .. } => {
+            out.extend(domain.iter().map(AsRef::as_ref));
+            out.push(body);
+        }
+        ExprKind::SetFilter { domain, pred, .. } => {
+            out.push(domain);
+            out.push(pred);
+        }
+        ExprKind::SetMap { expr, bounds } => {
+            out.extend(bounds.iter().map(|b| &b.domain));
+            out.push(expr);
+        }
+        ExprKind::FnConstruct { bounds, body } => {
+            out.extend(bounds.iter().map(|b| &b.domain));
+            out.push(body);
+        }
+        // `Let` is walked by the caller that needs its definitions; the level
+        // walk handles it with its own scope frames.
+        ExprKind::Let { body, .. } => out.push(body),
+        // `expand` handles `Apply` itself (the head's level comes from the
+        // scope, not from a child); the arguments are listed here so that
+        // `body_lowers_level`, which shares this function, still scans them.
+        ExprKind::Apply { args, .. } => out.extend(args),
+        ExprKind::Name(_)
+        | ExprKind::Int { .. }
+        | ExprKind::Real(_)
+        | ExprKind::Str(_)
+        | ExprKind::At => {}
     }
     out
+}
+
+/// Does this body contain a construct that *lowers* a sub-expression's level?
+///
+/// Everything in TLA+ either preserves the level, raises it to a fixed one, or
+/// — in exactly two cases — caps it: `ENABLED A` is a state predicate however
+/// high `A` is, and `\cdot` yields an action. For a body free of both, the
+/// level really is the maximum over the parts, and the rule used at
+/// application sites is exact.
+fn body_lowers_level(body: &Expr) -> bool {
+    // Iterative, for the same reason the level walk is: this runs over a
+    // user-supplied tree.
+    let mut stack = vec![body];
+    while let Some(e) = stack.pop() {
+        match &e.kind {
+            ExprKind::Prefix { op, .. } if op == "ENABLED" => return true,
+            ExprKind::Infix { op, .. } if op == "\\cdot" => return true,
+            _ => {}
+        }
+        stack.extend(child_exprs(e));
+        if let ExprKind::Let { defs, body } = &e.kind {
+            stack.push(body);
+            for d in defs {
+                match &d.kind {
+                    UnitKind::OpDef { body, .. } | UnitKind::FnDef { body, .. } => {
+                        stack.push(body);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    false
 }
 
 fn push_pattern(p: &Pattern, out: &mut Vec<(String, Lvl)>) {

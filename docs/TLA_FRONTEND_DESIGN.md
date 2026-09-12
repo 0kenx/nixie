@@ -365,16 +365,31 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 1. **Parser differential** — every file in the Apalache test suite and the public TLA+ examples
    corpus: accepted/rejected must agree with SANY, IR must be isomorphic.
 
-   **Status: acceptance measured, agreement not yet.** Checking out
-   `github.com/tlaplus/Examples` and `github.com/apalache-mc/apalache` as
-   `../temp/tlaplus-examples` and `../temp/apalache` gives 907 `.tla` files, of which
-   `nixie-tla-syntax` accepts **905**. Both rejections are specs that write `==` where TLA+
-   requires `=` or the reverse, which SANY also rejects. `tests/corpus.rs` pins the rate and
-   skips when the checkouts are absent.
+   **Status: closed.** `bench/tla_parity/` runs SANY as an oracle over the sibling corpora
+   (907 `.tla` files) and compares both directions. SANY is consulted, never linked — the same
+   relationship `bench/z3_parity` has with Z3, and `deny.toml` still bans FFI.
 
-   Acceptance is the weaker half of the claim: it says nothing about whether the *tree* agrees
-   with SANY's, and nothing about files SANY rejects that we accept. Running SANY itself to
-   compare is the remaining work.
+   ```
+   syntax:  903 both accept | 0 SANY-accepts-we-reject | 2 we-accept-SANY-rejects
+   levels:  4 541 definitions compared over 684 files | 0 mismatches
+            1 106 skipped as untrusted | 1 known SANY defect excluded
+   ```
+
+   The syntax gate is **one-sided** on purpose: every file SANY parses must parse here, but
+   parsing more is allowed, because the target is a superset. The two extras are `\mod` as a
+   definable operator — accepted with its own identity rather than aliased to `%`, so that
+   `u \mod v == u` cannot silently redefine `%`.
+
+   Level comparison covers only definitions whose level was actually *established*; a guess
+   held against SANY measures the missing module resolution, not the level walk. The skipped
+   count is reported every run and rising means coverage regressed.
+
+   **Validate the oracle before believing it.** Three of the findings were defects in the
+   comparison rather than in the parser: SANY extracts the standard modules into the JVM temp
+   directory, so parallel runs sharing `/tmp` corrupt each other; SANY's multi-line per-file
+   output interleaves when parallel processes share a pipe, which manufactured ~120 phantom
+   level mismatches; and SANY itself reports `x * x` as *constant* for a state-level `x`,
+   while every neighbouring operator is right. `METHODOLOGY.md` records all three.
 
    Every construct beyond the basics was found by this corpus, not by reading the grammar:
    junction-list-versus-infix, the `[`/`{` classifiers, labels (`P0 :: e`), subexpression
@@ -429,14 +444,19 @@ oracle to test the clever ones against.
   "unresolved" taint that suppresses reporting.
 
   The direction is deliberate: it misses real violations and never rejects valid input, which
-  is right for a front end whose rejections are user-facing. Measured on the corpora: **zero**
-  violations reported across 905 real specifications, and the computed levels are sound where
-  checkable — `EWD998` comes out with `Init` state, every action action-level and `Spec`
-  temporal. Across 7 774 definitions the split is 46% constant / 22% state / 24% action / 8%
-  temporal.
+  is right for a front end whose rejections are user-facing. Levels now agree with SANY on all
+  **4 541** definitions the parity suite can compare (§5).
 
-  Closing the gap needs module resolution and argument level constraints. Until then, a
-  downstream pass must not treat "no level errors" as "level-correct".
+  `LevelReport.definitions` carries the taint, and `trusted_level_of` returns `None` rather
+  than a plausible default, so a downstream pass cannot mistake a guess for a fact. The
+  remaining known gap is **argument level constraints**: `B(d) == ENABLED d` has level *state*
+  however high `d` goes, so `C == B(A)` is a state predicate even when `A` is an action, and
+  the max rule gets that wrong. Operators whose body contains a level-*lowering* construct
+  (`ENABLED`, `\cdot`) are therefore marked untrusted rather than reported wrongly.
+  `test57a.tla` is the reproducer. Closing it needs the per-parameter level functions TLA+
+  defines; module resolution closes the rest.
+
+  A downstream pass must still not treat "no level errors" as "level-correct".
 - How much of Snowcat's inference is needed when `@type:` annotations are present? Parity says
   all of it; a staged path may accept annotated specs first.
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or
