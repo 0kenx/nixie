@@ -1409,6 +1409,13 @@ pub struct Solver {
     pub(crate) and_gates_override: Option<bool>,
     /// Test/differential override for the eager-subsumption arm.
     pub(crate) eager_sub_override: Option<bool>,
+    /// Elimination ballast anatomy (NIXIE_LOG_ELIM round line):
+    /// resolvents added / clauses retired by the backward pass /
+    /// OTF antecedent shrinks fired in the resolvent loop — the
+    /// Timetable phase-collapse diagnosis counters.
+    pub(super) diag_elim_added: u64,
+    pub(super) diag_elim_bw_retired: u64,
+    pub(super) diag_elim_otf_shrunk: u64,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
     /// Seen flags for conflict analysis
@@ -2203,6 +2210,9 @@ impl Solver {
             otfs_override: None,
             and_gates_override: None,
             eager_sub_override: None,
+            diag_elim_added: 0,
+            diag_elim_bw_retired: 0,
+            diag_elim_otf_shrunk: 0,
             learnt: SmallVec::new(),
             seen: Vec::new(),
             analyze_stack: Vec::new(),

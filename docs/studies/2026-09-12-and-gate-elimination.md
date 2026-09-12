@@ -1,5 +1,13 @@
 # AND-gate elimination: the recognizer lands; the compounding blocker is the resolvent ballast (2026-09-12)
 
+> **ERRATUM (same day)**: the "resolvent ballast" below was a counter
+> artifact — `num_original` does not decrement on elim retirements, so
+> the "+580 k growth" missed ~660 k removals.  Live masses match cadical
+> (1,648,558 vs 1,626,226).  See
+> [`2026-09-12-elim-ballast-erratum.md`](2026-09-12-elim-ballast-erratum.md)
+> for the corrected anatomy (the phase-yield starvation stands; the mass
+> narrative does not).
+
 The amplitude diagnosis's #2 lever: cadical eliminates **147,478 of
 282,525 variables** on Timetable_C (52 %, solving at 184,851 conflicts
 where we time out) with 17,009 AND-gates recognized and gate-aware

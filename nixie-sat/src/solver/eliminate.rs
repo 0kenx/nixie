@@ -569,8 +569,17 @@ impl Solver {
         self.elim_phases += 1;
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_LOG_ELIM").is_ok() {
+            let live_orig = self
+                .clauses
+                .iter_ids()
+                .filter(|&id| {
+                    self.clauses
+                        .get(id)
+                        .is_some_and(|c| !c.deleted && !c.learned)
+                })
+                .count();
             eprintln!(
-                "[elim] phase {} start: conflicts={} vars={} orig={}",
+                "[elim] phase {} start: conflicts={} vars={} orig={} live_orig={live_orig}",
                 self.elim_phases,
                 self.stats.conflicts,
                 self.num_vars,
@@ -593,6 +602,9 @@ impl Solver {
             return SubstOutcome::Unsat;
         }
 
+        self.diag_elim_added = 0;
+        self.diag_elim_bw_retired = 0;
+        self.diag_elim_otf_shrunk = 0;
         let mut phase_complete = false;
         let mut round = 1usize;
         let mut eliminated_total = 0usize;
@@ -604,13 +616,16 @@ impl Solver {
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_LOG_ELIM").is_ok() {
                 eprintln!(
-                    "[elim]   round {}: eliminated={} complete={} dirty={} units={} resolutions={}",
+                    "[elim]   round {}: eliminated={} complete={} dirty={} units={} resolutions={} added={} bw_retired={} otf_shrunk={}",
                     round,
                     eliminated,
                     complete,
                     round_dirty,
                     units.len(),
-                    self.elim_resolutions_total
+                    self.elim_resolutions_total,
+                    self.diag_elim_added,
+                    self.diag_elim_bw_retired,
+                    self.diag_elim_otf_shrunk
                 );
             }
             eliminated_total += eliminated;
@@ -1434,6 +1449,7 @@ impl Solver {
         if let Some((sid, drop_lit)) = shrink
             && self.elim_shrink_clause(ctx, sid, &[drop_lit])
         {
+            self.diag_elim_otf_shrunk += 1;
             return ElimResolve::Skip;
         }
         // A refused shrink (proof-attached run with an unprovable in-place
@@ -1532,6 +1548,7 @@ impl Solver {
                     }
                     ctx.backward.push(rid);
                     ctx.dirty = true;
+                    self.diag_elim_added += 1;
                 }
             } else {
                 let rid = self.clauses.add_original(r.iter().copied());
@@ -1544,6 +1561,7 @@ impl Solver {
                 }
                 ctx.backward.push(rid);
                 ctx.dirty = true;
+                self.diag_elim_added += 1;
             }
             let _ = &proof_skip;
         }
@@ -1907,6 +1925,7 @@ impl Solver {
             }
             if satisfied {
                 self.elim_retire_clause(ctx, did);
+                self.diag_elim_bw_retired += 1;
                 continue;
             }
             if found < size {
@@ -1917,6 +1936,7 @@ impl Solver {
                     // d is subsumed by the candidate: retire d.
                     self.stats.subsumed_removed += 1;
                     self.elim_retire_clause(ctx, did);
+                    self.diag_elim_bw_retired += 1;
                 }
                 Some(neg) => {
                     // Self-subsuming resolution: strengthen d by dropping
