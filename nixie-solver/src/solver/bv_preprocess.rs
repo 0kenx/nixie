@@ -550,7 +550,42 @@ impl BvPreprocessor {
             }
         }
         non_const.sort_unstable();
-        product_term(const_coeff, &non_const, manager, width)
+        // Z3 `bv_rewriter::mk_mul_hoist`: a `shl` operand factors out of a
+        // product — `x · shl(z, u) → shl(x · z, u)` (multiplication is
+        // associative in ℤ/2ʷ, so the shift-as-multiplication hoists to
+        // the outside).  This is what closes the Noetzli rewrite-rule
+        // identities (`bvshl (bvmul s t) (bvshl s s) = bvmul s (bvshl t …)`
+        // both normalize to the hoisted form under z3's `simplify`).
+        // Every hoist removes one `shl` from the operand list, so the loop
+        // terminates in ≤ args.len() steps; multiple shifts nest outermost
+        // last (the shift-of-shift association is left to the blaster).
+        let mut hoisted: Vec<TermId> = Vec::new();
+        while let Some(pos) = non_const
+            .iter()
+            .position(|&t| matches!(manager.get(t).map(|d| &d.kind), Some(TermKind::BvShl(..))))
+        {
+            let shl = non_const.remove(pos);
+            let Some(TermKind::BvShl(z, u)) = manager.get(shl).map(|d| d.kind.clone()) else {
+                // Race-free by construction (the kind was just read);
+                // keep the term if the world changed under us.
+                non_const.insert(pos, shl);
+                break;
+            };
+            // Flatten `z`'s own product factors: the hoisted shift's
+            // multiplicand may itself be a (reassociated) product —
+            // `t · shl(s·t, u)` must rebuild to the same sorted flat
+            // product both sides converge to, or a pure
+            // associativity/commutativity identity (`t·(s·(t<<s)) =
+            // s·(t·(t<<s))`, Noetzli 1104) stops folding syntactically.
+            flatten_product(z, manager, &mut non_const);
+            non_const.sort_unstable();
+            hoisted.push(u);
+        }
+        let mut term = product_term(const_coeff, &non_const, manager, width);
+        for u in hoisted {
+            term = manager.mk_bv_shl(term, u);
+        }
+        term
     }
 
     /// The fully-distributed polynomial of a BV-sorted term, in the monomial
