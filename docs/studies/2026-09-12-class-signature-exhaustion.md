@@ -76,3 +76,36 @@ first 600 k clauses) join the exhausted set — the interleaving is total:
 trajectory facts, full stop — every cheap gate (search-shape or
 formula-structure) is dead.  The remaining shapes are the online A/B
 probe and the portfolio, as recorded above.
+
+## Second postscript: the online A/B probe dies cheaply too
+
+The remaining "cheap" shape was gating on the *response* to the
+perturbation rather than a static profile: run both arms for an early
+window, compare, commit.  Its core assumption — that the early-window
+response predicts the full-run effect — was tested directly against the
+store's known full-run ratios (14 files spanning the classes, both arms
+at a 15 k-conflict window, seed 0):
+
+| file | full ratio | dec/c Δ | lbd Δ | prop/c Δ |
+|---|---|---|---|---|
+| mp1-Nb7T42 | 0.49 | 1.11 | 1.06 | 1.12 |
+| stable-300 | 0.53 | 1.01 | 0.77 | 1.00 |
+| constraints_17 | 0.63 | 1.13 | 1.63 | 1.12 |
+| FmlaEquivChain | 0.68 | **1.58** | 0.90 | 1.24 |
+| worker_550 | 0.77 | **0.51** | 0.66 | 1.14 |
+| Break_08_24 | 0.83 | 1.38 | 0.74 | 1.08 |
+| pb_300 | 0.88 | 1.03 | 1.05 | 1.06 |
+| 6s167 / x9-09054 / barman | ~1.1 | ~1.1 | ≤1.8 | ≤1.01 |
+| ITC / qwh / shuffling / frb65 | 1.2–1.9 | ≈1.0 | 0.8–1.0 | 0.9–1.05 |
+
+Every early delta sits in 1.0 ± 0.15 for both classes, and the
+exceptions point in *both* directions across winners (worker's dec/c Δ
+0.51 vs FmlaEquiv's 1.58).  The compounding advantage that makes the
+winner class win emerges after the window any practical probe could
+afford.  **The probe gate is dead on the same evidence pattern as the
+static gates — the effect is a late-trajectory fact.**
+
+The adaptive-arming route is now exhausted end to end: seven static
+features and the online probe, all measured non-predictive.  What
+remains is portfolio budget arithmetic at wider caps — a pure
+scheduling/evaluation-policy question, not a solver-heuristic one.
