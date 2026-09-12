@@ -434,6 +434,21 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 3. **Apalache differential** — same spec, same bound, same verdict; disagreements are bugs in
    one of the two and worth chasing either way.
 
+4. **Semantic differential against TLC** (`bench/tla_eval/`). The three above are all
+   *structural*: they check that we parse, level and lower what SANY does, not that a lowered
+   term **means** what the source meant. The `INSTANCE` visibility bug is why that distinction
+   matters — it produced a perfectly valid kernel term that read the wrong module's variables
+   and passed every structural check.
+
+   The suite lowers each nullary definition of a constant- and variable-free module, evaluates
+   it, and compares against TLC evaluating the *original* definition. Extending the source
+   module rather than re-printing the kernel term is what makes it a test of lowering rather
+   than of the evaluator against itself.
+
+   Standing result: **93 definitions, 0 semantic mismatches.** That is a spot check, not a
+   gate — 93 against 4 349 that lower. Widening it means generating TLC configurations that
+   assign a module's constants, which is the obvious next step.
+
 Plus the standing gates: `cargo build --all-features`, `cargo nextest run --workspace
 --all-features`, `clippy -D warnings`, `fmt --check`, `cargo doc -D warnings`, and
 `./bench/z3_parity/run_parity.sh` for anything that touches the solver core.

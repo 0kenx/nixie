@@ -34,9 +34,13 @@
 #![warn(missing_docs)]
 
 pub mod error;
+pub mod eval;
 pub mod kera;
 pub mod lower;
+pub mod value;
 
 pub use error::{LowerError, LowerErrorKind};
+pub use eval::{EvalErrorKind, Evaluator};
 pub use kera::{Kera, KeraRef, Name};
 pub use lower::Lowerer;
+pub use value::Value;
