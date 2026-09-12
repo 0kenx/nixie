@@ -319,6 +319,15 @@ pub struct BvSolver {
     /// carry-save tree (`NIXIE_BV_MUL_ARRAY=1`, read at construction; the
     /// `*_for_test` setter exists because the flag memo is process-wide).
     mul_array: bool,
+    /// PROBE (unjournaled — single-check files only): structural hash-consing
+    /// of the gate constructors on canonical input-var pairs.  Identical
+    /// gates share one output variable and one clause set, exactly z3's
+    /// expression-level sharing (`BuchwaldFried`'s two equal products over
+    /// the same operand bits share every partial product and adder).
+    gate_sh_probe: bool,
+    and_sh: FxHashMap<(u64, u64), Sig>,
+    xor_sh: FxHashMap<(u64, u64), Sig>,
+    or_sh: FxHashMap<(u64, u64), Sig>,
     /// Result-bit definitions in IR mode: bit var → IR literal.  These
     /// are the *deferred* wires — consumers reading the bit through
     /// [`Self::sig`] inline the definition's node, so intermediate bits
@@ -407,6 +416,10 @@ impl BvSolver {
             ir_defs: FxHashMap::default(),
             ir_defs_journal: Vec::new(),
             mul_array: Self::mul_array_default(),
+            gate_sh_probe: Self::gate_sh_default(),
+            and_sh: FxHashMap::default(),
+            xor_sh: FxHashMap::default(),
+            or_sh: FxHashMap::default(),
             const_flow_enabled: Self::const_flow_default(),
             const_true,
             const_false,
@@ -511,6 +524,17 @@ impl BvSolver {
         self.pending_unlinked.clear();
         self.adopted_model.clear();
         self.external_const = None;
+        self.clear_gate_sh();
+    }
+
+    /// Drop every gate-sharing memo entry.  The entries name output
+    /// variables whose defining clauses belong to one var space (embedded
+    /// or one unified generation's caller core); surviving an era switch
+    /// would alias two unrelated spaces.
+    fn clear_gate_sh(&mut self) {
+        self.and_sh.clear();
+        self.xor_sh.clear();
+        self.or_sh.clear();
     }
 
     /// End a unified generation and **wipe every var-space-carrying table**.
@@ -527,6 +551,7 @@ impl BvSolver {
         self.unified = false;
         self.term_to_bv.clear();
         self.ult_cache.clear();
+        self.clear_gate_sh();
         self.bool_node.clear();
         self.unified_atoms.clear();
         self.pending_unlinked.clear();
@@ -2596,6 +2621,17 @@ impl BvSolver {
         }
     }
 
+    fn gate_sh_default() -> bool {
+        #[cfg(feature = "std")]
+        {
+            matches!(std::env::var("NIXIE_BV_GATE_SH"), Ok(v) if !v.is_empty() && v != "0")
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
     /// Test-only override of [`Self::mul_array_default`] (the env memo is
     /// process-wide, so in-process tests set the field directly).
     pub fn enable_mul_array_for_test(&mut self) {
@@ -2981,6 +3017,22 @@ impl BvSolver {
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     a
+                } else if self.gate_sh_probe {
+                    let key = if x.index() < y.index() {
+                        (x.index() as u64, y.index() as u64)
+                    } else {
+                        (y.index() as u64, x.index() as u64)
+                    };
+                    if let Some(&hit) = self.and_sh.get(&key) {
+                        return hit;
+                    }
+                    let out = self.sat.new_var();
+                    self.emit_and(out, x, y);
+                    let sig = Sig::Var(out);
+                    if self.at_base_scope() {
+                        self.and_sh.insert(key, sig);
+                    }
+                    sig
                 } else {
                     let out = self.sat.new_var();
                     self.emit_and(out, x, y);
@@ -3035,6 +3087,22 @@ impl BvSolver {
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     a
+                } else if self.gate_sh_probe {
+                    let key = if x.index() < y.index() {
+                        (x.index() as u64, y.index() as u64)
+                    } else {
+                        (y.index() as u64, x.index() as u64)
+                    };
+                    if let Some(&hit) = self.or_sh.get(&key) {
+                        return hit;
+                    }
+                    let out = self.sat.new_var();
+                    self.emit_or(out, x, y);
+                    let sig = Sig::Var(out);
+                    if self.at_base_scope() {
+                        self.or_sh.insert(key, sig);
+                    }
+                    sig
                 } else {
                     let out = self.sat.new_var();
                     self.emit_or(out, x, y);
@@ -3081,6 +3149,22 @@ impl BvSolver {
             (Sig::Var(x), Sig::Var(y)) => {
                 if x == y {
                     Sig::False
+                } else if self.gate_sh_probe {
+                    let key = if x.index() < y.index() {
+                        (x.index() as u64, y.index() as u64)
+                    } else {
+                        (y.index() as u64, x.index() as u64)
+                    };
+                    if let Some(&hit) = self.xor_sh.get(&key) {
+                        return hit;
+                    }
+                    let out = self.sat.new_var();
+                    self.emit_xor(out, x, y);
+                    let sig = Sig::Var(out);
+                    if self.at_base_scope() {
+                        self.xor_sh.insert(key, sig);
+                    }
+                    sig
                 } else {
                     let out = self.sat.new_var();
                     self.emit_xor(out, x, y);
@@ -3828,6 +3912,7 @@ impl Theory for BvSolver {
         // torn down or reused, so its var-space-carrying tables cannot be
         // trusted afterwards.
         self.exit_unified();
+        self.clear_gate_sh();
         self.asserted_eq_pairs.clear();
         self.order_distinct_argsets.clear();
         self.build_target = BuildTarget::Embedded;
