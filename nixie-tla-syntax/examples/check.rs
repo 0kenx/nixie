@@ -18,10 +18,17 @@ fn main() {
         match nixie_tla_syntax::parse_file(&src) {
             Ok(p) => {
                 ok += 1;
+                let report = nixie_tla_syntax::check_module(&p.module);
+                if std::env::var_os("NIXIE_TLA_LEVELS").is_some() {
+                    for e in &report.errors {
+                        println!("LEVEL {path}\n       {e}");
+                    }
+                }
                 println!(
-                    "OK   {path}  ({} units, {} comments)",
+                    "OK   {path}  ({} units, {} comments, {} level errors)",
                     p.module.units.len(),
-                    p.comments.len()
+                    p.comments.len(),
+                    report.errors.len()
                 );
             }
             Err(e) => {

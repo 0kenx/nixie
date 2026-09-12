@@ -112,14 +112,34 @@ fn external_corpora_acceptance_rate() {
     }
 
     let mut failures = Vec::new();
+    let mut level_errors = Vec::new();
     for path in &files {
         let Ok(src) = std::fs::read_to_string(path) else {
             continue;
         };
-        if let Err(e) = nixie_tla_syntax::parse_file(&src) {
-            failures.push(format!("{}: {e}", path.display()));
+        match nixie_tla_syntax::parse_file(&src) {
+            Err(e) => failures.push(format!("{}: {e}", path.display())),
+            Ok(parsed) => {
+                // The level checker's contract is that it never rejects a
+                // correct specification. These are overwhelmingly correct
+                // specifications, so any violation reported here is a false
+                // positive until proven otherwise.
+                let report = nixie_tla_syntax::check_module(&parsed.module);
+                for e in report.errors {
+                    level_errors.push(format!("{}: {e}", path.display()));
+                }
+            }
         }
     }
+    for e in level_errors.iter().take(20) {
+        eprintln!("  level: {e}");
+    }
+    assert!(
+        level_errors.is_empty(),
+        "{} level violations reported on real specifications; \
+         the checker must not reject correct input",
+        level_errors.len()
+    );
     let accepted = files.len() - failures.len();
     let rate = accepted as f64 / files.len() as f64;
     for f in failures.iter().take(20) {

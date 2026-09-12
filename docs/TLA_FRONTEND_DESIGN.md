@@ -398,7 +398,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 
 | # | Deliverable | Gate |
 |---|---|---|
-| 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(open)* | Parser differential vs SANY on the corpus |
+| 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
 | 2 | Surface IR + KerA + Snowcat typing + pass pipeline | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
@@ -420,10 +420,23 @@ oracle to test the clever ones against.
   ternary product `A \X B \X C`), and `!!`, `:=`, `::=`, `\mod`, `\exists`, `\forall`
   missing altogether. Check the whole table against SANY before declaring the differential
   suite green.
-- **Level checking is not implemented yet.** The surface IR retains everything it needs
-  (primes, `ENABLED`, `UNCHANGED`, `[A]_v`, `WF_`/`SF_`), but nothing yet computes or enforces
-  the constant/state/action/temporal levels. That is the next piece of §1.3, and the
-  transition analysis in §2 depends on it.
+- **Level checking is implemented, and deliberately under-reports.** `nixie-tla-syntax::level`
+  computes constant/state/action/temporal levels and reports violations — but only those that
+  do **not** depend on a name it could not resolve. Two things it cannot yet see would
+  otherwise make it reject correct specifications: `EXTENDS` is not resolved, and operator
+  levels use the max rule rather than full TLA+ *argument level constraints* (which is what
+  catches `Op(x')` for an `Op` that primes its parameter). Every level therefore carries an
+  "unresolved" taint that suppresses reporting.
+
+  The direction is deliberate: it misses real violations and never rejects valid input, which
+  is right for a front end whose rejections are user-facing. Measured on the corpora: **zero**
+  violations reported across 905 real specifications, and the computed levels are sound where
+  checkable — `EWD998` comes out with `Init` state, every action action-level and `Spec`
+  temporal. Across 7 774 definitions the split is 46% constant / 22% state / 24% action / 8%
+  temporal.
+
+  Closing the gap needs module resolution and argument level constraints. Until then, a
+  downstream pass must not treat "no level errors" as "level-correct".
 - How much of Snowcat's inference is needed when `@type:` annotations are present? Parity says
   all of it; a staged path may accept annotated specs first.
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or

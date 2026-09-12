@@ -14,6 +14,7 @@
 //! * [`parser`] — recursive descent for units, Pratt for expressions, with
 //!   junction-list layout decided in the parser rather than the lexer.
 //! * [`ast`] — the surface tree, with a span on every node.
+//! * [`level`] — TLA+ level checking (constant / state / action / temporal).
 //!
 //! # Why not LR(1)
 //!
@@ -59,6 +60,7 @@
 
 pub mod ast;
 pub mod error;
+pub mod level;
 pub mod lexer;
 pub mod op;
 pub mod parser;
@@ -67,6 +69,7 @@ pub mod token;
 
 pub use ast::{Expr, ExprKind, Module, Unit, UnitKind};
 pub use error::{ErrorKind, SyntaxError};
+pub use level::{Level, LevelError, LevelReport, check_module};
 pub use lexer::lex;
 pub use parser::{ParsedFile, Parser, parse_expr_str, parse_file};
 pub use span::{Pos, Span};
