@@ -315,6 +315,10 @@ pub struct BvSolver {
     /// Boolean-expression IR (the deferred circuit layer).  `Some` iff
     /// IR mode is on (`NIXIE_BV_IR=1`, read at construction).
     ir: Option<crate::bv::bool_ir::BoolIr>,
+    /// Whether `bvmul` encodes as z3's row-array multiplier instead of the
+    /// carry-save tree (`NIXIE_BV_MUL_ARRAY=1`, read at construction; the
+    /// `*_for_test` setter exists because the flag memo is process-wide).
+    mul_array: bool,
     /// Result-bit definitions in IR mode: bit var → IR literal.  These
     /// are the *deferred* wires — consumers reading the bit through
     /// [`Self::sig`] inline the definition's node, so intermediate bits
@@ -402,6 +406,7 @@ impl BvSolver {
             },
             ir_defs: FxHashMap::default(),
             ir_defs_journal: Vec::new(),
+            mul_array: Self::mul_array_default(),
             const_flow_enabled: Self::const_flow_default(),
             const_true,
             const_false,
@@ -2577,6 +2582,26 @@ impl BvSolver {
     // would immediately subsume.
 
     /// Whether IR mode is on (`NIXIE_BV_IR=1`; default off — experiment).
+    /// Whether `bvmul` encodes as z3's row-array multiplier
+    /// (`NIXIE_BV_MUL_ARRAY=1`; default off — the carry-save tree is the
+    /// landed default pending the corpus A/B).
+    fn mul_array_default() -> bool {
+        #[cfg(feature = "std")]
+        {
+            matches!(std::env::var("NIXIE_BV_MUL_ARRAY"), Ok(v) if !v.is_empty() && v != "0")
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Test-only override of [`Self::mul_array_default`] (the env memo is
+    /// process-wide, so in-process tests set the field directly).
+    pub fn enable_mul_array_for_test(&mut self) {
+        self.mul_array = true;
+    }
+
     fn ir_mode_default() -> bool {
         #[cfg(feature = "std")]
         {
@@ -3382,6 +3407,25 @@ impl BvSolver {
         assert_eq!(result.len(), a.len());
         assert_eq!(result.len(), b.len());
 
+        // Z3's row-array multiplier (`bit_blaster_tpl_def.h::mk_multiplier`):
+        // diagonal accumulation where row `i` sums the partial products
+        // `a[j]&b[i-j]` with a half adder on the first two, full adders on
+        // the rest, and the carry-outs feeding the *next* row's carry-ins
+        // (`cins.swap(couts)` — carries ripple diagonally, not column-wise
+        // as in our carry-save tree).  On the `smulov` family the resulting
+        // CNF is dramatically easier for resolution: cadical needs ~35 s on
+        // the carry-save CNF of `smulov1bw12` (3118 vars / 9167 clauses)
+        // where z3 decides the whole file in 6.7 s — the row-array decides
+        // it in ~3 s.  **Width-bounded at 64**: the diagonal carry chain is
+        // O(w) deep, and on wide multipliers (`smulov3bw0512/0768`, muls at
+        // 1024 bits) the carry-save tree's O(log w) depth wins — the
+        // ungated flag measured a real regression there (4 s → >25 s).
+        // Default off behind `NIXIE_BV_MUL_ARRAY=1` pending a default-on
+        // gate screen.
+        if self.mul_array && result.len() <= 64 {
+            return self.encode_mul_array(result, a, b);
+        }
+
         let width = result.len();
 
         // Create partial products: columns[k] contains all bits that
@@ -3413,6 +3457,59 @@ impl BvSolver {
         // Use carry-save reduction to reduce each column to at most 2 bits
         // Then do a final ripple-carry addition
         self.reduce_columns_and_add(result, &mut columns);
+    }
+
+    /// Z3 `bit_blaster_tpl_def.h::mk_multiplier`, the non-numeral path:
+    /// row-by-row diagonal accumulation.  All gates route through the
+    /// constant-folding constructors, so constant operand bits shrink the
+    /// array exactly as z3's pre-folding does (partial products against
+    /// zero bits vanish).
+    fn encode_mul_array(&mut self, result: &[Var], a: &[Var], b: &[Var]) {
+        let sz = result.len();
+        assert!(sz > 0, "zero-width multiplication");
+        let a_sig: Vec<Sig> = a.iter().map(|&v| self.sig(v)).collect();
+        let b_sig: Vec<Sig> = b.iter().map(|&v| self.sig(v)).collect();
+
+        // Bit 0: the single partial product a[0]&b[0].
+        let mut out_bits: Vec<Sig> = Vec::with_capacity(sz);
+        out_bits.push(self.gate_and(a_sig[0], b_sig[0]));
+
+        // Carry-ins consumed by row `i` (produced by row `i-1`).
+        let mut cins: Vec<Sig> = Vec::new();
+        for i in 1..sz {
+            let mut couts: Vec<Sig> = Vec::new();
+            let i1 = self.gate_and(a_sig[0], b_sig[i]);
+            let i2 = self.gate_and(a_sig[1], b_sig[i - 1]);
+            let mut out = if i < sz - 1 {
+                // Half adder over the first two partial products, full
+                // adders over the rest (carry-outs feed the next row).
+                let sum = self.gate_xor(i1, i2);
+                couts.push(self.gate_and(i1, i2));
+                sum
+            } else {
+                self.gate_xor(i1, i2)
+            };
+            for j in 2..=i {
+                let i3 = self.gate_and(a_sig[j], b_sig[i - j]);
+                if i < sz - 1 {
+                    let (sum, cout) = self.gate_full_adder(i3, out, cins[j - 2]);
+                    out = sum;
+                    couts.push(cout);
+                } else {
+                    // Last row: carry-outs would leave the word — consume
+                    // the carry-ins in the sum and drop them (z3's mk_xor3).
+                    let hi = self.gate_xor(i3, out);
+                    out = self.gate_xor(hi, cins[j - 2]);
+                }
+            }
+            if i < sz - 1 {
+                cins = couts;
+            }
+            out_bits.push(out);
+        }
+        for (k, &r) in result.iter().enumerate() {
+            self.wire(r, out_bits[k]);
+        }
     }
 
     /// Reduce columns using 3:2 compressors until each column has at most 2
