@@ -419,3 +419,46 @@ Performance signals worth keeping (from the sound-prefix runs and the
   and the preprocessor needs an equisatisfiability self-check (solve
   the rewritten set standalone and compare) before any
   rewritten-only consumer can exist.
+
+## Session round 7 (2026-09-12, night): the false-sat root-caused and fixed (dfa1c754)
+
+Both holes behind the deferral prototype's false `sat` on
+  `s3_clnt_1_true` were in **70a35000's budget bounds**, not in the
+  deferral design:
+
+1. **Flatness** (the soundness bug): the Kahn worklist's invariant —
+   every recorded elimination body has its dependencies substituted
+   before it resolves, so the apply phase's *single-pass simultaneous*
+   substitution hands out complete terms — was broken by the budget
+   break and the meganode skip (measured: 583 breaks / 141 278 skips on
+   this file).  Skipped bodies resolved later with dangling references
+   to variables whose defining equations were dropped; the rewritten
+   set lost that content (cadical: the 547 k-clause deferred CNF is
+   satisfiable against an unsat original).  The default alongside path
+   was verdict-safe but fed the same dangling bodies to **model
+   replay**.  Fix: re-substitute the recorded map to a fixpoint when
+   any break/skip fired.
+2. **dag_size** (the amplifier): the memoized size counted nodes *per
+   occurrence* — exponential on diamond-shaped shared chains (debug
+   overflow, caught by the new test; release silently truncated).  Tree
+   size is a deliberate conservative upper bound for the gate/budget
+   (now saturating + documented) — and its over-gating made bug 1 fire
+   constantly: the 141 k "meganode" skips were mostly ordinary shared
+   terms.
+
+**Corpus effect of the fix: 308 of 509, zero verdict flips, +7 gains /
+  0 losses** — the over-gating had been silently skipping legitimate
+  substitutions on shared bodies, and restoring them decides
+  `s3_clnt_2_false`, `s3_srvr_3_true`, `bitrev1024`, `calypto_24`,
+  `hdp_3365`, `btfnt`, `spear_vc7692` (all serially verified within the
+  cap, z3-consistent).  Parity: 0 disagreements (z3 4.16.0); 11 035
+  tests green.
+
+**The deferral is now sound on the repro** (`unsat` in 17.9 s under
+  `NIXIE_BV_DEFER_BLAST=1`) — its remaining flag-arm failures are
+  prototype model-path holes, next session's work if it is picked up.
+  Pinned by `s3_clnt_1_rewritten_only_equisatisfiable` in
+  `known_unsound_regressions` (the preprocessor-output equisatisfiability
+  guard).
+
+Campaign: **~315 of 509** effective (z3 4.16.0: 281).
