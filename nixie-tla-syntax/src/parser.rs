@@ -181,6 +181,32 @@ impl Parser {
         }
     }
 
+    /// A record field name.
+    ///
+    /// Reserved words are legal field names: `bar.NEW` and `[f EXCEPT !.NEW =
+    /// 0]` both occur in the TLA+ test suite. `NEW` and friends are only
+    /// reserved in the positions that actually use them.
+    fn expect_field_name(&mut self) -> Result<Ident> {
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::Ident | TokenKind::Keyword(_) | TokenKind::Sym => {
+                // A symbol is only a field name if it reads as a word
+                // (`DOMAIN`, `SUBSET`, …); punctuation never is.
+                if tok.kind == TokenKind::Sym
+                    && !tok.text.chars().next().is_some_and(char::is_alphabetic)
+                {
+                    return self.err("a record field name");
+                }
+                self.advance();
+                Ok(Ident {
+                    name: tok.text,
+                    span: tok.span,
+                })
+            }
+            _ => self.err("a record field name"),
+        }
+    }
+
     fn expect_ident(&mut self) -> Result<Ident> {
         if self.peek().kind == TokenKind::Ident {
             let tok = self.advance();
@@ -201,7 +227,22 @@ impl Parser {
     ///
     /// Returns the first [`SyntaxError`] encountered.
     pub fn parse_file(&mut self) -> Result<Module> {
+        self.skip_to_module_header();
         self.parse_module()
+    }
+
+    /// Discard everything before the first `---- MODULE` header.
+    ///
+    /// A `.tla` file may legally open with prose, a copyright block, or
+    /// typesetting escapes; SANY ignores all of it and so must we. Only done
+    /// at the top level -- inside a module, stray tokens are real errors.
+    fn skip_to_module_header(&mut self) {
+        while !self.at_eof() {
+            if self.peek().kind == TokenKind::Dashes && self.peek_at(1).is_kw(Keyword::Module) {
+                return;
+            }
+            self.advance();
+        }
     }
 
     fn parse_module(&mut self) -> Result<Module> {
@@ -309,19 +350,16 @@ impl Parser {
                 })
             }
             TokenKind::Keyword(Keyword::Recursive) => {
-                // Apalache dropped `RECURSIVE`. Rejecting explicitly is the
-                // rule from AGENTS.md: unhandled input raises an error, it
-                // never gets a default.
-                Err(SyntaxError::new(
-                    ErrorKind::Unsupported {
-                        construct: "`RECURSIVE`".to_string(),
-                        note: "recursive operator definitions are outside the supported \
-                               fragment; rewrite the definition using a fold over a finite \
-                               set, or a function defined by `[x \\in S |-> …]`"
-                            .to_string(),
-                    },
-                    tok.span,
-                ))
+                self.advance();
+                let mut decls = vec![self.parse_op_decl()?];
+                while self.eat_sym(",") {
+                    decls.push(self.parse_op_decl()?);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::Recursive(decls),
+                    span,
+                })
             }
             TokenKind::Keyword(Keyword::Instance) => {
                 let instance = self.parse_instance()?;
@@ -347,10 +385,29 @@ impl Parser {
                 self.advance();
                 let name = self.try_parse_named_prefix();
                 let body = self.parse_expr(0)?;
-                let proof = self.parse_proof_opt()?;
+                let proof = self.parse_proof_opt(start.start.col)?;
                 let span = start.merge(self.prev_span());
                 Ok(Unit {
                     kind: UnitKind::Theorem { name, body, proof },
+                    span,
+                })
+            }
+            // TLAPS proof directives at unit level. Apalache ignores proofs,
+            // so these are consumed with their extent recorded and nothing
+            // else; they are represented as a proof-only unit.
+            TokenKind::Keyword(Keyword::Use | Keyword::Hide | Keyword::ProofKw) => {
+                self.advance();
+                self.skip_proof_tokens(start.start.col);
+                // `PROOF` is followed by the proof body, which is usually a
+                // run of `<n>` steps; consume those too, or the first step
+                // marker is left for the unit parser to choke on.
+                while self.at_proof_step_marker() {
+                    self.consume_proof_step_marker();
+                    self.skip_proof_tokens(start.start.col);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::ProofDirective(Proof { span }),
                     span,
                 })
             }
@@ -380,8 +437,84 @@ impl Parser {
         }
     }
 
+    /// The operator-symbol spelling in a declaration, if one starts here.
+    ///
+    /// `CONSTANT _++_, Plus(_, _)` declares an infix operator alongside an
+    /// ordinary one, and `BoxTest(-._)` takes a prefix operator as a
+    /// parameter. The three shapes are `_ op _` (infix, arity 2), `op _`
+    /// (prefix, arity 1) and `_ op` (postfix, arity 1). Returns `None` when
+    /// this is not an operator declaration, having consumed nothing.
+    fn try_parse_operator_decl(&mut self) -> Option<OpDecl> {
+        let start = self.peek().span;
+
+        // `-` `.` is the prefix-minus spelling `-.`; the lexer keeps them
+        // apart so that `x-.5` is not mis-lexed.
+        let (sym_len, spelling) = if self.peek().is_sym("_") {
+            // `_ op _` or `_ op`.
+            let at = 1;
+            let (len, spell) = if self.peek_at(at).is_sym("-") && self.peek_at(at + 1).is_sym(".") {
+                (2usize, "-.".to_string())
+            } else if self.peek_at(at).kind == TokenKind::Sym {
+                (1usize, self.peek_at(at).text.clone())
+            } else {
+                return None;
+            };
+            let after = 1 + len;
+            let arity = if self.peek_at(after).is_sym("_") {
+                2
+            } else {
+                1
+            };
+            if arity == 2 && op::infix_info(&spell).is_none() {
+                return None;
+            }
+            if arity == 1 && op::postfix_info(&spell).is_none() {
+                return None;
+            }
+            let total = after + if arity == 2 { 1 } else { 0 };
+            for _ in 0..total {
+                self.advance();
+            }
+            let span = start.merge(self.prev_span());
+            return Some(OpDecl {
+                name: Ident { name: spell, span },
+                arity,
+                span,
+            });
+        } else if self.peek().is_sym("-") && self.peek_at(1).is_sym(".") {
+            (2usize, "-.".to_string())
+        } else if self.peek().kind == TokenKind::Sym {
+            (1usize, self.peek().text.clone())
+        } else {
+            return None;
+        };
+
+        // `op _` — a prefix operator.
+        if op::prefix_info(&spelling).is_none() && spelling != "-." {
+            return None;
+        }
+        if !self.peek_at(sym_len).is_sym("_") {
+            return None;
+        }
+        for _ in 0..=sym_len {
+            self.advance();
+        }
+        let span = start.merge(self.prev_span());
+        Some(OpDecl {
+            name: Ident {
+                name: spelling,
+                span,
+            },
+            arity: 1,
+            span,
+        })
+    }
+
     /// `Op`, or `Op(_, _)` declaring arity, or an operator symbol.
     fn parse_op_decl(&mut self) -> Result<OpDecl> {
+        if let Some(decl) = self.try_parse_operator_decl() {
+            return Ok(decl);
+        }
         let start = self.peek().span;
         let name = self.expect_ident()?;
         let mut arity = 0;
@@ -447,47 +580,151 @@ impl Parser {
         }
     }
 
-    /// Milestone 1: record a proof's extent without interpreting it.
-    fn parse_proof_opt(&mut self) -> Result<Option<Proof>> {
+    /// Record a proof's extent without interpreting its statements.
+    ///
+    /// Apalache does not check proofs, so parity needs the proof *found and
+    /// skipped with the right extent*, not understood. What it must never do
+    /// is guess the extent and swallow a following unit — so the skip is
+    /// driven by the proof's own structure rather than by indentation alone:
+    ///
+    /// * a terminal proof is `OBVIOUS`, `OMITTED`, or `BY …`;
+    /// * a structured proof is a run of steps, each introduced by a
+    ///   `<level>name` marker, ending at the `QED` step.
+    ///
+    /// Step markers are the anchor. Between them the tokens are skipped with
+    /// bracket depth tracked, and the run stops at a token that can only begin
+    /// a new unit. Proof *statements* are not built into the AST; the span is
+    /// recorded so a later milestone can come back and parse them.
+    fn parse_proof_opt(&mut self, theorem_col: u32) -> Result<Option<Proof>> {
         let tok = self.peek().clone();
+        let start = tok.span;
         match tok.kind {
             TokenKind::Keyword(Keyword::Obvious | Keyword::Omitted) => {
                 let span = self.advance().span;
                 Ok(Some(Proof { span }))
             }
             TokenKind::Keyword(Keyword::By) => {
-                let start = self.advance().span;
-                // Consume to the end of the proof: the next unit always starts
-                // at column 1, and a module footer always ends the module.
-                while !self.at_eof()
-                    && self.peek().kind != TokenKind::ModuleFooter
-                    && self.peek().kind != TokenKind::Dashes
-                    && self.peek().col() > 1
-                {
-                    self.advance();
+                self.advance();
+                self.skip_proof_tokens(theorem_col);
+                Ok(Some(Proof {
+                    span: start.merge(self.prev_span()),
+                }))
+            }
+            _ if self.at_proof_step_marker() => {
+                while self.at_proof_step_marker() {
+                    self.consume_proof_step_marker();
+                    self.skip_proof_tokens(theorem_col);
                 }
                 Ok(Some(Proof {
                     span: start.merge(self.prev_span()),
                 }))
             }
-            // A structured `<1>1.` proof lexes as `<` `1` `>` … . Guessing at
-            // its extent would silently swallow real units, so reject it.
-            TokenKind::Sym if tok.text == "<" && self.peek_at(1).kind != TokenKind::Eof => {
-                if matches!(self.peek_at(1).kind, TokenKind::Int(_)) && self.peek_at(2).is_sym(">")
-                {
-                    return Err(SyntaxError::new(
-                        ErrorKind::Unsupported {
-                            construct: "a structured `<n>` proof".to_string(),
-                            note: "milestone 1 accepts only `OBVIOUS`, `OMITTED` and `BY` \
-                                   proofs; remove the proof body or replace it with `OMITTED`"
-                                .to_string(),
-                        },
-                        tok.span,
-                    ));
-                }
-                Ok(None)
-            }
             _ => Ok(None),
+        }
+    }
+
+    /// Is the cursor the first token on its source line?
+    ///
+    /// Proof-step markers always are, which is what makes it safe to treat
+    /// `<1>` as a marker rather than as a `<` that happens to be followed by
+    /// a numeral and a `>`.
+    fn at_line_start(&self) -> bool {
+        let here = self.peek().span.start.line;
+        match self.pos.checked_sub(1).and_then(|i| self.tokens.get(i)) {
+            Some(prev) => prev.span.end.line < here,
+            None => true,
+        }
+    }
+
+    /// Is the cursor on a `<level>name` proof-step marker?
+    ///
+    /// The lexer has no reason to know about proof steps, so `<1>2a.` arrives
+    /// as `<` `1` `>` `2a` `.`; recognising it here keeps that knowledge in
+    /// the one place that needs it.
+    fn at_proof_step_marker(&self) -> bool {
+        if !self.peek().is_sym("<") {
+            return false;
+        }
+        if !matches!(self.peek_at(1).kind, TokenKind::Int(_)) {
+            return false;
+        }
+        // `<1>` and `<+>` / `<*>` are all legal level markers.
+        self.peek_at(2).is_sym(">")
+    }
+
+    fn consume_proof_step_marker(&mut self) {
+        self.advance(); // `<`
+        self.advance(); // level
+        self.advance(); // `>`
+        // An optional step name, then an optional `.`.
+        if matches!(self.peek().kind, TokenKind::Ident | TokenKind::Int(_)) {
+            self.advance();
+        }
+        if self.peek().is_sym(".") {
+            self.advance();
+        }
+    }
+
+    /// Skip the body of one proof step, stopping before the next step marker
+    /// or the start of the next unit.
+    fn skip_proof_tokens(&mut self, theorem_col: u32) {
+        let mut depth = 0i32;
+        while !self.at_eof() {
+            let tok = self.peek();
+            if depth == 0 {
+                if matches!(tok.kind, TokenKind::ModuleFooter | TokenKind::Dashes) {
+                    return;
+                }
+                if self.at_proof_step_marker() {
+                    return;
+                }
+                if tok.col() <= theorem_col && self.starts_new_unit() {
+                    return;
+                }
+            }
+            if tok.kind == TokenKind::Sym {
+                match tok.text.as_str() {
+                    "(" | "[" | "{" | "<<" => depth += 1,
+                    ")" | "]" | "}" | ">>" => depth -= 1,
+                    _ => {}
+                }
+            }
+            self.advance();
+        }
+    }
+
+    /// Could the cursor be the first token of a new top-level unit?
+    ///
+    /// Used only to bound a proof skip, so it errs towards *not* stopping:
+    /// a false positive would truncate a proof and produce a spurious error,
+    /// while a false negative merely swallows a little more of the proof.
+    fn starts_new_unit(&self) -> bool {
+        let tok = self.peek();
+        match tok.kind {
+            TokenKind::Keyword(
+                Keyword::Extends
+                | Keyword::Constant
+                | Keyword::Constants
+                | Keyword::Variable
+                | Keyword::Variables
+                | Keyword::Local
+                | Keyword::Instance
+                | Keyword::Recursive
+                | Keyword::Assume
+                | Keyword::Assumption
+                | Keyword::Axiom
+                | Keyword::Theorem
+                | Keyword::Lemma
+                | Keyword::Corollary
+                | Keyword::Proposition,
+            ) => true,
+            // `Name ==`, `Name(…) ==`, `Name[…] ==`.
+            TokenKind::Ident => {
+                self.peek_at(1).is_sym("==")
+                    || self.peek_at(1).is_sym("(")
+                    || self.peek_at(1).is_sym("[")
+            }
+            _ => false,
         }
     }
 
@@ -497,7 +734,37 @@ impl Parser {
     fn parse_definition(&mut self, local: bool, start: Span) -> Result<Unit> {
         let tok = self.peek().clone();
 
-        // Prefix-operator definition: `SUBSET x == …`.
+        // Prefix-operator definition: `SUBSET x == …`, or `-. z == …` where
+        // the lexer emits `-` and `.` separately.
+        let minus_dot = tok.is_sym("-")
+            && self.peek_at(1).is_sym(".")
+            && self.peek_at(2).kind == TokenKind::Ident
+            && self.peek_at(3).is_sym("==");
+        if minus_dot {
+            let op_span = tok.span.merge(self.peek_at(1).span);
+            self.advance();
+            self.advance();
+            let param = self.expect_ident()?;
+            self.advance(); // `==`
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Unit {
+                kind: UnitKind::OpDef {
+                    local,
+                    name: Ident {
+                        name: "-.".to_string(),
+                        span: op_span,
+                    },
+                    params: vec![OpDecl {
+                        span: param.span,
+                        name: param,
+                        arity: 0,
+                    }],
+                    body,
+                },
+                span,
+            });
+        }
         if tok.kind == TokenKind::Sym
             && op::prefix_info(&tok.text).is_some()
             && self.peek_at(1).kind == TokenKind::Ident
@@ -661,6 +928,9 @@ impl Parser {
 
     /// A formal parameter: `x`, or the higher-order form `F(_, _)`.
     fn parse_param_decl(&mut self) -> Result<OpDecl> {
+        if let Some(decl) = self.try_parse_operator_decl() {
+            return Ok(decl);
+        }
         let tok = self.peek().clone();
         // An operator symbol may itself be a formal parameter: `Op(_+_)`.
         if tok.kind == TokenKind::Sym
@@ -697,6 +967,12 @@ impl Parser {
     fn at_layout_boundary(&self, tok: &Token) -> bool {
         if tok.kind == TokenKind::Eof {
             return false;
+        }
+        // A proof-step marker ends the statement it follows. Without this,
+        // `LEMMA L == Spec => []TypeOK` followed by `<1>1.` absorbs the marker
+        // and reports a bogus `<`/`>` precedence conflict.
+        if self.at_proof_step_marker() && self.at_line_start() {
+            return true;
         }
         if self.bracket_depth == self.unit_floor_depth && tok.col() <= self.unit_floor {
             return true;
@@ -864,7 +1140,7 @@ impl Parser {
 
             // `.` takes a field name, not an expression.
             if tok.text == "." {
-                let field = self.expect_ident()?;
+                let field = self.expect_field_name()?;
                 let span = lhs.span.merge(field.span);
                 lhs = Expr {
                     kind: ExprKind::Field {
@@ -1002,44 +1278,226 @@ impl Parser {
         }
     }
 
+    /// The selector following a `!`, and how many tokens it spans.
+    ///
+    /// `!` introduces an instance qualifier (`I!Op`), a subexpression index
+    /// (`A!1`), a positional selector (`A!:`, `A!<<`, `A!>>`), the operator
+    /// itself (`A!@`), or an operator name (`R!+`, `F!^#`, `F!-.`). The
+    /// standard modules are written with these: `Naturals` is literally
+    /// `a + b == R!+(a, b)`.
+    fn selector_at(&self, n: usize) -> Option<(Ident, usize)> {
+        let tok = self.peek_at(n);
+        // `-.` reaches the parser as `-` then `.`, so it spans two tokens.
+        if tok.is_sym("-") && self.peek_at(n + 1).is_sym(".") {
+            let span = tok.span.merge(self.peek_at(n + 1).span);
+            return Some((
+                Ident {
+                    name: "-.".to_string(),
+                    span,
+                },
+                2,
+            ));
+        }
+        let ok = match tok.kind {
+            TokenKind::Ident | TokenKind::Int(_) => true,
+            TokenKind::Sym => {
+                matches!(tok.text.as_str(), ":" | "<<" | ">>" | "@")
+                    || op::infix_info(&tok.text).is_some()
+                    || op::prefix_info(&tok.text).is_some()
+                    || op::postfix_info(&tok.text).is_some()
+            }
+            _ => false,
+        };
+        ok.then(|| {
+            (
+                Ident {
+                    name: tok.text.clone(),
+                    span: tok.span,
+                },
+                1,
+            )
+        })
+    }
+
+    fn parse_call_args(&mut self) -> Result<Vec<Expr>> {
+        self.expect_sym("(")?;
+        self.bracket_depth += 1;
+        let mut args = Vec::new();
+        if !self.peek().is_sym(")") {
+            loop {
+                args.push(self.parse_expr(0)?);
+                if !self.eat_sym(",") {
+                    break;
+                }
+            }
+        }
+        self.expect_sym(")")?;
+        self.bracket_depth -= 1;
+        Ok(args)
+    }
+
     fn parse_name_or_apply(&mut self) -> Result<Expr> {
         let start = self.peek().span;
+
+        // Gather the leading `!`-separated path while it stays a pure name.
         let mut path = vec![self.expect_ident()?];
-        while self.peek().is_sym("!") && self.peek_at(1).kind == TokenKind::Ident {
+        while self.peek().is_sym("!") {
+            let Some((sel, width)) = self.selector_at(1) else {
+                break;
+            };
             self.advance();
-            path.push(self.expect_ident()?);
+            for _ in 0..width {
+                self.advance();
+            }
+            path.push(sel);
         }
         let name = QualName {
             path,
             span: start.merge(self.prev_span()),
         };
 
-        if self.peek().is_sym("(") {
-            self.advance();
-            self.bracket_depth += 1;
-            let mut args = Vec::new();
-            if !self.peek().is_sym(")") {
-                loop {
-                    args.push(self.parse_expr(0)?);
-                    if !self.eat_sym(",") {
-                        break;
-                    }
-                }
-            }
-            self.expect_sym(")")?;
-            self.bracket_depth -= 1;
-            let span = start.merge(self.prev_span());
+        // A label, `lbl :: e` or `lbl(a, b) :: e`.
+        if self.peek().is_sym("(") && self.call_is_label() {
+            let args = self.parse_call_args()?;
+            self.expect_sym("::")?;
+            let params = args
+                .iter()
+                .map(|a| match &a.kind {
+                    ExprKind::Name(n) if !n.is_qualified() => n
+                        .base()
+                        .cloned()
+                        .ok_or_else(|| self.label_param_error(a.span)),
+                    _ => Err(self.label_param_error(a.span)),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            let label_name = match name.base() {
+                Some(id) => id.clone(),
+                None => return self.err("a label name"),
+            };
             return Ok(Expr {
-                kind: ExprKind::Apply { head: name, args },
+                kind: ExprKind::Label {
+                    name: label_name,
+                    params,
+                    body: Box::new(body),
+                },
+                span,
+            });
+        }
+        if self.peek().is_sym("::") && !name.is_qualified() {
+            self.advance();
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            let label_name = match name.base() {
+                Some(id) => id.clone(),
+                None => return self.err("a label name"),
+            };
+            return Ok(Expr {
+                kind: ExprKind::Label {
+                    name: label_name,
+                    params: Vec::new(),
+                    body: Box::new(body),
+                },
                 span,
             });
         }
 
-        let span = name.span;
-        Ok(Expr {
-            kind: ExprKind::Name(name),
+        let mut expr = if self.peek().is_sym("(") {
+            let args = self.parse_call_args()?;
+            Expr {
+                kind: ExprKind::Apply { head: name, args },
+                span: start.merge(self.prev_span()),
+            }
+        } else {
+            let span = name.span;
+            Expr {
+                kind: ExprKind::Name(name),
+                span,
+            }
+        };
+
+        // Further `!` selections, now that the base is an expression:
+        // `Inner(q)!Spec`.
+        while self.peek().is_sym("!") {
+            // `A!(1, 2)` instantiates the arguments of the subexpression
+            // selected so far; the selector is the reserved spelling `()`.
+            if self.peek_at(1).is_sym("(") {
+                let bang = self.advance().span;
+                let args = self.parse_call_args()?;
+                let span = expr.span.merge(self.prev_span());
+                expr = Expr {
+                    kind: ExprKind::Qualified {
+                        base: Box::new(expr),
+                        selector: Ident {
+                            name: "()".to_string(),
+                            span: bang,
+                        },
+                        args,
+                    },
+                    span,
+                };
+                continue;
+            }
+            let Some((sel, width)) = self.selector_at(1) else {
+                break;
+            };
+            self.advance();
+            for _ in 0..width {
+                self.advance();
+            }
+            let args = if self.peek().is_sym("(") {
+                self.parse_call_args()?
+            } else {
+                Vec::new()
+            };
+            let span = expr.span.merge(self.prev_span());
+            expr = Expr {
+                kind: ExprKind::Qualified {
+                    base: Box::new(expr),
+                    selector: sel,
+                    args,
+                },
+                span,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    /// Does the `(` at the cursor open a label's parameter list rather than an
+    /// argument list? Decided by whether a `::` follows the matching `)`.
+    fn call_is_label(&self) -> bool {
+        let mut depth = 0i32;
+        let mut n = 0usize;
+        loop {
+            let tok = self.peek_at(n);
+            match tok.kind {
+                TokenKind::Eof => return false,
+                TokenKind::Sym => match tok.text.as_str() {
+                    "(" | "[" | "{" | "<<" => depth += 1,
+                    ")" | "]" | "}" | ">>" => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return self.peek_at(n + 1).is_sym("::");
+                        }
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+
+    fn label_param_error(&self, span: Span) -> SyntaxError {
+        SyntaxError::new(
+            ErrorKind::Unexpected {
+                expected: "a plain identifier as a label parameter".to_string(),
+                found: "an expression".to_string(),
+            },
             span,
-        })
+        )
     }
 
     fn parse_keyword_expr(&mut self, kw: Keyword, start: Span) -> Result<Expr> {
@@ -1062,6 +1520,7 @@ impl Parser {
                 })
             }
             Keyword::Case => self.parse_case(start),
+            Keyword::Assume | Keyword::Assumption => self.parse_assume_prove(start),
             Keyword::Let => {
                 self.advance();
                 let mut defs = Vec::new();
@@ -1070,11 +1529,31 @@ impl Parser {
                         return self.err("`IN` to close a `LET`");
                     }
                     let unit_start = self.peek().span;
-                    let def_floor = unit_start.start.col;
-                    let def = self.with_unit_floor(def_floor, |p| {
+                    // No column floor here. A `LET` definition ends where the
+                    // next one begins, and the next one begins with an
+                    // identifier or `IN` -- neither of which can continue an
+                    // expression, so the Pratt loop already stops. Imposing a
+                    // column floor instead breaks a definition whose
+                    // continuation lines happen to sit at the definition's own
+                    // column, which `TLAPlusGrammar.tla` does throughout.
+                    let def = (|p: &mut Self| {
+                        // `LET RECURSIVE F(_) F(x) == … IN …` is common in the
+                        // standard modules and in the examples corpus.
+                        if p.peek().is_kw(Keyword::Recursive) {
+                            p.advance();
+                            let mut decls = vec![p.parse_op_decl()?];
+                            while p.eat_sym(",") {
+                                decls.push(p.parse_op_decl()?);
+                            }
+                            let span = unit_start.merge(p.prev_span());
+                            return Ok(Unit {
+                                kind: UnitKind::Recursive(decls),
+                                span,
+                            });
+                        }
                         let local = p.eat_kw(Keyword::Local);
                         p.parse_definition(local, unit_start)
-                    })?;
+                    })(self)?;
                     defs.push(def);
                 }
                 self.expect_kw(Keyword::In)?;
@@ -1150,6 +1629,57 @@ impl Parser {
         }
     }
 
+    /// `ASSUME a, NEW CONSTANT x \in S, b PROVE g` — the sequent form of a
+    /// theorem statement. Only valid where an expression is expected; a
+    /// top-level `ASSUME` unit is handled by [`Parser::parse_unit`].
+    fn parse_assume_prove(&mut self, start: Span) -> Result<Expr> {
+        self.advance(); // ASSUME
+        let mut assumptions = Vec::new();
+        loop {
+            assumptions.push(self.parse_assume_item()?);
+            if !self.eat_sym(",") {
+                break;
+            }
+        }
+        self.expect_kw(Keyword::Prove)?;
+        let goal = self.parse_expr(0)?;
+        let span = start.merge(goal.span);
+        Ok(Expr {
+            kind: ExprKind::AssumeProve {
+                assumptions,
+                goal: Box::new(goal),
+            },
+            span,
+        })
+    }
+
+    fn parse_assume_item(&mut self) -> Result<AssumeItem> {
+        if !self.peek().is_kw(Keyword::New) {
+            return Ok(AssumeItem::Expr(self.parse_expr(1)?));
+        }
+        self.advance(); // NEW
+        let kind = if self.eat_kw(Keyword::Variable) {
+            NewKind::Variable
+        } else if self.eat_kw(Keyword::State) {
+            NewKind::State
+        } else if self.eat_kw(Keyword::Action) {
+            NewKind::Action
+        } else if self.eat_kw(Keyword::Temporal) {
+            NewKind::Temporal
+        } else {
+            // `NEW CONSTANT x` and a bare `NEW x` mean the same thing.
+            let _ = self.eat_kw(Keyword::Constant);
+            NewKind::Constant
+        };
+        let decl = self.parse_op_decl()?;
+        let domain = if self.eat_sym("\\in") {
+            Some(self.parse_expr(1)?)
+        } else {
+            None
+        };
+        Ok(AssumeItem::New { kind, decl, domain })
+    }
+
     fn parse_case(&mut self, start: Span) -> Result<Expr> {
         self.expect_kw(Keyword::Case)?;
         let mut arms = Vec::new();
@@ -1180,6 +1710,22 @@ impl Parser {
     }
 
     fn parse_sym_prefix(&mut self, tok: &Token, start: Span) -> Result<Expr> {
+        // An operator with nothing after it that could be an operand is being
+        // passed as a *value*: `TestOpArg( - )`, `BoxTest([])`. Checked before
+        // the prefix readings below so that `-` and `[]` are covered too.
+        if self.operator_used_as_value(tok) {
+            self.advance();
+            return Ok(Expr {
+                kind: ExprKind::Name(QualName {
+                    path: vec![Ident {
+                        name: tok.text.clone(),
+                        span: start,
+                    }],
+                    span: start,
+                }),
+                span: start,
+            });
+        }
         match tok.text.as_str() {
             "/\\" => return self.parse_junction_list(Junct::And),
             "\\/" => return self.parse_junction_list(Junct::Or),
@@ -1228,6 +1774,45 @@ impl Parser {
             _ => {}
         }
 
+        // An operator symbol with no prefix reading can be applied like an
+        // ordinary operator: `+(4, 6)`, `^#(4)`.
+        if op::prefix_info(&tok.text).is_none()
+            && (op::infix_info(&tok.text).is_some() || op::postfix_info(&tok.text).is_some())
+        {
+            self.advance();
+            let name = QualName {
+                path: vec![Ident {
+                    name: tok.text.clone(),
+                    span: start,
+                }],
+                span: start,
+            };
+            if self.peek().is_sym("(") {
+                self.advance();
+                self.bracket_depth += 1;
+                let mut args = Vec::new();
+                if !self.peek().is_sym(")") {
+                    loop {
+                        args.push(self.parse_expr(0)?);
+                        if !self.eat_sym(",") {
+                            break;
+                        }
+                    }
+                }
+                self.expect_sym(")")?;
+                self.bracket_depth -= 1;
+                let span = start.merge(self.prev_span());
+                return Ok(Expr {
+                    kind: ExprKind::Apply { head: name, args },
+                    span,
+                });
+            }
+            return Ok(Expr {
+                kind: ExprKind::Name(name),
+                span: start,
+            });
+        }
+
         if let Some(info) = op::prefix_info(&tok.text) {
             self.advance();
             let operand = self.parse_expr(info.right_bp())?;
@@ -1243,6 +1828,17 @@ impl Parser {
         }
 
         self.err("an expression")
+    }
+
+    /// Is this operator token being passed as a value rather than applied?
+    ///
+    /// True exactly when the next token closes an argument list or separates
+    /// arguments, which is the only position where a bare operator is legal.
+    fn operator_used_as_value(&self, tok: &Token) -> bool {
+        let is_operator = op::infix_info(&tok.text).is_some()
+            || op::postfix_info(&tok.text).is_some()
+            || op::prefix_info(&tok.text).is_some();
+        is_operator && (self.peek_at(1).is_sym(")") || self.peek_at(1).is_sym(","))
     }
 
     fn parse_quant(&mut self, tok: &Token, start: Span) -> Result<Expr> {
@@ -1474,16 +2070,32 @@ impl Parser {
         let mut depth = 0i32;
         let mut saw_in = false;
         let mut n = 0usize;
+        // Binders bring their own `:`. In `{CHOOSE x : x \in T}` the colon
+        // belongs to the `CHOOSE`, and reading it as a set-map separator was
+        // what broke the standard `FiniteSets` module.
+        let mut pending_binder_colons = 0usize;
         loop {
             let tok = self.peek_at(n);
             match tok.kind {
                 TokenKind::Eof => return (None, false),
+                TokenKind::Keyword(Keyword::Choose | Keyword::Lambda) if depth == 0 => {
+                    pending_binder_colons += 1;
+                }
                 TokenKind::Sym => match tok.text.as_str() {
+                    "\\A" | "\\E" | "\\AA" | "\\EE" if depth == 0 => {
+                        pending_binder_colons += 1;
+                    }
                     "{" | "[" | "(" | "<<" => depth += 1,
                     "}" if depth == 0 => return (None, saw_in),
                     "}" | "]" | ")" | ">>" => depth -= 1,
-                    "\\in" if depth == 0 => saw_in = true,
-                    ":" if depth == 0 => return (Some(n), saw_in),
+                    "\\in" if depth == 0 && pending_binder_colons == 0 => saw_in = true,
+                    ":" if depth == 0 => {
+                        if pending_binder_colons > 0 {
+                            pending_binder_colons -= 1;
+                        } else {
+                            return (Some(n), saw_in);
+                        }
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -1492,8 +2104,7 @@ impl Parser {
         }
     }
 
-    /// Classify a `[ … ]` form by scanning at bracket depth zero for the first
-    /// of `\in`, `|->`, `:`, `->`, `EXCEPT`, `]`.
+    /// Parse a `[ … ]` form, classified by [`Parser::scan_bracket_shape`].
     fn parse_bracket(&mut self, start: Span) -> Result<Expr> {
         self.expect_sym("[")?;
         self.bracket_depth += 1;
@@ -1520,7 +2131,7 @@ impl Parser {
             BracketShape::RecordLit => {
                 let mut fields = Vec::new();
                 loop {
-                    let name = self.expect_ident()?;
+                    let name = self.expect_field_name()?;
                     self.expect_sym("|->")?;
                     let value = self.parse_expr(1)?;
                     fields.push((name, value));
@@ -1537,7 +2148,7 @@ impl Parser {
             BracketShape::RecordSet => {
                 let mut fields = Vec::new();
                 loop {
-                    let name = self.expect_ident()?;
+                    let name = self.expect_field_name()?;
                     self.expect_sym(":")?;
                     let value = self.parse_expr(1)?;
                     fields.push((name, value));
@@ -1582,7 +2193,7 @@ impl Parser {
                             path.push(ExceptSel::Index(idx));
                         } else if self.peek().is_sym(".") {
                             self.advance();
-                            path.push(ExceptSel::Field(self.expect_ident()?));
+                            path.push(ExceptSel::Field(self.expect_field_name()?));
                         } else {
                             break;
                         }
@@ -1624,24 +2235,68 @@ impl Parser {
         }
     }
 
+    /// Classify a `[ … ]` form by scanning at bracket depth zero.
+    ///
+    /// A decisive token is only decisive when what precedes it has the right
+    /// shape, which is what separates the six forms:
+    ///
+    /// * `\in` means a function constructor only if everything before it is a
+    ///   pattern list (identifiers, commas, `<<`, `>>`). In
+    ///   `[\A i \in Proc : P]_vars` the `\in` belongs to the quantifier and
+    ///   the form is an action.
+    /// * `|->` and `:` mean a record literal / record set only if preceded by
+    ///   exactly one identifier — the field name.
+    /// * `->` means a function set unless a `CASE` is open, whose arms use the
+    ///   same token.
     fn scan_bracket_shape(&self) -> BracketShape {
         let mut depth = 0i32;
         let mut n = 0usize;
+        // Tokens since the start, or since the last depth-0 comma.
+        let mut idents_in_group = 0usize;
+        let mut only_pattern_tokens = true;
+        let mut in_case = false;
         loop {
             let tok = self.peek_at(n);
             match tok.kind {
                 TokenKind::Eof => return BracketShape::Action,
                 TokenKind::Keyword(Keyword::Except) if depth == 0 => return BracketShape::Except,
+                TokenKind::Keyword(Keyword::Case) if depth == 0 => {
+                    in_case = true;
+                    only_pattern_tokens = false;
+                }
+                TokenKind::Ident if depth == 0 => idents_in_group += 1,
                 TokenKind::Sym => match tok.text.as_str() {
-                    "{" | "[" | "(" | "<<" => depth += 1,
+                    "{" | "[" | "(" => {
+                        depth += 1;
+                        only_pattern_tokens = false;
+                    }
+                    "<<" => depth += 1,
                     "]" if depth == 0 => return BracketShape::Action,
-                    "}" | "]" | ")" | ">>" => depth -= 1,
-                    "\\in" if depth == 0 => return BracketShape::FnConstruct,
-                    "|->" if depth == 0 => return BracketShape::RecordLit,
-                    ":" if depth == 0 => return BracketShape::RecordSet,
-                    "->" if depth == 0 => return BracketShape::FnSet,
+                    "}" | "]" | ")" => depth -= 1,
+                    ">>" => depth -= 1,
+                    "," if depth == 0 => {
+                        idents_in_group = 0;
+                    }
+                    "\\in" if depth == 0 => {
+                        if only_pattern_tokens {
+                            return BracketShape::FnConstruct;
+                        }
+                        only_pattern_tokens = false;
+                    }
+                    "|->" if depth == 0 && idents_in_group == 1 => {
+                        return BracketShape::RecordLit;
+                    }
+                    ":" if depth == 0 && idents_in_group == 1 && only_pattern_tokens => {
+                        return BracketShape::RecordSet;
+                    }
+                    "->" if depth == 0 && !in_case => return BracketShape::FnSet,
+                    // Only tokens at depth zero say anything about the shape
+                    // of *this* bracket. Without the guard, the comma inside
+                    // `[<<p, q>> \in S |-> …]` disqualifies the pattern.
+                    _ if depth == 0 => only_pattern_tokens = false,
                     _ => {}
                 },
+                _ if depth == 0 => only_pattern_tokens = false,
                 _ => {}
             }
             n += 1;

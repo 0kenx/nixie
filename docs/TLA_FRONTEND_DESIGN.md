@@ -199,6 +199,14 @@ desugaring → inlining (operators, `LET`-`IN`, `LAMBDA`) → Snowcat typing →
 constant simplification → Keramelizer → priming → VC generation → transition split and
 assignment solving → analysis (skolemization / expansion / free-existential) → encode.
 
+**The parser recognises TLA+; it does not enforce the fragment.** Milestone 1 originally
+rejected `RECURSIVE` and structured proofs at parse time. Running the corpora showed that
+conflates two jobs: 33 files use `RECURSIVE` and 47 carry TLAPS proofs, and all of them are
+valid TLA+. What the *encoder* can handle is a question for the lowering pass, which knows
+what the encoder is; rejecting in the parser also blocks the long-term superset goal. So the
+parser now accepts both and records them in the surface IR, and the fragment check moves
+here.
+
 The analysis passes deserve a note. In Apalache they are *IR rewrites*, because a hint has no
 other way to reach Z3. Here they are **hints handed to the solver**: skolemization marking
 becomes a call into `nixie-solver/src/skolemization.rs`, expansion marking becomes an
@@ -356,6 +364,25 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 
 1. **Parser differential** — every file in the Apalache test suite and the public TLA+ examples
    corpus: accepted/rejected must agree with SANY, IR must be isomorphic.
+
+   **Status: acceptance measured, agreement not yet.** Checking out
+   `github.com/tlaplus/Examples` and `github.com/apalache-mc/apalache` as
+   `../temp/tlaplus-examples` and `../temp/apalache` gives 907 `.tla` files, of which
+   `nixie-tla-syntax` accepts **905**. Both rejections are specs that write `==` where TLA+
+   requires `=` or the reverse, which SANY also rejects. `tests/corpus.rs` pins the rate and
+   skips when the checkouts are absent.
+
+   Acceptance is the weaker half of the claim: it says nothing about whether the *tree* agrees
+   with SANY's, and nothing about files SANY rejects that we accept. Running SANY itself to
+   compare is the remaining work.
+
+   Every construct beyond the basics was found by this corpus, not by reading the grammar:
+   junction-list-versus-infix, the `[`/`{` classifiers, labels (`P0 :: e`), subexpression
+   references (`A!1`, `A!:`, `R!+(a, b)`, `Op1(2)!(3)!2!1`), operator-symbol declarations
+   (`_++_`, `-._`), operators passed as values (`TestOpArg( - )`), `ASSUME`/`PROVE` sequents
+   with `NEW`, structured proofs, nested modules, prose before the header and after the
+   footer, digit-leading identifiers, and subscript-underscore adjacency. Reading the
+   specification would not have produced that list.
 2. **TLC differential** — TLC is explicit-state and exhaustive on finite models. On small
    instances it is a complete oracle for the symbolic checker, exactly the relationship
    `run_parity.sh` has with Z3. This is the soundness canary for the new layer and should be a
@@ -371,7 +398,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 
 | # | Deliverable | Gate |
 |---|---|---|
-| 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed)*; level checker *(open)* | Parser differential vs SANY on the corpus |
+| 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(open)* | Parser differential vs SANY on the corpus |
 | 2 | Surface IR + KerA + Snowcat typing + pass pipeline | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
@@ -384,16 +411,15 @@ oracle to test the clever ones against.
 
 ## 7. Open questions
 
-- **Parser effort — partly answered.** `nixie-tla-syntax` now covers the expression and unit
-  grammar in ~2 700 lines, and parses `DieHard`, `EWD998`, `Paxos` and a constructed torture
-  case. What remains unmeasured is the *tail*: the Apalache test suite and the public TLA+
-  examples corpus have not been run through it, and that is what turns "parses the specs we
-  wrote" into the parity claim in §5. Vendor those corpora next.
+- **Parser effort — answered.** `nixie-tla-syntax` accepts **905 of 907** files (99.8%) across
+  the two external corpora (see below). The two rejections are invalid TLA+ that SANY rejects
+  too. The grammar work is done; what is *not* done is level checking.
 - **The operator precedence table is transcribed, not verified.** The common operators are
   high-confidence and pinned by a test; the exotic ones (`\wr`, `\sqcap`, `##`, `$$`, `??`)
-  are not. One error has already been found and fixed this way — `\X` was marked
-  non-associative, which rejected the legal ternary product `A \X B \X C`. Check the whole
-  table against SANY before declaring the differential suite green.
+  are not. Two errors were found this way — `\X` marked non-associative (rejecting the legal
+  ternary product `A \X B \X C`), and `!!`, `:=`, `::=`, `\mod`, `\exists`, `\forall`
+  missing altogether. Check the whole table against SANY before declaring the differential
+  suite green.
 - **Level checking is not implemented yet.** The surface IR retains everything it needs
   (primes, `ENABLED`, `UNCHANGED`, `[A]_v`, `WF_`/`SF_`), but nothing yet computes or enforces
   the constant/state/action/temporal levels. That is the next piece of §1.3, and the

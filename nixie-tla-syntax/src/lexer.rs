@@ -50,6 +50,11 @@ pub fn canonical_sym(s: &str) -> &str {
         "\\circ" => "\\o",
         "\\times" => "\\X",
         "\\leadsto" => "~>",
+        // Aliases confirmed against the TLA+ test suite's own
+        // "definability of operators with aliases" cases.
+        "\\mod" => "%",
+        "\\exists" => "\\E",
+        "\\forall" => "\\A",
         "(+)" => "\\oplus",
         "(-)" => "\\ominus",
         "(.)" => "\\odot",
@@ -122,10 +127,10 @@ pub fn canonical_sym(s: &str) -> &str {
 /// Order is load-bearing: maximal munch is what separates `<=>` from `<=`,
 /// `-+->` from `->`, and `(+)` from a parenthesised `+`.
 const MULTI_SYMS: &[&str] = &[
-    "(\\X)", "-+->", "<=>", "|->", "...", "(+)", "(-)", "(.)", "(/)", "=>", "=<", "=|", "==", "<=",
-    "<:", "<<", "<>", ">=", ">>", "|-", "|=", "||", "->", "-|", "--", "..", "//", "/=", "/\\",
-    "<-", "[]", "^+", "^*", "^#", "^^", ":>", "::", ":=", "~>", "##", "$$", "%%", "&&", "**", "++",
-    "@@", "??",
+    "(\\X)", "-+->", "<=>", "|->", "...", "::=", "(+)", "(-)", "(.)", "(/)", "=>", "=<", "=|",
+    "==", "<=", "<:", "<<", "<>", ">=", ">>", "|-", "|=", "||", "->", "-|", "--", "..", "//", "/=",
+    "/\\", "<-", "[]", "^+", "^*", "^#", "^^", ":>", "::", ":=", "~>", "##", "$$", "%%", "&&",
+    "**", "++", "@@", "??", "!!",
 ];
 
 /// Single-character ASCII symbols.
@@ -158,18 +163,62 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Discard everything before the first `---- MODULE`.
+    ///
+    /// A `.tla` file may legally open with prose, a copyright block, or
+    /// typesetting escapes such as `` `. … .' ``. SANY ignores all of it, so
+    /// this has to happen at the *lexer*: the prose frequently contains
+    /// characters that are not TLA+ lexemes at all, and lexing would fail
+    /// before the parser ever got to skip anything.
+    fn skip_preamble(&mut self) {
+        // Only skip when there is a header to skip *to*. A bare expression --
+        // what `parse_expr_str` and the `@type:` annotation bodies are -- has
+        // no module header, and skipping to end of input would silently
+        // swallow the whole thing.
+        if !self.more_modules_ahead() {
+            return;
+        }
+        loop {
+            // A module header is four or more `-`, then `MODULE`.
+            if self.peek(0) == Some('-') && self.run_len('-') >= 4 {
+                let mut n = self.run_len('-');
+                while self.peek(n).is_some_and(char::is_whitespace) {
+                    n += 1;
+                }
+                let mut word = String::new();
+                let mut m = n;
+                while self.peek(m).is_some_and(char::is_alphanumeric) {
+                    if let Some(c) = self.peek(m) {
+                        word.push(c);
+                    }
+                    m += 1;
+                }
+                if word == "MODULE" {
+                    return;
+                }
+            }
+            if self.peek(0).is_none() {
+                return;
+            }
+            self.bump();
+        }
+    }
+
     /// Lex the whole input.
     ///
     /// # Errors
     ///
     /// Returns the first [`SyntaxError`] encountered.
     pub fn lex(mut self) -> Result<Lexed> {
+        self.skip_preamble();
         let mut tokens = Vec::new();
         // `[A]_v` and `<<A>>_v` are the reason this flag exists. `_` is a
         // legal identifier character, so `_v` would otherwise lex as the
         // identifier `_v` and swallow the subscript marker. Immediately after
         // a closing `]` or `>>`, a `_` is the subscript operator instead.
-        let mut prev_close = false;
+        let mut prev_close_end: Option<u32> = None;
+        let mut module_depth: usize = 0;
+        let mut prev_was_dashes = false;
         loop {
             self.skip_trivia()?;
             let start = self.pos();
@@ -181,9 +230,44 @@ impl<'a> Lexer<'a> {
                 });
                 break;
             };
-            let tok = self.lex_one(c, start, prev_close)?;
-            prev_close = tok.kind == TokenKind::Sym && (tok.text == "]" || tok.text == ">>");
+            // Adjacency matters: `[A]_v` has no space, whereas a line ending
+            // in `>>` followed by a definition of `__f1` at column 1 must not
+            // turn that leading `_` into a subscript marker.
+            let adjacent = prev_close_end == Some(start.offset);
+            let tok = self.lex_one(c, start, adjacent)?;
+            if tok.kind == TokenKind::Sym && (tok.text == "]" || tok.text == ">>") {
+                prev_close_end = Some(tok.span.end.offset);
+            } else {
+                prev_close_end = None;
+            }
+            // Track module nesting. TLA+ modules nest, and a `====` that
+            // closes an *inner* module must not be mistaken for the end of the
+            // file -- `Rec12.tla` and `AnnotationsAndInstances592.tla` both
+            // close four inner modules before the outer one ends.
+            if tok.kind == TokenKind::Keyword(Keyword::Module) && prev_was_dashes {
+                module_depth += 1;
+            }
+            prev_was_dashes = tok.kind == TokenKind::Dashes;
+            let mut done = false;
+            if tok.kind == TokenKind::ModuleFooter {
+                module_depth = module_depth.saturating_sub(1);
+                // Text after the last module's `====` is not part of any
+                // module -- specs routinely end with shell snippets or prose --
+                // and lexing it would fail on characters that are not TLA+
+                // lexemes. Stop once the outermost module has closed and no
+                // further header remains.
+                done = module_depth == 0 && !self.more_modules_ahead();
+            }
             tokens.push(tok);
+            if done {
+                let end = self.pos();
+                tokens.push(Token {
+                    kind: TokenKind::Eof,
+                    text: String::new(),
+                    span: Span::empty(end),
+                });
+                break;
+            }
         }
         Ok(Lexed {
             tokens,
@@ -191,8 +275,25 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn lex_one(&mut self, c: char, start: Pos, prev_close: bool) -> Result<Token> {
-        if c == '_' && prev_close {
+    /// Is there another `---- MODULE` header in the remaining input?
+    fn more_modules_ahead(&self) -> bool {
+        let from = match self.chars.get(self.idx) {
+            Some(&(o, _)) => o,
+            None => return false,
+        };
+        let rest = self.src.get(from..).unwrap_or_default();
+        rest.lines().any(|line| {
+            let trimmed = line.trim_start();
+            let dashes = trimmed.chars().take_while(|&c| c == '-').count();
+            dashes >= 4
+                && trimmed
+                    .get(dashes..)
+                    .is_some_and(|t| t.trim_start().starts_with("MODULE"))
+        })
+    }
+
+    fn lex_one(&mut self, c: char, start: Pos, after_closer: bool) -> Result<Token> {
+        if c == '_' && after_closer {
             self.bump();
             return Ok(self.finish(TokenKind::Sym, "_".to_string(), start));
         }
@@ -211,6 +312,23 @@ impl<'a> Lexer<'a> {
             return self.lex_string(start);
         }
         if c.is_ascii_digit() {
+            // A TLA+ identifier is letters, digits and `_` with *at least one
+            // letter*, so it may begin with a digit: the module
+            // `09_OutTransition` is a real example. Decide by scanning the
+            // whole run before committing to a numeral.
+            let mut n = 0;
+            let mut has_letter = false;
+            while let Some(ch) = self.peek(n) {
+                if ch.is_alphanumeric() || ch == '_' {
+                    has_letter |= ch.is_alphabetic();
+                    n += 1;
+                } else {
+                    break;
+                }
+            }
+            if has_letter {
+                return self.lex_word(start);
+            }
             return self.lex_decimal(start);
         }
         if c == '\\' {
@@ -405,11 +523,15 @@ impl<'a> Lexer<'a> {
                         'n' => '\n',
                         'f' => '\u{000C}',
                         'r' => '\r',
+                        // TLA+ defines `\" \\ \t \n \f \r`, but the
+                        // language's own test suite contains strings such as
+                        // `"\oslash"`, so an unrecognised escape is kept
+                        // literally rather than rejected. Matching the
+                        // reference implementation beats matching the prose.
                         other => {
-                            return Err(SyntaxError::new(
-                                ErrorKind::InvalidEscape(other),
-                                Span::new(esc_at, self.pos()),
-                            ));
+                            let _ = esc_at;
+                            value.push('\\');
+                            other
                         }
                     };
                     value.push(decoded);

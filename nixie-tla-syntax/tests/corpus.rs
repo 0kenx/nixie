@@ -70,3 +70,78 @@ fn set_operators_still_may_not_be_mixed_unparenthesised() {
     );
     nixie_tla_syntax::parse_expr_str("(a \\cup b) \\cap c").expect("parenthesised form parses");
 }
+
+/// Acceptance over the external TLA+ corpora, when they are checked out.
+///
+/// `AGENTS.md` keeps reference material in sibling directories, read-only:
+///
+/// ```text
+/// ../temp/tlaplus-examples   github.com/tlaplus/Examples
+/// ../temp/apalache           github.com/apalache-mc/apalache
+/// ```
+///
+/// Together those are ~900 `.tla` files and are the real acceptance gate from
+/// `docs/TLA_FRONTEND_DESIGN.md` §5 — every construct the parser now handles
+/// beyond the basics was found by running them. The test **skips** when the
+/// checkouts are absent, so it never fails a clean clone of this repo.
+///
+/// It asserts a *floor* rather than an exact count, because the corpora are
+/// upstream repositories that move. Two files are expected to fail and should
+/// stay failing: `FoldDefined.tla` writes `==` where `EXCEPT` requires `=`,
+/// and `test30-true.tla` writes `=` where a definition requires `==`. Both are
+/// invalid TLA+ that SANY rejects too.
+#[test]
+fn external_corpora_acceptance_rate() {
+    const CORPORA: &[&str] = &[
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../temp/tlaplus-examples"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../temp/apalache"),
+    ];
+    /// Accept at least this fraction. Measured at 905/907 = 99.78%.
+    const FLOOR: f64 = 0.995;
+
+    let mut files = Vec::new();
+    for root in CORPORA {
+        collect_tla(Path::new(root), &mut files);
+    }
+    if files.len() < 100 {
+        eprintln!(
+            "skipping: external TLA+ corpora not checked out (found {} files)",
+            files.len()
+        );
+        return;
+    }
+
+    let mut failures = Vec::new();
+    for path in &files {
+        let Ok(src) = std::fs::read_to_string(path) else {
+            continue;
+        };
+        if let Err(e) = nixie_tla_syntax::parse_file(&src) {
+            failures.push(format!("{}: {e}", path.display()));
+        }
+    }
+    let accepted = files.len() - failures.len();
+    let rate = accepted as f64 / files.len() as f64;
+    for f in failures.iter().take(20) {
+        eprintln!("  reject: {f}");
+    }
+    assert!(
+        rate >= FLOOR,
+        "acceptance {accepted}/{} = {rate:.4} fell below the {FLOOR} floor",
+        files.len()
+    );
+}
+
+fn collect_tla(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_tla(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("tla") {
+            out.push(path);
+        }
+    }
+}

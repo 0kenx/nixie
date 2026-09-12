@@ -143,6 +143,37 @@ pub struct ExceptUpdate {
     pub value: Expr,
 }
 
+/// What a declaration introduced by `NEW` ranges over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NewKind {
+    /// `NEW CONSTANT x`, or a bare `NEW x` (constant is the default).
+    Constant,
+    /// `NEW VARIABLE x`.
+    Variable,
+    /// `NEW STATE x`.
+    State,
+    /// `NEW ACTION x`.
+    Action,
+    /// `NEW TEMPORAL x`.
+    Temporal,
+}
+
+/// One item in the assumption list of an `ASSUME … PROVE …`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AssumeItem {
+    /// `NEW CONSTANT x \in S` — a fresh declaration, scoped to the sequent.
+    New {
+        /// What the declaration introduces.
+        kind: NewKind,
+        /// The declared name, with its arity if written as `F(_, _)`.
+        decl: OpDecl,
+        /// The domain, when written as `NEW x \in S`.
+        domain: Option<Expr>,
+    },
+    /// An ordinary assumed formula.
+    Expr(Expr),
+}
+
 /// One `predicate -> value` arm of a `CASE`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaseArm {
@@ -189,6 +220,24 @@ pub enum ExprKind {
         /// The function.
         func: Box<Expr>,
         /// The arguments.
+        args: Vec<Expr>,
+    },
+    /// An instance or subexpression selection whose base is not a plain name:
+    /// `Inner(q)!Spec`, `A!1!2`, `R!+(a, b)`.
+    ///
+    /// A selection off a bare name folds into [`QualName`] instead, so this
+    /// node only appears where the base is itself an expression.
+    Qualified {
+        /// The thing being selected from.
+        base: Box<Expr>,
+        /// The selector: a name, a subexpression index, `:`, `<<`, `>>`, `@`,
+        /// or an operator symbol.
+        ///
+        /// The reserved spelling `()` marks an *argument instantiation* step,
+        /// written `A!(1, 2)`: it supplies arguments to the subexpression
+        /// selected so far rather than naming a new one.
+        selector: Ident,
+        /// Arguments, when the selection is applied.
         args: Vec<Expr>,
     },
     /// Record field access, `r.field`.
@@ -359,6 +408,26 @@ pub enum ExprKind {
     },
     /// `@`, the old value inside an `EXCEPT` update.
     At,
+    /// A labelled subexpression, `lbl :: e` or `lbl(a, b) :: e`.
+    ///
+    /// Labels name a position inside a formula so that a proof or a
+    /// `!`-qualified reference can point at it. They are not operators and
+    /// carry no precedence: the label extends to the end of its expression.
+    Label {
+        /// The label name.
+        name: Ident,
+        /// The label's parameters, if it was written with any.
+        params: Vec<Ident>,
+        /// The labelled expression.
+        body: Box<Expr>,
+    },
+    /// `ASSUME a, b PROVE g`, the sequent form of a theorem statement.
+    AssumeProve {
+        /// The assumptions.
+        assumptions: Vec<AssumeItem>,
+        /// The goal.
+        goal: Box<Expr>,
+    },
     /// A parenthesised expression. Retained so that the printer can round-trip
     /// and so that a precedence diagnostic can suggest exactly where to add
     /// parentheses.
@@ -475,6 +544,19 @@ pub enum UnitKind {
         /// The proof, if one was written.
         proof: Option<Proof>,
     },
+    /// `RECURSIVE F(_), G(_)`.
+    ///
+    /// Parsed, not rejected. Whether a construct is inside the supported
+    /// *fragment* is a question for the lowering pass in `nixie-tla`, which
+    /// knows what the encoder can handle; the parser's job is to recognise
+    /// TLA+. Conflating the two would also block the long-term goal of
+    /// accepting a superset of what Apalache takes.
+    Recursive(Vec<OpDecl>),
+    /// A TLAPS proof directive at unit level: `USE …`, `HIDE …`, `PROOF …`.
+    ///
+    /// Recorded with its extent and otherwise uninterpreted, matching
+    /// Apalache, which does not check proofs.
+    ProofDirective(Proof),
     /// A `----` horizontal rule between units.
     Separator,
     /// A nested module.

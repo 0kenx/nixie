@@ -177,6 +177,9 @@ pub fn infix_info(canonical: &str) -> Option<OpInfo> {
         // Action composition spans nearly the whole table.
         "\\cdot" => infix("\\cdot", 5, 14, true),
         "@@" => infix("@@", 6, 6, true),
+        ":=" => infix(":=", 5, 5, false),
+        "::=" => infix("::=", 5, 5, false),
+        "!!" => infix("!!", 9, 13, true),
         ":>" => infix(":>", 7, 7, false),
         "<:" => infix("<:", 7, 7, false),
         "\\cup" => infix("\\cup", 8, 8, true),

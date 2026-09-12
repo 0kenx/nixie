@@ -601,23 +601,74 @@ A == 3
 // ---- rejections ------------------------------------------------------------
 
 #[test]
-fn recursive_is_rejected_by_name() {
-    let src = "---- MODULE M ----\nRECURSIVE F(_)\n====\n";
-    let err = parse_file(src).map(|_| ()).unwrap_err();
-    let ErrorKind::Unsupported { construct, .. } = &err.kind else {
-        panic!("expected an Unsupported diagnostic, got {:?}", err.kind);
+fn recursive_is_parsed_not_rejected() {
+    // Originally rejected as outside the Apalache fragment. Running the TLA+
+    // examples corpus showed that conflates two jobs: the parser's is to
+    // recognise TLA+, and deciding what the *encoder* supports belongs to the
+    // lowering pass, which is also what the long-term superset goal needs.
+    let src = "---- MODULE M ----\nRECURSIVE F(_), G(_, _)\nF(x) == x\n====\n";
+    let parsed = parse_file(src).expect("RECURSIVE parses");
+    let Some(UnitKind::Recursive(decls)) = parsed.module.units.first().map(|u| &u.kind) else {
+        panic!("expected a RECURSIVE unit");
     };
-    assert!(construct.contains("RECURSIVE"));
+    assert_eq!(decls.len(), 2);
+    assert_eq!(decls[1].arity, 2);
 }
 
 #[test]
-fn structured_proofs_are_rejected_rather_than_guessed_at() {
-    let src = "---- MODULE M ----\nTHEOREM T == 1 = 1\n<1>1. TRUE\n<1> QED\n====\n";
-    let err = parse_file(src).map(|_| ()).unwrap_err();
+fn recursive_inside_let() {
+    let e = expr(
+        "LET RECURSIVE Fact(_)\n    Fact(n) == IF n = 0 THEN 1 ELSE n * Fact(n - 1)\nIN Fact(5)",
+    );
+    let ExprKind::Let { defs, .. } = &e.kind else {
+        panic!("expected LET, got {:?}", e.kind);
+    };
+    assert!(matches!(defs[0].kind, UnitKind::Recursive(_)));
+}
+
+#[test]
+fn structured_proofs_are_skipped_with_the_right_extent() {
+    // Apalache does not check proofs, so parity needs them found and skipped,
+    // not understood. What must never happen is swallowing the next unit.
+    let src = "---- MODULE M ----\n               THEOREM T == 1 = 1\n               <1>1. TRUE\n  BY DEF T\n<1>2. TRUE\n<1> QED\n               After == 3\n====\n";
+    let parsed = parse_file(src).expect("structured proof parses");
     assert!(
-        matches!(err.kind, ErrorKind::Unsupported { .. }),
-        "got {:?}",
-        err.kind
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(u.kind, UnitKind::Theorem { proof: Some(_), .. })),
+        "the theorem keeps its proof"
+    );
+    assert!(
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(&u.kind, UnitKind::OpDef { name, .. } if name.name == "After")),
+        "the unit after the proof is still found"
+    );
+}
+
+#[test]
+fn a_proof_step_marker_ends_the_statement_before_it() {
+    // `LEMMA L == Spec => []TypeOK` followed by `<1>1.` used to absorb the
+    // marker and report a bogus `<`/`>` precedence conflict.
+    let src =
+        "---- MODULE M ----\nLEMMA L == Spec => []TypeOK\n  <1> USE A DEF B\n  <1>1. QED\n====\n";
+    parse_file(src).expect("a proof step ends the lemma statement");
+}
+
+#[test]
+fn unit_level_proof_directives() {
+    let src = "---- MODULE M ----\nEXTENDS TLAPS\nUSE NAssumption\nA == 1\n====\n";
+    let parsed = parse_file(src).expect("USE parses");
+    assert!(
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(u.kind, UnitKind::ProofDirective(_)))
     );
 }
 
@@ -647,4 +698,246 @@ fn spans_point_at_the_offending_token() {
     let err = parse_expr_str("a = b < c").map(|_| ()).unwrap_err();
     assert_eq!(err.span.start.line, 1);
     assert_eq!(err.span.start.col, 7, "the `<` is at column 7");
+}
+
+// ---- regressions found by running the TLA+ examples / Apalache corpora -----
+
+#[test]
+fn prose_before_the_module_header_is_skipped() {
+    // A `.tla` file may open with prose or typesetting escapes; SANY ignores
+    // it. This has to happen in the *lexer*, because the prose routinely
+    // contains characters that are not TLA+ lexemes at all.
+    let src = "The cat is in one of the boxes. Is she? `. quoted .'\n\n               ---- MODULE Cat ----\nA == 1\n====\n";
+    let parsed = parse_file(src).expect("preamble prose is skipped");
+    assert_eq!(parsed.module.name.name, "Cat");
+}
+
+#[test]
+fn text_after_the_final_footer_is_ignored() {
+    let src = "---- MODULE M ----\nA == 1\n====\n\n## shell notes with `backticks` and ?\n";
+    parse_file(src).expect("trailing prose is ignored");
+}
+
+#[test]
+fn nested_modules_do_not_end_the_file_early() {
+    // Each inner `====` closes an inner module; only the outermost one ends
+    // the file. Getting this wrong truncated four real specs.
+    let src = "---- MODULE Outer ----\n               ---- MODULE A ----\nX == 1\n====\n               ---- MODULE B ----\nY == 2\n====\n               I == INSTANCE A\n====\n";
+    let parsed = parse_file(src).expect("nested modules parse");
+    let subs = parsed
+        .module
+        .units
+        .iter()
+        .filter(|u| matches!(u.kind, UnitKind::Submodule(_)))
+        .count();
+    assert_eq!(subs, 2);
+    assert!(
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(u.kind, UnitKind::ModuleDef { .. })),
+        "the unit after the last submodule is still found"
+    );
+}
+
+#[test]
+fn identifiers_may_begin_with_digits() {
+    // A TLA+ identifier is letters, digits and `_` with at least one letter,
+    // so `09_OutTransition` is a module name, not the numeral 9.
+    let src = "---- MODULE 09_OutTransition ----\nA == 1\n====\n";
+    let parsed = parse_file(src).expect("digit-leading module name parses");
+    assert_eq!(parsed.module.name.name, "09_OutTransition");
+}
+
+#[test]
+fn subscript_underscore_needs_adjacency() {
+    // `[A]_v` has no space. A line ending in `>>` followed by a definition of
+    // `__f1` at column 1 must not turn that leading `_` into a subscript.
+    let src = "---- MODULE M ----\nA == <<1, 2>>\n__f1 @@ __f2 == __f1\n====\n";
+    let parsed = parse_file(src).expect("a leading underscore stays an identifier");
+    assert!(
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(&u.kind, UnitKind::OpDef { name, .. } if name.name == "@@"))
+    );
+}
+
+#[test]
+fn labels() {
+    let e = expr("P0 :: B = 1");
+    let ExprKind::Label { name, params, .. } = &e.kind else {
+        panic!("expected a label, got {:?}", e.kind);
+    };
+    assert_eq!(name.name, "P0");
+    assert!(params.is_empty());
+
+    let e = expr("lab(a, b) :: a + b");
+    let ExprKind::Label { params, .. } = &e.kind else {
+        panic!("expected a parameterised label");
+    };
+    assert_eq!(params.len(), 2);
+}
+
+#[test]
+fn instance_and_subexpression_selection() {
+    // `Naturals` is literally `a + b == R!+(a, b)`.
+    let e = expr("R!+(a, b)");
+    let ExprKind::Apply { head, args } = &e.kind else {
+        panic!("expected an application, got {:?}", e.kind);
+    };
+    assert_eq!(head.path.len(), 2);
+    assert_eq!(head.path[1].name, "+");
+    assert_eq!(args.len(), 2);
+
+    // Selection off an application needs a general node.
+    assert!(matches!(
+        expr("Inner(q)!Spec").kind,
+        ExprKind::Qualified { .. }
+    ));
+    // Subexpression selectors, including argument instantiation.
+    for src in [
+        "A!1",
+        "A!:",
+        "A!<<",
+        "A!>>",
+        "SOp!@",
+        "R!(1, 2)!<<",
+        "Op1(2)!(3)!2!1",
+    ] {
+        expr(src);
+    }
+    // `-.` spans two tokens as a selector.
+    expr("F!-.(4)");
+}
+
+#[test]
+fn operators_as_values_and_applied() {
+    // Passing an operator as an argument, with or without a prefix reading.
+    assert!(matches!(expr("BoxTest([])").kind, ExprKind::Apply { .. }));
+    assert!(matches!(
+        expr("TestOpArg( - )").kind,
+        ExprKind::Apply { .. }
+    ));
+    // Applying an operator symbol directly.
+    assert!(matches!(expr("+(4, 6)").kind, ExprKind::Apply { .. }));
+    assert!(matches!(expr("^#(4)").kind, ExprKind::Apply { .. }));
+    // But `-(x = 0)` is still unary minus, not an application.
+    assert!(matches!(
+        expr("-(x = 0)").kind,
+        ExprKind::Prefix { ref op, .. } if op == "-."
+    ));
+}
+
+#[test]
+fn operator_symbol_declarations() {
+    let src = "---- MODULE M ----\nCONSTANT P(_,_), _++_, Plus(_, _), PLen(_)\n               BoxTest(-._) == -(x = 0)\n-. z == z\n====\n";
+    let parsed = parse_file(src).expect("operator-symbol declarations parse");
+    let consts = parsed.module.constants();
+    assert_eq!(consts.len(), 4);
+    assert_eq!(consts[1].name.name, "++");
+    assert_eq!(consts[1].arity, 2);
+    assert!(
+        parsed
+            .module
+            .units
+            .iter()
+            .any(|u| matches!(&u.kind, UnitKind::OpDef { name, .. } if name.name == "-."))
+    );
+}
+
+#[test]
+fn bracket_classification_is_not_fooled_by_binders() {
+    // The `\in` belongs to the quantifier; the form is an action.
+    assert!(matches!(
+        expr("[\\A i \\in Proc : P(i)]_vars").kind,
+        ExprKind::Action { .. }
+    ));
+    // A tuple pattern must still read as a function constructor.
+    assert!(matches!(
+        expr("[<<p, q>> \\in Proc \\X Proc |-> p]").kind,
+        ExprKind::FnConstruct { .. }
+    ));
+    // A CASE inside `[…]_v` uses `->`, which is not a function set.
+    assert!(matches!(
+        expr("[CASE p -> 1 [] OTHER -> 2]_v").kind,
+        ExprKind::Action { .. }
+    ));
+}
+
+#[test]
+fn brace_classification_is_not_fooled_by_binders() {
+    // `{CHOOSE x : x \in T}` — the colon belongs to the CHOOSE. Getting this
+    // wrong broke the standard `FiniteSets` module.
+    assert!(matches!(
+        expr("{CHOOSE x : x \\in T}").kind,
+        ExprKind::SetEnum(_)
+    ));
+    assert!(matches!(
+        expr("{x \\in S : \\A y \\in T : Q(x, y)}").kind,
+        ExprKind::SetFilter { .. }
+    ));
+}
+
+#[test]
+fn assume_prove_with_new_declarations() {
+    let src = "---- MODULE M ----\n               THEOREM T == ASSUME NEW CONSTANT x \\in S, NEW VARIABLE v, P(x) PROVE Q(x)\n====\n";
+    let parsed = parse_file(src).expect("ASSUME/PROVE parses");
+    let Some(UnitKind::Theorem { body, .. }) = parsed.module.units.first().map(|u| &u.kind) else {
+        panic!("expected a theorem");
+    };
+    let ExprKind::AssumeProve { assumptions, .. } = &body.kind else {
+        panic!("expected ASSUME/PROVE, got {:?}", body.kind);
+    };
+    assert_eq!(assumptions.len(), 3);
+    assert!(matches!(
+        assumptions[0],
+        AssumeItem::New {
+            kind: NewKind::Constant,
+            domain: Some(_),
+            ..
+        }
+    ));
+    assert!(matches!(
+        assumptions[1],
+        AssumeItem::New {
+            kind: NewKind::Variable,
+            ..
+        }
+    ));
+    assert!(matches!(assumptions[2], AssumeItem::Expr(_)));
+}
+
+#[test]
+fn reserved_words_are_legal_record_fields() {
+    // Evidence from the TLA+ test suite: `NEW` is only reserved in the
+    // positions that use it, so it is a legal field name after `.`.
+    expr("bar.NEW");
+    expr("[bar EXCEPT !.NEW = 0]");
+    // Deliberately *not* extended to record-literal field names
+    // (`[NEW |-> 1]`): nothing in either corpus writes that, and accepting
+    // more than SANY is a parity gap in the permissive direction.
+}
+
+#[test]
+fn unknown_string_escapes_are_literal() {
+    // TLA+ documents `\" \\ \t \n \f \r`, but the language's own test suite
+    // contains `"\oslash"`. Match the reference implementation, not the prose.
+    let e = expr("\"(/)\\oslash\"");
+    let ExprKind::Str(v) = &e.kind else {
+        panic!("expected a string");
+    };
+    assert!(v.contains("\\oslash"), "got {v:?}");
+}
+
+#[test]
+fn a_let_definition_may_continue_at_its_own_column() {
+    // A column floor on LET definitions broke `TLAPlusGrammar.tla`, whose
+    // continuation lines sit at the definition's own column.
+    let src =
+        "---- MODULE M ----\nTest ==\n LET P(G) ==\n   a\n      |  b\n\n     |  c\n IN P\n====\n";
+    let parsed = parse_file(src).expect("a LET body may continue at its own column");
+    assert_eq!(parsed.module.units.len(), 1);
 }
