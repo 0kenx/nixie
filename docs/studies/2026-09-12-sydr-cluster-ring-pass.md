@@ -366,3 +366,43 @@ Remaining gap at default: 7 cells — BuchwaldFried + smulov2bw064 +
   umulov1bw064 (all three closed by `NIXIE_BV_GATE_SH=1` or
   `NIXIE_BV_MUL_ARRAY=1` opt-ins), calypto_14, s3_srvr_1_alt, and the
   IR-gated maxandminor016 / bitrev2048 / ex7_prime.
+
+## Session round 6 (2026-09-12, evening): unified-path deferral prototyped — and it exposed a preprocessor property
+
+Menu item 4 (**blast-rewritten-only on the unified route**) was
+  prototyped behind `NIXIE_BV_DEFER_BLAST=1`: pure-BV fragment asserts
+  defer clause emission and circuit linking to `check`, where stage-4
+  emits the preprocessor's rewritten set *instead of* alongside.  The
+  prototype is complete (window-breaker raw flush, push/pop pending
+  flush, `track_theory_vars`/alias/distinctness bookkeeping kept at
+  assert time, a second honesty-gate read after the late emission) and
+  preserved as
+  `docs/studies/assets/2026-09-12-unified-defer-proto.patch`.
+
+**It is unsound as a verdict path, and the reason is a finding**: on
+  `s3_clnt_1_true` the deferred build answers **`sat`** (truth: unsat;
+  z3 confirms).  The emitted rewritten-only CNF is
+  184 727 vars / 547 425 clauses vs the alongside path's
+  358 344 / 1 779 525 — and **cadical proves the deferred CNF
+  satisfiable**.  So the preprocessor's `pre.rewritten` is **not
+  equisatisfiable** with the original assertion set on this file: some
+  constraint content exists only in the raw (parse-inlined) form and is
+  dropped by the substitution/dropping machinery.  The alongside
+  default never noticed because weakened rewrites asserted *next to*
+  the raw clauses are harmless in both directions — the deferral
+  removes the backstop and the hole becomes a false `sat`.
+
+Not yet root-caused (next session's entry point): the leading
+  suspects are the plain solve-eqs drop-after-substitute semantics
+  interacting with the node budget (partially-substituted rounds), or
+  content that lives only in the assert-time pipeline
+  (`flatten_eq_ite_tables`, ite table guards) that the rewritten set
+  never sees.  Repro: `NIXIE_BV_DEFER_BLAST=1` + the patch, on
+  `bmc-bv-svcomp14/s3_clnt_1_true…` — `sat` at ~25 s.
+
+Performance signals worth keeping (from the sound-prefix runs and the
+  flag-arm diffs): `cjpeg/predicate_2636` 1.9 → 1.2 s;
+  `bv-term-small-rw_609` closes (correct `unsat`); `define-fun`
+  regressions are `unknown`-not-false (the model gates catch the
+  weakened sets).  The deferral stays exactly as valuable as round 5
+  concluded — *after* the equisatisfiability question is answered.

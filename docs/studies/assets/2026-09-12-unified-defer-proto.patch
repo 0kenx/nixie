@@ -1,0 +1,233 @@
+diff --git a/nixie-solver/src/solver/encode.rs b/nixie-solver/src/solver/encode.rs
+index 64e372ff..ddafcd32 100644
+--- a/nixie-solver/src/solver/encode.rs
++++ b/nixie-solver/src/solver/encode.rs
+@@ -932,6 +932,56 @@ impl Solver {
+         if !super::dispatch_pure_bv::assertion_in_bv_fragment(term_to_encode, manager) {
+             self.all_assertions_bv_fragment = false;
+         }
++        // Unified-path blast deferral (`NIXIE_BV_DEFER_BLAST=1`): pure-BV
++        // fragment assertions on the unified route postpone BOTH the clause
++        // emission and the circuit linking to the next `check`, where the
++        // preprocessor has already collapsed define-equations / ring
++        // identities — the search then sees one (rewritten, folded,
++        // shareable) circuit set instead of raw parse-inlined meganodes
++        // *plus* the rewrites alongside.  Any window breaker (non-fragment
++        // assert, push, generation end) flushes the deferral with the raw
++        // emission, restoring exactly the assert-time behavior.
++        if self.deferred_flush_pending {
++            self.deferred_flush_pending = false;
++            self.flush_deferred_bv_asserts_raw(manager);
++        }
++        if Self::bv_defer_blast_enabled()
++            && self.all_assertions_bv_fragment
++            && Self::bv_dispatch_unified()
++            && !self.has_bv_wide_mul
++            && Self::bv_unify_enabled()
++            && self.context_stack.is_empty()
++            && !self.has_quantifiers
++            && !self.has_array_ops
++            && self.array_select_terms.is_empty()
++            && self.array_store_terms.is_empty()
++            && self.proof.is_none()
++            && self.config.certification_mode == crate::solver::CertificationMode::Uncertified
++            && !self.has_bv_result_uf
++        {
++            // Bookkeeping that must not defer: the theory-variable interning
++            // (routing gates and model extraction read `bv_terms`), the
++            // unit-eq alias note (reads the *raw* term, exactly like the
++            // assert-time path), and the big-constant distinctness guards.
++            // Only the clause emission and circuit linking defer.
++            self.track_theory_vars(term_to_encode, manager);
++            self.note_unit_eq_alias(term_to_encode, manager);
++            self.emit_big_const_distinctness(manager);
++            self.deferred_bv_asserts.push(term_to_encode);
++            self.record_assertion_identity(term, None, index);
++            return;
++        }
++        if !self.deferred_bv_asserts.is_empty() {
++            // The window just broke (this assert is outside the fragment or
++            // the routing changed): emit every deferred assertion raw, in
++            // order, before this one — the assert-time semantics they would
++            // have had.
++            let deferred = std::mem::take(&mut self.deferred_bv_asserts);
++            for d in deferred {
++                self.emit_assertion_clauses(d, manager);
++                self.link_or_blast_bv_circuits(d, manager);
++            }
++        }
+         // Encode the assertion immediately – *structurally*: the top-level
+         // Boolean skeleton of the assertion (conjunctions, negations,
+         // disjunctions under a negation) is flattened into clauses directly,
+diff --git a/nixie-solver/src/solver/mod.rs b/nixie-solver/src/solver/mod.rs
+index fdc0f9df..6118e79e 100644
+--- a/nixie-solver/src/solver/mod.rs
++++ b/nixie-solver/src/solver/mod.rs
+@@ -269,6 +269,15 @@ pub struct Solver {
+     /// Assertion count at which the stage-4 preprocessing-parity pass last
+     /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
+     pub(super) bv_preprocess_at_count: usize,
++    /// Unified-path deferred assertions (`NIXIE_BV_DEFER_BLAST=1`): pure-BV
++    /// fragment asserts whose clause emission and circuit linking wait for
++    /// the next `check`, so the search sees the preprocessor's rewritten
++    /// (folded, shareable) forms *instead of* the raw parse-inlined ones.
++    /// Flushed raw on any window breaker; flushed rewritten at `check`.
++    pub(super) deferred_bv_asserts: Vec<TermId>,
++    /// Whether a raw flush of [`Self::deferred_bv_asserts`] is pending (set
++    /// by `push`/`pop`, honored by the next assert or check).
++    pub(super) deferred_flush_pending: bool,
+     /// Memoized [`PreprocessOutcome`] of the current assertion set, with the
+     /// assertion count it was computed at (see
+     /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
+@@ -961,6 +970,8 @@ impl Solver {
+             bv_elim_deferred: Vec::new(),
+             bv_preprocess_at_count: usize::MAX,
+             bv_preprocess_cache: None,
++            deferred_bv_asserts: Vec::new(),
++            deferred_flush_pending: false,
+             has_bv_result_uf: false,
+             bv_unified: false,
+             bv_order_specs: Vec::new(),
+@@ -2059,15 +2070,24 @@ impl Solver {
+         // both directions: implied units can only strengthen refutation,
+         // and every model of the originals satisfies the rewrites.  E.g.
+         // the wienand identity folds to `false` and refutes on the spot.
++        let defer_active = Self::bv_defer_blast_enabled() && !self.deferred_bv_asserts.is_empty();
++        if defer_active && !Self::bv_dispatch_unified() {
++            // The deferral's asserts were admitted under the unified routing;
++            // if that routing is off at check (env flip), fall back to raw.
++            self.flush_deferred_bv_asserts_raw(manager);
++        }
+         if Self::bv_dispatch_unified()
+             && !self.has_bv_wide_mul
+             && !self.bv_terms.is_empty()
+             && self.all_assertions_bv_fragment
+-            && self.bv_preprocess_at_count != self.assertions.len()
++            && (self.bv_preprocess_at_count != self.assertions.len() || defer_active)
+             && std::env::var("NIXIE_BV_NO_PARITY").is_err()
+         {
+             self.bv_preprocess_at_count = self.assertions.len();
+             let pp = self.bv_preprocess_assertions(manager);
++            if std::env::var("NIXIE_PRE_TRACE").is_ok() {
++                eprintln!("[defer] stage4 runs, rewritten={} deferred={}", pp.rewritten.len(), self.deferred_bv_asserts.len());
++            }
+             // Every rewrite the preprocessor emits is implied by the
+             // originals, so asserting them alongside is sound in both
+             // directions: the plain solve-eqs pass substitutes
+@@ -2089,7 +2109,7 @@ impl Solver {
+             // pre-ring assertion set and therefore the old trajectory).
+             let ring_participated = pp.used_ring_elimination;
+             for &r in &pp.rewritten {
+-                if ring_participated {
++                if !defer_active && ring_participated {
+                     let is_literal = manager
+                         .get(r)
+                         .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False));
+@@ -2100,10 +2120,29 @@ impl Solver {
+                 self.emit_assertion_clauses(r, manager);
+                 self.link_or_blast_bv_circuits(r, manager);
+             }
++            // With the deferral active these rewrites are the *only* circuit
++            // set (the raw asserts were never emitted); drop the deferral so
++            // later checks do not re-flush.
++            if defer_active {
++                self.deferred_bv_asserts.clear();
++                self.deferred_flush_pending = false;
++            }
++            // Honesty gate, take two: the deferral's emission happens *after*
++            // the gate read at the top of `check_core`, and an encoder that
++            // refuses a pathologically deep sub-formula would otherwise
++            // leave unconstrained atoms behind a `Sat` verdict.
++            if defer_active && self.encode_depth_exceeded {
++                return SolverResult::Unknown;
++            }
+             if self.has_false_assertion {
+                 self.build_unsat_core_trivial_false();
+                 return SolverResult::Unsat;
+             }
++        } else if defer_active {
++            // The stage-4 gate refused (fragment broke, no-parity set, or the
++            // preprocess cache is current): the deferred assertions must not
++            // stay unencoded — raw emission restores assert-time semantics.
++            self.flush_deferred_bv_asserts_raw(manager);
+         }
+ 
+         // Check resource limits before starting
+@@ -3889,8 +3928,45 @@ impl Solver {
+         self.context_stack.len()
+     }
+ 
++    /// Whether unified-path assertions defer their blast to the next check
++    /// (`NIXIE_BV_DEFER_BLAST=1`; default off — experimental).
++    pub(super) fn bv_defer_blast_enabled() -> bool {
++        #[cfg(feature = "std")]
++        {
++            matches!(std::env::var("NIXIE_BV_DEFER_BLAST"), Ok(v) if !v.is_empty() && v != "0")
++        }
++        #[cfg(not(feature = "std"))]
++        {
++            false
++        }
++    }
++
++    /// Emit every deferred assertion raw (the assert-time semantics) and
++    /// clear the deferral.  Window breakers and any check that cannot use
++    /// the rewritten forms take this path.
++    pub(super) fn flush_deferred_bv_asserts_raw(&mut self, manager: &mut TermManager) {
++        if self.deferred_bv_asserts.is_empty() {
++            return;
++        }
++        let deferred = std::mem::take(&mut self.deferred_bv_asserts);
++        for d in deferred {
++            self.emit_assertion_clauses(d, manager);
++            self.link_or_blast_bv_circuits(d, manager);
++        }
++    }
++
++    /// Mark the deferral for raw flush at the next manager-touching point:
++    /// `push` has no manager argument, and the raw emission must happen at
++    /// the base scope — the next `assert` (which flushes before encoding)
++    /// or `check` (which flushes before anything else) does it.  A pop that
++    /// returns to the base scope also re-arms it via the same flag.
++    pub(super) fn defer_flush_raw(&mut self) {
++        self.deferred_flush_pending = !self.deferred_bv_asserts.is_empty();
++    }
++
+     /// Push a context level
+     pub fn push(&mut self) {
++        self.defer_flush_raw();
+         self.bv_preprocess_cache = None;
+         // A `push` opens a scope the previous verdict knew nothing about.  It
+         // adds no assertion by itself, so the old model would still satisfy the
+@@ -3950,6 +4026,7 @@ impl Solver {
+ 
+     /// Pop a context level using trail-based undo
+     pub fn pop(&mut self) {
++        self.defer_flush_raw();
+         self.bv_preprocess_cache = None;
+         // Retracting a scope changes the parity-lemma basis (assertions of
+         // the scope disappear; their rows and lemmas go with the trail ops).
+@@ -4238,6 +4315,8 @@ impl Solver {
+         self.bv_unified = false;
+         self.bv_preprocess_at_count = usize::MAX;
+         self.bv_preprocess_cache = None;
++        self.deferred_bv_asserts.clear();
++        self.deferred_flush_pending = false;
+         self.bv_order_specs.clear();
+         self.distinct_guard_clauses.clear();
+         self.bv_order_built.clear();
+diff --git a/nixie-solver/src/solver/trail.rs b/nixie-solver/src/solver/trail.rs
+index 144059bd..8ec3d439 100644
+--- a/nixie-solver/src/solver/trail.rs
++++ b/nixie-solver/src/solver/trail.rs
+@@ -198,6 +198,10 @@ impl super::Solver {
+             // a stale value cannot outlive its scope's assertions.
+             define_fun_equations: _, // NOT trailed: script-level (SMT-LIB
+             // definitions persist across push/pop); cleared on `reset`.
++            deferred_bv_asserts: _, // NOT trailed: `push`/`pop` mark the
++            // pending raw flush (the clauses must land at the base scope);
++            // `reset` clears.
++            deferred_flush_pending: _, // NOT trailed: same lifecycle.
+             has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
+             // conservative direction (keeps the dispatch).
+             bv_elim_var_occurrences: _, // NOT trailed: routing hint only;
