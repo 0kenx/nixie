@@ -316,6 +316,28 @@ impl Solver {
             self.equiv_substitution[v] = rep;
             if rep.var().index() != v {
                 eliminated += 1;
+                // Extension-stack witness clauses for the equivalence
+                // `v ≡ rep` (both implications), so model reconstruction is
+                // uniform with BVE: the backward walk in `save_model` repairs
+                // a falsified implication by flipping `v`, exactly like an
+                // eliminated pivot.  A separate representative-lookup pass
+                // cannot express stack ORDER relative to BVE entries, and a
+                // pre-defaulted unconstrained representative made such a
+                // pass assign a variable against its own equivalence
+                // (summle_X4053: `1268 ≡ ¬1267` with 1267 never branched
+                // falsified `(1267 ∨ 1268)`).
+                let var = Var::new(v as u32);
+                let lit = Lit::pos(var);
+                // (v ∨ ¬rep) with witness v
+                self.ext_stack.push(lit.code());
+                self.ext_stack.push(lit.code());
+                self.ext_stack.push(rep.negate().code());
+                self.ext_stack.push(u32::MAX);
+                // (¬v ∨ rep) with witness ¬v
+                self.ext_stack.push(lit.negate().code());
+                self.ext_stack.push(lit.negate().code());
+                self.ext_stack.push(rep.code());
+                self.ext_stack.push(u32::MAX);
             }
         }
 

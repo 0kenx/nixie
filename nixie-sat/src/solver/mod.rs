@@ -1839,14 +1839,30 @@ pub struct Solver {
     pub(super) equiv_substitution: Vec<Lit>,
     /// Model-reconstruction data for BVE-eliminated variables. Indexed by
     /// variable; `bve_def[v]` holds the non-`v` literals of every clause that
-    /// contained `v` *positively* at elimination time. At model-extension time
-    /// `v` is set true iff all of those clauses are falsified by the current
-    /// model (else false) – see [`Solver::save_model`].
+    /// contained `v` *positively* at elimination time. **Marker only since
+    /// the 2026-09-13 extension-stack port** (`var_eliminated`, the VMTF
+    /// branching skip): the actual model reconstruction walks
+    /// [`Solver::ext_stack`], because the recorded positive side is
+    /// *incomplete* as an obligation set – clauses of `v` retired earlier by
+    /// other variables' eliminations, or strengthened away mid-scan, never
+    /// enter it, and a side-rule over a partial obligation set reconstructs
+    /// values that falsify retired clauses (the summle_X4053 false-model
+    /// class: 63 falsified original clauses, root-caused 2026-09-13).
     pub(super) bve_def: Vec<Vec<SmallVec<[Lit; 4]>>>,
-    /// Elimination order of BVE-eliminated variables (reconstruction runs in
-    /// reverse, so a variable eliminated later – which may appear in an earlier
-    /// variable's recorded clauses – is assigned first).
+    /// Elimination order of BVE-eliminated variables (kept for diagnostics;
+    /// reconstruction itself is order-driven through [`Solver::ext_stack`]).
     pub(super) bve_order: Vec<Var>,
+    /// Extension stack (cadical `External::extension`, Sörensson/IJCAR'12):
+    /// flat sequence of entries `[witness, clause literals..., SENTINEL]`
+    /// pushed for **every clause retired at a variable's elimination**, in
+    /// retirement order, with the witness being the pivot literal the clause
+    /// contains (±pivot per side). `save_model` walks it backward and
+    /// **toggles** the witness of any entry falsified under the current
+    /// partial model – a demand-driven repair that needs no per-variable
+    /// side bookkeeping and stays correct when obligations cross variables
+    /// (clause of `x` retired by `y`'s elimination, empty-side eliminations,
+    /// mid-scan strengthenings).
+    pub(super) ext_stack: Vec<u32>,
     /// Inprocessing-elimination state (cadical `elim.cpp` port, see
     /// `solver/eliminate.rs`). `elim_mark[i]`: variable `i` occurred in a
     /// removed or shrunken original clause since the last elimination phase
@@ -2334,6 +2350,7 @@ impl Solver {
             equiv_substitution: Vec::new(),
             bve_def: Vec::new(),
             bve_order: Vec::new(),
+            ext_stack: Vec::new(),
             elim_mark: Vec::new(),
             elim_mark_count: 0,
             elim_bound: 0,
@@ -4608,6 +4625,16 @@ impl Solver {
         &self.stats
     }
 
+    /// Number of model-reconstruction obligations on the extension stack
+    /// (clauses retired at eliminations plus ELS equivalence implications).
+    /// Diagnostic accessor for the reconstruction regression: a run that
+    /// eliminates variables but records zero obligations would silently
+    /// skip the mechanism under test.
+    #[must_use]
+    pub fn extension_obligations(&self) -> usize {
+        self.ext_stack.len()
+    }
+
     /// Number of AND/XOR gates the congruence detector finds in the current
     /// clause set (`solver/congruence.rs`).  Diagnostic accessor for the
     /// structural-gate studies: the count is a formula property (seed- and
@@ -5122,6 +5149,17 @@ impl Solver {
         self.inproc_budgets = InprocBudgets::legacy();
         self.kissat_used_hist = [[0; 32]; 2];
         self.pure_literal_reconstruction.clear();
+        // Elimination/ELS bookkeeping refers to the previous formula's
+        // clauses and variables: stale extension-stack entries (and the
+        // `bve_*`/equiv maps feeding `var_eliminated`) would corrupt model
+        // reconstruction and branching-skip decisions of the next solve —
+        // obligations of clauses that no longer exist.  Cleared with the
+        // other per-formula state.
+        self.ext_stack.clear();
+        self.bve_def.clear();
+        self.bve_order.clear();
+        self.equiv_substitution.clear();
+        self.equiv_subst_inited = false;
         // Drop any proof logger: its clause ids refer to the now-cleared database,
         // so continuing to emit against it would produce a meaningless proof.
         self.disable_proof();

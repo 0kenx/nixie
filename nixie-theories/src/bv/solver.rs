@@ -2632,7 +2632,7 @@ impl BvSolver {
         }
     }
 
-    /// Test-only override of [`Self::mul_array_default`] (the env memo is
+    /// Test-only override of `mul_array_default` (the env memo is
     /// process-wide, so in-process tests set the field directly).
     pub fn enable_mul_array_for_test(&mut self) {
         self.mul_array = true;

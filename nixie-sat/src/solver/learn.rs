@@ -2225,90 +2225,83 @@ impl Solver {
             }
         }
 
-        // Reconstruct variables eliminated by equivalent-literal substitution
-        // (equiv.rs / congruence.rs): give each the value of its representative
-        // literal (flipped when polarities differ). Iterated to a fixpoint so a
-        // representative that is itself eliminated (or whose value arrives via
-        // BVE reconstruction below) is handled regardless of variable order.
-        if !self.equiv_substitution.is_empty() {
-            loop {
-                let mut changed = false;
-                for v in 0..self.num_vars {
-                    if self.model[v] != LBool::Undef {
-                        continue;
-                    }
-                    let Some(rep) = self.equiv_substitution.get(v).copied() else {
-                        continue;
-                    };
-                    if rep.var().index() == v {
-                        continue; // not eliminated
-                    }
-                    let Some(rep_val) = self.model.get(rep.var().index()).copied() else {
-                        continue;
-                    };
-                    if rep_val == LBool::Undef {
-                        continue; // rep not yet known; retry next iteration
-                    }
-                    self.model[v] = if rep.is_pos() {
-                        rep_val
-                    } else {
-                        rep_val.negate()
-                    };
-                    changed = true;
-                }
-                if !changed {
-                    break;
-                }
+        // Total-model base layer (cadical `External::extend`'s `vals`
+        // semantics): every variable not valued by the trail or the pure
+        // literals – unconstrained variables and every eliminated variable –
+        // reads as **false** before the extension walk.  The walk's literal
+        // tests then never see an `Undef`, so a *negative* literal over an
+        // unassigned variable reads true, a positive one false – the exact
+        // convention under which cadical's witness toggles are proven
+        // correct, and the only one under which obligation entries that
+        // cross elimination mechanisms (BVE pivot clauses, ELS equivalence
+        // implications, clauses retired by a *different* variable's
+        // elimination) repair consistently in one backward pass.
+        for i in 0..self.num_vars {
+            if self.model[i] == LBool::Undef {
+                self.model[i] = LBool::False;
             }
         }
 
-        // Reconstruct variables eliminated by BVE in reverse elimination order.
-        // For eliminated `v` with positive clauses `(v ∨ A_i)` (stripped of `v`):
-        //   - if EVERY `A_i` already has a satisfied literal, set `v = false`
-        //     (the `(v ∨ A_i)` are satisfied without it, and `¬v` satisfies the
-        //     `(¬v ∨ B_j)`);
-        //   - else SOME `A_k` is all-false, forcing `v = true` to satisfy
-        //     `(v ∨ A_k)`. The resolvents `(A_k ∨ B_j)` then guarantee every
-        //     `B_j` is true, so the `(¬v ∨ B_j)` are satisfied too.
-        // (The earlier version used "any satisfied" → wrong when some but not
-        //  all `A_i` are satisfied: it set v=false and violated the all-false
-        //  clause.)
+        // The extension-stack walk (SÃ¶rensson/IJCAR'12; cadical
+        // `External::extend`): every clause retired at a variable's
+        // elimination and both implications of every ELS equivalence were
+        // pushed with a witness literal, in retirement order.  Walk the
+        // entries backward; whenever one is falsified under the current
+        // model, flip its witness variable's boolean so the witness literal
+        // becomes true.  Demand-driven repair over the *complete* obligation
+        // set – no per-variable side bookkeeping, no defaults chosen over
+        // partial obligations (the summle_X4053 false-model root cause: the
+        // old positive-side rule falsified 63 original clauses; its
+        // orderings left 305-6636 more).
         //
-        // A variable eliminated by the inprocessing eliminator with an *empty*
-        // recorded positive side (all its positive clauses were retired as
-        // satisfied before it was eliminated) defaults to `false`: that
-        // satisfies every dropped `(¬v ∨ B_j)` and the positive side was
-        // already satisfied by unconditional units.
-        if !self.bve_order.is_empty() {
-            for &v in self.bve_order.iter().rev() {
-                let clauses = match self.bve_def.get(v.index()) {
-                    Some(c) if !c.is_empty() => c,
-                    _ => {
-                        if v.index() < self.model.len() {
-                            self.model[v.index()] = LBool::False;
-                        }
-                        continue;
-                    }
-                };
-                let lit_true = |l: Lit| {
-                    self.model
-                        .get(l.var().index())
-                        .copied()
-                        .unwrap_or(LBool::Undef)
-                        == if l.is_pos() {
-                            LBool::True
-                        } else {
-                            LBool::False
-                        }
-                };
-                let all_satisfied = clauses
+        // Soundness (the inprocessing-paper argument): entries are repaired
+        // newest-retirement-first; a witness flip can only falsify entries
+        // retired *earlier* (walked later, still to be checked), because
+        // every clause containing the flipped literal that was retired
+        // earlier already went through its own repair, and the resolvents
+        // added at each elimination carry cross-variable obligations as
+        // live clauses (or as later-walked entries themselves).
+        if !self.ext_stack.is_empty() {
+            let mut i = self.ext_stack.len();
+            while i > 0 {
+                // entry layout: witness, lit, ..., lit, SENTINEL
+                let end = i - 1;
+                debug_assert_eq!(self.ext_stack[end], u32::MAX);
+                let start = self.ext_stack[..end]
                     .iter()
-                    .all(|clause| clause.iter().any(|&l| lit_true(l)));
-                self.model[v.index()] = if all_satisfied {
-                    LBool::False
-                } else {
-                    LBool::True
-                };
+                    .rposition(|&c| c == u32::MAX)
+                    .map_or(0, |p| p + 1);
+                let witness = Lit::from_code(self.ext_stack[start]);
+                let satisfied = self.ext_stack[start + 1..end].iter().any(|&code| {
+                    let lit = Lit::from_code(code);
+                    match self.model.get(lit.var().index()).copied() {
+                        Some(LBool::True) => lit.is_pos(),
+                        _ => lit.is_neg(),
+                    }
+                });
+                if !satisfied {
+                    let idx = witness.var().index();
+                    if let Some(slot) = self.model.get_mut(idx) {
+                        // Flip the variable's boolean iff the witness literal
+                        // reads falsified (cadical's `vals[idx] = !vals[idx]`
+                        // under guard `tmp != lit`); every variable already
+                        // carries a concrete value here, so this is a plain
+                        // toggle.
+                        let witness_true = match *slot {
+                            LBool::True => witness.is_pos(),
+                            LBool::False => witness.is_neg(),
+                            LBool::Undef => witness.is_neg(),
+                        };
+                        if !witness_true {
+                            *slot = if witness.is_pos() {
+                                LBool::True
+                            } else {
+                                LBool::False
+                            };
+                        }
+                    }
+                }
+                i = start;
             }
         }
     }
@@ -2339,6 +2332,50 @@ impl Solver {
                 "solve() reported Sat with a model that violates clause {id:?} ({lits:?}); \
                  the search accepted an assignment that does not satisfy the database"
             );
+        }
+        // The extension-stack obligation net: retired clauses (elimination
+        // weakenings) are not in the live database, so the check above cannot
+        // see them – yet a Sat model must satisfy the *original* formula,
+        // and these clauses are part of it (satisfiability-preserving
+        // elimination with reconstruction).  This is the net that would have
+        // caught the summle_X4053 class (63 falsified retired clauses) in
+        // every debug CI run instead of only in model-checked corpus
+        // screens.
+        #[cfg(debug_assertions)]
+        {
+            let mut i = self.ext_stack.len();
+            let mut entry = 0usize;
+            while i > 0 {
+                let end = i - 1;
+                debug_assert_eq!(self.ext_stack[end], u32::MAX);
+                let start = self.ext_stack[..end]
+                    .iter()
+                    .rposition(|&c| c == u32::MAX)
+                    .map_or(0, |p| p + 1);
+                let satisfied = self.ext_stack[start + 1..end].iter().any(|&code| {
+                    let lit = Lit::from_code(code);
+                    match self
+                        .model
+                        .get(lit.var().index())
+                        .copied()
+                        .unwrap_or(LBool::Undef)
+                    {
+                        LBool::True => lit.is_pos(),
+                        LBool::False | LBool::Undef => lit.is_neg(),
+                    }
+                });
+                assert!(
+                    satisfied,
+                    "solve() reported Sat but the model violates retired clause \
+                     (extension entry {entry}): {:?}",
+                    self.ext_stack[start + 1..end]
+                        .iter()
+                        .map(|&c| Lit::from_code(c).to_dimacs())
+                        .collect::<Vec<_>>()
+                );
+                entry += 1;
+                i = start;
+            }
         }
     }
 
