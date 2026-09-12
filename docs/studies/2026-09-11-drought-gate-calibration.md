@@ -168,3 +168,43 @@ winners have the highest base dec/conf (summle 9.5, Break ~5.5 vs j3037
 per-conflict EMA crosses ~4 → ~8, targeting the decision-bloated class
 while leaving the tight-search class at today's cadence; then the 54x5
 corpus screen and this same null for the gate itself.
+
+## Round 7: dec/conf-adaptive margin — measured dead, family closed
+
+`NIXIE_FOCUSED_ADAPTIVE=1` (env-gated, default bit-identical): margin
+ramps 1.10 -> 1.40 as the decisions-per-conflict EMA (window 64) crosses
+3 -> 6. 10-file probe, 5-seed medians:
+
+| file | base | adaptive | ratio |
+|---|---|---|---|
+| Break_unsat_06_07 | 35,959 | 33,785 | 0.94x |
+| summle_X4044 | 81,294 | **106,465** | **1.31x** |
+| noL-11-14 | 1,227,852 | **2,775,789** | **2.26x** |
+| j3037 / x9 / frb65 | — | — | 1.08-1.21x |
+| crn / si2 | — | — | 0.79x / 0.92x |
+| 6s167 / worker_550 | — | — | 1.03x / 1.13x |
+
+The ramp **destroys the very wins it was designed for**: summle's flat-
+margin -34 % becomes +31 % under the oscillating mid-ramp margins (the
+ladder already showed the 1.25 rung flat-to-worse — mid values are the
+worst rung), and noL (dec/conf 5.3, inside the ramp zone) blows up 2.3x.
+Even nominally sub-3 files (j3037 2.8) shuffle and lose — the EMA
+oscillates across the foot of the ramp.  The scattered winners (crn 0.79x,
+si2 0.92x) are new cells, not the target class: the per-file spread
+0.79x-2.26x is the chaos band, not a gate.
+
+**The restart-margin family is closed.**  Flat margin: real semantic
+content on Break (T/N 0.64) but corpus-negative as any default.  Adaptive:
+destroys its own wins.  Every arming, gating, and ramping form of "fire
+the focused Glucose trigger less often" is now measured, and none is
+deliverable.  The two facts that survive for the structural program:
+
+1. The dec/conf systematic is *causally* restart-rate-coupled (round 5)
+   and the semantic content of slower firing is real but per-family
+   signed (round 6).
+2. Therefore the lever that remains is the one kissat actually uses:
+   **tiered stable/focused phases with per-mode restart policies** — a
+   schedule change, not a trigger tweak.  That is the recorded next
+   program item, alongside the inprocessing-amplitude class
+   (circuit_64in64out: cadical subsumes 54 % / strengthens 34 % /
+   vivifies 19.9 k mid-search).

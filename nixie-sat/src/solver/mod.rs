@@ -1508,6 +1508,11 @@ pub struct Solver {
     /// draw) was measured magnitude-broken and removed; see
     /// `2026-09-11-drought-gate-calibration.md` round 6.
     pub(super) glue_null_pos: usize,
+    /// Dec/conf-adaptive margin arm state (`NIXIE_FOCUSED_ADAPTIVE=1`):
+    /// EMA of decisions-per-conflict and the decisions watermark it is
+    /// updated from. Default path never touches these.
+    pub(super) dec_conf_ema: f64,
+    pub(super) dec_conf_last_decisions: u64,
     /// Matched-null machinery for the T1 stall trigger
     /// (`NIXIE_RESTART_STALL_NULL=1`): a ring of recent restart gaps and a
     /// second EMA fed from *pseudo-randomly reordered* ring entries. Same
@@ -2168,6 +2173,8 @@ impl Solver {
             last_restart_conflict: 0,
             restart_gap_ema: 100.0,
             glue_null_pos: 0,
+            dec_conf_ema: 2.0,
+            dec_conf_last_decisions: 0,
             restart_gap_ring: [100.0; 8],
             restart_gap_ema_null: 100.0,
             glue_saved: GlueAverages::new(),

@@ -59,6 +59,35 @@ fn focused_fire_every() -> u64 {
     20
 }
 
+/// `NIXIE_FOCUSED_ADAPTIVE=1`: dec/conf-adaptive margin arm. The focused
+/// Glucose margin ramps 1.10 -> 1.40 as the decisions-per-conflict EMA
+/// crosses 3 -> 6 (round-6 attribution: the semantic winners Break 5.5 /
+/// summle 9.5 vs the pure-rate losers j3037 2.8 / x9 2.1 / frb65 2.2; the
+/// 1.25 rung was flat on Break, so the ramp is steep). Files whose EMA
+/// stays below 3 keep margin exactly 1.10 — bit-identical trajectories.
+#[cfg(feature = "std")]
+fn focused_adaptive_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_FOCUSED_ADAPTIVE").is_ok_and(|v| v == "1"))
+}
+
+#[cfg(not(feature = "std"))]
+fn focused_adaptive_enabled() -> bool {
+    false
+}
+
+/// The adaptive ramp (linear 1.10 -> 1.40 over dec/conf EMA 3 -> 6).
+#[must_use]
+pub(super) fn adaptive_margin(dec_conf_ema: f64) -> f64 {
+    const LO: f64 = 3.0;
+    const HI: f64 = 6.0;
+    const M_LO: f64 = 1.10;
+    const M_HI: f64 = 1.40;
+    let t = ((dec_conf_ema - LO) / (HI - LO)).clamp(0.0, 1.0);
+    M_LO + t * (M_HI - M_LO)
+}
+
 #[cfg(feature = "std")]
 fn focused_restart_margin() -> f64 {
     use std::sync::OnceLock;
@@ -1685,6 +1714,14 @@ impl Solver {
     /// Handle clause deletion check and restart check
     pub(super) fn handle_clause_deletion_and_restart(&mut self) {
         self.conflicts_since_deletion += 1;
+        if focused_adaptive_enabled() {
+            // Decisions-per-conflict EMA (window 64). Maintained only while
+            // the adaptive arm is armed; the default path pays nothing.
+            let dec = self.stats.decisions;
+            let delta = dec.saturating_sub(self.dec_conf_last_decisions) as f64;
+            self.dec_conf_last_decisions = dec;
+            self.dec_conf_ema += (delta - self.dec_conf_ema) / 64.0;
+        }
         // Per-conflict inprocessing clock: the old inlined `solve` loop bumped
         // this next to `stats.conflicts`; the unified loop routes every
         // conflict through this handler, so the clock ticks here instead.
@@ -1796,7 +1833,12 @@ impl Solver {
                     let fast = self.glue_current.fast.value();
                     // 10% margin (cadical restartmarginfocused); guard against
                     // the all-zero initial state.
-                    let glucose = slow > 0.0 && fast >= focused_restart_margin() * slow;
+                    let margin = if focused_adaptive_enabled() {
+                        adaptive_margin(self.dec_conf_ema)
+                    } else {
+                        focused_restart_margin()
+                    };
+                    let glucose = slow > 0.0 && fast >= margin * slow;
                     if glucose && focused_margin_null_enabled() {
                         // Matched null v2: every-k-th pass of the UNTOUCHED
                         // 1.10-margin condition (`NIXIE_FOCUSED_FIRE_EVERY=k`,
@@ -1808,7 +1850,8 @@ impl Solver {
                         // (j3037 null 33k restarts vs treatment 1.4k) and is
                         // not a null at all - see the study.
                         self.glue_null_pos = self.glue_null_pos.wrapping_add(1);
-                        self.glue_null_pos.is_multiple_of(focused_fire_every() as usize)
+                        self.glue_null_pos
+                            .is_multiple_of(focused_fire_every() as usize)
                     } else {
                         glucose
                     }
