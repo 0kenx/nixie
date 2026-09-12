@@ -60,3 +60,19 @@ The combination itself stays available as two env flags
 (`NIXIE_OTFS=1 NIXIE_EAGER_SUB=1`, 0.9645× conflicts, circuit class
 fully converted) — arming it per-class is what needs the signature this
 study rules out of the cheap observable set.
+
+## Postscript (same day): the structural set fails too
+
+Exact-duplicate fraction and clause-width statistics (mean/σ over the
+first 600 k clauses) join the exhausted set — the interleaving is total:
+
+- `dup%`: winners at 0.00 / 0.35 / 2.53 / 5.13, losers at 0.00 / 2.69 /
+  4.85 / 7.82 — Break_08_24 (winner, 5.13 %) sits *between* rbsat
+  (loser, 4.85 %) and ITC (loser, 7.82 %).
+- Width: FmlaEquivChain (W, μ 2.8 σ 0.6) vs mp1-klieber (L, 2.3/0.5) vs
+  mp1-Nb7T42 (W, 2.7/0.7) vs qwh (L, 2.1/1.2) — indistinguishable.
+
+**Seven features, zero separation.**  The winner/loser classes are
+trajectory facts, full stop — every cheap gate (search-shape or
+formula-structure) is dead.  The remaining shapes are the online A/B
+probe and the portfolio, as recorded above.
