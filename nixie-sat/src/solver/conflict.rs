@@ -137,6 +137,12 @@ struct AnalysisMark<'a> {
     seen_level_trail: &'a mut [u32],
     lrat: bool,
     lrat_units: &'a mut SmallVec<[i32; 4]>,
+    /// OTFS support (`NIXIE_OTFS`): collect every newly-marked literal so an
+    /// on-the-fly strengthening can restart the analysis and un-mark exactly
+    /// the set this pass created (cadical keeps an `analyzed` vector for the
+    /// same purpose).  Empty/inert when the arm is off.
+    otfs_analyzed: &'a mut SmallVec<[Lit; 64]>,
+    otfs_armed: bool,
 }
 
 impl AnalysisMark<'_> {
@@ -176,6 +182,9 @@ impl AnalysisMark<'_> {
             self.seen[var.index()] = true;
             vars_to_bump.push(var);
             self.note_seen_level(var, level);
+            if self.otfs_armed {
+                self.otfs_analyzed.push(lit);
+            }
             if level == current_level {
                 *counter += 1;
             } else {
@@ -189,6 +198,9 @@ impl AnalysisMark<'_> {
             // directly (cadical's `analyze_literal` level-0 branch). `lit`
             // is FALSE; its true form `¬lit` is the unit.
             self.seen[var.index()] = true;
+            if self.otfs_armed {
+                self.otfs_analyzed.push(lit);
+            }
             self.lrat_units.push(lit.negate().to_dimacs());
         }
     }
@@ -365,6 +377,23 @@ impl Solver {
         let mut counter = 0;
         let mut p = None;
         let mut index = self.trail.assignments().len();
+        // OTFS arming (`NIXIE_OTFS`): off under any proof attachment — the
+        // pivot drop is justified by resolution against the in-flight
+        // resolvent, which a hint-less checker cannot replay (cadical builds
+        // an LRAT mini-chain for it; not ported). While armed, every newly
+        // marked literal is collected so a strengthening can un-mark exactly
+        // this analysis's set on restart.
+        let otfs_armed = self.otfs_override.unwrap_or_else(crate::otfs_enabled)
+            && !self.lrat
+            && self.proof.is_none();
+        if otfs_armed {
+            self.otfs_analyzed.clear();
+        }
+        // Number of antecedent resolutions completed before the current one
+        // (cadical's `resolved`): 0 while processing the conflict clause
+        // itself, 1 at the first antecedent. Feeds the OTFS trigger and its
+        // `resolved == 1` conflict-subsumption case.
+        let mut resolved: u32 = 0;
 
         // The "conflict level" is the highest decision level among the conflict
         // clause's literals. In textbook CDCL this always equals
@@ -383,7 +412,9 @@ impl Solver {
         // Anchoring the analysis at the genuine conflict level restores the
         // 1-UIP invariant (asserting literal strictly above the backtrack
         // level) for both the normal and the on-the-fly-clause cases.
-        let current_level = {
+        // (`mut`: an OTFS restart re-anchors at the strengthened clause's
+        // own max level, which can be lower than the original conflict's.)
+        let mut current_level = {
             let mut lvl = 0;
             if let Some(c) = self.clauses.get(conflict) {
                 for &lit in c.lits {
@@ -507,8 +538,10 @@ impl Solver {
                     seen_level_count,
                     seen_level_trail,
                     lrat,
+                    otfs_analyzed,
                     ..
                 } = self;
+                let otfs_armed_here = otfs_armed;
                 let mut lrat_units: SmallVec<[i32; 4]> = SmallVec::new();
                 {
                     let mut mark = AnalysisMark {
@@ -520,6 +553,8 @@ impl Solver {
                         seen_level_trail: &mut seen_level_trail[..],
                         lrat: *lrat,
                         lrat_units: &mut lrat_units,
+                        otfs_analyzed,
+                        otfs_armed: otfs_armed_here,
                     };
                     for &lit in clause.lits.iter() {
                         // When resolving a *reason* clause (`p` is Some), the
@@ -548,6 +583,139 @@ impl Solver {
                 for dimacs in lrat_units {
                     self.unit_chain.push(self.proof_unit_id(dimacs));
                 }
+            }
+
+            // OTFS (`NIXIE_OTFS`, cadical `analyze.cpp` 1152-1200): when at
+            // least one resolution has completed, the antecedent just marked
+            // is larger than 2 literals, and the accumulated resolvent
+            // (distinct marked literals: `counter` at the conflict level +
+            // the lower-level `learnt` tail, minus the asserting
+            // placeholder) is SMALLER than the antecedent, then the
+            // antecedent is self-subsumed by the resolvent: dropping its
+            // pivot literal `p` and every level-0-falsified literal yields a
+            // clause every model of the formula satisfies (any model makes
+            // the level-0-false literals false; a model satisfying the
+            // antecedent only through `p` falsifies the accumulated
+            // resolvent, which contains ¬p).
+            if otfs_armed
+                && resolved > 0
+                && let Some(piv) = p
+                && let Some(a) = self.clauses.get(reason_clause)
+                && a.lits.len() > 2
+                && (counter as usize + self.learnt.len().saturating_sub(1)) < a.lits.len()
+            {
+                let a_id = reason_clause;
+                let piv_var = piv.var();
+                let a_prime: SmallVec<[Lit; 8]> = a
+                    .lits
+                    .iter()
+                    .copied()
+                    .filter(|&l| l != piv && self.trail.level(l.var()) != 0)
+                    .collect();
+                // A' smaller than 2 literals: the self-subsumption derived a
+                // unit (level >= 1) or the empty clause (root refutation).
+                // Learn it directly and leave the DB untouched — the
+                // in-place shrink helpers require >= 2 literals for the two
+                // watches.
+                if a_prime.len() < 2 {
+                    self.stats.otfs_strengthened += 1;
+                    // Mid-analysis early return: the marking steps already
+                    // ran, so the per-level `seen` statistics must be cleared
+                    // here (the top-of-function level-0 early return runs
+                    // before any marking and carries no such obligation).
+                    self.clear_analyzed_levels();
+                    self.learnt.clear();
+                    self.learnt.extend_from_slice(&a_prime);
+                    return (0, core::mem::take(&mut self.learnt));
+                }
+                // `resolved == 1`: the accumulated resolvent IS the original
+                // conflict clause's resolution with this first antecedent;
+                // when the strengthened antecedent subsumes the conflict
+                // clause (every A' literal present, modulo literals falsified
+                // by level-0 units), the conflict clause is redundant and is
+                // retired (cadical `otfs_subsume_clause`). Deletion is sound
+                // because A' (kept, entailed) plus the level-0 units entail
+                // the deleted clause.
+                if resolved == 1 && a_id != conflict {
+                    // Snapshot the subsumption decision before mutating:
+                    // `clear_learned`/`retire_clause` take the arena
+                    // mutably while the subset test needs the live clause.
+                    let subsume = self.clauses.get(conflict).is_some_and(|cc| {
+                        !cc.deleted
+                            && a_prime.iter().all(|&l| {
+                                cc.lits.contains(&l)
+                                    || (self.trail.lit_value(l).is_false()
+                                        && self.trail.level(l.var()) == 0)
+                            })
+                    });
+                    if subsume {
+                        // Promotion (the `crn_11_99_u` lesson): a learned
+                        // subsumer must become original before the original
+                        // it justifies can be retired, else a later reduction
+                        // could drop the justification and uncover a false
+                        // SAT.
+                        let subsumed_learned =
+                            self.clauses.get(conflict).is_some_and(|cc| cc.learned);
+                        if !subsumed_learned && self.clauses.get(a_id).is_some_and(|s| s.learned) {
+                            self.clauses.clear_learned(a_id);
+                        }
+                        let removed: SmallVec<[Lit; 8]> = self
+                            .clauses
+                            .get(conflict)
+                            .map(|cc| cc.lits.iter().copied().collect())
+                            .unwrap_or_default();
+                        self.mark_elim_vars(removed.iter().copied());
+                        self.retire_clause(conflict);
+                        self.stats.deleted_clauses += 1;
+                        self.stats.subsumed_removed += 1;
+                        self.stats.otfs_subsumed += 1;
+                    }
+                }
+                // Rewrite the antecedent in place (watches re-attached, LBD
+                // recomputed for learned clauses, dirty marks for the
+                // subsume/elimination schedules). The pivot's recorded
+                // reason is reset to `Decision` — the rewritten clause no
+                // longer contains the literal it used to propagate, and a
+                // chronological backtrack can keep the pivot assigned past
+                // this conflict (a decision boundary is the conservative,
+                // sound degradation of its explanation).
+                self.mark_subsume_lits(a_prime.iter());
+                self.replace_clause_lits(a_id, &a_prime);
+                if matches!(
+                    self.trail.reason(piv_var),
+                    Reason::Propagation(r) if r == a_id
+                ) {
+                    self.trail.set_reason(piv_var, Reason::Decision);
+                }
+                self.stats.otfs_strengthened += 1;
+                // Restart the analysis from the strengthened clause exactly
+                // as cadical does ("restarting the analysis on the new
+                // conflict"): un-mark everything this pass created, reset
+                // the accumulators, and re-enter the loop with the
+                // strengthened clause as the conflict. Sound by construction
+                // — the restarted analysis derives a consequence of A', and
+                // A' is formula-entailed (the self-subsumption argument
+                // above).
+                for l in self.otfs_analyzed.drain(..) {
+                    let vi = l.var().index();
+                    if vi < self.seen.len() {
+                        self.seen[vi] = false;
+                    }
+                }
+                self.clear_analyzed_levels();
+                self.learnt.clear();
+                self.learnt.push(Lit::from_code(0));
+                counter = 0;
+                index = self.trail.assignments().len();
+                p = None;
+                resolved = 0;
+                current_level = a_prime
+                    .iter()
+                    .map(|l| self.trail.level(l.var()))
+                    .max()
+                    .unwrap_or(0);
+                self.current_conflict_level = current_level;
+                continue 'resolve;
             }
 
             // Find next literal to resolve on: the most recently assigned
@@ -607,8 +775,10 @@ impl Solver {
                                 seen_level_count,
                                 seen_level_trail,
                                 lrat,
+                                otfs_analyzed,
                                 ..
                             } = self;
+                            let otfs_armed_here = otfs_armed;
                             let mut lrat_units: SmallVec<[i32; 4]> = SmallVec::new();
                             {
                                 let mut mark = AnalysisMark {
@@ -620,6 +790,8 @@ impl Solver {
                                     seen_level_trail: &mut seen_level_trail[..],
                                     lrat: *lrat,
                                     lrat_units: &mut lrat_units,
+                                    otfs_analyzed,
+                                    otfs_armed: otfs_armed_here,
                                 };
                                 for &lit in &tail {
                                     mark.mark_antecedent(
@@ -652,6 +824,12 @@ impl Solver {
                     _ => break 'resolve,
                 }
             }
+            // One antecedent resolution completed (the conflict clause's own
+            // iteration — `resolved == 0` at its OTFS check — does not reach
+            // this tail because `break 'resolve` exits above it; the OTFS
+            // restart's `continue 'resolve` resets `resolved` to 0 and skips
+            // this tail, matching cadical's restart bookkeeping).
+            resolved += 1;
         }
 
         // Set asserting literal (p is guaranteed to be Some at this point)
@@ -2348,6 +2526,7 @@ impl Solver {
                         ..
                     } = self;
                     let mut dormant_units: SmallVec<[i32; 4]> = SmallVec::new();
+                    let mut dormant_otfs: SmallVec<[Lit; 64]> = SmallVec::new();
                     let mut mark = AnalysisMark {
                         seen: &mut seen[..],
                         trail,
@@ -2357,6 +2536,8 @@ impl Solver {
                         seen_level_trail: &mut seen_level_trail[..],
                         lrat: false,
                         lrat_units: &mut dormant_units,
+                        otfs_analyzed: &mut dormant_otfs,
+                        otfs_armed: false,
                     };
                     for &lit in clause.lits.iter() {
                         if lit == current_lit {

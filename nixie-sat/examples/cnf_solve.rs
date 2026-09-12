@@ -529,6 +529,10 @@ fn print_diag_block(solver: &Solver, result: SolverResult) {
         s.subsumed_removed, s.self_subsumed, s.shrunken
     );
     println!(
+        "otfs_strengthened={} otfs_subsumed={}",
+        s.otfs_strengthened, s.otfs_subsumed
+    );
+    println!(
         "bve_eliminated={} substitutions={} units={}",
         s.bve_eliminated, s.substitutions, s.unit_clauses
     );

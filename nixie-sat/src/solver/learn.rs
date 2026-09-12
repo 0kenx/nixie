@@ -2882,7 +2882,7 @@ impl Solver {
     /// Replace a clause's literals in place, re-attaching the two watched
     /// literals. (DRAT: the caller's context logs the strengthening; here we
     /// just keep the watched-literal invariant consistent.)
-    fn replace_clause_lits(&mut self, cid: ClauseId, new_lits: &[Lit]) {
+    pub(super) fn replace_clause_lits(&mut self, cid: ClauseId, new_lits: &[Lit]) {
         // Detach old watches (on the current positions 0 and 1).
         let (old_w0, old_w1) = match self.clauses.get(cid) {
             Some(c) if !c.deleted && c.lits.len() >= 2 => (c.lits[0], c.lits[1]),

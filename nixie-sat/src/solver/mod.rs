@@ -20,6 +20,8 @@ mod propagate;
 mod propagation_work;
 #[cfg(feature = "bcp-work")]
 pub use propagation_work::PropagationWork;
+#[cfg(test)]
+mod otfs_tests;
 mod search_ext;
 mod subsume;
 mod sweep;
@@ -1109,6 +1111,14 @@ pub struct SolverStats {
     /// Learned literals removed by block-UIP clause shrinking (cadical
     /// `stats.shrunken`).
     pub shrunken: u64,
+    /// Antecedent clauses rewritten in place by analyze-time OTFS
+    /// (`NIXIE_OTFS`; cadical `stats.otfs.strengthened`) — the pivot literal
+    /// plus level-0-falsified literals dropped when the accumulated
+    /// resolvent is smaller than the antecedent.
+    pub otfs_strengthened: u64,
+    /// Original conflict clauses deleted by the OTFS `resolved == 1`
+    /// subsumption (cadical `stats.otfs.subsumed`).
+    pub otfs_subsumed: u64,
     /// Learned literals removed by the minimizer fallback inside shrinking
     /// (cadical `stats.minishrunken`).
     pub minishrunken: u64,
@@ -1369,6 +1379,15 @@ pub struct Solver {
     pub(super) lrb: LRB,
     /// Statistics
     pub(super) stats: SolverStats,
+    /// OTFS (`NIXIE_OTFS`): the current analysis's newly-marked literals,
+    /// collected so an on-the-fly strengthening can restart the analysis and
+    /// un-mark exactly what this pass created. Reused across conflicts
+    /// (cleared at `analyze` start while armed; empty otherwise).
+    pub(super) otfs_analyzed: SmallVec<[Lit; 64]>,
+    /// Test/differential override for the OTFS arm (the env flag is a
+    /// process-global `OnceLock`, useless for paired on/off runs inside one
+    /// test process). `None` = follow the env (the shipped default).
+    pub(crate) otfs_override: Option<bool>,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
     /// Seen flags for conflict analysis
@@ -2159,6 +2178,8 @@ impl Solver {
             chb: CHB::new(0),
             lrb: LRB::new(0),
             stats: SolverStats::default(),
+            otfs_analyzed: SmallVec::new(),
+            otfs_override: None,
             learnt: SmallVec::new(),
             seen: Vec::new(),
             analyze_stack: Vec::new(),
@@ -2905,6 +2926,16 @@ impl Solver {
     /// loop returns [`SolverResult::Unknown`] once the budget is reached.
     pub fn set_max_conflicts(&mut self, max_conflicts: Option<u64>) {
         self.max_conflicts = max_conflicts;
+    }
+
+    /// Test/differential override for the analyze-time OTFS arm
+    /// (`NIXIE_OTFS`): the env flag is cached in a process-global
+    /// `OnceLock`, so paired on/off runs inside one test process need a
+    /// per-solver switch. `Some(false)` also lets a caller force the arm
+    /// off in a process that set the env for other solvers.
+    #[doc(hidden)]
+    pub fn set_otfs(&mut self, on: bool) {
+        self.otfs_override = Some(on);
     }
 
     /// The current conflict budget ([`Self::set_max_conflicts`]); `None`

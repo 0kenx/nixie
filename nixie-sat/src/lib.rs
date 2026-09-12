@@ -755,6 +755,23 @@ pub fn tiered_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("NIXIE_TIERED").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Analyze-time on-the-fly clause strengthening (`NIXIE_OTFS=1`): when the
+/// accumulated 1-UIP resolvent is smaller than the antecedent being
+/// resolved, the antecedent is rewritten in place with its pivot literal and
+/// level-0-falsified literals dropped (self-subsumption against the partial
+/// resolvent — every model of the formula satisfies the strengthened clause)
+/// and the analysis restarts from it (cadical `analyze.cpp` OTFS, 1.9
+/// events/conflict on circuit_64in64out per the 2026-09-12 amplitude
+/// diagnosis). Skipped entirely while a proof (DRAT/LRAT) is attached: the
+/// pivot drop is justified by resolution against the in-flight resolvent,
+/// which a hint-less checker cannot replay. Default off = bit-identical.
+#[doc(hidden)]
+pub fn otfs_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_OTFS").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// Matched null for [`tiered_enabled`] (`NIXIE_TIERED_NULL=1`, implies the
 /// arm): the phase schedule runs exactly as the treatment, but each phase's
 /// policy set (restart rule, rephase eligibility, target consult, branching
