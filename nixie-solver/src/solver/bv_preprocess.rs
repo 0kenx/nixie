@@ -1481,9 +1481,11 @@ impl Solver {
         let plain = solve_equations(&mut pairs, self.define_fun_equations.len(), manager);
         if tr {
             eprintln!(
-                "[pre] stage2 solve_eqs {:?} plain={}",
+                "[pre] stage2 solve_eqs {:?} plain={} budget_breaks={} meganode_skips={}",
                 t0.elapsed(),
-                plain.len()
+                plain.len(),
+                BUDGET_BREAKS.with(|c| c.get()),
+                MEGANODE_SKIPS.with(|c| c.get())
             );
         }
         // Ring (Gaussian) elimination runs after the plain pass (whose
@@ -1672,6 +1674,11 @@ fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager
     *pairs = out;
 }
 
+thread_local! {
+    static BUDGET_BREAKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static MEGANODE_SKIPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
 /// Eliminate variable definitions from an assertion list (Z3's
 /// `solve_eqs` tactic, the step that dissolves `wienand-cav2008` and the
 /// UltimateAutomizer definition chains).
@@ -1689,6 +1696,11 @@ fn normalize_assertions(pairs: &mut Vec<(TermId, TermId)>, manager: &TermManager
 /// becomes ready; those variables keep their assertions, which are then
 /// constraints rather than definitions.  Each outer round strictly drops
 /// at least one assertion, so the loop terminates.
+///
+/// Budget diagnostics (`NIXIE_PRE_TRACE`): the per-pass counts of budget
+/// breaks and meganode skips that fired — the two sites whose skipping can
+/// leave a recorded definition body with an unresolved dependency (repaired
+/// by the flatness fixpoint below the worklist).
 fn solve_equations(
     pairs: &mut Vec<(TermId, TermId)>,
     n_define_pairs: usize,
@@ -1854,10 +1866,12 @@ fn solve_equations(
                     // Budget exhausted: leave the remaining dependencies
                     // unresolved.  Their equations stay in `pairs` below
                     // (implied constraints, never dropped silently).
+                    BUDGET_BREAKS.with(|c| c.set(c.get() + 1));
                     break;
                 }
                 let body_size = dag_size(tj, manager, &mut size_memo);
                 if body_size > MAX_SUBSTITUTION_BODY_NODES {
+                    MEGANODE_SKIPS.with(|c| c.set(c.get() + 1));
                     // Meganode body (parse-inlined definition chain):
                     // substituting costs a full rebuild for a definition
                     // the search can consume whole.  Readiness still
@@ -1878,6 +1892,36 @@ fn solve_equations(
         }
         if resolved.is_empty() {
             return eliminations;
+        }
+        // ---- restore the flatness invariant (see below), then apply ----
+        // The worklist normally guarantees every recorded definition body
+        // already has its pending-variable dependencies substituted (Kahn
+        // order), so the single-pass apply substitution below hands out
+        // fully substituted terms.  The budget bounds break that invariant:
+        // a budget break or a meganode skip leaves a body's dependency
+        // unsubstituted, and the recorded definition then still mentions a
+        // variable whose own defining equation is dropped at apply — the
+        // dangling reference loses that constraint content entirely (the
+        // deferral prototype's false `sat` on `s3_clnt_1`: 583 budget
+        // breaks and 141 278 meganode skips left the rewritten set
+        // satisfiable against an unsat original).  Fix the recorded map to
+        // a fixpoint — each round substitutes one level of dangling
+        // reference, bounded by the elimination dependency depth.
+        if BUDGET_BREAKS.with(|c| c.get()) > 0 || MEGANODE_SKIPS.with(|c| c.get()) > 0 {
+            for _ in 0..64 {
+                let mut changed = false;
+                for (_, t) in round_elims.iter_mut() {
+                    let fixed = manager.substitute(*t, &resolved);
+                    if fixed != *t {
+                        *t = fixed;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+                resolved = round_elims.iter().copied().collect();
+            }
         }
         // ---- apply: substitute everywhere, drop resolved definitions ----
         let resolved_vars: rustc_hash::FxHashSet<TermId> = resolved.keys().copied().collect();
@@ -2318,11 +2362,18 @@ fn mentions(term: TermId, x: TermId, manager: &TermManager) -> bool {
 /// Collect, in one DAG walk, which of the `tracked` variables `term`
 /// mentions (shared subterms visited once).  Used by the Kahn worklist to
 /// build occurrence lists and reference counts without re-walking bodies.
-/// DAG node count of `term`, memoized on `memo` (hash-consed terms are
-/// immutable, so with chained definitions sharing the whole inlined prefix
-/// every shared subtree is measured once — unlike a per-call visited set,
-/// which re-walks the prefix per body and is quadratic on macro-heavy
-/// inputs).
+/// Tree node count of `term` (nodes counted **per occurrence**: a shared
+/// subtree contributes once per reference), memoized on `memo`.  This is an
+/// upper bound of the DAG size by construction, which is the right
+/// direction for both consumers — the meganode gate wants "substituting
+/// here is expensive" and the budget counts "work done" — and per-occurrence
+/// counting is what the rebuild actually touches when the substitution's
+/// per-call cache is cold.  The accumulation saturates: diamond-shaped
+/// shared chains make the tree count grow exponentially with depth, and an
+/// over-large (saturated) value only makes the gate fire more conservatively.
+/// (The first draft summed true DAG shares bottom-up — that is not
+/// compositional, and the debug profile caught the overflow the release
+/// profile silently truncated.)
 fn dag_size(
     term: TermId,
     manager: &TermManager,
@@ -2370,7 +2421,7 @@ fn dag_size(
                             .iter()
                             .map(|k| memo.get(k).copied().unwrap_or(1)),
                     )
-                    .sum();
+                    .fold(0usize, usize::saturating_add);
                 memo.insert(t, total);
             }
         }

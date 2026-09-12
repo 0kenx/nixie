@@ -25,7 +25,9 @@ fn gate_sh_on() {
     #[cfg(feature = "std")]
     // SAFETY: this test binary owns its process (per-test processes under
     // `cargo nextest`; every test here sets the same value first).
-    unsafe { std::env::set_var("NIXIE_BV_GATE_SH", "1") };
+    unsafe {
+        std::env::set_var("NIXIE_BV_GATE_SH", "1")
+    };
 }
 
 fn verdict(script: &str) -> String {
@@ -47,7 +49,8 @@ fn verdict(script: &str) -> String {
 fn shared_gates_close_reencoded_product_identity() {
     gate_sh_on();
     assert_eq!(
-        verdict(r#"
+        verdict(
+            r#"
             (set-logic QF_BV)
             (declare-const x (_ BitVec 32))
             (declare-const y (_ BitVec 32))
@@ -55,7 +58,8 @@ fn shared_gates_close_reencoded_product_identity() {
                             ((_ extract 63 32) (bvmul (concat #x0000000000000000 x)
                                                       (concat #x0000000000000000 y))))))
             (check-sat)
-        "#),
+        "#
+        ),
         "unsat"
     );
 }
@@ -65,7 +69,8 @@ fn shared_gates_close_reencoded_product_identity() {
 fn shared_gates_close_bitgathered_product() {
     gate_sh_on();
     assert_eq!(
-        verdict(r#"
+        verdict(
+            r#"
             (set-logic QF_BV)
             (declare-const w (_ BitVec 36))
             (declare-const x (_ BitVec 32))
@@ -82,7 +87,8 @@ fn shared_gates_close_bitgathered_product() {
                                                                              ((_ extract 16 9) w))
                                                                     ((_ extract 7 0) w))))))))
             (check-sat)
-        "#),
+        "#
+        ),
         "unsat"
     );
 }
@@ -125,7 +131,11 @@ fn shared_gates_respect_pop_scopes() {
 #[test]
 fn shared_gates_sign_extended_product_grid() {
     gate_sh_on();
-    for (x, y, p) in [(2u32, 3u32, 6u32), (7u32, 9u32, 63u32), (1u32, 12u32, 12u32)] {
+    for (x, y, p) in [
+        (2u32, 3u32, 6u32),
+        (7u32, 9u32, 63u32),
+        (1u32, 12u32, 12u32),
+    ] {
         let script = format!(
             "(set-logic QF_BV)\n\
              (declare-const x (_ BitVec 12))\n\

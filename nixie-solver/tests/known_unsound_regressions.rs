@@ -111,6 +111,37 @@ fn xs_22_42_is_not_sat() {
 
 // ======== Pre-existing on main (also wrong on integrate). Known-failing guards. ========
 
+/// The flatness bug (2026-09-12): `solve_equations`' budget bounds (the
+/// break/skip sites) could leave a recorded elimination body still
+/// mentioning an eliminated variable whose defining equation was dropped —
+/// the single-pass apply substitution then left the reference dangling and
+/// the rewritten set lost that constraint content.  The unified-path
+/// deferral prototype (`NIXIE_BV_DEFER_BLAST=1`) searches the rewritten set
+/// *alone* and answered **`sat`** here (truth: unsat; z3 confirms); the
+/// default alongside path masked it (weakened rewrites next to the raw
+/// clauses are harmless).  This pins the *preprocessor output*
+/// equisatisfiability through that search: with the flatness fixpoint, the
+/// deferred verdict is `unsat`.
+#[test]
+fn s3_clnt_1_rewritten_only_equisatisfiable() {
+    #[cfg(feature = "std")]
+    // SAFETY: per-test process under `cargo nextest`; this test's env is the
+    // only one this binary reads before solving.
+    unsafe {
+        std::env::set_var("NIXIE_BV_DEFER_BLAST", "1")
+    };
+    let res = solve_file(
+        "smt-lib/non-incremental/QF_BV/bmc-bv-svcomp14/s3_clnt_1_true.BV.c.cil.c.21.smt2",
+        60_000,
+    );
+    assert_ne!(
+        res,
+        SolverResult::Sat,
+        "rewritten-only search answered sat on an unsat goal: the preprocessor \
+         output is not equisatisfiable (flatness regression)"
+    );
+}
+
 #[test]
 fn bench_679_is_not_sat() {
     assert_not_sat(
