@@ -593,16 +593,36 @@ impl Solver {
             // placeholder) is SMALLER than the antecedent, then the
             // antecedent is self-subsumed by the resolvent: dropping its
             // pivot literal `p` and every level-0-falsified literal yields a
-            // clause every model of the formula satisfies (any model makes
-            // the level-0-false literals false; a model satisfying the
-            // antecedent only through `p` falsifies the accumulated
-            // resolvent, which contains ¬p).
+            // clause every model of the formula satisfies — PROVIDED the
+            // accumulated resolvent is exactly absorbed into the antecedent
+            // (cadical's `resolvent_size < antecedent_size` with the
+            // resolvent counted *after* merging this antecedent's literals:
+            // every previously-marked literal other than ¬p must already be
+            // a literal of the antecedent, forcing the merged resolvent to
+            // BE `A \ {p}`).  Then any model reaching `A` only through `p`
+            // falsifies the resolvent (which contains ¬p as its sole
+            // non-`A` literal), and the level-0-falsified literals are
+            // entailed units — so `A'` is entailed.
+            //
+            // The tightness test is NOT optional (found as false `unsat` on
+            // `constraints_17` — a model-verified sat file — 2026-09-12):
+            // the cheap size comparison `counter + learnt < |A|` undercounts
+            // the marked set (resolved-away conflict-level pivots leave both
+            // accumulators while staying `seen`), so it fires when the drop
+            // is unjustified and the "strengthened" clause is not entailed.
+            // The size gate stays as a cheap necessary pre-filter; the
+            // membership test over `otfs_analyzed` (the exact marked set)
+            // decides.
             if otfs_armed
                 && resolved > 0
                 && let Some(piv) = p
                 && let Some(a) = self.clauses.get(reason_clause)
                 && a.lits.len() > 2
                 && (counter as usize + self.learnt.len().saturating_sub(1)) < a.lits.len()
+                && self
+                    .otfs_analyzed
+                    .iter()
+                    .all(|&l| l == piv.negate() || a.lits.contains(&l))
             {
                 let a_id = reason_clause;
                 let piv_var = piv.var();
