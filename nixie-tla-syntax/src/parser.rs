@@ -1,0 +1,1714 @@
+//! The TLA+ parser: recursive descent for units, Pratt for expressions.
+//!
+//! # Why layout lives here and not in the lexer
+//!
+//! `docs/TLA_FRONTEND_DESIGN.md` §1.1 proposed handling junction lists as a
+//! Haskell-style token-stream transformer that inserts virtual brackets, so
+//! that the grammar proper stays context-free. **Implementation found that
+//! this does not work**, and the reason is worth recording.
+//!
+//! A `/\` opens a bulleted list only when it appears where an *expression* is
+//! expected. In `x == a /\ b` the same token is an ordinary infix operator, and
+//! a lexical pass cannot tell the two apart without reconstructing
+//! expression-position — the same problem as regex-vs-division in a JavaScript
+//! lexer, and equally prone to misfiring. The parser already knows, exactly, so
+//! layout is decided here: `parse_prefix` treats `/\` in prefix
+//! position as a list, and `at_layout_boundary` stops the Pratt loop
+//! at a token that would close an enclosing list.
+//!
+//! # Recursion depth
+//!
+//! `AGENTS.md` forbids unbounded native recursion over user-controlled input.
+//! A recursive-descent parser *is* recursion over user-controlled input, so
+//! depth is counted and [`ErrorKind::RecursionLimit`] is returned before the
+//! native stack can overflow. Deep input yields a diagnostic, never a crash.
+
+use crate::ast::*;
+use crate::error::{ErrorKind, Result, SyntaxError};
+use crate::lexer;
+use crate::op::{self, Fixity, OpInfo};
+use crate::span::Span;
+use crate::token::{Comment, Keyword, Token, TokenKind};
+
+/// Default maximum expression nesting depth.
+pub const DEFAULT_MAX_DEPTH: usize = 400;
+
+/// A parsed source file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedFile {
+    /// The top-level module.
+    pub module: Module,
+    /// Comments retained by the lexer, for `@type:` annotation extraction.
+    pub comments: Vec<Comment>,
+}
+
+/// The parser.
+pub struct Parser {
+    tokens: Vec<Token>,
+    pos: usize,
+    /// Columns of the junction lists currently open, innermost last. Strictly
+    /// increasing, so only the top needs consulting.
+    juncts: Vec<(u32, Junct)>,
+    /// Column at or left of which a token ends the unit body currently being
+    /// parsed. TLA+ starts every top-level unit at column 1, so a token there
+    /// terminates the previous definition however it would otherwise continue.
+    /// Consulted only at the bracket depth the floor was established at.
+    unit_floor: u32,
+    /// Bracket depth at which the unit floor was established. A `LET`
+    /// definition inside parentheses still gets a floor; it just applies at
+    /// that depth rather than at depth zero.
+    unit_floor_depth: usize,
+    /// Nesting depth of `(`, `[`, `{`, `<<`. Inside brackets a column-1 token
+    /// is ordinary continuation, not a new unit.
+    bracket_depth: usize,
+    depth: usize,
+    max_depth: usize,
+}
+
+impl Parser {
+    /// Create a parser over an already-lexed token stream.
+    #[must_use]
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self {
+            tokens,
+            pos: 0,
+            juncts: Vec::new(),
+            unit_floor: 0,
+            unit_floor_depth: 0,
+            bracket_depth: 0,
+            depth: 0,
+            max_depth: DEFAULT_MAX_DEPTH,
+        }
+    }
+
+    /// Override the maximum expression nesting depth.
+    #[must_use]
+    pub fn with_max_depth(mut self, max_depth: usize) -> Self {
+        self.max_depth = max_depth;
+        self
+    }
+
+    // ---- token plumbing -----------------------------------------------------
+
+    /// The token at `self.pos + n`, saturating at the trailing `Eof`.
+    fn peek_at(&self, n: usize) -> &Token {
+        let idx = (self.pos + n).min(self.tokens.len().saturating_sub(1));
+        match self.tokens.get(idx) {
+            Some(t) => t,
+            // The stream always ends in `Eof`, so this is unreachable for a
+            // stream built by the lexer. Returning the last token rather than
+            // panicking keeps the "no unwrap in production" rule honest even
+            // if a caller hands us a hand-built stream.
+            None => self.eof_fallback(),
+        }
+    }
+
+    fn eof_fallback(&self) -> &Token {
+        match self.tokens.last() {
+            Some(t) => t,
+            None => &EOF_TOKEN_SENTINEL,
+        }
+    }
+
+    fn peek(&self) -> &Token {
+        self.peek_at(0)
+    }
+
+    fn at_eof(&self) -> bool {
+        self.peek().kind == TokenKind::Eof
+    }
+
+    fn advance(&mut self) -> Token {
+        let tok = self.peek().clone();
+        if self.pos < self.tokens.len().saturating_sub(1) {
+            self.pos += 1;
+        }
+        tok
+    }
+
+    fn describe(tok: &Token) -> String {
+        match tok.kind {
+            TokenKind::Eof => "end of input".to_string(),
+            TokenKind::Ident => format!("identifier `{}`", tok.text),
+            TokenKind::Keyword(kw) => format!("`{}`", kw.as_str()),
+            TokenKind::Str => format!("string {:?}", tok.text),
+            _ => format!("`{}`", tok.text),
+        }
+    }
+
+    fn err<T>(&self, expected: &str) -> Result<T> {
+        let tok = self.peek();
+        Err(SyntaxError::new(
+            ErrorKind::Unexpected {
+                expected: expected.to_string(),
+                found: Self::describe(tok),
+            },
+            tok.span,
+        ))
+    }
+
+    fn expect_sym(&mut self, canonical: &str) -> Result<Token> {
+        if self.peek().is_sym(canonical) {
+            Ok(self.advance())
+        } else {
+            self.err(&format!("`{canonical}`"))
+        }
+    }
+
+    fn expect_kw(&mut self, kw: Keyword) -> Result<Token> {
+        if self.peek().is_kw(kw) {
+            Ok(self.advance())
+        } else {
+            self.err(&format!("`{}`", kw.as_str()))
+        }
+    }
+
+    fn eat_sym(&mut self, canonical: &str) -> bool {
+        if self.peek().is_sym(canonical) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn eat_kw(&mut self, kw: Keyword) -> bool {
+        if self.peek().is_kw(kw) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_ident(&mut self) -> Result<Ident> {
+        if self.peek().kind == TokenKind::Ident {
+            let tok = self.advance();
+            Ok(Ident {
+                name: tok.text,
+                span: tok.span,
+            })
+        } else {
+            self.err("an identifier")
+        }
+    }
+
+    // ---- modules and units --------------------------------------------------
+
+    /// Parse a whole file: one top-level module.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SyntaxError`] encountered.
+    pub fn parse_file(&mut self) -> Result<Module> {
+        self.parse_module()
+    }
+
+    fn parse_module(&mut self) -> Result<Module> {
+        let start = self.peek().span;
+        if self.peek().kind != TokenKind::Dashes {
+            return self.err("a module header `---- MODULE Name ----`");
+        }
+        self.advance();
+        self.expect_kw(Keyword::Module)?;
+        let name = self.expect_ident()?;
+        if self.peek().kind != TokenKind::Dashes {
+            return self.err("`----` to close the module header");
+        }
+        self.advance();
+
+        let mut units = Vec::new();
+        loop {
+            if self.peek().kind == TokenKind::ModuleFooter {
+                let end = self.advance().span;
+                return Ok(Module {
+                    name,
+                    units,
+                    span: start.merge(end),
+                });
+            }
+            if self.at_eof() {
+                return self.err("`====` to close the module");
+            }
+            units.push(self.parse_unit()?);
+        }
+    }
+
+    fn parse_unit(&mut self) -> Result<Unit> {
+        let floor = self.peek().col();
+        self.with_unit_floor(floor, Self::parse_unit_inner)
+    }
+
+    fn parse_unit_inner(&mut self) -> Result<Unit> {
+        let start = self.peek().span;
+
+        // `----` is either a separator or the header of a nested module.
+        if self.peek().kind == TokenKind::Dashes {
+            if self.peek_at(1).is_kw(Keyword::Module) {
+                let sub = self.parse_module()?;
+                let span = sub.span;
+                return Ok(Unit {
+                    kind: UnitKind::Submodule(Box::new(sub)),
+                    span,
+                });
+            }
+            let span = self.advance().span;
+            return Ok(Unit {
+                kind: UnitKind::Separator,
+                span,
+            });
+        }
+
+        let local = self.eat_kw(Keyword::Local);
+
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::Keyword(Keyword::Extends) => {
+                if local {
+                    return Err(SyntaxError::new(
+                        ErrorKind::Unexpected {
+                            expected: "a definition after `LOCAL`".to_string(),
+                            found: "`EXTENDS`".to_string(),
+                        },
+                        tok.span,
+                    ));
+                }
+                self.advance();
+                let mut names = vec![self.expect_ident()?];
+                while self.eat_sym(",") {
+                    names.push(self.expect_ident()?);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::Extends(names),
+                    span,
+                })
+            }
+            TokenKind::Keyword(Keyword::Constant | Keyword::Constants) => {
+                self.advance();
+                let mut decls = vec![self.parse_op_decl()?];
+                while self.eat_sym(",") {
+                    decls.push(self.parse_op_decl()?);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::ConstantDecl(decls),
+                    span,
+                })
+            }
+            TokenKind::Keyword(Keyword::Variable | Keyword::Variables) => {
+                self.advance();
+                let mut names = vec![self.expect_ident()?];
+                while self.eat_sym(",") {
+                    names.push(self.expect_ident()?);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::VariableDecl(names),
+                    span,
+                })
+            }
+            TokenKind::Keyword(Keyword::Recursive) => {
+                // Apalache dropped `RECURSIVE`. Rejecting explicitly is the
+                // rule from AGENTS.md: unhandled input raises an error, it
+                // never gets a default.
+                Err(SyntaxError::new(
+                    ErrorKind::Unsupported {
+                        construct: "`RECURSIVE`".to_string(),
+                        note: "recursive operator definitions are outside the supported \
+                               fragment; rewrite the definition using a fold over a finite \
+                               set, or a function defined by `[x \\in S |-> …]`"
+                            .to_string(),
+                    },
+                    tok.span,
+                ))
+            }
+            TokenKind::Keyword(Keyword::Instance) => {
+                let instance = self.parse_instance()?;
+                let span = start.merge(instance.span);
+                Ok(Unit {
+                    kind: UnitKind::Instance { local, instance },
+                    span,
+                })
+            }
+            TokenKind::Keyword(Keyword::Assume | Keyword::Assumption | Keyword::Axiom) => {
+                self.advance();
+                let name = self.try_parse_named_prefix();
+                let body = self.parse_expr(0)?;
+                let span = start.merge(body.span);
+                Ok(Unit {
+                    kind: UnitKind::Assume { name, body },
+                    span,
+                })
+            }
+            TokenKind::Keyword(
+                Keyword::Theorem | Keyword::Lemma | Keyword::Corollary | Keyword::Proposition,
+            ) => {
+                self.advance();
+                let name = self.try_parse_named_prefix();
+                let body = self.parse_expr(0)?;
+                let proof = self.parse_proof_opt()?;
+                let span = start.merge(self.prev_span());
+                Ok(Unit {
+                    kind: UnitKind::Theorem { name, body, proof },
+                    span,
+                })
+            }
+            _ => self.parse_definition(local, start),
+        }
+    }
+
+    /// `THEOREM Name == e` and `ASSUME Name == e` name their unit. Only commit
+    /// to that reading when `Ident ==` is actually there.
+    fn try_parse_named_prefix(&mut self) -> Option<Ident> {
+        if self.peek().kind == TokenKind::Ident && self.peek_at(1).is_sym("==") {
+            let tok = self.advance();
+            self.advance();
+            return Some(Ident {
+                name: tok.text,
+                span: tok.span,
+            });
+        }
+        None
+    }
+
+    fn prev_span(&self) -> Span {
+        let idx = self.pos.saturating_sub(1);
+        match self.tokens.get(idx) {
+            Some(t) => t.span,
+            None => Span::default(),
+        }
+    }
+
+    /// `Op`, or `Op(_, _)` declaring arity, or an operator symbol.
+    fn parse_op_decl(&mut self) -> Result<OpDecl> {
+        let start = self.peek().span;
+        let name = self.expect_ident()?;
+        let mut arity = 0;
+        if self.peek().is_sym("(") {
+            self.advance();
+            loop {
+                if self.eat_sym("_") {
+                    arity += 1;
+                } else {
+                    return self.err("`_` in an arity declaration");
+                }
+                if !self.eat_sym(",") {
+                    break;
+                }
+            }
+            self.expect_sym(")")?;
+        }
+        let span = start.merge(self.prev_span());
+        Ok(OpDecl { name, arity, span })
+    }
+
+    fn parse_instance(&mut self) -> Result<Instance> {
+        let start = self.expect_kw(Keyword::Instance)?.span;
+        let module = self.expect_ident()?;
+        let mut substitutions = Vec::new();
+        if self.eat_kw(Keyword::With) {
+            loop {
+                let lhs = self.parse_subst_lhs()?;
+                self.expect_sym("<-")?;
+                let rhs = self.parse_expr(0)?;
+                substitutions.push((lhs, rhs));
+                if !self.eat_sym(",") {
+                    break;
+                }
+            }
+        }
+        let span = start.merge(self.prev_span());
+        Ok(Instance {
+            module,
+            substitutions,
+            span,
+        })
+    }
+
+    /// The left side of a `WITH` substitution is a declared name, which may be
+    /// an operator symbol rather than an identifier.
+    fn parse_subst_lhs(&mut self) -> Result<Ident> {
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::Ident => self.expect_ident(),
+            TokenKind::Sym
+                if op::infix_info(&tok.text).is_some()
+                    || op::prefix_info(&tok.text).is_some()
+                    || op::postfix_info(&tok.text).is_some() =>
+            {
+                self.advance();
+                Ok(Ident {
+                    name: tok.text,
+                    span: tok.span,
+                })
+            }
+            _ => self.err("a name or operator symbol to substitute for"),
+        }
+    }
+
+    /// Milestone 1: record a proof's extent without interpreting it.
+    fn parse_proof_opt(&mut self) -> Result<Option<Proof>> {
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::Keyword(Keyword::Obvious | Keyword::Omitted) => {
+                let span = self.advance().span;
+                Ok(Some(Proof { span }))
+            }
+            TokenKind::Keyword(Keyword::By) => {
+                let start = self.advance().span;
+                // Consume to the end of the proof: the next unit always starts
+                // at column 1, and a module footer always ends the module.
+                while !self.at_eof()
+                    && self.peek().kind != TokenKind::ModuleFooter
+                    && self.peek().kind != TokenKind::Dashes
+                    && self.peek().col() > 1
+                {
+                    self.advance();
+                }
+                Ok(Some(Proof {
+                    span: start.merge(self.prev_span()),
+                }))
+            }
+            // A structured `<1>1.` proof lexes as `<` `1` `>` … . Guessing at
+            // its extent would silently swallow real units, so reject it.
+            TokenKind::Sym if tok.text == "<" && self.peek_at(1).kind != TokenKind::Eof => {
+                if matches!(self.peek_at(1).kind, TokenKind::Int(_)) && self.peek_at(2).is_sym(">")
+                {
+                    return Err(SyntaxError::new(
+                        ErrorKind::Unsupported {
+                            construct: "a structured `<n>` proof".to_string(),
+                            note: "milestone 1 accepts only `OBVIOUS`, `OMITTED` and `BY` \
+                                   proofs; remove the proof body or replace it with `OMITTED`"
+                                .to_string(),
+                        },
+                        tok.span,
+                    ));
+                }
+                Ok(None)
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A definition. Six shapes, distinguished by bounded lookahead:
+    /// `Op == e`, `Op(a, b) == e`, `f[x \in S] == e`, `a \oplus b == e`,
+    /// `-. x == e`, `x ^+ == e` — plus the `INSTANCE` variants of the first two.
+    fn parse_definition(&mut self, local: bool, start: Span) -> Result<Unit> {
+        let tok = self.peek().clone();
+
+        // Prefix-operator definition: `SUBSET x == …`.
+        if tok.kind == TokenKind::Sym
+            && op::prefix_info(&tok.text).is_some()
+            && self.peek_at(1).kind == TokenKind::Ident
+            && self.peek_at(2).is_sym("==")
+        {
+            self.advance();
+            let param = self.expect_ident()?;
+            self.advance(); // `==`
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Unit {
+                kind: UnitKind::OpDef {
+                    local,
+                    name: Ident {
+                        name: tok.text,
+                        span: tok.span,
+                    },
+                    params: vec![OpDecl {
+                        span: param.span,
+                        name: param,
+                        arity: 0,
+                    }],
+                    body,
+                },
+                span,
+            });
+        }
+
+        if tok.kind != TokenKind::Ident {
+            return self.err("a definition, declaration, or `====`");
+        }
+
+        // Infix-operator definition: `a \oplus b == …`.
+        if self.peek_at(1).kind == TokenKind::Sym
+            && op::infix_info(&self.peek_at(1).text).is_some()
+            && self.peek_at(2).kind == TokenKind::Ident
+            && self.peek_at(3).is_sym("==")
+        {
+            let lhs = self.expect_ident()?;
+            let opsym = self.advance();
+            let rhs = self.expect_ident()?;
+            self.advance(); // `==`
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Unit {
+                kind: UnitKind::OpDef {
+                    local,
+                    name: Ident {
+                        name: opsym.text,
+                        span: opsym.span,
+                    },
+                    params: vec![
+                        OpDecl {
+                            span: lhs.span,
+                            name: lhs,
+                            arity: 0,
+                        },
+                        OpDecl {
+                            span: rhs.span,
+                            name: rhs,
+                            arity: 0,
+                        },
+                    ],
+                    body,
+                },
+                span,
+            });
+        }
+
+        // Postfix-operator definition: `x ^+ == …`.
+        if self.peek_at(1).kind == TokenKind::Sym
+            && op::postfix_info(&self.peek_at(1).text).is_some()
+            && self.peek_at(2).is_sym("==")
+        {
+            let param = self.expect_ident()?;
+            let opsym = self.advance();
+            self.advance(); // `==`
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Unit {
+                kind: UnitKind::OpDef {
+                    local,
+                    name: Ident {
+                        name: opsym.text,
+                        span: opsym.span,
+                    },
+                    params: vec![OpDecl {
+                        span: param.span,
+                        name: param,
+                        arity: 0,
+                    }],
+                    body,
+                },
+                span,
+            });
+        }
+
+        let name = self.expect_ident()?;
+
+        // Function definition: `f[x \in S] == …`.
+        if self.peek().is_sym("[") {
+            self.advance();
+            let bounds = self.parse_bounds()?;
+            self.expect_sym("]")?;
+            self.expect_sym("==")?;
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Unit {
+                kind: UnitKind::FnDef {
+                    local,
+                    name,
+                    bounds,
+                    body,
+                },
+                span,
+            });
+        }
+
+        // Parameters, if any.
+        let mut params = Vec::new();
+        if self.peek().is_sym("(") {
+            self.advance();
+            loop {
+                params.push(self.parse_param_decl()?);
+                if !self.eat_sym(",") {
+                    break;
+                }
+            }
+            self.expect_sym(")")?;
+        }
+
+        self.expect_sym("==")?;
+
+        // `I(x) == INSTANCE M WITH …`.
+        if self.peek().is_kw(Keyword::Instance) {
+            let instance = self.parse_instance()?;
+            let span = start.merge(instance.span);
+            return Ok(Unit {
+                kind: UnitKind::ModuleDef {
+                    local,
+                    name,
+                    params,
+                    instance,
+                },
+                span,
+            });
+        }
+
+        let body = self.parse_expr(0)?;
+        let span = start.merge(body.span);
+        Ok(Unit {
+            kind: UnitKind::OpDef {
+                local,
+                name,
+                params,
+                body,
+            },
+            span,
+        })
+    }
+
+    /// A formal parameter: `x`, or the higher-order form `F(_, _)`.
+    fn parse_param_decl(&mut self) -> Result<OpDecl> {
+        let tok = self.peek().clone();
+        // An operator symbol may itself be a formal parameter: `Op(_+_)`.
+        if tok.kind == TokenKind::Sym
+            && (op::infix_info(&tok.text).is_some() || op::prefix_info(&tok.text).is_some())
+        {
+            self.advance();
+            return Ok(OpDecl {
+                span: tok.span,
+                name: Ident {
+                    name: tok.text,
+                    span: tok.span,
+                },
+                arity: 0,
+            });
+        }
+        self.parse_op_decl()
+    }
+
+    // ---- layout -------------------------------------------------------------
+
+    /// Would `tok` close an enclosing junction list, or start a new unit?
+    ///
+    /// Two layout rules, both column-based:
+    ///
+    /// * the junction stack has strictly increasing columns, so the innermost
+    ///   open list is the binding one;
+    /// * a token at or left of the unit floor begins a new unit, which
+    ///   is what stops `A == 1` from absorbing a following `<1>1.` proof step
+    ///   or a `- 5` written at column 1.
+    ///
+    /// The unit rule does not apply inside brackets opened *after* the floor
+    /// was established: a column-1 token in the middle of a parenthesised
+    /// expression is ordinary continuation, not a new unit.
+    fn at_layout_boundary(&self, tok: &Token) -> bool {
+        if tok.kind == TokenKind::Eof {
+            return false;
+        }
+        if self.bracket_depth == self.unit_floor_depth && tok.col() <= self.unit_floor {
+            return true;
+        }
+        match self.juncts.last() {
+            Some(&(col, _)) => tok.col() <= col,
+            None => false,
+        }
+    }
+
+    /// Parse `f` with the unit floor set to `floor`, restoring the previous
+    /// floor afterwards so that a nested `LET` cannot leak layout state into
+    /// its enclosing definition.
+    fn with_unit_floor<T>(
+        &mut self,
+        floor: u32,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let saved_floor = self.unit_floor;
+        let saved_depth = self.unit_floor_depth;
+        self.unit_floor = floor;
+        self.unit_floor_depth = self.bracket_depth;
+        let out = f(self);
+        self.unit_floor = saved_floor;
+        self.unit_floor_depth = saved_depth;
+        out
+    }
+
+    /// Parse a bulleted list starting at the current `/\` or `\/`.
+    fn parse_junction_list(&mut self, kind: Junct) -> Result<Expr> {
+        let start = self.peek().span;
+        let col = self.peek().col();
+        self.juncts.push((col, kind));
+
+        let mut items = Vec::new();
+        let result = (|| -> Result<()> {
+            loop {
+                // Consume the bullet.
+                let bullet = self.peek().clone();
+                if !(bullet.kind == TokenKind::Sym && bullet.text == kind.as_str()) {
+                    return Err(SyntaxError::new(
+                        ErrorKind::Unexpected {
+                            expected: format!("`{}`", kind.as_str()),
+                            found: Self::describe(&bullet),
+                        },
+                        bullet.span,
+                    ));
+                }
+                if bullet.col() != col {
+                    return Err(SyntaxError::new(
+                        ErrorKind::JunctionMisaligned {
+                            expected: col,
+                            found: bullet.col(),
+                        },
+                        bullet.span,
+                    ));
+                }
+                self.advance();
+                items.push(self.parse_expr(0)?);
+
+                // Another bullet of the same list?
+                let next = self.peek();
+                let continues =
+                    next.kind == TokenKind::Sym && next.text == kind.as_str() && next.col() == col;
+                if !continues {
+                    return Ok(());
+                }
+            }
+        })();
+        self.juncts.pop();
+        result?;
+
+        let span = start.merge(self.prev_span());
+        Ok(Expr {
+            kind: ExprKind::Junction { kind, items },
+            span,
+        })
+    }
+
+    // ---- expressions --------------------------------------------------------
+
+    /// Parse an expression with the given minimum binding power.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`SyntaxError`] encountered.
+    pub fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
+        self.depth += 1;
+        if self.depth > self.max_depth {
+            let span = self.peek().span;
+            self.depth -= 1;
+            return Err(SyntaxError::new(
+                ErrorKind::RecursionLimit {
+                    limit: self.max_depth,
+                },
+                span,
+            ));
+        }
+        let out = self.parse_expr_inner(min_bp);
+        self.depth -= 1;
+        out
+    }
+
+    fn parse_expr_inner(&mut self, min_bp: u8) -> Result<Expr> {
+        let mut lhs = self.parse_prefix()?;
+        // The operator most recently applied at this level, for the
+        // overlapping-range check that gives TLA+ its non-associativity.
+        let mut last: Option<OpInfo> = None;
+
+        loop {
+            let tok = self.peek().clone();
+            if tok.kind != TokenKind::Sym || self.at_layout_boundary(&tok) {
+                break;
+            }
+
+            // Function application binds tighter than every real operator
+            // except `.`; it is written as a bracket, not a table entry.
+            if tok.text == "[" && min_bp <= 16 {
+                self.advance();
+                self.bracket_depth += 1;
+                let mut args = vec![self.parse_expr(0)?];
+                while self.eat_sym(",") {
+                    args.push(self.parse_expr(0)?);
+                }
+                self.expect_sym("]")?;
+                self.bracket_depth -= 1;
+                let span = lhs.span.merge(self.prev_span());
+                lhs = Expr {
+                    kind: ExprKind::FnApply {
+                        func: Box::new(lhs),
+                        args,
+                    },
+                    span,
+                };
+                continue;
+            }
+
+            if let Some(info) = op::postfix_info(&tok.text) {
+                if info.lo < min_bp {
+                    break;
+                }
+                self.check_conflict(last.as_ref(), &info, tok.span)?;
+                self.advance();
+                let span = lhs.span.merge(tok.span);
+                lhs = Expr {
+                    kind: ExprKind::Postfix {
+                        op: tok.text.clone(),
+                        op_span: tok.span,
+                        operand: Box::new(lhs),
+                    },
+                    span,
+                };
+                last = Some(info);
+                continue;
+            }
+
+            let Some(info) = op::infix_info(&tok.text) else {
+                break;
+            };
+            if info.lo < min_bp {
+                break;
+            }
+            self.check_conflict(last.as_ref(), &info, tok.span)?;
+            self.advance();
+
+            // `.` takes a field name, not an expression.
+            if tok.text == "." {
+                let field = self.expect_ident()?;
+                let span = lhs.span.merge(field.span);
+                lhs = Expr {
+                    kind: ExprKind::Field {
+                        record: Box::new(lhs),
+                        field,
+                    },
+                    span,
+                };
+                last = Some(info);
+                continue;
+            }
+
+            let rhs = self.parse_expr(info.right_bp())?;
+            let span = lhs.span.merge(rhs.span);
+            lhs = Expr {
+                kind: ExprKind::Infix {
+                    op: tok.text.clone(),
+                    op_span: tok.span,
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                },
+                span,
+            };
+            last = Some(info);
+        }
+
+        Ok(lhs)
+    }
+
+    /// The precedence-range rule: two operators applied at the same level may
+    /// not have overlapping intervals, unless they are the same associative
+    /// operator.
+    fn check_conflict(&self, last: Option<&OpInfo>, next: &OpInfo, span: Span) -> Result<()> {
+        let Some(prev) = last else {
+            return Ok(());
+        };
+        if !op::ranges_overlap(prev, next) {
+            return Ok(());
+        }
+        let same_and_assoc =
+            prev.canonical == next.canonical && prev.assoc && prev.fixity == next.fixity;
+        if same_and_assoc {
+            return Ok(());
+        }
+        // A postfix operator chained onto a postfix operator (`x'^+`) is fine.
+        if prev.fixity == Fixity::Postfix && next.fixity == Fixity::Postfix {
+            return Ok(());
+        }
+        Err(SyntaxError::new(
+            ErrorKind::PrecedenceConflict {
+                left: prev.canonical.to_string(),
+                left_lo: prev.lo,
+                left_hi: prev.hi,
+                right: next.canonical.to_string(),
+                right_lo: next.lo,
+                right_hi: next.hi,
+            },
+            span,
+        ))
+    }
+
+    fn parse_prefix(&mut self) -> Result<Expr> {
+        let tok = self.peek().clone();
+        let start = tok.span;
+
+        match tok.kind {
+            TokenKind::Int(base) => {
+                self.advance();
+                Ok(Expr {
+                    kind: ExprKind::Int {
+                        base,
+                        digits: tok.text,
+                    },
+                    span: start,
+                })
+            }
+            TokenKind::Real => {
+                self.advance();
+                Ok(Expr {
+                    kind: ExprKind::Real(tok.text),
+                    span: start,
+                })
+            }
+            TokenKind::Str => {
+                self.advance();
+                Ok(Expr {
+                    kind: ExprKind::Str(tok.text),
+                    span: start,
+                })
+            }
+            TokenKind::Ident => self.parse_name_or_apply(),
+            TokenKind::Keyword(kw) => self.parse_keyword_expr(kw, start),
+            TokenKind::Sym => self.parse_sym_prefix(&tok, start),
+            TokenKind::Dashes | TokenKind::ModuleFooter | TokenKind::Eof => {
+                self.err("an expression")
+            }
+        }
+    }
+
+    /// A subscript: the `v` in `[A]_v`, `<<A>>_v`, `WF_v(A)`.
+    ///
+    /// Deliberately **not** `parse_prefix`. A subscript is a primary
+    /// expression, and letting it absorb a following `(` would read the `(A)`
+    /// of `WF_v(A)` as an application of `v`.
+    fn parse_subscript(&mut self) -> Result<Expr> {
+        let start = self.peek().span;
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::Ident => {
+                let mut path = vec![self.expect_ident()?];
+                while self.peek().is_sym("!") && self.peek_at(1).kind == TokenKind::Ident {
+                    self.advance();
+                    path.push(self.expect_ident()?);
+                }
+                let span = start.merge(self.prev_span());
+                Ok(Expr {
+                    kind: ExprKind::Name(QualName { path, span }),
+                    span,
+                })
+            }
+            TokenKind::Sym if tok.text == "<<" => self.parse_angle(start),
+            TokenKind::Sym if tok.text == "(" => {
+                self.advance();
+                self.bracket_depth += 1;
+                let inner = self.parse_expr(0)?;
+                self.expect_sym(")")?;
+                self.bracket_depth -= 1;
+                let span = start.merge(self.prev_span());
+                Ok(Expr {
+                    kind: ExprKind::Paren(Box::new(inner)),
+                    span,
+                })
+            }
+            _ => self.err("a subscript: a name, a tuple, or a parenthesised expression"),
+        }
+    }
+
+    fn parse_name_or_apply(&mut self) -> Result<Expr> {
+        let start = self.peek().span;
+        let mut path = vec![self.expect_ident()?];
+        while self.peek().is_sym("!") && self.peek_at(1).kind == TokenKind::Ident {
+            self.advance();
+            path.push(self.expect_ident()?);
+        }
+        let name = QualName {
+            path,
+            span: start.merge(self.prev_span()),
+        };
+
+        if self.peek().is_sym("(") {
+            self.advance();
+            self.bracket_depth += 1;
+            let mut args = Vec::new();
+            if !self.peek().is_sym(")") {
+                loop {
+                    args.push(self.parse_expr(0)?);
+                    if !self.eat_sym(",") {
+                        break;
+                    }
+                }
+            }
+            self.expect_sym(")")?;
+            self.bracket_depth -= 1;
+            let span = start.merge(self.prev_span());
+            return Ok(Expr {
+                kind: ExprKind::Apply { head: name, args },
+                span,
+            });
+        }
+
+        let span = name.span;
+        Ok(Expr {
+            kind: ExprKind::Name(name),
+            span,
+        })
+    }
+
+    fn parse_keyword_expr(&mut self, kw: Keyword, start: Span) -> Result<Expr> {
+        match kw {
+            Keyword::If => {
+                self.advance();
+                let cond = self.parse_expr(0)?;
+                self.expect_kw(Keyword::Then)?;
+                let then_branch = self.parse_expr(0)?;
+                self.expect_kw(Keyword::Else)?;
+                let else_branch = self.parse_expr(0)?;
+                let span = start.merge(else_branch.span);
+                Ok(Expr {
+                    kind: ExprKind::If {
+                        cond: Box::new(cond),
+                        then_branch: Box::new(then_branch),
+                        else_branch: Box::new(else_branch),
+                    },
+                    span,
+                })
+            }
+            Keyword::Case => self.parse_case(start),
+            Keyword::Let => {
+                self.advance();
+                let mut defs = Vec::new();
+                while !self.peek().is_kw(Keyword::In) {
+                    if self.at_eof() {
+                        return self.err("`IN` to close a `LET`");
+                    }
+                    let unit_start = self.peek().span;
+                    let def_floor = unit_start.start.col;
+                    let def = self.with_unit_floor(def_floor, |p| {
+                        let local = p.eat_kw(Keyword::Local);
+                        p.parse_definition(local, unit_start)
+                    })?;
+                    defs.push(def);
+                }
+                self.expect_kw(Keyword::In)?;
+                let body = self.parse_expr(0)?;
+                let span = start.merge(body.span);
+                Ok(Expr {
+                    kind: ExprKind::Let {
+                        defs,
+                        body: Box::new(body),
+                    },
+                    span,
+                })
+            }
+            Keyword::Choose => {
+                self.advance();
+                let pattern = self.parse_pattern()?;
+                let domain = if self.eat_sym("\\in") {
+                    Some(Box::new(self.parse_expr(0)?))
+                } else {
+                    None
+                };
+                self.expect_sym(":")?;
+                let body = self.parse_expr(0)?;
+                let span = start.merge(body.span);
+                Ok(Expr {
+                    kind: ExprKind::Choose {
+                        pattern,
+                        domain,
+                        body: Box::new(body),
+                    },
+                    span,
+                })
+            }
+            Keyword::Lambda => {
+                self.advance();
+                let mut params = vec![self.expect_ident()?];
+                while self.eat_sym(",") {
+                    params.push(self.expect_ident()?);
+                }
+                self.expect_sym(":")?;
+                let body = self.parse_expr(0)?;
+                let span = start.merge(body.span);
+                Ok(Expr {
+                    kind: ExprKind::Lambda {
+                        params,
+                        body: Box::new(body),
+                    },
+                    span,
+                })
+            }
+            Keyword::WeakFairness | Keyword::StrongFairness => {
+                self.advance();
+                let fk = if kw == Keyword::WeakFairness {
+                    FairnessKind::Weak
+                } else {
+                    FairnessKind::Strong
+                };
+                let subscript = self.parse_subscript()?;
+                self.expect_sym("(")?;
+                let body = self.parse_expr(0)?;
+                self.expect_sym(")")?;
+                let span = start.merge(self.prev_span());
+                Ok(Expr {
+                    kind: ExprKind::Fairness {
+                        kind: fk,
+                        subscript: Box::new(subscript),
+                        body: Box::new(body),
+                    },
+                    span,
+                })
+            }
+            _ => self.err("an expression"),
+        }
+    }
+
+    fn parse_case(&mut self, start: Span) -> Result<Expr> {
+        self.expect_kw(Keyword::Case)?;
+        let mut arms = Vec::new();
+        let mut other = None;
+        loop {
+            if self.eat_kw(Keyword::Other) {
+                self.expect_sym("->")?;
+                other = Some(Box::new(self.parse_expr(0)?));
+            } else {
+                let guard = self.parse_expr(0)?;
+                self.expect_sym("->")?;
+                let value = self.parse_expr(0)?;
+                arms.push(CaseArm { guard, value });
+            }
+            // Arms are separated by `[]`, which the lexer produces as one
+            // token — the same token as temporal `[]`, distinguished here by
+            // position rather than by a lexer hack.
+            if !self.peek().is_sym("[]") {
+                break;
+            }
+            self.advance();
+        }
+        let span = start.merge(self.prev_span());
+        Ok(Expr {
+            kind: ExprKind::Case { arms, other },
+            span,
+        })
+    }
+
+    fn parse_sym_prefix(&mut self, tok: &Token, start: Span) -> Result<Expr> {
+        match tok.text.as_str() {
+            "/\\" => return self.parse_junction_list(Junct::And),
+            "\\/" => return self.parse_junction_list(Junct::Or),
+            "(" => {
+                self.advance();
+                self.bracket_depth += 1;
+                let inner = self.parse_expr(0)?;
+                self.expect_sym(")")?;
+                self.bracket_depth -= 1;
+                let span = start.merge(self.prev_span());
+                return Ok(Expr {
+                    kind: ExprKind::Paren(Box::new(inner)),
+                    span,
+                });
+            }
+            "{" => return self.parse_brace(start),
+            "[" => return self.parse_bracket(start),
+            "<<" => return self.parse_angle(start),
+            "@" => {
+                self.advance();
+                return Ok(Expr {
+                    kind: ExprKind::At,
+                    span: start,
+                });
+            }
+            "\\A" | "\\E" | "\\AA" | "\\EE" => return self.parse_quant(tok, start),
+            "-" => {
+                // Unary minus. The lexer emits `-`; position decides, and the
+                // AST records the distinct `-.` spelling so that nothing
+                // downstream can confuse it with subtraction.
+                self.advance();
+                let info = op::prefix_info("-.").ok_or_else(|| {
+                    SyntaxError::new(ErrorKind::UnknownOperator("-.".to_string()), start)
+                })?;
+                let operand = self.parse_expr(info.right_bp())?;
+                let span = start.merge(operand.span);
+                return Ok(Expr {
+                    kind: ExprKind::Prefix {
+                        op: "-.".to_string(),
+                        op_span: start,
+                        operand: Box::new(operand),
+                    },
+                    span,
+                });
+            }
+            _ => {}
+        }
+
+        if let Some(info) = op::prefix_info(&tok.text) {
+            self.advance();
+            let operand = self.parse_expr(info.right_bp())?;
+            let span = start.merge(operand.span);
+            return Ok(Expr {
+                kind: ExprKind::Prefix {
+                    op: tok.text.clone(),
+                    op_span: start,
+                    operand: Box::new(operand),
+                },
+                span,
+            });
+        }
+
+        self.err("an expression")
+    }
+
+    fn parse_quant(&mut self, tok: &Token, start: Span) -> Result<Expr> {
+        let kind = match tok.text.as_str() {
+            "\\A" => QuantKind::Forall,
+            "\\E" => QuantKind::Exists,
+            "\\AA" => QuantKind::TemporalForall,
+            "\\EE" => QuantKind::TemporalExists,
+            _ => return self.err("a quantifier"),
+        };
+        self.advance();
+
+        // Bounded or unbounded? `\A x \in S : P` versus `\A x : P`. Scan the
+        // comma-separated variable list for a following `\in`.
+        let unbounded = {
+            let mut n = 0;
+            while self.peek_at(n).kind == TokenKind::Ident {
+                n += 1;
+                if self.peek_at(n).is_sym(",") {
+                    n += 1;
+                } else {
+                    break;
+                }
+            }
+            self.peek_at(n).is_sym(":")
+        };
+
+        if unbounded {
+            let mut vars = vec![self.expect_ident()?];
+            while self.eat_sym(",") {
+                vars.push(self.expect_ident()?);
+            }
+            self.expect_sym(":")?;
+            let body = self.parse_expr(0)?;
+            let span = start.merge(body.span);
+            return Ok(Expr {
+                kind: ExprKind::UnboundedQuant {
+                    kind,
+                    vars,
+                    body: Box::new(body),
+                },
+                span,
+            });
+        }
+
+        let bounds = self.parse_bounds()?;
+        self.expect_sym(":")?;
+        let body = self.parse_expr(0)?;
+        let span = start.merge(body.span);
+        Ok(Expr {
+            kind: ExprKind::Quant {
+                kind,
+                bounds,
+                body: Box::new(body),
+            },
+            span,
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        if self.peek().is_sym("<<") {
+            self.advance();
+            let mut names = vec![self.expect_ident()?];
+            while self.eat_sym(",") {
+                names.push(self.expect_ident()?);
+            }
+            self.expect_sym(">>")?;
+            return Ok(Pattern::Tuple(names));
+        }
+        Ok(Pattern::Name(self.expect_ident()?))
+    }
+
+    /// `x, y \in S, <<a, b>> \in T`
+    fn parse_bounds(&mut self) -> Result<Vec<Bound>> {
+        let mut bounds = Vec::new();
+        loop {
+            // `x, y \in S` shares one domain across two patterns; the outer
+            // loop below handles `x \in S, y \in T`, where the comma
+            // separates whole groups. Both spellings reach the same comma, so
+            // patterns are accumulated greedily and the `\in` that follows
+            // closes the group.
+            let mut patterns = vec![self.parse_pattern()?];
+            while self.peek().is_sym(",") {
+                self.advance();
+                patterns.push(self.parse_pattern()?);
+            }
+            self.expect_sym("\\in")?;
+            // A bound's domain must not swallow the `:` or `|->` that follows,
+            // and must not absorb the `,` separating bound groups. Parsing at
+            // binding power 1 stops before `,` and `:`, which are not
+            // operators, while still admitting every real domain expression.
+            let domain = self.parse_expr(1)?;
+            bounds.push(Bound { patterns, domain });
+            if self.peek().is_sym(",") {
+                self.advance();
+                continue;
+            }
+            break;
+        }
+        Ok(bounds)
+    }
+
+    fn parse_angle(&mut self, start: Span) -> Result<Expr> {
+        self.expect_sym("<<")?;
+        self.bracket_depth += 1;
+        let out = self.parse_angle_body(start);
+        self.bracket_depth -= 1;
+        out
+    }
+
+    fn parse_angle_body(&mut self, start: Span) -> Result<Expr> {
+        let mut items = Vec::new();
+        if !self.peek().is_sym(">>") {
+            loop {
+                items.push(self.parse_expr(0)?);
+                if !self.eat_sym(",") {
+                    break;
+                }
+            }
+        }
+        self.expect_sym(">>")?;
+        let close = self.prev_span();
+
+        // `<<A>>_v` — an angle action rather than a tuple.
+        if self.peek().is_sym("_") {
+            self.advance();
+            let subscript = self.parse_subscript()?;
+            let span = start.merge(subscript.span);
+            let body = match items.len() {
+                1 => match items.into_iter().next() {
+                    Some(e) => e,
+                    None => return self.err("an action inside `<< >>_`"),
+                },
+                _ => {
+                    return Err(SyntaxError::new(
+                        ErrorKind::Unexpected {
+                            expected: "a single action inside `<< >>_`".to_string(),
+                            found: format!("{} components", items.len()),
+                        },
+                        start.merge(close),
+                    ));
+                }
+            };
+            return Ok(Expr {
+                kind: ExprKind::Action {
+                    kind: ActionKind::NonStuttering,
+                    body: Box::new(body),
+                    subscript: Box::new(subscript),
+                },
+                span,
+            });
+        }
+
+        Ok(Expr {
+            kind: ExprKind::Tuple(items),
+            span: start.merge(close),
+        })
+    }
+
+    /// Classify a `{ … }` form by scanning at bracket depth zero.
+    ///
+    /// `{a, b}` has no top-level `:`; `{x \in S : P}` has a `\in` before its
+    /// `:`; `{e : x \in S}` does not. This is the arbitrary lookahead that
+    /// `docs/TLA_FRONTEND_DESIGN.md` §1.0 names as an obstacle to LR(1) — a
+    /// Pratt parser can simply look.
+    fn parse_brace(&mut self, start: Span) -> Result<Expr> {
+        self.expect_sym("{")?;
+        self.bracket_depth += 1;
+        let out = self.parse_brace_body(start);
+        self.bracket_depth -= 1;
+        out
+    }
+
+    fn parse_brace_body(&mut self, start: Span) -> Result<Expr> {
+        if self.eat_sym("}") {
+            return Ok(Expr {
+                kind: ExprKind::SetEnum(Vec::new()),
+                span: start.merge(self.prev_span()),
+            });
+        }
+
+        let (colon_at, in_before_colon) = self.scan_brace_shape();
+
+        if colon_at.is_none() {
+            let mut items = vec![self.parse_expr(0)?];
+            while self.eat_sym(",") {
+                items.push(self.parse_expr(0)?);
+            }
+            self.expect_sym("}")?;
+            return Ok(Expr {
+                kind: ExprKind::SetEnum(items),
+                span: start.merge(self.prev_span()),
+            });
+        }
+
+        if in_before_colon {
+            let pattern = self.parse_pattern()?;
+            self.expect_sym("\\in")?;
+            let domain = self.parse_expr(1)?;
+            self.expect_sym(":")?;
+            let pred = self.parse_expr(0)?;
+            self.expect_sym("}")?;
+            return Ok(Expr {
+                kind: ExprKind::SetFilter {
+                    pattern,
+                    domain: Box::new(domain),
+                    pred: Box::new(pred),
+                },
+                span: start.merge(self.prev_span()),
+            });
+        }
+
+        let expr = self.parse_expr(1)?;
+        self.expect_sym(":")?;
+        let bounds = self.parse_bounds()?;
+        self.expect_sym("}")?;
+        Ok(Expr {
+            kind: ExprKind::SetMap {
+                expr: Box::new(expr),
+                bounds,
+            },
+            span: start.merge(self.prev_span()),
+        })
+    }
+
+    /// Returns `(offset of the top-level ':', whether a top-level '\in'
+    /// precedes it)`. The cursor is just past the opening `{`.
+    fn scan_brace_shape(&self) -> (Option<usize>, bool) {
+        let mut depth = 0i32;
+        let mut saw_in = false;
+        let mut n = 0usize;
+        loop {
+            let tok = self.peek_at(n);
+            match tok.kind {
+                TokenKind::Eof => return (None, false),
+                TokenKind::Sym => match tok.text.as_str() {
+                    "{" | "[" | "(" | "<<" => depth += 1,
+                    "}" if depth == 0 => return (None, saw_in),
+                    "}" | "]" | ")" | ">>" => depth -= 1,
+                    "\\in" if depth == 0 => saw_in = true,
+                    ":" if depth == 0 => return (Some(n), saw_in),
+                    _ => {}
+                },
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+
+    /// Classify a `[ … ]` form by scanning at bracket depth zero for the first
+    /// of `\in`, `|->`, `:`, `->`, `EXCEPT`, `]`.
+    fn parse_bracket(&mut self, start: Span) -> Result<Expr> {
+        self.expect_sym("[")?;
+        self.bracket_depth += 1;
+        let out = self.parse_bracket_body(start);
+        self.bracket_depth -= 1;
+        out
+    }
+
+    fn parse_bracket_body(&mut self, start: Span) -> Result<Expr> {
+        match self.scan_bracket_shape() {
+            BracketShape::FnConstruct => {
+                let bounds = self.parse_bounds()?;
+                self.expect_sym("|->")?;
+                let body = self.parse_expr(0)?;
+                self.expect_sym("]")?;
+                Ok(Expr {
+                    kind: ExprKind::FnConstruct {
+                        bounds,
+                        body: Box::new(body),
+                    },
+                    span: start.merge(self.prev_span()),
+                })
+            }
+            BracketShape::RecordLit => {
+                let mut fields = Vec::new();
+                loop {
+                    let name = self.expect_ident()?;
+                    self.expect_sym("|->")?;
+                    let value = self.parse_expr(1)?;
+                    fields.push((name, value));
+                    if !self.eat_sym(",") {
+                        break;
+                    }
+                }
+                self.expect_sym("]")?;
+                Ok(Expr {
+                    kind: ExprKind::RecordLit(fields),
+                    span: start.merge(self.prev_span()),
+                })
+            }
+            BracketShape::RecordSet => {
+                let mut fields = Vec::new();
+                loop {
+                    let name = self.expect_ident()?;
+                    self.expect_sym(":")?;
+                    let value = self.parse_expr(1)?;
+                    fields.push((name, value));
+                    if !self.eat_sym(",") {
+                        break;
+                    }
+                }
+                self.expect_sym("]")?;
+                Ok(Expr {
+                    kind: ExprKind::RecordSet(fields),
+                    span: start.merge(self.prev_span()),
+                })
+            }
+            BracketShape::FnSet => {
+                let domain = self.parse_expr(0)?;
+                self.expect_sym("->")?;
+                let codomain = self.parse_expr(0)?;
+                self.expect_sym("]")?;
+                Ok(Expr {
+                    kind: ExprKind::FnSet {
+                        domain: Box::new(domain),
+                        codomain: Box::new(codomain),
+                    },
+                    span: start.merge(self.prev_span()),
+                })
+            }
+            BracketShape::Except => {
+                let base = self.parse_expr(0)?;
+                self.expect_kw(Keyword::Except)?;
+                let mut updates = Vec::new();
+                loop {
+                    self.expect_sym("!")?;
+                    let mut path = Vec::new();
+                    loop {
+                        if self.peek().is_sym("[") {
+                            self.advance();
+                            let mut idx = vec![self.parse_expr(0)?];
+                            while self.eat_sym(",") {
+                                idx.push(self.parse_expr(0)?);
+                            }
+                            self.expect_sym("]")?;
+                            path.push(ExceptSel::Index(idx));
+                        } else if self.peek().is_sym(".") {
+                            self.advance();
+                            path.push(ExceptSel::Field(self.expect_ident()?));
+                        } else {
+                            break;
+                        }
+                    }
+                    if path.is_empty() {
+                        return self.err("`[…]` or `.field` after `!` in an `EXCEPT`");
+                    }
+                    self.expect_sym("=")?;
+                    let value = self.parse_expr(1)?;
+                    updates.push(ExceptUpdate { path, value });
+                    if !self.eat_sym(",") {
+                        break;
+                    }
+                }
+                self.expect_sym("]")?;
+                Ok(Expr {
+                    kind: ExprKind::Except {
+                        base: Box::new(base),
+                        updates,
+                    },
+                    span: start.merge(self.prev_span()),
+                })
+            }
+            BracketShape::Action => {
+                let body = self.parse_expr(0)?;
+                self.expect_sym("]")?;
+                self.expect_sym("_")?;
+                let subscript = self.parse_subscript()?;
+                let span = start.merge(subscript.span);
+                Ok(Expr {
+                    kind: ExprKind::Action {
+                        kind: ActionKind::Stuttering,
+                        body: Box::new(body),
+                        subscript: Box::new(subscript),
+                    },
+                    span,
+                })
+            }
+        }
+    }
+
+    fn scan_bracket_shape(&self) -> BracketShape {
+        let mut depth = 0i32;
+        let mut n = 0usize;
+        loop {
+            let tok = self.peek_at(n);
+            match tok.kind {
+                TokenKind::Eof => return BracketShape::Action,
+                TokenKind::Keyword(Keyword::Except) if depth == 0 => return BracketShape::Except,
+                TokenKind::Sym => match tok.text.as_str() {
+                    "{" | "[" | "(" | "<<" => depth += 1,
+                    "]" if depth == 0 => return BracketShape::Action,
+                    "}" | "]" | ")" | ">>" => depth -= 1,
+                    "\\in" if depth == 0 => return BracketShape::FnConstruct,
+                    "|->" if depth == 0 => return BracketShape::RecordLit,
+                    ":" if depth == 0 => return BracketShape::RecordSet,
+                    "->" if depth == 0 => return BracketShape::FnSet,
+                    _ => {}
+                },
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BracketShape {
+    FnConstruct,
+    RecordLit,
+    RecordSet,
+    FnSet,
+    Except,
+    Action,
+}
+
+/// Sentinel returned when a caller hands the parser an empty token stream.
+///
+/// The lexer always emits a trailing [`TokenKind::Eof`], so this is dead for
+/// every stream this crate produces; it exists so that the "no `unwrap`"
+/// rule is satisfied without an `expect("unreachable")`, which `AGENTS.md`
+/// explicitly calls out as the wrong shape.
+static EOF_TOKEN_SENTINEL: Token = Token {
+    kind: TokenKind::Eof,
+    text: String::new(),
+    span: Span {
+        start: crate::span::Pos {
+            line: 1,
+            col: 1,
+            offset: 0,
+        },
+        end: crate::span::Pos {
+            line: 1,
+            col: 1,
+            offset: 0,
+        },
+    },
+};
+
+/// Lex and parse a TLA+ source file.
+///
+/// # Errors
+///
+/// Returns the first [`SyntaxError`] encountered in either phase.
+pub fn parse_file(src: &str) -> Result<ParsedFile> {
+    let lexed = lexer::lex(src)?;
+    let mut parser = Parser::new(lexed.tokens);
+    let module = parser.parse_file()?;
+    Ok(ParsedFile {
+        module,
+        comments: lexed.comments,
+    })
+}
+
+/// Lex and parse a single expression. Useful for tests and for `@type:`
+/// annotation bodies.
+///
+/// # Errors
+///
+/// Returns the first [`SyntaxError`] encountered in either phase.
+pub fn parse_expr_str(src: &str) -> Result<Expr> {
+    let lexed = lexer::lex(src)?;
+    let mut parser = Parser::new(lexed.tokens);
+    let expr = parser.parse_expr(0)?;
+    if !parser.at_eof() {
+        return parser.err("end of input after the expression");
+    }
+    Ok(expr)
+}

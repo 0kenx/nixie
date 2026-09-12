@@ -124,11 +124,24 @@ Next == \/ /\ a
 A `/\` or `\/` at column *c* opens a list whose items must align at *c*; any token at a column
 ≤ *c* terminates it. The indentation column behaves as a bracket.
 
-**Do not handle this in the grammar.** Handle it the way Haskell does: a token-stream
-transformer that inserts *virtual* open/close brackets, so the grammar the parser sees is
-plain context-free. The Haskell 2010 report's layout algorithm (§10.3) and Python's
-INDENT/DEDENT insertion are the two well-worn precedents; the TLA+ rule is simpler than
-either because there is no `let`/`where` interaction and no implicit continuation.
+**Superseded by the implementation — see the correction below.** The original plan was to
+handle this the way Haskell does: a token-stream transformer inserting *virtual* open/close
+brackets, so that the grammar the parser sees stays plain context-free, on the precedent of
+the Haskell 2010 layout algorithm (§10.3) and Python's INDENT/DEDENT insertion.
+
+**That does not work, and `nixie-tla-syntax` does it differently.** A `/\` opens a bulleted
+list only where an *expression* is expected; in `x == a /\ b` the identical token is an
+ordinary infix operator. A lexical pass cannot separate the two without reconstructing
+expression-position — the same problem as regex-versus-division in a JavaScript lexer, and
+equally prone to misfiring. The parser already knows, exactly, so layout is decided there:
+`/\` in prefix position starts a list, and a column check in the Pratt loop stops an
+expression at a token that would close an enclosing one.
+
+The same column mechanism does a second job the original plan did not anticipate: a token at
+or left of the column a *unit* started at ends that unit. Without it `A == 1` followed by a
+structured `<1>1.` proof step parses as `1 < 1 > 1`, and a `- 5` written at column 1 is
+absorbed as a subtraction. Both rules are suspended inside brackets, where a column-1 token
+is ordinary continuation.
 
 ### 1.2 Operator precedence is a *range*, not a level
 
@@ -358,7 +371,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 
 | # | Deliverable | Gate |
 |---|---|---|
-| 1 | `nixie-tla-syntax`: lexer, layout pre-pass, Pratt parser, level checker | Parser differential vs SANY on the corpus |
+| 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed)*; level checker *(open)* | Parser differential vs SANY on the corpus |
 | 2 | Surface IR + KerA + Snowcat typing + pass pipeline | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
@@ -371,9 +384,20 @@ oracle to test the clever ones against.
 
 ## 7. Open questions
 
-- **Parser effort is the dominant unknown.** Before committing to the full plan, measure how
-  much of the grammar the Apalache fragment actually requires — that is the cheapest way to
-  de-risk the whole programme, and it can be done against the corpus before any IR exists.
+- **Parser effort — partly answered.** `nixie-tla-syntax` now covers the expression and unit
+  grammar in ~2 700 lines, and parses `DieHard`, `EWD998`, `Paxos` and a constructed torture
+  case. What remains unmeasured is the *tail*: the Apalache test suite and the public TLA+
+  examples corpus have not been run through it, and that is what turns "parses the specs we
+  wrote" into the parity claim in §5. Vendor those corpora next.
+- **The operator precedence table is transcribed, not verified.** The common operators are
+  high-confidence and pinned by a test; the exotic ones (`\wr`, `\sqcap`, `##`, `$$`, `??`)
+  are not. One error has already been found and fixed this way — `\X` was marked
+  non-associative, which rejected the legal ternary product `A \X B \X C`. Check the whole
+  table against SANY before declaring the differential suite green.
+- **Level checking is not implemented yet.** The surface IR retains everything it needs
+  (primes, `ENABLED`, `UNCHANGED`, `[A]_v`, `WF_`/`SF_`), but nothing yet computes or enforces
+  the constant/state/action/temporal levels. That is the next piece of §1.3, and the
+  transition analysis in §2 depends on it.
 - How much of Snowcat's inference is needed when `@type:` annotations are present? Parity says
   all of it; a staged path may accept annotated specs first.
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or

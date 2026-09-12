@@ -1,0 +1,22 @@
+[package]
+name = "nixie-tla-syntax"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Pure-Rust TLA+ lexer and parser (SANY replacement) for the Nixie verification pipeline"
+keywords = ["tla", "parser", "verification", "smt", "model-checking"]
+categories = ["parser-implementations", "science"]
+
+# Deliberately dependency-light: this is a leaf crate below `nixie-tla`, and a
+# fast build here keeps the parser differential suite cheap to iterate on. It
+# does not depend on `nixie-core` -- the AST owns its strings, and interning
+# happens when the surface tree is lowered to the IR.
+
+[dependencies]
+thiserror = { workspace = true, default-features = true }
+smallvec = { workspace = true }
+
+[lints.clippy]
+unwrap_used = "deny"
