@@ -254,3 +254,40 @@ Micro-reproducers preserved: `docs/studies/assets/mulshare/`
   spelling, `mulshare3.smt2` = extract-of-var operand, `mulshare4.smt2` =
   extract-of-bvor operand — all close in ~0.02 s under IR=1, all time
   out under IR=0).
+
+## Session round 3 (2026-09-12, morning): mul-hoist lands (58dbe32b); the remaining gap is three architectural clusters
+
+**Landed — Z3 `mk_mul_hoist` port** (`bv_rewriter.cpp:2503`,
+  `shl(z,u) · x → shl(z·x, u)`): one rule in `rewrite_mul`, with the
+  subtlety that the hoisted shift's multiplicand must be *flattened into
+  the product's factor list* — without it, pure AC identities
+  (`t·(s·(t<<s)) = s·(t·(t<<s))`, Noetzli 1104) rebuild with different
+  nesting and stop folding (caught as a real 0.02 s → timeout → 0.02 s
+  regression during development, now pinned by a test).
+  `bv-term-small-rw_1300`: timeout → **unsat 0.02 s** (z3 0.29 s).
+  Whole Noetzli family (1575 files, 5 s cap): **1544 vs 1491 decided,
+  +52, zero regressions**; 45 prove `:status unknown` candidates (10/12
+  sampled z3-confirmed at 60 s; the 2 z3 non-answers are z3 crashes on
+  the files, both hand-verified identities).  509 A/B: zero flips.
+
+**Classified — `calypto/problem_14/19`** (z3 0.18/0.60 s): *not* a
+  cascade gap — nixie times out on **z3's own cascaded output** (2
+  declares, 1 assert, the 4-bvmul ite-chain core).  They join the
+  multiplier blast/search cluster.
+
+**Remaining gap, final map (8 cells, three architectural clusters):**
+
+1. *Multiplier blast/search* (4 cells): `smulov1bw12` (partial-product
+   encoding), `calypto` 14/19, `BuchwaldFried` (cross-round IR sharing
+   or shared-gate multipliers).  Nothing here is a cascade gap anymore —
+   every member times out on z3's own cascade residue.
+2. *Parser macro architecture* (1 cell): `s3_srvr_1_alt` (z3 0.15 s) —
+   parse-time define-fun inlining vs z3's short macro equations.
+3. *IR-gated* (3 cells): `maxandminor016`, `bitrev2048`, `ex7_prime`
+   (+ `rubik`, `maxandminor032`@870 s beyond cap) — solved by
+   `NIXIE_BV_IR=1`, which is net −16 on the corpus; needs a per-class
+   gate, and the gate study says no blast-time separator exists.
+
+Campaign scoreboard after three rounds: **285 → 311 of 509** effective
+  (z3 4.16.0: 281), zero verdict flips at every step, parity suite
+  clean at every commit.
