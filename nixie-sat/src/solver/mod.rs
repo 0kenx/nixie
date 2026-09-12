@@ -1531,6 +1531,27 @@ pub struct Solver {
     /// cadical `lim.restart`: next conflict count at which to check the
     /// focused-mode Glucose restart condition.
     pub(super) lim_restart: u64,
+    /// Tiered-schedule arm state (`NIXIE_TIERED`, pre-registered in
+    /// `docs/studies/2026-09-12-tiered-schedule-port.md`):
+    /// completed mode switches (drives the `1e3 x count x log10(count+9)^4`
+    /// focused-phase growth, `count = switches/2`).
+    pub(super) tiered_switched: u64,
+    /// Conflict limit of the current focused phase (kissat `lim.mode.conflicts`).
+    pub(super) tiered_lim_conflicts: u64,
+    /// Tick limit of the current stable phase, on the summed
+    /// focused+stable tick counter (kissat `lim.mode.ticks`).
+    pub(super) tiered_lim_ticks: u64,
+    /// Summed ticks at the current phase's entry (measures each phase's
+    /// consumed ticks; the focused phase's delta becomes the next stable
+    /// phase's budget - kissat `update_mode_limit`).
+    pub(super) tiered_phase_entry_ticks: u64,
+    /// Min-gap before the focused Glucose condition may be evaluated again
+    /// (kissat `lim.restart`, re-armed after every focused restart and on
+    /// switch-to-focused; grows as `max(1, log10(restarts+9))`).
+    pub(super) tiered_focused_restart_limit: u64,
+    /// The null arm's per-phase policy coin (only read when
+    /// `NIXIE_TIERED_NULL` is armed, so the default path never draws).
+    pub(super) tiered_policy_stable: bool,
     /// cadical `lim.stabilize` expressed in ticks of the upcoming mode.
     pub(super) lim_stabilize: u64,
     /// Level marks for LBD computation
@@ -2187,6 +2208,12 @@ impl Solver {
             ticks_focused: 0,
             ticks_stable: 0,
             lim_restart: 0,
+            tiered_switched: 0,
+            tiered_lim_conflicts: 0,
+            tiered_lim_ticks: 0,
+            tiered_phase_entry_ticks: 0,
+            tiered_focused_restart_limit: 0,
+            tiered_policy_stable: false,
             lim_stabilize: 0,
             level_marks: Vec::new(),
             lbd_mark: 0,

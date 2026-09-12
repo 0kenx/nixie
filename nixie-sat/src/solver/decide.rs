@@ -93,7 +93,13 @@ impl Solver {
             // every family member improving (e.g. quasigroup icl785 1.49s →
             // 0.76s).
             let use_vmtf_now = if self.config.enable_stabilize {
-                !self.stable && self.config.focused_vmtf
+                let tiered = crate::tiered_enabled() || crate::tiered_null_enabled();
+                let policy_focused = if tiered {
+                    !self.policy_stable()
+                } else {
+                    !self.stable
+                };
+                policy_focused && self.config.focused_vmtf
             } else {
                 self.config.use_vmtf
             };
@@ -408,7 +414,13 @@ impl Solver {
         // That mismatch measured as a 4.5x decisions-per-conflict gap
         // against cadical on dense instances (stable-300: 5.7 vs 1.27).
         let use_vmtf_now = if self.config.enable_stabilize {
-            !self.stable && self.config.focused_vmtf
+            let tiered_rt = crate::tiered_enabled() || crate::tiered_null_enabled();
+            let policy_focused = if tiered_rt {
+                !self.policy_stable()
+            } else {
+                !self.stable
+            };
+            policy_focused && self.config.focused_vmtf
         } else {
             self.config.use_vmtf
         };
@@ -454,6 +466,101 @@ impl Solver {
         }
     }
 
+    /// The tiered-arm policy mode: which per-mode policy set (restart rule,
+    /// rephase eligibility, target-phase consult, branching heap) is in force.
+    /// Without the null this is exactly [`Self::stable`]; with
+    /// `NIXIE_TIERED_NULL` it is the per-phase PRNG coin, so the schedule
+    /// (phase timing) stays treatment-identical while the mode↔policy
+    /// coupling is severed (pre-registration in the tiered-port study).
+    pub(super) fn policy_stable(&self) -> bool {
+        if crate::tiered_null_enabled() {
+            self.tiered_policy_stable
+        } else {
+            self.stable
+        }
+    }
+
+    /// kissat `update_focused_restart_limit` (`restart.c`): re-arm the
+    /// focused Glucose min-gap. `restarts` is the post-increment restart
+    /// count; the gap is `restartint(1) + log10(restarts+9) − 1`, which
+    /// truncates to `max(1, log10(restarts+9))` in conflicts.
+    pub(super) fn tiered_update_focused_restart_limit(&mut self) {
+        let n = self.stats.restarts;
+        let delta = (n as f64 + 9.0).log10().max(1.0) as u64;
+        self.tiered_focused_restart_limit = self.stats.conflicts.saturating_add(delta.max(1));
+    }
+
+    /// The tiered per-mode schedule (`NIXIE_TIERED`, pre-registered in
+    /// `docs/studies/2026-09-12-tiered-schedule-port.md`): kissat `mode.c`.
+    ///
+    /// - focused phases are *conflict*-budgeted: `modeinit` (1e3) first,
+    ///   then `modeint(1e3) × count × log10(count+9)⁴` conflicts
+    ///   (`count` = completed focused phases = `switched/2`);
+    /// - stable phases are *tick*-budgeted at exactly the previous focused
+    ///   phase's consumed (summed) ticks;
+    /// - the glue EMAs are **not** swapped on switches (kissat runs one
+    ///   continuous average set; `init_averages` has an `initialized` guard);
+    /// - on →stable: enable reluctant doubling (1024, 2²⁰) and push any
+    ///   missing active variables back into the score heap
+    ///   (`update_scores`); on →focused: disable reluctant, reset the VMTF
+    ///   search cursor to the queue tail (`reset_search_of_queue`), and
+    ///   re-arm the focused restart min-gap.
+    fn check_stabilize_tiered(&mut self) {
+        let total_ticks = self.ticks_focused.saturating_add(self.ticks_stable);
+        // Lazy init (kissat `init_mode_limit`: `modeinit` conflicts).
+        if self.tiered_switched == 0 && self.tiered_lim_conflicts == 0 {
+            self.tiered_lim_conflicts = self.stats.conflicts.saturating_add(1000);
+            self.tiered_phase_entry_ticks = total_ticks;
+            return;
+        }
+        let switching = if self.stable {
+            total_ticks >= self.tiered_lim_ticks
+        } else {
+            self.stats.conflicts >= self.tiered_lim_conflicts
+        };
+        if !switching {
+            return;
+        }
+        // The phase being left consumed this many ticks; under the kissat
+        // schedule that length becomes the next *stable* phase's budget
+        // whenever the outgoing phase is focused (odd switch count →
+        // entering stable, even → entering focused).
+        let delta_ticks = total_ticks.saturating_sub(self.tiered_phase_entry_ticks);
+        self.tiered_switched = self.tiered_switched.saturating_add(1);
+        self.stable = !self.stable;
+        self.stabphases = self.stabphases.saturating_add(1);
+        if self.stable {
+            self.tiered_lim_ticks = total_ticks.saturating_add(delta_ticks.max(1));
+        } else {
+            let count = self.tiered_switched / 2;
+            let growth = (count as f64 + 9.0).log10().max(1.0).powi(4);
+            let scaled = ((1000.0 * count as f64) * growth).max(1.0) as u64;
+            self.tiered_lim_conflicts = self.stats.conflicts.saturating_add(scaled);
+        }
+        self.tiered_phase_entry_ticks = total_ticks;
+        // Null arm: re-draw the policy coin at every phase boundary.
+        if crate::tiered_null_enabled() {
+            self.tiered_policy_stable = self.rand_u64() & 1 == 1;
+        }
+        // Switch hooks (kissat `switch_to_{stable,focused}_mode`).
+        if self.policy_stable() {
+            self.reluctant.enable(1024, 1 << 20);
+            // kissat `update_scores`: re-push any active variable the heap
+            // lost (elimination/freeze bookkeeping can drop entries).
+            let n = self.num_vars;
+            for idx in 0..n {
+                let var = crate::literal::Var::new(idx as u32);
+                if !self.var_eliminated(var) && !self.vsids.contains(var) {
+                    self.vsids.insert(var);
+                }
+            }
+        } else {
+            self.reluctant.disable();
+            self.vmtf.reset_search_cursor();
+            self.tiered_update_focused_restart_limit();
+        }
+    }
+
     /// cadical `stabilizing()`: switch focused/stable modes when the current
     /// mode's tick (propagation) count reaches `lim_stabilize`, swapping the
     /// per-mode glue averages and growing the interval quadratically
@@ -462,6 +569,10 @@ impl Solver {
     /// (focused mode uses the Glucose EMA condition instead).
     pub(super) fn check_stabilize(&mut self) {
         if !self.config.enable_stabilize {
+            return;
+        }
+        if crate::tiered_enabled() {
+            self.check_stabilize_tiered();
             return;
         }
         let current_ticks = if self.stable {
@@ -711,8 +822,16 @@ impl Solver {
     pub(super) fn update_target_and_best(&mut self) {
         // cadical: `if (opts.rephase == 2 && !stable) return;` – under the
         // stable-only schedule the focused phase never consults target phases,
-        // so do not spend the copies there.
-        if self.config.rephase == 2 && !self.stable {
+        // so do not spend the copies there.  The tiered arm has the same
+        // stable-only shape (kissat consults target only in stable policy
+        // mode).
+        let tiered = crate::tiered_enabled() || crate::tiered_null_enabled();
+        let policy_stable = if tiered {
+            self.policy_stable()
+        } else {
+            self.stable
+        };
+        if (self.config.rephase == 2 || tiered) && !policy_stable {
             return;
         }
         let reset = self.rephased.is_some() && self.stats.conflicts > self.last_rephase_conflicts;
@@ -771,6 +890,11 @@ impl Solver {
     pub(super) fn rephasing(&self) -> bool {
         if self.config.rephase == 0 || self.config.rephase_interval == 0 {
             return false;
+        }
+        // Tiered arm (kissat `rephasing`): stable-only, on TOTAL conflicts
+        // (not per-mode counters) - focused phases never rephase or walk.
+        if crate::tiered_enabled() || crate::tiered_null_enabled() {
+            return self.policy_stable() && self.stats.conflicts > self.lim_rephase;
         }
         if self.config.rephase == 2 {
             self.stable && self.stats.stable_conflicts > self.lim_rephase
@@ -885,7 +1009,15 @@ impl Solver {
         // the phase array.
         self.backtrack_with_phase_saving(0);
 
-        let stable = self.stable;
+        // Tiered arm: the schedule counter and the cycle follow the POLICY
+        // mode (the null's coin), and the cycle is kissat's
+        // `(best, walk, inverted, best, walk, original)^ω` (`rephase.c`).
+        let tiered = crate::tiered_enabled() || crate::tiered_null_enabled();
+        let stable = if tiered {
+            self.policy_stable()
+        } else {
+            self.stable
+        };
         let count = self.rephase_rounds[usize::from(stable)];
         self.rephase_rounds[usize::from(stable)] += 1;
 
@@ -895,7 +1027,16 @@ impl Solver {
         let single = !self.config.enable_stabilize;
         let walk = self.config.walk;
 
-        let kind = if single && !walk {
+        let kind = if tiered {
+            match count % 6 {
+                0 => self.rephase_best(),
+                1 => self.rephase_walk(),
+                2 => self.rephase_inverted(),
+                3 => self.rephase_best(),
+                4 => self.rephase_walk(),
+                _ => self.rephase_original(),
+            }
+        } else if single && !walk {
             // (inverted,best,flipping,best,random,best,original,best)^ω
             match count % 8 {
                 0 => self.rephase_inverted(),
@@ -1005,15 +1146,25 @@ impl Solver {
 
         // Arithmetic growth of the next interval, in the schedule's own
         // conflict counter (stable-only schedule counts stable conflicts).
-        let conflicts = if self.config.rephase == 2 {
+        // Tiered arm (kissat `UPDATE_CONFLICT_LIMIT(rephase, …, NLOG3N,
+        // false)`): `1e3 × count × log10(count+9)³` conflicts on the TOTAL
+        // counter.
+        let conflicts = if tiered {
+            self.stats.conflicts
+        } else if self.config.rephase == 2 {
             self.stats.stable_conflicts
         } else {
             self.stats.conflicts
         };
-        let delta = self
-            .config
-            .rephase_interval
-            .saturating_mul(self.stats.rephased.total + 1);
+        let delta = if tiered {
+            let n = self.stats.rephased.total;
+            let growth = (n as f64 + 9.0).log10().max(1.0).powi(3);
+            ((self.config.rephase_interval as f64) * n as f64 * growth).max(1.0) as u64
+        } else {
+            self.config
+                .rephase_interval
+                .saturating_mul(self.stats.rephased.total + 1)
+        };
         self.lim_rephase = conflicts.saturating_add(delta);
 
         // Arms `update_target_and_best` to reset target (and best for a `best`

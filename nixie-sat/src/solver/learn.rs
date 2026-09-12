@@ -1821,8 +1821,27 @@ impl Solver {
         let do_restart = if stall_restart {
             true
         } else if self.config.enable_stabilize {
-            if self.stable {
+            // Tiered arm: the policy mode (alternation, or the null's
+            // per-phase coin) selects the restart rule; the focused rule is
+            // the Glucose condition gated by the growing min-gap instead of
+            // the default path's every-2-conflicts check window.
+            let tiered = crate::tiered_enabled() || crate::tiered_null_enabled();
+            let policy_stable = if tiered {
+                self.policy_stable()
+            } else {
+                self.stable
+            };
+            if policy_stable {
                 self.reluctant.activated()
+            } else if tiered {
+                if self.stats.conflicts < self.tiered_focused_restart_limit {
+                    false
+                } else {
+                    let slow = self.glue_current.slow.value();
+                    let fast = self.glue_current.fast.value();
+                    let margin = focused_restart_margin();
+                    slow > 0.0 && fast >= margin * slow
+                }
             } else {
                 // Focused Glucose: check every 2 conflicts.
                 if self.stats.conflicts < self.lim_restart {
@@ -1864,6 +1883,11 @@ impl Solver {
         };
         if do_restart {
             self.restart();
+            // Tiered arm: re-arm the focused min-gap after the fire (kissat
+            // `restart()` tail) - only when the firing policy was focused.
+            if (crate::tiered_enabled() || crate::tiered_null_enabled()) && !self.policy_stable() {
+                self.tiered_update_focused_restart_limit();
+            }
             // `restart()` lands at decision level 0 only when reuse-trail is
             // off; with reuse-trail on (the default) it backtracks only as far
             // as `reuse_trail()`, so the level-0 consistency invariant does not

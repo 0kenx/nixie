@@ -174,6 +174,15 @@ impl VMTF {
         Some(Var::new(res))
     }
 
+    /// kissat `reset_search_of_queue` (`queue.c`, called on every switch to
+    /// focused mode): point the search cursor at the queue's tail again —
+    /// the most-recently-bumped variable — instead of wherever the stable
+    /// phase's (non-)use of the queue left it. Purely a scheduling-refresh;
+    /// no list order is touched.
+    pub fn reset_search_cursor(&mut self) {
+        self.search = self.tail;
+    }
+
     /// Called when a variable is unassigned (backtrack): if this variable's
     /// bump timestamp is more recent than the search pointer's, move the
     /// pointer here (cadical `unassign` → `update_queue_unassigned`). This is

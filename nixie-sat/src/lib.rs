@@ -741,6 +741,34 @@ pub fn stab_null_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("NIXIE_STAB_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// The tiered per-mode schedule arm (`NIXIE_TIERED=1`): the kissat-shaped
+/// mode/restart/rephase system of `docs/studies/2026-09-12-tiered-schedule-port.md`.
+/// Conflict-budgeted focused phases (1e3 x count x log10(count+9)^4),
+/// tick-budgeted stable phases (previous focused phase's ticks), no EMA swap
+/// on switches, growing min-gap on focused Glucose restarts, stable-only
+/// rephase with the (best, walk, inverted, best, walk, original) schedule and
+/// target-phase resets. Default off = bit-identical trajectories.
+#[doc(hidden)]
+pub fn tiered_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_TIERED").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+/// Matched null for [`tiered_enabled`] (`NIXIE_TIERED_NULL=1`, implies the
+/// arm): the phase schedule runs exactly as the treatment, but each phase's
+/// policy set (restart rule, rephase eligibility, target consult, branching
+/// heap) is assigned by a PRNG coin at the phase boundary instead of the
+/// alternation - same policies, same phase count, same magnitudes, no
+/// mode-coupling information.
+#[doc(hidden)]
+pub fn tiered_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG
+        .get_or_init(|| std::env::var("NIXIE_TIERED_NULL").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 /// Diagnostics (`NIXIE_REASON_STATS`): BCP propagation counts split by whether
 /// the reason clause was learned or original. Process-global atomics so the
 /// stats harness can read them after `solve()`; diagnostic-only.
