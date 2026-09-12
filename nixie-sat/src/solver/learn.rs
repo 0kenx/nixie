@@ -27,6 +27,24 @@ pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 /// class the floor fixes; noL 21 / mdp 15 / rbsat 10 / 6s167 11 — the
 /// files the ungated floor costs verdicts.  100 sits in the empty band
 /// between 26 and 224 with ~4x margin on both sides.
+#[cfg(feature = "std")]
+fn focused_restart_margin() -> f64 {
+    use std::sync::OnceLock;
+    static MARGIN: OnceLock<f64> = OnceLock::new();
+    *MARGIN.get_or_init(|| {
+        std::env::var("NIXIE_FOCUSED_MARGIN")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|m| *m >= 1.0)
+            .unwrap_or(1.10)
+    })
+}
+
+#[cfg(not(feature = "std"))]
+fn focused_restart_margin() -> f64 {
+    1.10
+}
+
 pub(super) const DROUGHT_GLUE_GATE: f64 = 500.0;
 
 /// Conflicts before the drought gate may arm.  Early-search glue transients
@@ -1746,7 +1764,7 @@ impl Solver {
                     let fast = self.glue_current.fast.value();
                     // 10% margin (cadical restartmarginfocused); guard against
                     // the all-zero initial state.
-                    slow > 0.0 && fast >= 1.10 * slow
+                    slow > 0.0 && fast >= focused_restart_margin() * slow
                 }
             }
         } else {

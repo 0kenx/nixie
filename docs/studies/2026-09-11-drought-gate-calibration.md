@@ -98,3 +98,36 @@ difference the shape data points at: cadence plus phase policy (kissat's
 tiered stable/focused schedule with per-mode restart policies), not a
 floor.  The landed arm keeps the round-4 conjunction (safest arming) and
 stays off by default.
+
+## Round 5: the dec/conf mechanism is causal — focused-restart margin ladder
+
+Phase 2's systematic (nixie dec/conf 1.5-2x cadical on the tails) tracks
+our focused restart rate: 99.5% of our restarts are focused-mode Glucose
+fires, at ~2x cadical's cadence with identical EMA constants
+(emagluefast 33 / emaglueslow 1e5 / margin 1.10; j3037: restart every ~12
+conflicts vs cadical's ~22, stable shares 51.5% vs 43.0%, stable-phase
+restarts 109 vs cadical's reluctant-doubling few).
+
+`NIXIE_FOCUSED_MARGIN` (env arm, default 1.10 = bit-identical; OnceLock,
+no per-conflict cost) raises the fire margin. 5-seed medians (120 s cap,
+all cells decisive):
+
+| file | 1.10 | 1.25 | 1.40 |
+|---|---|---|---|
+| Break_unsat_06_07 | 35,959 | 36,237 | **21,749 (−40 %)** |
+| summle_X4044 | 81,294 | 61,015 | **54,006 (−34 %)** |
+| j3037_10_mdd_bm1 | 348,577 | 405,499 | 426,884 (+22 %) |
+| x9-08075 | 628,266 | 666,912 | 704,821 (+12 %) |
+| frb65-12-2 | 461,240 | 970,938 | 727,933 (+58 %, non-monotone) |
+
+dec/conf collapses to cadical level (1.2-1.5) at 1.40 everywhere — the
+mechanism is confirmed causal — but the conflicts response is split:
+the two Break/summle-family tails win 34-40%, j3037/x9/frb65 lose 12-58%.
+That split is the matched-null question: is the Break/summle win the
+*semantic* content of slower Glucose firing (deeper focused phases) or
+just restart-rate reshuffle? Null design (pre-registered): fire the 1.10
+trigger but only every k-th evaluation with k tuned to reproduce 1.40's
+restart count per file — same rate reduction, no EMA information — then
+the full 54x5 corpus screen for whichever margin (or per-class gate)
+survives. The Break/summle class would close 1.4-1.8x of the remaining
+kissat gap on two user-table files.
