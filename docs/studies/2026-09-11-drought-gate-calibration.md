@@ -208,3 +208,33 @@ deliverable.  The two facts that survive for the structural program:
    program item, alongside the inprocessing-amplitude class
    (circuit_64in64out: cadical subsumes 54 % / strengthens 34 % /
    vivifies 19.9 k mid-search).
+
+## Round 8 (session close): the dec/conf residual is the tiered-schedule triple
+
+Post-round-7 diagnosis pass on the remaining dec/conf 1.5-2x residual:
+
+- Our restart-EMA input is already cadical-faithful (the 2026-08-19
+  walk-glue port, landed at 1.129x -> 0.952x); the 2x focused firing rate
+  is not an input mismatch.
+- Our `reuse_trail` is the cadical queue-branch port (VMTF/VSIDS mismatch
+  fixed earlier); j3037 reuse = 12,046 / 29,192 restarts.
+- Kissat reference check: kissat achieves ~1.9 dec/conf with **zero trail
+  reuse** (full backtracks + target phases) - so neither reuse depth nor
+  restart rate alone explains our 2.77. The residual is the coupled
+  (restart rate x reuse depth x phase quality) triple that kissat's
+  focused/stable *tiered* design and cadical's queue-ordered trail each
+  solve as a system.
+
+Every single-knob intervention in that space is now measured:
+flat/gated/ramped margins (rounds 1-7), floors, portfolios. None is
+deliverable. The program item this hands to the next session is the
+structural one: a tiered per-mode schedule port (kissat `search.c`:
+focused VMTF + fast restarts + saved phases, stable target/ACIDS + rare
+restarts), screened with the round-6 null machinery per mode.
+
+Session landings (all default bit-identical, all env-gated arms):
+`maxgap-<n>` portfolio token + config field; drought-gated floor
+(round-4 conjunction form); `NIXIE_FOCUSED_MARGIN` (+ causal result);
+`NIXIE_FOCUSED_MARGIN_NULL`/`NIXIE_FOCUSED_FIRE_EVERY` (+ attribution);
+`NIXIE_FOCUSED_ADAPTIVE` (measured dead, kept as documented-negative
+infrastructure).
