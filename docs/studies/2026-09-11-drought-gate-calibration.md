@@ -131,3 +131,40 @@ restart count per file — same rate reduction, no EMA information — then
 the full 54x5 corpus screen for whichever margin (or per-class gate)
 survives. The Break/summle class would close 1.4-1.8x of the remaining
 kissat gap on two user-table files.
+
+## Round 6: the margin arm's matched null — attribution settled
+
+Null v1 (scrambled glue reference) was **magnitude-broken and is recorded
+as a trap**: a full-variance reference makes `fast >= 1.4x rand-past-glue`
+fire at the *base* rate (j3037 null: 33,045 restarts vs the treatment's
+1,366), so it is not a null at all — the same failure class as the
+campaign's first stall-null build.  Removed.
+
+Null v2 (`NIXIE_FOCUSED_MARGIN_NULL=1` + `NIXIE_FOCUSED_FIRE_EVERY=k`,
+default 20): fire every k-th pass of the untouched 1.10-margin condition —
+same restart-count reduction family as the margin treatment (counts match
+within ~2x on every probe file), no EMA information in which passes fire.
+5-seed medians, conflicts/restarts:
+
+| file | base | treat 1.40 | null k=20 | T/N | N/B |
+|---|---|---|---|---|---|
+| Break_unsat_06_07 | 35,959/2,954 | **21,749/25** | 34,002/83 | **0.64x** | 0.95x |
+| summle_X4044 | 81,294/9,069 | **54,006/849** | 62,947/435 | **0.86x** | 0.77x |
+| j3037_10_mdd_bm1 | 348,577/29,192 | 426,884/1,366 | 437,657/2,083 | 0.98x | 1.26x |
+| x9-08075 | 628,266/33,180 | 704,821/646 | 721,437/2,507 | 0.98x | 1.15x |
+| frb65-12-2 | 461,240/27,288 | 727,933/2,389 | 386,950/1,674 | **1.88x** | **0.84x** |
+
+**Attribution**: Break_06_07's -40 % is real EMA-informed content (T/N
+0.64 at a null that itself does nothing); summle's -34 % is roughly half
+semantic, half generic rate; j3037/x9's losses are pure rate effects; and
+frb65 is *anti*-semantic — at the same reduced rate, EMA-blind firing
+beats the margin (0.84x vs base while the treatment sits at 1.58x).
+Restarts on this corpus are a per-family sign, not a monotone good.
+
+The class signature is visible in the base shapes: the two semantic
+winners have the highest base dec/conf (summle 9.5, Break ~5.5 vs j3037
+2.8, x9 2.1, frb65 2.2).  The designed follow-up (pre-registered):
+**dec/conf-adaptive margin** — margin ramps 1.10 → 1.40 as a decisions-
+per-conflict EMA crosses ~4 → ~8, targeting the decision-bloated class
+while leaving the tight-search class at today's cadence; then the 54x5
+corpus screen and this same null for the gate itself.

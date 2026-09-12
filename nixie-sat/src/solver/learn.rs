@@ -27,6 +27,38 @@ pub(super) const THEORY_LAZY_SWITCH_AFTER: u64 = 1_000_000;
 /// class the floor fixes; noL 21 / mdp 15 / rbsat 10 / 6s167 11 — the
 /// files the ungated floor costs verdicts.  100 sits in the empty band
 /// between 26 and 224 with ~4x margin on both sides.
+/// `NIXIE_FOCUSED_MARGIN_NULL=1`: arms the matched null for the margin arm.
+#[cfg(feature = "std")]
+fn focused_margin_null_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| std::env::var("NIXIE_FOCUSED_MARGIN_NULL").is_ok_and(|v| v == "1"))
+}
+
+#[cfg(not(feature = "std"))]
+fn focused_margin_null_enabled() -> bool {
+    false
+}
+
+/// `NIXIE_FOCUSED_FIRE_EVERY=k` (default 20): the null's pass-skip period.
+#[cfg(feature = "std")]
+fn focused_fire_every() -> u64 {
+    use std::sync::OnceLock;
+    static K: OnceLock<u64> = OnceLock::new();
+    *K.get_or_init(|| {
+        std::env::var("NIXIE_FOCUSED_FIRE_EVERY")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|k| *k >= 1)
+            .unwrap_or(20)
+    })
+}
+
+#[cfg(not(feature = "std"))]
+fn focused_fire_every() -> u64 {
+    20
+}
+
 #[cfg(feature = "std")]
 fn focused_restart_margin() -> f64 {
     use std::sync::OnceLock;
@@ -1764,7 +1796,22 @@ impl Solver {
                     let fast = self.glue_current.fast.value();
                     // 10% margin (cadical restartmarginfocused); guard against
                     // the all-zero initial state.
-                    slow > 0.0 && fast >= focused_restart_margin() * slow
+                    let glucose = slow > 0.0 && fast >= focused_restart_margin() * slow;
+                    if glucose && focused_margin_null_enabled() {
+                        // Matched null v2: every-k-th pass of the UNTOUCHED
+                        // 1.10-margin condition (`NIXIE_FOCUSED_FIRE_EVERY=k`,
+                        // default 20 - the treatment's measured rate-reduction
+                        // family). Same restart-count reduction as the margin
+                        // treatment, no EMA information in WHICH passes fire.
+                        // v1 (scrambled-reference) was magnitude-broken: a
+                        // full-variance reference fires at the base rate
+                        // (j3037 null 33k restarts vs treatment 1.4k) and is
+                        // not a null at all - see the study.
+                        self.glue_null_pos = self.glue_null_pos.wrapping_add(1);
+                        self.glue_null_pos.is_multiple_of(focused_fire_every() as usize)
+                    } else {
+                        glucose
+                    }
                 }
             }
         } else {

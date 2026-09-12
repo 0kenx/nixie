@@ -1502,6 +1502,12 @@ pub struct Solver {
     /// opt-in stall trigger (`NIXIE_RESTART_STALL=<multiplier>`), never the
     /// default path.
     pub(super) restart_gap_ema: f64,
+    /// Focused-margin null arm (`NIXIE_FOCUSED_MARGIN_NULL=1`): pass
+    /// counter for the every-k-th-fire null (`NIXIE_FOCUSED_FIRE_EVERY`,
+    /// default 20). The v1 scrambled-reference form (a glue ring + xorshift
+    /// draw) was measured magnitude-broken and removed; see
+    /// `2026-09-11-drought-gate-calibration.md` round 6.
+    pub(super) glue_null_pos: usize,
     /// Matched-null machinery for the T1 stall trigger
     /// (`NIXIE_RESTART_STALL_NULL=1`): a ring of recent restart gaps and a
     /// second EMA fed from *pseudo-randomly reordered* ring entries. Same
@@ -2161,6 +2167,7 @@ impl Solver {
             glue_current: GlueAverages::new(),
             last_restart_conflict: 0,
             restart_gap_ema: 100.0,
+            glue_null_pos: 0,
             restart_gap_ring: [100.0; 8],
             restart_gap_ema_null: 100.0,
             glue_saved: GlueAverages::new(),
