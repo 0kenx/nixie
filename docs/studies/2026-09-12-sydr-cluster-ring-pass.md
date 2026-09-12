@@ -406,3 +406,16 @@ Performance signals worth keeping (from the sound-prefix runs and the
   regressions are `unknown`-not-false (the model gates catch the
   weakened sets).  The deferral stays exactly as valuable as round 5
   concluded — *after* the equisatisfiability question is answered.
+
+**Addendum (rigor check)**: the direct test — z3 on the default
+  build's `NIXIE_BV_DUMP_PRE` output — could not complete: the SMT2
+  printer is super-linear on meganode shared DAGs and the dump only
+  lands at preprocess end (a 600 s cap expired first).  The attribution
+  instead rests on: the false-sat CNF was emitted by the *unchanged*
+  stage-4 emission calls over `pp.rewritten` (ring participated in
+  nothing on this file, so no filter difference), and the clause-count
+  gap (1.78 M → 547 K) matches exactly the raw set's removal.  **Two
+  tooling gaps recorded**: the dump sidecar needs a memoized printer,
+  and the preprocessor needs an equisatisfiability self-check (solve
+  the rewritten set standalone and compare) before any
+  rewritten-only consumer can exist.
