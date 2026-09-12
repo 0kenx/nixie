@@ -33,9 +33,16 @@ fn main() {
         let Some(module) = spec.root_module() else {
             continue;
         };
-        // A module with declared constants cannot be run by TLC without a
-        // configuration assigning them, so it is out of scope for the probe.
-        if !module.constants().is_empty() || !module.variables().is_empty() {
+        // Constants and variables no longer exclude a module. Only *ground*
+        // definitions are probed — one that mentions a constant or a variable
+        // has a free name and is not evaluated here at all — so the
+        // declarations can be given dummy assignments purely to make TLC run
+        // the module. That widens the sample from constant-free modules to
+        // essentially all of them.
+        //
+        // A constant of non-zero arity is the exception: TLC's configuration
+        // language cannot assign an operator, so those modules are skipped.
+        if module.constants().iter().any(|c| c.arity > 0) {
             continue;
         }
         let names: Vec<String> = module
@@ -76,7 +83,33 @@ fn main() {
         if let Some(dir) = &probe_dir
             && !ok.is_empty()
         {
-            write_probe(dir, &path, module, &ok);
+            // Every declared name in scope has to be assigned, including those
+            // inherited through EXTENDS: TLC requires the spec to constrain
+            // every variable it can see.
+            let mut vars: Vec<String> = Vec::new();
+            let mut consts: Vec<String> = Vec::new();
+            let mut defined: Vec<String> = Vec::new();
+            for (_, m) in &spec.modules {
+                vars.extend(m.variables().iter().map(|v| v.name.clone()));
+                consts.extend(m.constants().iter().map(|c| c.name.name.clone()));
+                for u in &m.units {
+                    if let nixie_tla_syntax::UnitKind::OpDef { name, .. } = &u.kind {
+                        defined.push(name.name.clone());
+                    }
+                }
+            }
+            // A configuration entry *overrides* a definition. The `MC` idiom
+            // declares `CONSTANT N` in a base module and defines `N == 3` in
+            // the model module; assigning `N = N` there would replace the real
+            // value with a model value, and TLC would print `N` where this
+            // evaluator prints 3. Only genuinely undefined constants are
+            // assigned.
+            consts.retain(|c| !defined.contains(c));
+            vars.sort();
+            vars.dedup();
+            consts.sort();
+            consts.dedup();
+            write_probe(dir, &path, module, &ok, &vars, &consts);
         }
     }
 
@@ -98,6 +131,8 @@ fn write_probe(
     src_path: &str,
     module: &nixie_tla_syntax::ast::Module,
     ok: &[(String, String)],
+    vars: &[String],
+    consts: &[String],
 ) {
     let _ = std::fs::create_dir_all(dir);
     let name = &module.name.name;
@@ -111,16 +146,33 @@ fn write_probe(
     let probe = format!("{name}NixieProbe");
     let mut body = format!("---- MODULE {probe} ----\nEXTENDS {name}, TLC\nVARIABLE nixieDummy\n");
     body.push_str("NixieProbeInit ==\n    /\\ nixieDummy = 0\n");
+    // Dummy assignments: the probed definitions are ground, so none of them
+    // can observe these.
+    for v in vars {
+        body.push_str(&format!("    /\\ {v} = 0\n"));
+    }
     for (n, _) in ok {
         body.push_str(&format!("    /\\ PrintT(<<\"{n}\", {n}>>)\n"));
     }
-    body.push_str("NixieProbeNext == UNCHANGED nixieDummy\n====\n");
+    let unchanged = if vars.is_empty() {
+        "nixieDummy".to_string()
+    } else {
+        format!("<<nixieDummy, {}>>", vars.join(", "))
+    };
+    body.push_str(&format!("NixieProbeNext == UNCHANGED {unchanged}\n====\n"));
     let out = std::path::Path::new(dir);
     let _ = std::fs::write(out.join(format!("{probe}.tla")), body);
-    let _ = std::fs::write(
-        out.join(format!("{probe}.cfg")),
-        "INIT NixieProbeInit\nNEXT NixieProbeNext\n",
-    );
+    // A constant is assigned a model value of the same name: TLC treats it as
+    // an uninterpreted element, which is all that is needed to make the module
+    // run.
+    let mut cfg = String::from("INIT NixieProbeInit\nNEXT NixieProbeNext\n");
+    if !consts.is_empty() {
+        cfg.push_str("CONSTANTS\n");
+        for c in consts {
+            cfg.push_str(&format!("    {c} = {c}\n"));
+        }
+    }
+    let _ = std::fs::write(out.join(format!("{probe}.cfg")), cfg);
     // Manifest: what we computed, plus where TLC must look for the module the
     // probe extends.
     let manifest = out.join(format!("{probe}.expected"));

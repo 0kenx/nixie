@@ -21,9 +21,24 @@ This suite asks that question at scale.
 
 ## How it works
 
-1. For every module with **no declared constants or variables** — so TLC needs
-   no configuration to run it — lower each nullary definition and evaluate it
-   to a value.
+1. For every module, lower each nullary definition and evaluate it to a value.
+
+   Constants and variables do not exclude a module. Only **ground** definitions
+   are probed — one that mentions a constant or a variable has a free name and
+   is not evaluated at all — so the declarations can be given dummy
+   assignments purely to make TLC run the module. That is what widened the
+   sample from 93 definitions to 299.
+
+   Two traps in generating those assignments:
+
+   - A configuration entry **overrides a definition**. The `MC` idiom declares
+     `CONSTANT N` in a base module and defines `N == 3` in the model module;
+     assigning `N = N` there replaces the real value with a model value, and
+     TLC prints `N` where this evaluator prints `3`. Only genuinely undefined
+     constants are assigned.
+   - A constant of non-zero arity cannot be assigned at all — TLC's
+     configuration language has no way to name an operator — so those modules
+     are skipped.
 2. Emit a probe module that `EXTENDS` the **original** module and `PrintT`s
    those same definitions.
 3. Run TLC and compare the two sets of values.
@@ -89,18 +104,42 @@ That is now the third oracle harness in this project to have been wrong because
 parallel processes shared something. **Check isolation before believing a low
 hit rate.**
 
+## What it has already caught
+
+Two real lowering bugs, both of which passed every structural check:
+
+- **`\X` was not n-ary.** `A \X B \X C` is a set of 3-tuples in TLA+, not a
+  set of pairs whose first component is a pair. Lowering nested it, giving
+  `{<<<<1, 2>>, 3>>}` where TLC gives `{<<1, 2, 3>>}`. The operator table
+  even carried a comment saying flattening was the lowering step's job.
+- **A multi-bound set map was nested.** `{e : x \in S, y \in T}` collects `e`
+  over every combination and is one flat set; nesting the binders produced a
+  set of sets — `{{<<1, 2>>}}` against TLC's `{<<1, 2>>}`.
+
+Both now have regressions in `nixie-tla/tests/eval.rs`.
+
+## An unparsed value is an untested value
+
+`compare.py` exits non-zero on a value it cannot parse, not just on a
+mismatch. Seven values were being silently skipped in an earlier run — all of
+them TLC printing a model value, which is how the configuration-override trap
+above was found. A differential that quietly shrinks its own sample is worse
+than one that fails.
+
 ## Standing result
 
 Recorded 2026-09-12, TLC 2.19 (tlaplus 1.7.4), OpenJDK 11, 907-file corpora:
 
 ```
-probes TLC evaluated            : 28
-definitions agreeing with TLC   : 93
+probes TLC evaluated            : 119
+definitions agreeing with TLC   : 299
 SEMANTIC MISMATCHES             : 0
-not printed by TLC              : 161
+not printed by TLC              : 351
+value unparsed by comparator    : 0
 ```
 
-93 definitions is a small sample against 4 349 that lower, and the restriction
-to constant- and variable-free modules is what makes it small. Widening it
-means generating TLC configurations that assign the constants — the obvious
-next step, and the one that would turn this from a spot check into a gate.
+299 against 4 349 definitions that lower. The remaining limit is the evaluator,
+not the harness: 2 611 definitions mention a variable or constant and so are
+not ground, and the rest hit an unimplemented primitive (`Len`, `Cardinality`,
+`\o`) or `CHOOSE`. Implementing the standard-module operators is what widens
+it further.

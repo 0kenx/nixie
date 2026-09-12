@@ -953,6 +953,57 @@ impl<'a> Lowerer<'a> {
         Some(CtxResolution::Def(def.clone()))
     }
 
+    /// Bind one fresh variable over the product of `bounds`, projecting the
+    /// components out of it.
+    ///
+    /// Shared by `[x \in S, y \in T |-> e]` and `{e : x \in S, y \in T}`:
+    /// both range over every *combination*, and both must end up with a single
+    /// kernel binder. Nesting binders instead is wrong for the set map — it
+    /// yields a set of sets — and wrong for the function, whose domain is the
+    /// product.
+    fn expand_product_binder(
+        &mut self,
+        e: &'a Expr,
+        bounds: &'a [Bound],
+        body: &'a Expr,
+        stack: &mut Vec<Frame<'a>>,
+    ) {
+        let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
+        let tv = self.fresh_name("arg");
+        let tvar = Kera::Var(tv.clone()).rc();
+        let mut scope = HashMap::new();
+        let mut i = 0usize;
+        for b in bounds {
+            for p in &b.patterns {
+                i += 1;
+                let proj = Kera::FunApp(Rc::clone(&tvar), Kera::Int(i.to_string()).rc()).rc();
+                match p {
+                    Pattern::Name(id) => {
+                        scope.insert(id.name.clone(), Binding::Value(proj));
+                    }
+                    Pattern::Tuple(ids) => {
+                        for (j, id) in ids.iter().enumerate() {
+                            let inner =
+                                Kera::FunApp(Rc::clone(&proj), Kera::Int((j + 1).to_string()).rc())
+                                    .rc();
+                            scope.insert(id.name.clone(), Binding::Value(inner));
+                        }
+                    }
+                }
+            }
+        }
+        self.binder_names.insert(e.span.start.offset, vec![tv]);
+        stack.push(Frame::Build(e, total + 1));
+        stack.push(Frame::PopScope);
+        stack.push(Frame::Expand(body));
+        stack.push(Frame::PushScope(scope));
+        for b in bounds.iter().rev() {
+            for _ in 0..b.patterns.len() {
+                stack.push(Frame::Expand(&b.domain));
+            }
+        }
+    }
+
     fn expand(
         &mut self,
         e: &'a Expr,
@@ -1269,53 +1320,25 @@ impl<'a> Lowerer<'a> {
                 stack.push(Frame::Expand(domain));
             }
             ExprKind::SetMap { expr, bounds } => {
-                self.expand_binder_chain(e, bounds, expr, stack);
+                let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
+                if total == 1 {
+                    self.expand_binder_chain(e, bounds, expr, stack);
+                } else {
+                    // `{e : x \in S, y \in T}` collects `e` over every
+                    // *combination*, giving one flat set. Nesting the binders
+                    // instead produced a set of sets — `{{<<1, 2>>}}` where
+                    // TLC gives `{<<1, 2>>}`. One variable ranges over the
+                    // product and the components are projected out, the same
+                    // shape a multi-variable function constructor uses.
+                    self.expand_product_binder(e, bounds, expr, stack);
+                }
             }
             ExprKind::FnConstruct { bounds, body } => {
                 let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
                 if total == 1 {
                     self.expand_binder_chain(e, bounds, body, stack);
                 } else {
-                    // `[x \in S, y \in T |-> e]` is a function on `S \X T`.
-                    // One tuple variable ranges over the product and the
-                    // components are projected out of it, which keeps every
-                    // kernel binder single-variable.
-                    let tv = self.fresh_name("arg");
-                    let tvar = Kera::Var(tv.clone()).rc();
-                    let mut scope = HashMap::new();
-                    let mut i = 0usize;
-                    for b in bounds {
-                        for p in &b.patterns {
-                            i += 1;
-                            let proj =
-                                Kera::FunApp(Rc::clone(&tvar), Kera::Int(i.to_string()).rc()).rc();
-                            match p {
-                                Pattern::Name(id) => {
-                                    scope.insert(id.name.clone(), Binding::Value(proj));
-                                }
-                                Pattern::Tuple(ids) => {
-                                    for (j, id) in ids.iter().enumerate() {
-                                        let inner = Kera::FunApp(
-                                            Rc::clone(&proj),
-                                            Kera::Int((j + 1).to_string()).rc(),
-                                        )
-                                        .rc();
-                                        scope.insert(id.name.clone(), Binding::Value(inner));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    self.binder_names.insert(span.start.offset, vec![tv]);
-                    stack.push(Frame::Build(e, total + 1));
-                    stack.push(Frame::PopScope);
-                    stack.push(Frame::Expand(body));
-                    stack.push(Frame::PushScope(scope));
-                    for b in bounds.iter().rev() {
-                        for _ in 0..b.patterns.len() {
-                            stack.push(Frame::Expand(&b.domain));
-                        }
-                    }
+                    self.expand_product_binder(e, bounds, body, stack);
                 }
             }
             ExprKind::Let { defs, body } => {
@@ -1555,6 +1578,29 @@ impl<'a> Lowerer<'a> {
                 };
                 Kera::Opaque(Name(id.name.clone()), kids).rc()
             }
+            // `A \X B \X C` is a *ternary* product in TLA+ — a set of
+            // 3-tuples — not `(A \X B) \X C`, which is a set of pairs whose
+            // first component is a pair. The parser makes `\X` associative so
+            // the chain parses; flattening it is this step's job, and not
+            // doing it produced `{<<<<1, 2>>, 3>>}` where TLC gives
+            // `{<<1, 2, 3>>}`.
+            //
+            // Only associativity-derived nesting is flattened. Explicit
+            // parentheses mean the nested reading, and TLA+ distinguishes the
+            // two, so a parenthesised left operand is left alone.
+            ExprKind::Infix { op, lhs, .. } if op == "\\X" => {
+                let a = take(0)?;
+                let b = take(1)?;
+                let from_assoc = matches!(&lhs.kind, ExprKind::Infix { op: l, .. } if l == "\\X");
+                match (from_assoc, a.as_ref()) {
+                    (true, Kera::Times(parts)) => {
+                        let mut v = parts.clone();
+                        v.push(b);
+                        Kera::Times(v).rc()
+                    }
+                    _ => Kera::Times(vec![a, b]).rc(),
+                }
+            }
             ExprKind::Prefix { op, .. } => build_prefix(op, take(0)?, span)?,
             ExprKind::Postfix { op, .. } => match op.as_str() {
                 "'" => Kera::Prime(take(0)?).rc(),
@@ -1585,21 +1631,36 @@ impl<'a> Lowerer<'a> {
                 }
                 acc
             }
-            ExprKind::SetMap { .. } => {
+            ExprKind::SetMap { bounds, .. } => {
                 let names = self.take_binder_names(span);
                 let expr = kids.last().cloned().ok_or_else(|| {
                     LowerError::unsupported("a set map", "internal: no body", span)
                 })?;
-                let mut acc = expr;
-                for (i, var) in names.iter().enumerate().rev() {
-                    acc = Kera::Map {
-                        var: var.clone(),
-                        set: take(i)?,
-                        expr: acc,
+                let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
+                if total > 1 {
+                    // One binder over the product; see `expand_product_binder`.
+                    let Some(var) = names.first().cloned() else {
+                        return Err(LowerError::unsupported("a set map", "internal", span));
+                    };
+                    let doms: Vec<KeraRef> = kids.iter().take(total).cloned().collect();
+                    Kera::Map {
+                        var,
+                        set: Kera::Times(doms).rc(),
+                        expr,
                     }
-                    .rc();
+                    .rc()
+                } else {
+                    let mut acc = expr;
+                    for (i, var) in names.iter().enumerate().rev() {
+                        acc = Kera::Map {
+                            var: var.clone(),
+                            set: take(i)?,
+                            expr: acc,
+                        }
+                        .rc();
+                    }
+                    acc
                 }
-                acc
             }
             ExprKind::FnConstruct { .. } => {
                 let names = self.take_binder_names(span);

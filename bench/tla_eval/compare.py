@@ -86,7 +86,7 @@ def parse(s):
 TLC_OVERRIDDEN = {"JavaTime", "TLCGet", "TLCSet", "RandomElement", "Permutations"}
 
 sp = sys.argv[1]
-agree = 0; mism = []; missing = 0; unparsed = 0; probes = 0
+agree = 0; mism = []; missing = 0; unparsed = 0; unparsed_ex = []; probes = 0
 for exp in sorted(glob.glob(f"{sp}/probes/*.expected")):
     probe = os.path.basename(exp)[:-len(".expected")]
     out = f"{sp}/tlcout/{probe}.out"
@@ -107,8 +107,13 @@ for exp in sorted(glob.glob(f"{sp}/probes/*.expected")):
         if n not in got: missing += 1; continue
         try:
             a, b = parse(v), parse(got[n])
-        except Exception as e:
-            unparsed += 1; continue
+        except Exception:
+            # An unparsed value is an *untested* value. Surfacing it is the
+            # difference between a differential and a differential that
+            # quietly shrinks its own sample.
+            unparsed += 1
+            unparsed_ex.append((probe, n, v, got[n]))
+            continue
         if a == b: agree += 1
         else: mism.append((probe, n, v, got[n]))
 print(f"probes TLC evaluated: {probes}")
@@ -118,3 +123,6 @@ print(f"  not printed by TLC            : {missing}")
 print(f"  value unparsed by comparator  : {unparsed}")
 for p_, n, a, b in mism[:20]:
     print(f"    MISMATCH {p_}!{n}\n       nixie: {a[:120]}\n       TLC  : {b[:120]}")
+for p_, n, a, b in unparsed_ex[:10]:
+    print(f"    UNPARSED {p_}!{n}\n       nixie: {a[:120]}\n       TLC  : {b[:120]}")
+sys.exit(1 if (mism or unparsed) else 0)

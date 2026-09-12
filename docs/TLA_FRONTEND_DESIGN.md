@@ -445,9 +445,15 @@ model checker multiplies the blast radius. Three oracles, all cheap:
    module rather than re-printing the kernel term is what makes it a test of lowering rather
    than of the evaluator against itself.
 
-   Standing result: **93 definitions, 0 semantic mismatches.** That is a spot check, not a
-   gate — 93 against 4 349 that lower. Widening it means generating TLC configurations that
-   assign a module's constants, which is the obvious next step.
+   Standing result: **299 definitions, 0 semantic mismatches.** It has already caught two real
+   lowering bugs that every structural check passed: `\X` was not n-ary (`A \X B \X C` is a
+   set of 3-tuples, not of nested pairs), and a multi-bound set map was nested into a set of
+   sets. Both now have regressions.
+
+   299 against 4 349 definitions that lower is still a sample, and the limit is now the
+   evaluator rather than the harness: 2 611 definitions mention a variable or constant and so
+   are not ground, and most of the rest hit an unimplemented standard-module primitive
+   (`Len`, `Cardinality`, `\o`) or `CHOOSE`.
 
 Plus the standing gates: `cargo build --all-features`, `cargo nextest run --workspace
 --all-features`, `clippy -D warnings`, `fmt --check`, `cargo doc -D warnings`, and

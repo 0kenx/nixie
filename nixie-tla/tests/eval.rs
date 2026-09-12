@@ -161,3 +161,48 @@ fn runaway_sets_are_bounded() {
     let e = Evaluator::new().eval(&k).map(|_| ()).unwrap_err();
     assert!(matches!(e, EvalErrorKind::SetTooLarge { .. }), "got {e:?}");
 }
+
+// ---- regressions found by the TLC differential ----------------------------
+
+#[test]
+fn cartesian_product_is_n_ary() {
+    // `A \X B \X C` is a set of *3-tuples* in TLA+, not a set of pairs whose
+    // first component is a pair. Nesting it gave `{<<<<1, 2>>, 3>>}` where TLC
+    // gives `{<<1, 2, 3>>}`.
+    assert_eq!(eval("A == {1} \\X {2} \\X {3}"), "{<<1, 2, 3>>}");
+    assert_eq!(
+        eval("A == {1, 2} \\X {3} \\X {4}"),
+        "{<<1, 3, 4>>, <<2, 3, 4>>}"
+    );
+    // Explicit parentheses mean the nested reading, and TLA+ distinguishes
+    // the two, so this must NOT be flattened.
+    assert_eq!(eval("A == ({1} \\X {2}) \\X {3}"), "{<<<<1, 2>>, 3>>}");
+}
+
+#[test]
+fn a_multi_bound_set_map_is_flat() {
+    // `{e : x \in S, y \in T}` collects `e` over every combination, giving one
+    // flat set. Nesting the binders produced a set of sets.
+    assert_eq!(
+        eval("A == {<<x, y>> : x \\in {1}, y \\in {2}}"),
+        "{<<1, 2>>}"
+    );
+    assert_eq!(
+        eval("A == {x + y : x \\in {1, 2}, y \\in {10}}"),
+        "{11, 12}"
+    );
+    // The single-bound form is unaffected.
+    assert_eq!(eval("A == {x * 2 : x \\in {1, 2}}"), "{2, 4}");
+}
+
+#[test]
+fn a_multi_variable_function_has_a_product_domain() {
+    assert_eq!(
+        eval("A == DOMAIN [x \\in {1}, y \\in {2} |-> 0]"),
+        "{<<1, 2>>}"
+    );
+    assert_eq!(
+        eval("A == [x \\in {1}, y \\in {2} |-> x + y][<<1, 2>>]"),
+        "3"
+    );
+}
