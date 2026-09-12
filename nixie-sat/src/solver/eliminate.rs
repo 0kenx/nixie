@@ -591,6 +591,25 @@ impl Solver {
         // (cadical: `if (last.elim.subsumephases == stats.subsumephases)
         // subsume ()`).
         let (mut subsumed, mut strengthened) = self.subsume_round();
+        // Fixpoint arm (`NIXIE_ELIM_SUBFIX`): keep subsuming until nothing
+        // changes (bounded) — the strengthening cascade compounds within
+        // the phase, and every retirement/strengthening re-marks its
+        // variables as elimination candidates. The dirty-set scheduling
+        // makes later rounds incremental (only touched literals are
+        // scheduled), so the loop's cost tracks its yield.
+        if crate::elim_subfix_enabled() {
+            const SUBFIX_MAX_ROUNDS: usize = 8;
+            let mut rounds = 1;
+            while rounds < SUBFIX_MAX_ROUNDS && !self.trivially_unsat {
+                let (s, st) = self.subsume_round();
+                if s == 0 && st == 0 {
+                    break;
+                }
+                subsumed += s;
+                strengthened += st;
+                rounds += 1;
+            }
+        }
         #[cfg(feature = "std")]
         if std::env::var("NIXIE_LOG_ELIM").is_ok() {
             eprintln!(

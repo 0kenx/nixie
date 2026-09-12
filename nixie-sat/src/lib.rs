@@ -792,6 +792,21 @@ pub fn eager_sub_enabled() -> bool {
     *FLAG.get_or_init(|| std::env::var("NIXIE_EAGER_SUB").is_ok_and(|v| !v.is_empty() && v != "0"))
 }
 
+/// Subsume fixpoint in the elimination phase (`NIXIE_ELIM_SUBFIX=1`):
+/// cadical `elim()` forces a full subsume PHASE (rounds until nothing
+/// changes) before eliminating when none ran since the last phase; we run
+/// a single round. Repeated rounds mine the strengthening cascade — each
+/// strengthened clause both subsumes more and re-marks its variables as
+/// elimination candidates (the phase-feeder for the starved later
+/// phases). Bounded at 8 rounds. Default off = bit-identical.
+#[doc(hidden)]
+pub fn elim_subfix_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG
+        .get_or_init(|| std::env::var("NIXIE_ELIM_SUBFIX").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
 #[doc(hidden)]
 pub fn and_gates_enabled() -> bool {
     use std::sync::OnceLock;
