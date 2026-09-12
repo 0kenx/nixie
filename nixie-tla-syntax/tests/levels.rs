@@ -230,25 +230,83 @@ fn fairness_of_a_temporal_formula_is_a_violation() {
 }
 
 #[test]
-fn an_operator_that_lowers_its_argument_level_is_not_claimed() {
-    // `test57a.tla`: `B(d) == ENABLED d` has level *state* however high `d`
-    // goes, so `C == B(A)` is a state predicate even though `A` is an action.
-    // The max rule used at application sites gets this wrong, so the level is
-    // marked unknown rather than reported wrongly.
+fn operator_levels_are_a_function_of_their_arguments_not_a_maximum() {
+    // The max rule is wrong for operators in two ways, both found by the SANY
+    // parity run, and both fixed by computing each parameter's level function.
+
+    // 1. An operator that *caps* a level. `B(d) == ENABLED d` is a state
+    //    predicate however high `d` goes, so `C == B(A)` is state even though
+    //    `A` is an action. `test57a.tla` is the corpus case.
     let r = levels(
         "---- MODULE M ----\nVARIABLES u, v\n\
          A == (u' = u) /\\ (v' = v)\nB(d) == ENABLED d\nC == B(A)\nD == ENABLED A\n====\n",
     );
-    assert_eq!(
-        r.trusted_level_of("C"),
-        None,
-        "the max rule cannot establish C's level, so it must not be claimed"
-    );
-    // The direct form needs no argument reasoning and stays exact.
+    assert_eq!(r.trusted_level_of("C"), Some(Level::State));
     assert_eq!(r.trusted_level_of("D"), Some(Level::State));
-    // A parameterised operator with no level-lowering construct is unaffected.
-    let r = levels("---- MODULE M ----\nVARIABLE v\nF(d) == d /\\ (v' = v)\nG == F(TRUE)\n====\n");
-    assert_eq!(r.trusted_level_of("G"), Some(Level::Action));
+
+    // 2. An operator that *ignores* a parameter. `SVGElemToString(elem) ==
+    //    TRUE` stays constant however high the argument goes; the max rule
+    //    made `EWD840_anim.tla`'s `Animation` state level.
+    let r = levels("---- MODULE M ----\nVARIABLE v\nIgnore(e) == TRUE\nA == Ignore(v)\n====\n");
+    assert_eq!(r.trusted_level_of("A"), Some(Level::Constant));
+
+    // A parameter that is genuinely passed through still raises the level.
+    let r = levels("---- MODULE M ----\nVARIABLE v\nId(e) == e\nA == Id(v)\nB == Id(v')\n====\n");
+    assert_eq!(r.trusted_level_of("A"), Some(Level::State));
+    assert_eq!(r.trusted_level_of("B"), Some(Level::Action));
+}
+
+#[test]
+fn operator_parameters_invoked_in_operator_position() {
+    // `BoxTest(-._) == -(x = 0)` applies its parameter as a prefix operator,
+    // so `BoxTest([])` is temporal. The spelling is a bound name, not a
+    // built-in, and treating it as a built-in silently ignored the parameter.
+    let r = levels(
+        "---- MODULE M ----\nVARIABLE x\nBoxTest(-._) == -(x = 0)\n         Foo1 == BoxTest([])\nFoo2 == BoxTest(<>)\n====\n",
+    );
+    assert_eq!(r.level_of("Foo1"), Some(Level::Temporal));
+    assert_eq!(r.level_of("Foo2"), Some(Level::Temporal));
+}
+
+#[test]
+fn parameter_level_functions_cross_extends() {
+    // An importer that learns only the level cannot apply an ignored-parameter
+    // operator correctly, so the exports carry the level functions too.
+    let dir = std::env::temp_dir().join(format!("nixie-tla-lvl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    std::fs::write(
+        dir.join("Helper.tla"),
+        "---- MODULE Helper ----
+Ignore(e) == TRUE
+Id(e) == e
+====
+",
+    )
+    .expect("write Helper");
+    std::fs::write(
+        dir.join("Main.tla"),
+        "---- MODULE Main ----
+EXTENDS Helper
+VARIABLE v
+A == Ignore(v)
+B == Id(v)
+====
+",
+    )
+    .expect("write Main");
+
+    let spec = nixie_tla_syntax::Loader::new()
+        .load(&dir.join("Main.tla"))
+        .expect("spec loads");
+    let reports = nixie_tla_syntax::check_spec(&spec);
+    let root = reports
+        .iter()
+        .find(|(n, _)| n == "Main")
+        .map(|(_, r)| r)
+        .expect("root report");
+    assert_eq!(root.trusted_level_of("A"), Some(Level::Constant));
+    assert_eq!(root.trusted_level_of("B"), Some(Level::State));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

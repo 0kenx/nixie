@@ -371,8 +371,8 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 
    ```
    syntax:  903 both accept | 0 SANY-accepts-we-reject | 2 we-accept-SANY-rejects
-   levels:  4 541 definitions compared over 684 files | 0 mismatches
-            1 106 skipped as untrusted | 1 known SANY defect excluded
+   levels:  5 067 definitions compared over 684 files | 0 mismatches
+              574 skipped as untrusted | 1 known SANY defect excluded
    ```
 
    The syntax gate is **one-sided** on purpose: every file SANY parses must parse here, but
@@ -448,13 +448,21 @@ oracle to test the clever ones against.
   **4 541** definitions the parity suite can compare (§5).
 
   `LevelReport.definitions` carries the taint, and `trusted_level_of` returns `None` rather
-  than a plausible default, so a downstream pass cannot mistake a guess for a fact. The
-  remaining known gap is **argument level constraints**: `B(d) == ENABLED d` has level *state*
-  however high `d` goes, so `C == B(A)` is a state predicate even when `A` is an action, and
-  the max rule gets that wrong. Operators whose body contains a level-*lowering* construct
-  (`ENABLED`, `\cdot`) are therefore marked untrusted rather than reported wrongly.
-  `test57a.tla` is the reproducer. Closing it needs the per-parameter level functions TLA+
-  defines; module resolution closes the rest.
+  than a plausible default, so a downstream pass cannot mistake a guess for a fact.
+
+  **Argument level constraints are implemented.** An operator's level is not a maximum over
+  its arguments: `B(d) == ENABLED d` is a state predicate however high `d` goes, and
+  `SVGElemToString(elem) == TRUE` *ignores* its parameter entirely. Each parameter now carries
+  an exact level function on the four-element chain, obtained by evaluating the body once per
+  level; built-in operators passed as values (`BoxTest([])`) carry theirs too. Both cases came
+  from the parity run — the second was SANY disagreeing and being *right*.
+
+  **`EXTENDS` is resolved** (`module::Loader`), so imported levels are exact — `EXTENDS`
+  performs no substitution. `INSTANCE` is not: `I == INSTANCE N WITH v <- e` substitutes, and
+  a substitution can lower a level, so instance members stay untrusted until the lowering pass
+  can apply the substitution properly.
+
+  Trusted coverage over the corpora went 76.8% → 89.6% of definitions.
 
   A downstream pass must still not treat "no level errors" as "level-correct".
 - How much of Snowcat's inference is needed when `@type:` annotations are present? Parity says

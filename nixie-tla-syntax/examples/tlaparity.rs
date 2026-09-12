@@ -80,6 +80,18 @@ fn main() -> ExitCode {
             continue;
         };
         let ours = nixie_tla_syntax::parse_file(&src);
+        // Follow EXTENDS so that imported levels are known. Without it most
+        // levels are untrusted and never reach the comparison at all; with it
+        // the suite actually exercises the level walk.
+        let resolved = {
+            let mut loader = nixie_tla_syntax::Loader::new();
+            if let Ok(lib) = std::env::var("TLA_LIBRARY") {
+                for dir in lib.split(':').filter(|d| !d.is_empty()) {
+                    loader = loader.with_search_path(dir);
+                }
+            }
+            loader.load(std::path::Path::new(path)).ok()
+        };
         // `#FILE` and `#RESOLVE_ERR` both mean SANY parsed the file;
         // `#PARSE_ERR` is the only syntax rejection.
         let sany_entry = sany.get(&key);
@@ -99,7 +111,14 @@ fn main() -> ExitCode {
             continue;
         };
         level_files += 1;
-        let report = nixie_tla_syntax::check_module(&parsed.module);
+        let report = match &resolved {
+            Some(spec) => nixie_tla_syntax::check_spec(spec)
+                .into_iter()
+                .find(|(n, _)| *n == spec.root)
+                .map(|(_, r)| r)
+                .unwrap_or_else(|| nixie_tla_syntax::check_module(&parsed.module)),
+            None => nixie_tla_syntax::check_module(&parsed.module),
+        };
         // Only compare levels we actually established. A tainted level is a
         // guess (an unresolved `EXTENDS` or instance member), and holding a
         // guess against SANY measures the missing module resolution, not the

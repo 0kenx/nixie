@@ -15,6 +15,7 @@
 //!   junction-list layout decided in the parser rather than the lexer.
 //! * [`ast`] — the surface tree, with a span on every node.
 //! * [`level`] — TLA+ level checking (constant / state / action / temporal).
+//! * [`module`] — following `EXTENDS` to load a spec's transitive imports.
 //!
 //! # Why not LR(1)
 //!
@@ -62,6 +63,7 @@ pub mod ast;
 pub mod error;
 pub mod level;
 pub mod lexer;
+pub mod module;
 pub mod op;
 pub mod parser;
 pub mod span;
@@ -69,8 +71,9 @@ pub mod token;
 
 pub use ast::{Expr, ExprKind, Module, Unit, UnitKind};
 pub use error::{ErrorKind, SyntaxError};
-pub use level::{Level, LevelError, LevelReport, check_module};
+pub use level::{Imports, Level, LevelError, LevelReport, check_module, check_spec};
 pub use lexer::lex;
+pub use module::{LoadedSpec, Loader};
 pub use parser::{ParsedFile, Parser, parse_expr_str, parse_file};
 pub use span::{Pos, Span};
 pub use token::{Keyword, NumBase, Token, TokenKind};

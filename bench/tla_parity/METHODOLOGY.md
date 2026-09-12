@@ -85,9 +85,18 @@ Validate the oracle before believing it. The `*` defect above and both
 isolation bugs were all found by checking SANY against hand-written modules
 with levels that are obvious by inspection.
 
+## Running with `EXTENDS` resolved
+
+Set `TLA_LIBRARY` to a `:`-separated list of directories to search for
+imported modules; `run_parity.sh` passes it to both sides. Without it most
+levels depend on unresolved imports, are marked untrusted, and never reach the
+comparison — the suite passes while testing much less than it appears to. The
+"definitions skipped (untrusted)" line is the number to watch.
+
 ## Standing result
 
-Recorded 2026-09-12, SANY from tlaplus 1.7.4, OpenJDK 11, 907 files:
+Recorded 2026-09-12, SANY from tlaplus 1.7.4, OpenJDK 11, 907 files, with
+`TLA_LIBRARY=../temp/communitymodules/modules`:
 
 ```
 === syntax parity ===
@@ -97,8 +106,11 @@ Recorded 2026-09-12, SANY from tlaplus 1.7.4, OpenJDK 11, 907 files:
 
 === level parity ===
   files SANY could fully resolve  : 684
-  definitions compared            : 4541
-  definitions skipped (untrusted) : 1106
+  definitions compared            : 5067
+  definitions skipped (untrusted) : 574
   known SANY defects excluded     : 1
   level mismatches                : 0
 ```
+
+Previous rounds, for the trend: 4 541 compared / 1 106 skipped before `EXTENDS`
+resolution and per-parameter level functions existed.
