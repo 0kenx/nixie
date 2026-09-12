@@ -1652,18 +1652,34 @@ fn eval_bv_value(
                 // what lets eliminated variables (never bit-blasted at all:
                 // deferred circuits, elim-uncnstr rewrites) certify `Sat`
                 // verdicts instead of degrading them to `Unknown`.
-                let val = if solver.bv.bits_all_determined(tid) {
-                    solver.bv.get_value_big(tid)
-                } else {
-                    model.get(tid).and_then(|value_term| {
-                        match manager.get(value_term).map(|td| &td.kind) {
+                // An explicit model entry is a *record* (a reconstructed
+                // preprocess definition, a deliberate completion) and wins
+                // over the bit readback: `bits_all_determined` also answers
+                // true for never-constrained bits that the adopted
+                // assignment reads as false, and a reconstructed
+                // eliminated variable must not be shadowed by that default
+                // (the unified-deferral replay produced exactly that
+                // shadowing: `x = 7` reconstructed, refuted as `x = 0`).
+                // For bit-blasted variables the record and the bits agree
+                // (`build_model` derives entries from the bits), so the
+                // priority flip changes nothing there.
+                let val = model
+                    .get(tid)
+                    .and_then(
+                        |value_term| match manager.get(value_term).map(|td| &td.kind) {
                             Some(TermKind::BitVecConst { value, width }) => {
                                 value.to_biguint().map(|v| mask(v, *width))
                             }
                             _ => None,
+                        },
+                    )
+                    .or_else(|| {
+                        if solver.bv.bits_all_determined(tid) {
+                            solver.bv.get_value_big(tid)
+                        } else {
+                            None
                         }
-                    })
-                };
+                    });
                 done.insert(tid, val);
                 stack.pop();
                 continue;

@@ -932,6 +932,56 @@ impl Solver {
         if !super::dispatch_pure_bv::assertion_in_bv_fragment(term_to_encode, manager) {
             self.all_assertions_bv_fragment = false;
         }
+        // Unified-path blast deferral (`NIXIE_BV_DEFER_BLAST=1`): pure-BV
+        // fragment assertions on the unified route postpone BOTH the clause
+        // emission and the circuit linking to the next `check`, where the
+        // preprocessor has already collapsed define-equations / ring
+        // identities — the search then sees one (rewritten, folded,
+        // shareable) circuit set instead of raw parse-inlined meganodes
+        // *plus* the rewrites alongside.  Any window breaker (non-fragment
+        // assert, push, generation end) flushes the deferral with the raw
+        // emission, restoring exactly the assert-time behavior.
+        if self.deferred_flush_pending {
+            self.deferred_flush_pending = false;
+            self.flush_deferred_bv_asserts_raw(manager);
+        }
+        if Self::bv_defer_blast_enabled()
+            && self.all_assertions_bv_fragment
+            && Self::bv_dispatch_unified()
+            && !self.has_bv_wide_mul
+            && Self::bv_unify_enabled()
+            && self.context_stack.is_empty()
+            && !self.has_quantifiers
+            && !self.has_array_ops
+            && self.array_select_terms.is_empty()
+            && self.array_store_terms.is_empty()
+            && self.proof.is_none()
+            && self.config.certification_mode == crate::solver::CertificationMode::Uncertified
+            && !self.has_bv_result_uf
+        {
+            // Bookkeeping that must not defer: the theory-variable interning
+            // (routing gates and model extraction read `bv_terms`), the
+            // unit-eq alias note (reads the *raw* term, exactly like the
+            // assert-time path), and the big-constant distinctness guards.
+            // Only the clause emission and circuit linking defer.
+            self.track_theory_vars(term_to_encode, manager);
+            self.note_unit_eq_alias(term_to_encode, manager);
+            self.emit_big_const_distinctness(manager);
+            self.deferred_bv_asserts.push(term_to_encode);
+            self.record_assertion_identity(term, None, index);
+            return;
+        }
+        if !self.deferred_bv_asserts.is_empty() {
+            // The window just broke (this assert is outside the fragment or
+            // the routing changed): emit every deferred assertion raw, in
+            // order, before this one — the assert-time semantics they would
+            // have had.
+            let deferred = std::mem::take(&mut self.deferred_bv_asserts);
+            for d in deferred {
+                self.emit_assertion_clauses(d, manager);
+                self.link_or_blast_bv_circuits(d, manager);
+            }
+        }
         // Encode the assertion immediately – *structurally*: the top-level
         // Boolean skeleton of the assertion (conjunctions, negations,
         // disjunctions under a negation) is flattened into clauses directly,

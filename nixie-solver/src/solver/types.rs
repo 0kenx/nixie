@@ -601,6 +601,16 @@ impl Model {
     }
 
     /// Set a value in the model
+    /// Drop `term`'s assignment (if any).  The preprocess-reconstruction
+    /// replay uses this to clear a *defaulted* entry before installing the
+    /// definition-derived value (`build_model` completes unconstrained
+    /// constants with sort defaults, and the replay's skip-if-assigned
+    /// would otherwise keep the default).
+    pub fn remove(&mut self, term: TermId) {
+        self.assignments.remove(&term);
+    }
+
+    /// Assign `term` to `value`.
     pub fn set(&mut self, term: TermId, value: TermId) {
         self.assignments.insert(term, value);
     }

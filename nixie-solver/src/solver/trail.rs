@@ -198,6 +198,12 @@ impl super::Solver {
             // a stale value cannot outlive its scope's assertions.
             define_fun_equations: _, // NOT trailed: script-level (SMT-LIB
             // definitions persist across push/pop); cleared on `reset`.
+            deferred_bv_asserts: _, // NOT trailed: `push`/`pop` mark the
+            // pending raw flush (the clauses must land at the base scope);
+            // `reset` clears.
+            deferred_flush_pending: _, // NOT trailed: same lifecycle.
+            deferred_eliminations: _,  // NOT trailed: replayed per-check from
+            // the current preprocessing outcome; cleared on reset/flush.
             has_bv_wide_mul: _, // NOT trailed: monotone routing input; same
             // conservative direction (keeps the dispatch).
             bv_elim_var_occurrences: _, // NOT trailed: routing hint only;

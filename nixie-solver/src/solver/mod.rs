@@ -269,6 +269,22 @@ pub struct Solver {
     /// Assertion count at which the stage-4 preprocessing-parity pass last
     /// ran (`usize::MAX` = never); re-runs only when new assertions arrive.
     pub(super) bv_preprocess_at_count: usize,
+    /// Unified-path deferred assertions (`NIXIE_BV_DEFER_BLAST=1`): pure-BV
+    /// fragment asserts whose clause emission and circuit linking wait for
+    /// the next `check`, so the search sees the preprocessor's rewritten
+    /// (folded, shareable) forms *instead of* the raw parse-inlined ones.
+    /// Flushed raw on any window breaker; flushed rewritten at `check`.
+    pub(super) deferred_bv_asserts: Vec<TermId>,
+    /// Whether a raw flush of [`Self::deferred_bv_asserts`] is pending (set
+    /// by `push`/`pop`, honored by the next assert or check).
+    pub(super) deferred_flush_pending: bool,
+    /// Eliminations of the deferral-flushed preprocessing (plain + ring):
+    /// with the rewritten set as the *only* circuit source, the search's
+    /// model leaves eliminated variables at their defaults, and the
+    /// `model_refutes_assertions` gate would refute the ORIGINAL assertions
+    /// with them — reconstruct from these definitions before validation
+    /// (the dispatch path's `bv_reconstruct_eliminations`, same machinery).
+    pub(super) deferred_eliminations: Vec<(TermId, TermId)>,
     /// Memoized [`PreprocessOutcome`] of the current assertion set, with the
     /// assertion count it was computed at (see
     /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
@@ -961,6 +977,9 @@ impl Solver {
             bv_elim_deferred: Vec::new(),
             bv_preprocess_at_count: usize::MAX,
             bv_preprocess_cache: None,
+            deferred_bv_asserts: Vec::new(),
+            deferred_flush_pending: false,
+            deferred_eliminations: Vec::new(),
             has_bv_result_uf: false,
             bv_unified: false,
             bv_order_specs: Vec::new(),
@@ -2059,15 +2078,28 @@ impl Solver {
         // both directions: implied units can only strengthen refutation,
         // and every model of the originals satisfies the rewrites.  E.g.
         // the wienand identity folds to `false` and refutes on the spot.
+        let defer_active = Self::bv_defer_blast_enabled() && !self.deferred_bv_asserts.is_empty();
+        if defer_active && !Self::bv_dispatch_unified() {
+            // The deferral's asserts were admitted under the unified routing;
+            // if that routing is off at check (env flip), fall back to raw.
+            self.flush_deferred_bv_asserts_raw(manager);
+        }
         if Self::bv_dispatch_unified()
             && !self.has_bv_wide_mul
             && !self.bv_terms.is_empty()
             && self.all_assertions_bv_fragment
-            && self.bv_preprocess_at_count != self.assertions.len()
+            && (self.bv_preprocess_at_count != self.assertions.len() || defer_active)
             && std::env::var("NIXIE_BV_NO_PARITY").is_err()
         {
             self.bv_preprocess_at_count = self.assertions.len();
             let pp = self.bv_preprocess_assertions(manager);
+            if std::env::var("NIXIE_PRE_TRACE").is_ok() {
+                eprintln!(
+                    "[defer] stage4 runs, rewritten={} deferred={}",
+                    pp.rewritten.len(),
+                    self.deferred_bv_asserts.len()
+                );
+            }
             // Every rewrite the preprocessor emits is implied by the
             // originals, so asserting them alongside is sound in both
             // directions: the plain solve-eqs pass substitutes
@@ -2089,7 +2121,7 @@ impl Solver {
             // pre-ring assertion set and therefore the old trajectory).
             let ring_participated = pp.used_ring_elimination;
             for &r in &pp.rewritten {
-                if ring_participated {
+                if !defer_active && ring_participated {
                     let is_literal = manager
                         .get(r)
                         .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False));
@@ -2100,10 +2132,30 @@ impl Solver {
                 self.emit_assertion_clauses(r, manager);
                 self.link_or_blast_bv_circuits(r, manager);
             }
+            // With the deferral active these rewrites are the *only* circuit
+            // set (the raw asserts were never emitted); drop the deferral so
+            // later checks do not re-flush.
+            if defer_active {
+                self.deferred_bv_asserts.clear();
+                self.deferred_flush_pending = false;
+                self.deferred_eliminations = pp.eliminations.clone();
+            }
+            // Honesty gate, take two: the deferral's emission happens *after*
+            // the gate read at the top of `check_core`, and an encoder that
+            // refuses a pathologically deep sub-formula would otherwise
+            // leave unconstrained atoms behind a `Sat` verdict.
+            if defer_active && self.encode_depth_exceeded {
+                return SolverResult::Unknown;
+            }
             if self.has_false_assertion {
                 self.build_unsat_core_trivial_false();
                 return SolverResult::Unsat;
             }
+        } else if defer_active {
+            // The stage-4 gate refused (fragment broke, no-parity set, or the
+            // preprocess cache is current): the deferred assertions must not
+            // stay unencoded — raw emission restores assert-time semantics.
+            self.flush_deferred_bv_asserts_raw(manager);
         }
 
         // Check resource limits before starting
@@ -2581,6 +2633,27 @@ impl Solver {
                             self.debug_verify_unified_circuits(manager);
                         }
                         self.build_model(manager);
+                        if !self.deferred_eliminations.is_empty()
+                            && let Some(model) = self.model.as_mut()
+                        {
+                            // Rewritten-only search: eliminated variables
+                            // hold defaults until replayed from their
+                            // definitions (without this, the refutes gate
+                            // below compares an unreconstructed model
+                            // against the original assertions and blocks
+                            // into `Unknown` — the first deferred `sat`).
+                            let elims = std::mem::take(&mut self.deferred_eliminations);
+                            // `build_model` completed the eliminated
+                            // variables with sort defaults (they carry no
+                            // circuits in the rewritten-only core); clear
+                            // those before the replay, whose
+                            // skip-if-assigned would otherwise keep them.
+                            for (var, _) in &elims {
+                                model.remove(*var);
+                            }
+                            Self::bv_reconstruct_eliminations(model, &elims, manager);
+                            self.deferred_eliminations = elims;
+                        }
                         #[cfg(test)]
                         self.repair_paths_saw_model.push(self.model.is_some());
                         // ORDER (upstream #40): the repair paths below run
@@ -3889,8 +3962,45 @@ impl Solver {
         self.context_stack.len()
     }
 
+    /// Whether unified-path assertions defer their blast to the next check
+    /// (`NIXIE_BV_DEFER_BLAST=1`; default off — experimental).
+    pub(super) fn bv_defer_blast_enabled() -> bool {
+        #[cfg(feature = "std")]
+        {
+            matches!(std::env::var("NIXIE_BV_DEFER_BLAST"), Ok(v) if !v.is_empty() && v != "0")
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Emit every deferred assertion raw (the assert-time semantics) and
+    /// clear the deferral.  Window breakers and any check that cannot use
+    /// the rewritten forms take this path.
+    pub(super) fn flush_deferred_bv_asserts_raw(&mut self, manager: &mut TermManager) {
+        if self.deferred_bv_asserts.is_empty() {
+            return;
+        }
+        let deferred = std::mem::take(&mut self.deferred_bv_asserts);
+        for d in deferred {
+            self.emit_assertion_clauses(d, manager);
+            self.link_or_blast_bv_circuits(d, manager);
+        }
+    }
+
+    /// Mark the deferral for raw flush at the next manager-touching point:
+    /// `push` has no manager argument, and the raw emission must happen at
+    /// the base scope — the next `assert` (which flushes before encoding)
+    /// or `check` (which flushes before anything else) does it.  A pop that
+    /// returns to the base scope also re-arms it via the same flag.
+    pub(super) fn defer_flush_raw(&mut self) {
+        self.deferred_flush_pending = !self.deferred_bv_asserts.is_empty();
+    }
+
     /// Push a context level
     pub fn push(&mut self) {
+        self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // A `push` opens a scope the previous verdict knew nothing about.  It
         // adds no assertion by itself, so the old model would still satisfy the
@@ -3950,6 +4060,7 @@ impl Solver {
 
     /// Pop a context level using trail-based undo
     pub fn pop(&mut self) {
+        self.defer_flush_raw();
         self.bv_preprocess_cache = None;
         // Retracting a scope changes the parity-lemma basis (assertions of
         // the scope disappear; their rows and lemmas go with the trail ops).
@@ -4238,6 +4349,9 @@ impl Solver {
         self.bv_unified = false;
         self.bv_preprocess_at_count = usize::MAX;
         self.bv_preprocess_cache = None;
+        self.deferred_bv_asserts.clear();
+        self.deferred_flush_pending = false;
+        self.deferred_eliminations.clear();
         self.bv_order_specs.clear();
         self.distinct_guard_clauses.clear();
         self.bv_order_built.clear();
@@ -4344,3 +4458,5 @@ mod fp_hybrid;
 mod scope_rebase_tests;
 #[cfg(test)]
 mod tests;
+
+// marker
