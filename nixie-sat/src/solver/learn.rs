@@ -37,6 +37,13 @@ pub(super) const DROUGHT_GLUE_GATE: f64 = 500.0;
 /// past any warmup.
 pub(super) const DROUGHT_WARMUP: u64 = 1_000;
 
+/// Gap-stagnation multiplier arming the drought floor: the current gap
+/// since the last restart must exceed this multiple of the restart-gap EMA
+/// (which freezes during a drought).  Same shape as the T1 stall trigger's
+/// multiplier; measured to exclude qwh's healthy-cadence huge-glue phases
+/// (2026-09-11 calibration round 4).
+pub(super) const DROUGHT_GAP_K: f64 = 8.0;
+
 pub(super) fn inproc_round_trace_enabled() -> bool {
     use std::sync::OnceLock;
     static FLAG: OnceLock<bool> = OnceLock::new();
@@ -1698,10 +1705,19 @@ impl Solver {
             .config
             .restart_drought_maxgap
             .or_else(crate::restart_drought_maxgap);
+        // Round 2 (2026-09-11 drought-gate calibration round 4): the glue
+        // gate alone cannot separate worker (needs the floor) from qwh
+        // (bimodal glue crosses every threshold where the floor hurts it);
+        // the drought axis can.  The gap EMA (window 8, updated only at
+        // restarts) freezes at the pre-drought cadence while a drought
+        // runs, so `gap >= k x ema` is true exactly while restarts have
+        // stopped — qwh's floor-negative phases sit on a healthy cadence
+        // and fail it.  Conjunction of glue signature AND gap stagnation.
         let drought_restart = drought.is_some_and(|n| {
             gap >= n
                 && self.stats.conflicts >= DROUGHT_WARMUP
                 && self.glue_current.fast.value() > DROUGHT_GLUE_GATE
+                && gap >= (DROUGHT_GAP_K * self.restart_gap_ema).max(200.0) as u64
         });
         let stall_restart = maxgap.is_some_and(|n| gap >= n)
             || drought_restart

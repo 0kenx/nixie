@@ -65,3 +65,36 @@ collateral). What remains untried and promising:
 
 The bigger systematic from Phase 2 — decisions/conflict 1.5-1.9× across
 x9/summle/frb65/Break — remains the program's largest open target.
+
+## Round 4: gap-stagnation conjunction — isolates the collateral, indicts the medicine
+
+`NIXIE_RESTART_DROUGHT_MAXGAP` now also requires `gap >= 8 x restart_gap_ema`
+(`DROUGHT_GAP_K = 8.0`; the gap EMA freezes during a drought because it is
+updated only at restarts, so this is the drought axis itself). 12-file
+probe, 5 seeds:
+
+| file | effect |
+|---|---|
+| mp1, rbsat, frb45, noL, mdp, 6s167, pb_300, stable-300, x9, summle | **fully inert** (bit-identical) |
+| worker_550 | fires — but the changed seeds get *worse* (10k→47k, 28k→29k, 59k→80k conflicts) |
+| qwh.50 | seeds 1/3 still fire — *worse* (132k→207k, 115k→313k) |
+
+The conjunction achieves the separation every earlier point missed, and the
+separated outcome shows the floor itself is the problem: where the arming
+is strict enough to be safe, the forced gap-1000 restart no longer helps
+even worker_550, and qwh's genuine drought phases are floor-negative at
+every arming.  Across four rounds the only configuration that beat
+worker_550 decisively was the *ungated* floor (and the `maxgap-1000`
+portfolio arm remains that tool: worker 5/5 at 6.8k-92k conflicts, 2026-09
+studies + this round's probes).  The restart-drought family is closed:
+
+1. flat floor — corpus-negative (noL/mdp/rbsat);
+2. glue gate — no separable threshold (qwh bimodal);
+3. glue + warmup — mp1 leak at 300, qwh always;
+4. glue + warmup + gap-stagnation — safe, and thereby revealed ineffective.
+
+What would actually close the worker-class tail is the structural
+difference the shape data points at: cadence plus phase policy (kissat's
+tiered stable/focused schedule with per-mode restart policies), not a
+floor.  The landed arm keeps the round-4 conjunction (safest arming) and
+stays off by default.
