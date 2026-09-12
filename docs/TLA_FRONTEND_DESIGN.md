@@ -434,7 +434,14 @@ model checker multiplies the blast radius. Three oracles, all cheap:
 3. **Apalache differential** — same spec, same bound, same verdict; disagreements are bugs in
    one of the two and worth chasing either way.
 
-4. **Semantic differential against TLC** (`bench/tla_eval/`). The three above are all
+4. **Encoder cross-check** (`nixie-tla-check/examples/encodecheck.rs`). The evaluator is
+   validated against TLC by the suite below, so checking the *encoder* against the evaluator
+   validates it against TLA+ semantics transitively, with no second oracle needed: a ground
+   definition the evaluator calls `TRUE` must encode to a formula whose negation the solver
+   finds unsatisfiable. **306 of 308 agree; 0 disagreements.** The two exceptions are solver
+   defects, not encoding ones — see below.
+
+5. **Semantic differential against TLC** (`bench/tla_eval/`). The three above are all
    *structural*: they check that we parse, level and lower what SANY does, not that a lowered
    term **means** what the source meant. The `INSTANCE` visibility bug is why that distinction
    matters — it produced a perfectly valid kernel term that read the wrong module's variables
@@ -468,7 +475,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 |---|---|---|
 | 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
 | 2 | Surface IR + KerA *(landed)* + lowering *(landed, 93.8%)* + `INSTANCE` *(landed)*; Snowcat typing, pass pipeline *(open)* | IR isomorphism on the same corpus |
-| 3 | Naive encoding onto existing theories, matching Apalache's `arrays` encoding | Apalache + TLC differential agree on verdicts |
+| 3 | Naive encoding onto existing theories *(started: arithmetic/propositional fragment landed in `nixie-tla-check`)* | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
 | 6 | O3 set/function theory plugin | Verdict-preserving; encoding-size and conflict-count deltas |

@@ -1,0 +1,30 @@
+[package]
+name = "nixie-tla-check"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Encoding TLA+ kernel terms into Nixie's SMT solver"
+keywords = ["tla", "smt", "model-checking", "verification", "encoding"]
+categories = ["science"]
+
+[dependencies]
+nixie-tla = { workspace = true }
+nixie-tla-syntax = { workspace = true }
+# `std` is required: `nixie-time` freezes its clock without it, and
+# `nixie-math` asserts at compile time that it has not been frozen.
+nixie-core = { workspace = true, features = ["std"] }
+nixie-time = { workspace = true, features = ["std"] }
+nixie-solver = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, default-features = true }
+# `TermManager::mk_int` takes `impl Into<BigInt>`; a wide TLA+ literal must
+# reach it without passing through `i64`.
+num-bigint = { workspace = true, features = ["std"] }
+
+[lints.clippy]
+unwrap_used = "deny"
+
+[dev-dependencies]
+nixie-tla-syntax = { workspace = true }
+num-bigint = { workspace = true, features = ["std"] }
