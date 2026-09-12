@@ -154,6 +154,22 @@ impl WatchLists {
         self.bin_phantom[idx] = self.bin_phantom[idx].saturating_add(1);
     }
 
+    /// Reset to `num_vars` variables, reusing the existing list storage
+    /// (each inner list is cleared with its capacity retained; the outer
+    /// vector is only grown). The full-rebuild path's allocation-free form:
+    /// identical contents to a fresh [`Self::new`] followed by the same
+    /// fill, minus the per-rebuild `2·num_vars` header zeroing and the
+    /// per-list regrowth.
+    pub(crate) fn reset_lists_in_place(&mut self, num_vars: usize) {
+        let n = num_vars * 2;
+        if self.watches.len() < n {
+            self.watches.resize(n, Vec::new());
+        }
+        for list in self.watches.iter_mut() {
+            list.clear();
+        }
+    }
+
     /// Reset every phantom count (the full watch rebuild's bookkeeping:
     /// the old scheme's rebuild re-created entries for exactly the live
     /// binaries, so the refill that follows this must add one bump per live

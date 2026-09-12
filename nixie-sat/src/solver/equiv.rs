@@ -344,9 +344,18 @@ impl Solver {
         // (exposing equivalences for the SCC) and are not backed by live
         // clauses, so leaving them in the BIG through the search would let
         // an inprocessing clause deletion strand them -- stale edges that
-        // produce hanging units (propagation fixpoint violations). Rebuild
-        // from the post-substitution live binary clauses.
-        self.refresh_binary_graph();
+        // produce hanging units (propagation fixpoint violations). That
+        // purge, however, is already done: the mid-round
+        // `rebuild_watches_and_binary_graph` reconstructs the BIG from the
+        // live binary clauses (dropping the unbacked augmented edges), and
+        // nothing between it and here changes the clause set — the units
+        // loop only assigns trail literals and `propagate` derives
+        // consequences without learning or deleting. The trailing rebuild
+        // therefore reproduced an identical graph every round and is
+        // skipped outright (one full clause-iteration pass per round; the
+        // `big_augmented` flag stays for the early-exit paths above, which
+        // genuinely bypass the mid-round rebuild).
+        let _ = big_augmented;
         SubstOutcome::Ok
     }
 
@@ -429,7 +438,14 @@ impl Solver {
 
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
         let num_vars = self.num_vars;
-        self.watches = WatchLists::new(num_vars);
+        // Reuse the existing outer allocation (2026-09-12): a fresh
+        // `WatchLists::new` allocated `2·num_vars` empty `Vec` headers every
+        // rebuild (si2-class: 6 ELS rounds x ~2.6 M headers zeroed plus
+        // per-list regrowth during the fill), while the fill reconstructs
+        // identical contents anyway. Clearing in place keeps every list's
+        // capacity - same sequential clause-major pattern, zero allocation
+        // churn, bit-identical contents (capacity is not semantic).
+        self.watches.reset_lists_in_place(num_vars);
         // Two-phase CSR build (count → layout → fill): the count pass must
         // apply exactly the filters the fill pass applies (nothing mutates
         // the clause database between the two, so the same live set is seen
