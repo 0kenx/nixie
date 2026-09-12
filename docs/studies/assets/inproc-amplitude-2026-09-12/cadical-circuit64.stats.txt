@@ -1,0 +1,284 @@
+c --- [ statistics ] ---------------------------------------------------------
+c 
+c blocked:                       0         0.00 %  of irredundant clauses
+c   blockings:                   0         0.00    internal
+c   candidates:                  0         0.00    per blocking 
+c   blockres:                    0         0.00    per candidate
+c   pure:                        0         0.00 %  of all variables
+c   pureclauses:                 0         0.00    per pure literal
+c chronological:             53324        14.29 %  of conflicts
+c compacts:                      0         0.00    interval
+c conflicts:                373215     25116.69    per second
+c   backtracked:            337791        90.51 %  of conflicts
+c inc-decay:                     0         0.00 %   per search
+c backbone:                  49039     12770.57 %  of vars
+c    rounds:                   251         3.69    per phase
+c    phases:                    68      5488.46    interval
+c    units:                      0         0.00    per phase
+c dedup-init-rnds:                0         0.00 %  of interval
+c dedup-init:                     0         0.00 %  of subsumed
+c conditioned:                   0         0.00 %  of irredundant clauses
+c   conditionings:               0         0.00    interval
+c   condcands:                   0         0.00    candidate clauses
+c   condassinit:                 0.0       0.00 %  initial assigned
+c   condcondinit:                0.0       0.00 %  initial condition
+c   condautinit:                 0.0       0.00 %  initial autarky
+c   condassrem:                  0.0       0.00 %  final assigned
+c   condcondrem:                 0.000     0.00 %  final conditional
+c   condautrem:                  0.000     0.00 %  final autarky
+c   condprops:                   0         0.00    per candidate
+c covered:                       0         0.00 %  of irredundant clauses
+c   coverings:                   0         0.00    interval
+c   asymmetric:                  0         0.00 %  of covered clauses
+c   blocked:                     0         0.00 %  of covered clauses
+c decisions:                609330     41006.81    per second
+c   searched:              1872143         3.07    per decision
+c rand. dec phase:               0         0.00    per interval
+c random decs:                   0         0.00    per phase
+c eliminated:                    0         0.00 %  of all variables
+c   fastelim:                    0         0.00 %  of eliminated
+c   elimphases:                  5     74643.00    interval
+c   elimrounds:                 10         2.00    per phase
+c   elimtried:                   5         0.00 %  eliminated
+c   elimgates:                   0         0.00 %  gates per tried
+c   elimequivs:                  0         0.00 %  equivalence gates
+c   elimands:                    0         0.00 %  and gates
+c   elimites:                    0         0.00 %  if-then-else gates
+c   elimxors:                    0         0.00 %  xor gates
+c   elimdefs:                    0         0.00 %  definitions
+c   elimsubst:                   0         0.00 %  substituted
+c   elimsubstequi:               0         0.00 %  equivalence gates
+c   elimsubstands:               0         0.00 %  and gates
+c   elimsubstites:               0         0.00 %  if-then-else gates
+c   elimsubstxors:               0         0.00 %  xor gates
+c   elimsubstdefs:               0         0.00 %  definitions
+c   elimres:                  1306         0.00    per eliminated
+c   elimrestried:             1306       100.00 %  per resolution
+c   def checked:                 0         0.00    per phase
+c   def extracted:               0         0.00 %  per checked
+c   def units:                   0         0.00 %  per checked
+c ext.prop. calls:               0         0.00 %  of queries
+c   propagating:                 0         0.00 %  per eprop-call
+c   explained:                   0         0.00 %  per eprop-call
+c   falsified:                   0         0.00 %  per eprop-call
+c ext.clause calls:              0         0.00 %  of queries
+c   learned:                     0         0.00 %  per called
+c   conflicting:                 0         0.00 %  per learned
+c   propagating:                 0         0.00 %  per learned
+c ext.final check:               0         0.00 %  of queries
+c factored:                      0         0.00 %  of variables
+c   factor:                      0         0.00    conflict interval
+c   cls factored:                0         0.00    per factored
+c   lits factored:               0         0.00    per factored
+c   cls unfactored:              0         0.00    per factored
+c   lits unfactored:             0         0.00    per factored
+c fixed:                        75        19.53 %  of all variables
+c   failed:                      2         0.52 %  of all variables
+c   probefailed:                 1        50.00 %  per failed
+c   transredunits:               0         0.00 %  per failed
+c   inprobephases:              34     10976.91    interval
+c   inprobesuccess:             16        47.06 %  phases
+c   probingrounds:              34         1.00    per phase
+c   probed:                    218       109.00    per failed
+c   hbrs:                       54         0.25    per probed
+c   hbrsizes:                  227         4.20    per hbr
+c   hbreds:                     42        77.78 %  per hbr
+c   hbrsubs:                    12        22.22 %  per hbr
+c   units:                       6     62202.50    interval
+c   binaries:                   42      8886.07    interval
+c flushed:                       0         0.00 %  per conflict
+c   hyper:                       0         0.00 %  per conflict
+c   flushings:                   0         0.00    interval
+c instantiated:                  0         0.00 %  of tried
+c   instrounds:                  0         0.00 %  of elimrounds
+c learned:                  191741        51.38 %  per conflict
+c   bumped:                6413813        33.45    per learned
+c   recomputed:            1519504       792.48 %  per learned
+c   promoted1:               14088         7.35 %  per learned
+c   promoted2:                5883         3.07 %  per learned
+c   improvedglue:            71957        37.53 %  per learned
+c lucky:                         0         0.00 %  of tried
+c   constantzero                 0         0.00 %  of tried
+c   constantone                  0         0.00 %  of tried
+c   backwardone                  0         0.00 %  of tried
+c   backwardzero                 0         0.00 %  of tried
+c   forwardone                   0         0.00 %  of tried
+c   forwardzero                  0         0.00 %  of tried
+c   positivehorn                 0         0.00 %  of tried
+c   negativehorn                 0         0.00 %  of tried
+c   extendbytes:               960         0.00    bytes and MB
+c learned_lits:            5959228       100.00 %  learned literals
+c minimized:                     0         0.00 %  learned literals
+c shrunken:                1549724        26.01 %  learned literals
+c minishrunken:             559918         9.40 %  learned literals
+c otfs:                     341968        91.63 %  of conflict
+c   subsumed                163186        43.72 %  of conflict
+c   strengthened            178782        47.90 %  of conflict
+c propagations:            6972519         0.47 M  per second
+c   coverprops:                  0         0.00 %  of propagations
+c   probeprops:               1691         0.02 %  of propagations
+c   searchprops:           6752194        96.84 %  of propagations
+c   transredprops:            2850         0.04 %  of propagations
+c   vivifyprops:            215784         3.09 %  of propagations
+c reactivated:                   0         0.00 %  of all variables
+c reduced:                  115505        30.95 %  per conflict
+c   reductions:                 36     10367.08    interval
+c   sqrt scheme:                 0         0.00 %  reductions
+c   prct scheme:                 0         0.00 %  reductions
+c   collections:                36     10367.08    interval
+c rephased:                     26     14354.42    interval
+c   rephasedbest:                8        30.77 %  rephased best
+c   rephasedflip:                2         7.69 %  rephased flipping
+c   rephasedinv:                 2         7.69 %  rephased inverted
+c   rephasedorig:                4        15.38 %  rephased original
+c   rephasedrand:                3        11.54 %  rephased random
+c   rephasedwalk:                7        26.92 %  rephased walk
+c rescored:                     27     13822.78    interval
+c restarts:                  18869        19.78    interval
+c   reused:                  13682        72.51 %  per restart
+c   reusedlevels:           117080        32.16 %  per restart levels
+c restored:                      0         0.00 %  per weakened
+c   restorations:                0         0.00 %  per extension
+c   literals:                    0         0.00    per restored clause
+c stabilizing:                   9        37.48 %  of conflicts
+c   restartstab:                42         0.22 %  of all restarts
+c   reusedstab:                 28        66.67 %  per stable restarts
+c substituted:                  15         3.91 %  of all variables
+c   decompositions:             50         1.47    per phase
+c sweep equivs:                  2         2.56 %  of swept variables
+c   sweepings:                   8         9.75    vars per sweeping
+c   swept vars:                 78        20.31 %  of all variables
+c   sweep units:                 0         0.00 %  of all variables
+c   solved:                    612         7.85    per swept variable
+c   sat:                       604        98.69 %  solved
+c   unsat:                       5         0.82 %  solved
+c   backbone solved:           311        50.82 %  solved
+c     sat:                     310        99.68 %  backbone solved
+c     unsat:                     0         0.00 %  backbone solved
+c     unknown:                   1         0.32 %  backbone solved
+c     fixed:                     0         0.00   per swept variable
+c     flip:                   4507        57.78   per swept variable
+c     flipped:                 576        12.78 %  of backbone flip
+c   equiv solved:              223        36.44 %  solved
+c     sat:                     218        97.76 %  equiv solved
+c     unsat:                     5         2.24 %  equiv solved
+c     unknown:                   0         0.00 %  equiv solved
+c     flip:                   3384        43.38    per swept variable
+c     flipped:                 507        14.98 %  of equiv flip
+c   depth:                     138         1.77    per swept variable
+c   environment:              2578        33.05    per swept variable
+c   clauses:                680771      8727.83    per swept variable
+c   completed:                   2         4.00    sweeps to complete
+c subsumed:                 387625        54.48 %  of all clauses
+c   subsumephases:               5     74643.00    interval
+c   subsumerounds:              10         2.00    per phase
+c   deduplicated:               10         0.00 %  per subsumed
+c   transreds:                  39      9569.62    interval
+c   transitive:                284         0.07 %  per subsumed
+c   subirr:                 174183        44.94 %  of subsumed
+c   subred:                   2237         0.58 %  of subsumed
+c   subtried:                58377         0.15    tried per subsumed
+c   subchecks:            13804467       236.47    per tried
+c   subchecks2:               7087         0.05 %  per subcheck
+c   elimotfsub:                  0         0.00 %  of subsumed
+c   elimbwsub:                   0         0.00 %  of subsumed
+c   eagersub:                38097         9.83 %  of subsumed
+c   eagertried:            4218170       110.72    tried per eagersub
+c strengthened:             242026        34.01 %  of all clauses
+c   elimotfstr:                 24         0.01 %  of strengthened
+c   elimbwstr:                   0         0.00 %  of strengthened
+c ternary:                       0         0.00 %  of resolved
+c   phases:                      4     93303.75    interval
+c   htr3:                        0         0.00 %  ternary hyper ternres
+c   htr2:                        0         0.00 %  binary hyper ternres
+c ticks:                 933907599       138.31    propagation
+c  searchticks:          854623618        91.51 %  totalticks
+c    stableticks:        370184670        43.32 %  searchticks
+c    unstableticks:      484438948        56.68 %  searchticks
+c  inprobeticks:          79283981         8.49 %  totalticks
+c    backboneticks:        1889929         0.22 %  searchticks
+c    factorticks:                0         0.00 %  searchticks
+c    probeticks:          12516422         1.46 %  searchticks
+c    sweepticks:          22214904         2.60 %  searchticks
+c    ternaryticks:         5876620         0.69 %  searchticks
+c    vivifyticks:         36786106         4.30 %  searchticks
+c    walkticks:           45633757         5.34 %  searchticks
+c    walkflipticks:       10233595         1.20 %  searchticks
+c    walkflipbrk:           927753         0.11 %  searchticks
+c    walkflipWL:           9305891         1.09 %  searchticks
+c    walkpickticks:       35399887         4.14 %  searchticks
+c    walkbreak:           35360936         4.14 %  searchticks
+c tier recomputed:              20     18660.75    interval
+c trail reuses:                  0         0.00 %  of incremental calls
+c   levels:                      0         0.00    per reuse
+c   literals:                    0         0.00    per reuse
+c   assumptions:                 0         0.00    per reuse
+c vivified:                  19889         2.80 %  of all clauses
+c   vivifications:               7     53316.43    interval
+c   vivifychecks:            24746         6.63 %  per conflict
+c   vivified:                12175        49.20 %  per check
+c   vified-irred:             8226        67.56 %  per vivified
+c   vified-tier1:             2073        17.03 %  per vivified
+c   vified-tier2:             1764        14.49 %  per vivified
+c   vified-tier3:              112         0.92 %  per vivified
+c   vivifysched:             90400        27.37 %  checks per scheduled
+c   vivifyunits:                 0         0.00 %  per vivify check
+c   vivifyinst:                167         0.67 %  per vivify check
+c   vivifysubs:               9930         2.56 %  per subsumed
+c   vivifyflushed:              18         0.00 %  per subsumed
+c   vivifysubred:             1513        15.24 %  per subs
+c   vivifysubirr:             8399        84.58 %  per subs
+c   vivifystrs:               9959         4.11 %  per strengthened
+c   vivifystrirr:             7975        80.08 %  per vivifystrs
+c   vivifystred1:              768         7.71 %  per vivifystrs
+c   vivifystred2:             1127        11.32 %  per viviyfstrs
+c   vivifystred3:               89         0.89 %  per vivifystrs
+c   vivifydemote:                0         0.00 %  per vivifystrs
+c   vivifydecs:              64237         2.60    per checks
+c   vivifyreused:           135685       211.23 %  per non-reused decision
+c walked:                        7     53316.43    interval
+c   prop-warmup:              2177       311.00    per warmup
+c   dec-warmup:                957       136.71    per warmup
+c   dummydec-w:                  0         0.00    per warmup
+c   conflicts:                 452        64.57    per warmup
+c   warmup:                      7         1.00    per walk
+c   flips:                   39329         0.08 M  per second
+c   minimum:                     6         0.00 %  clauses
+c   broken:                 785652        19.98    per flip
+c   improved:                    7         1.00    per walk
+c weakened:                     30         2.00    average size
+c   extensions:                  1    373215.00    interval
+c   flipped:                    11         0.37    per weakened
+c congruence:                   11     33928.64    interval
+c    units:                      0         0.00    per congruent
+c    cong-and:                   0         0.00    per found gates
+c    cong-ite:                   0         0.00    per found gates
+c    cong-xor:                   0         0.00    per found gates
+c    congruent:                  2         5.50    per round
+c    unaries:                    0         0.00    per round
+c    rewritten:                  1         9.09    per round
+c    rewri.-ands:                1       100.00    per rewritten
+c    rewri.-xors:                0         0.00%  per rewritten
+c    rewri.-ites:                0         0.00%  per rewritten
+c    subsumed:                 839        76.27%  per round
+c 
+c seconds are measured in process time for solving
+c 
+c --- [ glue usage ] ---------------------------------------------------------
+c 
+c focused glue 3 used 166962 clauses 25.79% accumulated 66.39% tier1
+c focused glue 4 used 83602 clauses 12.91% accumulated 79.31% tier2
+c 
+c stable glue 3 used 204092 clauses 23.77% accumulated 58.85% tier1
+c stable glue 4 used 116759 clauses 13.60% accumulated 72.45% tier2
+c 
+c 
+c --- [ resources ] ----------------------------------------------------------
+c 
+c total process time since initialization:        15.03    seconds
+c total real time since initialization:           15.08    seconds
+c maximum resident set size of process:          146.07    MB
+c 
+c --- [ shutting down ] ------------------------------------------------------
+c 
+c exit 10

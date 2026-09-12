@@ -1,5 +1,10 @@
 # Inprocessing amplitude on the unsolved class: the diagnosis (2026-09-12)
 
+> Evidence assets: `assets/inproc-amplitude-2026-09-12/` — cadical
+> `[statistics]` dumps for the four files, kissat's 170058440 tail, our
+> per-round traces, the Timetable elim probe, the sc24f re-baseline runner
+> and its 270-cell log.
+
 Priority-1 item from the round-8 close: four corpus files sit at 0/5 where
 references solve (`circuit_64in64out`, `Timetable_C`, `170058440`, `64_25`),
 with the recorded hook that cadical subsumes 54 % of clauses / strengthens

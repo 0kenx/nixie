@@ -1,0 +1,8 @@
+[elim] phase 1 start: conflicts=2000 vars=282525 orig=1746419
+[elim]   pre-phase subsume_round: subsumed=0 strengthened=0
+[elim]   round 1: eliminated=74535 complete=true dirty=true units=0 resolutions=4975982
+[elim]   round 2: eliminated=198 complete=true dirty=true units=0 resolutions=10084653
+[elim] phase 2 start: conflicts=6003 vars=282525 orig=2325044
+[elim]   pre-phase subsume_round: subsumed=9798 strengthened=13860
+[elim]   round 1: eliminated=1732 complete=true dirty=true units=0 resolutions=12311886
+[elim]   round 2: eliminated=379 complete=true dirty=true units=0 resolutions=14308837

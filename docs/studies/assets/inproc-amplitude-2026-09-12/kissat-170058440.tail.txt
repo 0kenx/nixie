@@ -1,0 +1,160 @@
+c [vectors] enlarged to 2^19 entries 2097152 bytes (2 MB) (in place)
+c [rephase-68] walking phases in stable search mode
+c [rephase-68] new limit of 12609022 after 456533 conflicts
+c W 539.73 26 25 77 693 179337 1 12152489 58099 1.6 27 17 5 20 48%   0 1675 283 88%
+c [vectors] enlarged to 2^20 entries 4194304 bytes (4 MB) (in place)
+c ] 539.74 26 25 77 693 179337 1 12152489 58099 1.6 27 17 5 20 48%   0 1675 283 88%
+c 1 539.74 26 27 77 693 179337 2 12152489 58099 1.6 23 15 3 17 47%   0 1675 283 88%
+c
+c ---- [ result ] ------------------------------------------------------------
+c
+s SATISFIABLE
+v 1 2 -3 -4 5 6 -7 -8 -9 -10 -11 -12 -13 14 -15 -16 17 -18 19 20 21 -22 -23 24
+v 25 -26 -27 28 29 30 -31 32 -33 -34 35 36 37 -38 39 40 -41 -42 43 -44 45 46
+v -47 -48 49 50 51 52 53 54 -55 -56 -57 -58 -59 60 61 -62 63 64 -65 66 67 -68
+v -69 70 -71 72 73 -74 75 -76 77 -78 -79 80 81 -82 83 84 85 -86 -87 88 -89 -90
+v 91 92 93 -94 -95 96 97 -98 99 -100 101 102 103 -104 -105 -106 -107 108 -109
+v 110 -111 -112 113 -114 115 -116 -117 118 -119 -120 121 122 123 -124 125 126
+v -127 128 129 130 131 -132 -133 -134 135 -136 137 138 139 -140 -141 142 -143
+v 144 -145 146 -147 148 -149 -150 151 152 153 -154 -155 -156 157 -158 -159
+v -160 161 -162 -163 -164 165 166 167 -168 169 -170 -171 172 173 -174 175 -176
+v 177 178 179 180 181 -182 183 -184 -185 186 -187 188 189 -190 191 -192 -193
+v -194 195 -196 197 198 199 -200 201 -202 -203 204 -205 206 -207 -208 -209 210
+v 211 212 213 -214 215 -216 217 -218 219 -220 221 -222 -223 224 225 -226 -227
+v -228 229 230 231 -232 233 234 235 -236 -237 238 -239 -240 -241 242 243 244
+v -245 -246 247 248 249 250 -251 -252 -253 -254 -255 256 -257 258 259 260 -261
+v -262 -263 -264 265 266 -267 268 -269 -270 271 -272 273 -274 -275 276 -277
+v 278 -279 280 -281 282 283 -284 285 -286 287 -288 289 290 291 292 293 294
+v -295 296 297 -298 -299 300 301 -302 -303 304 -305 -306 307 308 309 -310 -311
+v -312 313 -314 -315 -316 -317 -318 319 320 0
+c
+c ---- [ profiling ] ---------------------------------------------------------
+c
+c         471.26   87.31 %  search
+c         253.17   46.91 %  focused
+c         218.09   40.41 %  stable
+c          68.45   12.68 %  simplify
+c          50.99    9.45 %  probe
+c          37.77    7.00 %  vivify
+c          17.47    3.24 %  walking
+c          12.80    2.37 %  sweep
+c           3.98    0.74 %  reduce
+c           0.39    0.07 %  substitute
+c           0.02    0.00 %  preprocess
+c           0.01    0.00 %  transitive
+c           0.01    0.00 %  congruence
+c           0.01    0.00 %  eliminate
+c           0.00    0.00 %  backbone
+c           0.00    0.00 %  factor
+c           0.00    0.00 %  parse
+c           0.00    0.00 %  subsume
+c           0.00    0.00 %  lucky
+c           0.00    0.00 %  extend
+c =============================================
+c         539.74  100.00 %  total
+c
+c ---- [ statistics ] --------------------------------------------------------
+c
+c backbone_computations:                  121           100434    interval
+c backbone_ticks:                      139063 
+c chronological:                            0                0 %  conflicts
+c clauses_added:                     12150277              100 %  added
+c clauses_binary:                           0                0 %  added
+c clauses_irredundant:                   1675                0 %  added
+c clauses_learned:                   12148232              100 %  conflicts
+c clauses_original:                      1120                0 %  added
+c clauses_redundant:                    58099 
+c clauses_used:                      48566961              400 %  learned
+c clauses_used_focused:              11887563               24 %  used
+c clauses_used_stable:               36679398               76 %  used
+c closures:                                10          1215249    interval
+c conflicts:                         12152489            22515.54 per second
+c congruent:                                0                0 %  variables
+c congruent_gates:                          0                0.00 per closure
+c congruent_gates_ands:                     0                0 %  gates
+c congruent_gates_ites:                     0                0 %  gates
+c congruent_gates_xors:                     0                0 %  gates
+c congruent_matched:                        0                0 %  congruent
+c congruent_matched_ands:                   0                0 %  matched
+c congruent_matched_ites:                   0                0 %  matched
+c congruent_matched_xors:                   0                0 %  matched
+c decisions:                         19955912                1.64 per conflict
+c eliminated:                              37               12 %  variables
+c eliminate_resolutions:                41420               76.74 per second
+c eliminations:                             6          2025415    interval
+c factored:                                 0                0 %  variables
+c factorizations:                           2          6076244    interval
+c factor_ticks:                         96609 
+c fast_eliminated:                          0                0 %  eliminated
+c fast_strengthened:                        0                0 %  per strengthened
+c fast_subsumed:                            0                0 %  per subsumed
+c forward_checks:                       24429 
+c forward_steps:                        55012                2.25 per check
+c iterations:                               0                0 %  variables
+c kitten_propagations:               14374983             2699.02 per solved
+c kitten_solved:                         5326 
+c kitten_ticks:                     533682027               37.13 per prop
+c literals_factor:                       1083                3.38 per variable
+c probings:                                61           199221    interval
+c probing_ticks:                   4796356265 
+c propagations:                     563836566          1044649    per second
+c random_sequences:                      2172             5595    interval
+c reductions:                             693            17536    interval
+c reordered:                               45           270055    interval
+c rephased:                                68           178713    interval
+c restarts:                            179337               68    interval
+c retiered:                               186            65336    interval
+c searches:                                 1         12152489    interval
+c search_ticks:                   50224865335 
+c strengthened:                             0                0 %  checks
+c substituted:                              0                0 %  variables
+c substitute_ticks:                   1504994 
+c subsumed:                                 0                0 %  checks
+c subsumption_checks:                   24429 
+c sweep:                                   10          1215249    interval
+c sweep_completed:                          1               10.00 sweeps
+c sweep_equivalences:                       0                0 %  variables
+c sweep_solved:                          3225               61 %  kitten_solved
+c sweep_units:                              0                0 %  variables
+c switched:                                77           157825    interval
+c transitive_ticks:                    345800 
+c units:                                    0                0 %  variables
+c variables_activated:                    320                1.00 per variable
+c variables_eliminate:                    538                1.68 variables
+c variables_extension:                      0                0.00 per variable
+c variables_factor:                         0                0.00 per variable
+c variables_original:                     320                1.00 per variable
+c variables_subsume:                      597                1.87 per variable
+c vivifications:                           60           202541    interval
+c vivified:                            593047               72 %  checks
+c vivify_checks:                       825883            13765    per vivify
+c vivify_probes:                      9612636               11.64 per check
+c vivify_reused:                      2936052               31 %  probes
+c walks:                                   23           528369    interval
+c walk_steps:                     12284495160 
+c warming_decisions:                      823               35.78 per walk
+c warming_propagations:                  6731                0 %  propagations
+c warmups:                                 23              100 %  walks
+c
+c ---- [ glue usage ] --------------------------------------------------------
+c
+c focused glue 3    used  940171 clauses  7.91% accumulated 51.33% tier1
+c focused glue 4    used  667140 clauses  5.61% accumulated 56.95%
+c focused glue 5-15 used 3533751 clauses 29.73% accumulated 86.67%
+c focused glue 16   used  235436 clauses  1.98% accumulated 88.65%
+c focused glue 17   used  228356 clauses  1.92% accumulated 90.57% tier2
+c
+c stable glue 5    used 2599974 clauses  7.09% accumulated 57.01% tier1
+c stable glue 6    used 1852857 clauses  5.05% accumulated 62.06%
+c stable glue 7-18 used 9395391 clauses 25.61% accumulated 87.67%
+c stable glue 19   used  598570 clauses  1.63% accumulated 89.30%
+c stable glue 20   used  586528 clauses  1.60% accumulated 90.90% tier2
+c
+c ---- [ resources ] ---------------------------------------------------------
+c
+c maximum-resident-set-size:         63287296 bytes         60 MB
+c process-time:                             9m             539.74 seconds
+c
+c ---- [ shutting down ] -----------------------------------------------------
+c
+c exit 10
