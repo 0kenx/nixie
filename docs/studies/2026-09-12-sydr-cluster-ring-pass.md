@@ -326,3 +326,43 @@ Remaining gap after this round: 6 cells — `smulov2bw064`,
 `bitrev2048` / `ex7_prime` (+`rubik`).  Campaign scoreboard:
 **311 of 509** at the default configuration (z3 4.16.0: 281), zero
 verdict flips at every commit.
+
+## Session round 5 (2026-09-12, afternoon): gate structural hash-consing landed default-off (6e61c0c9)
+
+The third sharing mechanism, and the cleanest: plain var-keyed
+  hash-consing of the gate constructors (no complement edges, no
+  two-level rules — the simple version of the rejected AIG layer).
+  Soundness rides the codebase's own invariant: entries insert only at
+  the base scope (the `term_to_bv` truthfulness rule), unified-era
+  wipes on generation switches.
+
+Measured: the BuchwaldFried micro-reproducers close 15 s → 0.05 s;
+  **both cascade residues close in ~0.1 s** and the full file in 0.3 s
+  (via the eager dispatch — on the default unified route the
+  assert-time blast of raw asserts still hides the sharing, the same
+  obstacle the IR layer hits; **menu item 4 — blast-rewritten-only —
+  is the architectural fix for both mechanisms**).  Two multiplier
+  cells crack on the default route: `smulov2bw064` 1.5 s,
+  `umulov1bw064`.
+
+509-file A/B: 301 vs 301 parallel (zero flips); serially adjusted
+  +1..+4 net — inside the ±9 run-to-run noise floor measured on this
+  box (two null-arm runs of the same configuration read 301 and 310).
+  Default off; the flag keeps the family reachable.
+
+**Operational note for future sessions**: the campaign's parallel arms
+  have a ±9-cell noise floor under this box's load.  Parallel A/B pairs
+  are still the honest comparator (same conditions), but *serial*
+  re-checks of every mover are mandatory before reading a ±5-cell
+  result as signal.
+
+**Shared-tree note**: the workspace carried another agent's in-flight
+  `nixie-sat` edits (14 pre-existing test failures at clean HEAD,
+  verified in a pristine worktree) — this round's battery ran in an
+  isolated worktree (`git worktree add`, patch applied, built, tested;
+  worktree deleted after).
+
+Remaining gap at default: 7 cells — BuchwaldFried + smulov2bw064 +
+  umulov1bw064 (all three closed by `NIXIE_BV_GATE_SH=1` or
+  `NIXIE_BV_MUL_ARRAY=1` opt-ins), calypto_14, s3_srvr_1_alt, and the
+  IR-gated maxandminor016 / bitrev2048 / ex7_prime.
