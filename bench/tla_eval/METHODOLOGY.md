@@ -126,20 +126,40 @@ them TLC printing a model value, which is how the configuration-override trap
 above was found. A differential that quietly shrinks its own sample is worse
 than one that fails.
 
+## What limits the sample
+
+Three separate ceilings, worth keeping apart because they need different work:
+
+1. **Not ground.** 2 526 definitions mention a variable or constant, so this
+   evaluator refuses them by design. Reaching those needs the encoder and a
+   bounded model check, not a bigger evaluator.
+2. **Unimplemented primitives.** `ToString`, `SetToBag`, the `Variants`
+   operators, and the Apalache folds — which take an *operator* argument that
+   lowering records only by name. `CHOOSE` is excluded on purpose.
+3. **TLC will not run the probe.** 130 of 294 probes fail before printing
+   anything, dominated by **failing `ASSUME`s**: a module that declares
+   `CONSTANT N` and assumes `N \in Nat` rejects the model value this harness
+   assigns, and TLC refuses to start. Assigning values that satisfy a module's
+   assumptions needs reading those assumptions, which is a real piece of work
+   and the largest remaining widening.
+
+A smaller instance of (3) was missing module paths — several corpus modules
+extend `Apalache`, whose `.tla` ships in the Apalache checkout rather than with
+the community modules. That is now on the default library path.
+
 ## Standing result
 
 Recorded 2026-09-12, TLC 2.19 (tlaplus 1.7.4), OpenJDK 11, 907-file corpora:
 
 ```
-probes TLC evaluated            : 119
-definitions agreeing with TLC   : 299
+probes generated                : 294
+probes TLC evaluated            : 164
+definitions agreeing with TLC   : 390
 SEMANTIC MISMATCHES             : 0
-not printed by TLC              : 351
+not printed by TLC              : 530
 value unparsed by comparator    : 0
 ```
 
-299 against 4 349 definitions that lower. The remaining limit is the evaluator,
-not the harness: 2 611 definitions mention a variable or constant and so are
-not ground, and the rest hit an unimplemented primitive (`Len`, `Cardinality`,
-`\o`) or `CHOOSE`. Implementing the standard-module operators is what widens
-it further.
+390 against 4 349 definitions that lower. It is a sample, not a gate — but it
+is the only check here that tests *meaning*, and it has already found three
+real bugs that every structural check passed.

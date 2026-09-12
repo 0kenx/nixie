@@ -445,15 +445,18 @@ model checker multiplies the blast radius. Three oracles, all cheap:
    module rather than re-printing the kernel term is what makes it a test of lowering rather
    than of the evaluator against itself.
 
-   Standing result: **299 definitions, 0 semantic mismatches.** It has already caught two real
-   lowering bugs that every structural check passed: `\X` was not n-ary (`A \X B \X C` is a
-   set of 3-tuples, not of nested pairs), and a multi-bound set map was nested into a set of
-   sets. Both now have regressions.
+   Standing result: **390 definitions, 0 semantic mismatches.** It has already caught three
+   real bugs that every structural check passed: `\X` was not n-ary (`A \X B \X C` is a set
+   of 3-tuples, not of nested pairs); a multi-bound set map was nested into a set of sets; and
+   `TRUE`, `FALSE` and `BOOLEAN` lowered to **free names** rather than to built-in constants,
+   which would have handed any encoder an undeclared symbol where a boolean was meant. All
+   three have regressions.
 
-   299 against 4 349 definitions that lower is still a sample, and the limit is now the
-   evaluator rather than the harness: 2 611 definitions mention a variable or constant and so
-   are not ground, and most of the rest hit an unimplemented standard-module primitive
-   (`Len`, `Cardinality`, `\o`) or `CHOOSE`.
+   390 against 4 349 definitions that lower is a sample, not a gate, and three separate
+   ceilings hold it there: 2 526 definitions are not ground (reaching those needs the encoder
+   and a bounded model check); some hit an unimplemented primitive; and 130 of 294 probes
+   never run, dominated by modules whose `ASSUME` rejects the model values the harness
+   assigns. `METHODOLOGY.md` keeps them apart because they need different work.
 
 Plus the standing gates: `cargo build --all-features`, `cargo nextest run --workspace
 --all-features`, `clippy -D warnings`, `fmt --check`, `cargo doc -D warnings`, and

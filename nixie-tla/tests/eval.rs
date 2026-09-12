@@ -141,13 +141,14 @@ fn a_non_ground_term_is_an_error_not_a_guess() {
 
 #[test]
 fn an_unimplemented_primitive_is_named_not_guessed() {
-    // `\o` has no kernel node; lowering carries it through as an opaque
-    // application, and evaluation must decline rather than invent a value.
-    let e = eval_err("A == <<1>> \\o <<2>>");
+    // `ToString` has no kernel node and no implementation here; lowering
+    // carries it through as an opaque application, and evaluation must decline
+    // rather than invent a value.
+    let e = eval_err("A == ToString(1)");
     let EvalErrorKind::Unsupported(what) = &e else {
         panic!("got {e:?}");
     };
-    assert!(what.contains("\\o"), "the diagnostic names it: {what}");
+    assert!(what.contains("ToString"), "the diagnostic names it: {what}");
 }
 
 #[test]
@@ -205,4 +206,55 @@ fn a_multi_variable_function_has_a_product_domain() {
         eval("A == [x \\in {1}, y \\in {2} |-> x + y][<<1, 2>>]"),
         "3"
     );
+}
+
+#[test]
+fn standard_module_primitives() {
+    // Sequences.
+    assert_eq!(eval("A == Len(<<1, 2, 3>>)"), "3");
+    assert_eq!(eval("A == Head(<<7, 8>>)"), "7");
+    assert_eq!(eval("A == Tail(<<7, 8, 9>>)"), "<<8, 9>>");
+    assert_eq!(eval("A == Append(<<1>>, 2)"), "<<1, 2>>");
+    assert_eq!(eval("A == <<1, 2>> \\o <<3>>"), "<<1, 2, 3>>");
+    assert_eq!(eval("A == SubSeq(<<1, 2, 3, 4>>, 2, 3)"), "<<2, 3>>");
+    // A function on 1..n *is* a sequence, so the constructed form works too.
+    assert_eq!(eval("A == Len([i \\in 1..4 |-> i])"), "4");
+
+    // FiniteSets.
+    assert_eq!(eval("A == Cardinality({1, 2, 2, 3})"), "3");
+    assert_eq!(eval("A == IsFiniteSet({1})"), "TRUE");
+
+    // TLC.
+    assert_eq!(eval("A == 1 :> 5"), "(1 :> 5)");
+    assert_eq!(
+        eval("A == (1 :> 5) @@ (2 :> 6)"),
+        "(1 :> 5, 2 :> 6)".replace(", ", " @@ ")
+    );
+    // `@@` keeps the left operand on a shared key.
+    assert_eq!(eval("A == (1 :> 5) @@ (1 :> 9)"), "(1 :> 5)");
+}
+
+#[test]
+fn head_and_tail_of_the_empty_sequence_are_errors() {
+    // TLA+ leaves them undefined; returning a plausible value would be
+    // fabrication.
+    assert!(matches!(
+        eval_err("A == Head(<<>>)"),
+        EvalErrorKind::OutOfDomain(_)
+    ));
+    assert!(matches!(
+        eval_err("A == Tail(<<>>)"),
+        EvalErrorKind::OutOfDomain(_)
+    ));
+}
+
+#[test]
+fn boolean_literals_are_built_in_not_free_names() {
+    // `TRUE`, `FALSE` and `BOOLEAN` are part of the language. Lowering them to
+    // `Var("TRUE")` made them free names: unevaluable here, and an undeclared
+    // symbol to any encoder.
+    assert_eq!(eval("A == TRUE"), "TRUE");
+    assert_eq!(eval("A == FALSE /\\ TRUE"), "FALSE");
+    assert_eq!(eval("A == BOOLEAN"), "{FALSE, TRUE}");
+    assert_eq!(eval("A == TRUE \\in BOOLEAN"), "TRUE");
 }

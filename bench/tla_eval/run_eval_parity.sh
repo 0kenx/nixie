@@ -28,7 +28,10 @@ JAR="${TLA2TOOLS_JAR:-$(ls /nix/store/*/share/java/tla2tools.jar 2>/dev/null | h
 if [ -z "${JAR:-}" ] || [ ! -f "$JAR" ]; then
   echo "tla2tools.jar not found; set TLA2TOOLS_JAR." >&2; exit 2
 fi
-COMMUNITY="${TLA_LIBRARY:-$repo/../temp/communitymodules/modules}"
+# Several corpus modules extend `Apalache`, whose .tla ships inside the
+# Apalache checkout rather than with the community modules. Without it on the
+# path TLC cannot parse them at all, and the probe silently yields nothing.
+COMMUNITY="${TLA_LIBRARY:-$repo/../temp/communitymodules/modules:$repo/../temp/apalache/src/tla}"
 
 corpora=("$@")
 if [ ${#corpora[@]} -eq 0 ]; then

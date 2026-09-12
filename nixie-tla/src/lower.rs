@@ -704,6 +704,24 @@ impl Default for Lowerer<'_> {
     }
 }
 
+/// The TLA+ built-in constants.
+///
+/// `TRUE`, `FALSE` and `BOOLEAN` are part of the language, not names a module
+/// declares. Falling through to `Var("TRUE")` made them *free names*: the
+/// evaluator refused them, and an encoder would have seen an undeclared
+/// symbol where a boolean was meant.
+///
+/// Checked only after scopes and definitions, so a binding of the same name
+/// still wins — the language reserves them, but nothing here depends on that.
+fn builtin_constant(name: &str) -> Option<KeraRef> {
+    match name {
+        "TRUE" => Some(Kera::Bool(true).rc()),
+        "FALSE" => Some(Kera::Bool(false).rc()),
+        "BOOLEAN" => Some(Kera::SetEnum(vec![Kera::Bool(false).rc(), Kera::Bool(true).rc()]).rc()),
+        _ => None,
+    }
+}
+
 /// Sort record fields so two records written in different orders compare equal.
 fn sort_fields(mut fs: Vec<(String, KeraRef)>) -> Vec<(String, KeraRef)> {
     fs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1137,6 +1155,11 @@ impl<'a> Lowerer<'a> {
                         }
                         None => match self.funs.get(&id.name).cloned() {
                             Some((bounds, body)) => stack.push(Frame::ExpandFun(bounds, body)),
+                            None if builtin_constant(&id.name).is_some() => {
+                                if let Some(v) = builtin_constant(&id.name) {
+                                    values.push(v);
+                                }
+                            }
                             None => {
                                 // An unnamed `INSTANCE M WITH …` makes M's
                                 // members visible without a prefix.

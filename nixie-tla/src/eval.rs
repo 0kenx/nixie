@@ -149,7 +149,13 @@ impl Evaluator {
                 .cloned()
                 .ok_or_else(|| EvalErrorKind::FreeName(n.to_string())),
             Kera::Prime(_) => Err(EvalErrorKind::Unsupported("`'`".into())),
-            Kera::Opaque(n, _) => Err(EvalErrorKind::Unsupported(format!("`{n}`"))),
+            Kera::Opaque(n, args) => {
+                let mut vals = Vec::with_capacity(args.len());
+                for a in args {
+                    vals.push(self.go(a, env)?);
+                }
+                standard_operator(n.as_str(), &vals)
+            }
             Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => Err(EvalErrorKind::Unsupported(
                 "`CHOOSE` (TLA+ leaves which element it picks unspecified)".into(),
             )),
@@ -489,6 +495,162 @@ impl Evaluator {
             });
         }
         Ok(())
+    }
+}
+
+/// Operators the standard modules define, which lowering carries through by
+/// name because the kernel has no node for them.
+///
+/// Implementing them here is what lets the TLC differential cover sequence and
+/// finite-set code rather than declining it. Anything not listed still returns
+/// an error naming the operator: an evaluator that guesses would make the
+/// differential compare two guesses.
+fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
+    let arg = |i: usize| -> Result<&Value> {
+        args.get(i).ok_or_else(|| EvalErrorKind::Type {
+            expected: format!("{} argument(s) to `{name}`", i + 1),
+            found: format!("{}", args.len()),
+        })
+    };
+    /// A sequence is a function on `1..n`; TLC prints one as a tuple, and both
+    /// spellings reach here.
+    fn as_seq(v: &Value) -> Result<Vec<Value>> {
+        match v {
+            Value::Tuple(xs) => Ok(xs.clone()),
+            Value::Fun(m) => {
+                let mut out = Vec::with_capacity(m.len());
+                for i in 1..=m.len() {
+                    let k = Value::Int(i as i128);
+                    match m.get(&k) {
+                        Some(v) => out.push(v.clone()),
+                        None => {
+                            return Err(EvalErrorKind::Type {
+                                expected: "a sequence (a function on 1..n)".into(),
+                                found: "a function with a gap in its domain".into(),
+                            });
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            other => Err(EvalErrorKind::Type {
+                expected: "a sequence".into(),
+                found: other.kind().into(),
+            }),
+        }
+    }
+
+    match (name, args.len()) {
+        // ---- Sequences ----
+        ("Len", 1) => Ok(Value::Int(as_seq(arg(0)?)?.len() as i128)),
+        ("Head", 1) => as_seq(arg(0)?)?
+            .first()
+            .cloned()
+            .ok_or_else(|| EvalErrorKind::OutOfDomain("`Head` of the empty sequence".into())),
+        ("Tail", 1) => {
+            let s = as_seq(arg(0)?)?;
+            if s.is_empty() {
+                return Err(EvalErrorKind::OutOfDomain(
+                    "`Tail` of the empty sequence".into(),
+                ));
+            }
+            Ok(Value::Tuple(s[1..].to_vec()))
+        }
+        ("Append", 2) => {
+            let mut s = as_seq(arg(0)?)?;
+            s.push(arg(1)?.clone());
+            Ok(Value::Tuple(s))
+        }
+        ("\\o", 2) => {
+            let mut s = as_seq(arg(0)?)?;
+            s.extend(as_seq(arg(1)?)?);
+            Ok(Value::Tuple(s))
+        }
+        ("SubSeq", 3) => {
+            let s = as_seq(arg(0)?)?;
+            let (Value::Int(m), Value::Int(n)) = (arg(1)?, arg(2)?) else {
+                return Err(EvalErrorKind::Type {
+                    expected: "integer bounds".into(),
+                    found: "something else".into(),
+                });
+            };
+            if *n < *m {
+                return Ok(Value::Tuple(Vec::new()));
+            }
+            let lo = usize::try_from(*m).ok().filter(|i| *i >= 1);
+            let hi = usize::try_from(*n).ok();
+            match (lo, hi) {
+                (Some(lo), Some(hi)) if hi <= s.len() => Ok(Value::Tuple(s[lo - 1..hi].to_vec())),
+                _ => Err(EvalErrorKind::OutOfDomain(format!("SubSeq {m}..{n}"))),
+            }
+        }
+
+        // ---- FiniteSets ----
+        ("Cardinality", 1) => match arg(0)? {
+            Value::Set(s) => Ok(Value::Int(s.len() as i128)),
+            other => Err(EvalErrorKind::Type {
+                expected: "a set".into(),
+                found: other.kind().into(),
+            }),
+        },
+        ("IsFiniteSet", 1) => Ok(Value::Bool(matches!(arg(0)?, Value::Set(_)))),
+
+        // ---- TLC ----
+        // `d :> e` is the one-element function, `f @@ g` merges two with the
+        // left winning on a shared key.
+        (":>", 2) => {
+            let mut m = BTreeMap::new();
+            m.insert(arg(0)?.clone(), arg(1)?.clone());
+            Ok(Value::Fun(m))
+        }
+        ("@@", 2) => {
+            let as_fun = |v: &Value| -> Result<BTreeMap<Value, Value>> {
+                match v {
+                    Value::Fun(m) => Ok(m.clone()),
+                    Value::Tuple(xs) => Ok(xs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| (Value::Int(i as i128 + 1), x.clone()))
+                        .collect()),
+                    Value::Record(fs) => Ok(fs
+                        .iter()
+                        .map(|(k, v)| (Value::Str(k.clone()), v.clone()))
+                        .collect()),
+                    other => Err(EvalErrorKind::Type {
+                        expected: "a function".into(),
+                        found: other.kind().into(),
+                    }),
+                }
+            };
+            let left = as_fun(arg(0)?)?;
+            let mut out = as_fun(arg(1)?)?;
+            // `@@` keeps the left operand's value on a shared key.
+            for (k, v) in left {
+                out.insert(k, v);
+            }
+            Ok(Value::Fun(out))
+        }
+
+        // `Print` and `PrintT` are TLC's tracing operators: they return their
+        // value (respectively `TRUE`) and exist for their side effect, which
+        // this evaluator has no business reproducing.
+        ("Print", 2) => Ok(arg(1)?.clone()),
+        ("PrintT", 1) => Ok(Value::Bool(true)),
+        // `Assert(cond, out)` is `TRUE` when `cond` holds and an error
+        // otherwise -- the error is the point of it.
+        ("Assert", 2) => match arg(0)? {
+            Value::Bool(true) => Ok(Value::Bool(true)),
+            Value::Bool(false) => Err(EvalErrorKind::Unsupported(format!(
+                "a failing `Assert`: {}",
+                arg(1)?
+            ))),
+            other => Err(EvalErrorKind::Type {
+                expected: "a boolean condition".into(),
+                found: other.kind().into(),
+            }),
+        },
+
+        _ => Err(EvalErrorKind::Unsupported(format!("`{name}`"))),
     }
 }
 
