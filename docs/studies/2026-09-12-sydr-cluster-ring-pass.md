@@ -462,3 +462,45 @@ Both holes behind the deferral prototype's false `sat` on
   guard).
 
 Campaign: **~315 of 509** effective (z3 4.16.0: 281).
+
+## Session round 8 (2026-09-12, late): the deferral completes and lands default-off (6dd1ac34)
+
+With dfa1c754's equisatisfiability fix in place, the deferral
+  prototype's three remaining model-path holes were closed one by one,
+  each minimized to a two-line goal:
+
+1. **Elimination replay at `Sat`** — the rewritten-only core leaves
+   eliminated variables unconstrained; replay them from the recorded
+   eliminations before the validation gate (the dispatch's
+   `bv_reconstruct_eliminations`, same machinery).
+2. **Default-clearing before replay** — `build_model` completes
+   unconstrained constants with sort defaults and the replay's
+   skip-if-assigned kept them (`Model::remove`).
+3. **Records over defaulted bits** — `eval_bv_value`'s leaf read
+   `bits_all_determined` first, which is *true* for never-constrained
+   bits read as all-false by the adopted assignment; an explicit model
+   record (a replayed definition) now wins.  For bit-blasted variables
+   the two agree by construction, so the flip is default-path neutral
+   (verified: the 509-cell null arm is identical).
+
+**Corpus verdict**: 301 vs 308 parallel, zero flips; serial re-checks
+  recover 3 of 12 losses (boundary), 9 real — the rewritten-only blast
+  is net-negative exactly like IR and gate-SH, and for the same reason
+  (trajectory reshuffling).  **Default off.**  The unique structural
+  win: **`s3_srvr_1_alt` closes** (the last parser-macro cell, z3
+  0.15 s) — for that family the deferral *is* z3's macro-equation
+  architecture.  Also under the flag: VexRiscv-regch0, s3_clnt_2_false,
+  s3_srvr_3_true.
+
+**Operational post-mortem recorded**: every "instant 509-unknowns" arm
+  this campaign was one shell-precedence bug — `A && B & C &` backgrounds
+  the whole `A && B` chain, so the *second* arm ran from the workspace
+  root where the corpus paths do not resolve.  Launch each arm as its
+  own statement.
+
+Remaining gap at default (z3-decides cells): 6 — BuchwaldFried,
+  smulov2bw064, umulov1bw064 (all `NIXIE_BV_GATE_SH=1`-closed),
+  calypto_14 (`NIXIE_BV_MUL_ARRAY=1` family), maxandminor016,
+  bitrev2048, ex7_prime (IR-gated) — every one now has a documented
+  opt-in mechanism; the default-path campaign stands at ~315 of 509
+  (z3 4.16.0: 281) with 38 cells decided that z3 cannot.
