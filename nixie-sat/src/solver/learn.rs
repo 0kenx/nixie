@@ -1973,6 +1973,7 @@ impl Solver {
                      orig={}->{} learned={}->{} yield={work_yield} db={} \
                      lbd_ema={:.2}/{:.2} \
                      els={} units={} shr={} sub={} tred={} tfailed={} \
+                     viv_short={} viv_sub={} \
                      pass_props els={} bva={} pure_sub={} vivify={} tred={} bva_n={} \\
                      pass_us els={} bva={} pure_sub={} vivify={} tred={}",
                     budgets_used.window,
@@ -1993,6 +1994,8 @@ impl Solver {
                     self.inproc_diag[3],
                     self.inproc_diag[4],
                     self.inproc_diag[5],
+                    self.inproc_diag[6],
+                    self.inproc_diag[7],
                     self.inproc_diag_props[0],
                     self.inproc_diag_props[1],
                     self.inproc_diag_props[2],
@@ -2537,9 +2540,14 @@ impl Solver {
     /// clause count – *not* wall-clock: a clock-based policy input makes the
     /// solver nondeterministic under load (breaking `run_parity.sh`
     /// reproduction) and burned ~11% of solve time on `clock_gettime` calls.
-    pub(super) fn vivify_clauses(&mut self) {
+    ///
+    /// Returns `(shortened, subsumed)` — the round's vivify yield in
+    /// cadical `vivified`/`vivifysubs` terms (shortenings tick no
+    /// `SolverStats` counter, so this return is the only yield signal;
+    /// diagnostic data only, callers may ignore it).
+    pub(super) fn vivify_clauses(&mut self) -> (u64, u64) {
         if self.trail.decision_level() != 0 {
-            return;
+            return (0, 0);
         }
         const MAX_VIVIFY_PROPS: u64 = 10_000_000;
         const MAX_CLAUSES: usize = 5_000;
@@ -2550,7 +2558,7 @@ impl Solver {
         // absolute 10M budget.
         let scheduled = self.inproc_budgets.window > 0;
         if scheduled && !self.inproc_budgets.vivify_allowed {
-            return;
+            return (0, 0);
         }
         let prop_budget = if scheduled {
             self.inproc_budgets.vivify_props.max(1)
@@ -2624,12 +2632,17 @@ impl Solver {
         let mut prev_lits: SmallVec<[Lit; 8]> = SmallVec::new();
         let mut prev_depths: SmallVec<[u32; 8]> = SmallVec::new();
         let start_subsumed = self.stats.subsumed_removed;
+        let mut ok_count = 0u64;
         for (_, cid, lits) in &snapshot {
             if self.stats.propagations.saturating_sub(start_props) > prop_budget {
                 break;
             }
-            let _ = self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths);
+            if self.vivify_clause_shared(*cid, lits, &mut prev_lits, &mut prev_depths) {
+                ok_count += 1;
+            }
         }
+        let viv_sub = self.stats.subsumed_removed.saturating_sub(start_subsumed);
+        let viv_short = ok_count.saturating_sub(viv_sub);
         if crate::vivify_trace_enabled() {
             eprintln!(
                 "[vivify] cands={} props={} otf_subsumed={}",
@@ -2649,6 +2662,7 @@ impl Solver {
         // `propagate()` re-derives the level-0 consequences that were lost.
         // (Ported from upstream v0.3.3.)
         self.trail.reset_propagation_head();
+        (viv_short, viv_sub)
     }
 
     /// Vivify one candidate reusing the still-live decision prefix of the
@@ -3395,7 +3409,8 @@ impl Solver {
         // inprocessing rounds): shortens both learned and – when no proof is
         // attached – original clauses. The shortened clauses re-arm
         // elimination (their variables are marked in `vivify_clause`).
-        self.vivify_clauses();
+        // Yields are returned for the round trace (see `vivify_clauses`).
+        let (viv_short, viv_sub) = self.vivify_clauses();
 
         // Per-pass cost attribution: transred pass marker (closes vivify).
         if let Some(p) = viv_p0 {
@@ -3429,6 +3444,8 @@ impl Solver {
                 (self.stats.subsumed_removed + self.stats.self_subsumed) - b0,
                 _tred as u64,
                 _tfailed as u64,
+                viv_short,
+                viv_sub,
             ];
             self.inproc_diag_props = diag_props;
             self.inproc_diag_wall = diag_wall;

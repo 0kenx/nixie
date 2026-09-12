@@ -1603,10 +1603,15 @@ pub struct Solver {
     pub(super) conflicts_since_inprocessing: u64,
 
     /// Per-pass deltas of the most recent `inprocess()` round
-    /// (`[els, units, shrunk, subsumed, transred-removed, transred-failed]`),
+    /// (`[els, units, shrunk, subsumed, transred-removed, transred-failed,
+    /// vivify-shortened, vivify-subsumed]`),
     /// written only when `NIXIE_INPROC_TRACE` is on.  Purely diagnostic —
     /// never read by search logic (2026-09-04 gating follow-up telemetry).
-    pub(super) inproc_diag: [u64; 6],
+    /// Slots 6-7 were added 2026-09-12 for the inprocessing-amplitude
+    /// diagnosis: vivify's shortenings were previously invisible (they tick
+    /// no `SolverStats` counter), which made per-pass yield comparison
+    /// against cadical's `vivified`/`vivifysubs` statistics impossible.
+    pub(super) inproc_diag: [u64; 8],
 
     /// Per-pass cost attribution of the most recent `inprocess()` round
     /// (`[els_props, purelit_subsume_props, vivify_props, transred_props]`),
@@ -2232,7 +2237,7 @@ impl Solver {
             inproc_round_props_total: 0,
             inproc_budgets: InprocBudgets::legacy(),
             kissat_used_hist: [[0; 32]; 2],
-            inproc_diag: [0; 6],
+            inproc_diag: [0; 8],
             xor_search: None,
             real_theory_attached: false,
             frozen_vars: rustc_hash::FxHashSet::default(),
