@@ -138,6 +138,8 @@ pub struct StaticFeatures {
     has_dt: bool,
     has_fp: bool,
     has_string: bool,
+    /// Prime finite fields (`QF_FF`).
+    has_ff: bool,
 
     // ======== arithmetic atoms and their difference-logic subsets ========
     pub num_arith_eqs: u64,
@@ -286,6 +288,9 @@ impl StaticFeatures {
             n += 1;
         }
         if self.has_string {
+            n += 1;
+        }
+        if self.has_ff {
             n += 1;
         }
         n
@@ -585,6 +590,7 @@ impl StaticFeatures {
             SortKind::FloatingPoint { .. } => self.has_fp = true,
             SortKind::RoundingMode => self.has_fp = true,
             SortKind::Datatype(_) => self.has_dt = true,
+            SortKind::FiniteField(_) => self.has_ff = true,
             SortKind::Uninterpreted(_) | SortKind::Parameter(_) | SortKind::Parametric { .. } => {}
         }
     }
@@ -668,6 +674,7 @@ enum SortClass {
     Set,
     Dt,
     Fp,
+    Ff,
     String,
     Other,
 }
@@ -687,6 +694,7 @@ fn sort_class(manager: &TermManager, sort: SortId) -> SortClass {
         // The rounding modes belong to the FP family for feature routing.
         SortKind::RoundingMode => SortClass::Fp,
         SortKind::Datatype(_) => SortClass::Dt,
+        SortKind::FiniteField(_) => SortClass::Ff,
         SortKind::Uninterpreted(_) | SortKind::Parameter(_) | SortKind::Parametric { .. } => {
             SortClass::Other
         }

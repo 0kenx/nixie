@@ -142,6 +142,16 @@ impl<'a> PrettyPrinter<'a> {
             TermKind::RealConst(r) => {
                 let _ = write!(w, "{r}");
             }
+            TermKind::FfConst { value, field } => {
+                let rendered = self
+                    .manager
+                    .sorts
+                    .field_table()
+                    .modulus(*field)
+                    .map(|m| super::format_ff_literal(value, m))
+                    .unwrap_or_else(|| format!("#f{value}m(field {})", field.raw()));
+                let _ = write!(w, "{rendered}");
+            }
             TermKind::BitVecConst { value, width } => {
                 let _ = write!(w, "{}", super::format_bitvec_literal(value, *width));
             }
@@ -166,9 +176,28 @@ impl<'a> PrettyPrinter<'a> {
                     TermKind::Or(_) => "or",
                     TermKind::Add(_) => "+",
                     TermKind::Mul(_) => "*",
+                    // The remaining n-ary arms below handle these; listed
+                    // here only to keep the discriminant lookup total.
+                    TermKind::FfAdd(_) | TermKind::FfMul(_) | TermKind::FfBitsum(_) => {
+                        unreachable!("handled by the ff arms below")
+                    }
                     _ => unreachable!(),
                 };
                 self.write_nary_term(w, op, args, indent, depth, break_here);
+            }
+            TermKind::FfAdd(args) => {
+                self.write_nary_term(w, "ff.add", args, indent, depth, break_here);
+            }
+            TermKind::FfMul(args) => {
+                self.write_nary_term(w, "ff.mul", args, indent, depth, break_here);
+            }
+            TermKind::FfBitsum(args) => {
+                self.write_nary_term(w, "ff.bitsum", args, indent, depth, break_here);
+            }
+            TermKind::FfNeg(arg) => {
+                let _ = write!(w, "(ff.neg ");
+                self.write_term(w, *arg, indent, depth + 1);
+                let _ = write!(w, ")");
             }
             TermKind::Distinct(args) => {
                 self.write_nary_term(w, "distinct", args, indent, depth, break_here);

@@ -91,6 +91,16 @@ impl Solver {
                     // Found a variable - check its sort and track appropriately
                     let is_int = term.sort == manager.sorts.int_sort;
                     let is_real = term.sort == manager.sorts.real_sort;
+                    // A field-sorted variable reaching here has no CDCL(T)
+                    // engine behind it (the FF procedure is an eager
+                    // dispatch): trip the sat honesty gate.
+                    if manager
+                        .sorts
+                        .get(term.sort)
+                        .is_some_and(|s| s.is_finite_field())
+                    {
+                        self.ff_terms_unconstrained = true;
+                    }
 
                     if is_int || is_real {
                         if !self.arith_terms.contains(&current) {
@@ -289,6 +299,27 @@ impl Solver {
                 }
                 TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
                 TermKind::SetEmpty(_) => {}
+                // Finite fields: children are walked so nested structure is
+                // seen, but nothing is interned — the FF procedure is an
+                // eager whole-problem dispatch (see `check_ff.rs`), and a
+                // field element must never become a free arithmetic column.
+                // The walk *is* the honesty tripwire: an FF term seen here
+                // (including as an operand of the generic `=` encoding,
+                // which never reaches the Tseitin FF arm) means no CDCL(T)
+                // engine owns it, so the sat gate must degrade.
+                TermKind::FfConst { .. } => {
+                    self.ff_terms_unconstrained = true;
+                }
+                TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
+                    self.ff_terms_unconstrained = true;
+                    for &arg in args.iter().rev() {
+                        stack.push(arg);
+                    }
+                }
+                TermKind::FfNeg(a) => {
+                    self.ff_terms_unconstrained = true;
+                    stack.push(*a);
+                }
                 TermKind::Select(_, _) => {
                     self.has_array_ops = true;
                     let is_int = term.sort == manager.sorts.int_sort;

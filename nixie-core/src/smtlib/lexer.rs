@@ -93,6 +93,15 @@ pub enum TokenKind {
     Binary(String),
     /// String literal
     StringLit(String),
+    /// Finite-field literal `#f<value>m<modulus>` (the QF_FF theory's
+    /// numeral syntax, cvc5 `smt2_term_parser.cpp`): both halves are
+    /// arbitrary-precision decimal strings.
+    FfLiteral {
+        /// The element's value, `[0, p)` after reduction.
+        value: String,
+        /// The field order `p`.
+        modulus: String,
+    },
     /// End of file
     Eof,
 }
@@ -225,6 +234,49 @@ impl<'a> Lexer<'a> {
                             let bin = self.read_binary_chars();
                             TokenKind::Binary(bin)
                         }
+                        // Finite-field numeral `#f<d+>m<d+>` (cvc5
+                        // `lexFiniteFieldLiteral`). Both halves parse as
+                        // arbitrary-precision decimals later; a malformed
+                        // one (missing `m`, empty half) is a lexical error.
+                        'f' | 'F' => {
+                            self.pos += 1;
+                            let value = self.read_numeral();
+                            if value.is_empty() {
+                                self.errors.push(LexError {
+                                    message: "field literal '#f' needs a value before 'm' \
+                                     (#f<value>m<modulus>)"
+                                        .to_string(),
+                                    pos: start,
+                                });
+                                TokenKind::Symbol("#f".to_string())
+                            } else if self.pos < self.input.len()
+                                && self.input[self.pos..].starts_with('m')
+                            {
+                                self.pos += 1;
+                                let modulus = self.read_numeral();
+                                if modulus.is_empty() {
+                                    self.errors.push(LexError {
+                                        message: format!(
+                                            "field literal '#f{value}m' needs a modulus \
+                                             (#f<value>m<modulus>)"
+                                        ),
+                                        pos: start,
+                                    });
+                                    TokenKind::Symbol(format!("#f{value}m"))
+                                } else {
+                                    TokenKind::FfLiteral { value, modulus }
+                                }
+                            } else {
+                                self.errors.push(LexError {
+                                    message: format!(
+                                        "field literal '#f{value}' is missing its 'm' \
+                                         separator and modulus (#f<value>m<modulus>)"
+                                    ),
+                                    pos: start,
+                                });
+                                TokenKind::Symbol(format!("#f{value}"))
+                            }
+                        }
                         _ => {
                             // A bare `#` (not `#x...`/`#b...`) cannot start a
                             // valid SMT-LIB symbol; record it instead of
@@ -233,8 +285,9 @@ impl<'a> Lexer<'a> {
                             // confusing "undefined symbol" rather than a
                             // lex-level error.
                             self.errors.push(LexError {
-                                message: "bare '#' is not a valid token (expected #x... or #b...)"
-                                    .to_string(),
+                                message:
+                                    "bare '#' is not a valid token (expected #x..., #b... or #f...)"
+                                        .to_string(),
                                 pos: start,
                             });
                             TokenKind::Symbol("#".to_string())

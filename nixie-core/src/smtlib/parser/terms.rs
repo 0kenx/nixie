@@ -226,7 +226,8 @@ enum Opened {
 /// "abd"))` reported `sat`). Declarations are always consulted first, so a
 /// script that genuinely declares such a name keeps working.
 fn is_reserved_theory_symbol(name: &str) -> bool {
-    const RESERVED_PREFIXES: [&str; 7] = ["str.", "re.", "seq.", "char.", "fp.", "int.", "bv"];
+    const RESERVED_PREFIXES: [&str; 8] =
+        ["str.", "re.", "seq.", "char.", "fp.", "int.", "bv", "ff."];
     RESERVED_PREFIXES
         .iter()
         .any(|prefix| name.starts_with(prefix))
@@ -463,6 +464,41 @@ impl Parser<'_> {
                     })?;
                 let width = b.len() as u32;
                 Ok(self.manager.mk_bitvec(value, width))
+            }
+            TokenKind::FfLiteral { value, modulus } => {
+                // Intern the field (classifying the modulus once) and reduce
+                // the value into [0, p): a non-prime modulus errors here,
+                // never silently reinterprets as Z_n.
+                let value: BigInt = value.parse().map_err(|_| NixieError::ParseError {
+                    position: token.start,
+                    message: format!("invalid finite-field literal value: {value}"),
+                })?;
+                let modulus: num_bigint::BigUint =
+                    modulus.parse().map_err(|_| NixieError::ParseError {
+                        position: token.start,
+                        message: format!("invalid finite-field modulus: {modulus}"),
+                    })?;
+                let field = self.manager.sorts.finite_field(modulus).map_err(|e| {
+                    NixieError::ParseError {
+                        position: token.start,
+                        message: e.to_string(),
+                    }
+                })?;
+                let field_id = match self.manager.sorts.get(field).map(|s| s.kind.clone()) {
+                    Some(crate::sort::SortKind::FiniteField(id)) => id,
+                    _ => {
+                        return Err(NixieError::ParseError {
+                            position: token.start,
+                            message: "internal: finite-field sort interning mismatch".to_string(),
+                        });
+                    }
+                };
+                Ok(self.manager.mk_ff_const(field_id, value).map_err(|e| {
+                    NixieError::ParseError {
+                        position: token.start,
+                        message: e.to_string(),
+                    }
+                })?)
             }
             TokenKind::Decimal(d) => {
                 let rational =
@@ -726,6 +762,26 @@ impl Parser<'_> {
                 Ok(self.manager.mk_dt_tester(&ctor, *arg))
             }
             Head::Qualified { name, sort } => {
+                // `(as ffN (_ FiniteField p))`: a field numeral written
+                // through its qualified spelling (cvc5 accepts both the
+                // `#fNmP` literal and this form). Nullary and field-sorted
+                // or it is not this form.
+                if let Some(value_str) = name.strip_prefix("ff")
+                    && args.is_empty()
+                    && let Some(crate::sort::SortKind::FiniteField(field)) =
+                        self.manager.sorts.get(sort).map(|s| s.kind.clone())
+                {
+                    let value: BigInt = value_str.parse().map_err(|_| NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("invalid finite-field numeral in (as {name} ...)"),
+                    })?;
+                    return self.manager.mk_ff_const(field, value).map_err(|e| {
+                        NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: e.to_string(),
+                        }
+                    });
+                }
                 // For known forms like `(as const (Array D R))` we represent the
                 // qualified application as an `Apply` node whose function name
                 // records the qualifier and whose sort is the annotated one.
@@ -1151,7 +1207,7 @@ impl Parser<'_> {
 
     /// Head that is a plain operator or symbol.
     fn open_named_head(&mut self, op: String) -> Result<Opened> {
-        // Forms whose head carries syntax of its own.
+        // Forms whose head carry syntax of their own.
         match op.as_str() {
             "!" => return Ok(Opened::Frame(Frame::Annot(AnnotFrame::default()))),
             "let" => return self.open_let(),
@@ -1180,6 +1236,40 @@ impl Parser<'_> {
                 )));
             }
             _ => {}
+        }
+
+        // A bare qualified identifier `(as name Sort)` with no operands:
+        // the finite-field numeral spelling `(as ff5 (_ FiniteField 7))`
+        // (cvc5 accepts it beside the `#f5m7` literal). Other ascriptions
+        // are rejected honestly below rather than guessed at.
+        if op == "as" {
+            let name = self.expect_symbol()?;
+            let sort = self.parse_sort()?;
+            self.expect_rparen()?;
+            if let Some(value_str) = name.strip_prefix("ff")
+                && let Some(crate::sort::SortKind::FiniteField(field)) =
+                    self.manager.sorts.get(sort).map(|s| s.kind.clone())
+            {
+                let value: BigInt = value_str.parse().map_err(|_| NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!("invalid finite-field numeral in (as {name} {sort:?})"),
+                })?;
+                let term =
+                    self.manager
+                        .mk_ff_const(field, value)
+                        .map_err(|e| NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: e.to_string(),
+                        })?;
+                return Ok(Opened::Value(term));
+            }
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "(as {name} ...) as a standalone term is supported only for \
+                     finite-field numerals (as ff<value> (_ FiniteField <order>))"
+                ),
+            });
         }
 
         // Plain built-in operators.

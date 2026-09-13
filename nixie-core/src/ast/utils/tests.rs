@@ -743,10 +743,18 @@ fn test_structural_hash_is_pinned() {
         ("add", add, 0xce22_9b07_edc5_2831),
         ("not_term", not_term, 0xa8b9_8aa7_17c4_d5eb),
         ("ite", ite, 0xf102_89ed_feac_017c),
-        ("mixed", mixed, 0x2b3b_6df5_090b_4ef6),
-        ("matched", matched, 0x02e2_a2f6_deb5_5d6c),
+        ("mixed", mixed, 0xed25_1c25_737c_6735),
+        ("matched", matched, 0x5695_c821_f03c_3b10),
         ("deep500", deep500, 0xc477_fc5b_c1a0_45f8),
     ];
+    // Re-pinned 2026-09 for the finite-field `TermKind` variants
+    // (`FfConst`/`FfAdd`/`FfMul`/`FfNeg`/`FfBitsum`): they are declared
+    // before `Apply`/`Forall`/`Let`/`Match`, so the *later* variants'
+    // `core::mem::discriminant` ordinals — which the hash feeds on — moved
+    // by five. Only `mixed` and `matched` (the two cases containing kinds
+    // that sort after the insertion point) re-pinned; the other six are
+    // byte-identical, which is itself the evidence that the algorithm
+    // did not change.
     for (name, term, expected) in cases {
         let actual = structural_hash(term, &manager);
         assert_eq!(

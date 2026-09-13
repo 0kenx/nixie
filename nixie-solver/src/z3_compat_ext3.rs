@@ -107,6 +107,8 @@ impl Z3Sort {
             // so reporting `Array` here would tell a caller the sort has a
             // domain and a range that it does not have.
             Some(SortKind::Set(_)) => Z3SortKind::Other,
+            // Z3 has no finite-field theory; `Other` is the honest report.
+            Some(SortKind::FiniteField(_)) => Z3SortKind::Other,
             Some(SortKind::Datatype(_)) => Z3SortKind::Datatype,
             Some(SortKind::Uninterpreted(_)) => Z3SortKind::Uninterpreted,
             // `RoundingMode` reports `Other` rather than folding into

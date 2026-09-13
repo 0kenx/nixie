@@ -102,6 +102,24 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                             return false;
                         }
                     }
+                    // A field numeral's identity is its (normalized)
+                    // residue and its field — both interned, so the pair
+                    // decides equality.
+                    TermKind::FfConst {
+                        value: v1,
+                        field: f1,
+                    } => {
+                        let TermKind::FfConst {
+                            value: v2,
+                            field: f2,
+                        } = &rt.kind
+                        else {
+                            return false;
+                        };
+                        if v1 != v2 || f1 != f2 {
+                            return false;
+                        }
+                    }
                     TermKind::StringLit(a) => {
                         let TermKind::StringLit(b) = &rt.kind else {
                             return false;
@@ -132,6 +150,7 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::SetSingleton(a)
                     | TermKind::SetCard(a)
                     | TermKind::StrFromCode(a)
+                    | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)
                     | TermKind::FpNeg(a)
                     | TermKind::FpIsNormal(a)
@@ -297,7 +316,10 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::Or(a)
                     | TermKind::Add(a)
                     | TermKind::Mul(a)
-                    | TermKind::Distinct(a) => {
+                    | TermKind::Distinct(a)
+                    | TermKind::FfAdd(a)
+                    | TermKind::FfMul(a)
+                    | TermKind::FfBitsum(a) => {
                         if core::mem::discriminant(&lt.kind) != core::mem::discriminant(&rt.kind) {
                             return false;
                         }

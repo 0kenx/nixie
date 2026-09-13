@@ -234,6 +234,17 @@ impl Solver {
                     stack.push(*a);
                 }
                 TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
+
+                // Finite fields: ordinary traversal, no candidates of their
+                // own (FF has no function symbols).
+                TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
+                    for &a in args.iter().rev() {
+                        stack.push(a);
+                    }
+                }
+                TermKind::FfNeg(a) => {
+                    stack.push(*a);
+                }
                 // No children: the payload is a sort.
                 TermKind::SetEmpty(_) => {}
                 // Arrays.
@@ -374,6 +385,7 @@ impl Solver {
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
+                | TermKind::FfConst { .. }
                 // `Var` has its own arm above (nullary `sk!N` constants).
                 | TermKind::StringLit(_)
                 | TermKind::FpLit { .. }

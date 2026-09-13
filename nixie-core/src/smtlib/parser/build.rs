@@ -40,7 +40,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "fp.isPositive" | "fp.abs" | "fp.neg" | "fp.to_real" | "str.len" | "str.is_digit"
             | "str.to_code" | "str.from_code" | "str.to_int" | "str.to.int" | "int.to_str"
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
-            | "re.opt" | "re.comp" => Plan::Fixed(1),
+            | "re.opt" | "re.comp" | "ff.neg" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -84,7 +84,12 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "bvshl"
             | "bvlshr"
             | "bvashr"
-            | "concat" => Plan::Variadic,
+            | "concat"
+            // Finite fields: `ff.add`/`ff.mul`/`ff.bitsum` are n-ary ≥ 2
+            // (cvc5 `kinds.toml` declares them `children = "2:"`).
+            | "ff.add"
+            | "ff.mul"
+            | "ff.bitsum" => Plan::Variadic,
 
             _ => return None,
         };
@@ -105,6 +110,17 @@ impl Parser<'_> {
         match self.manager.get(term).map(|t| &t.kind) {
             Some(TermKind::BitVecConst { value, width }) => Some((value.clone(), *width)),
             _ => None,
+        }
+    }
+
+    /// A finite-field builder refusal, surfaced as a parse error: an
+    /// ill-typed FF application is a user error, and the alternative —
+    /// silently dropping the constraint — is the soundness bug this
+    /// codebase does not allow.
+    pub(super) fn ff_build_error(&self, op: &str, err: crate::ast::FfBuildError) -> NixieError {
+        NixieError::ParseError {
+            position: self.lexer.position(),
+            message: format!("{op}: {err}"),
         }
     }
 
@@ -384,6 +400,11 @@ impl Parser<'_> {
     pub(super) fn build_unary(&mut self, op: &str, x: TermId) -> Result<TermId> {
         let term = match op {
             "not" => self.manager.mk_not(x),
+            // ff.neg t normalizes to (ff.mul #f(p-1) t) at construction.
+            "ff.neg" => self
+                .manager
+                .mk_ff_neg(x)
+                .map_err(|e| self.ff_build_error("ff.neg", e))?,
             // (abs x) = (ite (>= x 0) x (- x)), with the zero literal typed to
             // match the operand sort so mixed Int/Real reasoning stays
             // consistent.
@@ -734,6 +755,30 @@ impl Parser<'_> {
             }
             "+" => self.manager.mk_add(args.iter().copied()),
             "*" => self.manager.mk_mul(args.iter().copied()),
+            "ff.add" => {
+                if args.len() < 2 {
+                    return Err(self.min_arity_err("ff.add", 2, args.len()));
+                }
+                self.manager
+                    .mk_ff_add(args.iter().copied())
+                    .map_err(|e| self.ff_build_error("ff.add", e))?
+            }
+            "ff.mul" => {
+                if args.len() < 2 {
+                    return Err(self.min_arity_err("ff.mul", 2, args.len()));
+                }
+                self.manager
+                    .mk_ff_mul(args.iter().copied())
+                    .map_err(|e| self.ff_build_error("ff.mul", e))?
+            }
+            "ff.bitsum" => {
+                if args.len() < 2 {
+                    return Err(self.min_arity_err("ff.bitsum", 2, args.len()));
+                }
+                self.manager
+                    .mk_ff_bitsum(args.iter().copied())
+                    .map_err(|e| self.ff_build_error("ff.bitsum", e))?
+            }
             "re.++" => self.manager.mk_re_concat(args.iter().copied()),
             "re.union" => self.manager.mk_re_union(args.iter().copied()),
             "re.inter" => self.manager.mk_re_inter(args.iter().copied()),

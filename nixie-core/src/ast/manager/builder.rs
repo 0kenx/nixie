@@ -416,6 +416,15 @@ impl TermManager {
             _ => {}
         }
 
+        // Finite-field equality: numeral comparison folds, and the atom is
+        // oriented by term order (cvc5 `postRewriteFfEq`). Handled by its own
+        // constructor because field numerals live at a field sort, not a
+        // numeric one, and mixing the two fold families here would fold
+        // `#f1m7` against `IntConst(1)`.
+        if let Some(folded) = self.mk_ff_eq(lhs, rhs) {
+            return folded;
+        }
+
         // Canonicalize order
         let (lhs, rhs) = if lhs.0 <= rhs.0 {
             (lhs, rhs)

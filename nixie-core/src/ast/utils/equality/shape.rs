@@ -28,6 +28,7 @@ pub(super) fn unary_arg(kind: &TermKind) -> Option<TermId> {
         TermKind::Not(a)
         | TermKind::Neg(a)
         | TermKind::BvNot(a)
+        | TermKind::FfNeg(a)
         | TermKind::StrLen(a)
         | TermKind::StrToInt(a)
         | TermKind::IntToStr(a)
@@ -142,7 +143,10 @@ pub(super) fn nary_args(kind: &TermKind) -> Option<&SmallVec<[TermId; 4]>> {
         | TermKind::Or(args)
         | TermKind::Add(args)
         | TermKind::Mul(args)
-        | TermKind::Distinct(args) => Some(args),
+        | TermKind::Distinct(args)
+        | TermKind::FfAdd(args)
+        | TermKind::FfMul(args)
+        | TermKind::FfBitsum(args) => Some(args),
         _ => None,
     }
 }

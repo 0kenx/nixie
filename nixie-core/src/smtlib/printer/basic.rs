@@ -148,6 +148,48 @@ impl<'a> Printer<'a> {
             TermKind::StringLit(s) => {
                 let _ = write!(w, "{}", super::format_string_literal(s));
             }
+            TermKind::FfConst { value, field } => {
+                let modulus = self.manager.sorts.field_table().modulus(*field).cloned();
+                match modulus {
+                    Some(modulus) => {
+                        let _ = write!(w, "{}", super::format_ff_literal(value, &modulus));
+                    }
+                    None => {
+                        // An extension field has no integer modulus; the
+                        // honest rendering names the field id.
+                        let _ = write!(w, "#f{value}m(field {})", field.raw());
+                    }
+                }
+            }
+            TermKind::FfAdd(args) => {
+                let _ = write!(w, "(ff.add");
+                for arg in args {
+                    let _ = write!(w, " ");
+                    self.write_term(w, *arg);
+                }
+                let _ = write!(w, ")");
+            }
+            TermKind::FfMul(args) => {
+                let _ = write!(w, "(ff.mul");
+                for arg in args {
+                    let _ = write!(w, " ");
+                    self.write_term(w, *arg);
+                }
+                let _ = write!(w, ")");
+            }
+            TermKind::FfNeg(arg) => {
+                let _ = write!(w, "(ff.neg ");
+                self.write_term(w, *arg);
+                let _ = write!(w, ")");
+            }
+            TermKind::FfBitsum(args) => {
+                let _ = write!(w, "(ff.bitsum");
+                for arg in args {
+                    let _ = write!(w, " ");
+                    self.write_term(w, *arg);
+                }
+                let _ = write!(w, ")");
+            }
             TermKind::Var(spur) => {
                 let name = self.manager.resolve_str(*spur);
                 let _ = write!(w, "{name}");
@@ -1054,6 +1096,16 @@ impl<'a> Printer<'a> {
                 }
                 SortKind::RoundingMode => {
                     let _ = write!(w, "RoundingMode");
+                }
+                SortKind::FiniteField(id) => {
+                    let modulus = self
+                        .manager
+                        .sorts
+                        .field_table()
+                        .get(*id)
+                        .map(|f| f.modulus().to_string())
+                        .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
+                    let _ = write!(w, "(_ FiniteField {modulus})");
                 }
                 SortKind::Set(elem) => {
                     let _ = write!(w, "(Set ");

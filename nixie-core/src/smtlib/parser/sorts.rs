@@ -299,6 +299,8 @@ impl<'a> Parser<'a> {
                 continue;
             };
             match &s.kind {
+                // A finite field is a leaf named by its table entry.
+                SortKind::FiniteField(_) => {}
                 // Interned by the *term* manager's interner.
                 SortKind::Uninterpreted(spur) => {
                     if self.manager.resolve_str(*spur) == name {
@@ -348,54 +350,72 @@ impl<'a> Parser<'a> {
         false
     }
 
-    /// Parse an indexed identifier: (_ name index1 index2 ...)
-    /// Returns (name, indices). LParen already consumed by caller; consumes trailing RParen.
-    pub(super) fn parse_indexed_identifier(&mut self) -> Result<(String, Vec<u32>)> {
-        // Expect underscore symbol
-        let underscore = self.expect_symbol()?;
-        if underscore != "_" {
-            return Err(NixieError::ParseError {
-                position: self.lexer.position(),
-                message: format!("expected '_', found '{underscore}'"),
-            });
-        }
-
-        // Get the identifier name
-        let name = self.expect_symbol()?;
-
-        // Parse indices (numerals)
-        let mut indices = Vec::new();
-        loop {
-            if let Some(token) = self.lexer.peek() {
-                match &token.kind {
-                    TokenKind::RParen => {
-                        self.lexer.next_token(); // consume rparen
-                        break;
-                    }
-                    TokenKind::Numeral(n) => {
-                        let n = n.clone();
-                        self.lexer.next_token();
-                        let idx = n.parse::<u32>().map_err(|_| NixieError::ParseError {
-                            position: token.start,
-                            message: format!("invalid index: {n}"),
-                        })?;
-                        indices.push(idx);
-                    }
-                    _ => {
-                        return Err(NixieError::ParseError {
-                            position: token.start,
-                            message: format!("expected numeral or ')', found {:?}", token.kind),
-                        });
-                    }
-                }
-            } else {
+    /// Finish `(_ FiniteField <order>)` with the `_` and head name already
+    /// consumed: read the order numeral and intern the field (classifying
+    /// primality once — a composite order errors here, never silently
+    /// reinterprets as Z_n).
+    fn finish_finite_field_sort(&mut self) -> Result<SortId> {
+        let numeral = match self.lexer.peek() {
+            Some(token) if matches!(token.kind, TokenKind::Numeral(_)) => match token.kind {
+                TokenKind::Numeral(n) => n,
+                _ => unreachable!("guarded above"),
+            },
+            _ => {
                 return Err(NixieError::ParseError {
                     position: self.lexer.position(),
-                    message: "unexpected end of input in indexed identifier".to_string(),
+                    message: "(_ FiniteField <order>) requires exactly 1 numeral index \
+                         (the field order)"
+                        .to_string(),
                 });
             }
-        }
+        };
+        self.lexer.next_token();
+        self.expect_rparen()?;
+        let modulus: num_bigint::BigUint = numeral.parse().map_err(|_| NixieError::ParseError {
+            position: self.lexer.position(),
+            message: format!("invalid finite-field order: {numeral}"),
+        })?;
+        self.manager
+            .sorts
+            .finite_field(modulus)
+            .map_err(|e| NixieError::ParseError {
+                position: self.lexer.position(),
+                message: e.to_string(),
+            })
+    }
 
+    /// Finish an indexed identifier with the `_` and head name already
+    /// consumed: read the numeral indices through the closing `)`.
+    fn finish_indexed_identifier(&mut self, name: String) -> Result<(String, Vec<u32>)> {
+        let mut indices = Vec::new();
+        loop {
+            let token = self.lexer.peek().ok_or_else(|| NixieError::ParseError {
+                position: self.lexer.position(),
+                message: "unexpected end of input in indexed identifier".to_string(),
+            })?;
+            match &token.kind {
+                TokenKind::RParen => {
+                    self.lexer.next_token(); // consume rparen
+                    break;
+                }
+                TokenKind::Numeral(n) => {
+                    let n = n.clone();
+                    let start = token.start;
+                    self.lexer.next_token();
+                    let idx = n.parse::<u32>().map_err(|_| NixieError::ParseError {
+                        position: start,
+                        message: format!("invalid index: {n}"),
+                    })?;
+                    indices.push(idx);
+                }
+                _ => {
+                    return Err(NixieError::ParseError {
+                        position: token.start,
+                        message: format!("expected numeral or ')', found {:?}", token.kind),
+                    });
+                }
+            }
+        }
         Ok((name, indices))
     }
 
@@ -440,8 +460,27 @@ impl<'a> Parser<'a> {
                     })?;
 
                     if matches!(next_token.kind, TokenKind::Symbol(ref s) if s == "_") {
-                        // Indexed identifier: (_ BitVec 32)
-                        let (name, indices) = self.parse_indexed_identifier()?;
+                        // `(_ FiniteField <numeral>)`: the order is an
+                        // arbitrary-precision numeral (a 254-bit ZK prime
+                        // does not fit `u32`), so it is parsed from its raw
+                        // digit string rather than through the `u32`-typed
+                        // indexed-identifier path, whose callers rely on
+                        // that very range check. Returns `None` with the
+                        // stream untouched when the head is not
+                        // `FiniteField`.
+                        // Consume the `_` here so the head name can be
+                        // inspected before committing to a parse: the
+                        // finite-field order is an arbitrary-precision
+                        // numeral (a 254-bit ZK prime does not fit `u32`),
+                        // so `(_ FiniteField ...)` must not go through the
+                        // `u32`-typed indexed-identifier path, whose other
+                        // callers rely on that range check.
+                        self.lexer.next_token();
+                        let head = self.expect_symbol()?;
+                        if head == "FiniteField" {
+                            return self.finish_finite_field_sort();
+                        }
+                        let (name, indices) = self.finish_indexed_identifier(head)?;
 
                         match name.as_str() {
                             "BitVec" => {
@@ -595,6 +634,16 @@ impl<'a> Parser<'a> {
                             out.push_str(&format!("(_ FloatingPoint {eb} {sb})"));
                         }
                         SortKind::RoundingMode => out.push_str("RoundingMode"),
+                        SortKind::FiniteField(id) => {
+                            let modulus = self
+                                .manager
+                                .sorts
+                                .field_table()
+                                .get(*id)
+                                .map(|f| f.modulus().to_string())
+                                .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
+                            out.push_str(&format!("(_ FiniteField {modulus})"));
+                        }
                         SortKind::Set(elem) => {
                             out.push_str("(Set ");
                             stack.push(Step::Text(")"));

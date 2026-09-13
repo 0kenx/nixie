@@ -80,6 +80,17 @@ pub enum Value {
     Datatype(u32, Vec<Value>),
     /// Floating-point value (sign, exponent, mantissa)
     FloatingPoint(bool, u64, u64),
+    /// A finite-field element: its residue in `[0, p)` and its field.
+    ///
+    /// Exact (`BigInt`), because the ZK moduli are 254 bits wide — a
+    /// fixed-width payload would truncate the very values the theory exists
+    /// to decide (`AGENTS.md` → *Wide bit-vectors and bignums are exact*).
+    FiniteField {
+        /// The element's residue in `[0, p)`.
+        value: num_bigint::BigInt,
+        /// The field (indexing the sort manager's `FieldTable`).
+        field: crate::sort::field::FieldId,
+    },
     /// One of the five IEEE 754 rounding modes.
     ///
     /// [`SortKind::RoundingMode`] is a *finite* built-in sort, so its values
@@ -152,6 +163,10 @@ impl Value {
             Value::String(s) => Value::String(s.clone()),
             Value::FloatingPoint(sign, exp, mant) => Value::FloatingPoint(*sign, *exp, *mant),
             Value::RoundingMode(rm) => Value::RoundingMode(*rm),
+            Value::FiniteField { value, field } => Value::FiniteField {
+                value: value.clone(),
+                field: *field,
+            },
             Value::Uninterpreted(id) => Value::Uninterpreted(*id),
             // The two compound variants are rebuilt by `Clone` from their
             // already-cloned children; reaching here would drop them.
@@ -366,6 +381,9 @@ impl core::fmt::Debug for Value {
         while let Some(step) = steps.pop() {
             match step {
                 DebugStep::Text(text) => f.write_str(text)?,
+                DebugStep::Node(Value::FiniteField { value, field }) => {
+                    write!(f, "FiniteField({}, {})", value, field.raw())?;
+                }
                 DebugStep::Node(Value::Array(default, excs)) => {
                     f.write_str("Array(")?;
                     // Scheduled in reverse of the emission order:
@@ -524,6 +542,15 @@ impl Value {
                 SortKind::String => break Value::String(String::new()),
                 SortKind::BitVec(width) => break Value::BitVec(width, 0),
                 SortKind::FloatingPoint { .. } => break Value::FloatingPoint(false, 0, 0),
+                // A finite field's canonical default is its zero element —
+                // additive identity, and `p - 1` would do as well, but zero
+                // is the one every consumer folds first.
+                SortKind::FiniteField(field) => {
+                    break Value::FiniteField {
+                        value: num_bigint::BigInt::from(0),
+                        field,
+                    };
+                }
                 // `RoundingMode` is finite and inhabited, so unlike the
                 // opaque sorts below it *does* have a canonical default:
                 // round-to-nearest-ties-to-even, the IEEE 754 default mode.
@@ -567,6 +594,16 @@ impl core::fmt::Display for Value {
                 }
             }
             Value::BitVec(w, v) => write!(f, "#b{:0width$b}", v, width = *w as usize),
+            // A field element prints as its SMT-LIB literal; the modulus is
+            // part of the literal, so a printed model re-reads as itself.
+            // The modulus lives in the sort manager's `FieldTable`, not on
+            // the value, so the exact SMT-LIB literal (`#f<v>m<p>`) is
+            // formatted by the SMT-LIB printers where the table is in
+            // reach; here the residue and the field id are shown. SMT-LIB
+            // output goes through the printers, never through `Display`.
+            Value::FiniteField { value, field } => {
+                write!(f, "#f{}m(field {})", value, field.raw())
+            }
             // A string value is source text, not display text: the quotes and
             // any `\u{...}` escapes come from the one shared encoder the
             // SMT-LIB printers use, so a model value re-reads as itself.

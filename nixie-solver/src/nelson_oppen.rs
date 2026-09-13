@@ -79,6 +79,8 @@ pub enum TermTheory {
     FloatingPoint,
     /// Algebraic datatypes.
     Datatype,
+    /// Prime finite fields (`QF_FF`).
+    FiniteField,
     /// Uninterpreted functions.
     Uf,
     /// Not a theory term at all: a binding form (`forall`, `exists`, `let`,
@@ -105,6 +107,7 @@ impl TermTheory {
             Self::Uf => 7,
             Self::Binder => 8,
             Self::Set => 9,
+            Self::FiniteField => 10,
         })
     }
 }
@@ -209,6 +212,7 @@ impl NelsonOppenCombiner {
             | TermKind::IntConst(_)
             | TermKind::RealConst(_)
             | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
             | TermKind::Var(_)
             | TermKind::StringLit(_)
             | TermKind::FpLit { .. }
@@ -259,6 +263,13 @@ impl NelsonOppenCombiner {
             | TermKind::BvSle(_, _) => TermTheory::BitVector,
 
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => TermTheory::Array,
+
+            // Finite fields: `ff.add`, `ff.mul`, `ff.neg`, `ff.bitsum`.
+            // The only predicate is `=`, which is `Shared` above.
+            TermKind::FfAdd(_)
+            | TermKind::FfMul(_)
+            | TermKind::FfNeg(_)
+            | TermKind::FfBitsum(_) => TermTheory::FiniteField,
             // `set.card` is listed here with the rest even though its result
             // is an `Int`: theory *ownership* follows the operator, and the
             // Int it produces becomes a shared interface term, which is

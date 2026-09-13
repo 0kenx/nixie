@@ -301,6 +301,7 @@ impl<'a> Parser<'a> {
             TokenKind::StringLit(s) => Some(s),
             TokenKind::Hexadecimal(h) => Some(h),
             TokenKind::Binary(b) => Some(b),
+            TokenKind::FfLiteral { value, modulus } => Some(format!("#f{value}m{modulus}")),
             TokenKind::Keyword(k) => Some(format!(":{k}")),
             TokenKind::LParen | TokenKind::RParen | TokenKind::Eof => None,
         }

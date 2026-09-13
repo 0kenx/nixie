@@ -36,6 +36,17 @@ pub use basic::Printer;
 ///   four; any other width must use the `#b` form with exactly `width` binary
 ///   digits.  Emitting `#x` with `width.div_ceil(4)` digits (as the printers
 ///   previously did) silently widens e.g. a 5-bit value to 8 bits.
+/// Render a finite-field element as its SMT-LIB literal `#f<v>m<p>`.
+///
+/// `value` must already be normalized into `[0, p)` (every `FfConst` is, at
+/// construction), so the literal re-reads as the same interned term.
+pub(crate) fn format_ff_literal(
+    value: &num_bigint::BigInt,
+    modulus: &num_bigint::BigUint,
+) -> String {
+    format!("#f{value}m{modulus}")
+}
+
 pub(crate) fn format_bitvec_literal(value: &num_bigint::BigInt, width: u32) -> String {
     // Width 0 is not a legal SMT-LIB bit-vector sort; there is no literal
     // syntax for it, so fall back to the shortest well-formed binary literal

@@ -80,6 +80,7 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::IntConst(_)
         | TermKind::RealConst(_)
         | TermKind::BitVecConst { .. }
+        | TermKind::FfConst { .. }
         | TermKind::StringLit(_)
         | TermKind::Var(_)
         | TermKind::FpLit { .. }
@@ -181,7 +182,13 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::FpIsNaN(_)
         | TermKind::FpIsNegative(_)
         | TermKind::FpIsPositive(_)
-        | TermKind::FpToReal(_) => OpKey::Plain(core::mem::discriminant(kind)),
+        | TermKind::FpToReal(_)
+        // Finite-field operators are plain function symbols: congruence over
+        // them is sound because they are total functions of their arguments.
+        | TermKind::FfAdd(_)
+        | TermKind::FfMul(_)
+        | TermKind::FfNeg(_)
+        | TermKind::FfBitsum(_) => OpKey::Plain(core::mem::discriminant(kind)),
 
         TermKind::BvExtract { high, low, .. } => OpKey::Extract {
             high: *high,
