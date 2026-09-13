@@ -44,6 +44,23 @@ use std::collections::BinaryHeap;
 
 pub(super) use super::equiv::SubstOutcome;
 
+/// `NIXIE_LOG_ELIMDTL=1`: per-variable elimination decision trace, the
+/// differential-instrumentation counterpart of cadical's verbose=3 LOG
+/// lines (`trying to eliminate`, outcome, per-pair classes).  See
+/// `docs/studies/2026-09-13-elim-bound-growth.md` (phase-1 yield gap).
+pub(super) fn elim_dtl_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("NIXIE_LOG_ELIMDTL").is_ok())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// cadical `elimocclim`: skip a variable whose heavier-side occurrence list
 /// is longer than this.
 const ELIM_OCC_LIMIT: usize = 100;
@@ -1041,13 +1058,29 @@ impl Solver {
         // (corpus sweep + differential fuzz), not by trajectory identity.
         let raw_pos = ctx.occs.len(pivot.code() as usize);
         let raw_neg = ctx.occs.len(pivot.negate().code() as usize);
+        let dtl = elim_dtl_enabled();
+        if dtl {
+            self.diag_pair_skip = 0;
+            self.diag_pair_unit = 0;
+            self.diag_pair_res = 0;
+            eprintln!(
+                "[dtl] trying v={} raw_pos={raw_pos} raw_neg={raw_neg}",
+                v.index() + 1
+            );
+        }
         if raw_pos == 0 || raw_neg == 0 {
             // Pure/one-sided variable: leave it to the pure-literal pass
             // (our model reconstruction only covers resolution
             // elimination).
+            if dtl {
+                eprintln!("[dtl]   v={} -> one_sided", v.index() + 1);
+            }
             return;
         }
         if raw_pos.max(raw_neg) > ELIM_OCC_LIMIT {
+            if dtl {
+                eprintln!("[dtl]   v={} -> occ_limit", v.index() + 1);
+            }
             return;
         }
         self.elim_flush_sort_occs(ctx, pivot);
@@ -1156,11 +1189,29 @@ impl Solver {
 
         let mut collected: Vec<(SmallVec<[Lit; 8]>, ClauseId, ClauseId)> = Vec::new();
         if self.elim_resolvents_bounded(ctx, pivot, pos, neg, &mut collected) {
+            if elim_dtl_enabled() {
+                eprintln!(
+                    "[dtl]   v={} -> elim pos={pos} neg={neg} skip={} unit={} res={}",
+                    v.index() + 1,
+                    self.diag_pair_skip,
+                    self.diag_pair_unit,
+                    self.diag_pair_res
+                );
+            }
             self.elim_add_resolvents(ctx, &collected);
             self.elim_retire_pivot_clauses(ctx, pivot);
             self.elim_var_flag[v.index()] = true;
             ctx.eliminated += 1;
             ctx.dirty = true;
+        }
+        if elim_dtl_enabled() {
+            eprintln!(
+                "[dtl]   v={} -> not_bounded skip={} unit={} res={}",
+                v.index() + 1,
+                self.diag_pair_skip,
+                self.diag_pair_unit,
+                self.diag_pair_res
+            );
         }
         self.elim_backward_clauses(ctx);
     }
@@ -1246,8 +1297,9 @@ impl Solver {
                     return false;
                 }
                 match self.elim_resolve_clauses(ctx, cid, pivot, nid) {
-                    ElimResolve::Skip => {}
+                    ElimResolve::Skip => self.diag_pair_skip += 1,
                     ElimResolve::Unit(u) => {
+                        self.diag_pair_unit += 1;
                         // LRAT unit-resolvent provenance (2026-09): the unit
                         // resolvent {u} of C(v) and D(¬v) is RUP with the
                         // resolvent shape — under ¬u every parent literal is
@@ -1300,7 +1352,15 @@ impl Solver {
                     }
                     ElimResolve::Resolvent(r) => {
                         resolvents += 1;
+                        self.diag_pair_res += 1;
                         if r.len() > ELIM_CLS_LIMIT || resolvents > bound {
+                            if elim_dtl_enabled() {
+                                eprintln!(
+                                    "[dtl]   v={} -> too_many_res (resolvents={resolvents} bound={bound} len={})",
+                                    pivot.var().index() + 1,
+                                    r.len()
+                                );
+                            }
                             return false;
                         }
                         // Record the resolving pair: the proof emission at

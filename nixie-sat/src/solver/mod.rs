@@ -1427,6 +1427,11 @@ pub struct Solver {
     pub(super) diag_fresh_from: u64,
     pub(super) diag_sub_old: usize,
     pub(super) diag_sub_fresh: usize,
+    /// Per-variable pair counters for the elimination differential trace
+    /// (`NIXIE_LOG_ELIMDTL`): skip/tautology, unit, non-taut resolvents.
+    pub(super) diag_pair_skip: usize,
+    pub(super) diag_pair_unit: usize,
+    pub(super) diag_pair_res: usize,
     pub(super) diag_elim_remain: usize,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
@@ -2245,6 +2250,9 @@ impl Solver {
             diag_fresh_from: 0,
             diag_sub_old: 0,
             diag_sub_fresh: 0,
+            diag_pair_skip: 0,
+            diag_pair_unit: 0,
+            diag_pair_res: 0,
             diag_elim_remain: 0,
             learnt: SmallVec::new(),
             seen: Vec::new(),
