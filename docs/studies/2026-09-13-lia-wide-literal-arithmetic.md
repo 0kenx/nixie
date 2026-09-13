@@ -261,6 +261,25 @@ disagreements; differential with model validation 0 disagreements, 88/88
 models valid; 1,200 debug-mode + 1,100 release-mode fuzz instances clean
 (seeds that previously found bugs included).
 
+## The debug-panic oracle, swept over the corpora
+
+The technique from item 12 — fuzz the DEBUG binary, where overflow-checks
+turn every silent release wrap into a loud abort naming its site — was
+swept over everything available, not just the random generator:
+
+* the Z3 parity corpus (177 benchmarks): **0 panics**, all 177 decided;
+* the 270-instance pinned differential sample (QF_ANIA/AUFNIA/BV/LRA/
+  NIA/UFLIA...): **0 panics**;
+* the extended-theories corpus (43 files): **0 panics** (the two nonzero
+  exits are honest logic-contract rejections of nonlinear-under-AUFLIRA
+  input, not crashes).
+
+490 corpus files + 1,200 generator instances, panic-free: the unchecked
+fixed-width hunt is converged on every surface we can currently throw at
+the solver. The sweep ships as
+`bench/differential/debug_panic_sweep.py` so the next theory that grows
+boundary arithmetic can re-run it in one command.
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves
