@@ -20,6 +20,27 @@ memcpy-rebuild it replaces.  The ELS study's surgery lost by 9.7 %
 *because* normalization at `Vec<Vec<Watcher>>` is entry-major; at CSR
 the same normalization is span-local.
 
+## Slice 1 result (landed same day, `1c8a1a99`)
+
+`CsrWatchBuild` (the `RoundOccs` pattern adapted to `Watcher` entries)
+plus a per-rebuild shadow behind `NIXIE_CSR_SHADOW=1`.  Validation
+across 6s167-opt, j3037_10_mdd_b and si2-b03m: **every rebuild
+compares equal, order included** (21.7k literals, up to 740k entries
+on si2), `mismatched=0` throughout.  Standalone two-sweep build cost:
+90-160 µs (6s167), 0.5-1.4 ms (j3037), 12-18 ms (si2) — the upper
+bound for slice 2's merged build, which shares the rebuild's existing
+sweep (≈ half).
+
+The stop-gate itself resolves **analytically**, recorded here because
+it upgrades slices 2-4 from "semantic risk" to "representation
+switch": the drifted `Vec` list is always *(prefix survivors in order)
+++ (arrival-ordered appends)* — in-place compaction, `retain`-removal
+and append are all order-preserving on that decomposition — and that
+is exactly *CSR primary ++ overflow*.  No mutation interleaves primary
+and overflow entries, so the two representations are order-isomorphic
+at every point of the search.  The empirical bar stays (trajectory
+identity per slice), but no semantic change is expected.
+
 ## Reference check (done first, per AGENTS)
 
 Neither reference uses CSR watches: cadical `internal.hpp` has
