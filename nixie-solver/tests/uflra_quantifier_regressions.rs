@@ -1,0 +1,176 @@
+//! Regression tests for the UFLRA quantifier parity gap (2026-09, the
+//! FFT/set family of `smt-lib/non-incremental/UFLRA`).
+//!
+//! Two stacked defects kept z3-decidable goals `unknown` here; each is
+//! pinned by a test:
+//!
+//! 1. **Compound linear UF arguments never reached the arithmetic
+//!    interface** (`Solver::intern_compound_uf_args_into_arith`): the
+//!    assert-time purifier (`purify_numeric_uf_args`) deliberately skips
+//!    functions that appear under quantifiers, and the quantifier engines
+//!    mint fresh application arguments anyway (every e-matching lemma
+//!    `(= (f3 f4 (+ f6 (- f5 f6))) ...)` introduces one).  Without an
+//!    arithmetic variable for such an argument, the Nelson-Oppen
+//!    model-equal / entailed-equality probe can never pair it with the
+//!    equal-valued argument it collapses onto, congruence
+//!    `f(.. x ..) = f(.. y ..)` never fires, and a refutable ground
+//!    combination is accepted round after round.  The repair internalizes
+//!    each such argument with its definitional (tautological) row.
+//!
+//! 2. **The MBQI universe restriction leaked to sampled sorts** (the
+//!    `restrict_to_universe` port in `mbqi::model_checker`): the completed
+//!    model's "universe" for an *interpreted* sort is merely a sample of
+//!    the model's values, so restricting an Int/Real Skolem to it
+//!    fabricated an unsat verdict out of values the Skolem was never
+//!    allowed to take — a false `Satisfied` on `2v+1 = y` whose falsifier
+//!    sat outside the sample.  Only uninterpreted sorts (genuinely finite
+//!    domains, the finite-model semantics) may be restricted; the
+//!    ite-chain completion covers the infinite ones.
+
+use nixie_solver::Context;
+
+fn run(script: &str) -> Vec<String> {
+    let mut ctx = Context::new();
+    ctx.execute_script(script)
+        .expect("script should parse and run")
+}
+
+fn last_status(output: &[String]) -> &str {
+    output
+        .iter()
+        .rev()
+        .find(|line| {
+            let t = line.trim();
+            matches!(t, "sat" | "unsat" | "unknown")
+        })
+        .map(String::as_str)
+        .unwrap_or("<no verdict>")
+}
+
+/// The FFT shape (`smtlib.620487`): the ground disequality
+/// `f3(f4, f5-f6) != -f3(f4, f5)` together with the periodicity axiom
+/// `forall v. f3(f4, f6+v) = -f3(f4, v)` is refuted by the single instance
+/// `v := f5-f6` — e-matching finds it, and the ground layer needs the
+/// arithmetic congruence `f6 + (f5-f6) = f5` to close (defect 1).
+#[test]
+fn fft_periodicity_is_unsat() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort S2 0)
+        (declare-fun f3 (S2 Real) Real)
+        (declare-fun f4 () S2)
+        (declare-fun f5 () Real)
+        (declare-fun f6 () Real)
+        (assert (not (= (f3 f4 (- f5 f6)) (- (f3 f4 f5)))))
+        (assert (forall ((?v0 Real)) (= (f3 f4 (+ f6 ?v0)) (- (f3 f4 ?v0)))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The same refutation with the instance already spelled out as a ground
+/// assertion: the quantifier-under-function purification skip must not
+/// leave `(+ f6 (- f5 f6))` outside the arithmetic interface (defect 1's
+/// assert-path exposure — was `unknown`, z3 `unsat`).
+#[test]
+fn spelled_out_instance_is_unsat() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort S2 0)
+        (declare-fun f3 (S2 Real) Real)
+        (declare-fun f4 () S2)
+        (declare-fun f5 () Real)
+        (declare-fun f6 () Real)
+        (assert (forall ((?v0 Real)) (= (f3 f4 (+ f6 ?v0)) (- (f3 f4 ?v0)))))
+        (assert (not (= (f3 f4 (- f5 f6)) (- (f3 f4 f5)))))
+        (assert (= (f3 f4 (+ f6 (- f5 f6))) (- (f3 f4 (- f5 f6)))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The ground combination itself: the positive instance refutes, the
+/// negated one does not.  Pins that the interface repair adds congruence
+/// without flipping the satisfiable twin (defect 1's soundness guard).
+#[test]
+fn ground_instance_congruence_pair() {
+    let unsat_output = run(r#"
+        (set-logic QF_UFLRA)
+        (declare-sort S2 0)
+        (declare-fun f3 (S2 Real) Real)
+        (declare-fun f4 () S2)
+        (declare-fun f5 () Real)
+        (declare-fun f6 () Real)
+        (assert (not (= (f3 f4 (- f5 f6)) (- (f3 f4 f5)))))
+        (assert (= (f3 f4 (+ f6 (- f5 f6))) (- (f3 f4 (- f5 f6)))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&unsat_output), "unsat");
+
+    let sat_output = run(r#"
+        (set-logic QF_UFLRA)
+        (declare-sort S2 0)
+        (declare-fun f3 (S2 Real) Real)
+        (declare-fun f4 () S2)
+        (declare-fun f5 () Real)
+        (declare-fun f6 () Real)
+        (assert (not (= (f3 f4 (- f5 f6)) (- (f3 f4 f5)))))
+        (assert (not (= (f3 f4 (+ f6 (- f5 f6))) (- (f3 f4 (- f5 f6))))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&sat_output), "sat");
+}
+
+/// Defect 2's shape: the derived universal of a negated arithmetic
+/// existential (`not (exists v. 2v+1 = y)` becomes `forall v. 2v+1 != y`)
+/// must not be "certified" by restricting the Int Skolem to the sampled
+/// model values.  `y` is pinned odd by the asserted existential, so the
+/// falsifier `v := (y-1)/2` exists at a point no finite sample contains;
+/// the pre-fix nested check reported `Satisfied` → false `sat`.
+#[test]
+fn derived_universal_over_int_is_not_falsely_satisfied() {
+    let output = run(r#"
+        (set-logic LIA)
+        (declare-const y Int)
+        (assert (exists ((a Int) (b Int) (c Int) (d Int))
+          (= (+ (* 2 a) (* 2 b) (* 2 c) (* 2 d) 1) y)))
+        (assert (not (exists ((v Int)) (= (+ (* 2 v) 1) y))))
+        (check-sat)
+    "#);
+    assert_eq!(last_status(&output), "unsat");
+}
+
+/// The set-theory sat shape (the `set16` family, minimized): axioms over
+/// `Bool`-valued functions on an uninterpreted sort with a `Real` member
+/// index.  The completed model with `else = false` satisfies every axiom
+/// vacuously off the finitely many entries, and the nested model check can
+/// certify that over the whole `Real` domain — but the outer loop's
+/// convergence (else-choice search in the finite-model finder) is not yet
+/// there, so the goal may honestly answer `unknown`.  What it must never
+/// do is answer `unsat`: the two-element model (member always false,
+/// subset/seteq only where forced, `seteq a b` false) is exhibited by the
+/// solver's own ground layer.  Pinned as never-wrong (the
+/// `parity_infeasibility_four_free_vars_is_never_wrong` pattern).
+#[test]
+fn set_theory_axioms_over_vacuous_membership_are_never_wrong() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort Set 0)
+        (declare-fun member (Real Set) Bool)
+        (declare-fun seteq (Set Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set))
+          (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set))
+          (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (not (seteq a b)))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "sat" || status == "unknown",
+        "a satisfiable set-theory axiom set must never be refuted; got {status}"
+    );
+}

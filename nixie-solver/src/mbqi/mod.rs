@@ -62,6 +62,7 @@ pub mod integration;
 pub mod lazy_instantiation;
 pub mod macros;
 pub(crate) mod model_certify;
+pub(crate) mod model_checker;
 pub mod model_completion;
 pub mod patterns;
 mod sat_certify;

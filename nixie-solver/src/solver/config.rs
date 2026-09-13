@@ -139,6 +139,9 @@ impl Solver {
     pub fn set_logic(&mut self, logic: &str) {
         self.logic = Some(logic.to_string());
         self.settings_changed();
+        // The nested model-checker solver should route theories the same
+        // way (see `mbqi::model_checker`).
+        self.mbqi.set_logic_hint(logic);
 
         // `Err` (unknown name) reaches here only via direct
         // `Solver::set_logic` calls — the Context layer rejects unknown

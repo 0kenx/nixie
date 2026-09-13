@@ -60,6 +60,83 @@ use nixie_theories::Theory;
 use nixie_theories::arithmetic::ArithSolver;
 use nixie_theories::bv::BvSolver;
 use nixie_theories::euf::EufSolver;
+use num_traits::{One, Zero};
+use smallvec::SmallVec;
+
+/// Collect the arguments of every `Apply` reachable from `roots`, in one
+/// explicit-stack DAG walk (bounded, visited-set deduped).  A helper for
+/// [`Solver::intern_compound_uf_args_into_arith`].
+fn collect_apply_args(roots: &[TermId], manager: &TermManager, out: &mut Vec<TermId>) {
+    /// Bound on the walk: bounded work on caller-controlled term sets,
+    /// never unbounded traversal.
+    const MAX_VISIT: usize = 65_536;
+    let mut stack: Vec<TermId> = roots.to_vec();
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(term) = stack.pop() {
+        if !visited.insert(term) || visited.len() > MAX_VISIT {
+            continue;
+        }
+        let Some(node) = manager.get(term) else {
+            continue;
+        };
+        if let TermKind::Apply { args, .. } = &node.kind {
+            out.extend(args.iter().copied());
+        }
+        let mut children: SmallVec<[TermId; 4]> = SmallVec::new();
+        // Locally scoped to keep the helper free of a solver dependency.
+        {
+            use nixie_core::ast::TermKind as TK;
+            match &node.kind {
+                TK::Forall { body, .. } | TK::Exists { body, .. } => stack.push(*body),
+                TK::Let { .. } | TK::Match { .. } => {}
+                _ => {
+                    let mut probe: SmallVec<[TermId; 4]> = SmallVec::new();
+                    // Reuse the structural child enumeration without naming
+                    // the whole enum here: push_children lives in the mbqi
+                    // model checker; a local mirror is unnecessary because the
+                    // manager exposes the children through the same kinds.
+                    let _ = &mut probe;
+                    // Fall back to a per-kind walk over the common shapes.
+                    match &node.kind {
+                        TK::Not(a) => probe.push(*a),
+                        TK::And(a) | TK::Or(a) | TK::Add(a) | TK::Mul(a) | TK::Distinct(a) => {
+                            probe.extend(a.iter().copied())
+                        }
+                        TK::Xor(a, b)
+                        | TK::Implies(a, b)
+                        | TK::Eq(a, b)
+                        | TK::Sub(a, b)
+                        | TK::Div(a, b)
+                        | TK::Mod(a, b)
+                        | TK::Lt(a, b)
+                        | TK::Le(a, b)
+                        | TK::Gt(a, b)
+                        | TK::Ge(a, b) => {
+                            probe.push(*a);
+                            probe.push(*b);
+                        }
+                        TK::Ite(a, b, c) | TK::Store(a, b, c) => {
+                            probe.push(*a);
+                            probe.push(*b);
+                            probe.push(*c);
+                        }
+                        TK::Neg(a) => probe.push(*a),
+                        TK::Select(a, b) => {
+                            probe.push(*a);
+                            probe.push(*b);
+                        }
+                        TK::Apply { args, .. } | TK::DtConstructor { args, .. } => {
+                            probe.extend(args.iter().copied());
+                        }
+                        _ => {}
+                    }
+                    children = probe;
+                }
+            }
+        }
+        stack.extend(children.iter().copied());
+    }
+}
 use num_rational::Rational64;
 
 use bv_unified::BvOrderSpec;
@@ -285,6 +362,12 @@ pub struct Solver {
     /// with them — reconstruct from these definitions before validation
     /// (the dispatch path's `bv_reconstruct_eliminations`, same machinery).
     pub(super) deferred_eliminations: Vec<(TermId, TermId)>,
+    /// Size of the encoded vocabulary (`var_to_term` + `var_to_constraint`)
+    /// when [`Solver::intern_compound_uf_args_into_arith`] last ran.  A
+    /// re-check that encoded nothing new skips the repair outright (the
+    /// 600-rerun convergence pins in `scope_rebase_tests` re-run the whole
+    /// search on identical terms).
+    pub(super) last_iface_repair_vocab: usize,
     /// Memoized [`PreprocessOutcome`] of the current assertion set, with the
     /// assertion count it was computed at (see
     /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
@@ -955,6 +1038,7 @@ impl Solver {
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
             has_quantifiers: false,
             next_skolem_id: 0,
+            last_iface_repair_vocab: 0,
             next_distinct_id: 0,
             has_injective_distinct: false,
             injective_distinct_specs: Vec::new(),
@@ -1685,6 +1769,139 @@ impl Solver {
             self.bv.reset_embedded_state();
         } else {
             self.bv.reset();
+        }
+    }
+
+    /// Internalize compound *linear* arithmetic UF arguments into the
+    /// arithmetic solver, each with its definitional (tautological) row.
+    ///
+    /// # Why this exists
+    ///
+    /// Congruence `f(.., x) = f(.., y)` needs the e-graph to learn `x = y`,
+    /// and for two arithmetic arguments that equality can only be *proved*
+    /// by arithmetic — so both arguments must be arithmetic variables
+    /// (interface terms) for the Nelson-Oppen model-equal /
+    /// entailed-equality probe to pair them.  The assert-time purifier
+    /// (`purify_numeric_uf_args`) creates those variables, but it
+    /// deliberately skips functions that appear under quantifiers, and the
+    /// quantifier engines mint fresh application arguments anyway: every
+    /// instantiation lemma `(= (f3 f4 (+ f6 (- f5 f6))) ...)` introduces a
+    /// compound argument nothing purifies.
+    ///
+    /// The row asserted here defines the fresh variable and nothing else:
+    /// `x − Σ cᵢ·tᵢ = k` for `x = Σ cᵢ·tᵢ + k` restates the term's own
+    /// linear meaning (a tautology in the same class as the constant-arg
+    /// pins in `nelson_oppen_combine`), so it can never flip a verdict —
+    /// it can only make an equality the tableau already entails *visible* to
+    /// the combination, letting congruence fire and a refutable ground
+    /// combination actually refute.
+    ///
+    /// Non-linear or unparseable arguments are skipped (there is no
+    /// definitional linear row to state); that costs completeness only.
+    fn intern_compound_uf_args_into_arith(&mut self, manager: &TermManager) {
+        /// Bound on the number of fresh interface terms per call: the pass
+        /// is O(apps × parse) and a pathological lemma set should not
+        /// dominate the round.
+        const MAX_NEW_INTERFACE_TERMS: usize = 256;
+
+        // Re-run only when the encoded vocabulary grew since the last
+        // repair.  A forced re-check of an unchanged goal re-runs the whole
+        // search with exactly the same terms; re-walking (and re-parsing
+        // every compound argument) on each redo is pure overhead.
+        let vocab_size = self.var_to_term.len() + self.var_to_constraint.len();
+        if vocab_size == self.last_iface_repair_vocab {
+            return;
+        }
+        self.last_iface_repair_vocab = vocab_size;
+
+        // Candidates come from the encoded vocabulary — the terms reachable
+        // from the SAT-variable table and the encoded atom constraints — the
+        // same terms the theory manager's eager EUF intern registers as
+        // application arguments — so this pass can run *before* the
+        // `TheoryManager` constructor takes the theory borrows.
+        let mut candidates: Vec<TermId> = Vec::new();
+        let mut roots: Vec<TermId> = Vec::new();
+        for &term in &self.var_to_term {
+            roots.push(term);
+        }
+        for constraint in self.var_to_constraint.values() {
+            let (l, r) = match constraint {
+                Constraint::Eq(l, r)
+                | Constraint::Lt(l, r)
+                | Constraint::Le(l, r)
+                | Constraint::Gt(l, r)
+                | Constraint::Ge(l, r)
+                | Constraint::Diseq(l, r) => (*l, *r),
+                _ => continue,
+            };
+            roots.push(l);
+            roots.push(r);
+        }
+        collect_apply_args(&roots, manager, &mut candidates);
+        candidates.sort_unstable();
+        candidates.dedup();
+        let already: FxHashSet<TermId> = self.arith.interface_terms().iter().copied().collect();
+        let mut fresh = 0usize;
+        for arg in candidates {
+            if fresh >= MAX_NEW_INTERFACE_TERMS {
+                break;
+            }
+            // Leaves need no definition (a plain variable is interned on
+            // first use; a constant is pinned by the existing machinery).
+            let Some(node) = manager.get(arg) else {
+                continue;
+            };
+            if matches!(
+                node.kind,
+                TermKind::Var(_) | TermKind::IntConst(_) | TermKind::RealConst(_)
+            ) {
+                continue;
+            }
+            // Only arithmetic-sorted arguments live in the linear solver.
+            if node.sort != manager.sorts.int_sort && node.sort != manager.sorts.real_sort {
+                continue;
+            }
+            if already.contains(&arg) {
+                continue;
+            }
+            // Parse the argument's linear structure: arg = Σ cᵢ·tᵢ + k.
+            // The `overflow` flag is the parser's exact-arithmetic bail (a
+            // coefficient outside the rational range): such an argument is
+            // not linearly definable here, so skip it.
+            let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
+            let mut constant = Rational64::zero();
+            let mut overflow = false;
+            if self
+                .extract_linear_terms(
+                    arg,
+                    Rational64::one(),
+                    &mut terms,
+                    &mut constant,
+                    manager,
+                    &mut overflow,
+                )
+                .is_none()
+                || overflow
+            {
+                continue;
+            }
+            if terms.is_empty() {
+                // A pure constant (the parse collapsed it): nothing to
+                // relate to other interface terms.
+                continue;
+            }
+            // Definitional row: arg − Σ cᵢ·tᵢ = k.  The reason term is the
+            // argument itself; it names no SAT atom, and the empty
+            // `DerivedReasons` entry below keeps any certificate citing the
+            // row contribution-free (same convention as the const pins).
+            let mut row: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
+            row.push((arg, Rational64::one()));
+            for (t, c) in terms {
+                row.push((t, -c));
+            }
+            self.arith.assert_eq(&row, constant, arg);
+            self.derived_reasons.record(arg, Vec::new());
+            fresh += 1;
         }
     }
 
@@ -2421,6 +2638,15 @@ impl Solver {
                 }
             }
         }
+
+        // Interface repair (see `intern_compound_uf_args_into_arith`): run
+        // before the constructor takes the theory borrows.  The candidate
+        // arguments come from the encoded vocabulary (`term_to_var`), the
+        // same terms the constructor's eager EUF intern is about to register
+        // as application arguments — so compound linear arguments get their
+        // definitional arithmetic rows before the first search misses the
+        // congruence they enable.
+        self.intern_compound_uf_args_into_arith(manager);
 
         // Run SAT solver with theory integration
         let zero_term = manager.mk_int(0);
@@ -3276,6 +3502,9 @@ impl Solver {
                     }
 
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
+                    if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                        eprintln!("[qround] iter={mbqi_iteration} result={mbqi_result:?}");
+                    }
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
                             if self.downgrade_if_injective_model_dishonest(manager) {
@@ -3594,6 +3823,21 @@ impl Solver {
                     // re-derives the theory state from exactly those.  Nothing is
                     // re-encoded, so no clause is duplicated.
                     self.rebase_theory_state();
+                    // Interface repair for instantiation lemmas: a compound
+                    // *linear* arithmetic term that appears only as a UF
+                    // argument (the `(f3 f4 (+ f6 (- f5 f6)))` shape the
+                    // e-matching/MBQI lemmas mint freely) is invisible to the
+                    // arithmetic solver unless something purifies it — and
+                    // `purify_numeric_uf_args` deliberately skips functions
+                    // under quantifiers.  Without an arith variable, the
+                    // Nelson-Oppen model-equal probe can never pair it with
+                    // the equal-valued argument it collapses onto, congruence
+                    // `f(.. x ..) = f(.. y ..)` never fires, and a refutable
+                    // ground combination is accepted round after round (the
+                    // UFLRA FFT false-loop class).  Internalize each such
+                    // argument with its *definitional* row — a tautology that
+                    // only names the fresh variable, constraining nothing.
+                    self.intern_compound_uf_args_into_arith(manager);
                     let zero_term = manager.mk_int(0);
                     theory_manager = TheoryManager::new(
                         manager,
@@ -4023,6 +4267,10 @@ impl Solver {
     pub fn push(&mut self) {
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
+        // The interface-repair memo compares vocabulary *sizes*; a pop can
+        // shrink the vocabulary back to a size a later assert re-reaches with
+        // different content, so invalidate here (usize::MAX never matches).
+        self.last_iface_repair_vocab = usize::MAX;
         // A `push` opens a scope the previous verdict knew nothing about.  It
         // adds no assertion by itself, so the old model would still satisfy the
         // stack *at this instant* – but the only way to observe it is to ask
@@ -4083,6 +4331,9 @@ impl Solver {
     pub fn pop(&mut self) {
         self.defer_flush_raw();
         self.bv_preprocess_cache = None;
+        // Same reasoning as `push`: the size-based memo must not survive a
+        // scope retraction.
+        self.last_iface_repair_vocab = usize::MAX;
         // Retracting a scope changes the parity-lemma basis (assertions of
         // the scope disappear; their rows and lemmas go with the trail ops).
         self.parity_generation = self.parity_generation.wrapping_add(1);

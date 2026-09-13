@@ -184,12 +184,15 @@ impl super::Solver {
     /// directions – never fewer clauses than the live assertions require.
     pub(super) fn debug_assert_scope_restored(&self, state: &ContextState) {
         let super::Solver {
-            config: _,          // INVARIANT: user configuration
-            sat: _,             // SCOPED: SatSolver::push/pop
-            branch_priority: _, // NOT trailed: empty queue is sound
-            euf: _,             // SCOPED: reset by `rebase_theory_state`
-            arith: _,           // SCOPED: reset by `rebase_theory_state`
-            bv: _,              // SCOPED: reset by `rebase_theory_state`
+            config: _,                  // INVARIANT: user configuration
+            sat: _,                     // SCOPED: SatSolver::push/pop
+            branch_priority: _,         // NOT trailed: empty queue is sound
+            euf: _,                     // SCOPED: reset by `rebase_theory_state`
+            arith: _,                   // SCOPED: reset by `rebase_theory_state`
+            bv: _,                      // SCOPED: reset by `rebase_theory_state`
+            last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
+            // invalidated there (usize::MAX), so a popped scope's smaller
+            // vocabulary always re-runs the idempotent repair.
             has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
             // `true` after pop only keeps the lazy route.
             bv_preprocess_at_count: _, // NOT trailed: a stale value only

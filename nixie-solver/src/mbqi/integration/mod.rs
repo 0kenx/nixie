@@ -22,10 +22,13 @@ use super::finite_model::FiniteModelFinder;
 use super::heuristics::MBQIBudget;
 use super::instantiation::InstantiationEngine;
 use super::lazy_instantiation::LazyInstantiator;
+use super::model_checker::{ModelCheckOutcome, ModelChecker};
 use super::model_completion::CompletedModel;
 use super::model_completion::ModelCompleter;
 use super::sat_certify;
-use super::{Instantiation, MBQIResult, MBQIStats, QuantifiedFormula, QuantifierId};
+use super::{
+    Instantiation, InstantiationReason, MBQIResult, MBQIStats, QuantifiedFormula, QuantifierId,
+};
 
 mod search_state;
 
@@ -101,6 +104,11 @@ pub struct MBQIIntegration {
     finite_model_finder: FiniteModelFinder,
     /// Counterexample generator
     cex_generator: CounterExampleGenerator,
+    /// Z3-style nested-solver model checker (see `model_checker`)
+    model_checker: ModelChecker,
+    /// Logic hint for the nested solver ("UFLRA", ...), set by
+    /// [`MBQIIntegration::set_logic_hint`].
+    logic_hint: Option<String>,
     /// Tracked quantifiers
     quantifiers: Vec<QuantifiedFormula>,
     /// Generated instantiations (for deduplication)
@@ -136,6 +144,8 @@ impl MBQIIntegration {
             lazy_instantiator: LazyInstantiator::new(),
             finite_model_finder: FiniteModelFinder::new(),
             cex_generator: CounterExampleGenerator::new(),
+            model_checker: ModelChecker::new(),
+            logic_hint: None,
             quantifiers: Vec::new(),
             generated_instantiations: FxHashMap::default(),
             extra_candidates: FxHashMap::default(),
@@ -213,6 +223,12 @@ impl MBQIIntegration {
         for q in &mut self.quantifiers {
             q.guard_inactive = q.guard.is_some() && inactive.contains(&q.term);
         }
+    }
+
+    /// Remember the logic name so the nested model-checker solver routes its
+    /// theories the same way the outer solver does.
+    pub fn set_logic_hint(&mut self, logic: &str) {
+        self.logic_hint = Some(logic.to_string());
     }
 
     /// The tracked quantifier at `idx`, if in range.
@@ -313,6 +329,11 @@ impl MBQIIntegration {
         // boolean values.  We can only claim Satisfied when every evaluation
         // across every quantifier was fully ground (i.e. concrete True).
         let mut all_evaluations_fully_ground = true;
+        // Quantifiers the nested model checker certified against a total
+        // completed interpretation this round.  Their satisfaction does not
+        // depend on the finite-domain enumeration below, so they are exempt
+        // from (and must not spoil) the finite-exhaustion gate.
+        let mut satisfied_by_checker: FxHashSet<TermId> = FxHashSet::default();
 
         // Collect quantifiers first to avoid borrow checker issues
         let quantifiers: Vec<_> = self.quantifiers.to_vec();
@@ -433,6 +454,13 @@ impl MBQIIntegration {
             self.cex_generator
                 .inject_extra_candidates(&self.extra_candidates);
 
+            // The Z3-style nested model checker (see `model_checker`) runs
+            // as the certification of LAST RESORT — after this loop, when
+            // the sampling engines produced neither a counterexample nor a
+            // certification — because a nested full solve per quantifier
+            // per round is the most expensive tool in the box and the
+            // cheap engines already converge on most goals.
+
             // Use the counterexample generator directly to find
             // assignments that falsify the quantifier body
             let cex_result = self
@@ -444,6 +472,11 @@ impl MBQIIntegration {
             }
 
             self.stats.num_counterexamples += cex_result.counterexamples.len();
+            // Progress that *decides* something: a counterexample-driven (or
+            // checker-mined) fresh lemma.  The enumerative engine's seed
+            // lemmas below are not progress — they mint candidate terms, not
+            // refutation steps — so they must not block the escalation.
+            let mut added_for_quantifier = false;
 
             for cex in &cex_result.counterexamples {
                 if !self.budget.consume(quantifier.term, 1) {
@@ -465,6 +498,7 @@ impl MBQIIntegration {
                     self.record_instantiation(&inst);
                     callback.on_instantiation(&inst);
                     all_instantiations.push(inst);
+                    added_for_quantifier = true;
                 }
             }
 
@@ -496,6 +530,61 @@ impl MBQIIntegration {
                 // we return Unknown rather than Satisfied (we couldn't verify).
                 all_evaluations_fully_ground = false;
             }
+
+            // Escalation: the sampling search found *no counterexample at
+            // all* for this universal.  Decide it against a *total*
+            // completed interpretation with a nested full solve (Z3's
+            // `smt_model_checker`): `Satisfied` certifies over the whole
+            // (possibly infinite) domain — something no finite sample can
+            // do — and a counterexample yields sound instantiation lemmas
+            // mined from the instantiation set.  A decline changes nothing.
+            // (Notably: a round that *sampled* counterexamples, even ones
+            // that turned out to be duplicates, does not escalate — the
+            // nested solve is the most expensive tool in the box and a
+            // re-checked goal must not re-pay it every forced rerun.)
+            // Only universals: an existential needs a witness, not a
+            // refutation.
+            if quantifier.is_universal && cex_result.counterexamples.is_empty() {
+                let logic = self.logic_hint.clone();
+                match self.model_checker.check(
+                    quantifier,
+                    &completed_model,
+                    logic.as_deref(),
+                    manager,
+                ) {
+                    ModelCheckOutcome::Satisfied => {
+                        satisfied_by_checker.insert(quantifier.term);
+                    }
+                    ModelCheckOutcome::Counterexample { substitutions } => {
+                        for substitution in substitutions {
+                            if let Some(ground_body) =
+                                self.apply_substitution(quantifier, &substitution, manager)
+                            {
+                                let inst = Instantiation::with_reason(
+                                    quantifier.term,
+                                    substitution,
+                                    ground_body,
+                                    completed_model.generation,
+                                    InstantiationReason::ModelBased,
+                                );
+                                if !self.is_duplicate(&inst) {
+                                    self.record_instantiation(&inst);
+                                    callback.on_instantiation(&inst);
+                                    all_instantiations.push(inst);
+                                    added_for_quantifier = true;
+                                }
+                            }
+                        }
+                        if added_for_quantifier {
+                            // A fresh lemma came out of this check: forget
+                            // the model signature so a later round may ask
+                            // again even if the model happens not to move.
+                            self.model_checker.mark_productive(quantifier.term);
+                        }
+                    }
+                    ModelCheckOutcome::Declined => {}
+                }
+            }
         }
 
         #[cfg(feature = "std")]
@@ -505,8 +594,17 @@ impl MBQIIntegration {
 
         // Step 3: Check result
         if all_instantiations.is_empty() {
+            // The legacy `Satisfied` certification below covers only the
+            // quantifiers the nested checker did *not* already certify:
+            // those may range over infinite domains, where the sampling
+            // engines' coverage says nothing.
+            let unresolved: Vec<QuantifiedFormula> = quantifiers
+                .iter()
+                .filter(|q| !satisfied_by_checker.contains(&q.term))
+                .cloned()
+                .collect();
             if all_evaluations_fully_ground
-                && self.all_domains_finitely_exhausted(&quantifiers, &completed_model, manager)
+                && self.all_domains_finitely_exhausted(&unresolved, &completed_model, manager)
             {
                 // Every quantifier body evaluated to concrete True under every
                 // candidate assignment AND every bound variable ranged over a
