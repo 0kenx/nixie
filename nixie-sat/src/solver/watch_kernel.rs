@@ -29,10 +29,18 @@ impl Cursor {
         destinations: &mut WatchLists,
     ) -> Step {
         debug_assert!(self.write <= self.read && self.read <= watches.len());
-        if self.write == self.read {
-            self.scan::<false>(watches, false_lit, trail, clauses, destinations)
+        // Const-generic MIRROR specialization: the dual-write notifications
+        // compile out entirely when the CSR shadow is off.
+        if destinations.csr_active() {
+            if self.write == self.read {
+                self.scan::<false, true>(watches, false_lit, trail, clauses, destinations)
+            } else {
+                self.scan::<true, true>(watches, false_lit, trail, clauses, destinations)
+            }
+        } else if self.write == self.read {
+            self.scan::<false, false>(watches, false_lit, trail, clauses, destinations)
         } else {
-            self.scan::<true>(watches, false_lit, trail, clauses, destinations)
+            self.scan::<true, false>(watches, false_lit, trail, clauses, destinations)
         }
     }
 
@@ -41,7 +49,7 @@ impl Cursor {
     /// independently of the input or the number of removals. Const specialization
     /// removes the compaction-state test from every kept entry in both loops.
     #[inline(never)]
-    fn scan<const COMPACT: bool>(
+    fn scan<const COMPACT: bool, const MIRROR: bool>(
         &mut self,
         watches: &mut [Watcher],
         false_lit: Lit,
@@ -50,6 +58,7 @@ impl Cursor {
         destinations: &mut WatchLists,
     ) -> Step {
         debug_assert_eq!(self.write < self.read, COMPACT);
+        let _ = MIRROR;
         let mut write = self.write;
         for read in self.read..watches.len() {
             let watcher = watches[read];
@@ -62,6 +71,9 @@ impl Cursor {
                     watches[write] = watcher;
                     write += 1;
                 }
+                if MIRROR {
+                    destinations.shadow_scan_keep(watcher, None);
+                }
                 continue;
             }
             #[cfg(feature = "bcp-work")]
@@ -73,12 +85,15 @@ impl Cursor {
                 {
                     self.work.deleted += 1;
                 }
+                if MIRROR {
+                    destinations.shadow_scan_remove();
+                }
                 if COMPACT {
                     continue;
                 }
                 self.read = read + 1;
                 self.write = read;
-                return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
+                return self.scan::<true, MIRROR>(watches, false_lit, trail, clauses, destinations);
             };
             let searched = live.searched();
             let mut found = false;
@@ -111,6 +126,9 @@ impl Cursor {
                             write += 1;
                         }
                         watches[kept].blocker = first;
+                        if MIRROR {
+                            destinations.shadow_scan_keep(watcher, Some(first));
+                        }
                         found = true;
                     } else {
                         let (pair, tail) = clause.split_at_mut(2);
@@ -138,6 +156,9 @@ impl Cursor {
                                     write += 1;
                                 }
                                 watches[kept].blocker = literal;
+                                if MIRROR {
+                                    destinations.shadow_scan_keep(watcher, Some(literal));
+                                }
                                 found = true;
                             } else {
                                 core::mem::swap(&mut pair[1], &mut tail[i]);
@@ -152,11 +173,14 @@ impl Cursor {
                                         ..watcher
                                     },
                                 );
+                                if MIRROR {
+                                    destinations.shadow_scan_remove();
+                                }
                                 if !COMPACT {
                                     live.set_searched(new_searched);
                                     self.read = read + 1;
                                     self.write = read;
-                                    return self.scan::<true>(
+                                    return self.scan::<true, MIRROR>(
                                         watches,
                                         false_lit,
                                         trail,
@@ -192,12 +216,15 @@ impl Cursor {
                         );
                     }
                 }
+                if MIRROR {
+                    destinations.shadow_scan_remove();
+                }
                 if COMPACT {
                     continue;
                 }
                 self.read = read + 1;
                 self.write = read;
-                return self.scan::<true>(watches, false_lit, trail, clauses, destinations);
+                return self.scan::<true, MIRROR>(watches, false_lit, trail, clauses, destinations);
             }
             if new_searched != searched {
                 live.set_searched(new_searched);
@@ -210,6 +237,9 @@ impl Cursor {
                 watches[kept] = watcher;
             }
             watches[kept].blocker = first;
+            if MIRROR {
+                destinations.shadow_scan_keep(watcher, Some(first));
+            }
             let next_write = kept + 1;
             if trail.lit_val_hot(first) < 0 {
                 #[cfg(feature = "bcp-work")]

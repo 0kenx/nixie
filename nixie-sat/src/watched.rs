@@ -101,6 +101,11 @@ pub struct WatchLists {
     /// Deleted long-watchers stripped at arena compact. Charged once on the
     /// next propagate of that literal, matching lazy ghost removal ticks.
     ghost_debt: Vec<u32>,
+    /// Maintained CSR shadow (`NIXIE_CSR_SHADOW=1`, slices 1.5-3 of the
+    /// CSR-watches migration — `docs/studies/2026-09-13-csr-watches-kickoff.md`).
+    /// `None` on default paths: every mirror below is a single None-check,
+    /// and nothing on a default path constructs one.
+    csr: Option<CsrWatchLists>,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -121,9 +126,12 @@ pub struct WatchSnapshot {
     bin_phantom: Vec<u32>,
     /// Copy of compact-time ghost tick debt.
     ghost_debt: Vec<u32>,
+    /// Copy of the CSR shadow, when the dual-write diagnostic is active
+    /// (slices 1.5-3; rollback must restore both representations).
+    csr: Option<CsrWatchLists>,
 }
 
-/// A CSR-form watch build (count → layout → fill), the `RoundOccs`
+/// The CSR-form watch build (count → layout → fill), the `RoundOccs`
 /// pattern (`solver/eliminate.rs`) adapted to [`Watcher`] entries —
 /// slice 1 of the CSR-watches migration
 /// (`docs/studies/2026-09-13-csr-watches-kickoff.md`).
@@ -207,23 +215,57 @@ impl CsrWatchBuild {
     }
 }
 
+/// The per-scan mirror state carried between `begin_scan` and `end_scan`
+/// (the dual-write BCP scan, slice 2 of the CSR-watches migration —
+/// `docs/studies/2026-09-13-csr-watches-kickoff.md`).
+///
+/// `read` counts *notified* entries. The notifying scan visits entries in
+/// list order exactly once each, so `read` is the scan's read cursor in
+/// combined-view coordinates: positions `< p_len` are primary sources,
+/// positions `>= p_len` are overflow sources — the order-isomorphism
+/// invariant that makes the mirror resolvable segment-wise.
+#[derive(Debug, Default, Clone)]
+struct CsrScanFrame {
+    /// The scanned literal's code.
+    code: usize,
+    /// Primary span start (absolute entry offset).
+    ps: u32,
+    /// Primary live length at scan start.
+    p_len: u32,
+    /// Overflow length at scan start (excludes mid-scan pushes).
+    o_len: u32,
+    /// Notified entries so far.
+    read: u32,
+    /// Primary survivors compacted so far.
+    pw: u32,
+    /// Overflow survivors compacted so far.
+    ow: u32,
+    /// False once the frame is finished or its precondition failed (all
+    /// notifications become no-ops; the per-rebuild drifted comparison
+    /// localizes the divergence).
+    active: bool,
+}
+
 /// The maintained CSR watch representation — slice 1.5's foundation
 /// (`docs/studies/2026-09-13-csr-watches-kickoff.md`): primary spans
 /// (rebuilt by the counting sort) plus per-literal arrival-order
 /// overflow, with the four mutation operations the search performs.
 ///
-/// InfraSTRUCTURE-AHEAD: nothing constructs this on default paths yet
-/// (the hooks are the next slice); the operations are unit-tested against
-/// the order-decomposition invariants.
+/// Slices 1.5-2: the search-time hooks now maintain this beside the
+/// `Vec<Vec<Watcher>>` under `NIXIE_CSR_SHADOW=1` — every scan's
+/// keep/remove/move is dual-written, cold-path mutations (`add`,
+/// `remove_clause`, arena relocation, snapshot/restore) are mirrored, and
+/// each rebuild compares the **drifted** state against the drifted `Vec`
+/// lists (order included) before adopting a fresh layout.  Nothing reads
+/// this on any default path; readers switch in slice 4.
 ///
 /// Invariants (the order-isomorphism argument, kickoff doc §slice-1):
 /// every list is *(sorted primary survivors in order) ++ (arrival-ordered
 /// overflow)*, which is exactly the drifted `Vec<Vec<Watcher>>` order —
 /// in-place compaction, removal and append are all order-preserving on
-/// that decomposition.  Nothing reads this on any default path yet; the
-/// BCP/session hooks that maintain it during search are the next slice.
-#[derive(Debug, Default)]
-#[allow(dead_code)] // slice-1.5 foundation; adopted by the shadow hooks next
+/// that decomposition.
+#[derive(Debug, Default, Clone)]
+#[allow(dead_code)] // adopted by the shadow hooks; readers switch in slice 4
 pub struct CsrWatchLists {
     /// Primary entries; literal `code`'s span is
     /// `entries[span_start[code]..prim_end[code]]`.
@@ -231,11 +273,14 @@ pub struct CsrWatchLists {
     /// Immutable span starts (the counting-sort layout).
     span_start: Vec<u32>,
     /// Live end of each primary span (compaction shrinks it; the space up
-    /// to `span_start[code+1]`-style capacity is reclaimed at the next
-    /// layout).
+    /// to the next span's start is reclaimed at the next layout).
     prim_end: Vec<u32>,
     /// Per-literal arrival-order overflow for search-time appends.
     overflow: Vec<Vec<Watcher>>,
+    /// The active dual-write scan's mirror state (one scan at a time).
+    scan: CsrScanFrame,
+    /// Precondition-violation reporting is once per process.
+    warned_precondition: bool,
 }
 
 #[allow(dead_code)] // slice-1.5 foundation
@@ -337,12 +382,200 @@ impl CsrWatchLists {
         self.prim_end = span_end;
         self.overflow.clear();
         self.overflow.resize(self.span_start.len(), Vec::new());
+        self.scan = CsrScanFrame::default();
+    }
+
+    // ---- Dual-write BCP scan (slice 2) --------------------------------
+
+    /// Begin mirroring a scan of `code`'s list whose live `Vec` length is
+    /// `vec_len`.  Snapshots the primary/overflow split so per-entry
+    /// notifications can compact each segment in lockstep with the `Vec`
+    /// scan.  The precondition (`vec_len` equals the combined length) is
+    /// the order-isomorphism invariant; a violation deactivates the frame
+    /// so notifications no-op, and the drifted comparison at the next
+    /// rebuild localizes the divergence.
+    pub(crate) fn begin_scan(&mut self, code: usize, vec_len: usize) {
+        let ps = self.span_start.get(code).copied().unwrap_or(0);
+        let pe = self.prim_end.get(code).copied().unwrap_or(0);
+        let p_len = pe.saturating_sub(ps);
+        let o_len = self.overflow.get(code).map_or(0, Vec::len) as u32;
+        let active = (p_len as usize) + (o_len as usize) == vec_len;
+        if !active && !self.warned_precondition {
+            self.warned_precondition = true;
+            eprintln!(
+                "[csr-shadow] scan precondition violated at literal code {code}: \
+                 combined {} vs vec {vec_len} — mirror suspended for this scan",
+                (p_len as u64) + (o_len as u64)
+            );
+        }
+        self.scan = CsrScanFrame {
+            code,
+            ps,
+            p_len,
+            o_len,
+            read: 0,
+            pw: 0,
+            ow: 0,
+            active,
+        };
+    }
+
+    /// Mirror a kept entry (optionally with a rewritten blocker — the
+    /// parked-blocker update).  The survivor compacts into its source
+    /// segment exactly where the `Vec` scan's write cursor would put it.
+    pub(crate) fn scan_keep(&mut self, watcher: Watcher, blocker: Option<Lit>) {
+        let f = &mut self.scan;
+        if !f.active {
+            return;
+        }
+        let mut w = watcher;
+        if let Some(b) = blocker {
+            w.blocker = b;
+        }
+        if f.read < f.p_len {
+            let dst = (f.ps + f.pw) as usize;
+            if let Some(slot) = self.entries.get_mut(dst) {
+                *slot = w;
+                f.pw += 1;
+            }
+        } else if let Some(ov) = self.overflow.get_mut(f.code) {
+            let dst = f.ow as usize;
+            if dst < ov.len() {
+                ov[dst] = w;
+                f.ow += 1;
+            }
+        }
+        f.read += 1;
+    }
+
+    /// Mirror a removed entry (deleted clause, repair, watch move-out):
+    /// advances the read cursor only.
+    pub(crate) fn scan_remove(&mut self) {
+        if self.scan.active {
+            self.scan.read += 1;
+        }
+    }
+
+    /// Mirror a watch move: the entry leaves the scanned list and appends
+    /// to the destination literal's overflow in arrival order — exactly
+    /// where the `Vec` path's `push_watch`/`add` lands it.
+    pub(crate) fn scan_push(&mut self, dest: Lit, w: Watcher) {
+        self.push_overflow(dest, w);
+    }
+
+    /// Finish the scan: compact each segment's unvisited tail behind its
+    /// survivors and drop anything pushed into the scanned literal's own
+    /// overflow mid-scan (the `Vec` put-back overwrites the taken slot,
+    /// which drops exactly those entries).
+    pub(crate) fn end_scan(&mut self) {
+        let f = &mut self.scan;
+        if !f.active {
+            f.active = false;
+            return;
+        }
+        let vis_p = f.read.min(f.p_len);
+        let unvis_p = f.p_len - vis_p;
+        if unvis_p > 0 {
+            let from = (f.ps + vis_p) as usize;
+            let to = (f.ps + f.p_len) as usize;
+            let dst = (f.ps + f.pw) as usize;
+            self.entries.copy_within(from..to, dst);
+        }
+        if let Some(end) = self.prim_end.get_mut(f.code) {
+            *end = f.ps + f.pw + unvis_p;
+        }
+        let vis_o = f.read.saturating_sub(f.p_len);
+        let unvis_o = f.o_len.saturating_sub(vis_o);
+        if let Some(ov) = self.overflow.get_mut(f.code) {
+            if unvis_o > 0 {
+                ov.copy_within(vis_o as usize..f.o_len as usize, f.ow as usize);
+            }
+            let keep = (f.ow + unvis_o) as usize;
+            if ov.len() > keep {
+                ov.truncate(keep);
+            }
+        }
+        f.active = false;
+    }
+
+    // ---- Cold-path mirrors (slice 3) ----------------------------------
+
+    /// Mirror `WatchLists::relocate_refs`: rewrite survivors' arena refs
+    /// through the compaction plan, dropping deleted-clause entries
+    /// (order-preserving in both segments, matching the `Vec` pass).
+    pub(crate) fn relocate(&mut self, arena: &ClauseArena, plan: &CompactionPlan) {
+        let relocated = plan.relocated();
+        let n = self.span_start.len().max(self.overflow.len());
+        for code in 0..n {
+            if let (Some(&start), Some(end)) =
+                (self.span_start.get(code), self.prim_end.get_mut(code))
+            {
+                let mut write = start as usize;
+                for read in start as usize..*end as usize {
+                    let mut w = self.entries[read];
+                    if w.r.is_null() {
+                        self.entries[write] = w;
+                        write += 1;
+                        continue;
+                    }
+                    if arena.is_deleted(w.r) {
+                        continue;
+                    }
+                    w.r = relocated[arena.live_identity(w.r).index()];
+                    self.entries[write] = w;
+                    write += 1;
+                }
+                *end = write as u32;
+            }
+            if let Some(ov) = self.overflow.get_mut(code) {
+                let mut write = 0usize;
+                for read in 0..ov.len() {
+                    let mut w = ov[read];
+                    if w.r.is_null() {
+                        ov[write] = w;
+                        write += 1;
+                        continue;
+                    }
+                    if arena.is_deleted(w.r) {
+                        continue;
+                    }
+                    w.r = relocated[arena.live_identity(w.r).index()];
+                    ov[write] = w;
+                    write += 1;
+                }
+                ov.truncate(write);
+            }
+        }
+    }
+
+    /// Mirror `WatchLists::clear`: every list empties (the layout arrays
+    /// reset; the next rebuild re-adopts a fresh layout).
+    pub(crate) fn clear_all(&mut self) {
+        self.entries.clear();
+        self.span_start.clear();
+        self.prim_end.clear();
+        for list in &mut self.overflow {
+            list.clear();
+        }
+        self.scan = CsrScanFrame::default();
     }
 }
 
 impl WatchLists {
-    pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut [u32]) {
-        (&mut self.watches, &self.bin_phantom, &mut self.ghost_debt)
+    pub(crate) fn propagation_parts(
+        &mut self,
+    ) -> (
+        &mut [Vec<Watcher>],
+        &[u32],
+        &mut [u32],
+        &mut Option<CsrWatchLists>,
+    ) {
+        (
+            &mut self.watches,
+            &self.bin_phantom,
+            &mut self.ghost_debt,
+            &mut self.csr,
+        )
     }
 
     pub(crate) fn move_capacity_bytes(&self) -> usize {
@@ -356,6 +589,105 @@ impl WatchLists {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
+            csr: None,
+        }
+    }
+
+    // ---- CSR dual-write shadow (slices 1.5-3) -------------------------
+    //
+    // The maintained CSR mirrors every mutation the `Vec` lists undergo.
+    // All hooks are single None-checks on default paths; the per-rebuild
+    // drifted comparison (`csr_drifted_compare`, called by
+    // `rebuild_watches_and_binary_graph`) validates the pair entry-for-
+    // entry, order included — the empirical order-isomorphism proof.
+
+    /// Detach the shadow (the rebuild: fills would double-maintain;
+    /// `csr_set` re-attaches the adopted fresh layout).
+    pub(crate) fn csr_take(&mut self) -> Option<CsrWatchLists> {
+        self.csr.take()
+    }
+
+    /// Attach an adopted CSR layout as the new shadow baseline.
+    pub(crate) fn csr_set(&mut self, csr: CsrWatchLists) {
+        self.csr = Some(csr);
+    }
+
+    /// Whether a maintained shadow exists (drifted comparison is meaningful).
+    pub(crate) fn csr_active(&self) -> bool {
+        self.csr.is_some()
+    }
+
+    /// Compare the **drifted** shadow against the drifted `Vec` lists,
+    /// entry-for-entry, order included (the dual-write validation; called
+    /// at every watch rebuild before either representation resets).
+    /// Returns `(literals_compared, entries_compared, mismatched_literals)`.
+    pub(crate) fn csr_drifted_compare(&self, num_vars: usize) -> (usize, usize, usize) {
+        let Some(csr) = &self.csr else {
+            return (0, 0, 0);
+        };
+        let mut lits = 0usize;
+        let mut entries = 0usize;
+        let mut bad = 0usize;
+        for code in 0..num_vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let list = self.get(lit);
+            let (prim, extra) = csr.spans(lit);
+            lits += 1;
+            entries += list.len();
+            let equal = prim.len() + extra.len() == list.len()
+                && prim
+                    .iter()
+                    .chain(extra.iter())
+                    .zip(list.iter())
+                    .all(|(a, b)| a == b);
+            if !equal {
+                bad += 1;
+                if bad <= 4 {
+                    let first_div = prim
+                        .iter()
+                        .chain(extra.iter())
+                        .zip(list.iter())
+                        .position(|(a, b)| a != b);
+                    eprintln!(
+                        "[csr-shadow] drift literal {lit:?}: csr len {} vs list len {} (first divergence at {first_div:?})",
+                        prim.len() + extra.len(),
+                        list.len(),
+                    );
+                }
+            }
+        }
+        (lits, entries, bad)
+    }
+
+    /// Begin mirroring a scan of `lit`'s list (dual-write BCP scan, slice
+    /// 2): snapshot the primary/overflow split before the list is taken.
+    pub(crate) fn shadow_begin_scan(&mut self, lit: Lit) {
+        if self.csr.is_some() {
+            let n = self.get(lit).len();
+            if let Some(csr) = &mut self.csr {
+                csr.begin_scan(lit.index(), n);
+            }
+        }
+    }
+
+    /// Mirror a kept entry (optionally with a rewritten blocker).
+    pub(crate) fn shadow_scan_keep(&mut self, watcher: Watcher, blocker: Option<Lit>) {
+        if let Some(csr) = &mut self.csr {
+            csr.scan_keep(watcher, blocker);
+        }
+    }
+
+    /// Mirror a removed entry.
+    pub(crate) fn shadow_scan_remove(&mut self) {
+        if let Some(csr) = &mut self.csr {
+            csr.scan_remove();
+        }
+    }
+
+    /// Finish the mirrored scan (compaction tails + overflow truncation).
+    pub(crate) fn shadow_end_scan(&mut self) {
+        if let Some(csr) = &mut self.csr {
+            csr.end_scan();
         }
     }
 
@@ -405,8 +737,26 @@ impl WatchLists {
         self.bin_phantom.get(lit.index()).map_or(0, |&c| c as usize)
     }
 
-    /// Add a watcher for a literal
+    /// Add a watcher for a literal (dual-write: `Vec` push + CSR mirror
+    /// when the shadow is active).
+    // The CSR mirror branch kept this out-of-line (measured: +2% samples on
+    // si2 through call overhead in the rebuild fill and attach paths); the
+    // always is load-bearing for the flag-off screen bar.
+    #[inline(always)]
     pub fn add(&mut self, lit: Lit, watcher: Watcher) {
+        self.push_only(lit, watcher);
+        if let Some(csr) = &mut self.csr {
+            csr.push_overflow(lit, watcher);
+        }
+    }
+
+    /// Append without touching the CSR shadow — for callers that fill the
+    /// lists while the shadow is detached (the watch rebuild's fill loop:
+    /// `csr_take` removed the shadow, so `add` would pay a dead branch per
+    /// entry on watch-dense instances, measured +0.75% samples on
+    /// worker-class).
+    #[inline(always)]
+    pub(crate) fn push_only(&mut self, lit: Lit, watcher: Watcher) {
         let idx = lit.index();
         if idx >= self.watches.len() {
             self.watches.resize(idx + 1, Vec::new());
@@ -476,11 +826,15 @@ impl WatchLists {
     }
 
     /// Remove all watchers for a clause from a literal's watch list
+    #[inline]
     #[allow(dead_code)]
     pub fn remove_clause(&mut self, lit: Lit, r: ClauseRef) {
         let idx = lit.index();
         if idx < self.watches.len() {
             self.watches[idx].retain(|w| w.r != r);
+        }
+        if let Some(csr) = &mut self.csr {
+            csr.remove_clause(lit, r);
         }
     }
 
@@ -510,6 +864,7 @@ impl WatchLists {
             ends: Vec::with_capacity(self.watches.len()),
             bin_phantom: self.bin_phantom.clone(),
             ghost_debt: self.ghost_debt.clone(),
+            csr: self.csr.clone(),
         };
         for list in &self.watches {
             snap.packed.extend_from_slice(list);
@@ -526,6 +881,7 @@ impl WatchLists {
             ends,
             bin_phantom,
             ghost_debt,
+            csr,
         } = snap;
         self.watches.clear();
         self.watches.reserve(ends.len());
@@ -541,6 +897,7 @@ impl WatchLists {
         }
         self.bin_phantom = bin_phantom;
         self.ghost_debt = ghost_debt;
+        self.csr = csr;
     }
 
     /// Live watcher count and total capacity count across all lists
@@ -561,6 +918,9 @@ impl WatchLists {
         }
         for c in &mut self.ghost_debt {
             *c = 0;
+        }
+        if let Some(csr) = &mut self.csr {
+            csr.clear_all();
         }
     }
 
@@ -623,6 +983,9 @@ impl WatchLists {
             if dropped != 0 {
                 self.ghost_debt[idx] = self.ghost_debt[idx].saturating_add(dropped);
             }
+        }
+        if let Some(csr) = &mut self.csr {
+            csr.relocate(arena, plan);
         }
     }
 
@@ -834,9 +1197,10 @@ pub fn csr_shadow_enabled() -> bool {
 
 #[cfg(test)]
 mod csr_tests {
+    use super::*;
+
     #[test]
     fn csr_watch_build_roundtrip_preserves_order() {
-        use super::*;
         let v = |n: usize| Var::new(n as u32);
         let lits = [
             Lit::pos(v(0)),
@@ -963,5 +1327,245 @@ mod csr_tests {
         assert_eq!(e2, &[c]);
         assert_eq!(csr2.len(Lit::neg(v(1))), 2);
         assert!(csr2.is_empty(Lit::pos(v(0))));
+    }
+
+    /// A tiny deterministic LCG so the dual-write tests are reproducible.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0 >> 33
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    fn wk(code: u32, salt: u32) -> Watcher {
+        // Distinct blockers per generation make order violations visible.
+        Watcher::new(
+            ClauseId::new(code),
+            ClauseRef::NULL,
+            Lit::from_code(code.wrapping_mul(31).wrapping_add(salt)),
+        )
+    }
+
+    /// Reference model of the scan's list-level effect (the spec the
+    /// dual-write mirror implements): survivors in visit order (possibly
+    /// blocker-rewritten) followed by the unvisited tail.
+    fn model_scan(list: &[Watcher], script: &[Option<Option<Lit>>]) -> Vec<Watcher> {
+        let mut out = Vec::new();
+        let mut read = 0usize;
+        for op in script {
+            match op {
+                Some(blocker) => {
+                    let mut w = list[read];
+                    if let Some(b) = blocker {
+                        w.blocker = *b;
+                    }
+                    out.push(w);
+                    read += 1;
+                }
+                None => {
+                    read += 1;
+                    if read >= list.len() {
+                        break; // ran past the list: callers never do this
+                    }
+                }
+            }
+        }
+        let unvisited = read.min(list.len());
+        out.extend_from_slice(&list[unvisited..]);
+        out
+    }
+
+    fn combined(csr: &CsrWatchLists, lit: Lit) -> Vec<Watcher> {
+        let (p, o) = csr.spans(lit);
+        p.iter().chain(o.iter()).copied().collect()
+    }
+
+    /// The dual-write mirror must reproduce the reference model's list
+    /// after arbitrary keep/remove sequences over a mixed primary/overflow
+    /// list — through many chained scans (drift chains) and early exits.
+    #[test]
+    fn csr_dual_write_scan_mirrors_reference_model() {
+        use super::*;
+        let v = |n: usize| Var::new(n as u32);
+        let lit = Lit::pos(v(0));
+        let mut rng = Lcg(0x5EED_1234);
+        for trial in 0..200u32 {
+            // Fresh CSR: 0..=5 primary entries, 0..=3 overflow entries.
+            let n_prim = 1 + rng.below(5) as usize;
+            let n_ovf = rng.below(4) as usize;
+            let mut build = CsrWatchBuild::default();
+            for i in 0..n_prim {
+                build.count(lit);
+                let _ = i;
+            }
+            build.layout(4);
+            let mut genctr = 100 * trial;
+            let mut reference: Vec<Watcher> = Vec::new();
+            for _ in 0..n_prim {
+                let w = wk(genctr, 0);
+                genctr += 1;
+                build.fill(lit, w);
+                reference.push(w);
+            }
+            let mut csr = CsrWatchLists::default();
+            csr.adopt_layout(build);
+            for _ in 0..n_ovf {
+                let w = wk(genctr, 0);
+                genctr += 1;
+                csr.push_overflow(lit, w);
+                reference.push(w);
+            }
+            assert_eq!(combined(&csr, lit), reference, "baseline {trial}");
+
+            // Chained scans: each notifies a scripted prefix then ends
+            // (end == early exit, the conflict shape).
+            for scan_round in 0..4u32 {
+                csr.begin_scan(lit.index(), reference.len());
+                let mut script: Vec<Option<Option<Lit>>> = Vec::new();
+                let visits = if scan_round == 3 {
+                    reference.len() // full sweep on the last round
+                } else {
+                    rng.below((reference.len() as u64) + 1) as usize
+                };
+                for _ in 0..visits {
+                    match rng.below(4) {
+                        0 => {
+                            csr.scan_remove();
+                            script.push(None);
+                        }
+                        1 => {
+                            csr.scan_keep(reference[script.len()], None);
+                            script.push(Some(None));
+                        }
+                        _ => {
+                            let b = Lit::from_code((rng.below(2000)) as u32);
+                            csr.scan_keep(reference[script.len()], Some(b));
+                            script.push(Some(Some(b)));
+                        }
+                    }
+                }
+                csr.end_scan();
+                reference = model_scan(&reference, &script);
+                assert_eq!(
+                    combined(&csr, lit),
+                    reference,
+                    "trial {trial} scan {scan_round}"
+                );
+            }
+        }
+    }
+
+    /// Watch moves append to the destination's overflow in arrival order,
+    /// and a mid-scan push into the scanned literal's own list is dropped
+    /// at `end_scan` — exactly what the `Vec` put-back overwrite does.
+    #[test]
+    fn csr_dual_write_moves_and_self_push_parity() {
+        use super::*;
+        let v = |n: usize| Var::new(n as u32);
+        let a = Lit::pos(v(0));
+        let b = Lit::neg(v(1));
+        let mut build = CsrWatchBuild::default();
+        build.count(a);
+        build.count(a);
+        build.layout(4);
+        let w0 = wk(10, 0);
+        let w1 = wk(11, 0);
+        build.fill(a, w0);
+        build.fill(a, w1);
+        let mut csr = CsrWatchLists::default();
+        csr.adopt_layout(build);
+
+        // Scan of `a`: keep w0, move w1 out to `b`, then push a fresh entry
+        // back into `a` mid-scan (the repair-can-target-self shape).
+        csr.begin_scan(a.index(), 2);
+        csr.scan_keep(w0, None);
+        let moved = Watcher::new(ClauseId::new(99), ClauseRef::NULL, Lit::from_code(77));
+        csr.scan_remove(); // w1 leaves the list
+        csr.scan_push(b, moved); // ...and lands in b's overflow
+        let self_push = Watcher::new(ClauseId::new(98), ClauseRef::NULL, Lit::from_code(78));
+        csr.scan_push(a, self_push); // dropped by end_scan (put-back parity)
+        csr.end_scan();
+
+        assert_eq!(combined(&csr, a), vec![w0]);
+        assert_eq!(combined(&csr, b), vec![moved]);
+
+        // A second scan of `b` with an early exit keeps its unvisited tail.
+        csr.begin_scan(b.index(), 1);
+        csr.end_scan();
+        assert_eq!(combined(&csr, b), vec![moved]);
+    }
+
+    /// `WatchLists`-level dual bookkeeping: `add`, `remove_clause` and the
+    /// scan delegators keep the shadow equal to the `Vec` lists, the
+    /// drifted comparison confirms it, and a fabricated divergence is
+    /// detected (the diagnostic must never silently pass).
+    #[test]
+    fn watch_lists_dual_write_drifted_compare_round_trip() {
+        use super::*;
+        let v = |n: usize| Var::new(n as u32);
+        let l0 = Lit::pos(v(0));
+        let l1 = Lit::neg(v(1));
+        let mut wl = WatchLists::new(4);
+        // Attach the shadow baseline the way the rebuild does.
+        let mut build = CsrWatchBuild::default();
+        build.count(l0);
+        build.count(l0);
+        build.layout(8);
+        let w0 = wk(1, 0);
+        let w1 = wk(2, 0);
+        build.fill(l0, w0);
+        build.fill(l0, w1);
+        let mut csr = CsrWatchLists::default();
+        csr.adopt_layout(build);
+        wl.csr_set(csr);
+        assert!(wl.csr_active());
+
+        // Cold-path drift: attach (overflow append) — then a clause
+        // deletion keyed by ref. All unit-test watchers share
+        // `ClauseRef::NULL` (no arena here), so `remove_clause` drops every
+        // NULL-ref entry under the literal: coarse, but it exercises the
+        // mirrored retain in both segments (order-preserving).
+        let w2 = wk(3, 0);
+        wl.add(l1, w2);
+        wl.remove_clause(l0, w1.r);
+        assert!(wl.get(l0).is_empty());
+
+        // Scan drift through the WatchLists delegators. The scan body
+        // writes the `Vec` itself; the delegator mirrors the same keep.
+        wl.shadow_begin_scan(l1);
+        let parked = Lit::from_code(5);
+        wl.get_mut(l1)[0].blocker = parked;
+        wl.shadow_scan_keep(w2, Some(parked));
+        wl.shadow_end_scan();
+        let mut w2b = w2;
+        w2b.blocker = parked;
+        assert_eq!(wl.get(l1), &[w2b]);
+
+        let (lits, entries, bad) = wl.csr_drifted_compare(4);
+        assert_eq!(bad, 0);
+        assert_eq!(entries, 1);
+        assert_eq!(lits, 8);
+
+        // Snapshot/restore round-trips both representations.
+        let snap = wl.packed_snapshot();
+        let mut wl2 = WatchLists::new(4);
+        wl2.restore(snap);
+        assert_eq!(wl2.get(l1), &[w2b]);
+        let (_, _, bad2) = wl2.csr_drifted_compare(4);
+        assert_eq!(bad2, 0);
+
+        // A fabricated divergence is detected: a Vec-only mutation
+        // (bypassing `add`, exactly what a missed mirror hook would be).
+        let mut wl3 = wl2.clone();
+        wl3.get_mut(l0).push(wk(42, 0));
+        let (_, _, bad3) = wl3.csr_drifted_compare(4);
+        assert_eq!(bad3, 1);
     }
 }
