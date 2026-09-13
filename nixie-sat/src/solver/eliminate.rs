@@ -2324,6 +2324,9 @@ mod eliminate_mark_tests;
 #[cfg(test)]
 #[path = "eliminate_budget_tests.rs"]
 mod eliminate_budget_tests;
+#[cfg(test)]
+#[path = "eliminate_reintroduction_tests.rs"]
+mod eliminate_reintroduction_tests;
 
 #[cfg(test)]
 #[path = "eliminate_safety_tests.rs"]

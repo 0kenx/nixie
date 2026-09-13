@@ -2272,6 +2272,15 @@ impl Solver {
                     .rposition(|&c| c == u32::MAX)
                     .map_or(0, |p| p + 1);
                 let witness = Lit::from_code(self.ext_stack[start]);
+                // Reintroduced variables skip the walk: their retired
+                // clauses were resurrected as live originals
+                // (`void_elimination_promises`), so the search already
+                // enforces them — and a toggle here could now falsify one
+                // of those live clauses, which the walk has no knowledge of.
+                if self.ext_rementioned.contains(&witness.var()) {
+                    i = start;
+                    continue;
+                }
                 let satisfied = self.ext_stack[start + 1..end].iter().any(|&code| {
                     let lit = Lit::from_code(code);
                     match self.model.get(lit.var().index()).copied() {
@@ -3435,6 +3444,9 @@ impl Solver {
         // force the opposite polarity of a variable with one-sided Boolean
         // occurrences, and `save_model` would pin the pure polarity regardless
         // (see `TheoryCallback::is_real_theory`).
+        // Clauses retired by this round's pure-literal pass (filled inside
+        // the gated block below; empty when the pass did not run).
+        let mut newly_deleted: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = Vec::new();
         if self.assertion_levels.len() <= 1 && self.destructive_preprocessing_safe() {
             // Variables already fixed on the level-0 trail must be excluded
             // from pure-literal elimination (see
@@ -3449,10 +3461,26 @@ impl Solver {
                 })
                 .collect();
             let _pure_elim = preprocessor.pure_literal_elimination(&mut self.clauses, &assigned);
+            // The clauses this pass retired, identified by diffing against
+            // the pre-pass snapshot (any previously-live clause that is now
+            // deleted). Computed before the pin bookkeeping so each pin can
+            // carry the clauses retired for it.
+            for id in &pre_live_ids {
+                if self.clauses.get(*id).is_some_and(|c| c.deleted)
+                    && let Some(c) = self.clauses.get(*id)
+                {
+                    newly_deleted.push((*id, c.lits.iter().copied().collect()));
+                }
+            }
             // Record each eliminated pure literal so `save_model` can fix it to
             // `true`, keeping the deleted clauses satisfied even if the search
             // later assigns the variable the opposite phase. Keep at most one
-            // polarity per variable (the first recorded).
+            // polarity per variable (the first recorded). Each pin also
+            // carries its retired clauses: `void_elimination_promises`
+            // re-asserts them the moment a later clause reintroduces the
+            // opposite polarity, restoring the information the deletion
+            // removed (the pin alone is then no longer a sound
+            // reconstruction).
             for &lit in preprocessor.eliminated_pure_literals() {
                 let already = self
                     .pure_literal_reconstruction
@@ -3460,21 +3488,16 @@ impl Solver {
                     .any(|existing| existing.var() == lit.var());
                 if !already {
                     self.pure_literal_reconstruction.push(lit);
+                    let retired = newly_deleted
+                        .iter()
+                        .filter(|(_, lits)| lits.contains(&lit))
+                        .map(|(_, lits)| lits.clone())
+                        .collect();
+                    self.pure_deleted_clauses.push((lit, retired));
                 }
             }
         }
 
-        // Emit a DRAT deletion line for every clause the pure-literal pass
-        // above retired, identified by diffing against the pre-pass snapshot
-        // (any previously-live clause that is now deleted).
-        let mut newly_deleted: Vec<(ClauseId, SmallVec<[Lit; 8]>)> = Vec::new();
-        for id in &pre_live_ids {
-            if self.clauses.get(*id).is_some_and(|c| c.deleted)
-                && let Some(c) = self.clauses.get(*id)
-            {
-                newly_deleted.push((*id, c.lits.iter().copied().collect()));
-            }
-        }
         for (id, lits) in &newly_deleted {
             {
                 // The pure-literal pass deleted inside a bare

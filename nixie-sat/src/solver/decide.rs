@@ -39,7 +39,7 @@ impl Solver {
         // Finite-domain equalities first (O(|priority|), not O(num_vars)).
         if !self.domain_priority.is_empty() {
             for &v in &self.domain_priority {
-                if !self.trail.is_assigned(v) && !self.var_eliminated(v) {
+                if !self.trail.is_assigned(v) && self.branchable(v) {
                     self.last_branch_source = BranchSource::Domain;
                     return Some(v);
                 }
@@ -50,7 +50,7 @@ impl Solver {
         if let Some(ref ext) = self.config.external_branching {
             let candidates: Vec<Var> = (0..self.num_vars)
                 .map(|i| Var::new(i as u32))
-                .filter(|&v| !self.trail.is_assigned(v) && !self.var_eliminated(v))
+                .filter(|&v| !self.trail.is_assigned(v) && self.branchable(v))
                 .collect();
             let scores: Vec<f64> = candidates.iter().map(|&v| self.vsids.activity(v)).collect();
             if let Ok(mut h) = ext.lock()
@@ -64,7 +64,7 @@ impl Solver {
         if self.config.use_lrb_branching {
             // Use LRB branching
             while let Some(var) = self.lrb.select() {
-                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
+                if !self.trail.is_assigned(var) && self.branchable(var) {
                     self.lrb.on_assign(var);
                     self.last_branch_source = BranchSource::Lrb;
                     return Some(var);
@@ -78,7 +78,7 @@ impl Solver {
             }
 
             while let Some(var) = self.chb.pop_max() {
-                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
+                if !self.trail.is_assigned(var) && self.branchable(var) {
                     self.last_branch_source = BranchSource::Chb;
                     return Some(var);
                 }
@@ -104,26 +104,31 @@ impl Solver {
                 self.config.use_vmtf
             };
             if use_vmtf_now {
-                // Borrow only `trail`, `equiv_substitution`, and `bve_def`
-                // (disjoint from the `&mut self.vmtf` the call below needs) –
-                // a full `&self` method like `var_eliminated` would conflict.
+                // Borrow only `trail`, `equiv_substitution`, `bve_def`,
+                // and `ext_rementioned` (disjoint from the `&mut self.vmtf`
+                // the call below needs) – a full `&self` method like
+                // `branchable` would conflict. The predicate is
+                // `!branchable`: eliminated unless its retired clauses were
+                // resurrected by re-introduction (see `branchable`).
                 let trail = &self.trail;
                 let subst = &self.equiv_substitution;
                 let bve = &self.bve_def;
-                let eliminated = |v: Var| {
-                    subst.get(v.index()).is_some_and(|&r| r.var() != v)
-                        || bve.get(v.index()).is_some_and(|d| !d.is_empty())
+                let rementioned = &self.ext_rementioned;
+                let unbranchable = |v: Var| {
+                    (subst.get(v.index()).is_some_and(|&r| r.var() != v)
+                        || bve.get(v.index()).is_some_and(|d| !d.is_empty()))
+                        && !rementioned.contains(&v)
                 };
                 if let Some(var) = self
                     .vmtf
-                    .next_decision(|v| trail.is_assigned(v) || eliminated(v))
+                    .next_decision(|v| trail.is_assigned(v) || unbranchable(v))
                 {
                     self.last_branch_source = BranchSource::Vmtf;
                     return Some(var);
                 }
             }
             while let Some(var) = self.vsids.pop_max() {
-                if !self.trail.is_assigned(var) && !self.var_eliminated(var) {
+                if !self.trail.is_assigned(var) && self.branchable(var) {
                     self.last_branch_source = BranchSource::Vsids;
                     return Some(var);
                 }
@@ -154,7 +159,7 @@ impl Solver {
         // `(b∨c)`.
         let fallback = (0..self.num_vars)
             .map(|i| Var::new(i as u32))
-            .find(|&var| !self.trail.is_assigned(var) && !self.var_eliminated(var))
+            .find(|&var| !self.trail.is_assigned(var) && self.branchable(var))
             .inspect(|&var| {
                 if self.config.use_lrb_branching {
                     self.lrb.on_assign(var);
@@ -550,7 +555,7 @@ impl Solver {
             let n = self.num_vars;
             for idx in 0..n {
                 let var = crate::literal::Var::new(idx as u32);
-                if !self.var_eliminated(var) && !self.vsids.contains(var) {
+                if self.branchable(var) && !self.vsids.contains(var) {
                     self.vsids.insert(var);
                 }
             }

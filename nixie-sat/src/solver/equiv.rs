@@ -306,9 +306,24 @@ impl Solver {
             self.equiv_substitution
                 .extend((0..num_vars).map(|v| Lit::pos(Var::new(v as u32))));
             self.equiv_subst_inited = true;
-        } else {
+        } else if self.equiv_substitution.len() < num_vars {
+            // Variables created since the last round (incremental callers,
+            // CDCL(T) refinement encoding new atoms) start at IDENTITY. A
+            // uniform fill value here poisoned the grown tail: every new
+            // variable became fake-eliminated into the fill's variable —
+            // `var_eliminated` reported it folded (never branched),
+            // `resolve_reintroduced_literal` rewrote later mentions of it
+            // into that variable (corrupting the clause), and the compose
+            // loop below pushed FABRICATED equivalence obligations onto the
+            // extension stack, whose walk then toggled the variable to the
+            // fill variable's value against live clauses (invalid `Sat`
+            // witnesses; observed on Rodin/smt3878551918658299427).
+            let old_len = self.equiv_substitution.len();
             self.equiv_substitution
                 .resize(num_vars, Lit::pos(Var::new(0)));
+            for v in old_len..num_vars {
+                self.equiv_substitution[v] = Lit::pos(Var::new(v as u32));
+            }
         }
         for v in 0..num_vars {
             let cur = self.equiv_substitution[v];
@@ -379,6 +394,25 @@ impl Solver {
         // genuinely bypass the mid-round rebuild).
         let _ = big_augmented;
         SubstOutcome::Ok
+    }
+
+    /// Whether `v` may be branched on. Every eliminated variable is
+    /// unbranchable *except* one whose retired clauses were resurrected by
+    /// re-introduction ([`Solver::void_elimination_promises`]): its
+    /// constraints are live clauses again, so the search must be able to
+    /// decide it — without this, a clause whose satisfaction needs a
+    /// positive decision on such a variable (all its literals unassigned,
+    /// no propagation possible) could never be satisfied and the model
+    /// would default the variable to `false` in violation of it. The
+    /// eliminated markers stay set, so the eliminator never re-eliminates
+    /// the variable (and the extension-stack walk's per-var obligation
+    /// skip in `save_model` remains exact).
+    ///
+    /// ELS-substituted variables are never re-introduced (their mentions
+    /// are rewritten to the representative), so they remain unbranchable.
+    #[inline]
+    pub(super) fn branchable(&self, v: Var) -> bool {
+        !self.var_eliminated(v) || self.ext_rementioned.contains(&v)
     }
 
     /// True if `v` was folded away by equivalent-literal substitution or
