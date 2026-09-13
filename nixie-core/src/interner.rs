@@ -98,6 +98,16 @@ mod no_std_interner {
         pub fn resolve(&self, spur: &Spur) -> &str {
             &self.strings[spur.index()]
         }
+
+        /// Resolve a key, or `None` if it does not belong to this interner.
+        ///
+        /// Mirrors `lasso::Rodeo::try_resolve`, so a caller holding a key of
+        /// uncertain provenance can ask instead of crashing. This codebase
+        /// runs **two** interners — a `TermManager`'s and its `SortManager`'s
+        /// — and a key from one is an out-of-range index in the other.
+        pub fn try_resolve(&self, spur: &Spur) -> Option<&str> {
+            self.strings.get(spur.index()).map(String::as_str)
+        }
     }
 }
 

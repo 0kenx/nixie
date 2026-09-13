@@ -634,3 +634,137 @@ fn popping_lowers_the_set_honesty_gate() {
     solver.assert(plain, &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
+
+// ---- membership under a *derived* equality --------------------------------
+//
+// There is no set theory *solver*: `TermTheory::Set` is classified and nothing
+// consumes it, so `set.member` is not a congruence-closed symbol and two
+// membership atoms over sets the solver merges at solve time are unrelated SAT
+// variables. Every equality the reduction did not *read* was therefore
+// invisible, and each of the first three below answered `sat`.
+//
+// The reduction now relates every pair of same-sorted set terms, which is what
+// congruence would have given. The fourth is the case that always worked — the
+// equality is written down — and is here so a regression cannot quietly narrow
+// the fix back to it.
+
+/// `5 \in (store a 1 {})[1]` — the select reduces to the empty set, so no
+/// element is in it.
+#[test]
+fn membership_in_a_set_read_out_of_an_array() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let arr = tm.sorts.array(int, set_int);
+    let a = tm.mk_var("a", arr);
+    let one = tm.mk_int(1);
+    let empty = tm.mk_set_empty_at(set_int);
+    let b = tm.mk_store(a, one, empty);
+    let five = tm.mk_int(5);
+    let sel = tm.mk_select(b, one);
+    let m = tm.mk_set_member(five, sel);
+    let mut s = Solver::new();
+    s.assert(m, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
+/// The same through an array *equality*, which is the shape a state variable
+/// pinned by `Init` produces.
+#[test]
+fn membership_through_an_array_equality() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let arr = tm.sorts.array(int, set_int);
+    let a = tm.mk_var("a", arr);
+    let base = tm.mk_var("base", arr);
+    let one = tm.mk_int(1);
+    let empty = tm.mk_set_empty_at(set_int);
+    let b = tm.mk_store(base, one, empty);
+    let eq = tm.mk_eq(a, b);
+    let five = tm.mk_int(5);
+    let sel = tm.mk_select(a, one);
+    let m = tm.mk_set_member(five, sel);
+    let mut s = Solver::new();
+    s.assert(eq, &mut tm);
+    s.assert(m, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
+/// Two set *variables* the solver derives equal through EUF, with no
+/// syntactic `(= a b)` anywhere.
+#[test]
+fn derived_equality_between_set_variables() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let x = tm.mk_var("x", int);
+    let y = tm.mk_var("y", int);
+    let fx = tm.mk_apply("f", [x], set_int);
+    let fy = tm.mk_apply("f", [y], set_int);
+    let xy = tm.mk_eq(x, y);
+    let five = tm.mk_int(5);
+    let in_fx = tm.mk_set_member(five, fx);
+    let in_fy = tm.mk_set_member(five, fy);
+    let not_fy = tm.mk_not(in_fy);
+    let mut s = Solver::new();
+    s.assert(xy, &mut tm);
+    s.assert(in_fx, &mut tm);
+    s.assert(not_fy, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
+/// The syntactic case, which the reduction's own axioms cover.
+#[test]
+fn syntactic_equality_between_set_variables() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let a = tm.mk_var("a", set_int);
+    let b = tm.mk_var("b", set_int);
+    let ab = tm.mk_eq(a, b);
+    let five = tm.mk_int(5);
+    let in_a = tm.mk_set_member(five, a);
+    let in_b = tm.mk_set_member(five, b);
+    let not_b = tm.mk_not(in_b);
+    let mut s = Solver::new();
+    s.assert(ab, &mut tm);
+    s.assert(in_a, &mut tm);
+    s.assert(not_b, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Unsat);
+}
+
+/// Two disequalities, each needing a *different* element to witness it.
+///
+/// `a = {1}`, `b = {}`, `c = {}`, `d = {2}` with `a # b` and `c # d` is
+/// satisfiable: 1 witnesses the first, 2 the second. The extensionality
+/// witness used to be named from a counter that restarts on every `reduce`
+/// call — and `reduce` runs once per `assert`, over the whole stack — so the
+/// same name, and therefore the same hash-consed variable, could be handed to
+/// a different pair on a later call. One element then had to witness both
+/// disequalities, which no theory says, and a satisfiable problem could come
+/// back `unsat`. Witnesses are keyed on their pair now.
+#[test]
+fn two_disequalities_need_two_witnesses() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let (one, two) = (tm.mk_int(1), tm.mk_int(2));
+    let empty = tm.mk_set_empty_at(set_int);
+    let s1 = tm.mk_set_singleton(one);
+    let s2 = tm.mk_set_singleton(two);
+    let mut solver = Solver::new();
+    for (x, want) in [("a", s1), ("b", empty), ("c", empty), ("d", s2)] {
+        let v = tm.mk_var(x, set_int);
+        let eq = tm.mk_eq(v, want);
+        solver.assert(eq, &mut tm);
+    }
+    // Asserted separately, which is what makes the stack re-surveyed.
+    for (x, y) in [("a", "b"), ("c", "d")] {
+        let (p, q) = (tm.mk_var(x, set_int), tm.mk_var(y, set_int));
+        let eq = tm.mk_eq(p, q);
+        let ne = tm.mk_not(eq);
+        solver.assert(ne, &mut tm);
+    }
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}

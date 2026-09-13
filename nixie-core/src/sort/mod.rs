@@ -762,10 +762,22 @@ impl SortManager {
             SortKind::RoundingMode => Some("RoundingMode".to_string()),
             SortKind::Set(_) => Some("Set".to_string()),
             SortKind::Array { .. } => Some("Array".to_string()),
-            SortKind::Uninterpreted(spur) => Some(self.interner.resolve(spur).to_string()),
-            SortKind::Parameter(spur) => Some(self.interner.resolve(spur).to_string()),
-            SortKind::Parametric { name, .. } => Some(self.interner.resolve(name).to_string()),
-            SortKind::Datatype(spur) => Some(self.interner.resolve(spur).to_string()),
+            // `try_resolve`, not `resolve`, and that is not defensiveness.
+            // There are **two** interners in play — a `TermManager`'s and this
+            // `SortManager`'s — and the codebase splits names between them:
+            // `SortKind::Uninterpreted` names are interned by the SMT-LIB
+            // parser (and read back by the printer) through the *term*
+            // manager's, while a datatype's own name is interned here. A key
+            // from the other interner is an out-of-range index, and
+            // `resolve` panics on it: `assertion failed: key.into_usize() <
+            // self.strings.len()`. Returning `None` says "this manager cannot
+            // name that sort", which is the truth.
+            SortKind::Uninterpreted(spur)
+            | SortKind::Parameter(spur)
+            | SortKind::Datatype(spur) => self.interner.try_resolve(spur).map(ToString::to_string),
+            SortKind::Parametric { name, .. } => {
+                self.interner.try_resolve(name).map(ToString::to_string)
+            }
         }
     }
 

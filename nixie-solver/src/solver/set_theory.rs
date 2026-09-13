@@ -302,22 +302,92 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // must take part in every membership definition below.
     let mut witnesses: Vec<(TermId, TermId, TermId, TermId)> = Vec::new();
     let mut elements = s.elements.clone();
-    let mut next_witness = 0usize;
-    let fresh_witness =
-        |manager: &mut TermManager, sort: nixie_core::SortId, n: &mut usize| -> TermId {
-            let name = format!("@set_ext_{n}");
-            *n += 1;
-            manager.mk_var(&name, sort)
+    // The witness is named after **the pair it witnesses**, not by a counter.
+    //
+    // `reduce` runs once per `assert`, over the whole assertion stack, and a
+    // counter restarts each time — so the same name, and therefore (names
+    // being hash-consed) the same SMT variable, was handed to a *different*
+    // pair on a later call. The axioms from the two calls then demanded that
+    // one element witness two unrelated disequalities, which is not a
+    // consequence of anything and can make a satisfiable problem `unsat`.
+    // Keying on the pair makes the witness stable across calls and unique to
+    // its pair, which is what the axiom means.
+    let pair_witness =
+        |manager: &mut TermManager, sort: nixie_core::SortId, a: TermId, b: TermId| -> TermId {
+            manager.mk_var(&format!("@set_ext_{}_{}", a.0, b.0), sort)
         };
 
     // One witness per set relation. `(= a b)` and `(set.subset a b)` both need
     // a place where the two sets can differ.
-    let relations: Vec<(TermId, TermId)> = s
+    //
+    // **Every pair of same-sorted set terms is a relation here, not only the
+    // ones the formula writes down.** There is no set theory *solver* — the
+    // classification `TermTheory::Set` has no consumer — so `set.member` is
+    // not a congruence-closed symbol, and two membership atoms over sets the
+    // solver merges *at solve time* are unrelated SAT variables. Every
+    // equality this reduction does not see is therefore invisible:
+    //
+    // ```smt2
+    // (assert (set.member 5 (select (store a 1 (as set.empty (Set Int))) 1)))
+    // ```
+    //
+    // answered `sat`. The array theory merges the select with the empty set,
+    // but nothing connects `(set.member 5 <select>)` to `(set.member 5
+    // set.empty)`, whose axiom says it is false. The same happens between two
+    // set *variables* the solver equates through `f(x)`/`f(y)` with `x = y`.
+    //
+    // Relating such a pair restores what congruence would have given: the
+    // equality atom is decided by EUF whatever derived it, and the axioms
+    // below then force the memberships to agree.
+    //
+    // Only pairs with an **opaque** side. Two structurally determined sets —
+    // `set.empty`, a singleton, a union, an `ite` over those — have every
+    // membership atom defined by their children, so a derived equality between
+    // them says nothing their definitions do not already; being hash-consed,
+    // the solver can only merge two of them through an equality that *is* in
+    // the formula, and that one is surveyed. An opaque term is the one whose
+    // value another theory decides: a variable, a `select`, an uninterpreted
+    // application. That is the whole source of the problem, and restricting to
+    // it keeps the quadratic small.
+    //
+    // The cap exists because the pair count is quadratic in set terms and each
+    // pair costs a witness, which is itself an element every set then needs an
+    // axiom against — `sets x pairs`, so cubic if pairs were left unbounded.
+    // Overflowing it raises the honesty gate, so the price of the bound is
+    // `Unknown` rather than a silently weaker encoding. A control run with
+    // these pairs switched off entirely was no faster on the corpus, so the
+    // bound is insurance rather than a measured hot spot.
+    const MAX_PAIRS: usize = 48;
+    let mut pair_budget_exceeded = false;
+    let mut relations: Vec<(TermId, TermId)> = s
         .set_equalities
         .iter()
         .chain(s.subsets.iter())
         .map(|&(_, a, b)| (a, b))
         .collect();
+    {
+        let mut by_sort: FxHashMap<nixie_core::SortId, Vec<TermId>> = FxHashMap::default();
+        for &set in &s.sets {
+            if let Some(es) = element_sort(set, manager) {
+                by_sort.entry(es).or_default().push(set);
+            }
+        }
+        'pairs: for group in by_sort.values() {
+            for (i, a) in group.iter().enumerate() {
+                let a_opaque = shape_of(*a, manager) == Shape::Opaque;
+                for b in group.iter().skip(i + 1) {
+                    if !a_opaque && shape_of(*b, manager) != Shape::Opaque {
+                        continue;
+                    }
+                    if relations.len() >= MAX_PAIRS {
+                        pair_budget_exceeded = true;
+                        break 'pairs;
+                    }
+                    relations.push((*a, *b));
+                }
+            }
+        }
+    }
     for (a, b) in relations {
         let Some(es) = element_sort(a, manager) else {
             continue;
@@ -325,7 +395,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         if witnesses.iter().any(|(wa, wb, _, _)| *wa == a && *wb == b) {
             continue;
         }
-        let k = fresh_witness(manager, es, &mut next_witness);
+        let k = pair_witness(manager, es, a, b);
         let ka = manager.mk_set_member(k, a);
         let kb = manager.mk_set_member(k, b);
         witnesses.push((a, b, ka, kb));
@@ -389,13 +459,20 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     }
 
     // `(= a b)` for sets is extensional equality.
-    for &(atom, a, b) in &s.set_equalities {
+    //
+    // Iterated over the **witnessed pairs**, not over the equality atoms the
+    // formula happens to contain: an equality the solver derives rather than
+    // reads is exactly the case that was answering `sat`. The atom is built
+    // here where the formula does not have one; it is hash-consed, so a
+    // surveyed `(= a b)` is the same term and nothing is duplicated.
+    for &(a, b, ka, kb) in &witnesses {
         let Some(es) = element_sort(a, manager) else {
             continue;
         };
         let Some(elems) = elements.get(&es).cloned() else {
             continue;
         };
+        let atom = manager.mk_eq(a, b);
         for e in elems {
             let ia = manager.mk_set_member(e, a);
             let ib = manager.mk_set_member(e, b);
@@ -403,12 +480,9 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             axioms.push(manager.mk_implies(atom, agree));
         }
         // ...and if they differ, they differ *somewhere*.
-        if let Some(&(_, _, ka, kb)) = witnesses.iter().find(|(wa, wb, _, _)| *wa == a && *wb == b)
-        {
-            let differs = manager.mk_xor(ka, kb);
-            let neg = manager.mk_not(atom);
-            axioms.push(manager.mk_implies(neg, differs));
-        }
+        let differs = manager.mk_xor(ka, kb);
+        let neg = manager.mk_not(atom);
+        axioms.push(manager.mk_implies(neg, differs));
     }
 
     // `(set.subset a b)`.
@@ -437,7 +511,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // `set.card`, exact where the members are confined to a known list and
     // *declined* otherwise: an under-constrained cardinality is a free
     // integer, and a model that picks one arbitrarily is not a model.
-    let mut incomplete = false;
+    let mut incomplete = pair_budget_exceeded;
     for &(card_term, set) in &s.cardinalities {
         match support(set, manager, 0) {
             Some(sup) => axioms.push(cardinality_axiom(card_term, set, &sup, manager)),
