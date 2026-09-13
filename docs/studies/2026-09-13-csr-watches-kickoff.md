@@ -20,6 +20,31 @@ memcpy-rebuild it replaces.  The ELS study's surgery lost by 9.7 %
 *because* normalization at `Vec<Vec<Watcher>>` is entry-major; at CSR
 the same normalization is span-local.
 
+## Slice-plan correction (close-read of `list_kernel::scan`)
+
+Threading a moves-only sink through `push_watch`/`push_watch_unique`
+is **insufficient**: the scan also rewrites survivors' blockers in
+place (`entry.keep(Some(blocker))` — the parked-blocker update), which
+a move sink never sees.  Maintaining the shadow *through* the scan
+therefore means a parallel write cursor over the CSR span mirroring
+keep/remove/moves — which is exactly slice 3 (the BCP scanning CSR
+spans) implemented as a **dual write**.  The corrected plan:
+
+1. ~~shadow build~~ ✓ (`1c8a1a99`); ~~mutation ops~~ ✓ (`3c60cf6d`);
+2. **dual-write BCP scan**: the cursor machinery drives both the taken
+   `Vec` and the CSR span+overflow (keep → mirrored rewrite, remove →
+   span compaction, `push_watch` → overflow append); the per-rebuild
+   comparison then validates the *drifted* state — the empirical
+   order-isomorphism proof;
+3. switch cold-path mutations (`add`, `remove_clause`) to CSR + dual
+   bookkeeping (trivial once (2) exists);
+4. switch all readers to the combined view; drop the `Vec` lists;
+5. ELS rewatching on CSR — the payoff, A/B'd against the memcpy rebuild.
+
+The dual-write scan is the next session's centerpiece; it touches the
+BCP hot path (277 lines of `list_kernel` + the cursor in
+`watch_cursor`) and carries the trajectory-identity + screen bar.
+
 ## Slice 1.5 status (`3c60cf6d`) + the economics measurement
 
 A `perf` profile of the current si2 solve (23 527 conflicts — it now
