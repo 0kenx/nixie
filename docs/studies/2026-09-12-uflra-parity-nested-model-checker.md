@@ -285,6 +285,55 @@ to a single precisely-scoped mechanism:
    `guard_inactive` (vacuously satisfied) is the loophole that lets the
    dodge stand; lemma-registered binders should not get that treatment.
 
+## Fifth pass (2026-09-13): macro completion wired end to end
+
+The fourth pass's diagnosis ("per-function else search") was one layer
+short.  The actual missing piece: **`macro_to_interpretation` built an
+*empty* interpretation** — the macro solver correctly extracts
+`seteq(s1,s2) = (s1 = s2)` from its defining axiom, but the defining body
+was dropped on the floor, so the completion fell back to entries+else and
+every reflexive pin had to be seeded individually (an unbounded chase for
+definitional axioms).  Landed:
+
+1. **`CompletedModel::macros`** carries each solved macro's defining body;
+   `CompletionEval::fold_apply` beta-reduces it at the (evaluated)
+   arguments and evaluates the result under the same completion (depth
+   capped at 16, arity mismatch declines).  When several axioms define the
+   same function (`seteq` as equality *and* as double-subset), the
+   *simplest* body wins — the conjunction macro inherits other functions'
+   else at symbolic points and breaks the equality axiom's own check.
+
+2. **Universe-distinctness folding for uninterpreted-sort equality** in
+   the evaluator: two *ground* universe representatives are unequal by
+   construction — without the fold, a mined substitution's ite-chain
+   conditions `(= z a)` stayed symbolic and the falsifier the aux check
+   found was never mined.  The first cut folded symbolic operands too
+   (the universe contains bound-variable artifact terms from entry
+   arguments!), fabricating `(= ?s1 ?s2) = false` and with it a fake
+   falsifier — the groundness guard is load-bearing.
+
+3. **`p -> p` collapses in `deep_simplify`**: the reflexive-implication
+   shape the set axioms instantiate into (`A3[z,z]`'s tautological
+   antecedent) now collapses, turning the instance into the unit
+   `subset(z,z)` and forcing the diagonal pin the SAT core otherwise
+   dodges via the wrapper Boolean.
+
+4. **Falsifier mining iterates the finite universe** for uninterpreted
+   sorts (not just the instantiation set), and the MBQI bail counts a
+   *streak* of unproductive rounds (10) instead of a flat total — a flat
+   25 taxed every re-check 2.3x on the rerun convergence pins (63s ->
+   150s single-threaded); the streak restores 88s while letting
+   converging goals run past round 10.
+
+The set family still answers `unknown`: after all of the above, the
+residual falsifiers sit at the *universe's compound elements*
+(`union(b,a)`, ...) whose subset diagonal pins the mining emits as
+duplicates of already-instantiated pairs — the ground solver satisfies
+the forcing equivalence by committing the *inner* nested binder's Boolean
+false (the committed-existential dodge from pass four, now the only
+remaining mechanism).  Model repair (Z3's `add_blocking_clause`) remains
+the fix.
+
 ## Verification
 
 - `cargo build --all-features` clean; `cargo nextest run` over the six

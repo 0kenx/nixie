@@ -1830,6 +1830,16 @@ impl MBQIIntegration {
                             Some(TermKind::True) => sr,
                             _ => match manager.get(sr).map(|t2| &t2.kind) {
                                 Some(TermKind::True) => manager.mk_true(),
+                                // `p -> p` is a tautology — syntactic
+                                // identity after simplification.  This is
+                                // the reflexive-implication shape the set
+                                // axioms instantiate into (`A3[z,z]`'s
+                                // antecedent `member(x,z) => member(x,z)`);
+                                // collapsing it turns the instance into the
+                                // unit `subset(z,z)`, forcing the diagonal
+                                // pin the SAT core otherwise dodges by
+                                // committing the wrapper Boolean false.
+                                _ if sl == sr => manager.mk_true(),
                                 _ => manager.mk_implies(sl, sr),
                             },
                         },

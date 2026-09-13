@@ -2888,6 +2888,16 @@ impl Solver {
         // MBQI loop for quantified formulas
         let max_mbqi_iterations = 100;
         let mut mbqi_iteration = 0;
+        // Consecutive MBQI rounds that produced nothing (no instantiation,
+        // no certification).  The bail below fires on a *streak* rather
+        // than a total: productive rounds — ones whose nested-check
+        // counterexamples became forcing instances — are what close
+        // definitional-axiom models (the set-family diagonal pins land
+        // around rounds 8-12), while a re-checked goal's unproductive
+        // rounds are pure cost.  A streak bound lets convergence run and
+        // caps waste.
+        let mut unproductive_mbqi_streak = 0;
+        let mut insts_before = self.mbqi.stats().total_instantiations;
 
         // Lazy array-axiom refinement rounds (see `instantiate_array_axioms`).
         // Bounded independently of the MBQI budget; deduplication guarantees
@@ -3964,7 +3974,7 @@ impl Solver {
                                     }
                                 }
                             }
-                            if mbqi_iteration >= 10 {
+                            if unproductive_mbqi_streak >= 10 {
                                 // After exhausting blind and finite domain
                                 // instantiation attempts, MBQI still could not
                                 // *verify* that the candidate model satisfies
@@ -3977,6 +3987,11 @@ impl Solver {
                                 // candidates would be wrongly declared
                                 // satisfiable.  Z3 returns `unknown` in exactly
                                 // this situation.
+                                //
+                                // (A streak of 10 unproductive rounds, not a
+                                // total: a flat total either abandoned
+                                // converging goals mid-run or taxed every
+                                // re-check with the full budget.)
                                 //
                                 // We may still soundly answer Sat in one case:
                                 // when every quantifier is *trivially valid* –
@@ -4001,6 +4016,17 @@ impl Solver {
                         }
                     }
 
+                    // A productive round resets the bail streak.
+                    // (`total_instantiations` is the monotone counter the
+                    // MBQI engine maintains — using it instead of matching
+                    // the moved `mbqi_result` avoids the partial-move.)
+                    let produced_any = self.mbqi.stats().total_instantiations > insts_before;
+                    if produced_any {
+                        unproductive_mbqi_streak = 0;
+                    } else {
+                        unproductive_mbqi_streak += 1;
+                    }
+                    insts_before = self.mbqi.stats().total_instantiations;
                     mbqi_iteration += 1;
                     #[cfg(test)]
                     {

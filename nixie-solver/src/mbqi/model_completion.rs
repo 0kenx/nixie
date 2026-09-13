@@ -39,6 +39,10 @@ use super::QuantifiedFormula;
 /// Maximum number of elements per sort universe (to avoid combinatorial explosion)
 const MAX_UNIVERSE_SIZE: usize = 1000;
 
+/// A macro definition carried by a completed model: the defining body
+/// together with its bound variables (name and sort, declaration order).
+pub type MacroDef = (SmallVec<[(Spur, SortId); 4]>, TermId);
+
 /// A completed model that assigns values to all relevant terms
 #[derive(Debug, Clone)]
 pub struct CompletedModel {
@@ -50,6 +54,15 @@ pub struct CompletedModel {
     pub universes: FxHashMap<SortId, Vec<TermId>>,
     /// Default values for each sort
     pub defaults: FxHashMap<SortId, TermId>,
+    /// Macro definitions: function -> its defining body, whose free
+    /// variables are exactly the macro's bound variables (in declaration
+    /// order).  A function completed as its macro is interpreted by
+    /// beta-reducing the body at the application's arguments — the
+    /// definitional axiom's intended semantics (Z3's quasi-macro
+    /// completion).  Without this, a `seteq(s1,s2) = (s1 = s2)` axiom
+    /// needs a per-element reflexive pin and the seeding chases compound
+    /// terms forever.
+    pub macros: FxHashMap<Spur, MacroDef>,
     /// Generation number
     pub generation: u32,
 }
@@ -62,6 +75,7 @@ impl CompletedModel {
             function_interps: FxHashMap::default(),
             universes: FxHashMap::default(),
             defaults: FxHashMap::default(),
+            macros: FxHashMap::default(),
             generation: 0,
         }
     }
@@ -438,8 +452,36 @@ impl ModelCompleter {
                 .function_interps
                 .entry(func_name)
                 .or_insert(macro_interp);
-            // If the function already has entries, the macro definition is redundant
-            // for evaluation purposes -- concrete entries are already correct.
+        }
+        // Record the defining bodies: every solved macro's body becomes the
+        // completion's interpretation of its function (beta-reduced at each
+        // application by the evaluators that consult `macros`).  The
+        // entry-only interpretation above stays as the structural fallback.
+        for (&func_name, macro_def) in self.macro_solver.definitions() {
+            // When several axioms define the same function (the set family
+            // defines `seteq` both as equality and as the double-subset
+            // conjunction), prefer the *simplest* body: the equality macro
+            // unfolds independently of other functions' entries, while the
+            // conjunction macro inherits their `else` at symbolic points
+            // and breaks the equality axiom's own check.  Both are sound
+            // completions (each is an asserted axiom); this only picks the
+            // one that evaluates most robustly.
+            let candidate = (macro_def.bound_vars.clone(), macro_def.body);
+            match completed.macros.entry(func_name) {
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    v.insert(candidate);
+                }
+                std::collections::hash_map::Entry::Occupied(mut o) => {
+                    let challenger_size =
+                        nixie_core::ast::traversal::collect_subterms(macro_def.body, manager).len();
+                    let incumbent = o.get().1;
+                    let incumbent_size =
+                        nixie_core::ast::traversal::collect_subterms(incumbent, manager).len();
+                    if challenger_size < incumbent_size {
+                        o.insert(candidate);
+                    }
+                }
+            }
         }
 
         // Step 3: Complete function interpretations (projections, else values)
@@ -1062,6 +1104,11 @@ impl MacroSolver {
     /// Get statistics
     pub fn stats(&self) -> &MacroStats {
         &self.stats
+    }
+
+    /// The macros detected by the last [`Self::solve_macros`] run.
+    pub(crate) fn definitions(&self) -> &FxHashMap<Spur, MacroDefinition> {
+        &self.macros
     }
 }
 

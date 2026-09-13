@@ -467,7 +467,13 @@ impl ModelChecker {
             }
         };
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+            eprintln!(
+                "[mc] check q={:?}: model.macros = {}",
+                q.term,
+                model.macros.len()
+            );
             let printer = nixie_core::smtlib::Printer::new(manager);
+            eprintln!("[mc] orig  = {}", printer.print_term(q.body));
             eprintln!("[mc] body' = {}", printer.print_term(body_completed));
             for (f, interp) in &model.function_interps {
                 eprintln!(
@@ -520,7 +526,7 @@ impl ModelChecker {
             result
         };
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-            eprintln!("[mc] aux verdict: {:?}", result);
+            eprintln!("[mc] aux verdict q={:?}: {:?}", q.term, result);
         }
 
         match result {
@@ -556,9 +562,29 @@ impl ModelChecker {
                 /// Bound on the combination product tried per check.
                 const MAX_COMBO_PRODUCT: usize = 256;
 
+                // The combo domain per bound variable: for an *uninterpreted*
+                // sort the finite universe itself — the restriction clause
+                // confines the Skolem to it, so the aux falsifier lives
+                // there, and inst-set-only mining misses points the seeding
+                // never referenced (a `seteq(z,z) = (z=z)` axiom fails at
+                // every universe element whose reflexive pin is missing,
+                // however `z` was constructed).  Interpreted sorts keep the
+                // instantiation set (their "universe" is an infinite-domain
+                // sample, not a domain).
                 let sets: Vec<Vec<TermId>> = skolem_terms
                     .iter()
-                    .map(|&(_, sort, _)| inst_sets.get(&sort).cloned().unwrap_or_default())
+                    .map(|&(_, sort, _)| {
+                        let finite_universe = manager
+                            .sorts
+                            .get(sort)
+                            .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+                            .then(|| model.universe(sort))
+                            .flatten()
+                            .filter(|u| !u.is_empty() && u.len() <= MAX_UNIVERSE_FOR_RESTRICTION)
+                            .map(|u| u.to_vec());
+                        finite_universe
+                            .unwrap_or_else(|| inst_sets.get(&sort).cloned().unwrap_or_default())
+                    })
                     .collect();
                 if sets.iter().any(|s| s.is_empty()) {
                     // Some bound variable has no candidate values at all:
@@ -1230,7 +1256,15 @@ struct CompletionEval<'a> {
     cache: FxHashMap<TermId, TermId>,
     symbolic: FxHashMap<TermId, bool>,
     nodes_visited: usize,
+    /// Current macro-unfolding nesting (see [`MAX_MACRO_DEPTH`]).
+    macro_depth: u32,
 }
+
+/// Bound on macro-unfolding nesting inside one evaluation.  The
+/// occurs-check in the macro solver forbids self-reference, so finite
+/// nesting exists; the cap guards pathological mutual-macro chains and
+/// keeps the native recursion in `fold_macro_application` bounded.
+const MAX_MACRO_DEPTH: u32 = 16;
 
 impl<'a> CompletionEval<'a> {
     /// Evaluate `root`; `Err` carries the decline reason.
@@ -1248,6 +1282,7 @@ impl<'a> CompletionEval<'a> {
             cache: FxHashMap::default(),
             symbolic: FxHashMap::default(),
             nodes_visited: 0,
+            macro_depth: 0,
         };
         eval.eval(root, manager)
     }
@@ -1466,7 +1501,39 @@ impl<'a> CompletionEval<'a> {
                                 match compare_numeric(a, b, manager) {
                                     Some(NumOrder::Eq) => manager.mk_true(),
                                     Some(_) => manager.mk_false(),
-                                    None => manager.mk_eq(a, b),
+                                    None => {
+                                        // Uninterpreted-sort equality: two
+                                        // *distinct universe representatives*
+                                        // of the same sort are unequal by
+                                        // construction (the universe is a
+                                        // set of pairwise-distinct
+                                        // elements).  Without this fold the
+                                        // ite-chain conditions `(= z a)` of
+                                        // a mined substitution stay symbolic
+                                        // and the falsifier the aux check
+                                        // found at `(z,z)` is never mined
+                                        // (the set-family diagonal stall).
+                                        let verdict = (|| {
+                                            let na = manager.get(a)?;
+                                            let nb = manager.get(b)?;
+                                            if na.sort != nb.sort
+                                                || !matches!(
+                                                    manager.sorts.get(na.sort).map(|s| &s.kind),
+                                                    Some(SortKind::Uninterpreted(_)),
+                                                )
+                                            {
+                                                return None;
+                                            }
+                                            let uni = self.model.universe(na.sort)?;
+                                            let a_in = uni.contains(&a);
+                                            let b_in = uni.contains(&b);
+                                            (a_in && b_in).then_some(false)
+                                        })();
+                                        match verdict {
+                                            Some(false) => manager.mk_false(),
+                                            _ => manager.mk_eq(a, b),
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1590,6 +1657,39 @@ impl<'a> CompletionEval<'a> {
         values.pop().ok_or("evaluator produced no value")
     }
 
+    /// Beta-reduce a macro body at the evaluated arguments and evaluate the
+    /// result under the same completion.  The body's free variables are the
+    /// macro's bound variables; substituting the arguments grounds it.
+    fn fold_macro_application(
+        &mut self,
+        bound_vars: &[(Spur, SortId)],
+        body: TermId,
+        evaluated_args: &[TermId],
+        manager: &mut TermManager,
+    ) -> Result<TermId, &'static str> {
+        if bound_vars.len() != evaluated_args.len() {
+            // Arity mismatch: the macro solver's shape guarantee is broken;
+            // decline rather than mis-substitute.
+            return Err("macro arity mismatch");
+        }
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for (&(name, sort), &arg) in bound_vars.iter().zip(evaluated_args.iter()) {
+            let name_str = manager.resolve_str(name).to_string();
+            let var = manager.mk_var(&name_str, sort);
+            subst.insert(var, arg);
+        }
+        let reduced = manager.substitute(body, &subst);
+        // Evaluate the reduced body to a value with the same machine.
+        // Bound-name hygiene: the macro's own binders were substituted away;
+        // any *other* free names in the body are the enclosing scope's —
+        // exactly what `self.bound` tracks.
+        self.nodes_visited += 1;
+        if self.nodes_visited > MAX_EVALUATED_BODY_SIZE {
+            return Err("evaluated body too large");
+        }
+        self.eval(reduced, manager)
+    }
+
     /// Fold one function application under the completed interpretation.
     fn fold_apply(
         &mut self,
@@ -1598,6 +1698,26 @@ impl<'a> CompletionEval<'a> {
         sort: SortId,
         manager: &mut TermManager,
     ) -> Result<TermId, &'static str> {
+        // Macro completion first: a function with a defining axiom
+        // (`seteq(s1,s2) = (s1 = s2)`) is interpreted by beta-reducing its
+        // body at the (already evaluated) arguments and evaluating the
+        // result under the same completion.  Entries stay authoritative
+        // when present — the macro fills the *rest* of the domain, which is
+        // exactly what per-element pinning could never close (a definitional
+        // axiom fails at every unpinned reflexive point, however many pins
+        // the seeding adds).
+        if let Some((bound_vars, body)) = self.model.macros.get(&func).cloned() {
+            if self.macro_depth < MAX_MACRO_DEPTH {
+                self.macro_depth += 1;
+                let result =
+                    self.fold_macro_application(&bound_vars, body, evaluated_args, manager);
+                self.macro_depth -= 1;
+                return result;
+            }
+            // Macro nesting too deep: decline rather than evaluate through
+            // an interpretation we cannot afford to unfold.
+            return Err("macro nesting too deep");
+        }
         let interp = self.model.function_interps.get(&func);
         let all_concrete = !evaluated_args
             .iter()
