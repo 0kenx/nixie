@@ -328,9 +328,9 @@ fn parity_row_of(
     manager: &TermManager,
 ) -> Option<ParityRow> {
     let mut lterms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-    let mut lconst = Rational64::zero();
+    let mut lconst = num_rational::BigRational::zero();
     let mut rterms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-    let mut rconst = Rational64::zero();
+    let mut rconst = num_rational::BigRational::zero();
     // `overflow == true` and `None` both bail the row: a constant that left
     // `Rational64` width has no trustworthy parity image either way.
     let mut overflow = false;
@@ -365,10 +365,10 @@ fn parity_row_of(
         merged.push((term, coef));
     }
     let rhs_val = lconst - rconst;
-    if rhs_val.denom() != &1 {
+    if !rhs_val.is_integer() {
         return None;
     }
-    let rhs = rhs_val.numer().to_i64()?;
+    let rhs = rhs_val.to_integer().to_i64()?;
     let mut terms: Vec<(TermId, i64)> = Vec::with_capacity(merged.len());
     for (term, coef) in merged {
         if coef == Rational64::zero() {

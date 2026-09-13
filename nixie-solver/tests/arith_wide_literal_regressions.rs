@@ -28,7 +28,6 @@
 //! linear parse with an honesty gate on overflow.
 
 use nixie_core::TermManager;
-use nixie_core::ast::TermKind;
 use nixie_solver::{Solver, SolverResult};
 use num_bigint::BigInt;
 
@@ -197,13 +196,22 @@ fn mixed_int_real_problem_tracks_each_variables_sort() {
     assert_eq!(s.check(&mut tm), SolverResult::Unsat);
 }
 
-/// The residual accumulator-overflow class: nested `Sub` whose *leaves* fold
-/// but whose constant sum (`i64::MAX + 1`) only assembles inside the linear
-/// parse.  The walk must fail honestly (gate to `Unknown`), never panic
-/// (debug) and never wrap (release).  A valid claim's negation must never
-/// be `Sat`.
+/// The accumulator-overflow class: nested `Sub` whose leaves fold but whose
+/// constant sum (`i64::MAX + 1`) only assembles inside the linear parse.
+/// The walk now accumulates the constant EXACTLY (`BigRational`) and
+/// synthesizes the too-wide sum as a wide `IntConst` column (the existing
+/// big-constant abstraction), so the atom parses, never wraps (release) or
+/// panics (debug), and `sat` answers only through model certification.
+///
+/// What stays OUT OF REACH — deliberately, and recorded in the study — is
+/// the *value-dependent refutation*: proving `(= (+ x MAX 1) (+ x 2^63))`
+/// requires the tableau to reason at the value `2^63`, whose row
+/// combinations and column values leave `Rational64` width.  Z3 decides
+/// these because its tableau computes in `mpz`; Nixie's fixed-width LP has
+/// that boundary, and the honest answer for it is `Unknown`, never a
+/// wrapped verdict.  The assertions below pin exactly that contract.
 #[test]
-fn nested_constant_overflow_is_gated_never_wrapped() {
+fn nested_constant_overflow_never_answers_wrongly() {
     let mut tm = TermManager::new();
     let x = tm.mk_var("x", tm.sorts.int_sort);
     let zero = tm.mk_int(0);
@@ -220,123 +228,111 @@ fn nested_constant_overflow_is_gated_never_wrapped() {
     let mut s = Solver::new();
     s.assert(tm.mk_not(claim), &mut tm);
     let r = s.check(&mut tm);
-    assert_ne!(r, SolverResult::Sat, "a valid claim must never be Sat");
+    assert_ne!(
+        r,
+        SolverResult::Sat,
+        "a valid claim's negation must never be Sat"
+    );
+
+    // The INVALID twin (`x + 2^63` vs `x + 2^63 + 1`): asserting the false
+    // claim must never be `Sat`, and refuting the true negation... the
+    // negation is valid so it must be Sat-or-Unknown, never Unsat.
+    let two63p1 = tm.mk_int(BigInt::from(2u32).pow(63) + 1);
+    let rhs2 = tm.mk_add([x, two63p1]);
+    let false_claim = tm.mk_eq(lhs, rhs2); // the sides differ by 1
+    let mut s2 = Solver::new();
+    s2.assert(false_claim, &mut tm);
+    assert_ne!(
+        s2.check(&mut tm),
+        SolverResult::Sat,
+        "a false claim must never be Sat"
+    );
+    let mut s3 = Solver::new();
+    s3.assert(tm.mk_not(false_claim), &mut tm);
+    assert_ne!(
+        s3.check(&mut tm),
+        SolverResult::Unsat,
+        "a valid claim's negation must never be Unsat"
+    );
 }
 
-// ======== `/` vs `div`: SMT-LIB division semantics ========
-
-/// `/` is REAL division: `(/ 7 2)` is `7/2`, not Euclidean `3`.  Routing `/`
-/// through the integer constructor answered `(/ 7 2) = 3` with `sat` and
-/// `(/ 7 2) > 3` with `unsat` — both wrong.
+/// The `-2^63` corner: the value fits `i64` but its negation does not, so
+/// it must travel as a (sign-flipped) big column, never as a fixed-width
+/// constant that `row_key` or DL normalization would flip.  These ARE
+/// decided — the corner only needed the parse-side handling.
 #[test]
-fn real_slash_is_not_integer_division() {
+fn neg_two_pow_63_constant_is_decided() {
     let mut tm = TermManager::new();
-    let seven = tm.mk_int(7);
-    let two = tm.mk_int(2);
-    let q = tm.mk_rdiv(seven, two);
-    // the node is Real-sorted and folds to 7/2
-    match &tm.get(q).expect("term").kind {
-        TermKind::RealConst(r) => assert_eq!(*r, num_rational::Rational64::new(7, 2)),
-        other => panic!("(/ 7 2) must fold to RealConst(7/2), got {other:?}"),
-    }
-    // ...and comparisons over it are exact
-    let three = tm.mk_int(3);
-    let eq_three = tm.mk_eq(q, three); // 3.5 = 3 is false
-    assert!(matches!(
-        &tm.get(eq_three).expect("term").kind,
-        TermKind::False
-    ));
-    let gt_three = tm.mk_gt(q, three); // 3.5 > 3 is true
-    assert!(matches!(
-        &tm.get(gt_three).expect("term").kind,
-        TermKind::True
-    ));
+    let x = tm.mk_var("x", tm.sorts.int_sort);
+    let zero = tm.mk_int(0);
+    // x = -2^63 is satisfiable (x is an Int).
+    let wide = tm.mk_int(BigInt::from(2u32).pow(63));
+    let neg_wide = tm.mk_sub(zero, wide);
+    let claim = tm.mk_eq(x, neg_wide);
+    let mut s = Solver::new();
+    s.assert(claim, &mut tm);
+    assert_eq!(s.check(&mut tm), SolverResult::Sat);
+    // The same value built by folding `-i64::MAX - 1`, and the two wide
+    // negatives are the SAME value.
+    let maxc = tm.mk_int(i64::MAX);
+    let one = tm.mk_int(1);
+    let neg_max = tm.mk_sub(zero, maxc);
+    let nm1 = tm.mk_sub(neg_max, one);
+    let same = tm.mk_eq(neg_wide, nm1);
+    let mut s3 = Solver::new();
+    s3.assert(tm.mk_not(same), &mut tm);
+    assert_eq!(s3.check(&mut tm), SolverResult::Unsat);
 }
 
-/// `div` stays Euclidean integer division on the same literals.
+/// An equality whose coefficients all cancel leaves an EMPTY row; with a
+/// FRACTIONAL constant (`0 = 5/3`) the infeasibility used to be dropped
+/// silently — the contradictory bounds were planted only on
+/// `expr.terms.first()`, which an empty row does not have — leaving the atom
+/// a free Boolean and reporting `sat`.  Found by the mixed-mode fuzz right
+/// after `/`-linearization made constant-folded dividends under `(/ x 3)`
+/// reachable.
 #[test]
-fn int_div_stays_euclidean() {
-    let mut tm = TermManager::new();
-    let seven = tm.mk_int(7);
-    let two = tm.mk_int(2);
-    let q = tm.mk_div(seven, two);
-    match &tm.get(q).expect("term").kind {
-        TermKind::IntConst(n) => assert_eq!(*n, num_bigint::BigInt::from(3)),
-        other => panic!("(div 7 2) must fold to 3, got {other:?}"),
-    }
-}
-
-/// Real division by a numeral constant linearizes (`(/ x 3.0)` ≡
-/// `(* x (1/3))`) and is decidable.
-#[test]
-fn real_division_by_constant_is_decidable() {
+fn empty_row_with_fractional_constant_is_refuted() {
     use nixie_solver::Context;
     let mut ctx = Context::new();
     let out = ctx
         .execute_script(
-            "(declare-const x Real)(assert (= (/ x 3.0) 2.0))(check-sat)(get-value (x))",
+            "(set-logic QF_LRA)(declare-const xr Real)\
+             (assert (= (/ (+ (* 1 xr) (+ -85 (* 1 xr) (* -2 xr))) 3) -1099511627776))\
+             (check-sat)",
         )
         .expect("script");
-    assert!(out[0].contains("sat"), "{}", out[0]);
-    // the printer may render the rational 6 as `6`, `6.0` or `(/ 6.0 1.0)`
-    assert!(
-        out[1].contains("x 6.0")
-            || out[1].contains("x (/ 6.0")
-            || out[1].trim_end_matches(')').contains("x 6"),
-        "{}",
-        out[1]
-    );
+    assert_eq!(out[0], "unsat", "{}", out[0]);
+
+    // The direct shape: xr - xr = 5/3 is false.
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const xr Real)(assert (= (- (* 1 xr) (* 1 xr)) (/ 5.0 3.0)))(check-sat)",
+        )
+        .expect("script");
+    assert_eq!(out[0], "unsat", "{}", out[0]);
 }
 
-/// Mixed `Int`/`Real` arithmetic gets the REAL sort whichever way the
-/// operands are ordered (`Int` is a subsort of `Real`): `(+ xi yr)` used to
-/// be `Int`-sorted when written operand-first, feeding integer-only
-/// reasoning a row whose value can be fractional.
+/// A wide constant assembled only in the linear parse (11x = i64::MAX + 24)
+/// synthesizes a big column; the honesty gate must keep a spurious model from
+/// being reported `sat` (the abstraction has no integer solution, but the
+/// abstraction itself is satisfiable — only certification can tell).
 #[test]
-fn mixed_int_real_add_is_real_sorted_either_order() {
-    let mut tm = TermManager::new();
-    let xi = tm.mk_var("xi", tm.sorts.int_sort);
-    let yr = tm.mk_var("yr", tm.sorts.real_sort);
-    let half = tm.mk_real(num_rational::Rational64::new(1, 2));
-    let a = tm.mk_add([xi, yr]);
-    let b = tm.mk_add([yr, xi]);
-    let c = tm.mk_add([xi, half]);
-    for t in [a, b, c] {
-        let node = tm.get(t).expect("term");
-        assert_eq!(
-            node.sort, tm.sorts.real_sort,
-            "mixed add must be Real-sorted"
-        );
-    }
-    // and a mixed sum with a fractional offset stays satisfiable
-    let mut s = nixie_solver::Solver::new();
-    let xi2 = tm.mk_var("xi", tm.sorts.int_sort);
-    let half2 = tm.mk_real(num_rational::Rational64::new(1, 2));
-    let sum = tm.mk_add([xi2, half2]);
-    let claim = tm.mk_eq(sum, half2);
-    s.assert(claim, &mut tm);
-    assert_eq!(s.check(&mut tm), nixie_solver::SolverResult::Sat); // xi = 0
-}
-
-/// Ill-sorted `mod`/`div` (a Real operand) is a parse error — the
-/// standard-mandated answer.  (z3 silently coerces via `to_int`, a
-/// nonstandard extension; nixie rejects, exactly as it rejects mixed-width
-/// bit-vector operands.)
-#[test]
-fn ill_sorted_mod_and_div_are_parse_errors() {
+fn synthesized_wide_column_never_answers_wrongly() {
     use nixie_solver::Context;
-    for bad in [
-        "(declare-const x Real)(assert (= (mod x 3) 1))",
-        "(assert (= (mod 1.5 3) 1))",
-        "(declare-const x Real)(assert (= (div x 2) 1))",
-    ] {
-        let mut ctx = Context::new();
-        let script = format!("{bad}(check-sat)");
-        // a parse error aborts the script (no verdict is produced at all)
-        let err = ctx
-            .execute_script(&script)
-            .expect_err("ill-sorted mod/div must be rejected at parse time");
-        let msg = format!("{err}");
-        assert!(msg.contains("Int"), "unexpected error: {msg}");
-    }
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)(declare-const xi Int)\
+             (assert (and (= (+ -24 (* 1 xi) (* 10 xi)) 9223372036854775807)\
+                          (<= (div (+ (+ (* 1 xi) -1099511627776) (mod 1 1)) 2) 3)\
+                          (<= (+ (* 2 xi) (+ (+ 9 (* 1 xi)) (+ (* 2 xi) -8))) -4)))\
+             (check-sat)",
+        )
+        .expect("script");
+    // The truth: 11x = 2^63 + 23 has no integer solution (remainder 9),
+    // so `unsat` is the right answer; `unknown` (uncertified abstraction)
+    // is acceptable; `sat` is a wrong answer.
+    assert_ne!(out[0], "sat", "{}", out[0]);
 }

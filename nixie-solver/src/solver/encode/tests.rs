@@ -856,7 +856,7 @@ fn extract_linear_terms_deep_sub_chain_on_a_small_stack() {
             }
 
             let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-            let mut constant = Rational64::zero();
+            let mut constant = num_rational::BigRational::zero();
             let mut overflow = false;
             let ok = solver.extract_linear_terms(
                 chain,
@@ -875,7 +875,7 @@ fn extract_linear_terms_deep_sub_chain_on_a_small_stack() {
             );
             assert_eq!(
                 constant,
-                Rational64::from_integer(-(DEPTH as i64)),
+                num_rational::BigRational::from_integer(num_bigint::BigInt::from(-(DEPTH as i64))),
                 "each of the {DEPTH} subtractions contributes -1"
             );
         })
@@ -913,7 +913,7 @@ fn extract_linear_terms_deep_nested_mul_on_a_small_stack() {
             }
 
             let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-            let mut constant = Rational64::zero();
+            let mut constant = num_rational::BigRational::zero();
             let mut overflow = false;
             let ok = solver.extract_linear_terms(
                 chain,
@@ -954,7 +954,7 @@ fn extract_linear_terms_semantic_pins() {
 
     let run = |manager: &TermManager, term: TermId| {
         let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-        let mut constant = Rational64::zero();
+        let mut constant = num_rational::BigRational::zero();
         let mut overflow = false;
         let ok = solver.extract_linear_terms(
             term,
@@ -987,7 +987,10 @@ fn extract_linear_terms_semantic_pins() {
         ],
         "coefficients and append order must match the recursive version"
     );
-    assert_eq!(constant, Rational64::from_integer(-1));
+    assert_eq!(
+        constant,
+        num_rational::BigRational::from(num_bigint::BigInt::from(-1))
+    );
 
     // A pure-constant product folds into the constant: 3 * 2 => 6.
     let three = manager.mk_int(3);
@@ -995,7 +998,10 @@ fn extract_linear_terms_semantic_pins() {
     let (ok, terms, constant) = run(&manager, const_prod);
     assert_eq!(ok, Some(()));
     assert!(terms.is_empty());
-    assert_eq!(constant, Rational64::from_integer(6));
+    assert_eq!(
+        constant,
+        num_rational::BigRational::from(num_bigint::BigInt::from(6))
+    );
 
     // Nonlinear rejects (all `None`, exactly as before):
     // two variable factors,
@@ -1025,13 +1031,16 @@ fn extract_linear_terms_semantic_pins() {
         ],
         "the constant factor scales every variable term of the multi-variable factor"
     );
-    assert_eq!(constant, Rational64::from_integer(0));
+    assert_eq!(
+        constant,
+        num_rational::BigRational::from(num_bigint::BigInt::from(0))
+    );
 
     // Failure leaves the caller's buffers untouched (the recursive version
     // left partial writes; the only caller discards them on None, so the
     // cleaner behaviour is safe – pin it so it stays deliberate).
     let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-    let mut constant = Rational64::zero();
+    let mut constant = num_rational::BigRational::zero();
     let mut overflow = false;
     let pre_seeded = (z, Rational64::from_integer(7));
     terms.push(pre_seeded);

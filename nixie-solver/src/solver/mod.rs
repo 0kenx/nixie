@@ -2058,7 +2058,7 @@ impl Solver {
             // coefficient outside the rational range): such an argument is
             // not linearly definable here, so skip it.
             let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-            let mut constant = Rational64::zero();
+            let mut constant = num_rational::BigRational::zero();
             let mut overflow = false;
             if self
                 .extract_linear_terms(
@@ -2074,6 +2074,21 @@ impl Solver {
             {
                 continue;
             }
+            // The definitional row's RHS must fit the tableau's bound type;
+            // an exact-but-wide constant has no row to write.
+            // `i64::MIN` numerators are excluded: the value fits, but its
+            // negation (which row normalization performs) does not.
+            let narrow = |c: &num_rational::BigRational| -> Option<Rational64> {
+                let n = num_traits::ToPrimitive::to_i64(c.numer())?;
+                let d = num_traits::ToPrimitive::to_i64(c.denom())?;
+                if n == i64::MIN {
+                    return None;
+                }
+                Some(Rational64::new(n, d))
+            };
+            let Some(constant) = narrow(&constant) else {
+                continue;
+            };
             if terms.is_empty() {
                 // A pure constant (the parse collapsed it): nothing to
                 // relate to other interface terms.

@@ -865,7 +865,16 @@ impl ArithSolver {
             return;
         }
         // bound on x:  coef·x ◦ rhs  ⟺  x ◦' rhs/coef  (comparison flips when coef<0).
-        let ratio = rhs / coef;
+        // Checked: the division can leave `i64` width (fractional row
+        // coefficients against near-`i64::MAX` bounds — the scaled pin
+        // rows produce exactly that shape), and propagation is an
+        // OPTIMIZATION: declining to record a bound that does not fit
+        // costs completeness only, never soundness.  Unchecked, it wrapped
+        // in release and propagated a fabricated bound.
+        use num_traits::CheckedDiv;
+        let Some(ratio) = rhs.checked_div(&coef) else {
+            return;
+        };
         let flip = coef.is_negative();
         match kind {
             PropCmp::Le => {
@@ -1041,13 +1050,24 @@ impl ArithSolver {
                 // Attribute the contradiction to the actual assertion that
                 // caused it (not a hardcoded/arbitrary reason id), so the
                 // resulting unsat core cites the real culprit.
+                //
+                // An EMPTY row (`0 = c`, `c` fractional — every coefficient
+                // cancelled, e.g. `xr - xr` under a `/`-linearization) has
+                // no variable to plant the crossed bounds on: it used to
+                // plant NOTHING and silently DROP the equality, leaving the
+                // atom a free Boolean and reporting `sat` for `0 = 5/3`.
+                // A var-free infeasible row gets a fresh witness variable
+                // instead — the crossed bounds `[1, 0]` refute regardless.
                 let reason_id = self.add_reason(reason);
-                if let Some(&(var, _)) = expr.terms.first() {
-                    self.simplex
-                        .set_lower(var, Rational64::from_integer(1), reason_id);
-                    self.simplex
-                        .set_upper(var, Rational64::from_integer(0), reason_id);
-                }
+                let victim = expr
+                    .terms
+                    .first()
+                    .map(|&(v, _)| v)
+                    .unwrap_or_else(|| self.simplex.new_var());
+                self.simplex
+                    .set_lower(victim, Rational64::from_integer(1), reason_id);
+                self.simplex
+                    .set_upper(victim, Rational64::from_integer(0), reason_id);
                 return;
             };
 
@@ -1109,12 +1129,17 @@ impl ArithSolver {
                     // instead of whatever the first reason ever added
                     // happened to be.
                     let reason_id = self.add_reason(reason);
-                    if let Some(&(var, _)) = expr.terms.first() {
-                        self.simplex
-                            .set_lower(var, Rational64::from_integer(1), reason_id);
-                        self.simplex
-                            .set_upper(var, Rational64::from_integer(0), reason_id);
-                    }
+                    // Empty-row GCD infeasibility needs a witness variable
+                    // too (see the fractional-constant branch above).
+                    let victim = expr
+                        .terms
+                        .first()
+                        .map(|&(v, _)| v)
+                        .unwrap_or_else(|| self.simplex.new_var());
+                    self.simplex
+                        .set_lower(victim, Rational64::from_integer(1), reason_id);
+                    self.simplex
+                        .set_upper(victim, Rational64::from_integer(0), reason_id);
                     return;
                 }
             }

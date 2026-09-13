@@ -180,6 +180,55 @@ models, and the 1,300-instance random differential above.  Regressions in
 semantics pair, mixed-sort pins, ill-sorted parse errors, ground
 certification) and the builder folding tests in `nixie-core`.
 
+## Continuation 2 (2026-09-14): the residual class chased to the tableau wall
+
+The documented residual (constants assembled across nesting that overflow
+only in the parse) got its principled treatment, and the chase found two
+more live defects on the way:
+
+9. **The constant pipeline is now exact.**  `extract_linear_terms`
+   accumulates constants in `BigRational` end-to-end (levels, `Mul`
+   const-products, the parse total): constant arithmetic can no longer
+   overflow, panic (debug), or wrap (release) at any nesting.  Only
+   COEFFICIENT arithmetic can still gate (`narrow_rational64` at the `Mul`
+   finalize and the combine loop).  A final constant too wide for
+   `Rational64` synthesizes as a wide `IntConst` COLUMN — the existing
+   big-constant abstraction — registered with the honesty gate and the
+   distinctness pass exactly like a wide literal (the synthesis must run
+   BEFORE the big-const scan; landing it after was a false-`sat` bug the
+   fuzz caught in minutes).  The `-2^63` corner (fits `i64`, its negation
+   does not — `row_key`/DL normalization flip it) travels sign-flipped as a
+   `+2^63` column; `narrow_rational64` rejects `i64::MIN` numerators
+   everywhere it is used.  `record_prop_bound`'s bound division is checked
+   now (propagation is an optimization; declining is sound — unchecked, it
+   wrapped in release and propagated a fabricated bound).
+10. **Empty-row fractional equalities were silently dropped.**  An
+    equality whose coefficients all cancel (`xr - xr`) leaves an EMPTY
+    row; with a fractional constant (`0 = 5/3`) the infeasibility planted
+    its crossed bounds only on `expr.terms.first()` — which an empty row
+    does not have — so the constraint vanished and the atom stayed a free
+    Boolean: **`sat` for `0 = 5/3`**.  Both plant sites (the
+    fractional-constant branch and the GCD branch) now use a witness
+    variable when the row is empty.  Found by the fuzz once `/`
+    linearization made constant-folded dividends under `(/ x 3)` produce
+    exactly this shape.
+11. **The wall, precisely located.**  What stays honestly `Unknown` is the
+    *value-dependent refutation over constants ≥ 2^63*: proving
+    `(= (+ x i64::MAX 1) (+ x 2^63))` needs row combinations and column
+    values AT `2^63`, which leave `Rational64` width inside the simplex
+    itself.  Scaled pin rows (`λ·C = λ·v`) encode the exact meaning with
+    representable coefficients, but the LP's pivot arithmetic still
+    overflows computing the derived values — the boundary is the
+    tableau's fixed width, not the encoding.  Z3 decides these because
+    its tableau computes in `mpz`.  Moving Nixie's LP to exact arithmetic
+    is the (large) fix; until then the honest answer is `Unknown`, never a
+    wrapped verdict.
+
+Verification for 9–11: 11,259 workspace tests, all gates clean; Z3 parity
+0 disagreements; differential bench with model validation 0 disagreements,
+88/88 models valid; 2,400 fresh fuzz instances across six seeds (the two
+seeds that found the bugs among them) clean.
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves

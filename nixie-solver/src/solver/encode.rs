@@ -5,7 +5,8 @@ use crate::prelude::*;
 use nixie_core::ast::{TermId, TermKind, TermManager, collect_subterms, get_children};
 use nixie_core::sort::{SortId, SortKind};
 use nixie_sat::{Lit, Var};
-use num_rational::Rational64;
+use num_bigint::BigInt;
+use num_rational::{BigRational, Rational64};
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub, One, ToPrimitive, Zero};
 use smallvec::SmallVec;
 
@@ -14,6 +15,25 @@ use super::trail::TrailOp;
 use super::types::{
     ArithConstraintType, Constraint, NamedAssertion, ParsedArithConstraint, Polarity, UnsatCore,
 };
+
+/// Narrow an exact `BigRational` to the `Rational64` the tableau's
+/// coefficients and bounds live in.  `None` = unrepresentable.
+///
+/// The `i64::MIN` numerator is deliberately NOT representable: the value
+/// itself fits `i64`, but downstream content-addressing and bound moves
+/// (`row_key`, strict-inequality direction flips) NEGATE constants, and
+/// `-i64::MIN` overflows — a value whose negation does not fit must not
+/// enter the fixed-width pipeline through this door (it synthesizes as a
+/// wide column instead, whose `to_i64()` is `None` and which the big-const
+/// machinery already owns).
+#[must_use]
+fn narrow_rational64(r: &BigRational) -> Option<Rational64> {
+    let (n, d) = (r.numer().to_i64()?, r.denom().to_i64()?);
+    if n == i64::MIN {
+        return None;
+    }
+    Some(Rational64::new(n, d))
+}
 
 mod exists_skolem;
 pub(crate) mod finite_expand;
@@ -264,7 +284,7 @@ impl Solver {
         rhs: TermId,
         constraint_type: ArithConstraintType,
         reason: TermId,
-        manager: &TermManager,
+        manager: &mut TermManager,
     ) -> Option<ParsedArithConstraint> {
         // Fast path: return cached result if available.
         if let Some(cached) = self.arith_parse_cache.get(&reason) {
@@ -272,7 +292,12 @@ impl Solver {
         }
 
         let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
-        let mut constant = Rational64::zero();
+        // The folded constant is accumulated EXACTLY (`BigRational`): the
+        // walk's constant pipeline can no longer overflow, and a final
+        // constant too wide for `Rational64` is synthesized into a wide
+        // `IntConst` COLUMN below (the existing big-constant abstraction),
+        // keeping such atoms decidable instead of gated.
+        let mut constant = BigRational::zero();
 
         // Parse LHS (add positive coefficients).  `overflow` distinguishes
         // "the constant arithmetic left `Rational64` width" from "not
@@ -334,6 +359,52 @@ impl Solver {
         let final_terms: SmallVec<[(TermId, Rational64); 4]> =
             combined.into_iter().filter(|(_, c)| !c.is_zero()).collect();
 
+        // Move the EXACT folded constant to the RHS.  Three outcomes:
+        //  (a) it fits `Rational64` — the ordinary path, as before;
+        //  (b) it is integral but too wide — SYNTHESIZE it as a wide
+        //      `IntConst` column (the existing big-constant abstraction:
+        //      exact for refutation, certified on `sat`), so the atom stays
+        //      decidable — `(- (+ x i64::MAX) (0 - 1))` used to gate to
+        //      `Unknown` here; now it parses as `x + col_{2^63}` and hash-
+        //      consing unifies the column with a literal `2^63` written on
+        //      the other side of the same equation.  The synthesis happens
+        //      BEFORE the big-const scan below so the column is registered
+        //      with the honesty gate and the distinctness pass exactly like
+        //      a wide literal.
+        //  (c) fractional and too wide — unrepresentable in any constant
+        //      node the solver stores; gate the atom honestly.
+        let moved = -constant;
+        let final_terms = match narrow_rational64(&moved) {
+            Some(_) => final_terms,
+            None if moved.is_integer() => {
+                // Exactly `-2^63` fits `i64` (`MIN`) but its NEGATION does
+                // not — every fixed-width consumer that flips it
+                // (`row_key`, DL normalization) would overflow — and a
+                // `MIN`-valued literal is not classified big by `to_i64`,
+                // so it would bypass the big-const machinery.  Synthesize
+                // that corner with a sign flip: column `+2^63` at
+                // coefficient `-1`, which IS a big const everywhere.
+                let (value, coef) = if moved.to_integer() == BigInt::from(i64::MIN) {
+                    (-moved.to_integer(), -Rational64::one())
+                } else {
+                    (moved.to_integer(), Rational64::one())
+                };
+                let col = manager.mk_int(value);
+                let mut with_col = final_terms;
+                with_col.push((col, coef));
+                with_col
+            }
+            None => {
+                self.arith_parse_overflow.insert(reason);
+                self.arith_parse_cache.insert(reason, None);
+                return None;
+            }
+        };
+        let constant_r = match narrow_rational64(&moved) {
+            Some(c) => c,
+            None => Rational64::zero(), // the constant lives in the column
+        };
+
         // A column that *is* an `IntConst` is the big-constant abstraction of
         // `extract_linear_terms`: the tableau sees the constant as a free
         // variable.  Remember it so the `Sat` honesty gate can demand exact
@@ -358,17 +429,9 @@ impl Solver {
             self.arith_abstracted_big_const = true;
         }
 
-        // Move constant to RHS (checked; `i64::MIN` negation overflow is the
-        // same gated class).  `Ratio` has no `checked_neg`; `0 - c` is the
-        // same test through `CheckedSub`.
-        let Some(negated_constant) = Rational64::zero().checked_sub(&constant) else {
-            self.arith_parse_overflow.insert(reason);
-            self.arith_parse_cache.insert(reason, None);
-            return None;
-        };
         let result = ParsedArithConstraint {
             terms: final_terms,
-            constant: negated_constant, // Move constant to RHS
+            constant: constant_r, // Move constant to RHS
             constraint_type,
             reason_term: reason,
         };
@@ -431,21 +494,23 @@ impl Solver {
         term_id: TermId,
         scale: Rational64,
         terms: &mut SmallVec<[(TermId, Rational64); 4]>,
-        constant: &mut Rational64,
+        constant: &mut BigRational,
         manager: &TermManager,
         overflow: &mut bool,
     ) -> Option<()> {
         /// One linear-accumulation context: the `(term, coefficient)` pairs
         /// and folded constant of the sub-expression currently being walked.
+        /// The constant is EXACT (`BigRational`): constants cannot overflow
+        /// this pipeline, so only coefficient arithmetic can fail (`overflow`).
         struct Level {
             terms: SmallVec<[(TermId, Rational64); 4]>,
-            constant: Rational64,
+            constant: BigRational,
         }
         impl Level {
             fn new() -> Self {
                 Level {
                     terms: SmallVec::new(),
-                    constant: Rational64::zero(),
+                    constant: BigRational::zero(),
                 }
             }
         }
@@ -466,7 +531,11 @@ impl Solver {
             /// been classified already, factor `next-1` (if `next > 0`) is the
             /// one whose result is sitting in the current level.
             next: usize,
-            const_product: Rational64,
+            /// Product of the pure-constant factors seen so far, EXACT:
+            /// feeds the constant pipeline (never overflows).  The
+            /// coefficient multiplier derived from it at finalize is
+            /// narrowed to `Rational64` there (and gates on failure).
+            const_product: BigRational,
             /// The single non-constant factor seen so far, in full linear
             /// form (variable terms + additive constant).  A second
             /// non-constant factor makes the product nonlinear.
@@ -485,6 +554,10 @@ impl Solver {
             Mul(Box<MulFrame>),
         }
 
+        let exact = |r: &Rational64| -> BigRational {
+            BigRational::new(BigInt::from(*r.numer()), BigInt::from(*r.denom()))
+        };
+
         let mut cur = Level::new();
         let mut work: Vec<Work> = vec![Work::Visit(term_id, scale)];
 
@@ -493,19 +566,16 @@ impl Solver {
                 Work::Visit(id, sc) => {
                     let term = manager.get(id)?;
                     match &term.kind {
-                        // Integer constant.
+                        // Integer constant.  The constant pipeline is exact
+                        // (`BigRational`), so a sum of individually-fitting
+                        // literals can no longer overflow here — the class
+                        // that used to panic in debug and silently wrap in
+                        // release, and (after checked arithmetic landed) gate
+                        // to `Unknown`, now folds exactly and is handed to
+                        // the wide-column synthesis at the parse boundary.
                         TermKind::IntConst(n) => match n.to_i64() {
                             Some(val) => {
-                                let folded = sc
-                                    .checked_mul(&Rational64::from_integer(val))
-                                    .and_then(|p| cur.constant.checked_add(&p));
-                                match folded {
-                                    Some(c) => cur.constant = c,
-                                    None => {
-                                        *overflow = true;
-                                        return None;
-                                    }
-                                }
+                                cur.constant += &exact(&sc) * BigRational::from(BigInt::from(val));
                             }
                             None => {
                                 // A BigInt too large for the `Rational64`
@@ -528,32 +598,15 @@ impl Solver {
                             }
                         },
 
-                        // Rational constant
+                        // Rational constant (exact — see the `IntConst` arm).
                         TermKind::RealConst(r) => {
-                            let folded =
-                                sc.checked_mul(r).and_then(|p| cur.constant.checked_add(&p));
-                            match folded {
-                                Some(c) => cur.constant = c,
-                                None => {
-                                    *overflow = true;
-                                    return None;
-                                }
-                            }
+                            cur.constant += &exact(&sc) * exact(r);
                         }
 
-                        // Bitvector constant - treat as integer
+                        // Bitvector constant - treat as integer (exact).
                         TermKind::BitVecConst { value, .. } => {
                             let val = value.to_i64()?;
-                            let folded = sc
-                                .checked_mul(&Rational64::from_integer(val))
-                                .and_then(|p| cur.constant.checked_add(&p));
-                            match folded {
-                                Some(c) => cur.constant = c,
-                                None => {
-                                    *overflow = true;
-                                    return None;
-                                }
-                            }
+                            cur.constant += &exact(&sc) * BigRational::from(BigInt::from(val));
                         }
 
                         // Variable (or bitvector variable - treat as integer variable)
@@ -661,7 +714,7 @@ impl Solver {
                             work.push(Work::Mul(Box::new(MulFrame {
                                 args: args.iter().copied().collect(),
                                 next: 0,
-                                const_product: Rational64::one(),
+                                const_product: BigRational::one(),
                                 non_const_factor: None,
                                 scale: sc,
                                 parent: core::mem::replace(&mut cur, Level::new()),
@@ -706,12 +759,9 @@ impl Solver {
                         // into the current (per-factor) level.
                         if cur.terms.is_empty() {
                             // Pure constant factor – absorb into the running
-                            // product of constant factors.
-                            let Some(p) = frame.const_product.checked_mul(&cur.constant) else {
-                                *overflow = true;
-                                return None;
-                            };
-                            frame.const_product = p;
+                            // product of constant factors (exact; the
+                            // `Rational64` narrowing happens at finalize).
+                            frame.const_product *= &cur.constant;
                         } else {
                             // Non-constant factor (one or more variable terms,
                             // possibly with an additive constant).  A product
@@ -732,39 +782,33 @@ impl Solver {
                         work.push(Work::Visit(arg, Rational64::one()));
                     } else {
                         // All factors classified: restore the parent context
-                        // and contribute the product to it.  `c` is the product
-                        // of the scale and every constant factor, so the single
-                        // non-constant factor's variable terms and its additive
-                        // constant are both scaled by `c`.
-                        let Some(c) = frame.scale.checked_mul(&frame.const_product) else {
+                        // and contribute the product to it.  `c_exact` (the
+                        // scale times every constant factor) scales BOTH the
+                        // single non-constant factor's variable terms and its
+                        // additive constant.  The COEFFICIENTS must live in
+                        // `Rational64`, so `c_exact` is narrowed for them and
+                        // an unrepresentable product gates the atom
+                        // (coefficient overflow); the CONSTANT contribution
+                        // uses `c_exact` directly and cannot fail.
+                        let c_exact = exact(&frame.scale) * &frame.const_product;
+                        let Some(c_r) = narrow_rational64(&c_exact) else {
                             *overflow = true;
                             return None;
                         };
                         cur = frame.parent;
                         match frame.non_const_factor {
                             None => {
-                                let Some(v) = cur.constant.checked_add(&c) else {
-                                    *overflow = true;
-                                    return None;
-                                };
-                                cur.constant = v;
+                                cur.constant += c_exact;
                             }
                             Some(level) => {
                                 for (v, coef) in level.terms {
-                                    let Some(scaled) = c.checked_mul(&coef) else {
+                                    let Some(scaled) = c_r.checked_mul(&coef) else {
                                         *overflow = true;
                                         return None;
                                     };
                                     cur.terms.push((v, scaled));
                                 }
-                                let scaled_const = c.checked_mul(&level.constant);
-                                let Some(v) =
-                                    scaled_const.and_then(|sc_| cur.constant.checked_add(&sc_))
-                                else {
-                                    *overflow = true;
-                                    return None;
-                                };
-                                cur.constant = v;
+                                cur.constant += c_exact * &level.constant;
                             }
                         }
                     }
@@ -778,13 +822,7 @@ impl Solver {
         for pair in cur.terms {
             terms.push(pair);
         }
-        match constant.checked_add(&cur.constant) {
-            Some(v) => *constant = v,
-            None => {
-                *overflow = true;
-                return None;
-            }
-        }
+        *constant += &cur.constant;
         Some(())
     }
 
@@ -2790,7 +2828,7 @@ impl Solver {
                     smallvec::SmallVec::new();
                 let mut nterms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
                     smallvec::SmallVec::new();
-                let (mut mc, mut nc) = (Rational64::zero(), Rational64::zero());
+                let (mut mc, mut nc) = (BigRational::zero(), BigRational::zero());
                 let mut of = false;
                 if self
                     .extract_linear_terms(
@@ -2817,15 +2855,19 @@ impl Solver {
                 {
                     return;
                 }
-                if nc == Rational64::zero() {
+                if nc.is_zero() {
                     return; // uninterpreted per SMT-LIB
                 }
-                mc / nc
+                // The pin value must be `Rational64`-representable.
+                let Some(value) = narrow_rational64(&(mc / nc)) else {
+                    return;
+                };
+                value
             }
             _ => {
                 let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
                     smallvec::SmallVec::new();
-                let mut constant = Rational64::zero();
+                let mut constant = BigRational::zero();
                 let mut of = false;
                 if self
                     .extract_linear_terms(
@@ -2841,6 +2883,11 @@ impl Solver {
                 {
                     return;
                 }
+                // A pin value must fit the `Rational64` the model stores;
+                // an exact-but-wide value simply has no pin to record.
+                let Some(constant) = narrow_rational64(&constant) else {
+                    return;
+                };
                 constant
             }
         };
