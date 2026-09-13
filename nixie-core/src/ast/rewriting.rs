@@ -706,21 +706,23 @@ mod tests {
     fn test_arithmetic_identity() {
         let mut manager = TermManager::new();
         let rule = ArithmeticIdentityRule;
-
-        // x + 0 → x
         let x = manager.mk_var("x", manager.sorts.int_sort);
+
+        // The builder itself now applies these identities at construction
+        // time (Z3's rewriter layering): `mk_add([x, 0])` IS `x`, and
+        // `mk_mul([x, 1])` IS `x`, so the rule has nothing to do on a
+        // builder-built term.  The rule remains for terms constructed by
+        // other paths; what this test pins is the *outcome* the layering
+        // must produce either way.
         let zero = manager.mk_int(0);
         let sum = manager.mk_add([x, zero]);
+        assert_eq!(sum, x, "x + 0 must already be x at construction");
+        assert_eq!(rule.apply(sum, &mut manager), None);
 
-        let result = rule.apply(sum, &mut manager);
-        assert_eq!(result, Some(x));
-
-        // x * 1 → x
         let one = manager.mk_int(1);
         let product = manager.mk_mul([x, one]);
-
-        let result = rule.apply(product, &mut manager);
-        assert_eq!(result, Some(x));
+        assert_eq!(product, x, "x * 1 must already be x at construction");
+        assert_eq!(rule.apply(product, &mut manager), None);
     }
 
     #[test]
@@ -728,23 +730,24 @@ mod tests {
         let mut manager = TermManager::new();
         let rule = ArithmeticConstantFoldingRule;
 
-        // (+ 1 2 3) → 6
+        // (+ 1 2 3) folds AT CONSTRUCTION now (the builder folds numeral
+        // arguments exactly, in `BigInt` -- see `manager/builder.rs`), so
+        // `sum` is already `IntConst(6)` and the rule is a no-op on it.
+        // The rule itself is still exercised by terms that reach it
+        // unfolded; what this test pins is that the numeral chain never
+        // survives construction with the wrong value.
         let one = manager.mk_int(1);
         let two = manager.mk_int(2);
         let three = manager.mk_int(3);
         let sum = manager.mk_add([one, two, three]);
 
-        if let Some(result) = rule.apply(sum, &mut manager) {
-            if let Some(result_term) = manager.get(result) {
-                if let TermKind::IntConst(n) = &result_term.kind {
-                    assert_eq!(*n, num_bigint::BigInt::from(6));
-                } else {
-                    panic!("Expected integer constant");
-                }
+        match &manager.get(sum).map(|t| t.kind.clone()) {
+            Some(TermKind::IntConst(n)) => {
+                assert_eq!(*n, num_bigint::BigInt::from(6));
             }
-        } else {
-            panic!("Constant folding should apply");
+            _ => panic!("(+ 1 2 3) must fold to IntConst(6) at construction"),
         }
+        assert_eq!(rule.apply(sum, &mut manager), None);
     }
 
     #[test]

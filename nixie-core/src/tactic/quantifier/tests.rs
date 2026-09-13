@@ -53,25 +53,29 @@ fn test_ground_term_collector() {
     let mut manager = setup_manager();
     let int_sort = manager.sorts.int_sort;
 
-    // Create some terms
+    // Create some terms.  The "ground sum" needs a non-numeral ground
+    // operand: the builder folds an all-numeral add into its sum, and the
+    // collector would never see the operands.  `(f 1)` is ground (a nullary
+    // environment, no free variables) and structural.
     let x = manager.mk_var("x", int_sort);
     let one = manager.mk_int(1);
     let two = manager.mk_int(2);
-    let sum = manager.mk_add([one, two]);
+    let f1 = manager.mk_apply("f", [one], int_sort);
+    let sum = manager.mk_add([f1, two]);
 
     // Collect from multiple terms
     let term_with_var = manager.mk_add([x, one]);
 
     let mut collector = GroundTermCollector::new();
-    // Collect from ground sum (1 + 2)
+    // Collect from ground sum ((f 1) + 2)
     collector.collect(sum, &manager);
     // Collect from non-ground term (x + 1)
     collector.collect(term_with_var, &manager);
 
-    // Should have collected 1, 2, and (1 + 2) from ground term
+    // Should have collected 1, 2, and ((f 1) + 2) from ground term
     assert!(collector.all_terms().contains(&one));
     assert!(collector.all_terms().contains(&two));
-    assert!(collector.all_terms().contains(&sum)); // ground term (1 + 2)
+    assert!(collector.all_terms().contains(&sum)); // ground term ((f 1) + 2)
     // Should NOT have collected x or (x + 1) since they contain free vars
     assert!(!collector.all_terms().contains(&x));
     assert!(!collector.all_terms().contains(&term_with_var));

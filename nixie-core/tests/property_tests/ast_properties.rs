@@ -392,23 +392,33 @@ proptest! {
     /// Test that the number of unique subterms is reasonable
     #[test]
     fn traversal_subterm_count(
-        a in small_int_strategy(),
-        b in small_int_strategy(),
-        c in small_int_strategy()
+        x_name in var_name_strategy(),
+        y_name in var_name_strategy(),
+        a in 1i32..,
+        b in 1i32..,
     ) {
         let mut tm = TermManager::new();
+        let sort = tm.sorts.int_sort;
+        let x = tm.mk_var(&x_name, sort);
+        let y = tm.mk_var(&y_name, sort);
         let ta = tm.mk_int(BigInt::from(a));
         let tb = tm.mk_int(BigInt::from(b));
-        let tc = tm.mk_int(BigInt::from(c));
 
-        // Create: (a + b) * c
-        let sum = tm.mk_add(vec![ta, tb]);
-        let prod = tm.mk_mul(vec![sum, tc]);
+        // Create: (a + x) * (b + y) with NON-ZERO numerals and variable
+        // leaves.  The builder's constant folding now (a) collapses an
+        // all-numeral product into one constant and (b) drops a zero
+        // numeral from an add -- so a structural-subterm property must
+        // feed it operands that carry structure: nonzero numerals and
+        // variables.  (Distinct names are not required: sharing only
+        // shrinks the count by the shared leaf, which the bound absorbs.)
+        let left = tm.mk_add(vec![ta, x]);
+        let right = tm.mk_add(vec![tb, y]);
+        let prod = tm.mk_mul(vec![left, right]);
 
         let subterms = traversal::collect_subterms(prod, &tm);
 
-        // Should have at least 3 terms
-        prop_assert!(subterms.len() >= 3);
+        // Mul, two Adds, two numerals, and at least one variable leaf.
+        prop_assert!(subterms.len() >= 6);
     }
 
     /// Test that collecting free variables works correctly

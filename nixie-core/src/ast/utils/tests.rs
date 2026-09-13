@@ -176,8 +176,10 @@ fn test_find_terms() {
     let five = manager.mk_int(5);
     let ten = manager.mk_int(10);
 
-    let mul = manager.mk_mul([five, ten]);
-    let expr = manager.mk_add([x, mul]);
+    // The product needs a variable operand: the builder folds `(* 5 10)`
+    // into `50` at construction.
+    let mul = manager.mk_mul([x, five]);
+    let expr = manager.mk_add([mul, ten]);
 
     // Find all integer constants
     let constants = find_terms(expr, &manager, |id, mgr| {
@@ -268,20 +270,26 @@ fn test_flatten_add() {
     let x = manager.mk_var("x", manager.sorts.int_sort);
     let one = manager.mk_int(1);
     let two = manager.mk_int(2);
-    let three = manager.mk_int(3);
 
-    // Create (+ (+ x 1) (+ 2 3))
+    // Create (+ (+ x 1) (+ x 2)) -- the inner adds need a variable operand,
+    // because the builder's constant folding collapses an all-numeral add
+    // into its sum.
     let left = manager.mk_add([x, one]);
-    let right = manager.mk_add([two, three]);
+    let right = manager.mk_add([x, two]);
     let nested = manager.mk_add([left, right]);
 
-    // Flatten should give us (+ x 1 2 3)
+    // Flatten yields the flat arg list (+ x x 1 2), which `mk_add` then
+    // normalizes: the two numerals merge into one collected numeral at the
+    // end, so (+ x x 3).  Same value, canonical shape.
     let flattened = flatten_associative(nested, &mut manager);
 
-    // Verify it's an Add with 4 arguments
+    // Verify it's an Add with 3 arguments: x, x, 3
+    let three = manager.mk_int(3);
     if let Some(term) = manager.get(flattened) {
         if let TermKind::Add(args) = &term.kind {
-            assert_eq!(args.len(), 4);
+            assert_eq!(args.len(), 3);
+            assert!(args.contains(&x));
+            assert!(args.contains(&three));
         } else {
             panic!("Expected Add term");
         }

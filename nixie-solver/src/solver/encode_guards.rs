@@ -59,6 +59,16 @@ impl Solver {
                 }
                 continue;
             }
+            // The parse failed with the constant arithmetic out of range
+            // (`arith_parse_overflow`): the atom has no linear constraint at
+            // all, and unlike the nonlinear case there is no structural
+            // tell in the term (every leaf fits `i64`; only the folded sum
+            // does not) – hence the explicit record.  Gate it.
+            if let Some(atom) = self.var_to_term.get(var.index()).copied()
+                && self.arith_parse_overflow.contains(&atom)
+            {
+                return true;
+            }
             if self.term_contains_unhandled_arith(lhs, manager)
                 || self.term_contains_unhandled_arith(rhs, manager)
             {

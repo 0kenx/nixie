@@ -6,18 +6,16 @@
 //! `nixie-solver`'s own `arith_axioms` ground-lemma encoder plus the linear
 //! arithmetic tableau.
 //!
-//! Every script below declares `(set-logic QF_LIA)` explicitly. This is not
-//! decorative: `arith_axioms::instantiate_arith_axioms` only asserts the
-//! Euclidean defining axioms in *integer mode*
-//! (`self.arith.is_integer()`) – real mode leaves `div`/`mod` deliberately
-//! undefined, per that module's own doc comment, because "the quotient
-//! being an integer" is what the axioms rest on. Integer mode is decided
-//! from the declared logic, not merely from every operand happening to be
-//! `Int`-sorted, so a script that never calls `set-logic` at all answers
-//! `unknown` for a `div`/`mod` query regardless of declared sorts – a
-//! pre-existing, logic-string-driven gate this file does not change or
-//! attempt to relax, and works around the documented way (declaring the
-//! logic, exactly as a conformant SMT-LIB2 script must).
+//! Every script below declares `(set-logic QF_LIA)`. Historically this was
+//! *load-bearing*: `arith_axioms::instantiate_arith_axioms` asserted the
+//! Euclidean defining axioms only when the arithmetic solver ran in integer
+//! mode, and the default (no `set-logic`) solver was pure LRA – so a
+//! `div`/`mod` query without a declared logic answered `unknown`. Since the
+//! default became mixed-integer (`ArithSolver::mixed()`, Z3's
+//! `theory_mi_arith` shape for an unset logic), integer reasoning is armed
+//! by default and the axioms fire for `Int`-sorted `div`/`mod` either way;
+//! the declaration is kept because it is what a conformant SMT-LIB2 script
+//! writes anyway.
 //!
 //! ## The convention being pinned
 //!
@@ -73,8 +71,10 @@ fn test_pr27_divmod_positive_dividend_positive_divisor() {
         (get-value ((div 7 2) (mod 7 2)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div 7 2) 3"), "{}", output[1]);
-    assert!(output[1].contains("(mod 7 2) 1"), "{}", output[1]);
+    // The builder folds a two-literal div/mod at construction now, so the
+    // echoed query term IS its value: `(3 3)`, `(1 1)`.
+    assert!(output[1].contains("(3 3)"), "{}", output[1]);
+    assert!(output[1].contains("(1 1)"), "{}", output[1]);
 }
 
 /// Positive dividend, negative divisor: `(div 7 (- 2))=-3`, `(mod 7 (- 2))=1`.
@@ -87,8 +87,8 @@ fn test_pr27_divmod_positive_dividend_negative_divisor() {
         (get-value ((div 7 (- 2)) (mod 7 (- 2))))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div 7 (- 2)) -3"), "{}", output[1]);
-    assert!(output[1].contains("(mod 7 (- 2)) 1"), "{}", output[1]);
+    assert!(output[1].contains("(-3 -3)"), "{}", output[1]);
+    assert!(output[1].contains("(1 1)"), "{}", output[1]);
 }
 
 /// Negative dividend, positive divisor: `(div (- 7) 2)=-4`, `(mod (- 7) 2)=1`.
@@ -103,8 +103,8 @@ fn test_pr27_divmod_negative_dividend_positive_divisor() {
         (get-value ((div (- 7) 2) (mod (- 7) 2)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div (- 7) 2) -4"), "{}", output[1]);
-    assert!(output[1].contains("(mod (- 7) 2) 1"), "{}", output[1]);
+    assert!(output[1].contains("(-4 -4)"), "{}", output[1]);
+    assert!(output[1].contains("(1 1)"), "{}", output[1]);
 }
 
 /// Negative dividend, negative divisor: `(div (- 7) (- 2))=4`,
@@ -117,8 +117,8 @@ fn test_pr27_divmod_negative_dividend_negative_divisor() {
         (get-value ((div (- 7) (- 2)) (mod (- 7) (- 2))))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div (- 7) (- 2)) 4"), "{}", output[1]);
-    assert!(output[1].contains("(mod (- 7) (- 2)) 1"), "{}", output[1]);
+    assert!(output[1].contains("(4 4)"), "{}", output[1]);
+    assert!(output[1].contains("(1 1)"), "{}", output[1]);
 }
 
 /// Boundary: exact division, remainder `0`.
@@ -130,8 +130,8 @@ fn test_pr27_divmod_boundary_remainder_zero() {
         (get-value ((div 8 2) (mod 8 2)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div 8 2) 4"), "{}", output[1]);
-    assert!(output[1].contains("(mod 8 2) 0"), "{}", output[1]);
+    assert!(output[1].contains("(4 4)"), "{}", output[1]);
+    assert!(output[1].contains("(0 0)"), "{}", output[1]);
 }
 
 /// Boundary: remainder at its maximum, `|n|-1`. `-1 = 7*(-1) + 6`.
@@ -143,8 +143,8 @@ fn test_pr27_divmod_boundary_remainder_at_upper_bound() {
         (get-value ((div (- 1) 7) (mod (- 1) 7)))
     "#);
     assert_eq!(output[0], "sat");
-    assert!(output[1].contains("(div (- 1) 7) -1"), "{}", output[1]);
-    assert!(output[1].contains("(mod (- 1) 7) 6"), "{}", output[1]);
+    assert!(output[1].contains("(-1 -1)"), "{}", output[1]);
+    assert!(output[1].contains("(6 6)"), "{}", output[1]);
 }
 
 /// A variable dividend, pinned indirectly: `x = -7` forces

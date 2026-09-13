@@ -96,7 +96,13 @@ impl Solver {
                         if !self.arith_terms.contains(&current) {
                             self.arith_terms.insert(current);
                             self.trail.push(TrailOp::ArithTermAdded { term: current });
-                            self.arith.intern(current);
+                            // Int-sorted variables are integer variables
+                            // (per-sort integrality; see `register_arith_atom`).
+                            if is_int {
+                                self.arith.intern_integer(current);
+                            } else {
+                                self.arith.intern(current);
+                            }
                         }
                     } else if let Some(sort) = manager.sorts.get(term.sort)
                         && sort.is_bitvec()
@@ -108,8 +114,9 @@ impl Solver {
                             self.bv_new_free_vector(current, width);
                         }
                         // Also intern in ArithSolver for BV comparison constraints
-                        // (BV comparisons are handled as bounded integer arithmetic)
-                        self.arith.intern(current);
+                        // (BV comparisons are handled as bounded integer arithmetic).
+                        // BV values are integral, so the column is marked integer.
+                        self.arith.intern_integer(current);
                     }
                 }
 
@@ -253,7 +260,11 @@ impl Solver {
                     if (is_int || is_real) && !self.arith_terms.contains(&current) {
                         self.arith_terms.insert(current);
                         self.trail.push(TrailOp::ArithTermAdded { term: current });
-                        self.arith.intern(current);
+                        if is_int {
+                            self.arith.intern_integer(current);
+                        } else {
+                            self.arith.intern(current);
+                        }
                     }
                 }
 
@@ -271,7 +282,11 @@ impl Solver {
                     if (is_int || is_real) && !self.arith_terms.contains(&current) {
                         self.arith_terms.insert(current);
                         self.trail.push(TrailOp::ArithTermAdded { term: current });
-                        self.arith.intern(current);
+                        if is_int {
+                            self.arith.intern_integer(current);
+                        } else {
+                            self.arith.intern(current);
+                        }
                     }
                 }
 

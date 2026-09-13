@@ -78,43 +78,46 @@ fn wide_literals_reach_the_solver_intact() {
     assert_eq!(validity_of("4611686018427387903 + 1"), SolverResult::Unsat);
 }
 
-/// Integer arithmetic near and above `i64::MAX` does not work.
+/// Integer arithmetic at and above `i64::MAX` is decided exactly.
 ///
-/// `(i64::MAX + 1) = i64::MAX + 1` **panics** inside `num-rational`
-/// (`attempt to add with overflow`), so the arithmetic path is carrying a
-/// fixed-width rational where a `BigRational` is needed; above that the solver
-/// returns `Unknown`. Reproduced without any TLA+ by
-/// `examples/widerepro.rs`, and written up in
+/// The original defect: `(i64::MAX + 1) = i64::MAX + 1` **panicked** inside
+/// `num-rational` (`attempt to add with overflow`) because the linear-parse
+/// accumulator summed two individually-fitting literals into a `Ratio<i64>`;
+/// above that the solver returned `Unknown`. Fixed at the root by exact
+/// `BigInt` constant folding in `TermManager::mk_add` (and checked
+/// accumulation behind it); reproduced without any TLA+ by
+/// `examples/widerepro.rs`, written up in
 /// `docs/studies/2026-09-13-lia-wide-literal-arithmetic.md`.
-///
-/// Ignored because it aborts the process rather than failing. Run it with
-/// `cargo test -p nixie-tla-check -- --ignored` once the gap is closed.
 #[test]
-#[ignore = "panics in num-rational; see docs/studies/2026-09-13-lia-wide-literal-arithmetic.md"]
 fn wide_literals_above_i64_max() {
-    assert_eq!(validity_of("9223372036854775807 + 1"), SolverResult::Unsat);
+    for body in [
+        "4611686018427387903 + 1",           // 2^62: always fine
+        "9223372036854775806 + 1",           // i64::MAX - 1: the old boundary case
+        "9223372036854775807 + 1",           // i64::MAX: used to panic
+        "18446744073709551615 + 1",          // 2^64 - 1: used to be Unknown
+        "79228162514264337593543950335 + 1", // 2^96 - 1
+    ] {
+        assert_eq!(validity_of(body), SolverResult::Unsat, "body: {body}");
+    }
 }
 
-/// Nixie returns `Unknown` for integer `\div` and `%` applied to literals.
+/// Integer `\div` and `%` on literals are decided.
 ///
-/// `26 \div 2 = 13` is trivially decidable, and the solver does not decide it;
-/// multiplication of the same literals is fine. `Unknown` is *sound* — it is
-/// never a wrong answer — but it makes any TLA+ specification using `\div` or
-/// `%` undecidable through this path, which is most specifications that do
-/// arithmetic at all.
-///
-/// Written up in `docs/studies/2026-09-13-lia-div-mod-literal-incompleteness.md`.
-/// This test asserts only the sound property, so it keeps passing when the gap
-/// is closed; the study is what records the gap.
+/// The original defect: the default arithmetic solver ran real mode, which
+/// refuses the Euclidean `div`/`mod` defining axioms, so every division atom
+/// was gated to `Unknown` (`26 \div 2 = 13` among them) — sound, but it made
+/// any TLA+ specification doing integer division undecidable. The default
+/// became mixed-integer and the builder constant-folds two-literal
+/// `div`/`mod` exactly, so these are decided.
 #[test]
-fn division_on_literals_is_currently_undecided_but_never_wrong() {
-    for body in ["26 \\div 2", "26 % 4"] {
-        let r = validity_of(body);
-        assert_ne!(
-            r,
-            SolverResult::Sat,
-            "a valid claim about `{body}` must never come back satisfiable"
-        );
+fn division_on_literals_is_decided() {
+    for body in [
+        "26 \\div 2",
+        "26 % 4",
+        "-7 \\div 2", // Euclidean: (- 7) \div 2 = - 4
+        "-7 % 2",     // Euclidean: (- 7) % 2 = 1
+    ] {
+        assert_eq!(validity_of(body), SolverResult::Unsat, "body: {body}");
     }
 }
 

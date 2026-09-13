@@ -228,7 +228,11 @@ fn substitute_passes_through_let_body() {
             assert_eq!(bindings.len(), 1);
             assert_eq!(bindings[0].1, five, "binding value unchanged");
             match &m.get(*body).expect("let body").kind {
-                TermKind::Add(args) => assert_eq!(args.as_slice(), &[ten, z]),
+                // The builder's constant folding collects numeral arguments
+                // to the end of an `Add` (Z3 rewriter layering), so the
+                // substituted body is `(+ z 10)`, not `(+ 10 z)` -- same
+                // value, canonical order.
+                TermKind::Add(args) => assert_eq!(args.as_slice(), &[z, ten]),
                 other => panic!("expected Add body, got {other:?}"),
             }
         }

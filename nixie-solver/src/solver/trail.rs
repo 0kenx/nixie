@@ -314,6 +314,7 @@ impl super::Solver {
             // (cleared only by `reset`).
             dt_var_constructors: _,    // TRAIL: DtVarConstructorAdded
             arith_parse_cache: _,      // INVARIANT: keyed by term structure
+            arith_parse_overflow: _, // INVARIANT: keyed by term structure (same contract as arith_parse_cache)
             tracked_compound_terms: _, // TRAIL: TrackedCompoundAdded
             encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term

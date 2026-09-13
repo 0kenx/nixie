@@ -645,14 +645,20 @@ mod tests {
     #[test]
     fn deep_right_nested_constant_add_chain_collapses() {
         let mut manager = TermManager::new();
-        // (+ 1 (+ 1 (+ 1 ... 0))) at depth 600: previously refused by the
+        // (+ 1 (+ 1 (+ 1 ... 0))) at depth 600 used to be refused by the
         // encode-depth guard as a >512-deep term even though it folds to 600.
+        // The builder's constant folding now collapses each `(+ 1 c)` into
+        // `c + 1` AT CONSTRUCTION, so the deep chain cannot be built through
+        // `mk_add` at all -- which is the fix working.  Pin both halves:
+        // the built term is already the exact numeral (depth 1), and
+        // `fold_ground` agrees with it.
         let mut term = manager.mk_int(0);
         let one = manager.mk_int(1);
         for _ in 0..600 {
             term = manager.mk_add([one, term]);
         }
-        assert!(compute_depth(term, &manager) > 512);
+        assert_eq!(compute_depth(term, &manager), 1);
+        int_const_is(term, &manager, &BigInt::from(600));
         let folded = fold_ground(term, &mut manager);
         int_const_is(folded, &manager, &BigInt::from(600));
     }

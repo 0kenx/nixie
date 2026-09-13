@@ -857,12 +857,14 @@ fn extract_linear_terms_deep_sub_chain_on_a_small_stack() {
 
             let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
             let mut constant = Rational64::zero();
+            let mut overflow = false;
             let ok = solver.extract_linear_terms(
                 chain,
                 Rational64::from_integer(1),
                 &mut terms,
                 &mut constant,
                 &manager,
+                &mut overflow,
             );
 
             assert_eq!(ok, Some(()), "a deep Sub chain is linear");
@@ -912,12 +914,14 @@ fn extract_linear_terms_deep_nested_mul_on_a_small_stack() {
 
             let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
             let mut constant = Rational64::zero();
+            let mut overflow = false;
             let ok = solver.extract_linear_terms(
                 chain,
                 Rational64::from_integer(1),
                 &mut terms,
                 &mut constant,
                 &manager,
+                &mut overflow,
             );
 
             assert_eq!(ok, Some(()), "x multiplied by 1 at any depth is linear");
@@ -951,12 +955,14 @@ fn extract_linear_terms_semantic_pins() {
     let run = |manager: &TermManager, term: TermId| {
         let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
         let mut constant = Rational64::zero();
+        let mut overflow = false;
         let ok = solver.extract_linear_terms(
             term,
             Rational64::from_integer(1),
             &mut terms,
             &mut constant,
             manager,
+            &mut overflow,
         );
         (ok, terms, constant)
     };
@@ -1026,6 +1032,7 @@ fn extract_linear_terms_semantic_pins() {
     // cleaner behaviour is safe – pin it so it stays deliberate).
     let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
     let mut constant = Rational64::zero();
+    let mut overflow = false;
     let pre_seeded = (z, Rational64::from_integer(7));
     terms.push(pre_seeded);
     let ok = solver.extract_linear_terms(
@@ -1034,6 +1041,7 @@ fn extract_linear_terms_semantic_pins() {
         &mut terms,
         &mut constant,
         &manager,
+        &mut overflow,
     );
     assert_eq!(ok, None);
     assert_eq!(terms.as_slice(), &[pre_seeded]);

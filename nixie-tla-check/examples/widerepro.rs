@@ -1,8 +1,12 @@
-//! Minimal solver-level reproducer for the wide-integer-literal failures.
+//! Minimal solver-level reproducer for the wide-integer-literal defects
+//! (now fixed -- every case prints `Unsat (correct)`).
 //!
 //! Builds the terms directly with `nixie-core`, with no TLA+ involved, so the
 //! finding is actionable for the solver rather than filtered through the front
-//! end. See `docs/studies/2026-09-13-lia-wide-literal-arithmetic.md`.
+//! end. See `docs/studies/2026-09-13-lia-wide-literal-arithmetic.md` for the
+//! original failures (a panic at `i64::MAX`, `Unknown` above it) and the fix
+//! layering that closed them; the end-to-end regressions live in
+//! `nixie-solver/tests/arith_wide_literal_regressions.rs`.
 
 use nixie_core::TermManager;
 use nixie_solver::{Solver, SolverResult};

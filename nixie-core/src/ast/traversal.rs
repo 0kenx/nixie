@@ -477,15 +477,17 @@ mod tests {
     fn test_collect_subterms() {
         let mut manager = TermManager::new();
 
-        // (+ 1 2)
-        let one = manager.mk_int(1);
+        // (+ x 2) -- a variable operand, because the builder's constant
+        // folding reduces an all-numeral add to the numeral itself, leaving
+        // no structure to collect.
+        let x = manager.mk_var("x", manager.sorts.int_sort);
         let two = manager.mk_int(2);
-        let sum = manager.mk_add([one, two]);
+        let sum = manager.mk_add([x, two]);
 
         let subterms = collect_subterms(sum, &manager);
-        // Should contain: 1, 2, (+ 1 2)
+        // Should contain: x, 2, (+ x 2)
         assert_eq!(subterms.len(), 3);
-        assert!(subterms.contains(&one));
+        assert!(subterms.contains(&x));
         assert!(subterms.contains(&two));
         assert!(subterms.contains(&sum));
     }
@@ -509,11 +511,13 @@ mod tests {
     fn test_compute_depth() {
         let mut manager = TermManager::new();
 
-        // (+ (+ 1 2) 3)
+        // (+ (+ x 1) 3): a variable inside, because the builder's constant
+        // folding collapses an all-numeral add into its sum (which would
+        // leave no nesting to measure).
+        let x = manager.mk_var("x", manager.sorts.int_sort);
         let one = manager.mk_int(1);
-        let two = manager.mk_int(2);
         let three = manager.mk_int(3);
-        let inner_sum = manager.mk_add([one, two]);
+        let inner_sum = manager.mk_add([x, one]);
         let outer_sum = manager.mk_add([inner_sum, three]);
 
         assert_eq!(compute_depth(one, &manager), 1);
@@ -525,12 +529,14 @@ mod tests {
     fn test_contains_term() {
         let mut manager = TermManager::new();
 
-        let one = manager.mk_int(1);
+        // Variable operand -- see `test_collect_subterms` for why not a
+        // numeral chain (the builder folds those away).
+        let x = manager.mk_var("x", manager.sorts.int_sort);
         let two = manager.mk_int(2);
         let three = manager.mk_int(3);
-        let sum = manager.mk_add([one, two]);
+        let sum = manager.mk_add([x, two]);
 
-        assert!(contains_term(sum, one, &manager));
+        assert!(contains_term(sum, x, &manager));
         assert!(contains_term(sum, two, &manager));
         assert!(!contains_term(sum, three, &manager));
     }
@@ -539,13 +545,16 @@ mod tests {
     fn test_count_nodes() {
         let mut manager = TermManager::new();
 
-        // (+ 1 2 3)
-        let one = manager.mk_int(1);
-        let two = manager.mk_int(2);
+        // (+ x y 3) -- the numeral operands of a structure test must not be
+        // all-numeral (the builder folds such an add into its sum, leaving
+        // one node); with variables the node set is exactly the leaves plus
+        // the add itself.
+        let x = manager.mk_var("x", manager.sorts.int_sort);
+        let y = manager.mk_var("y", manager.sorts.int_sort);
         let three = manager.mk_int(3);
-        let sum = manager.mk_add([one, two, three]);
+        let sum = manager.mk_add([x, y, three]);
 
-        // Should count: 1, 2, 3, (+ 1 2 3) = 4 nodes
+        // Should count: x, y, 3, (+ x y 3) = 4 nodes
         assert_eq!(count_nodes(sum, &manager), 4);
     }
 
@@ -627,9 +636,11 @@ mod tests {
         }
 
         let mut manager = TermManager::new();
-        let one = manager.mk_int(1);
+        // Variable operand -- an all-numeral add folds to one numeral at
+        // construction, leaving a single node to visit.
+        let x = manager.mk_var("x", manager.sorts.int_sort);
         let two = manager.mk_int(2);
-        let sum = manager.mk_add([one, two]);
+        let sum = manager.mk_add([x, two]);
 
         let mut visitor = CountVisitor { count: 0 };
         traverse(sum, &manager, &mut visitor).expect("test operation should succeed");

@@ -116,10 +116,15 @@ fn a_hundred_thousand_unknown_commands_do_not_overflow() {
 
 /// Build `(define-fun a0 () Int 0)` followed by `n` doubling definitions.
 fn nullary_define_fun_chain(n: u32) -> String {
-    let mut script = String::from("(define-fun a0 () Int 0)\n");
+    // A SYMBOLIC base (`a0` is a declared constant), and one `ite` per
+    // level: the original `(+ a a)` over a numeral base folds to a numeral
+    // at construction (the builder's constant folding -- and `(> a a)`
+    // folds to `false`, collapsing any purely-ground conditional chain), so
+    // the depth this test exercises needs a variable base to stay symbolic.
+    let mut script = String::from("(declare-fun a0 () Int)\n");
     for i in 1..=n {
         script.push_str(&format!(
-            "(define-fun a{i} () Int (+ a{prev} a{prev}))\n",
+            "(define-fun a{i} () Int (ite (> a{prev} 0) a{prev} 0))\n",
             prev = i - 1
         ));
     }

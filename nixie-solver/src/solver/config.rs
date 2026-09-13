@@ -159,7 +159,9 @@ impl Solver {
             self.arith = if spec.integer {
                 ArithSolver::lia()
             } else {
-                ArithSolver::lra()
+                // Mixed-integer fallback: NRA goals are all-real (no integer
+                // marks → identical to LRA), NIRA keeps Int variables exact.
+                ArithSolver::mixed()
             };
             #[cfg(feature = "tracing")]
             tracing::info!(
@@ -167,10 +169,19 @@ impl Solver {
                 spec.integer
             );
         } else if spec.arith {
+            // Integer logics are pure LIA (every term Int-sorted).  Everything
+            // else – real logics *and the LIRA/NIRA mixed shapes, which the
+            // contract table deliberately records with `integer: false`
+            // (see `logic_contract.rs`) – runs MIXED-INTEGER with per-variable
+            // integrality.  A pure-real formula marks nothing integer, so its
+            // behavior is byte-identical to LRA; but a `QF_LIRA` goal with
+            // `Int` variables keeps their integrality instead of silently
+            // relaxing them to reals (which answered `sat` for
+            // `x:Int ∧ x>3 ∧ x<4` from the LP point `x = 3.5`).
             self.arith = if spec.integer {
                 ArithSolver::lia()
             } else {
-                ArithSolver::lra()
+                ArithSolver::mixed()
             };
         } else if spec.bv {
             // BV comparisons are handled as bounded integer arithmetic.

@@ -917,15 +917,25 @@ mod tests {
     fn test_parse_real_arithmetic() {
         let mut manager = TermManager::new();
 
-        let add = parse_term("(+ 1.5 2.5)", &mut manager).expect("should parse real addition");
-        let _one_half = manager.mk_real(num_rational::Rational64::new(3, 2));
-        let _five_half = manager.mk_real(num_rational::Rational64::new(5, 2));
+        // A variable operand keeps the Add node: the parser builds through
+        // the same `mk_add` the API uses, and its constant folding reduces
+        // an all-numeral add (`(+ 1.5 2.5)`) to the literal `4.0`.
+        let add = parse_term("(+ x 1.5)", &mut manager).expect("should parse real addition");
 
         // Verify it's an addition node
         let term = manager.get(add).expect("term should exist");
         match &term.kind {
             crate::ast::TermKind::Add(_) => {}
             _ => panic!("expected Add term, got {:?}", term.kind),
+        }
+
+        // And the all-numeral form folds to the exact sum.
+        let folded = parse_term("(+ 1.5 2.5)", &mut manager).expect("should parse real addition");
+        match &manager.get(folded).expect("term should exist").kind {
+            crate::ast::TermKind::RealConst(r) => {
+                assert_eq!(*r, num_rational::Rational64::from_integer(4));
+            }
+            other => panic!("expected folded RealConst(4), got {other:?}"),
         }
     }
 

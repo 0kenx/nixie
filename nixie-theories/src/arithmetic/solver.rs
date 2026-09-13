@@ -63,8 +63,8 @@ pub struct ArithSolver {
     reason_counter: u32,
     /// Reason to term mapping
     reasons: Vec<TermId>,
-    /// Is this LIA (integers) or LRA (reals)?
-    is_integer: bool,
+    /// Integrality regime (LRA / LIA / mixed-integer); see [`ArithMode`].
+    mode: ArithMode,
     /// Context stack
     context_stack: Vec<ContextState>,
     /// Accumulated shared equalities (from notify_equality calls)
@@ -122,6 +122,13 @@ pub struct ArithSolver {
     /// integer variable as continuous only weakens cuts (sound), so slacks of
     /// non-integral form are simply absent from this set.
     int_vars: FxHashSet<VarId>,
+    /// TERMS declared integer-valued (Int-sorted) by the registration sites
+    /// that can see the sort.  Mixed mode's per-term integrality memory: the
+    /// simplex is rebuilt (variables renumbered, `int_vars` cleared) on every
+    /// theory-layer `reset()`/replay, but a term's sort is a structural fact,
+    /// so this registry lets `intern` re-mark the fresh variable without the
+    /// replay having to know anything about sorts.
+    int_terms: FxHashSet<TermId>,
     /// Per-ATOM tableau-row cache: `(linear form, assertion term) -> slack`.
     ///
     /// The SAME atom re-asserted (CDCL re-sends a literal after every
@@ -260,6 +267,31 @@ struct ContextState {
     num_int_equalities: usize,
 }
 
+/// How the tableau treats integrality.  The mirror of Z3's `theory_lra` /
+/// `theory_lia` / `theory_mi_arith` split, selected by the *declared* logic:
+///
+/// * [`ArithMode::Lra`] – every variable continuous (QF_LRA).
+/// * [`ArithMode::Lia`] – every interned term integer-valued (QF_LIA).
+/// * [`ArithMode::Mixed`] – per-variable integrality from each term's sort:
+///   `Int`-sorted terms are integer variables, `Real`-sorted terms are
+///   continuous, and rows that mix them keep the real semantics for the
+///   continuous part while branch-and-bound closes the integer part
+///   (Z3's `theory_mi_arith`, the default for an unset / `ALL` logic).
+///
+/// The mode is a *configuration*, not a per-row fact: what a row may
+/// legitimately assume is decided per row by [`ArithSolver::is_integral_form`]
+/// over the [`ArithSolver::int_vars`] set the mode populated.  A solver that
+/// ran Lra but was handed `Int`-sorted atoms (a bare `Solver::new()` before
+/// the mixed default existed) had no integrality anywhere: `x:Int ∧ x>3 ∧
+/// x<4` was answered `sat` from the LP point `x = 3.5` – a wrong answer on
+/// the most basic integer query, and the reason the *default* mode is mixed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArithMode {
+    Lra,
+    Lia,
+    Mixed,
+}
+
 impl Default for ArithSolver {
     fn default() -> Self {
         Self::new(false)
@@ -270,13 +302,22 @@ impl ArithSolver {
     /// Create a new arithmetic solver
     #[must_use]
     pub fn new(is_integer: bool) -> Self {
+        Self::with_mode(if is_integer {
+            ArithMode::Lia
+        } else {
+            ArithMode::Lra
+        })
+    }
+
+    #[must_use]
+    fn with_mode(mode: ArithMode) -> Self {
         Self {
             simplex: Simplex::new(),
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
             reason_counter: 0,
             reasons: Vec::new(),
-            is_integer,
+            mode,
             context_stack: Vec::new(),
             shared_equalities: Vec::new(),
             lia_model: FxHashMap::default(),
@@ -286,6 +327,7 @@ impl ArithSolver {
             prop_upper: Vec::new(),
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
+            int_terms: FxHashSet::default(),
             bnb_used_reasons: FxHashSet::default(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
@@ -293,10 +335,17 @@ impl ArithSolver {
         }
     }
 
+    /// Create a new mixed-integer solver (`Int` and `Real` variables side by
+    /// side, per-variable integrality – Z3's `theory_mi_arith`).
+    #[must_use]
+    pub fn mixed() -> Self {
+        Self::with_mode(ArithMode::Mixed)
+    }
+
     /// Create a new LRA solver
     #[must_use]
     pub fn lra() -> Self {
-        Self::new(false)
+        Self::with_mode(ArithMode::Lra)
     }
 
     /// Create a new LIA solver
@@ -305,10 +354,26 @@ impl ArithSolver {
         Self::new(true)
     }
 
-    /// Whether this solver operates in integer (LIA) mode
+    /// Whether this solver performs *any* integer reasoning (LIA or mixed
+    /// mode – i.e. branch-and-bound may run and integer-specific row
+    /// reasoning is enabled).
+    ///
+    /// Callers that need "is THIS variable an integer" must consult the
+    /// per-variable set instead: in mixed mode this is `true` while
+    /// `Real`-sorted terms stay continuous.  [`ArithSolver::term_is_integer`]
+    /// is the per-term query.
     #[must_use]
     pub fn is_integer(&self) -> bool {
-        self.is_integer
+        !matches!(self.mode, ArithMode::Lra)
+    }
+
+    /// Whether `term` is interned as an integer variable.  `false` for
+    /// continuous (`Real`-sorted) terms and for terms never interned.
+    #[must_use]
+    pub fn term_is_integer(&self, term: TermId) -> bool {
+        self.term_to_var
+            .get(&term)
+            .is_some_and(|&v| self.int_vars.contains(&v))
     }
 
     /// Diagnostic: reset the theory-combination probe counters.
@@ -354,7 +419,7 @@ impl ArithSolver {
         // hit implies the normalized LinExpr the row was built from is
         // identical.
         let all_integer = terms.iter().all(|(_, c)| c.denom() == &1);
-        if self.is_integer && all_integer && !terms.is_empty() {
+        if self.is_integer() && all_integer && !terms.is_empty() {
             let g = terms
                 .iter()
                 .map(|(_, c)| c.numer().abs())
@@ -448,7 +513,7 @@ impl ArithSolver {
         } else {
             self.normalize_ineq_expr(&mut expr);
         }
-        let integral = self.is_integer && self.is_integral_form(&expr);
+        let integral = self.is_integral_form(&expr);
         let cache_key = (self.row_key(lhs, rhs, equality), reason);
         if let Some(&slack) = self.atom_rows.get(&cache_key)
             && self.simplex.row_defines_var(slack)
@@ -572,7 +637,7 @@ impl ArithSolver {
         // SIGN-FLIP half of `normalize_expr` is forbidden here, and it is
         // not applied.
         super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
-        let integral = self.is_integer && self.is_integral_form(&expr);
+        let integral = self.is_integral_form(&expr);
         let cache_key = (self.row_key_strict(lhs, rhs), reason);
         if let Some(&slack) = self.atom_rows.get(&cache_key)
             && self.simplex.row_defines_var(slack)
@@ -597,13 +662,63 @@ impl ArithSolver {
         // In LIA mode every interned term is Int-sorted, so every term
         // variable is integer-valued in every model.  The Gomory-cut
         // generator's integrality test and the branch-variable scan rely on
-        // this set containing them.
-        if self.is_integer {
+        // this set containing them.  Mixed mode does NOT blanket-mark here:
+        // the sort of the term is not visible at this call site.  It marks
+        // explicitly through [`Self::intern_integer`], which ALSO records the
+        // term in [`Self::int_terms`] so the mark survives `reset()` – the
+        // theory layer rebuilds its tableau from scratch on restarts and
+        // replays literals through the sort-blind `assert_*` paths, and a
+        // mark that lived only in the per-variable set would be lost to that
+        // replay (re-interning `x:Int` as continuous).  An unmarked variable
+        // is treated as continuous – the sound default (a relaxation).
+        if matches!(self.mode, ArithMode::Lia)
+            || (!matches!(self.mode, ArithMode::Lra) && self.int_terms.contains(&term))
+        {
             self.int_vars.insert(var);
         }
         self.term_to_var.insert(term, var);
         self.var_to_term.push(term);
         var
+    }
+
+    /// Intern `term` as an **integer** variable.
+    ///
+    /// The caller must know the term is `Int`-sorted (or, for the
+    /// bit-vector-as-bounded-integer encoding, that its values are
+    /// integral).  In LIA mode this is identical to [`Self::intern`]; in
+    /// mixed mode it is what puts the variable into the integer-variable set so
+    /// Gomory cuts and branch-and-bound close its integrality gap; in LRA
+    /// mode it behaves as [`Self::intern`] (the mode is a contract that no
+    /// integer term appears; if one does anyway, marking it would only make
+    /// the solver *more* exact, so the mark is kept for safety).
+    ///
+    /// The term is remembered in the integer-term registry, so a later plain
+    /// [`Self::intern`] of the same term (e.g. from the theory layer's
+    /// reset/replay) re-marks the fresh variable integer.
+    pub fn intern_integer(&mut self, term: TermId) -> VarId {
+        let var = self.intern(term);
+        self.int_terms.insert(term);
+        if !matches!(self.mode, ArithMode::Lra) {
+            self.int_vars.insert(var);
+        }
+        var
+    }
+
+    /// Whether every variable of `lhs` is a known-integer variable and every
+    /// coefficient integral, so the linear form takes only integer values.
+    /// Terms are interned first (idempotent) so the check never fails on a
+    /// not-yet-interned term.
+    fn lhs_is_integral(&mut self, lhs: &[(TermId, Rational64)]) -> bool {
+        for (term, coef) in lhs {
+            if coef.denom() != &1 {
+                return false;
+            }
+            let var = self.intern(*term);
+            if !self.int_vars.contains(&var) {
+                return false;
+            }
+        }
+        true
     }
 
     /// Whether `expr` is integer-valued in every model: integer constant,
@@ -892,7 +1007,19 @@ impl ArithSolver {
         // (normalization divides by GCD, which would lose the infeasibility signal).
         // Only for the first assertion of this form at this scope: a
         // re-assertion's contradictory bounds are already live.
-        if self.is_integer && lia_is_new {
+        //
+        // The guard is PER-ROW, not per-mode: the row's reasoning (GCD
+        // divisibility, "integral lhs ≠ fractional rhs ⇒ infeasible") needs
+        // every coefficient integral AND every variable known-integer.  In
+        // mixed mode a row over `Real` variables satisfies neither, and
+        // applying the integer argument to it would fabricate infeasibility
+        // that does not exist (`0.5·y = 1.2` has the solution `y = 2.4`).
+        let row_integer = self.is_integer()
+            && expr
+                .terms
+                .iter()
+                .all(|&(v, c)| c.denom() == &1 && self.int_vars.contains(&v));
+        if row_integer && lia_is_new {
             // Extract integer coefficients
             let coeffs: Vec<i64> = expr
                 .terms
@@ -1058,11 +1185,19 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs <= rhs - δ
     /// For LIA, transforms to: lhs <= rhs - 1 (since no integer exists between k and k+1)
     pub fn assert_lt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // For integer arithmetic, x < k is equivalent to x <= k - 1
-        // because there's no integer strictly between k-1 and k
-        if self.is_integer {
+        // For an INTEGRAL row, x < k is equivalent to x <= k - 1
+        // because there is no integer strictly between k-1 and k.
+        //
+        // Per-row, not per-mode: the tightening `k-1` is exact only when the
+        // row takes integer values AND `k` itself is an integer.  A
+        // fractional `k` would tighten too far (integral `x < 5/2` admits
+        // `x = 2`, but `x <= 3/2` does not), and a row over `Real`
+        // variables has no integer gap at all.  Both fall through to the
+        // delta-rational path, which is exact for reals and integers alike.
+        if rhs.denom() == &1 && self.lhs_is_integral(lhs) {
             // Transform: lhs < rhs becomes lhs <= rhs - 1
-            self.assert_le(lhs, rhs - Rational64::one(), reason);
+            let rhs = rhs - Rational64::one();
+            self.assert_le(lhs, rhs, reason);
             return;
         }
 
@@ -1096,11 +1231,12 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs >= rhs + δ
     /// For LIA, transforms to: lhs >= rhs + 1 (since no integer exists between k and k+1)
     pub fn assert_gt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
-        // For integer arithmetic, x > k is equivalent to x >= k + 1
-        // because there's no integer strictly between k and k+1
-        if self.is_integer {
+        // For an INTEGRAL row, x > k is equivalent to x >= k + 1 (same
+        // per-row conditions as `assert_lt`; see the soundness note there).
+        if rhs.denom() == &1 && self.lhs_is_integral(lhs) {
             // Transform: lhs > rhs becomes lhs >= rhs + 1
-            self.assert_ge(lhs, rhs + Rational64::one(), reason);
+            let rhs = rhs + Rational64::one();
+            self.assert_ge(lhs, rhs, reason);
             return;
         }
 
@@ -1134,61 +1270,63 @@ impl ArithSolver {
     /// - If value is `r - δ` (negative delta), return `floor(r)` for integers
     #[must_use]
     pub fn value(&self, term: TermId) -> Option<Rational64> {
-        self.term_to_var.get(&term).map(|&var| {
-            if self.is_integer {
-                // Prefer the integral assignment found by branch-and-bound when
-                // the last check() proved Sat – the raw LP optimum may be
-                // fractional for Int variables.
-                if let Some(v) = self.lia_model.get(&var) {
-                    return *v;
-                }
-                // Get the full delta-rational value
-                let dval = self.simplex.delta_value(var);
+        let &var = self.term_to_var.get(&term)?;
+        // Per-VARIABLE integrality, not per-mode: in mixed mode a
+        // `Real`-sorted term sitting at a strict bound keeps its
+        // delta-rational value, while an `Int`-sorted term rounds.
+        if self.int_vars.contains(&var) {
+            // Prefer the integral assignment found by branch-and-bound when
+            // the last check() proved Sat – the raw LP optimum may be
+            // fractional for Int variables.
+            if let Some(v) = self.lia_model.get(&var) {
+                return Some(*v);
+            }
+            // Get the full delta-rational value
+            let dval = self.simplex.delta_value(var);
 
-                // For integer arithmetic, round based on delta:
-                // - Positive delta means we have a strict lower bound (x > r)
-                //   so round up to the next integer
-                // - Negative delta means we have a strict upper bound (x < r)
-                //   so round down to the previous integer
-                // - Zero delta means exact value, round to nearest integer
-                if dval.delta.is_positive() {
-                    // x > r implies x >= ceil(r) for integers
-                    // If r is already an integer, we need r + 1
-                    let real_val = dval.real;
-                    if real_val.is_integer() {
-                        Rational64::from_integer(real_val.to_integer() + 1)
-                    } else {
-                        Rational64::from_integer(real_val.ceil().to_integer())
-                    }
-                } else if dval.delta.is_negative() {
-                    // x < r implies x <= floor(r) for integers
-                    // If r is already an integer, we need r - 1
-                    let real_val = dval.real;
-                    if real_val.is_integer() {
-                        Rational64::from_integer(real_val.to_integer() - 1)
-                    } else {
-                        Rational64::from_integer(real_val.floor().to_integer())
-                    }
+            // For integer arithmetic, round based on delta:
+            // - Positive delta means we have a strict lower bound (x > r)
+            //   so round up to the next integer
+            // - Negative delta means we have a strict upper bound (x < r)
+            //   so round down to the previous integer
+            // - Zero delta means exact value, round to nearest integer
+            Some(if dval.delta.is_positive() {
+                // x > r implies x >= ceil(r) for integers
+                // If r is already an integer, we need r + 1
+                let real_val = dval.real;
+                if real_val.is_integer() {
+                    Rational64::from_integer(real_val.to_integer() + 1)
                 } else {
-                    // No strict bound, just return the value
-                    // Round to nearest integer for consistency
-                    dval.real
+                    Rational64::from_integer(real_val.ceil().to_integer())
+                }
+            } else if dval.delta.is_negative() {
+                // x < r implies x <= floor(r) for integers
+                // If r is already an integer, we need r - 1
+                let real_val = dval.real;
+                if real_val.is_integer() {
+                    Rational64::from_integer(real_val.to_integer() - 1)
+                } else {
+                    Rational64::from_integer(real_val.floor().to_integer())
                 }
             } else {
-                // For reals, the raw real part is NOT a model: a variable
-                // sitting at a strict bound is stored as `r ± δ`, so returning
-                // `r` alone reports a witness that violates the very constraint
-                // that created it (e.g. `x > 0` would report `x = 0`).
-                // Substitute a concrete positive δ₀ that keeps every bound
-                // satisfied (see `Simplex::delta_instantiation`).
-                let dval = self.simplex.delta_value(var);
-                if dval.delta.is_zero() {
-                    dval.real
-                } else {
-                    dval.real + dval.delta * self.simplex.delta_instantiation()
-                }
-            }
-        })
+                // No strict bound, just return the value
+                // Round to nearest integer for consistency
+                dval.real
+            })
+        } else {
+            // For reals, the raw real part is NOT a model: a variable
+            // sitting at a strict bound is stored as `r ± δ`, so returning
+            // `r` alone reports a witness that violates the very constraint
+            // that created it (e.g. `x > 0` would report `x = 0`).
+            // Substitute a concrete positive δ₀ that keeps every bound
+            // satisfied (see `Simplex::delta_instantiation`).
+            let dval = self.simplex.delta_value(var);
+            Some(if dval.delta.is_zero() {
+                dval.real
+            } else {
+                dval.real + dval.delta * self.simplex.delta_instantiation()
+            })
+        }
     }
 
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
@@ -1388,7 +1526,7 @@ impl ArithSolver {
     /// - x > 2.0 becomes x >= 3
     #[allow(dead_code)]
     fn tighten_bound(&self, bound: Rational64, is_upper: bool) -> Rational64 {
-        if !self.is_integer {
+        if !self.is_integer() {
             return bound;
         }
 
@@ -1429,10 +1567,19 @@ impl ArithSolver {
     /// deterministic branching order.  Slack variables are excluded – we only
     /// branch on the original integer-sorted variables.
     fn interned_int_vars(&self) -> Vec<VarId> {
+        // ONLY the variables actually known integer.  The name-and-body used
+        // to disagree in mixed mode (the body returned every interned term
+        // variable): branching on a `Real`-sorted variable with the integer
+        // split `v \le k ∨ v \ge k+1` deletes the fractional values and
+        // refutes real solutions that exist – e.g. `y:Real \u2208 (0,1)` has
+        // no integer point, so the search would return a spurious `unsat`.
+        // In pure LIA the filter is a no-op (every interned term is marked at
+        // `intern`), so the trajectory there is unchanged.
         let mut vars: Vec<VarId> = self
             .var_to_term
             .iter()
             .filter_map(|term| self.term_to_var.get(term).copied())
+            .filter(|&v| self.int_vars.contains(&v))
             .collect();
         vars.sort_unstable();
         vars.dedup();
@@ -2334,7 +2481,7 @@ impl ArithSolver {
     ///
     /// Returns true if any tightening was performed
     pub fn tighten_constraints(&mut self) -> bool {
-        if !self.is_integer {
+        if !self.is_integer() {
             return false;
         }
 
@@ -2350,7 +2497,11 @@ impl ArithSolver {
 
 impl Theory for ArithSolver {
     fn id(&self) -> TheoryId {
-        if self.is_integer {
+        // Mixed-integer arithmetic dispatches like LIA (integer reasoning is
+        // armed); there is no separate `TheoryId` variant for it.  The only
+        // consumer of this id (`combination.rs` politeness) treats LIA and
+        // LRA identically anyway.
+        if self.is_integer() {
             TheoryId::LIA
         } else {
             TheoryId::LRA
@@ -2358,7 +2509,11 @@ impl Theory for ArithSolver {
     }
 
     fn name(&self) -> &str {
-        if self.is_integer { "LIA" } else { "LRA" }
+        match self.mode {
+            ArithMode::Lra => "LRA",
+            ArithMode::Lia => "LIA",
+            ArithMode::Mixed => "LIRA",
+        }
     }
 
     fn can_handle(&self, _term: TermId) -> bool {
@@ -2417,7 +2572,11 @@ impl Theory for ArithSolver {
         }
 
         // Step 2 (LRA): the LP relaxation is exact – feasible LP ⇒ Sat.
-        if !self.is_integer {
+        // Mixed mode falls through to Step 3 as well: its integer variables
+        // live in `int_vars`, and `lia_branch_and_bound` scans exactly that
+        // set, so a formula with no integer variables pays one scan that
+        // finds nothing and returns Sat.
+        if !self.is_integer() {
             return Ok(TheoryResult::Sat);
         }
 
@@ -2492,6 +2651,10 @@ impl Theory for ArithSolver {
         self.atom_rows.clear();
         self.slack_forms.clear();
         self.int_vars.clear();
+        // `int_terms` is deliberately KEPT: a term's integer-valuedness is a
+        // structural fact (its sort), not search state, and the replay that
+        // follows this reset re-interns terms through the sort-blind
+        // `assert_*` paths – `intern` consults this registry to re-mark.
         self.var_to_term.clear();
         self.reason_counter = 0;
         self.reasons.clear();

@@ -792,12 +792,16 @@ mod tests {
     fn test_add_zero() {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
+        // The builder itself folds `x + 0` to `x` at construction (Z3's
+        // rewriter layering), so the rewriter sees an already-normal term.
+        // Pin the composed outcome.
         let x = manager.mk_var("x", manager.sorts.int_sort);
         let zero = manager.mk_int(0);
         let add = manager.mk_add([x, zero]);
+        assert_eq!(add, x);
 
         let result = rewriter.rewrite(add, &mut ctx, &mut manager);
-        assert!(result.was_rewritten());
+        assert!(!result.was_rewritten());
         assert_eq!(result.term(), x);
     }
 
@@ -805,42 +809,50 @@ mod tests {
     fn test_add_constants() {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
+        // The builder folds numeral sums exactly at construction now, so
+        // `(+ 2 3)` never survives as an Add for the rewriter to fold; pin
+        // the composed outcome (the value, either way, is 5).
         let two = manager.mk_int(2);
         let three = manager.mk_int(3);
         let add = manager.mk_add([two, three]);
 
-        let result = rewriter.rewrite(add, &mut ctx, &mut manager);
-        assert!(result.was_rewritten());
-
-        let t = manager.get(result.term()).expect("term should exist");
+        let t = manager.get(add).expect("term should exist");
         assert!(matches!(&t.kind, TermKind::IntConst(n) if n == &BigInt::from(5)));
+
+        let result = rewriter.rewrite(add, &mut ctx, &mut manager);
+        assert!(!result.was_rewritten());
     }
 
     #[test]
     fn test_mul_zero() {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
+        // The builder folds `x * 0` to `0` at construction; pin the composed
+        // outcome.
         let x = manager.mk_var("x", manager.sorts.int_sort);
         let zero = manager.mk_int(0);
         let mul = manager.mk_mul([x, zero]);
 
-        let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
-        assert!(result.was_rewritten());
-
-        let t = manager.get(result.term()).expect("term should exist");
+        let t = manager.get(mul).expect("term should exist");
         assert!(matches!(&t.kind, TermKind::IntConst(n) if n == &BigInt::from(0)));
+
+        let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
+        assert!(!result.was_rewritten());
     }
 
     #[test]
     fn test_mul_one() {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
+        // The builder folds `x * 1` to `x` at construction; pin the composed
+        // outcome.
         let x = manager.mk_var("x", manager.sorts.int_sort);
         let one = manager.mk_int(1);
         let mul = manager.mk_mul([x, one]);
+        assert_eq!(mul, x);
 
         let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
-        assert!(result.was_rewritten());
+        assert!(!result.was_rewritten());
         assert_eq!(result.term(), x);
     }
 

@@ -331,8 +331,25 @@ fn parity_row_of(
     let mut lconst = Rational64::zero();
     let mut rterms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
     let mut rconst = Rational64::zero();
-    solver.extract_linear_terms(lhs, Rational64::one(), &mut lterms, &mut lconst, manager)?;
-    solver.extract_linear_terms(rhs, -Rational64::one(), &mut rterms, &mut rconst, manager)?;
+    // `overflow == true` and `None` both bail the row: a constant that left
+    // `Rational64` width has no trustworthy parity image either way.
+    let mut overflow = false;
+    solver.extract_linear_terms(
+        lhs,
+        Rational64::one(),
+        &mut lterms,
+        &mut lconst,
+        manager,
+        &mut overflow,
+    )?;
+    solver.extract_linear_terms(
+        rhs,
+        -Rational64::one(),
+        &mut rterms,
+        &mut rconst,
+        manager,
+        &mut overflow,
+    )?;
     // Merge both sides into one coefficient map keyed by TermId.
     let mut combined: Vec<(TermId, Rational64)> = lterms.into_iter().collect();
     combined.extend(rterms);
@@ -361,6 +378,19 @@ fn parity_row_of(
             // Non-integral coefficient: the row has no mod-2 image.  Bail
             // on the whole row — keeping the integral part would fabricate
             // a consequence the equation does not state.
+            return None;
+        }
+        // Every COLUMN must be integer-valued too, not just carry an
+        // integral coefficient: in mixed-integer mode an equality between
+        // an `Int`-sorted term and a `Real`-sorted one (e.g. `x:Int =
+        // f(y:Real)`) parses with integral coefficients, but a real-valued
+        // column has no parity — reasoning mod 2 over it would fabricate a
+        // lemma the equation does not entail.  (A too-big `IntConst` column
+        // is integer-valued in truth, so it keeps its parity.)
+        let col_is_int = manager.get(term).is_some_and(|n| {
+            matches!(n.kind, TermKind::IntConst(_)) || n.sort == manager.sorts.int_sort
+        });
+        if !col_is_int {
             return None;
         }
         terms.push((term, coef.numer().to_i64()?));

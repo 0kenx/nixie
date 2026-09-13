@@ -395,15 +395,21 @@ mod size_depth_tests {
         const DEPTH: usize = 100_000;
         let (size, depth) = run_on_1mib_stack(|| {
             let mut m = TermManager::new();
-            let zero = m.mk_int(0);
+            let int_sort = m.sorts.int_sort;
+            let one = m.mk_int(1);
             // Iteratively (never recursively) build a chain of depth
-            // `DEPTH`: t_0 is a leaf, t_k = (+ t_{k-1} 0). By the
-            // recurrence: size(t_k) = size(t_{k-1}) + 2, depth(t_k) =
-            // depth(t_{k-1}) + 1, so after DEPTH steps from a leaf (size 1,
-            // depth 0): size = 1 + 2*DEPTH, depth = DEPTH.
-            let mut t = m.mk_int(1);
+            // `DEPTH`: t_0 is a VARIABLE leaf, t_k = (+ t_{k-1} 1).  (The
+            // original built `(+ t_{k-1} 0)` from a CONSTANT leaf, but the
+            // builder's constant folding now collapses a numeral-chain into
+            // one numeral – `(+ t 0)` to `t`, a constant chain into its sum
+            // – so both the base and the surviving operand must be chosen to
+            // keep the nesting.)  By the recurrence: size(t_k) =
+            // size(t_{k-1}) + 2, depth(t_k) = depth(t_{k-1}) + 1, so after
+            // DEPTH steps from a leaf (size 1, depth 0): size = 1 + 2*DEPTH,
+            // depth = DEPTH.
+            let mut t = m.mk_var("x", int_sort);
             for _ in 0..DEPTH {
-                t = m.mk_add([t, zero]);
+                t = m.mk_add([t, one]);
             }
             (m.term_size(t), m.term_depth(t))
         });
@@ -611,14 +617,19 @@ mod substitute_tests {
 
         let (size, depth, still_has_old_leaf, now_has_new_leaf) = run_on_1mib_stack(|| {
             let mut m = TermManager::new();
-            let zero = m.mk_int(0);
-            let leaf = m.mk_int(1);
+            // A VARIABLE leaf and `+ 1` (not a constant leaf with `+ 0`):
+            // the builder's constant folding collapses both, and the chain
+            // this test exists to walk would never be built (see the
+            // sibling size/depth test).
+            let int_sort = m.sorts.int_sort;
+            let one = m.mk_int(1);
+            let leaf = m.mk_var("x", int_sort);
             let mut t = leaf;
             for _ in 0..DEPTH {
-                t = m.mk_add([t, zero]);
+                t = m.mk_add([t, one]);
             }
 
-            let y = m.mk_var("y", m.sorts.int_sort);
+            let y = m.mk_var("y", int_sort);
             let mut subst = FxHashMap::default();
             subst.insert(leaf, y);
             let result = m.substitute(t, &subst);

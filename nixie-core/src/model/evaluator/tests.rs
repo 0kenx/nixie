@@ -127,12 +127,17 @@ fn test_eval_mod_min_by_neg_one_errors_not_panic() {
     let model = Model::new();
     let mut evaluator = ModelEvaluator::new(&model);
 
-    // `(mod i64::MIN -1)` triggers `i64::MIN.rem_euclid(-1)`, which
-    // overflows and panics in BOTH debug and release. It must surface an
-    // explicit error rather than aborting the process.
+    // `(mod i64::MIN -1)` triggers `i64::MIN.rem_euclid(-1)` on the i64
+    // path, which overflows and panics in BOTH debug and release.  It must
+    // surface an explicit error rather than aborting the process.
+    //
+    // The builder now folds a two-LITERAL mod exactly in `BigInt`, so the
+    // node has to be constructed directly (`intern_term`) to reach the
+    // evaluator's own arm -- which non-literal operands (e.g. `(mod (mod
+    // x -1) -1)` after the inner one evaluates) still exercise.
     let min = manager.mk_int(num_bigint::BigInt::from(i64::MIN));
     let neg_one = manager.mk_int(num_bigint::BigInt::from(-1));
-    let m = manager.mk_mod(min, neg_one);
+    let m = manager.intern_term(TermKind::Mod(min, neg_one), manager.sorts.int_sort);
     let result = evaluator.eval(m, &manager);
     match result {
         EvalResult::Error(_) => {}
@@ -320,10 +325,13 @@ fn half_plus_half(manager: &mut TermManager) -> TermId {
 
 #[test]
 fn test_real_literal_and_computed_real_still_have_different_shapes() {
-    // Pins the *premise* of the bug: the two operands really do evaluate to
-    // different `Value` variants, which is what the derived `PartialEq` keyed
-    // on. If this ever stops holding, the bridge below has become moot rather
-    // than wrong.
+    // Pins the *premise* of the bug this file's bridge exists for: the two
+    // operands evaluate to different `Value` variants.  Since the builder
+    // began folding numeral arithmetic at construction (`(+ 0.5 0.5)` IS
+    // `RealConst(1)` now), a builder-built computed real is a literal by the
+    // time the evaluator sees it -- so the Int-shaped variant is produced by
+    // a non-folded shape: an integer-sorted sum evaluates to `Value::Int`.
+    // Both forms still have to compare equal through the bridge.
     let mut manager = TermManager::new();
     let one = manager.mk_real(Rational64::from_integer(1));
     let sum = half_plus_half(&mut manager);
@@ -333,9 +341,23 @@ fn test_real_literal_and_computed_real_still_have_different_shapes() {
         evaluator.eval(one, &manager),
         EvalResult::Ok(Value::Rational(_))
     ));
+    // The folded `(+ 0.5 0.5)` is the literal `1.0` (a Rational) -- the
+    // historical Int-variant comes from integer-sorted ground sums instead.
+    let sum_val = evaluator.eval(sum, &manager);
+    assert!(
+        matches!(sum_val, EvalResult::Ok(Value::Rational(_))),
+        "folded (+ 0.5 0.5) is the literal 1.0, got {sum_val:?}"
+    );
+    if let EvalResult::Ok(Value::Rational(r)) = sum_val {
+        assert_eq!(r, Rational64::from_integer(1));
+    }
+    let int_two = {
+        let t = manager.mk_int(2);
+        manager.mk_add([t, t])
+    };
     assert!(matches!(
-        evaluator.eval(sum, &manager),
-        EvalResult::Ok(Value::Int(1))
+        evaluator.eval(int_two, &manager),
+        EvalResult::Ok(Value::Int(4))
     ));
 }
 

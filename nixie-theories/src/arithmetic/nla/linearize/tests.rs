@@ -253,10 +253,19 @@ fn zero_coefficient_product_needs_no_monic() {
     let x = int_var(&mut m, "x");
     let y = int_var(&mut m, "y");
     let zero = ic(&mut m, 0);
+    // The builder folds `0 * x * y` to `0` at construction, so a
+    // zero-coefficient product can no longer REACH the linearizer from a
+    // builder-built term -- the fold this test used to demand of
+    // `linearize` happens one layer earlier now.  Pin both: the product is
+    // the numeral, and the comparison over it is a trivial `true` with no
+    // arithmetic content to linearize.
     let p = m.mk_mul(vec![zero, x, y]);
+    assert!(
+        matches!(&m.get(p).expect("product").kind, TermKind::IntConst(n) if n.is_zero()),
+        "0 * x * y folds to 0"
+    );
     let a = m.mk_ge(p, zero);
-    let l = lin(&m, &[a]);
-    assert!(l.monics.is_empty(), "0 * x * y folds to 0");
+    assert!(matches!(&m.get(a).expect("atom").kind, TermKind::True));
 }
 
 #[test]

@@ -1,101 +1,145 @@
-# LIA on wide integer literals: a panic at `i64::MAX`, `Unknown` beyond
+# LIA on wide integer literals: a panic at `i64::MAX`, `Unknown` beyond — and, underneath, a false `sat`
 
-**Status:** found, reported, not fixed. Reproducers below.
+**Status:** FIXED (all layers), 2026-09-13/14. Regressions in
+`nixie-solver/tests/arith_wide_literal_regressions.rs`,
+`nixie-core/src/ast/manager/builder.rs` (`arith_folding_tests`),
+`nixie-theories/tests/mixed_integer_mode.rs`, and the strengthened
+`nixie-tla-check` encode tests.
 **Found by:** the TLA+ front end's encoder cross-check
 (`nixie-tla-check/examples/encodecheck.rs`), 2026-09-13.
 
-## Summary
+## Summary of the four defects
 
-Three defects in integer arithmetic, all reachable from ordinary SMT input and
-none needing TLA+ to reproduce:
+| # | Input | Expected | Was | Root layer |
+|---|---|---|---|---|
+| 1 | `(9223372036854775807 + 1) = 9223372036854775808` | `unsat` | **panic** in `num-rational` (abort in release) | fixed-width accumulator in the linear parse |
+| 2 | `(18446744073709551615 + 1) = …` | `unsat` | `Unknown` | same + no exact fold |
+| 3 | `(26 div 2) = 13` | `unsat` | `Unknown` | default arithmetic solver in real mode refuses `div`/`mod` axioms |
+| 4 | `x:Int ∧ x>3 ∧ x<4` | `unsat` | **`sat`** (x = 3.5!) — found while fixing 3 | default arithmetic solver in real mode: no integrality at all |
 
-| Input | Expected | Actual |
-|---|---|---|
-| `(9223372036854775807 + 1) = 9223372036854775808` | `unsat` on the negation | **panic** in `num-rational` |
-| `(18446744073709551615 + 1) = …` | `unsat` on the negation | `Unknown` |
-| `(26 div 2) = 13` | `unsat` on the negation | `Unknown` |
+Defects 1–3 were the TLA front end's report. Chasing 3 turned up 4, which is
+the serious one: a wrong answer, not a gap. It was reachable from the bare
+`Solver::new()` API (the TLA encoder's path), from `ALL`, and from an
+explicit `(set-logic QF_LIRA)` — every configuration where the arithmetic
+solver ran `ArithSolver::lra()` while the problem contained `Int`-sorted
+terms.
 
-The panic is the serious one. `num-rational-0.4.2/src/lib.rs:481` raises
-`attempt to add with overflow`, so the arithmetic path is carrying a
-**fixed-width** rational somewhere rather than a `BigRational`. The release
-profile sets `panic = "abort"`, so in a release build this is a process abort
-on a valid query.
+## The layer analysis (what was actually wrong, at each depth)
 
-`AGENTS.md` names this class directly: *"Wide bit-vectors and bignums are
-exact. `>64`-bit BV constants, `BigUint` / `BigRational` paths … never truncate
-to `u64`/`f64` for convenience. Truncation has already produced both false
-`sat` and false `unsat` in this codebase."*
+Per AGENTS.md the fix had to name every layer along the path, not the one
+nearest the crash. Layers examined, innermost out:
 
-The two `Unknown` results are sound — `Unknown` is never a wrong answer — but
-they are completeness gaps that matter in practice: a specification doing
-integer division is undecidable through this path, and `\div` and `%` are
-everywhere in real TLA+.
+1. **The linear-parse accumulator** (`extract_linear_terms`,
+   `parse_arith_comparison`). Sums/updates in `Ratio<i64>`: `i64::MAX + 1`
+   panicked in debug and **silently wrapped in release** (the workspace
+   `[profile.release]` has no `overflow-checks`) — the wrap is a
+   wrong-coefficient, wrong-verdict hazard, strictly worse than the panic.
+   Fixed: every step is now checked (`CheckedAdd/CheckedSub/CheckedMul`);
+   overflow fails the parse *and* records the atom in
+   `arith_parse_overflow`, which the honesty gate
+   (`arith_atoms_need_theory`) turns into `Unknown`. Without the record the
+   failed parse would leave the atom a free Boolean — the exact
+   wrong-verdict shape the gate exists for, and *invisible* to the
+   structural scan (every leaf fits `i64`; only the folded sum does not).
 
-## Reproducers
+2. **Term construction** (`TermManager::mk_add/sub/neg/mul/div/mod`). There
+   was no constant folding at the builder at all, so `(+ MAX 1)` reached
+   layer 1 as two separately-fitting literals. Fixed by Z3's
+   `arith_rewriter` policy at mk-time: integer sums/products/quotients fold
+   exactly in `BigInt` (partials collected to one numeral — `(+ x 1 2)`
+   becomes `(+ x 3)`); reals fold in `BigRational`, kept only when the
+   result is representable as the `Rational64` a `RealConst` stores (never
+   approximated); `div`/`mod` fold **Euclidean** (`div_euclid`/`rem_euclid`)
+   — the same semantics `arith_axioms` asserts, so folder and axiomatiser
+   cannot disagree; a zero divisor never folds (SMT-LIB: uninterpreted).
+   This alone fixes defects 1–3's literal cases (`(div 26 2)` never survives
+   construction) and hands layer 1 at most *one* numeral per `Add`.
 
-`cargo run -p nixie-tla-check --example widerepro` builds the terms directly
-with `nixie-core`; no TLA+ is involved.
+3. **The arithmetic solver's integrality regime** (`ArithSolver`). The
+   solver had a single global `is_integer` flag: `lra()`/`lia()` chosen from
+   the *declared logic*, with `Solver::new()` defaulting to `lra()`. Every
+   `Int`-sorted term interned into a real-mode tableau was a continuous
+   variable — that is defect 4 — and `instantiate_arith_axioms`' integer-mode
+   gate (correctly) refused to axiomatise `div`/`mod` there — that is
+   defect 3. Fixed with Z3's three-way split (`theory_lra` / `theory_lia` /
+   **`theory_mi_arith`**): a new `Mixed` mode with **per-term integrality**
+   (`intern_integer` from every registration site that can see the sort),
+   now the default for `Solver::new()` and for every `spec.arith` logic the
+   contract table records as non-integer (QF_LRA is behaviorally identical —
+   a pure-real formula marks nothing integer; QF_LIRA/NIRA keep `Int`
+   variables exact). Per-row reasoning that previously trusted the global
+   flag is now per-row: `assert_lt/gt`'s `k-1`/`k+1` tightening fires only
+   on integral rows *with integral rhs* (the old unconditional LIA tighten
+   was itself unsound for fractional rhs), `assert_eq`'s GCD block only on
+   integral rows, `value()` rounds per-variable, and
+   `interned_int_vars` (which claimed to return integer variables but
+   returned *all* of them — a latent mixed-mode unsoundness in the
+   branch-and-bound) filters on the integer set.
 
-```rust
-let mut tm = TermManager::new();
-let a   = tm.mk_int("9223372036854775807".parse::<BigInt>()?);
-let one = tm.mk_int(1);
-let sum = tm.mk_add([a, one]);
-let exp = tm.mk_int("9223372036854775808".parse::<BigInt>()?);
-let claim   = tm.mk_eq(sum, exp);
-let negated = tm.mk_not(claim);      // valid claim, so this must be unsat
-let mut s = Solver::new();
-s.assert(negated, &mut tm);
-s.check(&mut tm);                    // panics
-```
+4. **The mark's lifecycle.** Per-term integrality first landed as a mark on
+   the tableau *variable*; the theory layer's `reset()`+replay (restarts,
+   scope rebasing) re-interns terms through sort-blind `assert_*` paths, so
+   the mark silently vanished and defect 4 briefly survived its own fix.
+   Integrality is a property of the *term* (its sort), so it now lives in a
+   term-keyed registry (`int_terms`) that survives tableau rebuilds.
 
-The boundary is sharp:
+5. **Callers/consumers audited for the same assumptions.**
+   `parity_lemma` (mod-2 rows over integral coefficients) needed a
+   per-column integer-sort guard — under mixed mode a row like
+   `x:Int = f(y:Real)` has integral coefficients but a parity-less real
+   column. `cached_row_slack*`'s slack-integrality now derives from the
+   per-variable set. `set_logic`'s nonlinear fallback routes reals to mixed
+   (NIRA). `emit_big_const_distinctness` and the big-const certification
+   gate are unchanged in behavior (columns stay continuous — the
+   abstraction argument is unchanged). `Solver::check()`'s
+   `arith_atoms_need_theory` gate gained the overflow consult described in
+   layer 1.
 
-```
-2^62 - 1                   Unsat (correct)
-i64::MAX - 1               Unsat (correct)
-i64::MAX                   panic: attempt to add with overflow
-2^64 - 1                   Unknown
-2^96 - 1                   Unknown
-```
+## Why the release build mattered more than the panic
 
-`i64::MAX - 1` is fine and `i64::MAX` is not, which points at an `i64`-width
-accumulator that overflows on the `+ 1` rather than at the literal's own width.
+The panic (`debug-assertions` on) was the *visible* symptom. In the release
+profile the same `Ratio<i64>` arithmetic compiled to wrapping ops: no abort,
+no error — a constraint with a wrapped constant is simply a *different*
+constraint, answered with full confidence. Any fix that only de-panicked
+(checked arithmetic that bails, say) without the gate would still have been
+correct; any fix that only widened the accumulator would have left the wrap
+in release. The checked-accumulate-then-gate fix is what makes release
+sound, and it is why the residual class (defect-1 shapes hidden behind
+non-foldable nesting) answers `Unknown` rather than a verdict.
 
-For the division gap:
+## Verification
 
-```
-26 \div 2  ->  Unknown      (26 * 2 is fine, so it is specific to div/mod)
-26 % 4     ->  Unknown
-```
+- `nixie-core` builder folding: exact `BigInt` sums/products/negations,
+  Euclidean `div`/`mod` on all four sign combinations and the
+  `(i64::MIN, -1)` corner, zero-divisor non-folding, real exactness-or-refusal.
+- `nixie-solver` regressions: all four defects end-to-end, plus the
+  mixed-mode soundness twins (a `Real` variable between adjacent integers
+  stays `sat`; `x:Int = 1/4`-forcing mixed rows are `unsat`) and the
+  residual overflow class gated to never-`Sat`.
+- `nixie-theories`: mixed-mode unit tests (integer hole `unsat`, real
+  interval `sat`) and the full pre-existing LIA/LRA/NLA suites.
+- Full workspace: `cargo nextest run --workspace --all-features` —
+  11,124 tests green; `cargo test --doc` green; clippy `-D warnings` clean;
+  `cargo fmt --check` clean; `cargo doc -D warnings` clean.
+- **Z3 differential parity** (z3 4.16.0): 175 benchmarks, **0
+  disagreements**, 174 decisive agreements (1 unresolved: Z3 itself
+  `Unknown` on `array_unique.smt2`) — `bench/z3_parity/run_parity.sh`.
 
-## Where to look
+## Residual known incompleteness (sound, documented)
 
-The panic is inside `num_rational`'s `Add`, so the caller is holding a
-`Ratio<i64>` (or narrower) where a `BigRational` is needed. Start from the
-simplex/LRA bound representation and the LIA literal path in
-`nixie-theories/src/arithmetic` and `nixie-theories/src/lra`, and check every
-`Ratio<` instantiation for a fixed-width parameter.
+- A constant sum that overflows `i64` *only in the linear parse* (leaves
+  folded, nesting not — e.g. `(- (+ x i64::MAX) (0 - 1))`) answers
+  `Unknown` via the gate. Making it decidable would require synthesising a
+  wide-constant term mid-parse (`&mut TermManager` through the extract walk)
+  to reuse the big-const column abstraction; recorded as future work, not
+  attempted here.
+- A `div`/`mod` with a symbolic or out-of-`i64` divisor keeps its
+  pre-existing (honest) gate.
 
-The `div`/`mod` incompleteness is separate and probably in the LIA
-preprocessing that turns `div`/`mod` into their defining constraints: on two
-literals it should constant-fold, and evidently does not.
+## History
 
-## Why this was not caught before
-
-Nothing in the existing suites builds a literal near `i64::MAX` and adds to
-it. The TLA+ front end reached it immediately because real specifications use
-`\div` for layout arithmetic and because the front end's own test corpus
-includes wide literals — `nixie-tla` deliberately routes numerals through
-`BigInt` so that a 96-bit constant survives lowering exactly, and that is what
-delivered one to the solver.
-
-A new front end exercising an old core along different paths is worth having
-for exactly this reason.
-
-## Status of the front end's tests
-
-`nixie-tla-check/tests/encode.rs` asserts only the **sound** property for these
-cases — that a valid claim never comes back `Sat` — so the suite stays green
-and keeps passing once the gap is closed. This study is what records the gap;
-the tests are not a substitute for it.
+Originally found, reported and left unfixed by the TLA+ front end's agent in
+commit `6be6cc25` ("reported rather than fixed: the arithmetic subsystem is
+another agent's territory"). This document is the fix's record; the original
+reproducer lives on as `nixie-tla-check/examples/widerepro.rs`, whose five
+wide-literal cases now all print `Unsat (correct)`.

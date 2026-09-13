@@ -1834,12 +1834,25 @@ mod tests {
     use super::{ENCODE_DEPTH_LIMIT, EvalOutcome, EvalVal};
     use crate::solver::Solver;
     use crate::solver::types::Model;
-    use nixie_core::ast::{TermId, TermManager};
+    use nixie_core::ast::{TermId, TermKind, TermManager};
     use num_rational::Rational64;
+    use smallvec::SmallVec;
 
     /// `2^62` fits `i64`, but `2^62 + 2^62 = 2^63` does not – the smallest
     /// round number that makes `Rational64` addition overflow.
     const HALF_MAX: i64 = 1 << 62;
+
+    /// Build an arithmetic node whose operands are literals WITHOUT the
+    /// builder's constant folding.  The builder folds two-literal `+`, `-`,
+    /// `*` and negation exactly in `BigInt` at construction now, so the
+    /// evaluator's own checked-i64 paths -- still live for *model values*
+    /// mixed with literals, e.g. a variable pinned to `2^62` in the model
+    /// appearing under another `+` -- can only be pointed at the shape by
+    /// constructing the node directly.
+    fn unfolded(kind: TermKind, manager: &mut TermManager) -> TermId {
+        let sort = manager.sorts.int_sort;
+        manager.intern_term(kind, sort)
+    }
 
     /// The stack the in-budget regression tests in this module run their
     /// evaluation on.  1 MiB is what an embedder's worker thread typically
@@ -1903,7 +1916,10 @@ mod tests {
     fn overflowing_addition_never_hides_a_violated_assertion() {
         let mut manager = TermManager::new();
         let half = manager.mk_int(HALF_MAX);
-        let sum = manager.mk_add([half, half]);
+        let sum = unfolded(
+            TermKind::Add(SmallVec::from_iter([half, half])),
+            &mut manager,
+        );
         let zero = manager.mk_int(0);
         let assertion = manager.mk_lt(sum, zero);
 
@@ -1923,7 +1939,10 @@ mod tests {
     fn overflowing_addition_never_vouches_for_a_model() {
         let mut manager = TermManager::new();
         let half = manager.mk_int(HALF_MAX);
-        let sum = manager.mk_add([half, half]);
+        let sum = unfolded(
+            TermKind::Add(SmallVec::from_iter([half, half])),
+            &mut manager,
+        );
         let zero = manager.mk_int(0);
         let assertion = manager.mk_ge(sum, zero);
 
@@ -1939,9 +1958,12 @@ mod tests {
         let min = manager.mk_int(i64::MIN);
         let max = manager.mk_int(i64::MAX);
 
-        let product = manager.mk_mul([half, two]);
-        let difference = manager.mk_sub(min, max);
-        let negation = manager.mk_neg(min);
+        let product = unfolded(
+            TermKind::Mul(SmallVec::from_iter([half, two])),
+            &mut manager,
+        );
+        let difference = unfolded(TermKind::Sub(min, max), &mut manager);
+        let negation = unfolded(TermKind::Neg(min), &mut manager);
 
         for term in [product, difference, negation] {
             assert_eq!(outcome(&manager, term), EvalOutcome::Unrepresentable);
@@ -1958,7 +1980,10 @@ mod tests {
     fn short_circuited_overflow_does_not_downgrade() {
         let mut manager = TermManager::new();
         let half = manager.mk_int(HALF_MAX);
-        let sum = manager.mk_add([half, half]);
+        let sum = unfolded(
+            TermKind::Add(SmallVec::from_iter([half, half])),
+            &mut manager,
+        );
         let zero = manager.mk_int(0);
         let overflowing = manager.mk_lt(sum, zero);
         // `mk_or` / `mk_and` drop a literal `true` / `false` operand outright,
@@ -1997,9 +2022,14 @@ mod tests {
         let one = manager.mk_int(1);
         let zero = manager.mk_int(0);
         // Terms are hash-consed, so `mk_int(1)` twice is the *same* term and
-        // `mk_eq` would fold it to `true`.  `(+ 0 1)` is a distinct term with
-        // the same value, which is exactly the collision the gate distrusts.
-        let other_one = manager.mk_add([zero, one]);
+        // `mk_eq` would fold it to `true`.  `(+ 0 1)` used to be a distinct
+        // term with the same value (exactly the collision the gate
+        // distrusts); the builder folds it to `1` now, so build the add
+        // node unfolded to keep the distinct-but-equal shape.
+        let other_one = unfolded(
+            TermKind::Add(SmallVec::from_iter([zero, one])),
+            &mut manager,
+        );
 
         let collision = manager.mk_eq(one, other_one);
         let boundary = manager.mk_lt(one, other_one);
@@ -2081,9 +2111,13 @@ mod tests {
         let refused = on_worker_stack(|| {
             let mut manager = TermManager::new();
             let one = manager.mk_int(1);
+            // Built node-by-node (`intern_term`), not via `mk_sub`: the
+            // builder folds a literal-minus-literal chain flat at
+            // construction, and the depth this test exists to exercise would
+            // never exist.
             let mut chain = manager.mk_int(0);
             for _ in 0..DEPTH {
-                chain = manager.mk_sub(chain, one);
+                chain = unfolded(TermKind::Sub(chain, one), &mut manager);
             }
             // `chain` is exactly `-DEPTH`, so `(>= chain 0)` is false: the gate
             // must refute, and refute for the right reason.
@@ -2112,9 +2146,11 @@ mod tests {
         let (value, refused) = on_stack(DEEP_WORKER_STACK, || {
             let mut manager = TermManager::new();
             let one = manager.mk_int(1);
+            // Direct node construction: `mk_sub` folds the all-literal chain
+            // flat (see the sibling test above).
             let mut chain = manager.mk_int(0);
             for _ in 0..DEPTH {
-                chain = manager.mk_sub(chain, one);
+                chain = unfolded(TermKind::Sub(chain, one), &mut manager);
             }
             let assertion = manager.mk_ge(chain, one);
             (outcome(&manager, chain), gate_refuses(&manager, assertion))

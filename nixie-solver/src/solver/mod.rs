@@ -481,6 +481,16 @@ pub struct Solver {
     /// `ParsedArithConstraint` is purely structural (depends only on the term graph),
     /// so it is safe to reuse across CDCL backtracks.
     pub(super) arith_parse_cache: FxHashMap<TermId, Option<ParsedArithConstraint>>,
+    /// Comparison atoms whose linear parse failed because the folded
+    /// constant (or a coefficient) left `Rational64` width mid-walk – a
+    /// *structural* fact about the atom, so exactly like
+    /// [`Self::arith_parse_cache`] it is never rolled back on `pop`.  Such an
+    /// atom carries no linear constraint and must not be trusted as a free
+    /// Boolean: `arith_atoms_need_theory` gates every verdict over it to
+    /// `Unknown`.  (Construction-time constant folding in `TermManager`
+    /// removes the wide-literal cases before a parse ever sees them; this is
+    /// the residual class – accumulated sums across nested `Sub`/`Mul`.)
+    pub(super) arith_parse_overflow: FxHashSet<TermId>,
     /// Set of compound term ids whose theory-variable sub-graph has been fully
     /// traversed by `track_theory_vars`.  Avoids redundant O(depth) re-walks
     /// when the same sub-expression appears in multiple parent constraints.
@@ -923,7 +933,17 @@ impl Solver {
             },
             branch_priority,
             euf: EufSolver::new(),
-            arith: ArithSolver::lra(),
+            // Default arithmetic is MIXED-INTEGER (Z3's `theory_mi_arith`, the
+            // mode an unset / `ALL` logic gets): `Int`-sorted terms are
+            // integer variables, `Real`-sorted terms continuous, per variable.
+            // A bare `Solver::new()` used to default to pure LRA, which has
+            // no integrality at all – `x:Int ∧ x>3 ∧ x<4` came back `sat`
+            // from the LP point `x = 3.5`, a false model on the most basic
+            // integer query, and integer `div`/`mod` axioms were refused
+            // (`instantiate_arith_axioms` requires integer mode), gating every
+            // division atom to `unknown`.  A `set-logic` call may still pin a
+            // purer mode; see `SolverConfig::set_logic`.
+            arith: ArithSolver::mixed(),
             bv: BvSolver::new(),
             diff: nixie_theories::DiffLogicSolver::new(true),
             derived_reasons: theory_manager::DerivedReasons::default(),
@@ -1016,6 +1036,7 @@ impl Solver {
             binary_table_results: FxHashSet::default(),
             dt_var_constructors: FxHashMap::default(),
             arith_parse_cache: FxHashMap::default(),
+            arith_parse_overflow: FxHashSet::default(),
             tracked_compound_terms: FxHashSet::default(),
             encoded_terms: FxHashMap::default(),
             fp_constraint_cache: FxHashMap::default(),

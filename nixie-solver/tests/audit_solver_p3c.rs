@@ -77,10 +77,16 @@ fn pushpop_arith_restores_satisfiability() {
 
 #[test]
 fn mod_atom_is_not_spuriously_decided() {
-    // (mod x 3) ∈ [0,3), so (> (mod x 3) 5) is unsat – but the linear solver
-    // cannot encode `mod`.  It must answer Unknown, never a fabricated verdict.
+    // (mod x 3) ∈ [0,3), so (> (mod x 3) 5) is unsat.  The linear solver
+    // cannot encode `mod` itself, but the arithmetic default became
+    // mixed-integer, which arms `arith_axioms`' Euclidean defining axioms
+    // (`0 <= mod x 3 < 3`) without a `set-logic` declaration – so this is
+    // now a genuine, axiom-backed Unsat (previously the default solver ran
+    // real mode, left the term undefined, and the honesty gate answered
+    // Unknown).  What stays excluded is a free-Boolean spurious Sat.
     let r = run_script(r#"(declare-const x Int)(assert (> (mod x 3) 5))(check-sat)"#);
-    assert_eq!(r, vec![SolverResult::Unknown]);
+    assert_ne!(r, vec![SolverResult::Sat]);
+    assert_eq!(r, vec![SolverResult::Unsat]);
 }
 
 #[test]

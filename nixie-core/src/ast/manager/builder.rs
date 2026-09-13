@@ -5,8 +5,72 @@ use super::super::term::{RoundingMode, TermId, TermKind};
 use crate::prelude::*;
 use crate::sort::SortId;
 use num_bigint::BigInt;
-use num_rational::Rational64;
-use num_traits::ToPrimitive;
+use num_rational::{BigRational, Rational64};
+use num_traits::{Euclid, One, ToPrimitive, Zero};
+// ---------------------------------------------------------------------------
+// Constant folding at construction time (Z3's `arith_rewriter` policy).
+//
+// Ground arithmetic is decided the moment the term is built, exactly and in
+// `BigInt` / `BigRational` – never through the `Rational64` the linear
+// tableau carries, whose fixed width used to overflow (a release build
+// *silently wraps* there, which is a soundness hazard, not just the
+// `panic = "abort"` the dev build shows) on sums like
+// `9223372036854775807 + 1`, and which cannot represent the wide literals
+// at all.  Folding here fixes every downstream consumer at once: the linear
+// parse, the axiom instantiation, the model printer.
+//
+// Rules of engagement, each one load-bearing:
+//
+// * **Exactness over convenience** – integer sums/products/quotients fold in
+//   `BigInt`; real sums/products fold in `BigRational` and are only kept
+//   when the result is representable as the `Rational64` a `RealConst`
+//   stores (otherwise the operands are left in place – sound, merely less
+//   folded).
+// * **Sort preservation** – a folded constant carries the *node's* sort: a
+//   zero produced inside a `Real`-sorted product is `0.0`, not `0`.  A
+//   folded integer sub-sum inside a `Real` node stays an `IntConst`
+//   argument (integer addition commutes with the coercion, so this is
+//   exact).
+// * **Division by zero never folds** – SMT-LIB treats `(div m 0)` /
+//   `(mod m 0)` as uninterpreted; the solver's `arith_axioms` relies on
+//   the term surviving to carry that meaning.  Folding it to anything
+//   would fabricate a value SMT-LIB does not define.
+// * **Euclidean semantics** – `div`/`mod` fold with `div_euclid`/
+//   `rem_euclid`, the exact semantics the theory's defining axioms assert
+//   (`m = n·q + r ∧ 0 ≤ r < |n|`), so the folder and the axiomatiser can
+//   never disagree about a value.
+// ---------------------------------------------------------------------------
+
+/// View a term as an integer constant (for folding), by value.
+#[must_use]
+fn int_const_of(t: TermId, manager: &TermManager) -> Option<BigInt> {
+    match &manager.get(t)?.kind {
+        TermKind::IntConst(v) => Some(v.clone()),
+        _ => None,
+    }
+}
+
+/// View a term as a rational constant (for folding), widened to `BigRational`.
+#[must_use]
+fn real_const_of(t: TermId, manager: &TermManager) -> Option<BigRational> {
+    match &manager.get(t)?.kind {
+        TermKind::RealConst(r) => Some(BigRational::new(
+            BigInt::from(*r.numer()),
+            BigInt::from(*r.denom()),
+        )),
+        _ => None,
+    }
+}
+
+/// Narrow a `BigRational` back to the `Rational64` a `RealConst` stores.
+/// `None` means the exact value is not representable and the caller must not
+/// fold (keeping the original operands is always sound).
+#[must_use]
+fn narrow_rational(r: BigRational) -> Option<Rational64> {
+    let (n, d) = r.into();
+    Some(Rational64::new(n.to_i64()?, d.to_i64()?))
+}
+
 use smallvec::SmallVec;
 
 use super::TermManager;
@@ -296,6 +360,15 @@ impl TermManager {
     }
 
     /// Create an addition
+    ///
+    /// Folds the numeral arguments at construction time (Z3's
+    /// `arith_rewriter::mk_add_core`): the `IntConst` arguments are summed
+    /// exactly in `BigInt` into a single numeral, the `RealConst` arguments
+    /// into a single `RealConst` when the exact sum is representable.  This is
+    /// what keeps a wide sum like `9223372036854775807 + 1` from ever reaching
+    /// the `Rational64` tableau as two separately-fitting summands (where the
+    /// fold would overflow) – it arrives as the one exact `IntConst(2^63)`
+    /// instead, and the big-constant abstraction owns it from there.
     pub fn mk_add(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         let args: SmallVec<[TermId; 4]> = args.into_iter().collect();
 
@@ -304,24 +377,120 @@ impl TermManager {
             1 => args[0],
             _ => {
                 let sort = self.get(args[0]).map_or(self.sorts.int_sort, |t| t.sort);
-                self.intern(TermKind::Add(args), sort)
+                // Classify once: integer numerals, real numerals, the rest.
+                let mut int_sum: Option<BigInt> = None;
+                let mut real_sum: Option<BigRational> = None;
+                let mut others: SmallVec<[TermId; 4]> = SmallVec::new();
+                let mut saw_int = false;
+                let mut saw_real = false;
+                for &a in &args {
+                    if let Some(v) = int_const_of(a, self) {
+                        saw_int = true;
+                        int_sum = match int_sum.take() {
+                            Some(s) => Some(s + v),
+                            None => Some(v),
+                        };
+                    } else if let Some(v) = real_const_of(a, self) {
+                        saw_real = true;
+                        real_sum = match real_sum.take() {
+                            Some(s) => Some(s + v),
+                            None => Some(v),
+                        };
+                    } else {
+                        others.push(a);
+                    }
+                }
+                if !saw_int && !saw_real {
+                    return self.intern(TermKind::Add(args), sort);
+                }
+                // Exact-but-unrepresentable real sum: keep the original real
+                // operands (folding only the integer part stays exact).
+                let folded_real = real_sum.and_then(narrow_rational);
+                if saw_real && folded_real.is_none() {
+                    // Re-run the classification keeping the real numerals.
+                    others = args
+                        .iter()
+                        .copied()
+                        .filter(|&a| int_const_of(a, self).is_none())
+                        .collect();
+                }
+                let mut new_args = others;
+                if let Some(r) = folded_real {
+                    new_args.push(self.mk_real(r));
+                }
+                match int_sum {
+                    // No integer numerals at all.
+                    None => {
+                        if new_args.len() == 1 {
+                            new_args[0]
+                        } else if new_args.is_empty() {
+                            // Every argument was a real numeral and the sum
+                            // folded; representable by construction above.
+                            self.mk_real(folded_real.unwrap_or(Rational64::zero()))
+                        } else {
+                            self.intern(TermKind::Add(new_args), sort)
+                        }
+                    }
+                    Some(s) if new_args.is_empty() => self.mk_int(s),
+                    Some(s) if !s.is_zero() => {
+                        new_args.push(self.mk_int(s));
+                        self.intern(TermKind::Add(new_args), sort)
+                    }
+                    // The integer sum vanished: `(+ x 1 -1)` is `x` (or the
+                    // remaining non-numeral args).
+                    Some(_) => {
+                        if new_args.len() == 1 {
+                            new_args[0]
+                        } else {
+                            self.intern(TermKind::Add(new_args), sort)
+                        }
+                    }
+                }
             }
         }
     }
 
     /// Create a subtraction
+    ///
+    /// Folds when both operands are numerals of the same family (exact in
+    /// `BigInt` / `BigRational`); a non-uniform pair keeps its shape.
     pub fn mk_sub(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let sort = self.get(lhs).map_or(self.sorts.int_sort, |t| t.sort);
+        if let (Some(a), Some(b)) = (int_const_of(lhs, self), int_const_of(rhs, self)) {
+            return self.mk_int(a - b);
+        }
+        if sort == self.sorts.real_sort
+            && let (Some(a), Some(b)) = (real_const_of(lhs, self), real_const_of(rhs, self))
+            && let Some(r) = narrow_rational(a - b)
+        {
+            return self.mk_real(r);
+        }
         self.intern(TermKind::Sub(lhs, rhs), sort)
     }
 
     /// Create arithmetic negation
+    ///
+    /// Folds a numeral operand to its exact negation.
     pub fn mk_neg(&mut self, arg: TermId) -> TermId {
         let sort = self.get(arg).map_or(self.sorts.int_sort, |t| t.sort);
+        if let Some(v) = int_const_of(arg, self) {
+            return self.mk_int(-v);
+        }
+        if sort == self.sorts.real_sort
+            && let Some(r) = real_const_of(arg, self)
+            && let Some(r) = narrow_rational(-r)
+        {
+            return self.mk_real(r);
+        }
         self.intern(TermKind::Neg(arg), sort)
     }
 
     /// Create a multiplication
+    ///
+    /// Folds the numeral arguments at construction time: the `IntConst`
+    /// arguments into their exact `BigInt` product (a zero product collapses
+    /// the whole node to the zero of the node's sort), the `RealConst`
+    /// arguments into a single `RealConst` when exactly representable.
     pub fn mk_mul(&mut self, args: impl IntoIterator<Item = TermId>) -> TermId {
         let args: SmallVec<[TermId; 4]> = args.into_iter().collect();
 
@@ -330,20 +499,140 @@ impl TermManager {
             1 => args[0],
             _ => {
                 let sort = self.get(args[0]).map_or(self.sorts.int_sort, |t| t.sort);
-                self.intern(TermKind::Mul(args), sort)
+                // Exact integer product of the IntConst arguments.
+                let mut int_prod: Option<BigInt> = None;
+                let mut rest: SmallVec<[TermId; 4]> = SmallVec::new();
+                for &a in &args {
+                    match int_const_of(a, self) {
+                        Some(v) => {
+                            int_prod = match int_prod.take() {
+                                Some(s) => Some(s * v),
+                                None => Some(v),
+                            };
+                        }
+                        None => rest.push(a),
+                    }
+                }
+                let mut real_prod: Option<BigRational> = None;
+                let mut keep: SmallVec<[TermId; 4]> = SmallVec::new();
+                let mut saw_real = false;
+                for a in rest {
+                    match real_const_of(a, self) {
+                        Some(v) => {
+                            saw_real = true;
+                            real_prod = match real_prod.take() {
+                                Some(s) => Some(s * v),
+                                None => Some(v),
+                            };
+                        }
+                        None => keep.push(a),
+                    }
+                }
+                // Zero of either numeral family collapses the product to the
+                // zero OF THE NODE'S SORT (`(* 0 1.5)` is `0.0`, not `0`).
+                let int_zero = int_prod.as_ref().is_some_and(BigInt::is_zero);
+                let real_zero = real_prod.as_ref().is_some_and(BigRational::is_zero);
+                if int_zero || real_zero {
+                    return if sort == self.sorts.real_sort {
+                        self.mk_real(Rational64::zero())
+                    } else {
+                        self.mk_int(0)
+                    };
+                }
+                let folded_real = real_prod.and_then(narrow_rational);
+                if saw_real && folded_real.is_none() {
+                    // Exact but unrepresentable: keep the original real
+                    // operands (dropping them would change the value).
+                    keep = args
+                        .iter()
+                        .copied()
+                        .filter(|&a| int_const_of(a, self).is_none())
+                        .collect();
+                }
+                if let Some(r) = folded_real {
+                    keep.push(self.mk_real(r));
+                }
+                match int_prod {
+                    None => {
+                        if keep.len() == 1 {
+                            keep[0]
+                        } else if keep.is_empty() {
+                            // Real numerals folded away entirely cannot happen
+                            // (zero returned above); defensive.
+                            self.mk_real(Rational64::one())
+                        } else {
+                            self.intern(TermKind::Mul(keep), sort)
+                        }
+                    }
+                    // No surviving factors: the product IS the numeral.
+                    Some(p) if keep.is_empty() => self.mk_int(p),
+                    Some(p) if !p.is_one() => {
+                        keep.push(self.mk_int(p));
+                        self.intern(TermKind::Mul(keep), sort)
+                    }
+                    // Unit integer product: the numeral arguments vanish.
+                    Some(_) => {
+                        if keep.len() == 1 {
+                            keep[0]
+                        } else {
+                            self.intern(TermKind::Mul(keep), sort)
+                        }
+                    }
+                }
             }
         }
     }
 
     /// Create a division
+    ///
+    /// Integer `div` folds to the exact **Euclidean** quotient
+    /// (`div_euclid`) whenever both operands are integer numerals and the
+    /// divisor is non-zero – the same semantics the theory's defining axioms
+    /// assert, so the folder and the axiomatiser agree on every value.  Real
+    /// division folds to the exact `BigRational` quotient when representable.
+    /// A zero divisor never folds: SMT-LIB defines `(div m 0)` / `(/ m 0.0)`
+    /// as uninterpreted, and the surviving term is what carries that meaning.
     pub fn mk_div(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let sort = self.get(lhs).map_or(self.sorts.int_sort, |t| t.sort);
+        if sort == self.sorts.int_sort
+            && let (Some(a), Some(b)) = (int_const_of(lhs, self), int_const_of(rhs, self))
+            && !b.is_zero()
+        {
+            // Euclidean division: the unique `q` with `m = n·q + r`,
+            // `0 ≤ r < |n|` — exactly the defining axiom pair `arith_axioms`
+            // asserts for `(div m n)`.
+            return self.mk_int(a.div_euclid(&b));
+        }
+        if sort == self.sorts.real_sort {
+            let a =
+                real_const_of(lhs, self).or_else(|| int_const_of(lhs, self).map(BigRational::from));
+            let b =
+                real_const_of(rhs, self).or_else(|| int_const_of(rhs, self).map(BigRational::from));
+            if let (Some(a), Some(b)) = (a, b)
+                && !b.is_zero()
+                && let Some(r) = narrow_rational(a / b)
+            {
+                return self.mk_real(r);
+            }
+        }
         self.intern(TermKind::Div(lhs, rhs), sort)
     }
 
     /// Create a modulo operation
+    ///
+    /// Folds to the exact **Euclidean** remainder (`rem_euclid` – always in
+    /// `[0, |n|)`, the semantics the theory's axioms assert) on two integer
+    /// numerals with a non-zero divisor.  `(mod m 0)` never folds (SMT-LIB:
+    /// uninterpreted).
     pub fn mk_mod(&mut self, lhs: TermId, rhs: TermId) -> TermId {
         let sort = self.get(lhs).map_or(self.sorts.int_sort, |t| t.sort);
+        if let (Some(a), Some(b)) = (int_const_of(lhs, self), int_const_of(rhs, self))
+            && !b.is_zero()
+        {
+            // Euclidean remainder: `0 ≤ r < |n|` by construction, matching
+            // the `mod` defining axioms.
+            return self.mk_int(a.rem_euclid(&b));
+        }
         self.intern(TermKind::Mod(lhs, rhs), sort)
     }
 
@@ -2152,4 +2441,176 @@ enum ShiftFold {
     Identity,
     /// Nothing can be decided syntactically.
     None,
+}
+
+#[cfg(test)]
+mod arith_folding_tests {
+    use super::*;
+    use num_traits::Zero;
+
+    fn int_const_value(t: TermId, m: &TermManager) -> Option<BigInt> {
+        match &m.get(t)?.kind {
+            TermKind::IntConst(v) => Some(v.clone()),
+            _ => None,
+        }
+    }
+
+    fn real_const_value(t: TermId, m: &TermManager) -> Option<Rational64> {
+        match &m.get(t)?.kind {
+            TermKind::RealConst(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// The exact wide-literal sum that used to panic inside `num-rational`
+    /// when the solver's `Ratio<i64>` accumulator folded it at parse time
+    /// (and to *silently wrap* in release): `i64::MAX + 1` folds to the
+    /// exact `2^63` `BigInt` constant at construction.
+    #[test]
+    fn wide_addition_folds_exactly_in_bigint() {
+        let mut m = TermManager::new();
+        let max = m.mk_int(i64::MAX);
+        let one = m.mk_int(1);
+        let sum = m.mk_add([max, one]);
+        assert_eq!(int_const_value(sum, &m), Some(BigInt::from(2u32).pow(63)));
+        // ...and a wide literal that only fits together as 2^64.
+        let wide = m.mk_int(BigInt::from(2u32).pow(64) - 1);
+        assert_eq!(
+            int_const_value(m.mk_add([wide, one]), &m),
+            Some(BigInt::from(2u32).pow(64))
+        );
+    }
+
+    #[test]
+    fn partial_add_folding_collects_numerals_at_the_end() {
+        let mut m = TermManager::new();
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let one = m.mk_int(1);
+        let two = m.mk_int(2);
+        // (+ x 1 2) -> (+ x 3)
+        let t = m.mk_add([x, one, two]);
+        match &m.get(t).expect("term").kind {
+            TermKind::Add(args) => {
+                assert_eq!(args.len(), 2);
+                assert_eq!(args[0], x);
+                assert_eq!(int_const_value(args[1], &m), Some(BigInt::from(3)));
+            }
+            other => panic!("expected Add, got {other:?}"),
+        }
+        // (+ x 1 -1) -> x
+        let neg_one = m.mk_int(-1);
+        assert_eq!(m.mk_add([x, one, neg_one]), x);
+        // (+ 1 -1) -> 0
+        let zero_sum = m.mk_add([one, neg_one]);
+        assert_eq!(int_const_value(zero_sum, &m), Some(BigInt::zero()));
+    }
+
+    #[test]
+    fn sub_neg_mul_fold_on_uniform_numerals() {
+        let mut m = TermManager::new();
+        let five = m.mk_int(5);
+        let two = m.mk_int(2);
+        assert_eq!(
+            int_const_value(m.mk_sub(five, two), &m),
+            Some(BigInt::from(3))
+        );
+        // i64::MIN negation is exact in BigInt.
+        let min = m.mk_int(i64::MIN);
+        let negated = m.mk_neg(min);
+        assert_eq!(int_const_value(negated, &m), Some(-BigInt::from(i64::MIN)));
+        // A product past i64 width folds exactly, and with no surviving
+        // factors collapses to the numeral itself.
+        let f1 = m.mk_int(1i64 << 40);
+        let f2 = m.mk_int(1i64 << 40);
+        let big = m.mk_mul([f1, f2]);
+        assert_eq!(int_const_value(big, &m), Some(BigInt::from(2u32).pow(80)));
+        // (* x 1) -> x, (* x 0) -> 0
+        let int_sort = m.sorts.int_sort;
+        let x = m.mk_var("x", int_sort);
+        let one = m.mk_int(1);
+        let zero = m.mk_int(0);
+        assert_eq!(m.mk_mul([x, one]), x);
+        assert_eq!(
+            int_const_value(m.mk_mul([x, zero]), &m),
+            Some(BigInt::zero())
+        );
+    }
+
+    /// Euclidean `div`/`mod` fold exactly, on every sign combination, and a
+    /// zero divisor never folds (SMT-LIB: uninterpreted).
+    #[test]
+    fn div_mod_fold_euclidean_and_never_on_zero() {
+        let mut m = TermManager::new();
+        for (a, b, q, r) in [
+            (7i64, 2i64, 3i64, 1i64), // 7 = 2*3 + 1
+            (7, -2, -3, 1),           // 7 = (-2)(-3) + 1
+            (-7, 2, -4, 1),           // -7 = 2*(-4) + 1
+            (-7, -2, 4, 1),           // -7 = (-2)*4 + 1
+        ] {
+            let ma = m.mk_int(a);
+            let mb = m.mk_int(b);
+            assert_eq!(
+                int_const_value(m.mk_div(ma, mb), &m),
+                Some(BigInt::from(q)),
+                "div {a} {b}"
+            );
+            assert_eq!(
+                int_const_value(m.mk_mod(ma, mb), &m),
+                Some(BigInt::from(r)),
+                "mod {a} {b}"
+            );
+        }
+        // The i64-overflow corner: Euclidean (div i64::MIN -1) = 2^63 with
+        // remainder 0 -- exact in `BigInt`, where an i64 path would overflow.
+        let min = m.mk_int(i64::MIN);
+        let neg_one = m.mk_int(-1);
+        assert_eq!(
+            int_const_value(m.mk_div(min, neg_one), &m),
+            Some(BigInt::from(2u32).pow(63))
+        );
+        assert_eq!(
+            int_const_value(m.mk_mod(min, neg_one), &m),
+            Some(BigInt::zero())
+        );
+        // Zero divisor: the term must survive as a Div/Mod node.
+        let five = m.mk_int(5);
+        let zero = m.mk_int(0);
+        let dz = m.mk_div(five, zero);
+        assert!(matches!(
+            &m.get(dz).expect("term").kind,
+            TermKind::Div(_, _)
+        ));
+        let mz = m.mk_mod(five, zero);
+        assert!(matches!(
+            &m.get(mz).expect("term").kind,
+            TermKind::Mod(_, _)
+        ));
+    }
+
+    /// Real folding is exact where representable and refused (not approximated)
+    /// where not.
+    #[test]
+    fn real_folding_is_exact_or_refused() {
+        let mut m = TermManager::new();
+        let half = m.mk_real(Rational64::new(1, 2));
+        // (+ 0.5 0.5) -> 1.0
+        let sum = m.mk_add([half, half]);
+        assert_eq!(real_const_value(sum, &m), Some(Rational64::from_integer(1)));
+        // (/ 1.0 4.0) -> 0.25
+        let one = m.mk_real(Rational64::from_integer(1));
+        let four = m.mk_real(Rational64::from_integer(4));
+        assert_eq!(
+            real_const_value(m.mk_div(one, four), &m),
+            Some(Rational64::new(1, 4))
+        );
+        // A zero real product collapses to the REAL zero (sort preserved).
+        let x_real = m.mk_var("xr", m.sorts.real_sort);
+        let r_zero = m.mk_real(Rational64::zero());
+        let prod = m.mk_mul([x_real, r_zero]);
+        assert!(matches!(
+            &m.get(prod).expect("term").kind,
+            TermKind::RealConst(r) if r.is_zero()
+        ));
+    }
 }

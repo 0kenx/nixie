@@ -6,7 +6,7 @@ use nixie_core::ast::{TermId, TermKind, TermManager, collect_subterms, get_child
 use nixie_core::sort::{SortId, SortKind};
 use nixie_sat::{Lit, Var};
 use num_rational::Rational64;
-use num_traits::{One, ToPrimitive, Zero};
+use num_traits::{CheckedAdd, CheckedMul, CheckedSub, One, ToPrimitive, Zero};
 use smallvec::SmallVec;
 
 use super::Solver;
@@ -242,7 +242,14 @@ impl Solver {
         }
         self.arith_terms.insert(term_id);
         self.trail.push(TrailOp::ArithTermAdded { term: term_id });
-        self.arith.intern(term_id);
+        // Per-sort integrality: an `Int`-sorted atom is an integer variable
+        // (mixed-integer mode marks exactly these), a `Real`-sorted one is
+        // continuous.  Under pure LIA/LRA the mark agrees with the mode.
+        if sort == manager.sorts.int_sort {
+            self.arith.intern_integer(term_id);
+        } else {
+            self.arith.intern(term_id);
+        }
     }
 
     /// Parse an arithmetic comparison and extract linear expression.
@@ -267,27 +274,60 @@ impl Solver {
         let mut terms: SmallVec<[(TermId, Rational64); 4]> = SmallVec::new();
         let mut constant = Rational64::zero();
 
-        // Parse LHS (add positive coefficients)
-        let lhs_ok =
-            self.extract_linear_terms(lhs, Rational64::one(), &mut terms, &mut constant, manager);
+        // Parse LHS (add positive coefficients).  `overflow` distinguishes
+        // "the constant arithmetic left `Rational64` width" from "not
+        // linear": an overflowing parse MUST gate the atom to `Unknown`
+        // rather than leave it a free Boolean (a free Boolean the SAT core
+        // assigns one truth value to is exactly the wrong-verdict shape the
+        // honesty gate exists to prevent).
+        let mut overflow = false;
+        let lhs_ok = self.extract_linear_terms(
+            lhs,
+            Rational64::one(),
+            &mut terms,
+            &mut constant,
+            manager,
+            &mut overflow,
+        );
         if lhs_ok.is_none() {
+            if overflow {
+                self.arith_parse_overflow.insert(reason);
+            }
             self.arith_parse_cache.insert(reason, None);
             return None;
         }
 
         // Parse RHS (subtract, so coefficients are negated)
         // For lhs OP rhs, we want lhs - rhs OP 0
-        let rhs_ok =
-            self.extract_linear_terms(rhs, -Rational64::one(), &mut terms, &mut constant, manager);
+        let rhs_ok = self.extract_linear_terms(
+            rhs,
+            -Rational64::one(),
+            &mut terms,
+            &mut constant,
+            manager,
+            &mut overflow,
+        );
         if rhs_ok.is_none() {
+            if overflow {
+                self.arith_parse_overflow.insert(reason);
+            }
             self.arith_parse_cache.insert(reason, None);
             return None;
         }
 
-        // Combine like terms
+        // Combine like terms (checked: a coefficient sum that leaves `i64`
+        // width is an overflow of the same class, gated identically).
         let mut combined: FxHashMap<TermId, Rational64> = FxHashMap::default();
         for (term, coef) in terms {
-            *combined.entry(term).or_insert(Rational64::zero()) += coef;
+            let entry = combined.entry(term).or_insert(Rational64::zero());
+            match entry.checked_add(&coef) {
+                Some(v) => *entry = v,
+                None => {
+                    self.arith_parse_overflow.insert(reason);
+                    self.arith_parse_cache.insert(reason, None);
+                    return None;
+                }
+            }
         }
 
         // Remove zero coefficients
@@ -318,9 +358,17 @@ impl Solver {
             self.arith_abstracted_big_const = true;
         }
 
+        // Move constant to RHS (checked; `i64::MIN` negation overflow is the
+        // same gated class).  `Ratio` has no `checked_neg`; `0 - c` is the
+        // same test through `CheckedSub`.
+        let Some(negated_constant) = Rational64::zero().checked_sub(&constant) else {
+            self.arith_parse_overflow.insert(reason);
+            self.arith_parse_cache.insert(reason, None);
+            return None;
+        };
         let result = ParsedArithConstraint {
             terms: final_terms,
-            constant: -constant, // Move constant to RHS
+            constant: negated_constant, // Move constant to RHS
             constraint_type,
             reason_term: reason,
         };
@@ -331,6 +379,25 @@ impl Solver {
 
     /// Extract linear terms from an arithmetic expression.
     /// Returns None if the term is not linear.
+    ///
+    /// # Overflow honesty
+    ///
+    /// The coefficients and folded constants live in `Rational64` (`i64`
+    /// numerator/denominator).  Every arithmetic step below is CHECKED: on
+    /// overflow the walk fails with `*overflow = true`, which
+    /// [`Solver::parse_arith_comparison`] turns into the atom's linear-parse
+    /// failure *and* a mark in [`Solver::arith_parse_overflow`] so the
+    /// arithmetic honesty gate answers `Unknown` for the atom.  The previous
+    /// unchecked arithmetic PANICKED under a debug build
+    /// (`9223372036854775807 + 1` on two literals that each fit) and
+    /// **silently wrapped in release** – the workspace `[profile.release]` has
+    /// no `overflow-checks` – which is a wrong-coefficient (wrong verdict)
+    /// hazard, not a crash: a wrapped constant turns a valid linear atom into
+    /// a different linear atom.  Construction-time constant folding
+    /// (`TermManager::mk_add` and friends) removed the common case at the
+    /// root; this is the defense in depth for the nesting the folder cannot
+    /// flatten (`(- (+ x i64::MAX) (- 0 1))` folds its leaves but sums
+    /// `MAX + 1` only here).
     ///
     /// # Explicit stack, not native recursion
     ///
@@ -356,9 +423,9 @@ impl Solver {
     /// expect(..)` is needed anywhere.
     ///
     /// On failure the caller's buffers are untouched (the recursive version
-    /// left partial writes behind); the only caller,
-    /// [`Solver::parse_arith_comparison`], discards the buffers on `None`, so
-    /// this is unobservable.
+    /// left partial writes behind); the only callers that keep the buffers,
+    /// [`Solver::parse_arith_comparison`] and `parity_row_of`, discard them on
+    /// `None`, so this is unobservable.
     pub(super) fn extract_linear_terms(
         &self,
         term_id: TermId,
@@ -366,6 +433,7 @@ impl Solver {
         terms: &mut SmallVec<[(TermId, Rational64); 4]>,
         constant: &mut Rational64,
         manager: &TermManager,
+        overflow: &mut bool,
     ) -> Option<()> {
         /// One linear-accumulation context: the `(term, coefficient)` pairs
         /// and folded constant of the sub-expression currently being walked.
@@ -428,7 +496,16 @@ impl Solver {
                         // Integer constant.
                         TermKind::IntConst(n) => match n.to_i64() {
                             Some(val) => {
-                                cur.constant += sc * Rational64::from_integer(val);
+                                let folded = sc
+                                    .checked_mul(&Rational64::from_integer(val))
+                                    .and_then(|p| cur.constant.checked_add(&p));
+                                match folded {
+                                    Some(c) => cur.constant = c,
+                                    None => {
+                                        *overflow = true;
+                                        return None;
+                                    }
+                                }
                             }
                             None => {
                                 // A BigInt too large for the `Rational64`
@@ -453,13 +530,30 @@ impl Solver {
 
                         // Rational constant
                         TermKind::RealConst(r) => {
-                            cur.constant += sc * *r;
+                            let folded =
+                                sc.checked_mul(r).and_then(|p| cur.constant.checked_add(&p));
+                            match folded {
+                                Some(c) => cur.constant = c,
+                                None => {
+                                    *overflow = true;
+                                    return None;
+                                }
+                            }
                         }
 
                         // Bitvector constant - treat as integer
                         TermKind::BitVecConst { value, .. } => {
                             let val = value.to_i64()?;
-                            cur.constant += sc * Rational64::from_integer(val);
+                            let folded = sc
+                                .checked_mul(&Rational64::from_integer(val))
+                                .and_then(|p| cur.constant.checked_add(&p));
+                            match folded {
+                                Some(c) => cur.constant = c,
+                                None => {
+                                    *overflow = true;
+                                    return None;
+                                }
+                            }
                         }
 
                         // Variable (or bitvector variable - treat as integer variable)
@@ -538,15 +632,25 @@ impl Solver {
                             }
                         }
 
-                        // Subtraction
+                        // Subtraction.  `Ratio` has no `checked_neg`, so the
+                        // scale negation goes through `0 - sc` (`CheckedSub`):
+                        // the only failing input is `i64::MIN`'s numerator.
                         TermKind::Sub(lhs, rhs) => {
-                            work.push(Work::Visit(*rhs, -sc));
+                            let Some(neg_sc) = Rational64::zero().checked_sub(&sc) else {
+                                *overflow = true;
+                                return None;
+                            };
+                            work.push(Work::Visit(*rhs, neg_sc));
                             work.push(Work::Visit(*lhs, sc));
                         }
 
-                        // Negation
+                        // Negation (same checked form as `Sub`'s scale).
                         TermKind::Neg(arg) => {
-                            work.push(Work::Visit(*arg, -sc));
+                            let Some(neg_sc) = Rational64::zero().checked_sub(&sc) else {
+                                *overflow = true;
+                                return None;
+                            };
+                            work.push(Work::Visit(*arg, neg_sc));
                         }
 
                         // Multiplication of linear terms.  Suspend the current
@@ -603,7 +707,11 @@ impl Solver {
                         if cur.terms.is_empty() {
                             // Pure constant factor – absorb into the running
                             // product of constant factors.
-                            frame.const_product *= cur.constant;
+                            let Some(p) = frame.const_product.checked_mul(&cur.constant) else {
+                                *overflow = true;
+                                return None;
+                            };
+                            frame.const_product = p;
                         } else {
                             // Non-constant factor (one or more variable terms,
                             // possibly with an additive constant).  A product
@@ -628,17 +736,35 @@ impl Solver {
                         // of the scale and every constant factor, so the single
                         // non-constant factor's variable terms and its additive
                         // constant are both scaled by `c`.
-                        let c = frame.scale * frame.const_product;
+                        let Some(c) = frame.scale.checked_mul(&frame.const_product) else {
+                            *overflow = true;
+                            return None;
+                        };
                         cur = frame.parent;
                         match frame.non_const_factor {
                             None => {
-                                cur.constant += c;
+                                let Some(v) = cur.constant.checked_add(&c) else {
+                                    *overflow = true;
+                                    return None;
+                                };
+                                cur.constant = v;
                             }
                             Some(level) => {
                                 for (v, coef) in level.terms {
-                                    cur.terms.push((v, c * coef));
+                                    let Some(scaled) = c.checked_mul(&coef) else {
+                                        *overflow = true;
+                                        return None;
+                                    };
+                                    cur.terms.push((v, scaled));
                                 }
-                                cur.constant += c * level.constant;
+                                let scaled_const = c.checked_mul(&level.constant);
+                                let Some(v) =
+                                    scaled_const.and_then(|sc_| cur.constant.checked_add(&sc_))
+                                else {
+                                    *overflow = true;
+                                    return None;
+                                };
+                                cur.constant = v;
                             }
                         }
                     }
@@ -652,7 +778,13 @@ impl Solver {
         for pair in cur.terms {
             terms.push(pair);
         }
-        *constant += cur.constant;
+        match constant.checked_add(&cur.constant) {
+            Some(v) => *constant = v,
+            None => {
+                *overflow = true;
+                return None;
+            }
+        }
         Some(())
     }
 
@@ -2630,12 +2762,27 @@ impl Solver {
                 let mut nterms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
                     smallvec::SmallVec::new();
                 let (mut mc, mut nc) = (Rational64::zero(), Rational64::zero());
+                let mut of = false;
                 if self
-                    .extract_linear_terms(*m, Rational64::one(), &mut mterms, &mut mc, manager)
+                    .extract_linear_terms(
+                        *m,
+                        Rational64::one(),
+                        &mut mterms,
+                        &mut mc,
+                        manager,
+                        &mut of,
+                    )
                     .is_none()
                     || !mterms.is_empty()
                     || self
-                        .extract_linear_terms(*n, Rational64::one(), &mut nterms, &mut nc, manager)
+                        .extract_linear_terms(
+                            *n,
+                            Rational64::one(),
+                            &mut nterms,
+                            &mut nc,
+                            manager,
+                            &mut of,
+                        )
                         .is_none()
                     || !nterms.is_empty()
                 {
@@ -2650,6 +2797,7 @@ impl Solver {
                 let mut terms: smallvec::SmallVec<[(TermId, Rational64); 4]> =
                     smallvec::SmallVec::new();
                 let mut constant = Rational64::zero();
+                let mut of = false;
                 if self
                     .extract_linear_terms(
                         arg,
@@ -2657,6 +2805,7 @@ impl Solver {
                         &mut terms,
                         &mut constant,
                         manager,
+                        &mut of,
                     )
                     .is_none()
                     || !terms.is_empty()
@@ -2758,8 +2907,13 @@ impl Solver {
                     if !self.arith_terms.contains(&term) {
                         self.arith_terms.insert(term);
                         self.trail.push(TrailOp::ArithTermAdded { term });
-                        // Register with arithmetic solver
-                        self.arith.intern(term);
+                        // Register with arithmetic solver; Int-sorted terms
+                        // are integer variables (per-sort integrality).
+                        if is_int {
+                            self.arith.intern_integer(term);
+                        } else {
+                            self.arith.intern(term);
+                        }
                     }
                 } else if let Some(sort) = manager.sorts.get(t.sort)
                     && sort.is_bitvec()

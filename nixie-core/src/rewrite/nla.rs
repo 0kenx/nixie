@@ -832,11 +832,13 @@ mod tests {
         let zero = manager.mk_int(0);
 
         let mul = manager.mk_mul(vec![x, zero]);
-        let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
-
-        assert!(result.was_rewritten());
-        let t = manager.get(result.term());
+        // The builder folds this identity at construction (Z3 rewriter
+        // layering); the rewriter sees an already-normal term.  Pin the
+        // composed outcome.
+        let t = manager.get(mul);
         assert!(matches!(t.map(|t| &t.kind), Some(TermKind::IntConst(n)) if n.is_zero()));
+        let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
+        assert!(!result.was_rewritten());
     }
 
     #[test]
@@ -847,9 +849,12 @@ mod tests {
         let one = manager.mk_int(1);
 
         let mul = manager.mk_mul(vec![x, one]);
+        // The builder folds this identity at construction (Z3 rewriter
+        // layering); the rewriter sees an already-normal term.  Pin the
+        // composed outcome.
+        assert_eq!(mul, x);
         let result = rewriter.rewrite(mul, &mut ctx, &mut manager);
-
-        assert!(result.was_rewritten());
+        assert!(!result.was_rewritten());
         assert_eq!(result.term(), x);
     }
 
@@ -861,9 +866,12 @@ mod tests {
         let zero = manager.mk_int(0);
 
         let add = manager.mk_add(vec![x, zero]);
+        // The builder folds this identity at construction (Z3 rewriter
+        // layering); the rewriter sees an already-normal term.  Pin the
+        // composed outcome.
+        assert_eq!(add, x);
         let result = rewriter.rewrite(add, &mut ctx, &mut manager);
-
-        assert!(result.was_rewritten());
+        assert!(!result.was_rewritten());
         assert_eq!(result.term(), x);
     }
 
