@@ -35,9 +35,17 @@
 //!
 //! Making them structural also makes `DOMAIN` exact where an array cannot be:
 //! a tuple's domain is `1..n` and a record's is its field names, both of which
-//! are known here. For an array-backed function the domain is not represented
-//! at all, and `DOMAIN` on one is refused rather than answered with something
-//! plausible.
+//! are known here.
+//!
+//! # Why a function is a pair
+//!
+//! A TLA+ function *is* a domain and a graph, and an SMT array is only the
+//! graph. [`Value::Fun`] carries both: the graph as an array, so `f[x]` and
+//! `[f EXCEPT ![i] = v]` cost a select and a store, and the domain as a
+//! set-sorted term, so `DOMAIN f` is exact and equality is domain-relative.
+//! Keeping only the array was not merely imprecise — array equality compares
+//! every index, so two functions that differ *only* in their domain read as
+//! equal, which hides a counterexample rather than manufacturing one.
 //!
 //! # The one thing to be careful about
 //!
@@ -50,7 +58,7 @@
 //! is the standard de-duplicating sum and the reason cardinality is not simply
 //! a sum of indicator variables.
 
-use nixie_core::{TermId, TermManager};
+use nixie_core::{SortId, TermId, TermManager};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -79,6 +87,26 @@ pub enum Value {
     /// the same operation and both land here. Sorted by name, so two records
     /// written in a different order compare equal.
     Record(BTreeMap<String, Rc<Value>>),
+    /// A function: a **domain** and a **graph**, which is what TLA+ says a
+    /// function is.
+    ///
+    /// The graph is an SMT array, so `f[x]` is a select and
+    /// `[f EXCEPT ![i] = v]` a store — both free, because the array theory is
+    /// already in Nelson-Oppen. The domain is a *set-sorted term*, which is
+    /// the part an array alone cannot carry, and carrying it is what makes
+    /// `DOMAIN f` exact and equality domain-relative.
+    ///
+    /// Keeping only the array was not merely imprecise, it was unsound in the
+    /// direction that hides a counterexample: `[x \in {1} |-> 0]` and
+    /// `[x \in {1, 2} |-> 0]` are different TLA+ functions, and two arrays
+    /// that agree at 1 can be made to agree at 2 as well, so array equality
+    /// alone reports them equal. See [`eq_values`].
+    Fun {
+        /// The domain, as a set-sorted SMT term.
+        domain: TermId,
+        /// The graph, as an SMT array from the domain's element sort.
+        array: TermId,
+    },
 }
 
 /// A set, represented by the values it might contain.
@@ -166,7 +194,51 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
             }
             Some(tm.mk_and(conj))
         }
-        _ => None,
+        // Domain-relative, the only definition TLA+ has: two functions are
+        // equal when they have the same domain and agree on it.
+        //
+        // The graphs are compared by *array* equality, which also compares
+        // points outside the domain. That is stricter than TLA+ in one
+        // direction only — it can report two TLA+-equal functions unequal,
+        // never two unequal ones equal — so it can manufacture a
+        // counterexample and can never hide one. It is *exact* whenever both
+        // graphs are built by the encoder, because both store over the same
+        // canonical base array and therefore already agree everywhere they do
+        // not store; the strictness only bites against a free array, which is
+        // what a function-typed state variable's graph is.
+        //
+        // Conjoining the domains is what closes the hiding direction: without
+        // it, `[x \in {1} |-> 0]` and `[x \in {1, 2} |-> 0]` are reported
+        // equal whenever the base happens to hold 0 at 2.
+        (
+            Value::Fun {
+                domain: da,
+                array: aa,
+            },
+            Value::Fun {
+                domain: db,
+                array: ab,
+            },
+        ) => {
+            // `mk_eq` does not check sorts, so two functions with different
+            // domain or range sorts would build a well-formed-looking term
+            // that no theory can decide. Reported as a shape clash — which is
+            // what it is — rather than handed to the solver.
+            let sort = |t: &TermId| tm.get(*t).map(|d| d.sort);
+            if sort(da) != sort(db) || sort(aa) != sort(ab) {
+                return None;
+            }
+            let same_domain = tm.mk_eq(*da, *db);
+            let same_graph = tm.mk_eq(*aa, *ab);
+            Some(tm.mk_and([same_domain, same_graph]))
+        }
+        // Deliberately enumerated rather than a `_` arm: a new `Value` variant
+        // must break compilation here, not fall into a silent shape clash.
+        (Value::Scalar(_), _)
+        | (Value::Set(_), _)
+        | (Value::Tuple(_), _)
+        | (Value::Record(_), _)
+        | (Value::Fun { .. }, _) => None,
     }
 }
 
@@ -231,4 +303,46 @@ pub fn cardinality(set: &SetCell, tm: &mut TermManager) -> Option<TermId> {
         return Some(zero);
     }
     Some(tm.mk_add(terms))
+}
+
+/// The shared base array every function graph is built on, one per array sort.
+///
+/// Sharing it is load-bearing rather than a saving. Two functions built with
+/// the same domain and the same values must come out **equal**, and array
+/// equality compares every index — including the ones neither domain mentions.
+/// Storing over a common base makes them agree there by construction; a fresh
+/// base per function would leave two identical function literals free to
+/// differ, which is a counterexample the specification does not have.
+///
+/// The base itself is unconstrained, which is the right reading of TLA+'s
+/// "`f[x]` outside `DOMAIN f` is undefined": some value, never a chosen one.
+#[must_use]
+pub fn fun_base(array_sort: SortId, tm: &mut TermManager) -> TermId {
+    tm.mk_var(&format!("@tla_fun_base_{}", array_sort.0), array_sort)
+}
+
+/// A function with a *known* graph: every pair present, no guards.
+///
+/// This is the literal form — what a concrete function value looks like once
+/// the encoder or an evaluator has already worked out each point. The encoder
+/// builds conditional graphs of its own for a domain whose membership is not
+/// yet decided, but both go over the same [`fun_base`], which is what makes
+/// the two comparable.
+#[must_use]
+pub fn fun_literal(
+    pairs: &[(TermId, TermId)],
+    domain_sort: SortId,
+    range_sort: SortId,
+    tm: &mut TermManager,
+) -> Value {
+    let set_sort = tm.sorts.set(domain_sort);
+    let mut domain = tm.mk_set_empty_at(set_sort);
+    let array_sort = tm.sorts.array(domain_sort, range_sort);
+    let mut array = fun_base(array_sort, tm);
+    for (k, v) in pairs {
+        let single = tm.mk_set_singleton(*k);
+        domain = tm.mk_set_union(domain, single);
+        array = tm.mk_store(array, *k, *v);
+    }
+    Value::Fun { domain, array }
 }

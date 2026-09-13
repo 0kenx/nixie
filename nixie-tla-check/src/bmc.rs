@@ -240,10 +240,16 @@ impl Bmc {
         // at all. The solver's finite-set sort can, which is the whole reason
         // the theory was built.
         let mut encoder = Encoder::new().with_set_encoding(SetEncoding::Native);
-        let names: Vec<(String, nixie_tla::TyId)> = inf
+        let mut names: Vec<(String, nixie_tla::TyId)> = inf
             .free_names()
             .map(|(n, id)| (n.to_string(), id))
             .collect();
+        // Sorted, because `free_names` comes off a `HashMap` and its order
+        // varies from process to process. Declaration order decides the order
+        // sorts and SMT variables are interned, so an unsorted walk makes
+        // every `SortId` and `TermId` in the problem depend on the run — and a
+        // corpus measurement that is not reproducible is not a measurement.
+        names.sort();
         for (name, id) in names {
             let ty = inf
                 .to_type(id)

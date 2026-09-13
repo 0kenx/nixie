@@ -103,6 +103,15 @@ cargo run --release -p nixie-tla-check --example bmccheck -- $(find ../temp/tlap
 
 `NIXIE_BMC_DEPTH` sets the bound (default 4).
 
+The harness **sorts its input paths**, and `Bmc::prepare` sorts the names it
+declares, so two runs over the same corpus are byte-identical. Neither was true
+at first: `find` returns directory order, which is not stable between
+invocations, and `Inference::free_names` comes off a `HashMap` — between them
+every `SortId`, `TermId` and reported example shifted from run to run. The
+counts were in fact stable throughout, but that is something to *establish*
+rather than assume; a measurement that cannot be reproduced byte for byte
+cannot be compared against the next one.
+
 The harness finds `Init`/`Next`/`Inv` by convention, which is a deliberate
 approximation: the authoritative source is the `.cfg`, and until that is parsed
 the numbers describe the specifications the convention happens to match, not

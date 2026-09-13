@@ -55,8 +55,33 @@ fn literal_of(
             }
             EV::Set(SetCell { members })
         }
-        // Functions have no literal form here yet.
-        _ => return None,
+        // A function is a domain and a graph, built over the same canonical
+        // base array the encoder uses — which is what makes the two
+        // comparable at all. Every point is known here, so the graph is a
+        // plain chain of stores with no guards.
+        nixie_tla::Value::Fun(map) => {
+            let mut pairs = Vec::with_capacity(map.len());
+            for (k, v) in map {
+                let (EV::Scalar(k), EV::Scalar(v)) = (&*literal_of(k, tm)?, &*literal_of(v, tm)?)
+                else {
+                    // A function whose points are themselves structural has
+                    // no array form; skipped rather than claimed.
+                    return None;
+                };
+                pairs.push((*k, *v));
+            }
+            let (Some((k, v)), true) = (pairs.first(), !pairs.is_empty()) else {
+                // The empty function's sorts are not recoverable from it.
+                return None;
+            };
+            let (ks, vs) = (tm.get(*k)?.sort, tm.get(*v)?.sort);
+            if pairs.iter().any(|(k, v)| {
+                tm.get(*k).map(|d| d.sort) != Some(ks) || tm.get(*v).map(|d| d.sort) != Some(vs)
+            }) {
+                return None;
+            }
+            nixie_tla_check::arena::fun_literal(&pairs, ks, vs, tm)
+        }
     };
     Some(std::rc::Rc::new(out))
 }
@@ -70,7 +95,13 @@ fn main() {
     let mut unknown = 0usize;
     let mut unknown_names: Vec<String> = Vec::new();
 
-    for path in std::env::args().skip(1) {
+    // Sorted, so two runs over the same corpus are comparable: the shell's
+    // `find` hands back directory order, which is not stable between
+    // invocations, and an unordered walk makes the reported examples (and the
+    // truncated lists) shuffle from run to run for no reason.
+    let mut paths: Vec<String> = std::env::args().skip(1).collect();
+    paths.sort();
+    for path in paths {
         let mut loader = nixie_tla_syntax::Loader::new();
         if let Some(l) = &lib {
             for d in l.split(':').filter(|d| !d.is_empty()) {
@@ -136,7 +167,8 @@ fn main() {
                     // is a shape clash, not something to claim.
                     nixie_tla_check::Value::Set(_)
                     | nixie_tla_check::Value::Tuple(_)
-                    | nixie_tla_check::Value::Record(_) => continue,
+                    | nixie_tla_check::Value::Record(_)
+                    | nixie_tla_check::Value::Fun { .. } => continue,
                 }),
                 _ => same,
             };

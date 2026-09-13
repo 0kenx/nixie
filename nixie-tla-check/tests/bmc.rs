@@ -516,12 +516,12 @@ Inv  == f[j] = 7
     );
 }
 
-/// The array encoding does not carry a function's domain, and that must be
-/// visible: TLA+ leaves `f[x]` outside `DOMAIN f` undefined while an array
-/// returns a value, so the search explores behaviours the specification does
-/// not have.
+/// A function-typed variable carries its domain, so an ordinary `f[x]` no
+/// longer goes through the unmodelled-domain path. This used to assert the
+/// opposite, and the flag flipping is the point: `arena::Value::Fun` gives a
+/// function a domain as well as a graph.
 #[test]
-fn an_unmodelled_domain_is_reported() {
+fn a_function_variable_has_a_modelled_domain() {
     let src = r"
 ---- MODULE Dom ----
 EXTENDS Integers
@@ -543,8 +543,40 @@ Inv  == f[k] = 0
         Outcome::NoViolationWithin(3)
     );
     assert!(
+        !bmc.encoder().domain_unmodelled(),
+        "a function-typed variable carries its own domain"
+    );
+}
+
+/// What is still unmodelled, and must still say so: a function reached
+/// *through* an application. `f[a]` is a select, and its result is a bare
+/// array — the range sort carries no domain of its own — so `f[a][b]` leaves
+/// TLA+'s undefinedness outside that inner domain unrepresented.
+#[test]
+fn a_nested_function_still_reports_an_unmodelled_domain() {
+    let src = r"
+---- MODULE Nested ----
+EXTENDS Integers
+CONSTANT k
+VARIABLE f
+Init == f[k][k] = 0
+Next == f' = f
+Inv  == f[k][k] = 0
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+    assert!(
         bmc.encoder().domain_unmodelled(),
-        "a verdict reached through a function application must say the domain was not modelled"
+        "the inner function of `f[a][b]` is a bare array and has no domain"
     );
 }
 
