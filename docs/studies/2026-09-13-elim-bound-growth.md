@@ -287,8 +287,32 @@ at Timetable phase-1 entry (originals + units; search at 2 k conflicts
 has fired no inprocessing yet), feed the identical CNF to both
 eliminators (cadical `-P1` with probe/condition off; ours with the
 phase forced on it), diff the per-var traces from a truly common
-state.  Alternatively, close the occ-limit gate's raw-vs-flushed
-divergence first (~4.3 k vars on Timetable) and re-measure the gap.
+state.
+
+## Follow-up 7 (same day): the occ-limit live-gate hypothesis REFUTED — the raw gate is load-bearing
+
+The cheaper alternative above (close the raw-vs-flushed occ-limit gate
+divergence, est. ~4.3 k recoverable vars) was implemented faithfully
+(sort-free `compact_live` for the borderline raw>100 population only,
+cadical-exact live-count re-gate) and measured:
+
+- **Timetable round 1: 74 757 → 74 759 (+2).**  The 4.3 k raw-in-(100,140]
+  vars fail the resolvent bound anyway — the yield hypothesis is dead.
+- **mp1-Nb7T42 destroyed**: 16 805 conflicts (bit-stable across every
+  prior change of the program) → Unknown at 60 k, restarts 1 202 →
+  4 196.  The raw gate is load-bearing for our co-adapted trajectories —
+  the third independent confirmation (after the clock matrix) that
+  piecemeal cadical-parity changes to the elimination schedule lose.
+- 6s167 unchanged (no borderline vars at that scale).
+
+Reverted (working tree returned to `d1fe26d5` byte-identical; no commit
+needed).  The raw-gate divergence stays as a *documented* divergence,
+not a defect: cadical parity here costs a solving file.  The controlled
+same-formula differential (follow-up 6's design) is the remaining
+route, with the gate difference noted as a known state confounder to
+neutralize in the harness.
+
+## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
 60 s cap including the first Timetable solve, 0 verdict disagreements

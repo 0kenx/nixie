@@ -93,7 +93,10 @@ fn quantifiers() {
 fn functions_records_and_tuples() {
     assert_eq!(eval("A == [i \\in 1..3 |-> i * 2][2]"), "4");
     assert_eq!(eval("A == DOMAIN [i \\in 1..2 |-> 0]"), "{1, 2}");
-    assert_eq!(eval("A == [f \\in {1} |-> 0] "), "(1 :> 0)");
+    // A function on `{1}` *is* the 1-tuple: TLA+ has no separate sequence
+    // type, so this prints as a tuple. It used to print `(1 :> 0)`, which is
+    // the same value spelled as a function and a spelling TLC does not use.
+    assert_eq!(eval("A == [f \\in {1} |-> 0] "), "<<0>>");
     assert_eq!(eval("A == [a |-> 1, b |-> 2].b"), "2");
     assert_eq!(eval("A == <<10, 20, 30>>[2]"), "20");
     assert_eq!(eval("A == [[i \\in 1..2 |-> 0] EXCEPT ![1] = 9][1]"), "9");
@@ -225,13 +228,17 @@ fn standard_module_primitives() {
     assert_eq!(eval("A == IsFiniteSet({1})"), "TRUE");
 
     // TLC.
-    assert_eq!(eval("A == 1 :> 5"), "(1 :> 5)");
+    // `1 :> 5` builds the function `{1} -> {5}`, which is the 1-tuple.
+    assert_eq!(eval("A == 1 :> 5"), "<<5>>");
+    // ...and `@@` of `1 :> 5` and `2 :> 6` has domain `{1, 2}`, so it is the
+    // 2-tuple. A function whose domain is *not* `1..n` still prints as one.
+    assert_eq!(eval("A == (1 :> 5) @@ (2 :> 6)"), "<<5, 6>>");
     assert_eq!(
-        eval("A == (1 :> 5) @@ (2 :> 6)"),
-        "(1 :> 5, 2 :> 6)".replace(", ", " @@ ")
+        eval("A == (1 :> 5) @@ (3 :> 6)"),
+        "(1 :> 5, 3 :> 6)".replace(", ", " @@ ")
     );
     // `@@` keeps the left operand on a shared key.
-    assert_eq!(eval("A == (1 :> 5) @@ (1 :> 9)"), "(1 :> 5)");
+    assert_eq!(eval("A == (1 :> 5) @@ (1 :> 9)"), "<<5>>");
 }
 
 #[test]
@@ -257,4 +264,110 @@ fn boolean_literals_are_built_in_not_free_names() {
     assert_eq!(eval("A == FALSE /\\ TRUE"), "FALSE");
     assert_eq!(eval("A == BOOLEAN"), "{FALSE, TRUE}");
     assert_eq!(eval("A == TRUE \\in BOOLEAN"), "TRUE");
+}
+
+// ---- `@` in a multi-update EXCEPT ----
+//
+// `[f EXCEPT !p1 = v1, !p2 = v2]` abbreviates `[[f EXCEPT !p1 = v1] EXCEPT
+// !p2 = v2]`, so the `@` in `v2` denotes the **partially updated** function at
+// `p2` — not the original `f`, and certainly not `v1`.
+//
+// The expected values below are TLC's, on `tlaplus 1.7.4`. They are the
+// oracle: the two readings of `@` differ only when two updates touch the same
+// index, which is exactly the case a from-first-principles reading gets wrong.
+
+/// Different fields: both readings agree, and this is the common shape.
+#[test]
+fn at_in_a_later_update_reads_the_function_not_the_previous_value() {
+    assert_eq!(
+        eval("A == [[a |-> 1, b |-> 10] EXCEPT !.a = 5, !.b = @ + 100].b"),
+        "110"
+    );
+}
+
+/// The same field twice, where the readings disagree. TLC says 105: the `@`
+/// sees the 5 written by the first update.
+#[test]
+fn at_sees_what_an_earlier_update_wrote() {
+    assert_eq!(
+        eval("A == [[a |-> 1] EXCEPT !.a = 5, !.a = @ + 100].a"),
+        "105"
+    );
+}
+
+/// The regression proper. The `@` used to be lowered against the *previous
+/// update's value* — `1[\"b\"]` here — because the function was assumed to sit
+/// a fixed distance below the top of the value stack, which holds only for the
+/// first update. Silent, and a wrong value rather than a refusal.
+#[test]
+fn the_first_update_does_not_become_the_function() {
+    assert_eq!(
+        eval("A == [[a |-> 1, b |-> 10] EXCEPT !.a = 7, !.b = @].b"),
+        "10"
+    );
+    // Three updates, so the third has two to skip over.
+    assert_eq!(
+        eval("A == [[a |-> 1, b |-> 2, c |-> 3] EXCEPT !.a = 9, !.b = 9, !.c = @].c"),
+        "3"
+    );
+}
+
+/// An untouched field keeps its value, and the earlier updates are all applied.
+#[test]
+fn every_update_in_a_multi_update_lands() {
+    assert_eq!(
+        eval("A == [[a |-> 1, b |-> 2] EXCEPT !.a = 5, !.b = 6]"),
+        "[a |-> 5, b |-> 6]"
+    );
+}
+
+/// Indexed rather than field paths, which take the same code path.
+#[test]
+fn at_in_a_multi_update_over_a_function() {
+    assert_eq!(
+        eval("A == [[i \\in 1..3 |-> i] EXCEPT ![1] = 10, ![2] = @ + 100][2]"),
+        "102"
+    );
+    assert_eq!(
+        eval("A == [[i \\in 1..3 |-> i] EXCEPT ![1] = 10, ![1] = @ + 100][1]"),
+        "110"
+    );
+}
+
+// ---- a tuple IS a function on `1..n` ----
+//
+// TLA+ has no separate sequence type: `<<3, 4, 5>>` *is* the function with
+// domain `1..3`, so the two spellings denote one value and must compare equal.
+// Found by the TLC differential (`Apalache!MkSeq`, which is defined as
+// `[i \in 1..N |-> F(i)]` and is tested against a tuple literal).
+
+#[test]
+fn a_function_on_a_range_equals_the_tuple_of_its_values() {
+    assert_eq!(
+        eval("A == [i \\in 1..4 |-> 2 * i] = <<2, 4, 6, 8>>"),
+        "TRUE"
+    );
+    assert_eq!(
+        eval("A == <<2, 4, 6, 8>> = [i \\in 1..4 |-> 2 * i]"),
+        "TRUE"
+    );
+}
+
+#[test]
+fn the_empty_function_equals_the_empty_tuple() {
+    assert_eq!(eval("A == [i \\in 1..0 |-> i] = << >>"), "TRUE");
+}
+
+#[test]
+fn a_different_value_is_still_different() {
+    assert_eq!(eval("A == [i \\in 1..3 |-> i] = <<1, 2, 4>>"), "FALSE");
+    assert_eq!(eval("A == [i \\in 1..3 |-> i] = <<1, 2>>"), "FALSE");
+}
+
+/// A function whose domain is not `1..n` is not a tuple, however its values
+/// line up.
+#[test]
+fn a_function_on_another_domain_is_not_a_tuple() {
+    assert_eq!(eval("A == [i \\in 2..4 |-> i] = <<2, 3, 4>>"), "FALSE");
+    assert_eq!(eval("A == [i \\in {\"a\"} |-> 1] = <<1>>"), "FALSE");
 }

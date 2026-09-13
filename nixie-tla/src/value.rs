@@ -46,6 +46,40 @@ impl Value {
         Self::Set(items.into_iter().collect())
     }
 
+    /// A function value, normalised.
+    ///
+    /// **A tuple *is* a function on `1..n` in TLA+** — there is no separate
+    /// sequence type — so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one
+    /// value and must compare equal. The empty map is `<<>>` for the same
+    /// reason: its domain is `1..0`.
+    ///
+    /// This is done at *construction* rather than by a hand-written
+    /// `PartialEq`, and that is not a style choice. `Value` is a `BTreeMap`
+    /// key and a `BTreeSet` element, so `Eq` and `Ord` have to agree; an
+    /// equality that crossed the two variants while a derived `Ord` still
+    /// ordered them by discriminant would break every set and function built
+    /// out of them — `{<<1, 2>>, [i \in 1..2 |-> i]}` would have two members.
+    /// Normalising makes the invariant representational, and `Ord` stays
+    /// derived and consistent.
+    ///
+    /// Found by the TLC differential: `Apalache!MkSeq(4, Double)` is defined
+    /// as `[i \in 1..4 |-> Double(i)]` and its own test compares it to
+    /// `<<2, 4, 6, 8>>`.
+    #[must_use]
+    pub fn fun(map: BTreeMap<Value, Value>) -> Self {
+        // A tuple exactly when the domain is `1, 2, …, n` with nothing else.
+        // `BTreeMap` iterates in key order and `Ord` on `Value` puts every
+        // `Int` together, so one pass over the keys decides it.
+        let mut want = 1i128;
+        for k in map.keys() {
+            match k {
+                Self::Int(i) if *i == want => want += 1,
+                _ => return Self::Fun(map),
+            }
+        }
+        Self::Tuple(map.into_values().collect())
+    }
+
     /// Whether this is `TRUE`.
     #[must_use]
     pub fn is_true(&self) -> bool {

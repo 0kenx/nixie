@@ -96,6 +96,19 @@ pub enum SetEncoding {
     Native,
 }
 
+/// How one set-valued term came out.
+///
+/// Not the same thing as [`SetEncoding`], which says what a *new* set is built
+/// as. A single problem routinely holds both: `1..3` has only an arena form
+/// and a set-valued state variable only a native one.
+#[derive(Debug, Clone)]
+enum SetRepr {
+    /// A candidate list.
+    Arena(SetCell),
+    /// A set-sorted SMT term.
+    Native(TermId),
+}
+
 /// Default ceiling on the candidate members of a single set.
 ///
 /// The encoding's size is driven by candidate counts, and they multiply:
@@ -324,6 +337,52 @@ impl Encoder {
         let out = self.set(term, tm);
         self.set_encoding = saved;
         out
+    }
+
+    /// A set-valued term, in whichever representation it came out in.
+    ///
+    /// The two encodings are not a mode the whole problem is in — they are a
+    /// property of each *term*. `1..3` only has an arena form (the theory has
+    /// no range constructor) while a set-valued state variable only has a
+    /// native one (its members are not knowable before the solver runs), and
+    /// `x \in 1..3` has to work in either mode. Dispatching on the value
+    /// rather than on the mode is what makes that true; dispatching on the
+    /// mode made native mode decline a perfectly ordinary membership test.
+    fn set_repr(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetRepr> {
+        match &*self.value(term, tm)? {
+            Value::Set(cell) => Ok(SetRepr::Arena(cell.clone())),
+            Value::Scalar(t) if self.element_sort_of(*t, tm).is_ok() => Ok(SetRepr::Native(*t)),
+            Value::Scalar(_) | Value::Tuple(_) | Value::Record(_) | Value::Fun { .. } => Err(
+                EncodeError::NotEnumerable("a value used as a set".to_string()),
+            ),
+        }
+    }
+
+    /// Both operands of a binary set operation, in one representation.
+    ///
+    /// Native wins when either side is native, because a native set may be an
+    /// opaque variable with no candidate list to fall back to, while an arena
+    /// set can always be written out as a union of singletons.
+    fn set_pair(
+        &mut self,
+        a: &KeraRef,
+        b: &KeraRef,
+        tm: &mut TermManager,
+    ) -> Result<(SetRepr, SetRepr)> {
+        let (x, y) = (self.set_repr(a, tm)?, self.set_repr(b, tm)?);
+        Ok(match (x, y) {
+            (SetRepr::Arena(p), SetRepr::Native(q)) => {
+                let elem = self.element_sort_of(q, tm)?;
+                let p = self.native_set_of(&p.members, elem, tm)?;
+                (SetRepr::Native(p), SetRepr::Native(q))
+            }
+            (SetRepr::Native(p), SetRepr::Arena(q)) => {
+                let elem = self.element_sort_of(p, tm)?;
+                let q = self.native_set_of(&q.members, elem, tm)?;
+                (SetRepr::Native(p), SetRepr::Native(q))
+            }
+            same => same,
+        })
     }
 
     /// Encode a term and require it to be a set.
@@ -763,26 +822,67 @@ impl Encoder {
                     other => Err(EncodeError::Unsupported(format!("`{other}` as a set"))),
                 }
             }
-            Kera::In(a, s) if self.set_encoding == SetEncoding::Native => {
-                let e = self.go(a, tm)?;
-                let set = self.go(s, tm)?;
-                scalar(tm.mk_set_member(e, set))
-            }
-            Kera::SetBin(op, a, b) if self.set_encoding == SetEncoding::Native => {
-                let x = self.go(a, tm)?;
-                let y = self.go(b, tm)?;
-                scalar(match op {
+            // Membership follows the *set's* representation, not the mode.
+            // `x \in 1..3` in native mode reaches an arena candidate list,
+            // because `..` has no native form; dispatching on the mode
+            // declined it.
+            Kera::In(a, s) => match self.set_repr(s, tm)? {
+                SetRepr::Native(set) => {
+                    let e = self.go(a, tm)?;
+                    scalar(tm.mk_set_member(e, set))
+                }
+                SetRepr::Arena(cell) => {
+                    let v = self.value(a, tm)?;
+                    let t = self.shape(member_of(&v, &cell, tm))?;
+                    scalar(t)
+                }
+            },
+            Kera::SetBin(op, a, b) => match self.set_pair(a, b, tm)? {
+                (SetRepr::Native(x), SetRepr::Native(y)) => scalar(match op {
                     SetOp::Union => tm.mk_set_union(x, y),
                     SetOp::Intersect => tm.mk_set_inter(x, y),
                     SetOp::Difference => tm.mk_set_minus(x, y),
-                })
-            }
-            Kera::In(a, s) => {
-                let v = self.value(a, tm)?;
-                let set = self.set(s, tm)?;
-                let t = self.shape(member_of(&v, &set, tm))?;
-                scalar(t)
-            }
+                }),
+                (SetRepr::Arena(x), SetRepr::Arena(y)) => {
+                    let mut members = Vec::new();
+                    match op {
+                        // Candidates of both sides, each keeping its own
+                        // membership. Duplicates across the two lists are
+                        // fine: membership is a disjunction, so counting a
+                        // value twice changes nothing. Cardinality
+                        // de-duplicates separately.
+                        SetOp::Union => {
+                            members.extend(x.members.iter().cloned());
+                            members.extend(y.members.iter().cloned());
+                        }
+                        SetOp::Intersect => {
+                            for m in &x.members {
+                                let inside = self.shape(member_of(&m.value, &y, tm))?;
+                                members.push(Member {
+                                    value: Rc::clone(&m.value),
+                                    present: tm.mk_and([m.present, inside]),
+                                });
+                            }
+                        }
+                        SetOp::Difference => {
+                            for m in &x.members {
+                                let inside = self.shape(member_of(&m.value, &y, tm))?;
+                                let outside = tm.mk_not(inside);
+                                members.push(Member {
+                                    value: Rc::clone(&m.value),
+                                    present: tm.mk_and([m.present, outside]),
+                                });
+                            }
+                        }
+                    }
+                    self.mk_set(members)
+                }
+                // `set_pair` promotes to a single representation, so a mixed
+                // pair cannot reach here. Written as a refusal rather than an
+                // `unreachable!`: the rule against `expect` is exactly about
+                // "cannot happen" arms surviving a refactor.
+                _ => Err(EncodeError::ShapeClash),
+            },
 
             // ---- sets ----
             // Native: a set literal is a union of singletons, which is also
@@ -883,41 +983,7 @@ impl Encoder {
                 }
                 self.mk_set(members)
             }
-            Kera::SetBin(op, a, b) => {
-                let x = self.set(a, tm)?;
-                let y = self.set(b, tm)?;
-                let mut members = Vec::new();
-                match op {
-                    // Candidates of both sides, each keeping its own
-                    // membership. Duplicates across the two lists are fine:
-                    // membership is a disjunction, so counting a value twice
-                    // changes nothing. Cardinality de-duplicates separately.
-                    SetOp::Union => {
-                        members.extend(x.members.iter().cloned());
-                        members.extend(y.members.iter().cloned());
-                    }
-                    SetOp::Intersect => {
-                        for m in &x.members {
-                            let inside = self.shape(member_of(&m.value, &y, tm))?;
-                            members.push(Member {
-                                value: Rc::clone(&m.value),
-                                present: tm.mk_and([m.present, inside]),
-                            });
-                        }
-                    }
-                    SetOp::Difference => {
-                        for m in &x.members {
-                            let inside = self.shape(member_of(&m.value, &y, tm))?;
-                            let outside = tm.mk_not(inside);
-                            members.push(Member {
-                                value: Rc::clone(&m.value),
-                                present: tm.mk_and([m.present, outside]),
-                            });
-                        }
-                    }
-                }
-                self.mk_set(members)
-            }
+
             // `UNION S` flattens one level: every candidate of every candidate,
             // present when both the inner set and the member are.
             Kera::BigUnion(a) => {
@@ -1313,33 +1379,29 @@ impl Encoder {
             }
 
             // Standard-module operators whose meaning is arena-level.
+            // Cardinality follows the set's representation too: the theory
+            // decides it for a native set, the de-duplicating sum for an
+            // arena one.
             Kera::Opaque(name, args)
-                if self.set_encoding == SetEncoding::Native
-                    && matches!(
-                        (name.as_str(), args.len()),
-                        ("Cardinality", 1) | ("IsFiniteSet", 1)
-                    ) =>
+                if matches!(
+                    (name.as_str(), args.len()),
+                    ("Cardinality", 1) | ("IsFiniteSet", 1)
+                ) =>
             {
-                let set = self.go(&args[0], tm)?;
-                match name.as_str() {
-                    "Cardinality" => scalar(tm.mk_set_card(set)),
-                    // Every set in this theory is finite.
+                let repr = self.set_repr(&args[0], tm)?;
+                match (name.as_str(), repr) {
+                    ("Cardinality", SetRepr::Native(set)) => scalar(tm.mk_set_card(set)),
+                    ("Cardinality", SetRepr::Arena(cell)) => {
+                        let t = self.shape(cardinality(&cell, tm))?;
+                        scalar(t)
+                    }
+                    // Every set either encoding can hold is finite: the arena
+                    // by construction, and the theory is the theory of
+                    // *finite* sets.
                     _ => scalar(tm.mk_bool(true)),
                 }
             }
-            Kera::Opaque(name, args) => match (name.as_str(), args.len()) {
-                ("Cardinality", 1) => {
-                    let s = self.set(&args[0], tm)?;
-                    let t = self.shape(cardinality(&s, tm))?;
-                    scalar(t)
-                }
-                // Every set the arena can build is finite by construction.
-                ("IsFiniteSet", 1) => {
-                    let _ = self.set(&args[0], tm)?;
-                    scalar(tm.mk_bool(true))
-                }
-                _ => Err(EncodeError::Unsupported(describe(term.as_ref()))),
-            },
+            Kera::Opaque(_, _) => Err(EncodeError::Unsupported(describe(term.as_ref()))),
             other => Err(EncodeError::Unsupported(describe(other))),
         }
     }

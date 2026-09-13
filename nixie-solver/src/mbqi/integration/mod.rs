@@ -424,6 +424,9 @@ impl MBQIIntegration {
                     // earlier round or is a tautology, and the ground solver still
                     // found a model – so by the completeness theorem for this
                     // fragment the whole quantified formula is `Sat`.
+                    if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                        eprintln!("[mc] SATISFIED VIA sat_certify saturation");
+                    }
                     MBQIResult::Satisfied
                 } else {
                     MBQIResult::NewInstantiations(fresh)
@@ -439,6 +442,20 @@ impl MBQIIntegration {
 
         for quantifier in &quantifiers {
             if !quantifier.can_instantiate() {
+                // Instantiation budget exhausted.  This is NOT satisfaction:
+                // the quantifier simply stops being searched, and a `Satisfied`
+                // verdict that quietly ignores it certifies a model nobody
+                // checked — the Rodin false-`sat` (`smt4688353851435564037`,
+                // `:status unsat`): rounds of heavy instantiation exhausted
+                // the goal quantifiers' budgets, the finite-exhaustion gate
+                // then saw only the survivors, and a fabricated finite model
+                // was printed.  A vacuously-satisfied guard is genuinely
+                // done; anything else must veto `Satisfied` unless the
+                // nested checker certifies it below.  (Existentials with an
+                // exhausted budget equally lack a witness — same veto.)
+                if !quantifier.guard_inactive {
+                    all_evaluations_fully_ground = false;
+                }
                 continue;
             }
             // A boundary quantifier whose branch the SAT core committed
@@ -550,6 +567,18 @@ impl MBQIIntegration {
                         satisfied_by_checker.insert(quantifier.term);
                     }
                     ModelCheckOutcome::Counterexample { substitutions } => {
+                        // The nested refutation found a falsifier *inside the
+                        // Skolem restriction* — the finite universe — so the
+                        // completed model demonstrably fails this quantifier
+                        // on a domain point.  When even the mined lemmas are
+                        // all duplicates, the sampling engines' "true on
+                        // every candidate tuple" verdict that powers the
+                        // legacy finite-exhaustion `Satisfied` is
+                        // demonstrably untrustworthy for this quantifier
+                        // (the Rodin false-`sat`: a stale-entry lookup
+                        // evaluated the goal bodies `true` at tuples the
+                        // completed model refutes).  Veto the verdict.
+                        all_evaluations_fully_ground = false;
                         for substitution in substitutions {
                             if let Some(ground_body) =
                                 self.apply_substitution(quantifier, &substitution, manager)
@@ -595,8 +624,30 @@ impl MBQIIntegration {
                 .filter(|q| !satisfied_by_checker.contains(&q.term))
                 .cloned()
                 .collect();
+            // The veto gate: the sampling engines' tuple evaluations are the
+            // legacy certification's only evidence, and their evaluator has
+            // a documented liar in its lookup path (stale-entry TermId
+            // matches — the Rodin false-`sat`).  Before accepting, every
+            // unresolved quantifier gets the nested checker's second
+            // opinion (memoized per model signature; `true` = the completed
+            // model demonstrably fails it, or the check could not run).
+            // The veto gate is evaluated LAST: the cheap gates first
+            // (ground evaluations, then the finite-domain enumeration),
+            // because a second opinion is a nested solve and most rounds
+            // fail the cheap gates — evaluating it eagerly cost the
+            // 600-rerun convergence pins 20x (a nested solve per round
+            // per quantifier, on goals the cheap gates disqualify anyway).
+            let logic_hint = self.logic_hint.clone();
             if all_evaluations_fully_ground
                 && self.all_domains_finitely_exhausted(&unresolved, &completed_model, manager)
+                && !unresolved.iter().any(|q| {
+                    self.model_checker.check_veto(
+                        q,
+                        &completed_model,
+                        logic_hint.as_deref(),
+                        manager,
+                    )
+                })
             {
                 // Every quantifier body evaluated to concrete True under every
                 // candidate assignment AND every bound variable ranged over a

@@ -35,7 +35,7 @@ use nixie_core::TermManager;
 use nixie_solver::{Solver, SolverResult};
 use nixie_tla::types::Inference;
 use nixie_tla::{Kera, KeraRef, Lowerer};
-use nixie_tla_syntax::{LoadedSpec, Module, UnitKind};
+use nixie_tla_syntax::{ConfigValue, LoadedSpec, Module, TlcConfig, UnitKind};
 
 use crate::encode::{EncodeError, Encoder, SetEncoding};
 use crate::sorts::sort_of;
@@ -103,6 +103,20 @@ pub enum SetupError {
         /// The level the role allows.
         wanted: String,
     },
+    /// A `.cfg` replacement could not be applied.
+    ///
+    /// Reported rather than skipped. `Ballot <- MCBallot` is usually the only
+    /// thing making a specification finite, so proceeding without it checks a
+    /// different — and often unencodable — specification.
+    #[error("the configuration's `{name} <- {with}` could not be applied: {why}")]
+    Replacement {
+        /// The name being replaced.
+        name: String,
+        /// The replacement.
+        with: String,
+        /// Why not.
+        why: String,
+    },
     /// A formula could not be encoded.
     #[error("`{name}` could not be encoded: {why}")]
     Encode {
@@ -111,6 +125,31 @@ pub enum SetupError {
         /// The encoding diagnostic.
         why: String,
     },
+}
+
+/// Which definitions play which role in a check.
+///
+/// A struct rather than four positional `&str`s: `init` and `next` have the
+/// same type, and swapping them produces a check that runs happily and answers
+/// a different question. Naming them at the call site makes that mistake
+/// visible.
+#[derive(Debug, Clone, Copy)]
+pub struct Roles<'r> {
+    /// The initial-state predicate.
+    pub init: &'r str,
+    /// The next-state action.
+    pub next: &'r str,
+    /// The invariant to check.
+    pub inv: &'r str,
+    /// Extra zero-argument definitions to assume, on top of the module's
+    /// `ASSUME`s.
+    ///
+    /// Apalache's `ConstInit` convention lives here: a specification whose
+    /// constants are pinned by `--cinit=ConstInit` puts no `ASSUME` in the
+    /// module, so a checker reading only `ASSUME` sees completely arbitrary
+    /// constants and reports counterexamples the specification does not have.
+    /// `Bug1023.tla` in Apalache's own test suite is exactly that shape.
+    pub constraints: &'r [&'r str],
 }
 
 /// A specification prepared for checking.
@@ -123,6 +162,12 @@ pub struct Bmc {
     encoder: Encoder,
     /// Assumptions that could not be lowered, typed or encoded.
     dropped_assumptions: usize,
+    /// `CONSTRAINT`: a state predicate asserted in every state.
+    state_constraints: Vec<KeraRef>,
+    /// `ACTION_CONSTRAINT`: a predicate asserted over every step.
+    action_constraints: Vec<KeraRef>,
+    /// Parts of the configuration that were read and not acted on.
+    unapplied_config: Vec<String>,
 }
 
 impl Bmc {
@@ -150,6 +195,57 @@ impl Bmc {
         constraints: &[&str],
         tm: &mut TermManager,
     ) -> core::result::Result<Self, SetupError> {
+        Self::prepare_with_config(
+            spec,
+            module,
+            Roles {
+                init,
+                next,
+                inv,
+                constraints,
+            },
+            &TlcConfig::default(),
+            tm,
+        )
+    }
+
+    /// Prepare a specification with its TLC configuration applied.
+    ///
+    /// The `.cfg` is where a specification's parameters actually live. Without
+    /// it a `CONSTANT N` is an arbitrary integer, `1..N` has no enumerable
+    /// member list, and the checker is asking a strictly harder question than
+    /// the author did. Three parts of the file are acted on here:
+    ///
+    /// * `CONSTANT x = e` becomes an **assumption** `x = e`, which is also
+    ///   what gives `x` its type. A **model value** becomes a string literal
+    ///   with a reserved prefix: model values are uninterpreted constants,
+    ///   distinct from one another and from everything else, and distinct
+    ///   string literals are already exactly that in the solver.
+    /// * `CONSTANT x <- Def` rebinds `x` to `Def` in the lowerer, which is
+    ///   what TLC does and what makes an infinite specification finite.
+    /// * `CONSTRAINT C` becomes a predicate asserted in **every** state of the
+    ///   unrolling, and `ACTION_CONSTRAINT A` one asserted over every step.
+    ///
+    /// What is read and not acted on is listed by
+    /// [`Bmc::unapplied_config`] rather than being absorbed silently.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bmc::prepare`], plus [`SetupError::Replacement`] when a `<-` names
+    /// a definition the module does not have or one of a different arity.
+    pub fn prepare_with_config<'a>(
+        spec: &'a LoadedSpec,
+        module: &'a Module,
+        roles: Roles<'_>,
+        config: &TlcConfig,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Self, SetupError> {
+        let Roles {
+            init,
+            next,
+            inv,
+            constraints,
+        } = roles;
         // ONE lowerer for all three formulas. Binder renaming uses a counter
         // held by the `Lowerer`, so separate lowerings would each start from
         // zero and could give two unrelated binders — one in `Init`, one in
@@ -158,6 +254,48 @@ impl Bmc {
         let mut low = Lowerer::new();
         low.add_spec(spec);
         let mut dropped = 0usize;
+        let mut unapplied: Vec<String> = Vec::new();
+
+        // Replacements first: every later stage — levels, lowering, inference
+        // — must see the replaced definitions, because that is the
+        // specification the author configured.
+        for (name, r) in &config.replacements {
+            match &r.module {
+                // `x <- [M]d` replaces inside an instantiated module, which
+                // needs `INSTANCE` substitution the lowering does not do.
+                // Recorded, never quietly treated as the unqualified form:
+                // the two are different specifications.
+                Some(m) => unapplied.push(format!("{name} <- [{m}]{} (INSTANCE)", r.to)),
+                None => {
+                    low.replace_definition(name, &r.to)
+                        .map_err(|e| SetupError::Replacement {
+                            name: name.clone(),
+                            with: r.to.clone(),
+                            why: e.to_string(),
+                        })?
+                }
+            }
+        }
+        // `CONSTANT x = e` is a **substitution**, not an assumption. TLC's
+        // own words are "replace the constant with the constant expression",
+        // and the difference is load-bearing: an assumption `N = 3` reaches
+        // the solver, but the encoder needs the value earlier than that —
+        // `1..N` has no candidate list until `N` is literally `3`. Pinning it
+        // as an equation and hoping the encoder catches up was the first
+        // attempt, and it leaves the headline case exactly as blocked as it
+        // was.
+        for (name, value) in &config.assignments {
+            match config_value_to_kera(value) {
+                Some(v) => low.bind_constant(name, v),
+                None => unapplied.push(format!("{name} = … (uninterpreted)")),
+            }
+        }
+        for (name, module_name, to) in config.module_qualified_assignments() {
+            unapplied.push(format!("{name} = [{module_name}]{to} (uninterpreted)"));
+        }
+        for opt in config.unused_options() {
+            unapplied.push(opt.to_string());
+        }
         // Level-check before anything else. TLA+ gives `Init` and `Inv` a
         // maximum level, and a formula above it is malformed rather than
         // false. The check is deliberately one-sided: `trusted_level_of`
@@ -195,6 +333,19 @@ impl Bmc {
         for name in constraints {
             assumptions.push(lower_one(&mut low, module, name)?);
         }
+        // `CONSTRAINT C` bounds the state space TLC explores. Asserting it in
+        // every state is the bounded-model-checking reading, and it is the
+        // *strengthening* direction — a search that ignores it explores states
+        // the author excluded and can report a counterexample outside the
+        // intended model.
+        let mut state_constraints = Vec::new();
+        for name in &config.state_constraints {
+            state_constraints.push(lower_one(&mut low, module, name)?);
+        }
+        let mut action_constraints = Vec::new();
+        for name in &config.action_constraints {
+            action_constraints.push(lower_one(&mut low, module, name)?);
+        }
         for unit in &module.units {
             if let UnitKind::Assume { body, .. } = &unit.kind {
                 // An assumption that will not lower is skipped rather than
@@ -210,7 +361,11 @@ impl Bmc {
         // One inference over all three, so a state variable has one type
         // across the whole specification rather than three unrelated ones.
         let mut inf = Inference::new();
-        for t in [&init_k, &next_k, &inv_k] {
+        for t in [&init_k, &next_k, &inv_k]
+            .into_iter()
+            .chain(state_constraints.iter())
+            .chain(action_constraints.iter())
+        {
             inf.infer(t).map_err(|e| SetupError::Types(e.to_string()))?;
         }
         // Names reachable from the specification proper. These *must* get a
@@ -284,6 +439,8 @@ impl Bmc {
         for root in [&init_k, &next_k, &inv_k]
             .into_iter()
             .chain(typed_assumptions.iter())
+            .chain(state_constraints.iter())
+            .chain(action_constraints.iter())
         {
             collect_empty_sets(root, &mut nodes);
         }
@@ -303,6 +460,9 @@ impl Bmc {
             next: next_k,
             inv: inv_k,
             encoder,
+            state_constraints,
+            action_constraints,
+            unapplied_config: unapplied,
         })
     }
 
@@ -368,6 +528,32 @@ impl Bmc {
             for t in transitions.iter().take(j as usize) {
                 solver.assert(*t, tm);
             }
+            // A `CONSTRAINT` holds in every state of the trace, including the
+            // one being tested, and an `ACTION_CONSTRAINT` over every step
+            // taken. Both *narrow* the search to the model the author
+            // configured. A constraint with no encoding is refused rather than
+            // dropped: unlike an `ASSUME`, dropping one here would widen the
+            // search past the configured model, which is the direction that
+            // manufactures counterexamples — and it would do so invisibly,
+            // because nothing else records that the model was bounded.
+            for c in &self.state_constraints {
+                for step in 0..=j {
+                    let t = self
+                        .encoder
+                        .encode_at(c, step, tm)
+                        .map_err(|e| named("CONSTRAINT", &e))?;
+                    solver.assert(t, tm);
+                }
+            }
+            for c in &self.action_constraints {
+                for step in 0..j {
+                    let t = self
+                        .encoder
+                        .encode_at(c, step, tm)
+                        .map_err(|e| named("ACTION_CONSTRAINT", &e))?;
+                    solver.assert(t, tm);
+                }
+            }
             solver.assert(violated, tm);
             match solver.check(tm) {
                 SolverResult::Sat => return Ok(Outcome::Violation { step: j }),
@@ -393,6 +579,17 @@ impl Bmc {
     #[must_use]
     pub fn dropped_assumptions(&self) -> usize {
         self.dropped_assumptions
+    }
+
+    /// What the configuration said that this check did not act on.
+    ///
+    /// Empty is the good case. A non-empty list means the verdict is about a
+    /// specification that differs from the configured one in a named way —
+    /// surfaced for the same reason [`Bmc::dropped_assumptions`] is, because
+    /// a caller deciding whether to trust a trace needs it.
+    #[must_use]
+    pub fn unapplied_config(&self) -> &[String] {
+        &self.unapplied_config
     }
 
     /// The encoder, for inspecting the variables a counterexample mentions.
@@ -472,3 +669,44 @@ pub fn mentions_prime(term: &KeraRef) -> bool {
     }
     false
 }
+
+/// A configuration constant as a kernel term.
+///
+/// `None` for a value with no kernel form — only
+/// [`ConfigValue::ModuleQualified`], which is recorded uninterpreted by the
+/// parser precisely so that this decision is explicit here rather than
+/// implied by a missing match arm.
+///
+/// # Model values
+///
+/// A bare identifier is a TLC **model value**: an uninterpreted constant,
+/// distinct from every other model value and from every integer, string and
+/// set (*Specifying Systems* §14.5.3). It becomes a string literal under a
+/// reserved prefix, which is Apalache's encoding and costs nothing here
+/// because distinct string literals are already distinct values in the
+/// solver — the same mechanism floating-point literals use. The prefix is what
+/// keeps a model value `n1` apart from a specification that genuinely writes
+/// the string `"n1"`.
+fn config_value_to_kera(v: &ConfigValue) -> Option<KeraRef> {
+    use std::rc::Rc;
+    Some(match v {
+        ConfigValue::Int(digits) => Rc::new(Kera::Int(digits.clone())),
+        ConfigValue::Bool(b) => Rc::new(Kera::Bool(*b)),
+        ConfigValue::Str(text) => Rc::new(Kera::Str(text.clone())),
+        ConfigValue::ModelValue(name) => Rc::new(Kera::Str(format!("{MODEL_VALUE_PREFIX}{name}"))),
+        ConfigValue::Set(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for i in items {
+                out.push(config_value_to_kera(i)?);
+            }
+            Rc::new(Kera::SetEnum(out))
+        }
+        ConfigValue::ModuleQualified { .. } => return None,
+    })
+}
+
+/// The prefix that keeps a model value apart from a string of the same name.
+///
+/// Matches Apalache's `ConfigModelValue.STR_PREFIX`, so a specification read
+/// by both tools sees the same distinctions.
+pub const MODEL_VALUE_PREFIX: &str = "ModelValue_";

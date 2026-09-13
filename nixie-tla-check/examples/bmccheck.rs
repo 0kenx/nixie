@@ -29,6 +29,12 @@ fn main() {
 
     let mut modules = 0usize;
     let mut with_triple = 0usize;
+    let mut with_cfg = 0usize;
+    let no_cfg = std::env::var("NIXIE_BMC_NO_CFG").is_ok_and(|v| v == "1");
+    // `NIXIE_BMC_LIST=1` prints one `file<TAB>outcome` line per specification
+    // instead of the summary, so two runs can be diffed spec by spec. A
+    // summary that moves by one is not a finding until you can name the one.
+    let list = std::env::var("NIXIE_BMC_LIST").is_ok_and(|v| v == "1");
     let mut prepared = 0usize;
     let mut checked = 0usize;
     let mut no_violation = 0usize;
@@ -76,7 +82,55 @@ fn main() {
                 .find(|c| defined.contains(c))
                 .map(|c| (*c).to_string())
         };
-        let (Some(init), Some(next), Some(inv)) = (pick(INITS), pick(NEXTS), pick(INVS)) else {
+        // The `.cfg` is authoritative where it exists: it names the entry
+        // points and pins the constants. The naming convention is the
+        // *fallback*, used only for what the file does not say.
+        let cfg_path = std::path::Path::new(&path).with_extension("cfg");
+        // The control. `NIXIE_BMC_NO_CFG=1` runs the *same binary* over the
+        // same corpus with the configuration ignored, which is the only
+        // honest way to say what reading it bought: comparing against an
+        // older build would also be comparing against every other change.
+        let cfg = match if no_cfg {
+            Err(std::io::Error::other("disabled"))
+        } else {
+            std::fs::read_to_string(&cfg_path)
+        } {
+            Ok(text) => match nixie_tla_syntax::parse_config(&text) {
+                Ok(c) => {
+                    with_cfg += 1;
+                    Some(c)
+                }
+                Err(e) => {
+                    let key = "the .cfg does not parse".to_string();
+                    *blocked.entry(key.clone()).or_default() += 1;
+                    blocked_eg
+                        .entry(key)
+                        .or_insert(format!("{}: {e}", path.rsplit('/').next().unwrap_or(&path)));
+                    continue;
+                }
+            },
+            Err(_) => None,
+        };
+        let from_cfg = cfg.as_ref().map(|c| &c.behavior);
+        let cfg_init_next = match from_cfg {
+            Some(nixie_tla_syntax::BehaviorSpec::InitNext { init, next }) => {
+                Some((init.clone(), next.clone()))
+            }
+            _ => None,
+        };
+        let cfg_inv = cfg.as_ref().and_then(|c| c.invariants.first().cloned());
+
+        let (init, next) = match cfg_init_next {
+            Some(p) => p,
+            None => match (pick(INITS), pick(NEXTS)) {
+                (Some(i), Some(n)) => (i, n),
+                _ => continue,
+            },
+        };
+        let Some(inv) = cfg_inv
+            .filter(|i| defined.contains(&i.as_str()))
+            .or_else(|| pick(INVS))
+        else {
             continue;
         };
         with_triple += 1;
@@ -86,10 +140,21 @@ fn main() {
 
         let file = path.rsplit('/').next().unwrap_or(&path).to_string();
         let mut tm = TermManager::new();
-        let mut bmc = match Bmc::prepare(&spec, module, &init, &next, &inv, &constraints, &mut tm) {
+        let empty = nixie_tla_syntax::TlcConfig::default();
+        let use_cfg = cfg.as_ref().unwrap_or(&empty);
+        let roles = nixie_tla_check::bmc::Roles {
+            init: &init,
+            next: &next,
+            inv: &inv,
+            constraints: &constraints,
+        };
+        let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
             Ok(b) => b,
             Err(e) => {
                 let key = reason(&e);
+                if list {
+                    println!("{path}\tblocked\t{key}");
+                }
                 *blocked.entry(key.clone()).or_default() += 1;
                 blocked_eg.entry(key).or_insert(format!("{file}: {e}"));
                 continue;
@@ -98,6 +163,9 @@ fn main() {
         prepared += 1;
         match bmc.check(depth, &mut tm) {
             Ok(Outcome::NoViolationWithin(_)) => {
+                if list {
+                    println!("{path}\tno-violation");
+                }
                 checked += 1;
                 no_violation += 1;
             }
@@ -115,16 +183,27 @@ fn main() {
                 // (`ConfigReplacements.tla` replaces `Value`), so a verdict
                 // reached without reading it may be about a different
                 // specification. Flagged rather than silently reported.
-                let has_cfg = std::path::Path::new(&path).with_extension("cfg").exists();
-                if has_cfg {
+                // The `.cfg` is read now, so the flag is no longer "a file
+                // exists that we ignored" but the sharper "the file said
+                // something we did not act on".
+                let unapplied = bmc.unapplied_config().to_vec();
+                if !unapplied.is_empty() || (no_cfg && cfg_path.exists()) {
                     cfg_unaware += 1;
                 }
                 let mut notes = Vec::new();
                 if d > 0 {
                     notes.push(format!("{d} assumption(s) dropped"));
                 }
-                if has_cfg {
+                if no_cfg && cfg_path.exists() {
                     notes.push("a .cfg exists and was not read".to_string());
+                } else if !unapplied.is_empty() {
+                    notes.push(format!(
+                        "the .cfg's {} was not applied",
+                        unapplied.join(", ")
+                    ));
+                }
+                if list {
+                    println!("{path}\tviolation\t{step}");
                 }
                 violations.push(format!(
                     "{file}!{inv} violated after {step} step(s){}",
@@ -136,25 +215,39 @@ fn main() {
                 ));
             }
             Ok(Outcome::Unknown(_)) => {
+                if list {
+                    println!("{path}\tundecided");
+                }
                 checked += 1;
                 unknown += 1;
             }
+            // A specification that prepared and then failed to *encode* is
+            // as blocked as one that never prepared, and must appear in the
+            // per-spec list too — it went missing there at first, which is
+            // exactly the silent gap a spec-by-spec diff exists to catch.
             Err(e) => {
                 let key = reason(&e);
+                if list {
+                    println!("{path}\tblocked\t{key}");
+                }
                 *blocked.entry(key.clone()).or_default() += 1;
                 blocked_eg.entry(key).or_insert(format!("{file}: {e}"));
             }
         }
     }
 
+    if list {
+        return;
+    }
     println!("{modules} modules loaded");
+    println!("  with a .cfg that parsed      : {with_cfg}");
     println!("  with an Init/Next/Inv triple : {with_triple}");
     println!("  prepared (typed and sorted)  : {prepared}");
     println!("  actually checked at depth {depth}  : {checked}");
     println!("    no violation within the bound : {no_violation}");
     println!("    violations found              : {}", violations.len());
     println!("      of which under dropped ASSUMEs : {weakened}");
-    println!("      of which with an unread .cfg   : {cfg_unaware}");
+    println!("      of which with unapplied .cfg   : {cfg_unaware}");
     println!("    solver undecided              : {unknown}");
     for v in violations.iter().take(64) {
         println!("      {v}");
@@ -179,6 +272,9 @@ fn reason(e: &SetupError) -> String {
         SetupError::Level { role, .. } => format!("wrong TLA+ level for {role}"),
         SetupError::NoSort { ty, .. } => format!("state type has no sort yet: {}", head(ty)),
         SetupError::Encode { why, .. } => format!("no encoding yet: {}", head(why)),
+        SetupError::Replacement { why, .. } => {
+            format!("the .cfg's `<-` could not be applied: {why}")
+        }
     }
 }
 

@@ -163,3 +163,26 @@ value unparsed by comparator    : 0
 390 against 4 349 definitions that lower. It is a sample, not a gate — but it
 is the only check here that tests *meaning*, and it has already found three
 real bugs that every structural check passed.
+
+## The comparator read the wrong directory
+
+Recorded because the failure mode is the dangerous one: the suite reported
+`SEMANTIC MISMATCHES: 0` while comparing **nothing**.
+
+`run_eval_parity.sh` points TLC's output at `$work/out`; `compare.py` read
+`$work/tlcout`. On a clean run every probe looked "not printed by TLC", the
+mismatch count was zero because there was nothing to mismatch, and the summary
+read exactly like a pass. The numbers this suite reported before 2026-09-13
+came from runs where an earlier hand-driven iteration had left a `tlcout/`
+directory behind in a reused work directory.
+
+Two changes, because the path fix alone would leave the shape intact:
+
+- `compare.py` reads `out/`, the directory the runner actually writes.
+- **An empty comparison is a hard failure.** No probes on disk, or no probe
+  TLC could evaluate, now exits with an error naming the directory it looked
+  in. A differential that finds nothing has not passed; it has not run.
+
+With it fixed the suite compares 587 definitions across 217 probes, and found
+four real mismatches immediately (`Apalache!MkSeq` against a tuple literal —
+in TLA+ a tuple *is* a function on `1..n`, and the evaluator disagreed).

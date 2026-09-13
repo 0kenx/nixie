@@ -97,6 +97,26 @@ struct Def<'a> {
     cacheable: bool,
 }
 
+/// Why a configuration replacement could not be applied.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ReplaceError {
+    /// The right-hand side names nothing this lowerer has.
+    #[error("`{0}` is not defined in this specification")]
+    NoSuchDefinition(String),
+    /// The two definitions take different numbers of parameters.
+    #[error("`{name}` takes {wanted} parameter(s) but `{with}` takes {found}")]
+    ArityMismatch {
+        /// The name being replaced.
+        name: String,
+        /// Its arity.
+        wanted: usize,
+        /// The replacement.
+        with: String,
+        /// The replacement's arity.
+        found: usize,
+    },
+}
+
 /// What a name is bound to while lowering.
 #[derive(Debug, Clone)]
 enum Binding<'a> {
@@ -119,6 +139,12 @@ enum Binding<'a> {
 /// Lowers surface expressions to the kernel.
 pub struct Lowerer<'a> {
     defs: HashMap<String, Def<'a>>,
+    /// Values a TLC configuration pinned, `CONSTANT N = 3`.
+    ///
+    /// Already-lowered kernel terms rather than surface expressions: they come
+    /// from a `.cfg`, which has no TLA+ syntax tree behind it, and they are
+    /// closed constants so there is nothing to resolve in them.
+    constants: HashMap<String, KeraRef>,
     /// Per-module definitions, so a name inside an instantiated module
     /// resolves against that module rather than against the flat root view.
     module_defs: HashMap<String, HashMap<String, Def<'a>>>,
@@ -165,8 +191,16 @@ enum Frame<'a> {
     /// Bind `@` to the value being replaced, for an `EXCEPT` update. Peeks the
     /// function and index already on the value stack rather than popping them.
     BindExceptAt {
-        /// How many index expressions make up the path step.
+        /// How many index expressions make up this update's path step.
         path_len: usize,
+        /// The path lengths of the updates *before* this one, in order.
+        ///
+        /// Needed for both halves of what `@` means in a multi-update
+        /// `EXCEPT`. It locates the function on the shared value stack — which
+        /// is not a fixed distance below the top, because each earlier update
+        /// left its own indices and value there — and it rebuilds the
+        /// partially-updated function that `@` actually refers to.
+        before: Vec<usize>,
     },
     /// Inline an operator: pop one value per parameter, bind them, and
     /// continue into `body`.
@@ -213,6 +247,7 @@ impl<'a> Lowerer<'a> {
     pub fn new() -> Self {
         Self {
             defs: HashMap::new(),
+            constants: HashMap::new(),
             module_defs: HashMap::new(),
             instances: HashMap::new(),
             open_instances: Vec::new(),
@@ -228,6 +263,67 @@ impl<'a> Lowerer<'a> {
             max_inline_depth: DEFAULT_MAX_INLINE_DEPTH,
             step_budget: DEFAULT_STEP_BUDGET,
         }
+    }
+
+    /// Pin `name` to a constant value, as a TLC configuration's
+    /// `CONSTANT name = value` does.
+    ///
+    /// A substitution, not an assumption. TLC's own description is "replace
+    /// the constant in the left-hand side with the constant expression in the
+    /// right-hand side", and the difference is load-bearing rather than
+    /// stylistic: an assumption `N = 3` reaches the solver, but the *encoder*
+    /// needs the value earlier than that — `1..N` has no candidate list until
+    /// `N` is literally `3`, and no amount of solver-level knowledge supplies
+    /// one.
+    ///
+    /// Shadowed by any binder of the same name, and it wins over a definition
+    /// of that name, which is the order TLC uses.
+    pub fn bind_constant(&mut self, name: &str, value: KeraRef) {
+        self.cache.remove(name);
+        self.constants.insert(name.to_string(), value);
+    }
+
+    /// Rebind `name` to the definition of `with`, as a TLC configuration's
+    /// `name <- with` does.
+    ///
+    /// This is how a model-checking harness makes an infinite specification
+    /// finite: `MCPaxos` replaces `Ballot` — declared a `CONSTANT`, or defined
+    /// as `Nat` — with `MCBallot == 0..2`. It is a rebinding of the flat name
+    /// space rather than a substitution pass, which is exactly what TLC does
+    /// and what makes it work for a `CONSTANT` as well as a definition: a
+    /// declared constant has no entry here, so adding one turns a name that
+    /// was free into one that inlines.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `with` is not defined, or if the two have different arities.
+    /// An arity mismatch is a malformed configuration, and substituting across
+    /// one would produce a term that means nothing — so it is reported rather
+    /// than coerced. A `name` that is not itself defined is *not* an error: it
+    /// is the ordinary case of replacing a declared `CONSTANT`.
+    pub fn replace_definition(
+        &mut self,
+        name: &str,
+        with: &str,
+    ) -> core::result::Result<(), ReplaceError> {
+        let Some(def) = self.defs.get(with).cloned() else {
+            return Err(ReplaceError::NoSuchDefinition(with.to_string()));
+        };
+        if let Some(old) = self.defs.get(name)
+            && old.params.len() != def.params.len()
+        {
+            return Err(ReplaceError::ArityMismatch {
+                name: name.to_string(),
+                wanted: old.params.len(),
+                with: with.to_string(),
+                found: def.params.len(),
+            });
+        }
+        // The cache is keyed by name and holds the *previous* body's lowering,
+        // so it has to go or the replacement silently does nothing.
+        self.cache.remove(name);
+        self.defs.insert(name.to_string(), def);
+        Ok(())
     }
 
     /// Register every operator definition in `module` for inlining.
@@ -495,21 +591,63 @@ impl<'a> Lowerer<'a> {
                 Frame::PopScope => {
                     self.scopes.pop();
                 }
-                Frame::BindExceptAt { path_len } => {
-                    // The function is below the path indices on the stack.
+                Frame::BindExceptAt { path_len, before } => {
+                    // `@` in the k-th update of `[f EXCEPT !p1 = v1, !p2 = v2]`
+                    // denotes the **partially updated** function applied at
+                    // this update's path — not the original `f`, and certainly
+                    // not the previous update's value.
+                    //
+                    // TLC settles it: `[[a |-> 1] EXCEPT !.a = 5, !.a = @ + 100].a`
+                    // is 105, not 101, so `@` sees the 5. That follows from
+                    // the language definition, where the multi-update form is
+                    // an abbreviation for nested single updates and `@` in
+                    // `[g EXCEPT ![c] = e]` denotes `g[c]`.
+                    //
+                    // The old code took the function to be a fixed
+                    // `path_len + 1` below the top of the value stack. That
+                    // holds only for the *first* update; by the second, the
+                    // first update's indices and value sit in between, so it
+                    // picked up `v1` and lowered `@` to `v1[c2]`. Silent, and
+                    // a wrong value rather than a refusal — it typed as a
+                    // record where a model value belonged, which is how it
+                    // was found.
                     let n = values.len();
-                    let base = n.checked_sub(path_len + 1).and_then(|i| values.get(i));
-                    let Some(base) = base.cloned() else {
+                    let skipped: usize = before.iter().map(|p| p + 1).sum();
+                    let base_at = n
+                        .checked_sub(path_len)
+                        .and_then(|i| i.checked_sub(skipped))
+                        .and_then(|i| i.checked_sub(1));
+                    let Some(base_at) = base_at else {
                         return Err(LowerError::unsupported(
                             "an `EXCEPT` update",
                             "internal: the function being updated was not on the stack",
                             expr.span,
                         ));
                     };
-                    let mut at = base;
-                    for k in 0..path_len {
-                        let Some(idx) = n.checked_sub(path_len - k).and_then(|i| values.get(i))
+                    let Some(mut acc) = values.get(base_at).cloned() else {
+                        return Err(LowerError::unsupported(
+                            "an `EXCEPT` update",
+                            "internal: the function being updated was not on the stack",
+                            expr.span,
+                        ));
+                    };
+                    // Replay the earlier updates, exactly as `build_except`
+                    // will, so `@` sees what they wrote.
+                    let mut cursor = base_at + 1;
+                    for pl in &before {
+                        let Some(path) = values.get(cursor..cursor + pl).map(<[KeraRef]>::to_vec)
                         else {
+                            break;
+                        };
+                        let Some(value) = values.get(cursor + pl).cloned() else {
+                            break;
+                        };
+                        acc = nest_except(acc, &path, value, expr.span)?;
+                        cursor += pl + 1;
+                    }
+                    let mut at = acc;
+                    for k in 0..path_len {
+                        let Some(idx) = values.get(cursor + k) else {
                             break;
                         };
                         at = Kera::FunApp(at, Rc::clone(idx)).rc();
@@ -1126,6 +1264,18 @@ impl<'a> Lowerer<'a> {
                             span,
                         ));
                     }
+                    // A value the TLC configuration pinned (`CONSTANT N = 3`).
+                    // Substituted here rather than asserted as `N = 3`
+                    // downstream, because that is what the configuration
+                    // *means* — TLC replaces the constant — and because an
+                    // equation the solver knows does not help the encoder:
+                    // `1..N` needs a literal bound to have a candidate list at
+                    // all, and an assumption arrives far too late for that.
+                    None if self.constants.contains_key(&id.name) => {
+                        if let Some(v) = self.constants.get(&id.name) {
+                            values.push(Rc::clone(v));
+                        }
+                    }
                     None => match self.defs.get(&id.name).cloned() {
                         Some(def) if def.params.is_empty() => {
                             // Only a module-level definition may be shared,
@@ -1423,18 +1573,30 @@ impl<'a> Lowerer<'a> {
                     })
                     .sum::<usize>();
                 stack.push(Frame::Build(e, nchildren));
-                for u in updates.iter().rev() {
-                    let path_len: usize = u
-                        .path
-                        .iter()
-                        .map(|s| match s {
-                            ExceptSel::Index(ix) => ix.len(),
-                            ExceptSel::Field(_) => 1,
-                        })
-                        .sum();
+                // Each update needs to know the shape of the ones before it,
+                // both to find the function on the shared value stack and to
+                // rebuild what `@` refers to. Collected forwards, then used as
+                // the frames are pushed in reverse.
+                let path_lens: Vec<usize> = updates
+                    .iter()
+                    .map(|u| {
+                        u.path
+                            .iter()
+                            .map(|s| match s {
+                                ExceptSel::Index(ix) => ix.len(),
+                                ExceptSel::Field(_) => 1,
+                            })
+                            .sum()
+                    })
+                    .collect();
+                for (k, u) in updates.iter().enumerate().rev() {
+                    let path_len = path_lens.get(k).copied().unwrap_or(0);
                     stack.push(Frame::PopScope);
                     stack.push(Frame::Expand(&u.value));
-                    stack.push(Frame::BindExceptAt { path_len });
+                    stack.push(Frame::BindExceptAt {
+                        path_len,
+                        before: path_lens.get(..k).unwrap_or(&[]).to_vec(),
+                    });
                     for sel in u.path.iter().rev() {
                         match sel {
                             ExceptSel::Index(ix) => {

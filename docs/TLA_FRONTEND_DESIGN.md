@@ -674,7 +674,7 @@ opaque set (a state variable) has no candidate list and is refused by that name.
 Measured: the ground cross-check went **817 → 847** definitions, still **zero disagreements**
 and zero `Unknown` — function-valued definitions are now claimed by equality against the
 evaluator's own function rather than skipped. Bounded model checking went **35 → 39**
-specifications.
+specifications, and **46** once the `.cfg` is read (below).
 
 And the blocker moved again, informatively. The largest single cause was
 `a function constructor [x \in S |-> e] has no encoding` (39); that line is gone, and what
@@ -684,6 +684,66 @@ value, which is what the `.cfg` supplies. The next unlock is config parsing, not
 What is still refused, by name: a function whose *values* are themselves functions (the inner
 domain would be lost), a function over an empty domain with no sort to give it, and `[S -> T]`
 as a value rather than as a membership test — it has `|T|^|S|` members.
+
+**The TLC configuration file is read** (`nixie-tla-syntax::config`). A
+specification does not name its own entry points or fix its own constants; the
+`.cfg` beside it does, and without it a `CONSTANT N` is an arbitrary integer and
+`1..N` has no enumerable member list. All **363 of 363** corpus `.cfg` files
+parse. Constants are *substituted* rather than assumed — TLC's own wording is
+"replace the constant with the constant expression", and the difference is
+load-bearing: an assumption `N = 3` reaches the solver, but the encoder needs
+the value earlier than that. A **model value** (a bare identifier) becomes a
+string literal under a reserved prefix, which costs nothing because distinct
+string literals are already distinct in the solver.
+
+Measured with the same binary, configuration on versus off — the only honest
+control, since an older build would differ in everything else:
+
+| | `.cfg` ignored | `.cfg` read |
+|---|---|---|
+| checked at depth 4 | 43 | **46** |
+| violations | 17 | **15** |
+| violations flagged possibly-spurious | 2 | **0** |
+
+The two that disappeared are the two the flag had predicted: `AsynchInterface`
+and `ConfigParams` reported violations that the author's constants exclude. The
+flag was right, and reading the file is what turned "may be spurious" into an
+answer.
+
+**Two bugs surfaced by doing this, both older than the work that found them.**
+
+*`@` in a multi-update `EXCEPT` read the wrong thing.* `[f EXCEPT !.a = d, !.b
+= 1 - @]` lowered `@` to `d["b"]` — the *previous update's value* — because the
+function was assumed to sit a fixed distance below the top of the lowering's
+value stack, which holds only for the first update. Silent, and a wrong value
+rather than a refusal. TLC settles what `@` should mean, and the two readings
+differ only when two updates touch the same index:
+`[[a |-> 1] EXCEPT !.a = 5, !.a = @ + 100].a` is **105**, so `@` sees what the
+earlier update wrote. Fixing it moved eight specifications (`EWD998`, `Channel`,
+`LamportMutex`, `CoffeeCan`, `DieHarder`, …) out of "does not type check", and
+**no reported verdict changed** — it had only ever mis-typed specifications,
+never corrupted a result that reached the solver.
+
+*A tuple is a function on `1..n`, and the evaluator disagreed.* `Apalache!MkSeq`
+is defined as `[i \in 1..N |-> F(i)]` and its own test compares it to a tuple
+literal; the evaluator said `FALSE`. Fixed by normalising at *construction*
+rather than with a hand-written `PartialEq`: `Value` is a `BTreeMap` key, so an
+equality crossing the two variants while a derived `Ord` still separated them
+would make `{<<1, 2>>, [i \in 1..2 |-> i]}` a two-element set. The encoder
+cannot normalise the same way — a function-typed state variable has no
+candidate list to turn into a tuple — so `arena::eq_values` crosses the two
+there by the definition instead.
+
+**The differential that found the second one had been reporting nothing.**
+`bench/tla_eval` compares the evaluator against TLC, and it is the only check
+in this front end that can see a *lowering* bug: the encoder cross-check shares
+the lowering with the evaluator, so a wrong kernel term is invisible to it.
+`compare.py` read `tlcout/` while the runner had always written `out/`, so a
+clean run compared zero definitions and printed `SEMANTIC MISMATCHES: 0` — which
+reads as a pass. It now compares **587 definitions across 217 probes with 0
+mismatches**, and an empty comparison is a hard failure rather than a clean
+sheet. The number in this document before today came from a run where a
+hand-made `tlcout/` happened to exist.
 
 One measurement hygiene fix came with it: the corpus harnesses sort their inputs and `Bmc`
 sorts the names it declares. `find` hands back directory order, which is not stable between

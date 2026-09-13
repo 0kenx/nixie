@@ -232,6 +232,38 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
             let same_graph = tm.mk_eq(*aa, *ab);
             Some(tm.mk_and([same_domain, same_graph]))
         }
+        // A tuple **is** a function on `1..n` — TLA+ has no separate sequence
+        // type — so `<<2, 4>>` and `[i \in 1..2 |-> 2 * i]` denote one value.
+        // The evaluator normalises the two into one representation; the
+        // encoder cannot, because a function-typed state variable has no
+        // candidate list to turn into a tuple. So the crossing is done here,
+        // by the same definition: same domain, and equal at every index.
+        (Value::Tuple(xs), Value::Fun { domain, array })
+        | (Value::Fun { domain, array }, Value::Tuple(xs)) => {
+            let elem = tm
+                .get(*domain)
+                .and_then(|d| tm.sorts.get(d.sort))
+                .and_then(|s| match s.kind {
+                    nixie_core::SortKind::Set(e) => Some(e),
+                    _ => None,
+                })?;
+            // The domain has to be exactly `1..n`, built the way the encoder
+            // builds one so the two terms are comparable.
+            let set_sort = tm.sorts.set(elem);
+            let mut want = tm.mk_set_empty_at(set_sort);
+            for i in 1..=xs.len() {
+                let k = tm.mk_int(i as i64);
+                let single = tm.mk_set_singleton(k);
+                want = tm.mk_set_union(want, single);
+            }
+            let mut conj = vec![tm.mk_eq(*domain, want)];
+            for (i, x) in xs.iter().enumerate() {
+                let k = tm.mk_int((i + 1) as i64);
+                let at = tm.mk_select(*array, k);
+                conj.push(eq_values(x, &Value::Scalar(at), tm)?);
+            }
+            Some(tm.mk_and(conj))
+        }
         // Deliberately enumerated rather than a `_` arm: a new `Value` variant
         // must break compilation here, not fall into a silent shape clash.
         (Value::Scalar(_), _)

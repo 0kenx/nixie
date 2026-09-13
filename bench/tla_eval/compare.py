@@ -86,10 +86,20 @@ def parse(s):
 TLC_OVERRIDDEN = {"JavaTime", "TLCGet", "TLCSet", "RandomElement", "Permutations"}
 
 sp = sys.argv[1]
+# The directory `run_eval_parity.sh` points TLC's output at (`OUTDIR`). This
+# read `tlcout/` while the runner has always written `out/`, so a clean run
+# found nothing, counted nothing, and printed "SEMANTIC MISMATCHES: 0" --
+# which reads as a pass. A differential that reports success when it compared
+# nothing is worse than no differential, so the mismatch is fixed here *and*
+# an empty comparison is now a hard failure rather than a clean sheet.
+OUT_DIR = "out"
 agree = 0; mism = []; missing = 0; unparsed = 0; unparsed_ex = []; probes = 0
-for exp in sorted(glob.glob(f"{sp}/probes/*.expected")):
+expected = sorted(glob.glob(f"{sp}/probes/*.expected"))
+if not expected:
+    sys.exit(f"no probes under {sp}/probes: nothing was compared")
+for exp in expected:
     probe = os.path.basename(exp)[:-len(".expected")]
-    out = f"{sp}/tlcout/{probe}.out"
+    out = f"{sp}/{OUT_DIR}/{probe}.out"
     want = {}
     for line in open(exp):
         if line.startswith("#"): continue
@@ -116,6 +126,12 @@ for exp in sorted(glob.glob(f"{sp}/probes/*.expected")):
             continue
         if a == b: agree += 1
         else: mism.append((probe, n, v, got[n]))
+if probes == 0:
+    sys.exit(
+        f"TLC produced no usable output for any of {len(expected)} probes "
+        f"(looked in {sp}/{OUT_DIR}). Nothing was compared, so this is a "
+        "harness failure, not a pass."
+    )
 print(f"probes TLC evaluated: {probes}")
 print(f"  definitions agreeing with TLC : {agree}")
 print(f"  SEMANTIC MISMATCHES           : {len(mism)}")
