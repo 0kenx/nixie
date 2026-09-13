@@ -71,6 +71,31 @@ pub type Result<T> = core::result::Result<T, EncodeError>;
 /// Default maximum encoding depth.
 pub const DEFAULT_MAX_DEPTH: usize = 512;
 
+/// How set-valued terms reach the solver.
+///
+/// The two are kept side by side on purpose. The design doc's O3 is the claim
+/// that a lazy theory beats the eager arena; that claim is only checkable if
+/// the thing it replaces still exists and still answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SetEncoding {
+    /// Apalache's arena: a statically computed candidate list per set, with a
+    /// Boolean per (candidate, set). Exact and quantifier-free, but it needs
+    /// the candidates to be knowable *before* the solver runs — so it cannot
+    /// represent a set-valued **state variable**, whose members are whatever
+    /// the transition relation puts there.
+    #[default]
+    Arena,
+    /// The solver's own finite-set theory (`SortKind::Set`). A set is a value
+    /// with a sort, so a state variable can have one, and membership,
+    /// `\cup`/`\cap`/`\`, extensional equality and cardinality are decided
+    /// by the theory rather than expanded here.
+    ///
+    /// What it does not have is a comprehension: `{x \in S : P(x)}` and
+    /// `{e(x) : x \in S}` have no native form, so they are declined in this
+    /// mode rather than silently approximated.
+    Native,
+}
+
 /// Default ceiling on the candidate members of a single set.
 ///
 /// The encoding's size is driven by candidate counts, and they multiply:
@@ -92,6 +117,14 @@ pub struct Encoder {
     /// Whether any encoded term relied on a function's domain not being
     /// modelled. See [`Encoder::domain_unmodelled`].
     domain_unmodelled: bool,
+    /// How set-valued terms are encoded.
+    set_encoding: SetEncoding,
+    /// Sorts for individual kernel nodes, keyed by pointer identity.
+    ///
+    /// A few terms do not carry enough information to sort themselves: `{}`
+    /// is the whole motivation, since an empty set literal has no element to
+    /// take an element sort from. Type inference knows, so the caller can say.
+    node_sorts: HashMap<*const Kera, SortId>,
     /// Bound variables in scope, mapped to the value they stand for.
     ///
     /// A binder over a set is encoded once per candidate member, with the
@@ -116,11 +149,28 @@ impl Encoder {
             vars: HashMap::new(),
             step: 0,
             domain_unmodelled: false,
+            set_encoding: SetEncoding::default(),
+            node_sorts: HashMap::new(),
             bound: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
         }
+    }
+
+    /// Choose how set-valued terms reach the solver.
+    #[must_use]
+    pub fn with_set_encoding(mut self, encoding: SetEncoding) -> Self {
+        self.set_encoding = encoding;
+        self
+    }
+
+    /// Tell the encoder the sort of one kernel node.
+    ///
+    /// Only consulted where a term cannot sort itself; see [`Encoder`]'s
+    /// `node_sorts`.
+    pub fn declare_node_sort(&mut self, node: &KeraRef, sort: SortId) {
+        self.node_sorts.insert(Rc::as_ptr(node), sort);
     }
 
     /// Declare the sort of a rigid name — a `CONSTANT`, or a parameter.
@@ -244,6 +294,20 @@ impl Encoder {
         }
     }
 
+    /// Encode a term as an arena candidate list, whatever the current mode.
+    ///
+    /// A bounded quantifier is the one construct that mixes cleanly: its
+    /// *result* is a `Bool`, so the bound set can be enumerated by the arena
+    /// while the body goes on using native set terms. Without this, native
+    /// mode declines `\E x \in {1, 2, 3} : P` — a perfectly ordinary shape —
+    /// purely because the theory has no comprehension.
+    fn set_as_arena(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetCell> {
+        let saved = std::mem::replace(&mut self.set_encoding, SetEncoding::Arena);
+        let out = self.set(term, tm);
+        self.set_encoding = saved;
+        out
+    }
+
     /// Encode a term and require it to be a set.
     fn set(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetCell> {
         match &*self.value(term, tm)? {
@@ -318,6 +382,16 @@ impl Encoder {
             // and never taken apart. `StringLit` gives that exactly, and the
             // string theory is already in Nelson-Oppen.
             Kera::Str(text) => scalar(tm.mk_string_lit(text)),
+            // A standard infinite set reaching here is being used as a
+            // *value* rather than in a membership test — `s = Nat`, say. It
+            // has no finite representation, and making it an opaque set
+            // constant would leave it unconstrained, so it is declined.
+            Kera::Var(_) | Kera::Opaque(_, _) if standard_set(term).is_some() => {
+                let name = standard_set(term).map_or("a standard set", |n| n);
+                Err(EncodeError::Unsupported(format!(
+                    "`{name}` used as a value (it is infinite)"
+                )))
+            }
             Kera::Var(n) => {
                 // A binder's variable shadows everything: it stands for the
                 // candidate member currently being instantiated.
@@ -392,6 +466,45 @@ impl Encoder {
                 let t = self.shape(eq_values(&x, &y, tm))?;
                 scalar(t)
             }
+            // The standard *infinite* sets are not sets this encoding can
+            // hold, and must never become opaque set constants: an
+            // unconstrained `Nat` lets the solver decide `0 \notin Nat`, so
+            // `TypeOK == x \in Nat` "fails" in the initial state. That is a
+            // false counterexample, and it was found on `AddTwo.tla`.
+            //
+            // Membership in them *is* exactly expressible, so it is encoded
+            // rather than declined:
+            Kera::In(a, s) if standard_set(s).is_some() => {
+                let Some(name) = standard_set(s) else {
+                    return Err(EncodeError::Unsupported("a standard set".into()));
+                };
+                let x = self.go(a, tm)?;
+                match name {
+                    // `x \in Nat` is `x >= 0` for an integer `x`.
+                    "Nat" => {
+                        let zero = tm.mk_int(0);
+                        scalar(tm.mk_ge(x, zero))
+                    }
+                    // Every value of the matching sort is in these, and the
+                    // type checker has already established the sort.
+                    "Int" | "Real" | "STRING" | "BOOLEAN" => scalar(tm.mk_bool(true)),
+                    other => Err(EncodeError::Unsupported(format!("`{other}` as a set"))),
+                }
+            }
+            Kera::In(a, s) if self.set_encoding == SetEncoding::Native => {
+                let e = self.go(a, tm)?;
+                let set = self.go(s, tm)?;
+                scalar(tm.mk_set_member(e, set))
+            }
+            Kera::SetBin(op, a, b) if self.set_encoding == SetEncoding::Native => {
+                let x = self.go(a, tm)?;
+                let y = self.go(b, tm)?;
+                scalar(match op {
+                    SetOp::Union => tm.mk_set_union(x, y),
+                    SetOp::Intersect => tm.mk_set_inter(x, y),
+                    SetOp::Difference => tm.mk_set_minus(x, y),
+                })
+            }
             Kera::In(a, s) => {
                 let v = self.value(a, tm)?;
                 let set = self.set(s, tm)?;
@@ -400,6 +513,32 @@ impl Encoder {
             }
 
             // ---- sets ----
+            // Native: a set literal is a union of singletons, which is also
+            // the normal form CVC5 uses for a set constant.
+            Kera::SetEnum(xs) if self.set_encoding == SetEncoding::Native => {
+                let mut acc: Option<TermId> = None;
+                for x in xs {
+                    let e = self.go(x, tm)?;
+                    let single = tm.mk_set_singleton(e);
+                    acc = Some(match acc {
+                        None => single,
+                        Some(prev) => tm.mk_set_union(prev, single),
+                    });
+                }
+                match acc {
+                    Some(t) => scalar(t),
+                    // `{}` carries no element to take a sort from, so the
+                    // sort has to come from the caller's type inference.
+                    // Declined, never guessed: an empty set at the wrong
+                    // element sort is a different value.
+                    None => match self.node_sorts.get(&Rc::as_ptr(term)).copied() {
+                        Some(set_sort) => scalar(tm.mk_set_empty_at(set_sort)),
+                        None => Err(EncodeError::Unsupported(
+                            "`{}` with no element sort to give it".into(),
+                        )),
+                    },
+                }
+            }
             Kera::SetEnum(xs) => {
                 let yes = tm.mk_bool(true);
                 let mut members = Vec::with_capacity(xs.len());
@@ -437,6 +576,11 @@ impl Encoder {
                     i += 1;
                 }
                 self.mk_set(members)
+            }
+            Kera::Filter { .. } | Kera::Map { .. } if self.set_encoding == SetEncoding::Native => {
+                Err(EncodeError::Unsupported(
+                    "a set comprehension (the set theory has no comprehension)".into(),
+                ))
             }
             Kera::Filter { var, set, pred } => {
                 let base = self.set(set, tm)?;
@@ -608,7 +752,7 @@ impl Encoder {
             // ---- binders over a set ----
             // Instantiated, not quantified: one copy of the body per candidate.
             Kera::Forall { var, set, body } => {
-                let base = self.set(set, tm)?;
+                let base = self.set_as_arena(set, tm)?;
                 let mut conj = Vec::with_capacity(base.members.len());
                 for m in &base.members {
                     let b = self.with_bound(var, Rc::clone(&m.value), body, tm)?;
@@ -621,7 +765,7 @@ impl Encoder {
                 scalar(tm.mk_and(conj))
             }
             Kera::Exists { var, set, body } => {
-                let base = self.set(set, tm)?;
+                let base = self.set_as_arena(set, tm)?;
                 let mut disj = Vec::with_capacity(base.members.len());
                 for m in &base.members {
                     let b = self.with_bound(var, Rc::clone(&m.value), body, tm)?;
@@ -797,6 +941,20 @@ impl Encoder {
             }
 
             // Standard-module operators whose meaning is arena-level.
+            Kera::Opaque(name, args)
+                if self.set_encoding == SetEncoding::Native
+                    && matches!(
+                        (name.as_str(), args.len()),
+                        ("Cardinality", 1) | ("IsFiniteSet", 1)
+                    ) =>
+            {
+                let set = self.go(&args[0], tm)?;
+                match name.as_str() {
+                    "Cardinality" => scalar(tm.mk_set_card(set)),
+                    // Every set in this theory is finite.
+                    _ => scalar(tm.mk_bool(true)),
+                }
+            }
             Kera::Opaque(name, args) => match (name.as_str(), args.len()) {
                 ("Cardinality", 1) => {
                     let s = self.set(&args[0], tm)?;
@@ -818,6 +976,27 @@ impl Encoder {
 impl Default for Encoder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// The name of a standard *infinite* set, if the term is one.
+///
+/// These cannot be represented by a finite-set theory, and must not be turned
+/// into opaque set constants either — an unconstrained `Nat` admits models in
+/// which `0` is not a natural number.
+fn standard_set(term: &KeraRef) -> Option<&'static str> {
+    let name = match term.as_ref() {
+        Kera::Var(n) => n.as_str(),
+        Kera::Opaque(n, args) if args.is_empty() => n.as_str(),
+        _ => return None,
+    };
+    match name {
+        "Nat" => Some("Nat"),
+        "Int" => Some("Int"),
+        "Real" => Some("Real"),
+        "STRING" => Some("STRING"),
+        "BOOLEAN" => Some("BOOLEAN"),
+        _ => None,
     }
 }
 

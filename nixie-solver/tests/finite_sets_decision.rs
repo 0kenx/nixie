@@ -486,3 +486,117 @@ fn cardinality_of_an_opaque_set_is_declined() {
         "an opaque set's cardinality is not determined here"
     );
 }
+
+// ---- conditional sets -------------------------------------------------
+//
+// `ite` at a set sort is *structured*, and the reduction has to treat it so.
+// The generic mux pass (`eliminate_nonbool_ite`) does own this sort, but it
+// runs after the reduction, so the conditional equalities it creates are never
+// surveyed. Leaving the `ite` opaque made the three cases below answer `Sat`.
+
+/// `(ite c {1} {2})` is never empty, whichever way `c` goes.
+#[test]
+fn a_conditional_set_is_not_opaque() {
+    let got = solve(|tm| {
+        let b = tm.sorts.bool_sort;
+        let c = tm.mk_var("c", b);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let s1 = tm.mk_set_singleton(one);
+        let s2 = tm.mk_set_singleton(two);
+        let ite = tm.mk_ite(c, s1, s2);
+        let int = tm.sorts.int_sort;
+        let set_int = tm.sorts.set(int);
+        let empty = tm.mk_set_empty_at(set_int);
+        vec![tm.mk_eq(ite, empty)]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The condition decides which branch the membership follows.
+#[test]
+fn membership_in_a_conditional_set_follows_the_condition() {
+    let got = solve(|tm| {
+        let b = tm.sorts.bool_sort;
+        let c = tm.mk_var("c", b);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let s1 = tm.mk_set_singleton(one);
+        let s2 = tm.mk_set_singleton(two);
+        let ite = tm.mk_ite(c, s1, s2);
+        // `c /\ 1 \notin (ite c {1} {2})` is unsatisfiable.
+        let m = tm.mk_set_member(one, ite);
+        let no = tm.mk_not(m);
+        vec![c, no]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Cardinality is exact through a conditional: both branches are known, so
+/// the support is their union and the count de-duplicates as usual.
+#[test]
+fn cardinality_of_a_conditional_set_is_exact() {
+    let got = solve(|tm| {
+        let b = tm.sorts.bool_sort;
+        let c = tm.mk_var("c", b);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let s1 = tm.mk_set_singleton(one);
+        let s2 = tm.mk_set_singleton(two);
+        let ite = tm.mk_ite(c, s1, s2);
+        let card = tm.mk_set_card(ite);
+        // Either branch is a singleton, so the cardinality is 1 either way.
+        let n = tm.mk_int(1);
+        let eq = tm.mk_eq(card, n);
+        vec![tm.mk_not(eq)]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+// ---- set terms under a binder ----------------------------------------
+//
+// `survey` walks into quantifier bodies, and a bound variable in this AST is
+// an ordinary named `Var` — so a set-sorted bound name is indistinguishable
+// from a free one, and the axioms land at the top level where that name reads
+// free. That is sound, and these pin it: every axiom the reduction emits is a
+// *tautology of the theory of finite sets in all its variables*, so reading a
+// bound name as a free one just instantiates the tautology at a fresh
+// variable. What it is not is complete, which costs `Unknown`, never a wrong
+// answer.
+
+/// `1 \in t /\ (\E t : t = {})` is satisfiable — the inner `t` is a different
+/// variable, and the extensionality axioms must not force the outer one empty.
+#[test]
+fn a_shadowed_set_binder_does_not_constrain_the_free_name() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let t = tm.mk_var("t", set_int);
+    let one = tm.mk_int(1);
+    let outer = tm.mk_set_member(one, t);
+    let empty = tm.mk_set_empty_at(set_int);
+    let inner = tm.mk_eq(t, empty);
+    let ex = tm.mk_exists([("t", set_int)], inner);
+    let mut solver = Solver::new();
+    solver.assert(outer, &mut tm);
+    solver.assert(ex, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}
+
+/// `(\A x : x \in s) /\ s = {}` has no model, and must not be claimed to.
+#[test]
+fn a_quantified_membership_is_never_answered_sat() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let s = tm.mk_var("s", set_int);
+    let x = tm.mk_var("x", int);
+    let mem = tm.mk_set_member(x, s);
+    let all = tm.mk_forall([("x", int)], mem);
+    let empty = tm.mk_set_empty_at(set_int);
+    let is_empty = tm.mk_eq(s, empty);
+    let mut solver = Solver::new();
+    solver.assert(all, &mut tm);
+    solver.assert(is_empty, &mut tm);
+    assert_ne!(solver.check(&mut tm), SolverResult::Sat);
+}

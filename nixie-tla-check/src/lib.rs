@@ -12,5 +12,5 @@ pub mod sorts;
 
 pub use arena::{Member, SetCell, Value};
 pub use bmc::{Bmc, Outcome, SetupError};
-pub use encode::{EncodeError, Encoder};
+pub use encode::{EncodeError, Encoder, SetEncoding};
 pub use sorts::{NoSort, sort_of};
