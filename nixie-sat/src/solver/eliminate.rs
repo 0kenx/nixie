@@ -1605,6 +1605,18 @@ impl Solver {
                 if !lits.contains(&side) {
                     continue;
                 }
+                // Extension-stack entry (cadical `push_clause_on_extension_
+                // stack (c, witness)`): the witness is the pivot literal the
+                // clause contains, so the backward walk in `save_model` can
+                // repair a falsified entry by toggling exactly the literal
+                // that retires it.  Both sides are pushed – an obligation
+                // transferred to *another* variable's elimination (a clause
+                // of `x` retired here because it contains `±y`) must be
+                // repairable too, which a positive-side-only record cannot
+                // express (the summle_X4053 false-model root cause).
+                self.ext_stack.push(side.code());
+                self.ext_stack.extend(lits.iter().map(|l| l.code()));
+                self.ext_stack.push(u32::MAX);
                 if side == pos_lit {
                     let stripped: SmallVec<[Lit; 4]> =
                         lits.iter().copied().filter(|&l| l != side).collect();
