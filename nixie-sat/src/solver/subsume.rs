@@ -640,6 +640,13 @@ impl Solver {
                                     true
                                 };
                                 if emitted {
+                                    if self.diag_fresh_from > 0 {
+                                        if u64::from(c2_id.0) >= self.diag_fresh_from {
+                                            self.diag_sub_fresh += 1;
+                                        } else {
+                                            self.diag_sub_old += 1;
+                                        }
+                                    }
                                     self.mark_elim_vars(c2_lits.iter().copied());
                                     if c2_lits.len() == 2 {
                                         if let Some(&u) = c2_lits.iter().find(|&&l| l != remove) {
@@ -959,6 +966,13 @@ impl Solver {
                         && !crate::nopromote_enabled();
                     if !subsumed_learned && self.clauses.get(subsumer).is_some_and(|s| s.learned) {
                         self.clauses.clear_learned(subsumer);
+                    }
+                    if self.diag_fresh_from > 0 {
+                        if u64::from(cid.0) >= self.diag_fresh_from {
+                            self.diag_sub_fresh += 1;
+                        } else {
+                            self.diag_sub_old += 1;
+                        }
                     }
                     if let Some(c) = self.clauses.get(cid) {
                         // Re-arm elimination for the variables of the removed

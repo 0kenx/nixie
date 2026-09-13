@@ -638,6 +638,19 @@ impl Solver {
         let mut definition_ticks = 0;
 
         loop {
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_LOG_ELIM").is_ok() {
+                // Residue classification watermark: set ONCE (first round)
+                // so `residue_old` counts original-file clauses and
+                // `residue_fresh` every resolvent the eliminator ever added
+                // (the per-round form conflated prior phases' resolvents
+                // with originals - measured 75-90% "old" was ambiguous).
+                if self.diag_fresh_from == 0 {
+                    self.diag_fresh_from = self.clauses.num_slots() as u64;
+                }
+                self.diag_sub_old = 0;
+                self.diag_sub_fresh = 0;
+            }
             let (eliminated, complete, round_dirty, units) = self.elim_round(&mut definition_ticks);
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_LOG_ELIM").is_ok() {
@@ -711,8 +724,10 @@ impl Solver {
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_LOG_ELIM").is_ok() {
                 eprintln!(
-                    "[elim]   inter-round subsume: subsumed={s} strengthened={st} new_marks={}",
-                    self.elim_mark_count.saturating_sub(marks_before)
+                    "[elim]   inter-round subsume: subsumed={s} strengthened={st} new_marks={} residue_old={} residue_fresh={}",
+                    self.elim_mark_count.saturating_sub(marks_before),
+                    self.diag_sub_old,
+                    self.diag_sub_fresh
                 );
             }
             subsumed += s;
