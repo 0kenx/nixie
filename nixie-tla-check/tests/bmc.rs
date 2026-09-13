@@ -408,3 +408,81 @@ fn a_well_levelled_specification_still_passes() {
         Outcome::Violation { step: 3 }
     );
 }
+
+/// A function-valued state variable encodes as an SMT array, so `f[i]` is a
+/// select and `[f EXCEPT ![i] = v]` is a store.
+///
+/// The index is a `CONSTANT` rather than a literal on purpose: `f[1]` alone
+/// does not say whether `f` is a tuple, a sequence or a function, and
+/// inference reports that rather than guessing.
+#[test]
+fn a_function_state_variable_is_checked() {
+    let src = r"
+---- MODULE Fun ----
+EXTENDS Integers
+CONSTANT k
+VARIABLE f
+Init == f[k] = 0
+Next == f' = [f EXCEPT ![k] = f[k] + 1]
+Inv  == f[k] < 3
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 8),
+        Outcome::Violation { step: 3 }
+    );
+}
+
+/// `EXCEPT` must leave other indices alone — the store/select axioms doing
+/// their job, which is what makes the array encoding faithful *inside* the
+/// domain.
+#[test]
+fn except_leaves_other_indices_alone() {
+    let src = r"
+---- MODULE Untouched ----
+EXTENDS Integers
+CONSTANT j, k
+VARIABLE f
+ASSUME j # k
+Init == f[k] = 0 /\ f[j] = 7
+Next == f' = [f EXCEPT ![k] = f[k] + 1]
+Inv  == f[j] = 7
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 5),
+        Outcome::NoViolationWithin(5)
+    );
+}
+
+/// The array encoding does not carry a function's domain, and that must be
+/// visible: TLA+ leaves `f[x]` outside `DOMAIN f` undefined while an array
+/// returns a value, so the search explores behaviours the specification does
+/// not have.
+#[test]
+fn an_unmodelled_domain_is_reported() {
+    let src = r"
+---- MODULE Dom ----
+EXTENDS Integers
+CONSTANT k
+VARIABLE f
+Init == f[k] = 0
+Next == f' = f
+Inv  == f[k] = 0
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+    assert!(
+        bmc.encoder().domain_unmodelled(),
+        "a verdict reached through a function application must say the domain was not modelled"
+    );
+}

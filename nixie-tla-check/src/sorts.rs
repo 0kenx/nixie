@@ -48,7 +48,30 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
         }
         Type::Set(_) => Err(NoSort("a set".into())),
         Type::Seq(_) => Err(NoSort("a sequence".into())),
-        Type::Fun(_, _) => Err(NoSort("a function".into())),
+        // A TLA+ function maps onto an SMT array, which is a theory the solver
+        // already has. What an array does **not** carry is the domain, and
+        // that shows up in two places. Both err in the same direction, which
+        // is the one that matters:
+        //
+        // * `f[x]` outside `DOMAIN f` is *undefined* in TLA+ and gets some
+        //   value from the array, admitting behaviours the specification does
+        //   not have.
+        // * TLA+ function equality compares domains and the values on them;
+        //   SMT array equality compares every index. Array equality is
+        //   therefore **stricter**. In a positive position that costs nothing —
+        //   the out-of-domain entries are free variables, so the solver picks
+        //   witnesses that agree — but under a negation it lets two
+        //   TLA+-equal functions be told apart.
+        //
+        // So the encoding can manufacture a counterexample and cannot hide
+        // one: `Violation` may be spurious, `NoViolationWithin` stays sound.
+        // That is the same asymmetry as a dropped assumption, and it is the
+        // right way round. `Encoder::domain_unmodelled` surfaces it.
+        Type::Fun(d, r) => {
+            let dom = sort_of(d, tm)?;
+            let rng = sort_of(r, tm)?;
+            Ok(tm.sorts.array(dom, rng))
+        }
         Type::Tuple(_) => Err(NoSort("a tuple".into())),
         Type::Rec { .. } => Err(NoSort("a record".into())),
     }

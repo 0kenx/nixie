@@ -63,6 +63,23 @@ the `.cfg` may be about a different specification. Not yet parsed; the harness
 reports when a `.cfg` exists next to a specification whose invariant it found
 violated, so the number is visible rather than silently folded into the total.
 
+### 4. The function domain an SMT array does not carry
+
+A TLA+ function has a domain; an SMT array is total. Two consequences, both in
+the same direction:
+
+* `f[x]` outside `DOMAIN f` is *undefined* in TLA+ and gets some value from the
+  array, admitting behaviours the specification does not have;
+* TLA+ function equality compares domains and the values on them, while array
+  equality compares every index, so array equality is **stricter**. In a
+  positive position that costs nothing — the out-of-domain entries are free
+  variables and the solver picks witnesses that agree — but under a negation it
+  lets two TLA+-equal functions be told apart.
+
+So a `Violation` may be spurious and `NoViolationWithin` stays sound, the same
+asymmetry as a dropped assumption. `Encoder::domain_unmodelled()` reports when
+a verdict was reached through it.
+
 ## Level checking is part of correctness here, not tidiness
 
 An invariant must be a **state** predicate. `UnchangedAsInv1663.tla` has

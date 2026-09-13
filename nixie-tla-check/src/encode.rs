@@ -64,6 +64,9 @@ pub struct Encoder {
     vars: HashMap<(String, u32), TermId>,
     /// The step the term currently being encoded is read at. `'` raises it.
     step: u32,
+    /// Whether any encoded term relied on a function's domain not being
+    /// modelled. See [`Encoder::domain_unmodelled`].
+    domain_unmodelled: bool,
     max_depth: usize,
     depth: usize,
 }
@@ -77,6 +80,7 @@ impl Encoder {
             state: HashSet::new(),
             vars: HashMap::new(),
             step: 0,
+            domain_unmodelled: false,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
         }
@@ -126,6 +130,20 @@ impl Encoder {
     /// The names declared as state variables.
     pub fn state_names(&self) -> impl Iterator<Item = &str> {
         self.state.iter().map(String::as_str)
+    }
+
+    /// Whether anything encoded so far depended on a function domain that the
+    /// array encoding does not carry.
+    ///
+    /// A TLA+ function has a domain and `f[x]` outside it is *undefined*; an
+    /// SMT array is total and returns some value. The encoding therefore
+    /// admits behaviours the specification does not have, which can produce a
+    /// spurious counterexample but can never hide a real one. Surfaced rather
+    /// than logged, for the same reason `Bmc::dropped_assumptions` is: a
+    /// caller deciding whether to trust a trace needs to know.
+    #[must_use]
+    pub fn domain_unmodelled(&self) -> bool {
+        self.domain_unmodelled
     }
 
     /// Encode a kernel term.
@@ -252,6 +270,25 @@ impl Encoder {
                     }
                 })
             }
+            // A TLA+ function application is an array select, and `EXCEPT` is
+            // a store. Both are exact *inside* the function's domain. Outside
+            // it TLA+ leaves `f[x]` undefined while the array returns some
+            // value, which admits behaviours the specification does not have:
+            // that can manufacture a counterexample, never hide one. The flag
+            // is raised so a caller can see the verdict was reached under it.
+            Kera::FunApp(f, i) => {
+                let arr = self.go(f, tm)?;
+                let idx = self.go(i, tm)?;
+                self.domain_unmodelled = true;
+                Ok(tm.mk_select(arr, idx))
+            }
+            Kera::Except { fun, index, value } => {
+                let arr = self.go(fun, tm)?;
+                let idx = self.go(index, tm)?;
+                let val = self.go(value, tm)?;
+                self.domain_unmodelled = true;
+                Ok(tm.mk_store(arr, idx, val))
+            }
             Kera::Cmp(op, a, b) => {
                 let x = self.go(a, tm)?;
                 let y = self.go(b, tm)?;
@@ -288,11 +325,9 @@ fn describe(k: &Kera) -> String {
         | Kera::BigUnion(_)
         | Kera::Range(_, _)
         | Kera::Times(_) => "a set expression (the set theory is not wired up yet)",
-        Kera::FunDef { .. }
-        | Kera::FunApp(_, _)
-        | Kera::Domain(_)
-        | Kera::Except { .. }
-        | Kera::FunSet { .. } => "a function expression",
+        Kera::FunDef { .. } => "a function constructor `[x \\in S |-> e]`",
+        Kera::Domain(_) => "`DOMAIN`",
+        Kera::FunSet { .. } => "a function set `[S -> T]`",
         Kera::Tuple(_) => "a tuple",
         Kera::Record(_) | Kera::RecordSet(_) => "a record",
         Kera::Opaque(n, _) => return format!("`{n}`"),

@@ -526,16 +526,30 @@ bound and 9 with a counterexample. What blocks the rest is the useful half of th
 
 | | blocked by |
 |---|---|
-| 71 | a **set**-typed state variable |
-| 48 | a **function**-typed state variable |
+| 74 | a **set**-typed state variable |
 | 48 | does not type check (variant records dominate) |
 | 45 | does not lower (a recursive operator exhausts the inlining budget) |
-| 11 | `\in` has no encoding |
-| 10 | a **record**-typed state variable |
+| 22 | a **function of sets** state variable |
+| 18 | `\in` has no encoding |
+| 17 | `[x \in S \|-> e]` has no encoding |
 
-The top two lines are one piece of work — the arena encoding — and they are more than half of
-everything blocked. That is the case for doing it next, and it is a stronger case than the
-coverage number alone would have made.
+**Functions are SMT arrays** — `f[x]` is a select, `[f EXCEPT ![i] = v]` a store — which cost
+nothing to wire up because the array theory is already in Nelson-Oppen. That moved *prepared*
+from 81 to 106 and **left *checked* at 18**, which is the useful part of the measurement: a
+function-typed state variable now gets a sort, and then fails at the encoder, because
+`[i \in S |-> e]` is how a function actually receives its value in `Init`. The blocker moved
+rather than cleared, and it moved somewhere more informative.
+
+What an array does not carry is the domain, and it shows up twice: `f[x]` outside `DOMAIN f`
+is undefined in TLA+ but total in an array, and array equality compares every index where
+TLA+ compares the domain, so it is *stricter*. Under a negation that lets two TLA+-equal
+functions be told apart. Both err towards manufacturing a counterexample rather than hiding
+one — the same asymmetry as a dropped assumption — and `Encoder::domain_unmodelled()` reports
+when a verdict came through it.
+
+The remaining big lines all reduce to one question: **what are the candidate elements of this
+set?** `\in`, `[x \in S |-> e]` and every set-typed variable need it, which is exactly what
+the arena computes. That is the next unit of work, and it is a single unit rather than three.
 
 **Three ways a correct checker can answer the wrong question**, all found by reading the
 specifications behind reported violations rather than trusting the count:
