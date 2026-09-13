@@ -229,6 +229,38 @@ Verification for 9–11: 11,259 workspace tests, all gates clean; Z3 parity
 88/88 models valid; 2,400 fresh fuzz instances across six seeds (the two
 seeds that found the bugs among them) clean.
 
+## Continuation 3 (2026-09-14): the boundary arithmetic, checked and scaled
+
+Two more members of the fixed-width family, plus a decidability extension:
+
+12. **The strict-inequality tightening `k ± 1` was unchecked** — in
+    `assert_lt`/`assert_gt` AND in the case-split bound computation
+    (`compute_int_bounds`).  At `k = i64::MAX`, `MAX + 1` is a debug panic
+    and a SILENT WRAP to `i64::MIN` in release — a *different constraint*
+    than the one asserted (`-x > i64::MAX`, satisfiable at `x = -2^63`,
+    could wrap into `-x ≥ MIN`, trivially true — a false-verdict hazard,
+    and a live debug abort).  Both sites are checked now; an unshiftable
+    bound falls through to the exact delta-rational representation, which
+    handles strict bounds at any width.  Found by fuzzing the *debug*
+    binary (overflow-checks on): every remaining unchecked site panics
+    there, making the hunt mechanical — 1,200 debug-mode fuzz instances
+    now run panic-free.
+13. **Row scaling at the parse boundary.**  A linear row scaled by a
+    nonzero rational `λ` has the same solution set, so before falling back
+    to the big-constant column abstraction the parse now tries
+    `λ ∈ {1, 1/2, 1/4, …} ∪ {-1, -1/2, …}` (flipping an ordered
+    comparison when `λ < 0`): a row whose constant leaves `i64` width in
+    one orientation is often exactly representable in another.  `-x >
+    i64::MAX` becomes `(-1/2)·x > 2^62` — all parts in range, DECIDED
+    (`sat` at `x = -2^63`, agreeing with z3) where the answer was
+    `unknown`.  The column synthesis and the honesty gate remain the
+    fallback when no orientation fits.
+
+Verification: 11,273 workspace tests, all gates clean; Z3 parity 0
+disagreements; differential with model validation 0 disagreements, 88/88
+models valid; 1,200 debug-mode + 1,100 release-mode fuzz instances clean
+(seeds that previously found bugs included).
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves

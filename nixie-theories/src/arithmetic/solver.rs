@@ -8,7 +8,7 @@ use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, T
 use nixie_core::ast::TermId;
 use nixie_core::error::Result;
 use num_rational::Rational64;
-use num_traits::{One, Signed, Zero};
+use num_traits::{CheckedAdd, CheckedSub, One, Signed, Zero};
 use smallvec::SmallVec;
 
 /// Arithmetic equality solver's verdict on `a = b` from the current bounds.
@@ -1219,10 +1219,18 @@ impl ArithSolver {
         // `x = 2`, but `x <= 3/2` does not), and a row over `Real`
         // variables has no integer gap at all.  Both fall through to the
         // delta-rational path, which is exact for reals and integers alike.
-        if rhs.denom() == &1 && self.lhs_is_integral(lhs) {
+        //
+        // The shift itself is CHECKED: at `k = i64::MAX` the `k+1`/`k-1`
+        // used to overflow — a debug panic, and in release a SILENT WRAP to
+        // `i64::MIN`, turning `x < i64::MAX` into a different constraint
+        // than the one asserted.  An unshiftable bound falls through to the
+        // delta path, which represents the strict bound exactly.
+        if rhs.denom() == &1
+            && self.lhs_is_integral(lhs)
+            && let Some(shifted) = rhs.checked_sub(&Rational64::one())
+        {
             // Transform: lhs < rhs becomes lhs <= rhs - 1
-            let rhs = rhs - Rational64::one();
-            self.assert_le(lhs, rhs, reason);
+            self.assert_le(lhs, shifted, reason);
             return;
         }
 
@@ -1257,11 +1265,15 @@ impl ArithSolver {
     /// For LIA, transforms to: lhs >= rhs + 1 (since no integer exists between k and k+1)
     pub fn assert_gt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
         // For an INTEGRAL row, x > k is equivalent to x >= k + 1 (same
-        // per-row conditions as `assert_lt`; see the soundness note there).
-        if rhs.denom() == &1 && self.lhs_is_integral(lhs) {
+        // per-row conditions and CHECKED shift as `assert_lt`; see the
+        // soundness note there — at `k = i64::MAX` the unchecked `k+1`
+        // wrapped to `i64::MIN` in release).
+        if rhs.denom() == &1
+            && self.lhs_is_integral(lhs)
+            && let Some(shifted) = rhs.checked_add(&Rational64::one())
+        {
             // Transform: lhs > rhs becomes lhs >= rhs + 1
-            let rhs = rhs + Rational64::one();
-            self.assert_ge(lhs, rhs, reason);
+            self.assert_ge(lhs, shifted, reason);
             return;
         }
 

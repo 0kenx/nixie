@@ -66,7 +66,7 @@
 use nixie_core::ast::{TermId, TermKind, TermManager, collect_subterms};
 use nixie_sat::Lit;
 use num_rational::Rational64;
-use num_traits::ToPrimitive;
+use num_traits::{CheckedAdd, CheckedSub, ToPrimitive};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -397,10 +397,22 @@ impl Solver {
                 },
             };
             // Strict inequalities tighten by one over the integers.
+            // Strict inequalities tighten by one over the integers —
+            // CHECKED: at `±i64::MAX` the unchecked shift used to overflow
+            // (a debug panic, a silent wrap in release).  A bound that does
+            // not shift is simply not added: the case-split heuristic loses
+            // one fact, never a wrong one.
             let constant = match parsed.constraint_type {
-                ArithConstraintType::Lt => parsed.constant - Rational64::from_integer(1),
-                ArithConstraintType::Gt => parsed.constant + Rational64::from_integer(1),
-                _ => parsed.constant,
+                ArithConstraintType::Lt => {
+                    parsed.constant.checked_sub(&Rational64::from_integer(1))
+                }
+                ArithConstraintType::Gt => {
+                    parsed.constant.checked_add(&Rational64::from_integer(1))
+                }
+                _ => Some(parsed.constant),
+            };
+            let Some(constant) = constant else {
+                continue;
             };
             facts.push(Fact {
                 terms: parsed.terms.clone(),

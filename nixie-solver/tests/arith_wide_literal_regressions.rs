@@ -336,3 +336,32 @@ fn synthesized_wide_column_never_answers_wrongly() {
     // is acceptable; `sat` is a wrong answer.
     assert_ne!(out[0], "sat", "{}", out[0]);
 }
+
+/// The strict-inequality tightening `k ± 1` is checked at the boundary:
+/// `-x > i64::MAX` (satisfiable at `x = -2^63` — SMT `Int` is unbounded)
+/// used to compute `MAX + 1` unchecked — a debug panic and a SILENT WRAP to
+/// `i64::MIN` in release, a different constraint than the one asserted.  The
+/// unshiftable bound now falls through to the exact delta-rational path.
+#[test]
+fn strict_tightening_at_the_i64_boundary_is_exact() {
+    use nixie_solver::Context;
+    for (script, want) in [
+        // -x > MAX  ⟺  x < -MAX  ⟺  x ≤ -2^63 — satisfiable.
+        (
+            "(declare-const x Int)(assert (> (* -1 x) 9223372036854775807))(check-sat)",
+            "sat",
+        ),
+        // x < i64::MIN is unsatisfiable only if Int were bounded; it is not,
+        // so `x < i64::MIN` is satisfiable (any integer below MIN... there
+        // is none — MIN is the smallest representable but SMT Int is
+        // unbounded BELOW it too: satisfiable).
+        (
+            "(declare-const x Int)(assert (< x (- 9223372036854775807 1)))(assert (> x (- 9223372036854775807 1)))(check-sat)",
+            "unsat",
+        ),
+    ] {
+        let mut ctx = Context::new();
+        let out = ctx.execute_script(script).expect("script");
+        assert_eq!(out[0], want, "{script}: {}", out[0]);
+    }
+}

@@ -359,40 +359,81 @@ impl Solver {
         let final_terms: SmallVec<[(TermId, Rational64); 4]> =
             combined.into_iter().filter(|(_, c)| !c.is_zero()).collect();
 
-        // Move the EXACT folded constant to the RHS.  Three outcomes:
-        //  (a) it fits `Rational64` — the ordinary path, as before;
-        //  (b) it is integral but too wide — SYNTHESIZE it as a wide
-        //      `IntConst` column (the existing big-constant abstraction:
-        //      exact for refutation, certified on `sat`), so the atom stays
-        //      decidable — `(- (+ x i64::MAX) (0 - 1))` used to gate to
-        //      `Unknown` here; now it parses as `x + col_{2^63}` and hash-
-        //      consing unifies the column with a literal `2^63` written on
-        //      the other side of the same equation.  The synthesis happens
-        //      BEFORE the big-const scan below so the column is registered
-        //      with the honesty gate and the distinctness pass exactly like
-        //      a wide literal.
-        //  (c) fractional and too wide — unrepresentable in any constant
-        //      node the solver stores; gate the atom honestly.
+        // Move the EXACT folded constant to the RHS, choosing an EXACT
+        // representation.  Scaling a linear row by a nonzero rational λ
+        // preserves its solution set, so before falling back to the
+        // big-constant COLUMN abstraction, try λ ∈ {1, 1/2, 1/4, ...} ∪
+        // {-1, -1/2, ...}: a row whose constant leaves `i64` width in one
+        // orientation is often exactly representable in another
+        // (`-x > i64::MAX` — satisfiable at `x = -2^63` — becomes
+        // `(-1/2)·x > 2^62`, all parts in range, DECIDED instead of
+        // `unknown`).  λ < 0 flips an ordered comparison's direction.
+        // Outcomes:
+        //  (a) λ = 1 fits — the ordinary path, as before;
+        //  (b) some λ fits — the scaled row (same solutions, exact);
+        //  (c) no λ fits: integral constant — SYNTHESIZE it as a wide
+        //      `IntConst` column (the big-constant abstraction: exact for
+        //      refutation, certified on `sat`), registered with the honesty
+        //      gate and the distinctness pass like a wide literal.  Exactly
+        //      `-2^63` (fits `i64` as `MIN`, but its negation does not)
+        //      synthesizes sign-flipped as `+2^63` at coefficient `-1`.
+        //  (d) fractional, no λ, no column — unrepresentable anywhere;
+        //      gate the atom honestly.
         let moved = -constant;
-        let final_terms = match narrow_rational64(&moved) {
-            Some(_) => final_terms,
+        // (scaled terms, scaled constant, sign of λ): sign < 0 means the
+        // ordered comparison's direction was flipped by the scaling.
+        type Scaled = (Vec<(TermId, Rational64)>, Rational64, i64);
+        let mut chosen: Option<Scaled> = None;
+        if narrow_rational64(&moved).is_some() {
+            chosen = Some((
+                final_terms.iter().copied().collect(),
+                narrow_rational64(&moved)?,
+                1,
+            ));
+        } else {
+            for sign in [1i64, -1i64] {
+                for k in 0..=62u32 {
+                    let lambda = BigRational::new(BigInt::from(sign), BigInt::from(2u32).pow(k));
+                    let Some(constant_r) = narrow_rational64(&(lambda.clone() * &moved)) else {
+                        continue;
+                    };
+                    let mut scaled = Vec::with_capacity(final_terms.len());
+                    let mut all_fit = true;
+                    for &(t, c) in &final_terms {
+                        let sc = lambda.clone()
+                            * BigRational::new(BigInt::from(*c.numer()), BigInt::from(*c.denom()));
+                        match narrow_rational64(&sc) {
+                            Some(c_r) => scaled.push((t, c_r)),
+                            None => {
+                                all_fit = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_fit {
+                        chosen = Some((scaled, constant_r, sign));
+                        break;
+                    }
+                }
+                if chosen.is_some() {
+                    break;
+                }
+            }
+        }
+
+        let (final_terms, constant_r, sign) = match chosen {
+            Some(c) => c,
             None if moved.is_integer() => {
-                // Exactly `-2^63` fits `i64` (`MIN`) but its NEGATION does
-                // not — every fixed-width consumer that flips it
-                // (`row_key`, DL normalization) would overflow — and a
-                // `MIN`-valued literal is not classified big by `to_i64`,
-                // so it would bypass the big-const machinery.  Synthesize
-                // that corner with a sign flip: column `+2^63` at
-                // coefficient `-1`, which IS a big const everywhere.
+                // The column abstraction (see the comment above).
                 let (value, coef) = if moved.to_integer() == BigInt::from(i64::MIN) {
                     (-moved.to_integer(), -Rational64::one())
                 } else {
                     (moved.to_integer(), Rational64::one())
                 };
                 let col = manager.mk_int(value);
-                let mut with_col = final_terms;
+                let mut with_col: Vec<(TermId, Rational64)> = final_terms.iter().copied().collect();
                 with_col.push((col, coef));
-                with_col
+                (with_col, Rational64::zero(), 1)
             }
             None => {
                 self.arith_parse_overflow.insert(reason);
@@ -400,10 +441,22 @@ impl Solver {
                 return None;
             }
         };
-        let constant_r = match narrow_rational64(&moved) {
-            Some(c) => c,
-            None => Rational64::zero(), // the constant lives in the column
+        // λ < 0 flips an ordered comparison (an equality is symmetric).
+        let constraint_type = if sign < 0 {
+            match constraint_type {
+                ArithConstraintType::Lt => ArithConstraintType::Gt,
+                ArithConstraintType::Gt => ArithConstraintType::Lt,
+                ArithConstraintType::Le => ArithConstraintType::Ge,
+                ArithConstraintType::Ge => ArithConstraintType::Le,
+                // (ArithConstraintType has no Eq variant; equalities pass
+                // through parse as Le placeholders with the Eq recorded in
+                // var_to_constraint, and Le↔Ge is the correct flip for the
+                // symmetric pair the equality asserts.)
+            }
+        } else {
+            constraint_type
         };
+        let final_terms: SmallVec<[(TermId, Rational64); 4]> = final_terms.into_iter().collect();
 
         // A column that *is* an `IntConst` is the big-constant abstraction of
         // `extract_linear_terms`: the tableau sees the constant as a free
