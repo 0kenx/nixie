@@ -95,17 +95,21 @@ fn set_terms_are_interned() {
     );
 }
 
-/// **The soundness gate.** There is no set theory yet, so `set.member` is an
-/// opaque Boolean that nothing constrains. A solver that answered `Sat` here
-/// would be reporting a model for an assignment no set satisfies — a wrong
-/// `sat`, which `AGENTS.md` calls the catastrophe. It must answer `Unknown`.
+/// Membership is **decided**, not gated.
+///
+/// This test began life asserting `Unknown`: when only the set *language*
+/// existed, `set.member` was an opaque Boolean nothing constrained, and the
+/// honesty gate had to stop a wrong `sat`. `solver::set_theory` now supplies
+/// the defining axioms, so the right answer is available and the gate no
+/// longer fires for membership. The gate itself is still load-bearing — see
+/// `cardinality_still_degrades_to_unknown` in `finite_sets_decision.rs`, which
+/// covers the one construct the reduction does not.
 #[test]
-fn a_sat_over_unconstrained_set_atoms_degrades_to_unknown() {
+fn membership_is_decided_rather_than_gated() {
     let mut tm = TermManager::new();
     let one = tm.mk_int(1);
     let singleton = tm.mk_set_singleton(one);
-    // `1 \in {1}` is true, so its negation is unsatisfiable. Without a theory
-    // the solver cannot know that, and must not claim a model either.
+    // `1 \in {1}` is true, so its negation is unsatisfiable.
     let member = tm.mk_set_member(one, singleton);
     let claim = tm.mk_not(member);
 
@@ -113,12 +117,12 @@ fn a_sat_over_unconstrained_set_atoms_degrades_to_unknown() {
     solver.assert(claim, &mut tm);
     assert_eq!(
         solver.check(&mut tm),
-        SolverResult::Unknown,
-        "an unconstrained set atom must never yield Sat"
+        SolverResult::Unsat,
+        "the reduction decides membership in a singleton"
     );
 }
 
-/// The gate is specific: a problem with no set terms is unaffected.
+/// A problem with no set terms is unaffected by any of this.
 #[test]
 fn the_gate_does_not_fire_without_set_terms() {
     let mut tm = TermManager::new();
@@ -130,11 +134,9 @@ fn the_gate_does_not_fire_without_set_terms() {
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
 
-/// An `Unsat` that does not depend on the set atoms stays `Unsat`: dropping
-/// constraints can only make refutation *harder*, so one that still succeeds
-/// is sound.
+/// An `Unsat` that does not depend on the set atoms stays `Unsat`.
 #[test]
-fn an_unsat_independent_of_sets_survives_the_gate() {
+fn an_unsat_independent_of_sets_still_holds() {
     let mut tm = TermManager::new();
     let one = tm.mk_int(1);
     let singleton = tm.mk_set_singleton(one);

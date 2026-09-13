@@ -30,6 +30,7 @@ pub(super) mod nla_relax;
 pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
+pub(super) mod set_theory;
 pub(super) mod static_features;
 pub(super) mod term_walk;
 pub(super) use static_features::StaticFeatures;

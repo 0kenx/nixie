@@ -821,6 +821,35 @@ impl Solver {
         // bound to `(extract 255 64 a)`) loses its link to its definition and
         // an unsatisfiable formula reads as satisfiable.  See `expand_lets`.
         let mut term = self.expand_lets(term, manager);
+        // Finite sets: give every membership atom its defining axioms before
+        // anything else looks at the assertion. The axioms are *valid* — each
+        // is a consequence of the theory of finite sets — so conjoining them
+        // changes neither satisfiability nor unsatisfiability, and it is done
+        // by conjunction rather than by a recursive `assert` so the reduction
+        // cannot re-enter itself on the atoms it just created.
+        // See `super::set_theory`.
+        {
+            // Surveyed over **every** assertion, not just this one: an element
+            // introduced here must meet an equality asserted earlier, and vice
+            // versa. Doing it per-assertion answers `Sat` to `a = b /\ x \in a
+            // /\ x \notin b`, because nothing ever relates `x` to the equality.
+            // The axioms are conjoined onto *this* assertion, so a `pop` that
+            // removes it removes them too and the state stays scope-consistent.
+            let mut roots = self.assertions.clone();
+            roots.push(term);
+            let reduction = super::set_theory::reduce(&roots, manager);
+            if reduction.incomplete {
+                // `set.card` is not reduced here; keep the honesty gate up so
+                // a `Sat` resting on it degrades to `Unknown`.
+                self.set_terms_unconstrained = true;
+            }
+            if !reduction.axioms.is_empty() {
+                let mut parts = Vec::with_capacity(reduction.axioms.len() + 1);
+                parts.push(term);
+                parts.extend(reduction.axioms);
+                term = manager.mk_and(parts);
+            }
+        }
         // Depth guard, on the *expanded* term: the recursive pre-processing
         // passes below (`fold_unit_eq_reps` / `flatten_eq_ite_tables` /
         // `purify_arith` / …) walk the assertion term and would overflow the
@@ -2877,14 +2906,13 @@ impl Solver {
         };
 
         match &t.kind {
-            // Finite sets have no theory solver yet, so a set atom becomes an
-            // opaque Boolean that nothing constrains. That is sound only
-            // because `set_terms_unconstrained` degrades a resulting `Sat` to
-            // `Unknown`: dropping constraints keeps a refutation valid but
-            // makes a model meaningless. Returning a free literal *without*
-            // the flag would be a wrong `sat`.
+            // A membership or subset atom is an opaque Boolean *to the SAT
+            // layer*, but it is not unconstrained: `set_theory::reduce` has
+            // already conjoined its defining axioms onto the assertion, so the
+            // propositional structure and EUF decide it. No honesty gate is
+            // needed here — only `set.card`, which the reduction does not
+            // cover, still raises one.
             TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => {
-                self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
