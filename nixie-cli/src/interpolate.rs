@@ -700,16 +700,26 @@ mod tests {
             .write()
             .expect("scan guard lock poisoned");
 
+        // `cargo test` runs a module's tests as threads of one process (the
+        // lock above covers that world); `cargo nextest` runs EVERY test as
+        // its own process, where a static lock guards nothing — a sibling
+        // test process's scratch file could appear between the before and
+        // after snapshots and read as a false leak. The scratch name embeds
+        // the creating process's id, so the scan filters by OUR pid: other
+        // processes' files are not ours to judge, whatever the runner.
+        let own_prefix = format!("nixie-interpolate-{}-", std::process::id());
+        let is_own = move |p: &std::path::PathBuf| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&own_prefix))
+        };
+
         let before: std::collections::HashSet<_> = std::fs::read_dir(std::env::temp_dir())
             .map(|entries| {
                 entries
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with("nixie-interpolate-"))
-                    })
+                    .filter(|p| is_own(p))
                     .collect()
             })
             .unwrap_or_default();
@@ -726,11 +736,7 @@ mod tests {
                 entries
                     .filter_map(|e| e.ok())
                     .map(|e| e.path())
-                    .filter(|p| {
-                        p.file_name()
-                            .and_then(|n| n.to_str())
-                            .is_some_and(|n| n.starts_with("nixie-interpolate-"))
-                    })
+                    .filter(|p| is_own(p))
                     .filter(|p| !before.contains(p))
                     .collect()
             })
