@@ -388,12 +388,15 @@ impl Encoder {
     fn field_name(&self, index: &KeraRef) -> Option<String> {
         match index.as_ref() {
             Kera::Str(name) => Some(crate::sorts::record_field(name)),
-            Kera::Int(_) => {
-                let n = literal_int(index)?;
+            // Anything else is tried as a tuple index, which is an integer —
+            // and one that need not be written as a literal, since a `.cfg`
+            // substitution leaves arithmetic behind. A term that is not a
+            // ground integer falls through to `None`, which is the refusal.
+            _ => {
+                let n = ground_int(index)?;
                 let i = usize::try_from(&n).ok().filter(|k| *k >= 1)?;
                 Some(crate::sorts::tuple_field(i - 1))
             }
-            _ => None,
         }
     }
 
@@ -1071,14 +1074,16 @@ impl Encoder {
                 }
                 self.mk_set(members)
             }
-            // `a..b` is enumerable only when both ends are literal. A symbolic
-            // bound has no finite candidate list, and inventing one would
-            // silently check a different specification.
+            // `a..b` is enumerable only when both ends are *ground*. A
+            // symbolic bound has no finite candidate list, and inventing one
+            // would silently check a different specification — but ground is
+            // not the same as literal, and reading it as literal is what kept
+            // `0 .. N-1` out after a `.cfg` had already pinned `N`.
             Kera::Range(a, b) => {
-                let lo = literal_int(a).ok_or_else(|| {
+                let lo = ground_int(a).ok_or_else(|| {
                     EncodeError::NotEnumerable("`..` with a non-literal lower bound".into())
                 })?;
-                let hi = literal_int(b).ok_or_else(|| {
+                let hi = ground_int(b).ok_or_else(|| {
                     EncodeError::NotEnumerable("`..` with a non-literal upper bound".into())
                 })?;
                 let yes = tm.mk_bool(true);
@@ -1367,7 +1372,7 @@ impl Encoder {
                     // heterogeneous tuple has no well-sorted answer, and is
                     // refused rather than approximated.
                     Value::Tuple(parts) => {
-                        let Some(n) = literal_int(i) else {
+                        let Some(n) = ground_int(i) else {
                             return Err(EncodeError::Unsupported(
                                 "a tuple indexed by a non-literal".into(),
                             ));
@@ -1433,7 +1438,7 @@ impl Encoder {
                 let target = self.value(fun, tm)?;
                 match &*target {
                     Value::Tuple(parts) => {
-                        let Some(n) = literal_int(index) else {
+                        let Some(n) = ground_int(index) else {
                             return Err(EncodeError::Unsupported(
                                 "`EXCEPT` on a tuple at a non-literal index".into(),
                             ));
@@ -1802,14 +1807,38 @@ fn scalar(t: TermId) -> Result<Rc<Value>> {
 }
 
 /// The integer a term denotes, if it is a literal (possibly negated).
-///
-/// Used only where a *candidate list* has to be built, which is the one place
-/// a symbolic value cannot be carried: `a..b` needs to know how many elements
-/// there are, not merely how to compare them.
 fn literal_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
     match term.as_ref() {
         Kera::Int(d) => d.parse().ok(),
         Kera::Neg(a) => literal_int(a).map(|v| -v),
+        _ => None,
+    }
+}
+
+/// The integer a **ground** term denotes.
+///
+/// Used where a *candidate list* or a component index has to be built, which
+/// is the one place a symbolic value cannot be carried: `a..b` needs to know
+/// how many elements there are, not merely how to compare them, and a
+/// heterogeneous tuple has no well-sorted answer for a dynamic index.
+///
+/// A literal is not enough, and assuming it was is what kept a large part of
+/// the corpus out. `CONSTANT N = 4` is a *substitution*, so `0 .. N-1` becomes
+/// `0 .. (4-1)` — as ground as `0 .. 3` and rejected all the same. The value
+/// has to be computed, not pattern-matched.
+///
+/// It is computed by `nixie-tla`'s evaluator, which is the right authority
+/// rather than a convenience: it is the implementation of TLA+ arithmetic that
+/// `bench/tla_eval` checks against TLC, and a second constant folder here
+/// would be a second semantics to keep in agreement. It fails closed — a free
+/// name, an overflow or the depth limit all give `None`, which is the refusal
+/// that was already there.
+fn ground_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
+    if let Some(n) = literal_int(term) {
+        return Some(n);
+    }
+    match nixie_tla::Evaluator::new().eval(term) {
+        Ok(nixie_tla::Value::Int(i)) => Some(i.into()),
         _ => None,
     }
 }
