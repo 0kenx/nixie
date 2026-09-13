@@ -16,6 +16,8 @@
 //! * [`ast`] — the surface tree, with a span on every node.
 //! * [`level`] — TLA+ level checking (constant / state / action / temporal).
 //! * [`module`] — following `EXTENDS` to load a spec's transitive imports.
+//! * [`config`] — TLC `.cfg` files, which say what a specification's
+//!   constants are and which definitions to check.
 //!
 //! # Why not LR(1)
 //!
@@ -60,6 +62,7 @@
 #![warn(missing_docs)]
 
 pub mod ast;
+pub mod config;
 pub mod error;
 pub mod level;
 pub mod lexer;
@@ -70,6 +73,9 @@ pub mod span;
 pub mod token;
 
 pub use ast::{Expr, ExprKind, Module, Unit, UnitKind};
+pub use config::{
+    BehaviorSpec, ConfigError, ConfigErrorKind, ConfigValue, Replacement, TlcConfig, parse_config,
+};
 pub use error::{ErrorKind, SyntaxError};
 pub use level::{Imports, Level, LevelError, LevelReport, check_module, check_spec};
 pub use lexer::lex;

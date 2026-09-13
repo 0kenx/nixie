@@ -233,6 +233,32 @@ deeper ones already recorded — the inter-round subsume quiescence
 must not create marks) and a joint search redesign (cadence + schedule
 + restart policy measured together, not swapped piecemeal).
 
+## Follow-up 5 (same day): the residue is classified — everything funnels
+to the phase-1 gap (`a6982d5a`)
+
+`residue_old=`/`residue_fresh=` on the inter-round line (solve-start
+id watermark: original-file vs eliminator-created):
+
+| config | phase 3 | phase 4 |
+|---|---|---|
+| default | old 214 / fresh 257 | old 122 / fresh 138 |
+| SUBFIX | old 16 / fresh 36 | old 5 / fresh 23 |
+
+The pre-phase fixpoint does quiesce old-vs-old redundancy; the
+persistent blocker is ~2/3 resolvent-involving — tens of removals per
+phase, each re-marking variables.  cadical's equivalent inter-round
+(verbose=2) *checks 1.08 M clauses and creates zero marks* — and its
+resolvents are `mark_added`-scheduled exactly like ours
+(`new_clause(false)`), so the asymmetry is **state, not scheduling**:
+its phase 1 eliminated 16 k more variables and every downstream
+formula — including which resolvents exist to subsume what — differs.
+
+**The elimination-amplitude thread therefore has one root left**: the
+phase-1 yield gap (74 757 vs 91 067 at the same budget and schedule).
+Closing it needs the same-state differential (eliminate one variable
+with both engines on identical state, diff the resolvent sets) — the
+next session's concrete entry point for the Timetable class.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the

@@ -1420,6 +1420,13 @@ pub struct Solver {
     /// elimination schedule (cadical's `tried`) and the schedule remainder
     /// at the round's end.
     pub(super) diag_elim_tried: usize,
+    /// Subsume-residue classification (`NIXIE_LOG_ELIM`): clause-id
+    /// watermark set at elimination-round start; inter-round subsume
+    /// removals/shrinks at or above it are *fresh* (round-created
+    /// resolvents), below it *old* (pre-round originals).  0 = inactive.
+    pub(super) diag_fresh_from: u64,
+    pub(super) diag_sub_old: usize,
+    pub(super) diag_sub_fresh: usize,
     pub(super) diag_elim_remain: usize,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
@@ -2235,6 +2242,9 @@ impl Solver {
             diag_elim_bw_retired: 0,
             diag_elim_otf_shrunk: 0,
             diag_elim_tried: 0,
+            diag_fresh_from: 0,
+            diag_sub_old: 0,
+            diag_sub_fresh: 0,
             diag_elim_remain: 0,
             learnt: SmallVec::new(),
             seen: Vec::new(),
