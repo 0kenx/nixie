@@ -25,9 +25,9 @@
 //! cross-check in `examples/encodecheck.rs` compares the two on every ground
 //! definition of the corpora.
 
-use crate::arena::{Member, SetCell, Value, cardinality, eq_values, member_of};
+use crate::arena::{Member, SetCell, Value, cardinality, eq_values, ite_values, member_of};
 use nixie_core::{SortId, TermId, TermManager};
-use nixie_tla::kera::{ArithOp, CmpOp, Kera, KeraRef, Name, SetOp};
+use nixie_tla::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use thiserror::Error;
@@ -647,6 +647,35 @@ impl Encoder {
         match saved {
             Some(v) => self.bound.insert(var.clone(), v),
             None => self.bound.remove(var),
+        };
+        out
+    }
+
+    /// Encode `body` once with two names bound at the same time.
+    ///
+    /// A fold's operator takes an accumulator and an element, and the two have
+    /// to be in scope together. Nesting [`Encoder::with_bound`] would do it,
+    /// but it also has to *unbind* in the right order, and doing that by hand
+    /// at the call site is how a binding leaks.
+    fn with_two_bound(
+        &mut self,
+        first: &Name,
+        fv: Rc<Value>,
+        second: &Name,
+        sv: Rc<Value>,
+        body: &KeraRef,
+        tm: &mut TermManager,
+    ) -> Result<Rc<Value>> {
+        let saved_first = self.bound.insert(first.clone(), fv);
+        let saved_second = self.bound.insert(second.clone(), sv);
+        let out = self.value(body, tm);
+        match saved_second {
+            Some(v) => self.bound.insert(second.clone(), v),
+            None => self.bound.remove(second),
+        };
+        match saved_first {
+            Some(v) => self.bound.insert(first.clone(), v),
+            None => self.bound.remove(first),
         };
         out
     }
@@ -1562,6 +1591,85 @@ impl Encoder {
                             .into(),
                     )),
                 }
+            }
+
+            // A fold, which is `FoldSetRule` / `FoldSeqRule` in Apalache.
+            //
+            // The accumulator starts at the base and is stepped once per
+            // element, with the operator's body encoded afresh each time —
+            // instantiation, exactly as a binder over a set already works
+            // here. That is what keeps the result quantifier-free.
+            //
+            // What makes a *set* fold harder than a sequence fold is that an
+            // arena candidate list is an over-approximation in two ways at
+            // once: a candidate may not be in the set, and two candidates may
+            // denote the same value. A step therefore only takes effect when
+            // the candidate is present **and** is not a duplicate of an
+            // earlier present one, which is the same guard `cardinality` uses
+            // and the same one Apalache builds in `SetOps.dedup`. Without the
+            // second half, `ApaFoldSet(+, 0, {x, y})` would answer `x + y`
+            // when `x = y`.
+            Kera::Fold {
+                over,
+                acc,
+                elem,
+                base,
+                collection,
+                body,
+            } => {
+                let mut a = self.value(base, tm)?;
+                match over {
+                    FoldOver::Set => {
+                        // A fold needs a candidate list, exactly as a bounded
+                        // quantifier does, so it goes through the same
+                        // coercion: a set-sorted term this encoder built is a
+                        // union of singletons and its candidates read back off
+                        // it, while a genuinely opaque set variable has none
+                        // and is declined. Answering from the base alone would
+                        // be the shape of the bug Apalache fixed for infinite
+                        // sets (their issue 1691), and the same wrong answer.
+                        let cell = self.set(collection, tm)?;
+                        for (i, m) in cell.members.iter().enumerate() {
+                            let mut counts = vec![m.present];
+                            for earlier in &cell.members[..i] {
+                                let same = self.shape(eq_values(&m.value, &earlier.value, tm))?;
+                                let dup = tm.mk_and([earlier.present, same]);
+                                counts.push(tm.mk_not(dup));
+                            }
+                            let counts = tm.mk_and(counts);
+                            let stepped = self.with_two_bound(
+                                acc,
+                                Rc::clone(&a),
+                                elem,
+                                Rc::clone(&m.value),
+                                body,
+                                tm,
+                            )?;
+                            let picked = ite_values(counts, &stepped, &a, tm)
+                                .ok_or(EncodeError::ShapeClash)?;
+                            a = Rc::new(picked);
+                        }
+                    }
+                    // A sequence has neither problem: every element is there,
+                    // once, in order. It does have to *be* a sequence — a
+                    // literal tuple, which is what a TLA+ sequence is — and a
+                    // sequence-sorted state variable has no encoding yet, so
+                    // it is declined rather than approximated.
+                    FoldOver::SeqLeft => {
+                        let items = match &*self.value(collection, tm)? {
+                            Value::Tuple(items) => items.clone(),
+                            _ => {
+                                return Err(EncodeError::Unsupported(
+                                    "a fold over a sequence that is not a literal".into(),
+                                ));
+                            }
+                        };
+                        for item in items {
+                            a = self.with_two_bound(acc, a, elem, item, body, tm)?;
+                        }
+                    }
+                }
+                Ok(a)
             }
 
             // TLC's tracing and assertion operators, encoded as `TLC.tla`

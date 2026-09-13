@@ -347,6 +347,81 @@ pub fn member_of(v: &Value, set: &SetCell, tm: &mut TermManager) -> Option<TermI
     Some(tm.mk_or(disj))
 }
 
+/// `IF cond THEN a ELSE b`, at whatever shape the two values have.
+///
+/// `mk_ite` alone only covers [`Value::Scalar`]. The rest need the conditional
+/// pushed *inside* the structure, because a tuple, a record and a set are not
+/// single SMT terms — and for a set it is not even a matter of pushing it
+/// down: the result's candidate list is the two lists concatenated, each
+/// candidate kept under the branch it came from. That is exact, and it is why
+/// duplicate candidates have to be tolerated everywhere else (they already
+/// are; see [`cardinality`]).
+///
+/// # Errors
+///
+/// `None` when the two values have different shapes — a tuple against a
+/// record, or two tuples of different lengths. That is a type error the
+/// inferencer should have caught, and it is reported rather than resolved:
+/// picking one side would answer a question nobody asked.
+pub fn ite_values(cond: TermId, a: &Value, b: &Value, tm: &mut TermManager) -> Option<Value> {
+    match (a, b) {
+        (Value::Scalar(x), Value::Scalar(y)) => Some(Value::Scalar(tm.mk_ite(cond, *x, *y))),
+        (
+            Value::Fun {
+                domain: da,
+                array: aa,
+            },
+            Value::Fun {
+                domain: db,
+                array: ab,
+            },
+        ) => Some(Value::Fun {
+            domain: tm.mk_ite(cond, *da, *db),
+            array: tm.mk_ite(cond, *aa, *ab),
+        }),
+        (Value::Tuple(xs), Value::Tuple(ys)) if xs.len() == ys.len() => {
+            let mut out = Vec::with_capacity(xs.len());
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                out.push(Rc::new(ite_values(cond, x, y, tm)?));
+            }
+            Some(Value::Tuple(out))
+        }
+        (Value::Record(xs), Value::Record(ys)) if xs.len() == ys.len() => {
+            let mut out = BTreeMap::new();
+            for (k, x) in xs {
+                let y = ys.get(k)?;
+                out.insert(k.clone(), Rc::new(ite_values(cond, x, y, tm)?));
+            }
+            Some(Value::Record(out))
+        }
+        (Value::Set(x), Value::Set(y)) => {
+            let neg = tm.mk_not(cond);
+            let mut members = Vec::with_capacity(x.members.len() + y.members.len());
+            for m in &x.members {
+                members.push(Member {
+                    value: Rc::clone(&m.value),
+                    present: tm.mk_and([cond, m.present]),
+                });
+            }
+            for m in &y.members {
+                members.push(Member {
+                    value: Rc::clone(&m.value),
+                    present: tm.mk_and([neg, m.present]),
+                });
+            }
+            Some(Value::Set(SetCell { members }))
+        }
+        (
+            Value::Scalar(_)
+            | Value::Set(_)
+            | Value::Tuple(_)
+            | Value::Record(_)
+            | Value::Fun { .. },
+            _,
+        ) => None,
+    }
+}
+
 /// `Cardinality(set)`, as an integer term.
 ///
 /// Counts a candidate only when it is present **and** no earlier candidate is

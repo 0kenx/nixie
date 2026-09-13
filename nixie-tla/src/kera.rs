@@ -134,6 +134,17 @@ impl SetOp {
 /// duplicates subterms; sharing keeps that from blowing up.
 pub type KeraRef = Rc<Kera>;
 
+/// What a [`Kera::Fold`] folds over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FoldOver {
+    /// A set. Order is unspecified in TLA+, so a fold over a set is only
+    /// well defined when the operator is associative and commutative —
+    /// Apalache does not check this either, and neither does this.
+    Set,
+    /// A sequence, folded left to right.
+    SeqLeft,
+}
+
 /// The kernel language.
 ///
 /// Deliberately closed and small. Everything the surface syntax offers is
@@ -291,6 +302,37 @@ pub enum Kera {
     /// An ordering comparison.
     Cmp(CmpOp, KeraRef, KeraRef),
 
+    // ---- folds ----
+    /// `ApaFoldSet(Op, base, S)` and `ApaFoldSeqLeft(Op, base, seq)`.
+    ///
+    /// A fold is the one standard operator whose argument is an **operator**,
+    /// and the kernel is deliberately first-order. Rather than grow a lambda
+    /// and an operator type for it, the fold is its own binder: lowering keeps
+    /// the operator's *body* with its two parameters free, and this node names
+    /// them — exactly the shape `Forall` and `FunDef` already have.
+    ///
+    /// That is also what Apalache does in substance. Its rewriter receives the
+    /// operator wrapped in a `LetInEx` and inlines it once per element
+    /// (`FoldSetRule`, `FoldSeqRule`); naming the parameters here is the same
+    /// thing without a general binding form the kernel has no other use for.
+    Fold {
+        /// Whether the collection is a set or a sequence. They are genuinely
+        /// different jobs, not a detail: a set's candidates may be absent and
+        /// may repeat, and a fold that ignored either would count a member
+        /// twice or count one that is not there.
+        over: FoldOver,
+        /// The accumulator parameter of the folding operator.
+        acc: Name,
+        /// The element parameter of the folding operator.
+        elem: Name,
+        /// The initial value.
+        base: KeraRef,
+        /// The set or sequence being folded over.
+        collection: KeraRef,
+        /// The operator's body, with `acc` and `elem` free.
+        body: KeraRef,
+    },
+
     /// An application that could not be inlined: an operator declared but not
     /// defined (a `CONSTANT Op(_, _)`), or one imported from a module that was
     /// not resolved.
@@ -356,13 +398,25 @@ impl Kera {
             Self::Except { fun, index, value } => vec![fun, index, value],
             Self::FunSet { set, cod } => vec![set, cod],
             Self::Record(fs) | Self::RecordSet(fs) => fs.iter().map(|(_, v)| v).collect(),
+            Self::Fold {
+                base,
+                collection,
+                body,
+                ..
+            } => vec![base, collection, body],
             Self::Opaque(_, args) => args.iter().collect(),
         }
     }
 
-    /// The name a binder introduces, if this node is a binder.
+    /// The names this node introduces, if it is a binder.
+    ///
+    /// A slice rather than a single name because [`Kera::Fold`] binds two: the
+    /// accumulator and the element. Returning only one of them would leave the
+    /// other to be discovered as a free name, which happens to work where the
+    /// environment creates names on first sight and is exactly the kind of
+    /// accident that stops working later.
     #[must_use]
-    pub fn binder(&self) -> Option<&Name> {
+    pub fn binders(&self) -> Vec<&Name> {
         match self {
             Self::Forall { var, .. }
             | Self::Exists { var, .. }
@@ -370,8 +424,9 @@ impl Kera {
             | Self::ChooseUnbounded { var, .. }
             | Self::Filter { var, .. }
             | Self::Map { var, .. }
-            | Self::FunDef { var, .. } => Some(var),
-            _ => None,
+            | Self::FunDef { var, .. } => vec![var],
+            Self::Fold { acc, elem, .. } => vec![acc, elem],
+            _ => Vec::new(),
         }
     }
 

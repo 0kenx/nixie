@@ -27,7 +27,7 @@
 //! reports [`crate::LowerErrorKind::InlineLimit`] rather than looping.
 
 use crate::error::{LowerError, LowerErrorKind, Result};
-use crate::kera::{ArithOp, CmpOp, Kera, KeraRef, Name, SetOp};
+use crate::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
 use nixie_tla_syntax::Span;
 use nixie_tla_syntax::ast::{
     Bound, CaseArm, ExceptSel, Expr, ExprKind, Module, Pattern, QuantKind, Unit, UnitKind,
@@ -216,6 +216,15 @@ enum Frame<'a> {
     PopInline,
     /// Expand a function definition's `bounds`/`body` as `[x \in S |-> e]`.
     ExpandFun(&'a [Bound], &'a Expr),
+    /// Build a fold from `3` values (base, collection, operator body).
+    BuildFold {
+        /// Whether the collection is a set or a sequence.
+        over: FoldOver,
+        /// The name the operator's accumulator parameter was renamed to.
+        acc: Name,
+        /// The name its element parameter was renamed to.
+        elem: Name,
+    },
     /// Build that function definition from `1 + 1` values (domain, body).
     BuildFun(Name),
     /// Restore operator definitions shadowed by a `LET`.
@@ -818,6 +827,28 @@ impl<'a> Lowerer<'a> {
                     };
                     values.push(Kera::FunDef { var, set, body }.rc());
                 }
+                Frame::BuildFold { over, acc, elem } => {
+                    let (Some(body), Some(collection), Some(base)) =
+                        (values.pop(), values.pop(), values.pop())
+                    else {
+                        return Err(LowerError::unsupported(
+                            "a fold",
+                            "internal: missing children",
+                            expr.span,
+                        ));
+                    };
+                    values.push(
+                        Kera::Fold {
+                            over,
+                            acc,
+                            elem,
+                            base,
+                            collection,
+                            body,
+                        }
+                        .rc(),
+                    );
+                }
                 Frame::Build(e, n) => {
                     let built = self.build(e, &mut values, n)?;
                     values.push(built);
@@ -1160,6 +1191,105 @@ impl<'a> Lowerer<'a> {
         }
     }
 
+    /// Whether this application is one of Apalache's folds rather than a
+    /// definition that happens to share the name.
+    ///
+    /// The `Apa` prefix exists to reserve these names, so in practice the
+    /// answer is yes. What this guards is the one case where it is not — and
+    /// it cannot simply defer whenever a definition exists, because
+    /// `Apalache.tla` defines both names itself, `RECURSIVE`, and deferring
+    /// would defer to *that*. So a definition wins only when the application
+    /// does not look like a fold: its first argument is not a two-parameter
+    /// operator, and no reading of it as a fold was ever going to work.
+    fn folds_here(&self, name: &str, args: &'a [Expr]) -> bool {
+        if self.lookup(name).is_none() && !self.defs.contains_key(name) {
+            return true;
+        }
+        let Some(first) = args.first() else {
+            return false;
+        };
+        matches!(
+            self.as_operator(first),
+            Some(Binding::Op { params, .. }) if params.len() == 2
+        )
+    }
+
+    /// Lower `ApaFoldSet(Op, base, S)` / `ApaFoldSeqLeft(Op, base, seq)`.
+    ///
+    /// The operator's body is lowered **once**, with its two parameters left
+    /// free and renamed to fresh names; [`Kera::Fold`] records which names
+    /// they are, and whoever consumes the fold binds them. Lowering it once is
+    /// the point: a set's members are not known here, so there is nothing to
+    /// unroll against, and the encoder is where the candidate list lives.
+    ///
+    /// The parameters are renamed rather than kept because the body is lowered
+    /// into a term that may sit inside an enclosing binder. Every binder
+    /// lowering introduces is unique, and a fold's parameters have to join that
+    /// discipline: otherwise a fold under `\E p \in S` whose operator also
+    /// calls a parameter `p` would capture it.
+    fn expand_fold(
+        &mut self,
+        e: &'a Expr,
+        over: FoldOver,
+        args: &'a [Expr],
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let [op, base, collection] = args else {
+            return Err(LowerError::unsupported(
+                "a fold",
+                "internal: a fold takes three arguments",
+                span,
+            ));
+        };
+        let Some(Binding::Op { params, body }) = self.as_operator(op) else {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its first argument must be an operator: pass a defined \
+                 two-parameter operator or a `LAMBDA`",
+                op.span,
+            ));
+        };
+        if params.len() != 2 {
+            return Err(LowerError::new(
+                LowerErrorKind::Arity {
+                    name: "the folding operator".into(),
+                    expected: 2,
+                    found: params.len(),
+                },
+                op.span,
+            ));
+        }
+        if params.iter().any(|(_, arity)| *arity > 0) {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its operator takes an operator of its own, which the kernel \
+                 has no way to carry",
+                op.span,
+            ));
+        }
+        let acc = self.fresh_name(&params[0].0);
+        let elem = self.fresh_name(&params[1].0);
+        let mut scope = HashMap::new();
+        scope.insert(
+            params[0].0.clone(),
+            Binding::Value(Kera::Var(acc.clone()).rc()),
+        );
+        scope.insert(
+            params[1].0.clone(),
+            Binding::Value(Kera::Var(elem.clone()).rc()),
+        );
+        self.binder_names
+            .insert(e.span.start.offset, vec![acc.clone(), elem.clone()]);
+        stack.push(Frame::BuildFold { over, acc, elem });
+        stack.push(Frame::PopScope);
+        stack.push(Frame::Expand(body));
+        stack.push(Frame::PushScope(scope));
+        stack.push(Frame::Expand(collection));
+        stack.push(Frame::Expand(base));
+        Ok(())
+    }
+
     fn expand(
         &mut self,
         e: &'a Expr,
@@ -1352,6 +1482,26 @@ impl<'a> Lowerer<'a> {
                 let Some(id) = head.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
                 };
+                // Apalache's folds take an *operator* as their first argument,
+                // and they are intercepted here rather than resolved. Two
+                // reasons, both load-bearing:
+                //
+                // * `Apalache.tla` defines them `RECURSIVE`, peeling one
+                //   `CHOOSE __x \in __S` at a time. Inlining that reaches the
+                //   depth limit, so the specification does not lower at all
+                //   wherever that module is on the search path.
+                // * Unresolved, the operator argument lowered to a bare
+                //   `Opaque(name, [])`: the *identity* survived and the body
+                //   did not, so nothing downstream could apply it.
+                //
+                // A local `LET` or a parameter of the same name still wins, so
+                // a specification that defines its own `ApaFoldSet` keeps it.
+                if !head.is_qualified()
+                    && let Some(over) = fold_kind(&id.name, args.len())
+                    && self.folds_here(&id.name, args)
+                {
+                    return self.expand_fold(e, over, args, span, stack);
+                }
                 // A parameter bound to a value cannot be applied: higher-order
                 // parameters are inlined as values, and applying one needs the
                 // operator itself, not its level.
@@ -2117,5 +2267,19 @@ impl core::fmt::Display for DescribeKind<'_> {
             _ => "this construct",
         };
         f.write_str(s)
+    }
+}
+
+/// The fold an operator name denotes, if it is one of Apalache's.
+///
+/// Only the two whose signatures `Apalache.tla` pins down. The community
+/// modules' `FoldSet` / `FoldLeft` take their operator differently, and reading
+/// one signature as another would fold the wrong argument silently, so they are
+/// deliberately not guessed at here.
+fn fold_kind(name: &str, argc: usize) -> Option<FoldOver> {
+    match (name, argc) {
+        ("ApaFoldSet", 3) => Some(FoldOver::Set),
+        ("ApaFoldSeqLeft", 3) => Some(FoldOver::SeqLeft),
+        _ => None,
     }
 }

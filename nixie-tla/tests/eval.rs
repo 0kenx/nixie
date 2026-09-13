@@ -371,3 +371,110 @@ fn a_function_on_another_domain_is_not_a_tuple() {
     assert_eq!(eval("A == [i \\in 2..4 |-> i] = <<2, 3, 4>>"), "FALSE");
     assert_eq!(eval("A == [i \\in {\"a\"} |-> 1] = <<1>>"), "FALSE");
 }
+
+// ---- folds ----
+//
+// `ApaFoldSet` and `ApaFoldSeqLeft` are the only standard operators that take
+// an *operator* as an argument. The kernel stays first-order: lowering keeps
+// the operator's body with its two parameters free and `Kera::Fold` names
+// them, which is a binder of the same shape as `\A x \in S : …`.
+
+#[test]
+fn fold_set_sums() {
+    assert_eq!(
+        eval("Add(a, b) == a + b\nA == ApaFoldSet(Add, 0, {1, 2, 3, 4})"),
+        "10"
+    );
+}
+
+#[test]
+fn fold_set_over_the_empty_set_is_the_base() {
+    assert_eq!(eval("Add(a, b) == a + b\nA == ApaFoldSet(Add, 7, {})"), "7");
+}
+
+/// A set has no duplicates, so a member written twice is folded once. This is
+/// the property the encoder has to work for, and it is free here.
+#[test]
+fn fold_set_counts_each_member_once() {
+    assert_eq!(
+        eval("Inc(a, b) == a + 1\nA == ApaFoldSet(Inc, 0, {1, 1, 2, 2, 2})"),
+        "2"
+    );
+}
+
+#[test]
+fn fold_set_takes_a_lambda() {
+    assert_eq!(
+        eval("A == ApaFoldSet(LAMBDA a, b: a + b, 100, {1, 2})"),
+        "103"
+    );
+}
+
+/// A `LET`-bound operator, which is how Apalache's own regression specs write
+/// it (`Sum(S) == LET Add(i, j) == i + j IN ApaFoldSet(Add, 0, S)`).
+#[test]
+fn fold_set_takes_a_let_bound_operator() {
+    assert_eq!(
+        eval("A == LET Add(i, j) == i + j IN ApaFoldSet(Add, 0, {1, 2, 3})"),
+        "6"
+    );
+}
+
+#[test]
+fn fold_seq_left_is_left_to_right() {
+    // Subtraction is not commutative, so this pins the direction:
+    // ((100 - 1) - 2) - 3.
+    assert_eq!(
+        eval("Sub(a, b) == a - b\nA == ApaFoldSeqLeft(Sub, 100, <<1, 2, 3>>)"),
+        "94"
+    );
+}
+
+#[test]
+fn fold_seq_left_over_the_empty_sequence_is_the_base() {
+    assert_eq!(
+        eval("Sub(a, b) == a - b\nA == ApaFoldSeqLeft(Sub, 5, <<>>)"),
+        "5"
+    );
+}
+
+/// Unlike a set, a sequence keeps its repeats.
+#[test]
+fn fold_seq_left_counts_repeats() {
+    assert_eq!(
+        eval("Inc(a, b) == a + 1\nA == ApaFoldSeqLeft(Inc, 0, <<1, 1, 1>>)"),
+        "3"
+    );
+}
+
+/// A fold's parameters are renamed on the way in, so an enclosing binder that
+/// happens to use the same name cannot be captured.
+#[test]
+fn a_folds_parameters_do_not_capture_an_enclosing_binder() {
+    assert_eq!(
+        eval("Add(a, b) == a + b\nA == {a + ApaFoldSet(Add, 0, {1, 2}) : a \\in {10, 20}}"),
+        "{13, 23}"
+    );
+}
+
+/// Nested folds, where the inner one is applied to the outer one's element.
+#[test]
+fn folds_nest() {
+    assert_eq!(
+        eval(
+            "Add(a, b) == a + b\n\
+             A == ApaFoldSet(LAMBDA x, S: x + ApaFoldSet(Add, 0, S), 0, {{1, 2}, {3}})"
+        ),
+        "6"
+    );
+}
+
+/// A specification that defines its own `ApaFoldSet` keeps it: the intercept
+/// only fires for a name nothing local has bound.
+#[test]
+fn a_local_definition_of_a_fold_name_wins() {
+    assert_eq!(
+        eval("A == LET ApaFoldSet(x, y, z) == 42 IN ApaFoldSet(1, 2, 3)"),
+        "42"
+    );
+}

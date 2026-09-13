@@ -67,6 +67,25 @@ fn show(k: &Kera) -> String {
         Kera::FunDef { var, set, body } => {
             format!("[{var} \\in {} |-> {}]", show(set), show(body))
         }
+        Kera::Fold {
+            over,
+            acc,
+            elem,
+            base,
+            collection,
+            body,
+        } => {
+            let name = match over {
+                nixie_tla::kera::FoldOver::Set => "ApaFoldSet",
+                nixie_tla::kera::FoldOver::SeqLeft => "ApaFoldSeqLeft",
+            };
+            format!(
+                "{name}(LAMBDA {acc}, {elem}: {}, {}, {})",
+                show(body),
+                show(base),
+                show(collection)
+            )
+        }
         Kera::FunApp(f, a) => format!("{}[{}]", show(f), show(a)),
         Kera::Domain(a) => format!("DOMAIN {}", show(a)),
         Kera::Except { fun, index, value } => format!(

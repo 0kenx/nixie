@@ -28,7 +28,7 @@
 //! over a counter that turns deep input into a diagnostic. Deep input yields
 //! [`EvalErrorKind::DepthLimit`], never a crash.
 
-use crate::kera::{ArithOp, CmpOp, Kera, KeraRef, Name, SetOp};
+use crate::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
 use crate::value::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use thiserror::Error;
@@ -234,6 +234,43 @@ impl Evaluator {
                     self.check_set(&out)?;
                 }
                 Ok(Value::Set(out))
+            }
+            // A fold, the one standard operator that takes an operator.
+            //
+            // TLA+ leaves the *order* of a fold over a set unspecified, so the
+            // result is only well defined when the operator is associative and
+            // commutative. Apalache does not check that and neither does this;
+            // what this does guarantee is that the order is **deterministic**,
+            // because `Value` is ordered and the members come out of a
+            // `BTreeSet`. An evaluator whose answer depended on hash order
+            // would be useless as a differential oracle against TLC.
+            Kera::Fold {
+                over,
+                acc,
+                elem,
+                base,
+                collection,
+                body,
+            } => {
+                let items: Vec<Value> = match over {
+                    FoldOver::Set => self.set_of(collection, env)?.into_iter().collect(),
+                    FoldOver::SeqLeft => match self.go(collection, env)? {
+                        Value::Tuple(items) => items,
+                        other => {
+                            return Err(EvalErrorKind::Type {
+                                expected: "a sequence".into(),
+                                found: other.kind().into(),
+                            });
+                        }
+                    },
+                };
+                let mut a = self.go(base, env)?;
+                for item in items {
+                    a = self.with_bound(acc, a, env, |e, en| {
+                        e.with_bound(elem, item, en, |e2, en2| e2.go(body, en2))
+                    })?;
+                }
+                Ok(a)
             }
             Kera::SetBin(op, a, b) => {
                 let x = self.set_of(a, env)?;
