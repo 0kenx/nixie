@@ -81,3 +81,7 @@ rustc-ice-*.txt
 
 # AGENTS.md is local-only agent guidance, intentionally untracked
 /AGENTS.md
+
+# The corpus can also be materialized as a symlink in worktrees; the
+# directory pattern above does not match a symlink, so match the link too.
+/smt-lib
