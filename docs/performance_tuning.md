@@ -73,18 +73,27 @@ each logic family. Components listed as "disabled" incur no overhead.
 | Logic | Arithmetic solver | NLSAT | E-matching | MBQI | Array theory | BV theory | UF |
 |-------|------------------|-------|------------|------|-------------|-----------|-----|
 | `QF_LIA` / `QF_IDL` | LIA (Omega/CP) | off | off | off | off | off | off |
-| `QF_LRA` / `QF_RDL` | LRA (Simplex) | off | off | off | off | off | off |
+| `QF_LRA` / `QF_RDL` / `QF_LIRA` | Mixed (≈LRA for pure-real) | off | off | off | off | off | off |
 | `QF_NIA` | LIA + NLSAT | **on** | off | off | off | off | off |
-| `QF_NRA` / `QF_NIRA` | LRA + NLSAT | **on** | off | off | off | off | off |
+| `QF_NRA` / `QF_NIRA` | Mixed + NLSAT | **on** | off | off | off | off | off |
 | `QF_BV` / `QF_ABV` / `QF_AUFBV` | LIA (bounded) | off | off | off | conditional | **on** | conditional |
 | `QF_A` / `QF_ALIA` / `QF_AUFLIA` | LIA | off | off | off | **on** | off | conditional |
-| `QF_UF` / `QF_UFLIA` / `QF_UFLRA` | LIA/LRA | off | off | off | off | off | **on** |
+| `QF_UF` / `QF_UFLIA` / `QF_UFLRA` | Mixed/LIA | off | off | off | off | off | **on** |
 | `QF_FP` | FP (IEEE 754) | off | off | off | off | off | off |
 | `QF_DT` | LIA | off | off | off | off | off | off |
 | `QF_S` | String (re-based) | off | off | off | off | off | off |
 | `AUFLIA` / `UFLIA` | LIA | off | **on** | **on** | **on** | off | **on** |
-| `AUFLIRA` / `UFLRA` | LIA+LRA | off | **on** | **on** | **on** | off | **on** |
-| `ALL` (default) | LRA | off | **on** | **on** | **on** | **on** | **on** |
+| `AUFLIRA` / `UFLRA` | Mixed | off | **on** | **on** | **on** | off | **on** |
+| `ALL` (default) | Mixed (Int+Real, per-variable integrality) | off | **on** | **on** | **on** | **on** | **on** |
+
+**Arithmetic modes** (`ArithSolver`): `LIA` — every variable integer; `LRA` —
+every variable continuous; `Mixed` — Z3's `theory_mi_arith` shape, per-variable
+integrality taken from each term's sort (`Int`-sorted terms are integer
+variables, `Real`-sorted continuous). Non-integer `arith` logics — including
+the `LIRA`/`NIRA` mixed shapes and the unset-logic default — run Mixed; a
+formula with no `Int` terms behaves exactly like LRA under it, and integer
+holes (`x:Int ∧ x>3 ∧ x<4`) stay `unsat` instead of leaking the fractional LP
+point through (the historical false-`sat` class).
 
 **Key takeaway:** Quantifier-free logics are handled by specialized, highly
 optimized paths. Quantified logics (`AUFLIA`, `AUFLIRA`, `UFLIA`, `UFLRA`)

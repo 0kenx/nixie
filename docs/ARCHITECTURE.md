@@ -153,6 +153,7 @@ Nixie is a next-generation **Satisfiability Modulo Theories (SMT) solver** writt
 | **EUF** | Congruence closure, E-matching for quantifiers, MBQI |
 | **LRA** | Simplex with strict inequalities (infinitesimals), Farkas lemmas |
 | **LIA** | Branch-and-bound, Gomory/MIR/CG cuts, strong branching, feasibility pump |
+| **Mixed (LIRA)** | One tableau, per-variable integrality from each term's sort (Z3's `theory_mi_arith`); the default for an unset/`ALL` logic |
 | **Difference Logic** | Bellman-Ford graph-based algorithm |
 | **UTVPI** | Doubled graph algorithm (Unit Two Variable Per Inequality) |
 | **BitVectors** | Bit-blasting with AIGS, word-level propagators |
