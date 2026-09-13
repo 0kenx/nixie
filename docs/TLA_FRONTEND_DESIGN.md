@@ -486,7 +486,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 | 3 | Naive encoding *(arithmetic/propositional fragment landed)*; state variables, priming and bounded model checking *(landed)*; the arena encoding for sets *(open)* | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
-| 6 | O3 set/function theory plugin | Verdict-preserving; encoding-size and conflict-count deltas |
+| 6 | O3 set theory *(landed: sort, 8 operators, Nelson-Oppen dispatch, decision procedure, cardinality)*; function theory *(open)* | Verdict-preserving; encoding-size and conflict-count deltas |
 | 7+ | O4–O9, then temporal | Per-item, as above |
 
 Milestone 3 before anything clever is load-bearing: the naive encoding is what gives us an
@@ -600,8 +600,44 @@ wrong hypotheses the controls eliminated first. The encoding was deliberately **
 to avoid the `ite`: that would have hidden a live soundness bug rather than fixed it, and the
 blocked test would have gone green while the solver stayed wrong.
 
-What is still blocked is a set-valued **state variable** (78): a set built by an expression has
-its candidates from that expression, and `s@1` has nowhere to get them from yet.
+**O3 is landed, and the comparison it existed for has been run.** `nixie-solver` now has a real
+finite-set theory — a `Set` sort, the eight SMT-LIB operators, `TermTheory::Set` in
+Nelson-Oppen, membership and extensionality decided by a reduction with disequality witnesses,
+and cardinality exact wherever a set's members are statically known. The front end can point at
+either encoding, and on the corpus:
+
+| encoding | prepared | checked |
+|---|---|---|
+| arena | 106 | 31 |
+| native | 160 | 30 |
+| **hybrid** | **160** | **35** |
+
+**Neither pure encoding dominates**, which is the whole reason milestone 3 came before O3.
+
+- Native unlocks a set-valued **state variable** — 54 more specifications prepare. The arena
+  cannot represent one *at all*: its candidate list has to be known before the solver runs, and
+  `s@1` holds whatever the transition relation puts there.
+- Native loses **comprehensions and bounded quantifiers**: the theory has no comprehension, so
+  `\E x \in {1, 2, 3} : P` was declined and the `Slicer` family fell out of `checked`.
+
+The hybrid is not a split-the-difference compromise but a structural observation: a bounded
+quantifier's *result* is a `Bool`, so the arena can enumerate the bound set while the body goes
+on using native set terms. Comprehensions still decline — their result is a set, and mixing
+representations there is not free.
+
+Two soundness findings came out of this stage, both by reading the reported violations against
+their sources rather than trusting the count:
+
+- `Nat` was becoming an unconstrained opaque set constant, so the solver could decide
+  `0 \notin Nat` and report `TypeOK == x \in Nat` violated in the initial state
+  (`AddTwo.tla`). Membership in the standard infinite sets is exactly expressible —
+  `x \in Nat` is `x >= 0` — so it is encoded; using one as a *value* is declined by name.
+- The arena's `Cardinality` guards exposed a **false `sat`** in the solver itself: a string
+  equality that was not a foldable top-level assertion was a free Boolean. See
+  `docs/studies/2026-09-13-string-literal-distinctness-false-sat.md`.
+
+What is still blocked is a set whose *element* sort has no SMT sort — `Set(Set(<<Int, Int>>))`
+needs tuples to be sortable, which structural values are not.
 
 **Three ways a correct checker can answer the wrong question**, all found by reading the
 specifications behind reported violations rather than trusting the count:
