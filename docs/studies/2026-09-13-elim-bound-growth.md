@@ -133,6 +133,42 @@ on different elimination opportunities.  A same-state differential
 (eliminate one var with both orderings, diff the resolvent sets) is
 the cheap experiment.
 
+## Follow-up 2 (same day): the schedule-order hypothesis CONFIRMED, the default still loses (`281de4c0` + revert `29364160`)
+
+A position-mapped schedule (`IndexedSchedule`, cadical's
+`heap<elim_more>` `update`-in-place semantics, same score formula) was
+implemented and measured on Timetable:
+
+| | BinaryHeap (duplicates) | IndexedSchedule | cadical |
+|---|---|---|---|
+| round-1 pops | 729 023 (drained) | **401 333** | 403 731 (8 444 remain) |
+| round-1 eliminated | 74 757 @ 10 M (incomplete) | **75 149 @ 8.58 M (complete)** | 91 067 @ 10 M (incomplete) |
+| bound growth | never | **0→1 (phase 1 completes)** | 0→1 at phase 3 |
+| phase-2 yield | 1 949 | **26 781** | 21 103 |
+| total @ 21 k conflicts | ~78 k | **~103 k** | — |
+
+The order hypothesis is confirmed end-to-end: duplicate pushes popped
+occurrence-widened variables at stale better ranks, burning the budget
+on big lists ahead of turn; one-entry-per-variable with in-place
+re-scoring restores cadical's pop count *and* unlocks the bound cycle.
+
+**But the 60 s corpus screen loses: 220 → 200 solved cells** (records
+under `precompile/281de4c0/benchmark/runs/sc24f/`; 0 disagreements,
+conflicts gm 1.049; 14 files lose, 2 gain).  The amplitude arrives too
+early: our first phase fires unconditionally at `lim_elim = 2k`
+conflicts, while cadical's marks gate holds its first phase to ~12.5 k
+(probing/subsumption must feed candidates first) — easy files pay the
+richer elimination before their search has done its work.
+
+Reverted from the default (`29364160`; trajectory re-verified
+bit-identical to `107b7868`); the `tried=/remain=` diagnostics stay on
+the round line, and the `IndexedSchedule` implementation is preserved
+in `281de4c0`'s history for revival as an arm.  **The recorded next
+experiment**: gate the first phase on cadical's marks condition (or
+raise `elim_interval`) so the bound-growth cycle fires at cadical's
+cadence — the amplitude is now *reachable*; the open question is only
+when it should run.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
