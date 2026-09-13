@@ -264,6 +264,46 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
             }
             Some(tm.mk_and(conj))
         }
+        // A structural tuple or record against the *same value reified* as a
+        // datatype term. The encoder keeps the structural form wherever it can
+        // — it is what makes a literal index and an exact `DOMAIN` work — so a
+        // comparison routinely has one of each: `<<a, b>> \in msgs`, where
+        // `msgs` is a set of tuples and its members are datatype terms.
+        //
+        // Compared field by field through selectors rather than by reifying
+        // here, because reifying needs the encoder's sort machinery and this
+        // module deliberately holds none of it. A single-constructor datatype
+        // has no other shape to be, so taking it apart loses nothing.
+        (Value::Tuple(xs), Value::Scalar(t)) | (Value::Scalar(t), Value::Tuple(xs)) => {
+            let fields = struct_fields(*t, tm)?;
+            if fields.len() != xs.len() {
+                return Some(tm.mk_bool(false));
+            }
+            let mut conj = Vec::with_capacity(xs.len());
+            for (x, (f, fs)) in xs.iter().zip(fields.iter()) {
+                let at = tm.mk_dt_selector(f, *t, *fs);
+                conj.push(eq_values(x, &Value::Scalar(at), tm)?);
+            }
+            Some(tm.mk_and(conj))
+        }
+        (Value::Record(xs), Value::Scalar(t)) | (Value::Scalar(t), Value::Record(xs)) => {
+            let fields = struct_fields(*t, tm)?;
+            if fields.len() != xs.len() {
+                return Some(tm.mk_bool(false));
+            }
+            let mut conj = Vec::with_capacity(xs.len());
+            for ((name, x), (f, fs)) in xs.iter().zip(fields.iter()) {
+                // The datatype's selectors are the record's fields in the same
+                // (sorted) order, so a positional walk is a name walk; a
+                // mismatch means these are different record types.
+                if *f != format!("@f{name}") {
+                    return Some(tm.mk_bool(false));
+                }
+                let at = tm.mk_dt_selector(f, *t, *fs);
+                conj.push(eq_values(x, &Value::Scalar(at), tm)?);
+            }
+            Some(tm.mk_and(conj))
+        }
         // Deliberately enumerated rather than a `_` arm: a new `Value` variant
         // must break compilation here, not fall into a silent shape clash.
         (Value::Scalar(_), _)
@@ -377,4 +417,14 @@ pub fn fun_literal(
         array = tm.mk_store(array, *k, *v);
     }
     Value::Fun { domain, array }
+}
+
+/// The selectors of a single-constructor datatype term, in declaration order.
+///
+/// `None` when the term is not datatype-sorted, which is a shape clash rather
+/// than a `FALSE`: comparing a tuple to an integer is a type error the
+/// inferencer should have caught, and answering `FALSE` would make a genuine
+/// equality unsatisfiable.
+fn struct_fields(t: TermId, tm: &TermManager) -> Option<Vec<(String, SortId)>> {
+    crate::sorts::struct_fields(tm.get(t)?.sort, tm)
 }

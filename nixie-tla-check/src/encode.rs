@@ -305,24 +305,119 @@ impl Encoder {
     /// A set has no sort — it is a candidate list — so anything that needs a
     /// `TermId` must go through here and gets a named refusal otherwise.
     fn go(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<TermId> {
-        match &*self.value(term, tm)? {
+        let v = self.value(term, tm)?;
+        self.reify(&v, tm)
+    }
+
+    /// A value as a single SMT term.
+    ///
+    /// A tuple and a record reify into a **single-constructor datatype**, one
+    /// field per component. The structural form stays primary — it is what
+    /// makes a literal index and an exact `DOMAIN` possible — and this is what
+    /// it becomes when something needs a term: a member of a set of tuples, a
+    /// record-valued state variable's new value, an operand of `=`.
+    ///
+    /// A set and a function are refused rather than reified: a set *has* a
+    /// sort but its arena form is a candidate list rather than one term, and a
+    /// function is a domain and a graph, so handing back the graph alone would
+    /// drop the half that makes equality right.
+    fn reify(&mut self, v: &Rc<Value>, tm: &mut TermManager) -> Result<TermId> {
+        match &**v {
             Value::Scalar(t) => Ok(*t),
             Value::Set(_) => Err(EncodeError::Unsupported(
                 "a set where a single value is needed".into(),
             )),
-            Value::Tuple(_) => Err(EncodeError::Unsupported(
-                "a tuple where a single value is needed".into(),
-            )),
-            Value::Record(_) => Err(EncodeError::Unsupported(
-                "a record where a single value is needed".into(),
-            )),
-            // A function is a domain *and* a graph; handing back the graph
-            // alone would silently drop the domain, which is the half that
-            // makes equality right.
             Value::Fun { .. } => Err(EncodeError::Unsupported(
                 "a function where a single value is needed".into(),
             )),
+            Value::Tuple(parts) => {
+                let mut fields = Vec::with_capacity(parts.len());
+                for (i, p) in parts.iter().enumerate() {
+                    fields.push((crate::sorts::tuple_field(i), Rc::clone(p)));
+                }
+                self.reify_struct(&fields, tm)
+            }
+            Value::Record(entries) => {
+                let mut fields = Vec::with_capacity(entries.len());
+                for (name, p) in entries {
+                    fields.push((crate::sorts::record_field(name), Rc::clone(p)));
+                }
+                self.reify_struct(&fields, tm)
+            }
         }
+    }
+
+    /// Build the datatype term for a structural value.
+    ///
+    /// The constructor's name is a function of the field names and their
+    /// sorts, computed the same way [`crate::sorts::sort_of`] computes it —
+    /// which is what makes the value the encoder builds and the sort the type
+    /// checker assigned the *same* datatype rather than two that merely look
+    /// alike.
+    fn reify_struct(
+        &mut self,
+        fields: &[(String, Rc<Value>)],
+        tm: &mut TermManager,
+    ) -> Result<TermId> {
+        let mut args = Vec::with_capacity(fields.len());
+        let mut sorts = Vec::with_capacity(fields.len());
+        for (name, v) in fields {
+            let t = self.reify(v, tm)?;
+            sorts.push((name.clone(), self.sort_of(t, tm)?));
+            args.push(t);
+        }
+        let sort = crate::sorts::declare_struct(&sorts, tm);
+        let name = crate::sorts::struct_name(&sorts, tm);
+        Ok(tm.mk_dt_constructor(&name, args, sort))
+    }
+
+    /// The datatype selector a TLA+ index names, if it is a literal.
+    ///
+    /// `t[2]` selects a tuple's second component and `r.f` its `f` field; both
+    /// arrive here as an index expression. A non-literal index is `None`,
+    /// which is a refusal rather than an approximation — a datatype has no
+    /// dynamic field access, and picking one would be a guess.
+    fn field_name(&self, index: &KeraRef) -> Option<String> {
+        match index.as_ref() {
+            Kera::Str(name) => Some(crate::sorts::record_field(name)),
+            Kera::Int(_) => {
+                let n = literal_int(index)?;
+                let i = usize::try_from(&n).ok().filter(|k| *k >= 1)?;
+                Some(crate::sorts::tuple_field(i - 1))
+            }
+            _ => None,
+        }
+    }
+
+    /// `t[index]` where `t` is a reified tuple or record.
+    fn select_field(
+        &mut self,
+        t: TermId,
+        sort: SortId,
+        index: &KeraRef,
+        tm: &mut TermManager,
+    ) -> Result<Rc<Value>> {
+        let Some(fields) = self.struct_fields(sort, tm) else {
+            return Err(EncodeError::Unsupported(
+                "an index into a datatype with no fields".into(),
+            ));
+        };
+        let Some(want) = self.field_name(index) else {
+            return Err(EncodeError::Unsupported(
+                "a tuple or record indexed by a non-literal".into(),
+            ));
+        };
+        let Some((name, fs)) = fields.iter().find(|(f, _)| *f == want) else {
+            return Err(EncodeError::Unsupported(format!(
+                "`{want}`, which this value does not have"
+            )));
+        };
+        scalar(tm.mk_dt_selector(name, t, *fs))
+    }
+
+    /// The field names of a tuple-or-record datatype sort, in order.
+    fn struct_fields(&self, sort: SortId, tm: &TermManager) -> Option<Vec<(String, SortId)>> {
+        crate::sorts::struct_fields(sort, tm)
     }
 
     /// Encode a term as an arena candidate list, whatever the current mode.
@@ -754,9 +849,26 @@ impl Encoder {
                 scalar(tm.mk_ite(c, t, e))
             }
             // Equality is structural: extensional for sets, `=` otherwise.
+            //
+            // Two sets may arrive in different representations — `DOMAIN r` is
+            // an arena candidate list while `{"a", "b"}` in native mode is a
+            // set term — so they are promoted to one first, the same way a
+            // binary set operation does. Without that the comparison is a
+            // shape clash, which is an honest refusal of a perfectly ordinary
+            // equality.
             Kera::Eq(a, b) => {
                 let x = self.value(a, tm)?;
                 let y = self.value(b, tm)?;
+                let mixed = matches!(
+                    (&*x, &*y),
+                    (Value::Set(_), Value::Scalar(_)) | (Value::Scalar(_), Value::Set(_))
+                );
+                if mixed
+                    && let Ok((p, q)) = self.set_pair(a, b, tm)
+                    && let (SetRepr::Native(p), SetRepr::Native(q)) = (p, q)
+                {
+                    return scalar(tm.mk_eq(p, q));
+                }
                 let t = self.shape(eq_values(&x, &y, tm))?;
                 scalar(t)
             }
@@ -1152,18 +1264,13 @@ impl Encoder {
                 let base = self.set_as_arena(set, tm)?;
                 let mut entries = Vec::with_capacity(base.members.len());
                 for m in &base.members {
-                    let Value::Scalar(key) = &*m.value else {
-                        return Err(EncodeError::Unsupported(
-                            "a function over a domain whose members have no SMT sort".into(),
-                        ));
-                    };
+                    // Reified, not required to be scalar already: a domain of
+                    // tuples and a range of records are both ordinary, and
+                    // both are datatypes now.
+                    let key = self.reify(&m.value, tm)?;
                     let image = self.with_bound(var, Rc::clone(&m.value), body, tm)?;
-                    let Value::Scalar(val) = &*image else {
-                        return Err(EncodeError::Unsupported(
-                            "a function whose values are not single values".into(),
-                        ));
-                    };
-                    entries.push((*key, *val, m.present));
+                    let val = self.reify(&image, tm)?;
+                    entries.push((key, val, m.present));
                 }
                 // Sorts come from the entries when there are any, and from the
                 // caller's type inference when there are none: `[x \in {} |-> e]`
@@ -1261,6 +1368,17 @@ impl Encoder {
                         let idx = self.go(i, tm)?;
                         scalar(tm.mk_select(*array, idx))
                     }
+                    // A tuple or record that reached here as a *term* rather
+                    // than structurally — a member of a set of tuples, or a
+                    // record-valued state variable. It is a datatype, so the
+                    // index selects a field.
+                    Value::Scalar(t)
+                        if self.sort_of(*t, tm).is_ok_and(|s| tm.sorts.is_datatype(s)) =>
+                    {
+                        let t = *t;
+                        let sort = self.sort_of(t, tm)?;
+                        self.select_field(t, sort, i, tm)
+                    }
                     // A bare array with no domain: a function reached through
                     // a select (`f[x][y]`), where the inner sort carries no
                     // domain of its own.
@@ -1323,6 +1441,42 @@ impl Encoder {
                             array,
                         }))
                     }
+                    // `EXCEPT` on a reified tuple or record rebuilds the
+                    // constructor with one field replaced. Taking it apart and
+                    // putting it back is exact: a single-constructor datatype
+                    // has no other shape to be.
+                    Value::Scalar(t)
+                        if self.sort_of(*t, tm).is_ok_and(|s| tm.sorts.is_datatype(s)) =>
+                    {
+                        let t = *t;
+                        let sort = self.sort_of(t, tm)?;
+                        let Some(fields) = self.struct_fields(sort, tm) else {
+                            return Err(EncodeError::Unsupported(
+                                "`EXCEPT` on a datatype with no fields".into(),
+                            ));
+                        };
+                        let Some(want) = self.field_name(index) else {
+                            return Err(EncodeError::Unsupported(
+                                "`EXCEPT` on a tuple or record at a non-literal index".into(),
+                            ));
+                        };
+                        if !fields.iter().any(|(f, _)| *f == want) {
+                            return Err(EncodeError::Unsupported(format!(
+                                "`EXCEPT` at `{want}`, which this value does not have"
+                            )));
+                        }
+                        let replacement = self.go(value, tm)?;
+                        let mut args = Vec::with_capacity(fields.len());
+                        for (f, fs) in &fields {
+                            if *f == want {
+                                args.push(replacement);
+                            } else {
+                                args.push(tm.mk_dt_selector(f, t, *fs));
+                            }
+                        }
+                        let name = crate::sorts::struct_name(&fields, tm);
+                        scalar(tm.mk_dt_constructor(&name, args, sort))
+                    }
                     Value::Scalar(arr) => {
                         let idx = self.go(index, tm)?;
                         let val = self.go(value, tm)?;
@@ -1371,6 +1525,30 @@ impl Encoder {
                     }
                     // Exact, which is the whole point of carrying a domain.
                     Value::Fun { domain, .. } => scalar(*domain),
+                    // A reified tuple or record still knows its own domain:
+                    // the field names are in the datatype declaration.
+                    Value::Scalar(t)
+                        if self.sort_of(*t, tm).is_ok_and(|s| tm.sorts.is_datatype(s)) =>
+                    {
+                        let sort = self.sort_of(*t, tm)?;
+                        let Some(fields) = self.struct_fields(sort, tm) else {
+                            return Err(EncodeError::Unsupported(
+                                "`DOMAIN` of a datatype with no fields".into(),
+                            ));
+                        };
+                        let members = fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (f, _))| Member {
+                                value: Rc::new(Value::Scalar(match f.strip_prefix("@f") {
+                                    Some(name) => tm.mk_string_lit(name),
+                                    None => tm.mk_int((i + 1) as i64),
+                                })),
+                                present: yes,
+                            })
+                            .collect();
+                        self.mk_set(members)
+                    }
                     Value::Scalar(_) | Value::Set(_) => Err(EncodeError::Unsupported(
                         "`DOMAIN` of a function the array encoding does not carry a domain for"
                             .into(),

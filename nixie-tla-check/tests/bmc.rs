@@ -298,15 +298,20 @@ Inv  == x < N
 /// A dropped assumption must be counted, because it weakens the search: fewer
 /// assumptions means more states look reachable, so a `Violation` may be an
 /// artefact rather than a real trace.
+///
+/// The unsortable constant here used to be a tuple. Tuples are datatypes now,
+/// so that assumption encodes; a **sequence** is the shape that still has no
+/// sort, and the test follows it rather than pretending the old one still
+/// fails.
 #[test]
 fn dropped_assumptions_are_counted_not_silent() {
     let src = r"
 ---- MODULE Dropped ----
-EXTENDS Integers
+EXTENDS Integers, Sequences
 CONSTANT N, S
 VARIABLE x
 ASSUME N > 3
-ASSUME S = <<1, 2>>
+ASSUME Len(S) = 2
 Init == x = 0
 Next == x' = x
 Inv  == x < N
@@ -323,7 +328,7 @@ Inv  == x < N
     assert_eq!(
         bmc.dropped_assumptions(),
         1,
-        "an assumption over a tuple-typed constant has no sort and must be reported"
+        "an assumption over a sequence-typed constant has no sort and must be reported"
     );
 }
 
