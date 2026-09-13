@@ -109,6 +109,30 @@ binary (`32c88866`, runner script in this study's assets):
   shuffling, 64_25 — against 5 lost marginal cells (noL, pb_300,
   rbsat, af, frb45) on the 4.8 % both-decided conflicts increase.
 
+## Follow-up (same day): the inter-round fixpoint does not unlock Timetable (`6ee26fda`)
+
+The completion fix made `NIXIE_ELIM_SUBFIX`'s dead verdict stale, so the
+arm was re-measured and extended with a second slot (inter-round
+subsume to fixpoint, bounded 8 rounds, same flag).  Anatomy on
+Timetable: the pre-phase fixpoint slot shrinks the inter-round residue
+471/795 → 52/72 removals per phase, and the new inter-round slot
+absorbs the residue to a zero-yield round — but the marks created *by
+the absorption itself* keep `elim_mark_count > marks_before`, so round
+2 still runs and the round limit still blocks completion.  The bound
+stays 0 on this file; the arm remains default-off infrastructure.
+
+The blocker is not scheduling but trajectory: our phase 1 eliminates
+74 757 of cadical's 91 067 at the same 10 M-resolution budget, so every
+later state — including its residue structure — diverges from
+cadical's, whose phases 4-7 genuinely quiesce in one round.  The
+next-session lead for the phase-1 gap: the **reschedule order** —
+cadical's `schedule.update(idx)` re-scores the existing entry in place
+while our BinaryHeap push adds a ranked duplicate, so pops proceed in
+different orders and the two engines spend the same resolution budget
+on different elimination opportunities.  A same-state differential
+(eliminate one var with both orderings, diff the resolvent sets) is
+the cheap experiment.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
