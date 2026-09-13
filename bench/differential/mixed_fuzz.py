@@ -103,15 +103,29 @@ def formula(int_pool, real_pool, depth=0):
         f = f"(not {f})"
     return f
 
+LOGICS = [None, "QF_LIA", "QF_LRA", "QF_LIRA"]
+
+
 def gen():
+    """A random goal, stratified over the declared logic so the `set-logic`
+    routing matrix (LIA / mixed / LRA-by-shape / unset-default) is
+    exercised, not just the default mode."""
+    logic = random.choice(LOGICS)
     n_int = random.randint(1, 3)
     n_real = random.randint(0, 2)
+    if logic == "QF_LRA":
+        n_int = 0
+        n_real = random.randint(1, 2)
+    if logic == "QF_LIA":
+        n_real = 0
+        n_int = random.randint(1, 3)
     int_pool = INT_VARS[:n_int]
     real_pool = REAL_VARS[:n_real]
+    header = f"(set-logic {logic})\n" if logic else ""
     decls = "".join(f"(declare-const {v} Int)\n" for v in int_pool)
     decls += "".join(f"(declare-const {v} Real)\n" for v in real_pool)
     conjs = [formula(int_pool, real_pool) for _ in range(random.randint(1, 3))]
-    return decls + "(assert (and " + " ".join(conjs) + "))\n(check-sat)\n"
+    return header + decls + "(assert (and " + " ".join(conjs) + "))\n(check-sat)\n"
 
 def run(binary, path, extra=None):
     args = [binary, path]
