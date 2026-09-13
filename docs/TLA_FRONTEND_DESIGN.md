@@ -483,7 +483,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 |---|---|---|
 | 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
 | 2 | Surface IR + KerA *(landed)* + lowering *(landed, 93.8%)* + `INSTANCE` *(landed)*; type inference *(landed, 90.9%)*; pass pipeline *(open)* | IR isomorphism on the same corpus |
-| 3 | Naive encoding onto existing theories *(started: arithmetic/propositional fragment landed in `nixie-tla-check`)* | Apalache + TLC differential agree on verdicts |
+| 3 | Naive encoding *(arithmetic/propositional fragment landed)*; state variables, priming and bounded model checking *(landed)*; the arena encoding for sets *(open)* | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
 | 6 | O3 set/function theory plugin | Verdict-preserving; encoding-size and conflict-count deltas |
@@ -491,6 +491,73 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 
 Milestone 3 before anything clever is load-bearing: the naive encoding is what gives us an
 oracle to test the clever ones against.
+
+**Bounded model checking is landed** (`nixie-tla-check::bmc`), and it is the first path in the
+repository that runs TLA+ source all the way to a solver verdict: parse → lower → infer →
+encode → CDCL(T). Three decisions in it are worth stating because each could have been made
+unsoundly and silently:
+
+- **A state variable is a family of SMT variables, one per step; a `CONSTANT` is one variable
+  for the whole unrolling.** `'` raises the step, so `Next` encoded at step *i* relates *i* to
+  *i+1* with no rewriting of the term, and `(x + 1)'` is `x' + 1` by construction rather than
+  by a special case. Confusing the two directions is a soundness bug either way: a constant
+  treated as a state variable can change mid-trace, and a state variable treated as rigid can
+  never change at all. Both directions are pinned by a test.
+- **An action that does not mention `x'` leaves `x` unconstrained at the next step.** That is
+  what TLA+ means, and "helpfully" encoding it as unchanged would discard behaviours and could
+  turn a real counterexample into a false clean bill of health. Also pinned, in both
+  directions — with and without `UNCHANGED`.
+- **There is no `Safe` verdict to reach for.** The outcome is `NoViolationWithin(k)`, which
+  says no counterexample of that length exists and stays silent about *k+1*. Proving an
+  invariant needs O2's CHC lowering to `nixie-spacer`. Naming the bound in the variant is the
+  cheapest possible guard against the model-checking equivalent of a wrong `unsat`.
+
+One hazard found while building it, recorded because it is invisible and would have produced
+nonsense rather than an error: binder renaming uses a counter held by the `Lowerer`, so
+lowering `Init`, `Next` and `Inv` with *separate* lowerers restarts it each time and can give
+two unrelated binders the same name. Inference keys its environment by name, so that silently
+forces two independent variables to one type. One `Lowerer` for the whole specification is
+load-bearing, not tidiness.
+
+**Measured on the corpora** (`bench/tla_bmc/METHODOLOGY.md`): of 905 modules, 315 have an
+`Init`/`Next`/`Inv` triple under the naming conventions, 81 prepare (type check *and* have a
+sort for every state variable), and 18 are checked at depth 4 — 9 with no violation in the
+bound and 9 with a counterexample. What blocks the rest is the useful half of the number:
+
+| | blocked by |
+|---|---|
+| 71 | a **set**-typed state variable |
+| 48 | a **function**-typed state variable |
+| 48 | does not type check (variant records dominate) |
+| 45 | does not lower (a recursive operator exhausts the inlining budget) |
+| 11 | `\in` has no encoding |
+| 10 | a **record**-typed state variable |
+
+The top two lines are one piece of work — the arena encoding — and they are more than half of
+everything blocked. That is the case for doing it next, and it is a stronger case than the
+coverage number alone would have made.
+
+**Three ways a correct checker can answer the wrong question**, all found by reading the
+specifications behind reported violations rather than trusting the count:
+
+1. **`ASSUME`.** A specification is claimed to hold *under its assumptions*, which are usually
+   the only thing pinning a `CONSTANT`. Ignoring them asks a strictly harder question and
+   manufactures counterexamples. Assumptions are now asserted; one that cannot be encoded is
+   dropped **and counted**, because dropping weakens the search — it can invent a
+   counterexample but never hide one.
+2. **Apalache's `ConstInit`.** A specification run with `--cinit` pins its constants in a
+   definition rather than an `ASSUME`. `Bug1023.tla` in Apalache's own suite is that shape and
+   produced a violation before the convention was supported.
+3. **The `.cfg`.** TLC's config can replace a `CONSTANT` *or a definition* —
+   `ConfigReplacements.tla` replaces `Value`. Not yet parsed; reported when present so the
+   number is visible rather than folded into the total.
+
+And one malformed-specification case worth its own line: `UnchangedAsInv1663.tla` has
+`Inv == UNCHANGED x`, an **action** used as an invariant. At depth 0 with no transition
+asserted the next-state value is unconstrained, so `~Inv` is trivially satisfiable and the
+checker reported a violation — a faithful reading of the formula and a meaningless statement
+about the specification. `prepare` now rejects it on level grounds, one-sidedly: a level that
+could not be *established* is never grounds for rejection, only one proved too high.
 
 ## 7. Open questions
 
