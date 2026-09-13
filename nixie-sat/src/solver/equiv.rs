@@ -555,5 +555,54 @@ impl Solver {
         // buffer's `Vec` margin. The watch lists above were rebuilt into
         // fresh `Vec`s, so their slack is already minimal.
         self.binary_graph.shrink();
+        // CSR shadow validation (`NIXIE_CSR_SHADOW=1`): rebuild the watch
+        // state independently as a CSR (count → layout → fill over the same
+        // live long-clause set, in the same id order) and compare every
+        // literal's span against the freshly built `Vec` lists, order
+        // included.  See `docs/studies/2026-09-13-csr-watches-kickoff.md`
+        // (slice 1); zero cost and zero reads when the flag is off.
+        #[cfg(feature = "std")]
+        if crate::watched::csr_shadow_enabled() {
+            use crate::watched::CsrWatchBuild;
+            let t0 = std::time::Instant::now();
+            let num_lits = num_vars * 2;
+            let mut csr = CsrWatchBuild::default();
+            {
+                let Solver { clauses, .. } = self;
+                for cid in clauses.iter_ids() {
+                    let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                        continue;
+                    };
+                    if c.lits.len() < 3 {
+                        continue;
+                    }
+                    csr.count(c.lits[0].negate());
+                    csr.count(c.lits[1].negate());
+                }
+            }
+            csr.layout(num_lits);
+            {
+                let Solver { clauses, .. } = self;
+                for cid in clauses.iter_ids() {
+                    let Some(c) = clauses.get(cid).filter(|c| !c.deleted) else {
+                        continue;
+                    };
+                    if c.lits.len() < 3 {
+                        continue;
+                    }
+                    let Some(r) = clauses.ref_of(cid) else {
+                        continue;
+                    };
+                    csr.fill(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
+                    csr.fill(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
+                }
+            }
+            let (lits, entries, bad) = self.watches.csr_shadow_compare(num_vars, &csr);
+            eprintln!(
+                "[csr-shadow] rebuild@{}: lits={lits} entries={entries} mismatched={bad} build={}us",
+                self.stats.conflicts,
+                t0.elapsed().as_micros()
+            );
+        }
     }
 }

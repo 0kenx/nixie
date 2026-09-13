@@ -573,15 +573,31 @@ A set with no finite candidate list — `1..n` for symbolic `n` — is refused *
 is missing is a bound. A candidate budget turns a blow-up (`SUBSET A` is `2^|A|`) into a
 reported refusal rather than an out-of-memory kill.
 
-Measured: the ground cross-check went **308 → 473** definitions, still **zero disagreements**
-and zero `Unknown`, and the set-valued ones are now claimed by extensional equality against the
-evaluator's own set rather than skipped — so the arena's *values* are checked, not just
-Booleans about them. Bounded model checking went **18 → 25** specifications with the same nine
-violations and no new false alarms.
+**Strings, tuples and records share the representation.** A TLA+ string is an atom — only ever
+compared for equality — so it is a `StringLit`. Tuples and records are *structural*, taken
+apart by the encoder before anything reaches the solver, and that is forced by TLA+ rather
+than chosen: `<<1, "a">>` is an ordinary tuple, and an SMT array forces one sort across every
+index, so an array-backed tuple could only be homogeneous. Being structural also makes `DOMAIN`
+exact where an array cannot be — `1..n` for a tuple, the field names for a record — while
+`DOMAIN` of an array-backed function is refused rather than answered with something plausible.
+
+Measured: the ground cross-check went **308 → 817** definitions, still **zero disagreements**
+and zero `Unknown`. Set-valued definitions are now claimed by extensional equality against the
+evaluator's own set rather than skipped, so the arena's *values* are checked and not just
+Booleans about them. Bounded model checking went **18 → 31** specifications, 15 violations of
+which 12 were read against their source and confirmed, 3 flagged possibly-spurious, and none
+unflagged and wrong.
+
+**A wrong `sat` in the solver fell out of this**, and is worth recording here because it is
+what the arena bought beyond coverage. `Cardinality` is a sum of `ite`s guarded by element
+equalities; with string elements those conditions are string equalities, and a string equality
+used as an `ite` *condition* is not decided —
+`docs/studies/2026-09-13-string-equality-under-ite-false-sat.md` has a controlled reproducer
+with no TLA+ in it. The encoding was deliberately **not** reshaped to avoid the `ite`: that
+would hide a live soundness bug rather than fix it.
 
 What is still blocked is a set-valued **state variable** (78): a set built by an expression has
-its candidates from that expression, and `s@1` has nowhere to get them from yet. That is the
-next unit.
+its candidates from that expression, and `s@1` has nowhere to get them from yet.
 
 **Three ways a correct checker can answer the wrong question**, all found by reading the
 specifications behind reported violations rather than trusting the count:

@@ -579,11 +579,13 @@ impl Solver {
                 })
                 .count();
             eprintln!(
-                "[elim] phase {} start: conflicts={} vars={} orig={} live_orig={live_orig}",
+                "[elim] phase {} start: conflicts={} vars={} orig={} live_orig={live_orig} marks={} bound={bound}",
                 self.elim_phases,
                 self.stats.conflicts,
                 self.num_vars,
-                self.clauses.num_original()
+                self.clauses.num_original(),
+                self.elim_mark_count,
+                bound = self.elim_bound,
             );
         }
 
@@ -680,16 +682,39 @@ impl Solver {
             }
             round += 1;
 
-            // Prioritize subsumption: if it removed or strengthened anything,
-            // new elimination candidates exist, so run another round.
+            // Prioritize subsumption (cadical: `if (subsume_round ())
+            // continue;`).  cadical's `subsume_round` returns whether it
+            // **marked new elimination candidates** — not whether it
+            // subsumed anything — and only that continues the phase's
+            // round loop; block/cover finding nothing then completes the
+            // phase (growing the bound).  The port previously continued on
+            // `subsumed > 0` too, which (together with the persistent
+            // re-marking fixed above) made `phase_complete` unreachable.
+            // cadical `subsume_round` captures `old_marked =
+            // stats.mark.elim` at entry and returns whether the subsumption
+            // pass itself created NEW elimination candidates.  Marks from
+            // the elimination round (or earlier) do not continue the phase:
+            // they are the next phase's schedule, not a reason to run more
+            // rounds now.  A bare `elim_mark_count > 0` here conflated the
+            // two and (with the round now creating none of its own marks,
+            // any residue the subsume pass retires still counts) keeps
+            // round 2 running forever — the bound-growth blocker.
+            let marks_before = self.elim_mark_count;
             let (s, st) = self.subsume_round();
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_LOG_ELIM").is_ok() {
+                eprintln!(
+                    "[elim]   inter-round subsume: subsumed={s} strengthened={st} new_marks={}",
+                    self.elim_mark_count.saturating_sub(marks_before)
+                );
+            }
             subsumed += s;
             strengthened += st;
             dirty |= s > 0 || st > 0;
             if self.trivially_unsat {
                 return SubstOutcome::Unsat;
             }
-            if s > 0 || st > 0 || self.elim_mark_count > 0 {
+            if self.elim_mark_count > marks_before {
                 continue;
             }
             phase_complete = true;
@@ -1657,8 +1682,33 @@ impl Solver {
             if ctx.noccs[code] > 0 {
                 ctx.noccs[code] -= 1;
             }
-            // Their occurrence counts just dropped: reschedule.
-            self.mark_elim_one(lit.var());
+            // Their occurrence counts just dropped: reschedule **in the
+            // round's schedule** (cadical `elim_update_removed_lit` pushes
+            // into `eliminator.schedule`, never `flags.elim`).  Marking
+            // the persistent vector here was the phase-cadence bug: every
+            // elimination's own retirements re-armed the cross-phase
+            // candidate set, so `elim_mark_count > 0` held forever, round 2
+            // of every phase always ran, phases always exited at the round
+            // limit with `phase_complete = false` — and the elimination
+            // bound NEVER grew past 0 (measured on Timetable: 7 phases,
+            // bound=0 throughout, yields collapsing 74 k → 21; cadical
+            // completes phases and eliminates 21 k more at bound 1).
+            // Duplicate heap entries are benign: the pop-side gates skip
+            // assigned/eliminated/frozen vars, and a var that newly fits
+            // under the occurrence limit after the drop gets its retry —
+            // the exact rescheduling cadical's `schedule.update` does.
+            let v = lit.var();
+            if !self.trail.is_assigned(v)
+                && !self.var_eliminated(v)
+                && !self.frozen_vars.contains(&v)
+            {
+                let rank = ElimRank::of(
+                    ctx.noccs[Lit::pos(v).code() as usize],
+                    ctx.noccs[Lit::neg(v).code() as usize],
+                );
+                ctx.schedule
+                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+            }
         }
         // Physical removal from `occs` is lazy (filtered on access).
     }
@@ -1757,8 +1807,22 @@ impl Solver {
                 vars.push(lit.var());
             }
         }
+        // Reschedule the surviving variables **round-locally** (cadical's
+        // OTF self-subsumption routes through `elim_update_removed_clause`
+        // on the pre-shrink clause — a schedule push, never the persistent
+        // mark; see the note in `elim_retire_clause_lits`).
         for v in vars {
-            self.mark_elim_one(v);
+            if !self.trail.is_assigned(v)
+                && !self.var_eliminated(v)
+                && !self.frozen_vars.contains(&v)
+            {
+                let rank = ElimRank::of(
+                    ctx.noccs[Lit::pos(v).code() as usize],
+                    ctx.noccs[Lit::neg(v).code() as usize],
+                );
+                ctx.schedule
+                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+            }
         }
         // The shrunken clause may now subsume others: queue it.
         ctx.backward.push(cid);

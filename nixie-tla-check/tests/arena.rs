@@ -193,3 +193,149 @@ fn the_candidate_budget_is_enforced() {
         Err(EncodeError::TooManyCandidates { .. })
     ));
 }
+
+// ---------------------------------------------------------------------------
+// Strings, tuples and records
+// ---------------------------------------------------------------------------
+
+/// A TLA+ string is an atom: only ever compared for equality, never taken
+/// apart.
+#[test]
+fn strings_are_atoms() {
+    for b in [
+        "\"a\" = \"a\"",
+        "\"a\" = \"b\"",
+        "\"a\" \\in {\"a\", \"b\"}",
+        "\"c\" \\in {\"a\", \"b\"}",
+        "{\"a\", \"b\", \"a\"} = {\"a\", \"b\"}",
+    ] {
+        agrees(b);
+    }
+}
+
+/// `Cardinality` over string elements is blocked by a **solver** defect, not
+/// by the encoding: a string equality used as an `ite` condition is not
+/// decided, and the de-duplicating sum is exactly that shape. See
+/// `docs/studies/2026-09-13-string-equality-under-ite-false-sat.md` and
+/// `examples/strite.rs`, which reproduces it with no TLA+ at all.
+///
+/// Left as a live test rather than deleted, so it turns green on its own when
+/// the defect is fixed. The encoding was deliberately *not* reshaped to avoid
+/// the `ite`: that would hide a wrong `sat` rather than fix it.
+#[test]
+#[ignore = "blocked by a solver defect: string equality under `ite` is not decided"]
+fn cardinality_over_strings() {
+    for b in [
+        "Cardinality({\"a\", \"b\"}) = 2",
+        "Cardinality({\"a\", \"b\", \"a\"}) = 2",
+    ] {
+        agrees(b);
+    }
+}
+
+/// Tuples are structural, so they can be heterogeneous — which is exactly what
+/// an SMT array could not represent, since it forces one sort per component.
+#[test]
+fn tuples_are_heterogeneous_and_componentwise() {
+    for b in [
+        "<<1, \"a\">> = <<1, \"a\">>",
+        "<<1, \"a\">> = <<2, \"a\">>",
+        "<<1, 2>>[1] = 1",
+        "<<1, \"a\">>[2] = \"a\"",
+        "<<1, 2, 3>>[3] = 3",
+    ] {
+        agrees(b);
+    }
+}
+
+/// Two tuples of different arity are both tuples and simply not equal — a
+/// `FALSE`, not a shape error.
+#[test]
+fn tuples_of_different_arity_are_unequal_not_an_error() {
+    agrees("<<1, 2>> = <<1, 2, 3>>");
+}
+
+#[test]
+fn records_are_field_addressed() {
+    for b in [
+        "[a |-> 1, b |-> \"x\"].a = 1",
+        "[a |-> 1, b |-> \"x\"].b = \"x\"",
+        "[a |-> 1] = [a |-> 1]",
+        "[a |-> 1] = [a |-> 2]",
+    ] {
+        agrees(b);
+    }
+}
+
+/// Field order is not part of a record's identity.
+#[test]
+fn record_field_order_does_not_matter() {
+    agrees("[a |-> 1, b |-> 2] = [b |-> 2, a |-> 1]");
+}
+
+/// Records with different field sets are different values, not a type error.
+#[test]
+fn records_with_different_fields_are_unequal() {
+    agrees("[a |-> 1] = [a |-> 1, b |-> 2]");
+}
+
+#[test]
+fn except_rebuilds_tuples_and_records() {
+    for b in [
+        "[<<1, 2>> EXCEPT ![1] = 9] = <<9, 2>>",
+        "[[a |-> 1, b |-> 2] EXCEPT !.a = 9] = [a |-> 9, b |-> 2]",
+        "[<<1, \"x\">> EXCEPT ![2] = \"y\"] = <<1, \"y\">>",
+    ] {
+        agrees(b);
+    }
+}
+
+/// `DOMAIN` is exact for structural values: `1..n` for a tuple, the field
+/// names for a record.
+#[test]
+fn domain_of_structural_values() {
+    for b in [
+        "DOMAIN <<1, 2, 3>> = {1, 2, 3}",
+        "DOMAIN [a |-> 1, b |-> 2] = {\"a\", \"b\"}",
+    ] {
+        agrees(b);
+    }
+}
+
+/// `\X` and `[a : S]` build sets of tuples and records, so they are cartesian
+/// products over the candidate lists.
+#[test]
+fn products_build_sets_of_tuples_and_records() {
+    for b in [
+        "<<1, 2>> \\in {1} \\X {2}",
+        "<<1, 3>> \\in {1} \\X {2}",
+        "Cardinality({1, 2} \\X {3, 4}) = 4",
+        "[a |-> 1] \\in [a : {1, 2}]",
+        "Cardinality([a : {1, 2}, b : {3}]) = 2",
+    ] {
+        agrees(b);
+    }
+}
+
+/// Sets of tuples, which is how relations are written in TLA+.
+#[test]
+fn sets_of_tuples_work_as_relations() {
+    for b in [
+        "<<1, 2>> \\in {<<1, 2>>, <<3, 4>>}",
+        "<<1, 3>> \\in {<<1, 2>>, <<3, 4>>}",
+        "{<<x, x>> : x \\in 1..3} = {<<1, 1>>, <<2, 2>>, <<3, 3>>}",
+    ] {
+        agrees(b);
+    }
+}
+
+/// A non-literal index into a heterogeneous tuple has no well-sorted answer
+/// and is refused rather than approximated.
+#[test]
+fn a_non_literal_tuple_index_is_refused() {
+    let e = encode_err("\\A i \\in 1..2 : <<1, \"a\">>[i] = 1");
+    assert!(
+        matches!(e, EncodeError::Unsupported(_) | EncodeError::ShapeClash),
+        "got {e:?}"
+    );
+}
