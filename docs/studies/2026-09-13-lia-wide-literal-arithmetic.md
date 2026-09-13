@@ -321,6 +321,43 @@ disagreements; differential with model validation 0 disagreements, 88/88
 models valid; 1,200 fuzz instances clean; the stratified SMT-LIB sweep's
 two hard panics gone.
 
+## Continuation 5 (2026-09-14): the Rodin canary root-caused — a disabled guard and an invalid-model snapshot class
+
+The `debug_verify_model_input` trips on `AUFLIA/20170829-Rodin/
+smt3878551918658299427` were chased to two findings in the SAT core:
+
+16. **`trail_falsifies_live_clause` was dead code for CDCL(T).**  The
+    guard that checks a `Sat` candidate's trail against live clauses
+    before `save_model` returned `false` unconditionally once the caller
+    had ever `push`ed — and the CDCL(T) layer (the path's main consumer)
+    always scopes.  The bypass existed because LEARNED clauses from
+    popped scopes fire it spuriously; but ORIGINAL clauses are never
+    retracted, and a trail falsifying one is an invalid candidate under
+    any scoping history.  Fixed: originals are scanned unconditionally,
+    learned clauses only in never-pushed sessions (preserving the old
+    strictness where it was sound).  On the Rodin family this turns the
+    invalid-model exit into an honest `Unknown` (the refinement loop
+    retries, so those instances get slower — they were `unknown`-class
+    already); on any instance whose upstream lacks a model-certification
+    gate it converts a printed INVALID WITNESS into `Unknown`.
+17. **The invalid-model snapshot class itself (open, SAT core).**  The
+    instrumented trace shows the failing save_model snapshotting a trail
+    state whose var (505 in the probe) disagrees with the trail the
+    search validated, across theory-refinement rounds: the last write
+    came from `trail.value` at save time, yet the panic-time trail reads
+    the opposite — the candidate the search accepted and the candidate
+    snapshotted diverge through the final_check/rejection/re-entry cycle.
+    Full probe data (per-save var values, BIG edge presence — both edges
+    live, `pure=[]`, `ext_stack` empty, clause flags
+    `(deleted=false, learned=false, len=2)`) is in the session record;
+    the guard fix contains the symptom, the snapshot divergence is the
+    SAT agent's to root-cause.  Reproducer:
+    `smt-lib/non-incremental/AUFLIA/20170829-Rodin/smt3878551918658299427.smt2`
+    (debug build, `solve_with_theory`).
+
+Verification: 11,378 workspace tests, fmt/clippy/rustdoc clean, Z3 parity
+0 disagreements.
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves

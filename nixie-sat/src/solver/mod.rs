@@ -4879,12 +4879,24 @@ impl Solver {
     /// flag them and turn a correct `Sat` into `Unknown`.
     #[must_use]
     pub fn trail_falsifies_live_clause(&self) -> bool {
-        if self.ever_pushed {
-            return false;
-        }
+        // Under `push`/`pop` the old blanket bypass made this guard dead
+        // code for exactly its main consumer — the CDCL(T) layer, which
+        // always scopes.  The bypass existed because LEARNED clauses from
+        // popped scopes can legitimately be falsified by a later model
+        // (their scoping assumptions are gone), so scanning them fires
+        // spuriously; but ORIGINAL clauses are never retracted: a trail
+        // that falsifies one is an invalid candidate no matter the
+        // scoping history (observed on Rodin/smt3878551918658299427,
+        // where a mid-search snapshot violated a live original binary and
+        // the disabled guard was the only release-relevant check on that
+        // path).  Scan originals unconditionally; scan learned clauses
+        // only in sessions that never pushed, preserving the old
+        // strictness where it was sound.
+        let check_learned = !self.ever_pushed;
         self.clauses.iter_ids().any(|id| {
             self.clauses.get(id).is_some_and(|c| {
                 !c.deleted
+                    && (check_learned || !c.learned)
                     && !c.lits.is_empty()
                     && c.lits.iter().all(|l| self.trail.lit_value(*l).is_false())
             })
@@ -5134,9 +5146,10 @@ impl Solver {
         self.lim_rephase = 0;
         self.rephase_rounds = [0, 0];
         self.last_walk_ticks = 0;
-        // `ever_pushed` latches once push/pop is used and permanently disables
-        // the `trail_falsifies_live_clause` backstop.  It must be cleared on
-        // reset so a fresh problem gets the backstop again.
+        // `ever_pushed` latches once push/pop is used and restricts
+        // `trail_falsifies_live_clause` to ORIGINAL clauses (scope-stale
+        // learned clauses would fire it spuriously).  It must be cleared on
+        // reset so a fresh problem gets the full backstop again.
         self.ever_pushed = false;
         self.restart_threshold = self.config.restart_interval;
         self.trivially_unsat = false;
