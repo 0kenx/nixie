@@ -224,6 +224,18 @@ impl Solver {
                     stack.push(*c);
                 }
 
+                // Finite sets: ordinary traversal, no candidates of their own.
+                TermKind::SetUnion(a, b)
+                | TermKind::SetInter(a, b)
+                | TermKind::SetMinus(a, b)
+                | TermKind::SetMember(a, b)
+                | TermKind::SetSubset(a, b) => {
+                    stack.push(*b);
+                    stack.push(*a);
+                }
+                TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
+                // No children: the payload is a sort.
+                TermKind::SetEmpty(_) => {}
                 // Arrays.
                 TermKind::Select(a, i) => {
                     stack.push(*i);

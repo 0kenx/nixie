@@ -777,6 +777,18 @@ fn push_children(kind: &TermKind, out: &mut ChildList) {
         TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => out.push(*body),
         TermKind::Let { .. } | TermKind::Match { .. } => {}
         TermKind::Not(a) => out.push(*a),
+        // Finite sets: ordinary children. Whether MBQI can *rebuild* them is
+        // decided separately, in `rebuild`.
+        TermKind::SetSingleton(a) | TermKind::SetCard(a) => out.push(*a),
+        TermKind::SetUnion(a, b)
+        | TermKind::SetInter(a, b)
+        | TermKind::SetMinus(a, b)
+        | TermKind::SetMember(a, b)
+        | TermKind::SetSubset(a, b) => {
+            out.push(*a);
+            out.push(*b);
+        }
+        TermKind::SetEmpty(_) => {}
         TermKind::And(args) | TermKind::Or(args) | TermKind::Add(args) | TermKind::Mul(args) => {
             out.extend(args.iter().copied());
         }
@@ -1547,6 +1559,26 @@ fn rebuild_with(
             manager.mk_bv_sle(a, b)
         }
 
+        // Finite sets rebuild structurally; `set.member` and `set.subset` are
+        // the ones whose *truth* needs a theory, and there is none yet, so the
+        // model checker declines rather than evaluating them to a guess.
+        TermKind::SetEmpty(sort) => manager.mk_set_empty_at(*sort),
+        TermKind::SetSingleton(_) => manager.mk_set_singleton(one(0)?),
+        TermKind::SetUnion(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_set_union(a, b)
+        }
+        TermKind::SetInter(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_set_inter(a, b)
+        }
+        TermKind::SetMinus(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_set_minus(a, b)
+        }
+        TermKind::SetMember(..) | TermKind::SetSubset(..) | TermKind::SetCard(_) => {
+            return Err("set predicate has no theory to evaluate it");
+        }
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;
             manager.mk_str_concat(a, b)

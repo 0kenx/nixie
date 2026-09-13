@@ -326,6 +326,7 @@ impl<'a> Parser<'a> {
                         return true;
                     }
                 }
+                SortKind::Set(elem) => work.push(*elem),
                 SortKind::Array { domain, range } => {
                     work.push(*domain);
                     work.push(*range);
@@ -594,6 +595,11 @@ impl<'a> Parser<'a> {
                             out.push_str(&format!("(_ FloatingPoint {eb} {sb})"));
                         }
                         SortKind::RoundingMode => out.push_str("RoundingMode"),
+                        SortKind::Set(elem) => {
+                            out.push_str("(Set ");
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Sort(*elem));
+                        }
                         SortKind::Array { domain, range } => {
                             out.push_str("(Array ");
                             // Pushed in reverse of emission order.

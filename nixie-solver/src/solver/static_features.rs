@@ -134,6 +134,7 @@ pub struct StaticFeatures {
     /// Any arithmetic sort or arith head seen (drives `num_non_uf_theories`).
     has_arith: bool,
     has_array: bool,
+    has_set: bool,
     has_dt: bool,
     has_fp: bool,
     has_string: bool,
@@ -273,6 +274,9 @@ impl StaticFeatures {
             n += 1;
         }
         if self.has_array {
+            n += 1;
+        }
+        if self.has_set {
             n += 1;
         }
         if self.has_dt {
@@ -576,6 +580,7 @@ impl StaticFeatures {
             }
             SortKind::BitVec(_) => self.has_bv = true,
             SortKind::Array { .. } => self.has_array = true,
+            SortKind::Set(_) => self.has_set = true,
             SortKind::String => self.has_string = true,
             SortKind::FloatingPoint { .. } => self.has_fp = true,
             SortKind::RoundingMode => self.has_fp = true,
@@ -660,6 +665,7 @@ enum SortClass {
     Arith,
     Bv,
     Array,
+    Set,
     Dt,
     Fp,
     String,
@@ -675,6 +681,7 @@ fn sort_class(manager: &TermManager, sort: SortId) -> SortClass {
         SortKind::Int | SortKind::Real => SortClass::Arith,
         SortKind::BitVec(_) => SortClass::Bv,
         SortKind::Array { .. } => SortClass::Array,
+        SortKind::Set(_) => SortClass::Set,
         SortKind::String => SortClass::String,
         SortKind::FloatingPoint { .. } => SortClass::Fp,
         // The rounding modes belong to the FP family for feature routing.

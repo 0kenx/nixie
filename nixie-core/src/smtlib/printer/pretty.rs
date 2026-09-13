@@ -256,6 +256,37 @@ impl<'a> PrettyPrinter<'a> {
                     let _ = write!(w, ")");
                 }
             }
+            // SMT-LIB finite-set syntax, matching CVC5's spelling.
+            TermKind::SetEmpty(sort) => {
+                let _ = write!(w, "(as set.empty ");
+                self.write_sort(w, *sort);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetSingleton(e) => {
+                let _ = write!(w, "(set.singleton ");
+                self.write_term(w, *e, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetCard(set) => {
+                let _ = write!(w, "(set.card ");
+                self.write_term(w, *set, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetUnion(a, b) => {
+                self.write_binary_term(w, "set.union", *a, *b, indent, depth, break_here);
+            }
+            TermKind::SetInter(a, b) => {
+                self.write_binary_term(w, "set.inter", *a, *b, indent, depth, break_here);
+            }
+            TermKind::SetMinus(a, b) => {
+                self.write_binary_term(w, "set.minus", *a, *b, indent, depth, break_here);
+            }
+            TermKind::SetMember(x, set) => {
+                self.write_binary_term(w, "set.member", *x, *set, indent, depth, break_here);
+            }
+            TermKind::SetSubset(a, b) => {
+                self.write_binary_term(w, "set.subset", *a, *b, indent, depth, break_here);
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }

@@ -222,6 +222,23 @@ impl FingerprintCache {
                 t_fp.0.hash(&mut hasher);
                 e_fp.0.hash(&mut hasher);
             }
+            // The empty set's identity is its sort; everything else
+            // fingerprints its children, exactly as the array kinds do.
+            TermKind::SetEmpty(sort) => sort.0.hash(&mut hasher),
+            TermKind::SetSingleton(a) | TermKind::SetCard(a) => {
+                let fp = self.compute(*a, manager);
+                fp.0.hash(&mut hasher);
+            }
+            TermKind::SetUnion(a, b)
+            | TermKind::SetInter(a, b)
+            | TermKind::SetMinus(a, b)
+            | TermKind::SetMember(a, b)
+            | TermKind::SetSubset(a, b) => {
+                let a_fp = self.compute(*a, manager);
+                let b_fp = self.compute(*b, manager);
+                a_fp.0.hash(&mut hasher);
+                b_fp.0.hash(&mut hasher);
+            }
             TermKind::Select(arr, idx) => {
                 let arr_fp = self.compute(*arr, manager);
                 let idx_fp = self.compute(*idx, manager);

@@ -614,6 +614,16 @@ pub struct Solver {
     /// affected sub-formula under-constrained, so the solver must answer
     /// `Unknown` rather than trust a model built over an incomplete encoding.
     pub(super) encode_depth_exceeded: bool,
+    /// A finite-set term was encoded, but there is no set theory to constrain
+    /// its atoms yet.
+    ///
+    /// `set.member`, `set.subset` and `set.card` become opaque SAT atoms with
+    /// nothing forcing them to agree with set semantics, so the SAT layer is
+    /// free to pick either value. Dropped constraints keep `Unsat` sound —
+    /// fewer clauses can only make a refutation harder — but a `Sat` may rest
+    /// on an assignment no set satisfies, which is a wrong answer. This flag
+    /// degrades exactly that case to `Unknown`.
+    pub(super) set_terms_unconstrained: bool,
     /// Set to `true` when any array `select`/`store` operation is encoded.  Gates
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
@@ -1130,6 +1140,7 @@ impl Solver {
             encoded_terms: FxHashMap::default(),
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
+            set_terms_unconstrained: false,
             has_array_ops: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
@@ -1392,6 +1403,14 @@ impl Solver {
         // sound, but a `Sat` may rest on constraints the truncation lost and
         // must degrade to `Unknown`.
         if result == SolverResult::Sat && self.encode_depth_exceeded {
+            self.model = None;
+            self.unsat_core = None;
+            return SolverResult::Unknown;
+        }
+        // Honesty gate (soundness): see `set_terms_unconstrained`. Until the
+        // set theory is wired into Nelson-Oppen, a `Sat` over set atoms is not
+        // a model of anything.
+        if result == SolverResult::Sat && self.set_terms_unconstrained {
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -4465,6 +4484,7 @@ impl Solver {
         self.end_bv_unified_generation();
         self.all_assertions_bv_fragment = false;
         self.context_stack.push(ContextState {
+            set_terms_unconstrained: self.set_terms_unconstrained,
             num_assertions: self.assertions.len(),
             num_vars: self.var_to_term.len(),
             has_false_assertion: self.has_false_assertion,

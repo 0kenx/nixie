@@ -69,6 +69,13 @@ pub enum Value {
     String(String),
     /// Array value (default, exceptions)
     Array(Box<Value>, Vec<(Value, Value)>),
+    /// A finite set, as its elements.
+    ///
+    /// Distinct from `Array(Bool)`: a set value is *extensional* and finite,
+    /// so the elements are the whole value and there is no default to carry.
+    /// Held sorted and duplicate-free by the theory that produces it, which is
+    /// what makes two equal sets compare equal.
+    Set(Vec<Value>),
     /// Datatype constructor (constructor id, arguments)
     Datatype(u32, Vec<Value>),
     /// Floating-point value (sign, exponent, mantissa)
@@ -101,7 +108,10 @@ impl Value {
     fn has_children(&self) -> bool {
         // An array always owns its boxed default element, empty exception
         // list or not.
-        matches!(self, Value::Array(_, _) | Value::Datatype(_, _))
+        matches!(
+            self,
+            Value::Array(_, _) | Value::Datatype(_, _) | Value::Set(_)
+        )
     }
 
     /// Move this node's *compound* children onto `out`.
@@ -122,7 +132,7 @@ impl Value {
                         .filter(Value::has_children),
                 );
             }
-            Value::Datatype(_, args) => {
+            Value::Datatype(_, args) | Value::Set(args) => {
                 out.extend(args.drain(..).filter(Value::has_children));
             }
             _ => {}
@@ -147,6 +157,7 @@ impl Value {
             // already-cloned children; reaching here would drop them.
             Value::Array(_, _) => Value::Array(Box::new(Value::Undefined), Vec::new()),
             Value::Datatype(id, _) => Value::Datatype(*id, Vec::new()),
+            Value::Set(_) => Value::Set(Vec::new()),
             Value::Undefined => Value::Undefined,
         }
     }
@@ -176,6 +187,11 @@ enum CloneStep<'a> {
     /// Rebuild a [`Value::Array`] from the child clones at `out[base..]`,
     /// which are laid out as `[default, key0, value0, key1, value1, ...]`.
     FinishArray {
+        /// Where this node's child clones start in the output stack.
+        base: usize,
+    },
+    /// Rebuild a [`Value::Set`] from the element clones at `out[base..]`.
+    FinishSet {
         /// Where this node's child clones start in the output stack.
         base: usize,
     },
@@ -209,6 +225,12 @@ impl Clone for Value {
                     }
                     steps.push(CloneStep::Visit(default));
                 }
+                CloneStep::Visit(Value::Set(elements)) => {
+                    steps.push(CloneStep::FinishSet { base: out.len() });
+                    for e in elements.iter().rev() {
+                        steps.push(CloneStep::Visit(e));
+                    }
+                }
                 CloneStep::Visit(Value::Datatype(id, args)) => {
                     steps.push(CloneStep::FinishDatatype {
                         id: *id,
@@ -233,6 +255,10 @@ impl Clone for Value {
                         // with the `Visit` that produces its default element.
                         None => out.push(Value::Array(Box::new(Value::Undefined), Vec::new())),
                     }
+                }
+                CloneStep::FinishSet { base } => {
+                    let elements = out.split_off(base);
+                    out.push(Value::Set(elements));
                 }
                 CloneStep::FinishDatatype { id, base } => {
                     let args = out.split_off(base);
@@ -359,6 +385,16 @@ impl core::fmt::Debug for Value {
                     steps.push(DebugStep::Text("["));
                     steps.push(DebugStep::Text(", "));
                     steps.push(DebugStep::Node(default));
+                }
+                DebugStep::Node(Value::Set(elements)) => {
+                    f.write_str("Set([")?;
+                    steps.push(DebugStep::Text("])"));
+                    for (index, e) in elements.iter().enumerate().rev() {
+                        steps.push(DebugStep::Node(e));
+                        if index > 0 {
+                            steps.push(DebugStep::Text(", "));
+                        }
+                    }
                 }
                 DebugStep::Node(Value::Datatype(id, args)) => {
                     write!(f, "Datatype({id}, [")?;
@@ -492,6 +528,9 @@ impl Value {
                 // opaque sorts below it *does* have a canonical default:
                 // round-to-nearest-ties-to-even, the IEEE 754 default mode.
                 SortKind::RoundingMode => break Value::RoundingMode(RoundingMode::RNE),
+                // The empty set is the canonical default, and unlike an
+                // opaque sort it needs no witness to be minted.
+                SortKind::Set(_) => break Value::Set(Vec::new()),
                 SortKind::Array { range, .. } => {
                     array_levels += 1;
                     current = range;
@@ -532,6 +571,24 @@ impl core::fmt::Display for Value {
             // any `\u{...}` escapes come from the one shared encoder the
             // SMT-LIB printers use, so a model value re-reads as itself.
             Value::String(s) => write!(f, "{}", crate::smtlib::format_string_literal(s)),
+            // SMT-LIB spells a finite set as nested unions of singletons,
+            // which is also CVC5's normal form for a set constant
+            // (`theory/sets/normal_form.h`), so a printed model re-reads as
+            // itself. Built as a fold rather than a recursive `write!` per
+            // element, for the same reason the other traits use loops.
+            Value::Set(elements) => match elements.split_first() {
+                None => write!(f, "(as set.empty (Set ?))"),
+                Some((first, rest)) => {
+                    for _ in rest {
+                        f.write_str("(set.union ")?;
+                    }
+                    write!(f, "(set.singleton {first})")?;
+                    for e in rest {
+                        write!(f, " (set.singleton {e}))")?;
+                    }
+                    Ok(())
+                }
+            },
             // Only the default element is printed, so the nesting to unroll
             // is the chain of array-of-array defaults. Written as a loop for
             // the same reason the other structural traits are: a recursive

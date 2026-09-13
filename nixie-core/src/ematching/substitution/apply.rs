@@ -659,6 +659,35 @@ fn rebuild(
         }
 
         // ======== Arrays ========
+        TermKind::SetEmpty(sort) => manager.mk_set_empty_at(sort),
+        TermKind::SetSingleton(e) => {
+            let e = sub(e);
+            manager.mk_set_singleton(e)
+        }
+        TermKind::SetUnion(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_set_union(a, b)
+        }
+        TermKind::SetInter(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_set_inter(a, b)
+        }
+        TermKind::SetMinus(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_set_minus(a, b)
+        }
+        TermKind::SetMember(x, s) => {
+            let (x, s) = (sub(x), sub(s));
+            manager.mk_set_member(x, s)
+        }
+        TermKind::SetSubset(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_set_subset(a, b)
+        }
+        TermKind::SetCard(s) => {
+            let s = sub(s);
+            manager.mk_set_card(s)
+        }
         TermKind::Select(arr, idx) => {
             let arr = sub(arr);
             let idx = sub(idx);

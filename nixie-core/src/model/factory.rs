@@ -119,6 +119,8 @@ impl ValueFactory {
                     };
                 }
                 SortKind::String => break Value::String(self.config.default_string.clone()),
+                // The empty set, which exists for every element sort.
+                SortKind::Set(_) => break Value::Set(Vec::new()),
                 SortKind::BitVec(width) => break Value::BitVec(width, 0),
                 // Positive zero: sign bit clear, all-zero exponent and mantissa.
                 SortKind::FloatingPoint { .. } => break Value::FloatingPoint(false, 0, 0),

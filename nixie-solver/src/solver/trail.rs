@@ -143,6 +143,8 @@ pub(crate) struct ContextState {
     pub(crate) has_array_ops: bool,
     /// `encode_depth_exceeded` flag at the time of push
     pub(crate) encode_depth_exceeded: bool,
+    /// `set_terms_unconstrained` flag at the time of push
+    pub(crate) set_terms_unconstrained: bool,
     /// `dt_axioms_incomplete` flag at the time of push
     pub(crate) dt_axioms_incomplete: bool,
     /// Snapshot of the incremental array-theory index's journals at push, so
@@ -321,13 +323,14 @@ impl super::Solver {
             // across `assert`s; a stale entry only re-emits *valid* (redundant)
             // result splits / comparison links, so it is sound to leave it
             // (cleared only by `reset`).
-            dt_var_constructors: _,    // TRAIL: DtVarConstructorAdded
-            arith_parse_cache: _,      // INVARIANT: keyed by term structure
+            dt_var_constructors: _,     // TRAIL: DtVarConstructorAdded
+            arith_parse_cache: _,       // INVARIANT: keyed by term structure
             arith_parse_overflow: _, // INVARIANT: keyed by term structure (same contract as arith_parse_cache)
             tracked_compound_terms: _, // TRAIL: TrackedCompoundAdded
             encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
+            set_terms_unconstrained: _, // SNAPSHOT
             has_array_ops: _, // SNAPSHOT
             array_theory: _,  // SCOPED: snapshot/`pop` via `array_theory_scope`
             // in `ContextState` (entries are encoded at `assert` time, not as
@@ -439,6 +442,7 @@ impl super::Solver {
         debug_assert_eq!(self.has_bv_arith_ops, state.has_bv_arith_ops);
         debug_assert_eq!(self.has_array_ops, state.has_array_ops);
         debug_assert_eq!(self.encode_depth_exceeded, state.encode_depth_exceeded);
+        debug_assert_eq!(self.set_terms_unconstrained, state.set_terms_unconstrained);
         debug_assert_eq!(self.dt_axioms_incomplete, state.dt_axioms_incomplete);
     }
 }

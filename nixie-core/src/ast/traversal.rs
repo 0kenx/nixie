@@ -99,6 +99,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::RealConst(_)
         | TermKind::BitVecConst { .. }
         | TermKind::StringLit(_)
+        // The empty set's only payload is its sort, which is not a child.
+        | TermKind::SetEmpty(_)
         | TermKind::Var(_) => {}
 
         // Unary
@@ -109,6 +111,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::StrToInt(a)
         | TermKind::IntToStr(a)
         | TermKind::StrToCode(a)
+        | TermKind::SetSingleton(a)
+        | TermKind::SetCard(a)
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }
@@ -128,6 +132,11 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::Le(a, b)
         | TermKind::Gt(a, b)
         | TermKind::Ge(a, b)
+        | TermKind::SetUnion(a, b)
+        | TermKind::SetInter(a, b)
+        | TermKind::SetMinus(a, b)
+        | TermKind::SetMember(a, b)
+        | TermKind::SetSubset(a, b)
         | TermKind::Select(a, b)
         | TermKind::StrConcat(a, b)
         | TermKind::StrAt(a, b)

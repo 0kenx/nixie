@@ -452,7 +452,21 @@ impl Solver {
         };
         let mut push = |t: TermId| stack.push((t, child_depth));
         match &node.kind {
-            TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => push(*a),
+            TermKind::Not(a)
+            | TermKind::Neg(a)
+            | TermKind::SetSingleton(a)
+            | TermKind::SetCard(a)
+            | TermKind::BvNot(a) => push(*a),
+            TermKind::SetUnion(a, b)
+            | TermKind::SetInter(a, b)
+            | TermKind::SetMinus(a, b)
+            | TermKind::SetMember(a, b)
+            | TermKind::SetSubset(a, b) => {
+                push(*a);
+                push(*b);
+            }
+            // No children: the payload is a sort.
+            TermKind::SetEmpty(_) => {}
             TermKind::And(args)
             | TermKind::Or(args)
             | TermKind::Add(args)

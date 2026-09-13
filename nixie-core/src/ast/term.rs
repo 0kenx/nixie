@@ -474,6 +474,35 @@ pub enum TermKind {
         /// The match cases (patterns and bodies)
         cases: SmallVec<[MatchCase; 4]>,
     },
+
+    // Finite-set operations (SMT-LIB theory of finite sets, as CVC5
+    // implements it in `src/theory/sets`). Deliberately *not* modelled as
+    // `Array(elem, Bool)`: an array has no union, no intersection and no
+    // cardinality, so every set operation would need a quantifier or a
+    // pointwise expansion over a candidate list.
+    /// The empty set at a given element sort: `(as set.empty (Set T))`.
+    ///
+    /// Carries its **set** sort, because the empty set is not sort-inferable
+    /// from its (absent) elements.
+    SetEmpty(SortId),
+    /// `(set.singleton x)` — the one-element set containing `x`.
+    SetSingleton(TermId),
+    /// `(set.union a b)`.
+    SetUnion(TermId, TermId),
+    /// `(set.inter a b)`.
+    SetInter(TermId, TermId),
+    /// `(set.minus a b)` — set difference.
+    SetMinus(TermId, TermId),
+    /// `(set.member x s)` — a `Bool`.
+    SetMember(TermId, TermId),
+    /// `(set.subset a b)` — a `Bool`.
+    SetSubset(TermId, TermId),
+    /// `(set.card s)` — an `Int`.
+    ///
+    /// Kept as its own kind rather than expanded: cardinality is what forces
+    /// set reasoning to interact with arithmetic, and CVC5 gives it a whole
+    /// module (`cardinality_extension.cpp`) for that reason.
+    SetCard(TermId),
 }
 
 /// A case in a match expression.

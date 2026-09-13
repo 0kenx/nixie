@@ -123,6 +123,36 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         | TermKind::BvSlt(_, _)
         | TermKind::BvSle(_, _) => Ok(manager.sorts.bool_sort),
 
+        // Finite-set operations.
+        // `SetEmpty` carries its own set sort, because there are no elements
+        // to infer it from.
+        TermKind::SetEmpty(sort) => Ok(*sort),
+        TermKind::SetSingleton(element) => {
+            // Looked up, never interned: inference must not create a sort as a
+            // side effect. The builder interns `(Set T)` when it makes the
+            // singleton, so a well-built term always finds it.
+            if let Some(e) = manager.get(*element)
+                && let Some(id) = manager.sorts.find(&SortKind::Set(e.sort))
+            {
+                return Ok(id);
+            }
+            Err(NixieError::Internal(
+                "Cannot infer sort for set.singleton".to_string(),
+            ))
+        }
+        // The binary operators are homogeneous: both operands are sets of the
+        // same element sort, and so is the result.
+        TermKind::SetUnion(a, _) | TermKind::SetInter(a, _) | TermKind::SetMinus(a, _) => {
+            if let Some(t) = manager.get(*a) {
+                Ok(t.sort)
+            } else {
+                Err(NixieError::Internal("Set operand not found".to_string()))
+            }
+        }
+        TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => Ok(manager.sorts.bool_sort),
+        // Cardinality is where sets meet arithmetic.
+        TermKind::SetCard(_) => Ok(manager.sorts.int_sort),
+
         // Array operations
         TermKind::Select(array, _) => {
             if let Some(array_term) = manager.get(*array)
@@ -320,6 +350,12 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                         out.push_str(&format!("(_ FloatingPoint {} {})", eb, sb));
                     }
                     SortKind::RoundingMode => out.push_str("RoundingMode"),
+                    SortKind::Set(elem) => {
+                        // "(Set " <element> ")"
+                        out.push_str("(Set ");
+                        stack.push(FormatWork::Literal(")"));
+                        stack.push(FormatWork::Sort(*elem));
+                    }
                     SortKind::Array { domain, range } => {
                         // "(Array " <domain> " " <range> ")"
                         out.push_str("(Array ");

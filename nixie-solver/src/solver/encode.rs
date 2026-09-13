@@ -2877,6 +2877,17 @@ impl Solver {
         };
 
         match &t.kind {
+            // Finite sets have no theory solver yet, so a set atom becomes an
+            // opaque Boolean that nothing constrains. That is sound only
+            // because `set_terms_unconstrained` degrades a resulting `Sat` to
+            // `Unknown`: dropping constraints keeps a refutation valid but
+            // makes a model meaningless. Returning a free literal *without*
+            // the flag would be a wrong `sat`.
+            TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
             TermKind::True => {
                 let var = self.get_or_create_var(manager.mk_true());
                 self.sat.add_clause([Lit::pos(var)]);
@@ -3524,6 +3535,21 @@ impl Solver {
                 // Track theory variables for model extraction
                 self.track_theory_vars(*lhs, manager);
                 self.track_theory_vars(*rhs, manager);
+                Lit::pos(var)
+            }
+            // A set-sorted or Int-sorted set term reaching the Tseitin encoder
+            // is being used where a literal is expected. There is no set
+            // theory to give it meaning, so it becomes an opaque atom and the
+            // honesty gate degrades any resulting `Sat` to `Unknown` — see
+            // `Solver::set_terms_unconstrained`.
+            TermKind::SetEmpty(_)
+            | TermKind::SetSingleton(_)
+            | TermKind::SetUnion(_, _)
+            | TermKind::SetInter(_, _)
+            | TermKind::SetMinus(_, _)
+            | TermKind::SetCard(_) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => {

@@ -53,6 +53,14 @@ pub enum SortKind {
         /// Significand width in bits
         sb: u32,
     },
+    /// Finite-set sort, parameterised by its element sort.
+    ///
+    /// The theory is the SMT-LIB finite-sets theory as CVC5 implements it
+    /// (`src/theory/sets`): sets are *finite*, extensional, and reasoned about
+    /// by propagating membership rather than by enumerating elements. That is
+    /// what distinguishes it from an `Array(elem, Bool)`, which has no union,
+    /// no intersection and no cardinality.
+    Set(SortId),
     /// Array sort with domain and range sorts
     Array {
         /// Domain sort
@@ -132,6 +140,21 @@ impl Sort {
     #[must_use]
     pub fn is_string(&self) -> bool {
         matches!(self.kind, SortKind::String)
+    }
+
+    /// Check if this is a finite-set sort
+    #[must_use]
+    pub fn is_set(&self) -> bool {
+        matches!(self.kind, SortKind::Set(_))
+    }
+
+    /// The element sort of a finite-set sort.
+    #[must_use]
+    pub fn set_element(&self) -> Option<SortId> {
+        match self.kind {
+            SortKind::Set(e) => Some(e),
+            _ => None,
+        }
     }
 
     /// Check if this is a bit vector sort
@@ -300,6 +323,16 @@ impl SortManager {
         manager
     }
 
+    /// Look up an already-interned sort kind, without interning.
+    ///
+    /// Needed where only `&SortManager` is available — sort *inference* is one
+    /// such place, and it must not be able to create sorts as a side effect of
+    /// being asked a question.
+    #[must_use]
+    pub fn find(&self, kind: &SortKind) -> Option<SortId> {
+        self.cache.get(kind).copied()
+    }
+
     /// Intern a sort kind, returning its unique ID
     pub fn intern(&mut self, kind: SortKind) -> SortId {
         if let Some(&id) = self.cache.get(&kind) {
@@ -325,6 +358,11 @@ impl SortManager {
     /// Create a bit vector sort with the given width
     pub fn bitvec(&mut self, width: u32) -> SortId {
         self.intern(SortKind::BitVec(width))
+    }
+
+    /// Create a finite-set sort over `element`.
+    pub fn set(&mut self, element: SortId) -> SortId {
+        self.intern(SortKind::Set(element))
     }
 
     /// Create an array sort with the given domain and range
@@ -675,6 +713,10 @@ impl SortManager {
                 | SortKind::Datatype(_)
                 // A parameter not in `subst` stays free.
                 | SortKind::Parameter(_) => id,
+                SortKind::Set(elem) => {
+                    let new_elem = replacements.get(&elem).copied().unwrap_or(elem);
+                    if new_elem == elem { id } else { self.set(new_elem) }
+                }
                 SortKind::Array { domain, range } => {
                     let new_domain = replacements.get(&domain).copied().unwrap_or(domain);
                     let new_range = replacements.get(&range).copied().unwrap_or(range);
@@ -718,6 +760,7 @@ impl SortManager {
             SortKind::BitVec(w) => Some(format!("BitVec({})", w)),
             SortKind::FloatingPoint { eb, sb } => Some(format!("FloatingPoint({}, {})", eb, sb)),
             SortKind::RoundingMode => Some("RoundingMode".to_string()),
+            SortKind::Set(_) => Some("Set".to_string()),
             SortKind::Array { .. } => Some("Array".to_string()),
             SortKind::Uninterpreted(spur) => Some(self.interner.resolve(spur).to_string()),
             SortKind::Parameter(spur) => Some(self.interner.resolve(spur).to_string()),

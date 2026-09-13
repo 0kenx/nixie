@@ -835,6 +835,78 @@ impl TermManager {
         self.intern(TermKind::Select(array, index), sort)
     }
 
+    /// The empty set at element sort `element`.
+    pub fn mk_set_empty(&mut self, element: SortId) -> TermId {
+        let sort = self.sorts.set(element);
+        self.intern(TermKind::SetEmpty(sort), sort)
+    }
+
+    /// The empty set, given its already-formed **set** sort.
+    ///
+    /// Used when rebuilding a term whose sort is already known; prefer
+    /// [`TermManager::mk_set_empty`], which takes the *element* sort.
+    pub fn mk_set_empty_at(&mut self, set_sort: SortId) -> TermId {
+        self.intern(TermKind::SetEmpty(set_sort), set_sort)
+    }
+
+    /// `(set.singleton x)`.
+    pub fn mk_set_singleton(&mut self, element: TermId) -> TermId {
+        let elem_sort = self.get(element).map_or(self.sorts.int_sort, |t| t.sort);
+        let sort = self.sorts.set(elem_sort);
+        self.intern(TermKind::SetSingleton(element), sort)
+    }
+
+    /// `(set.union a b)`.
+    pub fn mk_set_union(&mut self, a: TermId, b: TermId) -> TermId {
+        let sort = self.set_result_sort(a);
+        self.intern(TermKind::SetUnion(a, b), sort)
+    }
+
+    /// `(set.inter a b)`.
+    pub fn mk_set_inter(&mut self, a: TermId, b: TermId) -> TermId {
+        let sort = self.set_result_sort(a);
+        self.intern(TermKind::SetInter(a, b), sort)
+    }
+
+    /// `(set.minus a b)`.
+    pub fn mk_set_minus(&mut self, a: TermId, b: TermId) -> TermId {
+        let sort = self.set_result_sort(a);
+        self.intern(TermKind::SetMinus(a, b), sort)
+    }
+
+    /// `(set.member x s)`.
+    pub fn mk_set_member(&mut self, element: TermId, set: TermId) -> TermId {
+        let sort = self.sorts.bool_sort;
+        self.intern(TermKind::SetMember(element, set), sort)
+    }
+
+    /// `(set.subset a b)`.
+    pub fn mk_set_subset(&mut self, a: TermId, b: TermId) -> TermId {
+        let sort = self.sorts.bool_sort;
+        self.intern(TermKind::SetSubset(a, b), sort)
+    }
+
+    /// `(set.card s)`.
+    pub fn mk_set_card(&mut self, set: TermId) -> TermId {
+        let sort = self.sorts.int_sort;
+        self.intern(TermKind::SetCard(set), sort)
+    }
+
+    /// The sort a homogeneous binary set operator returns: its first operand's.
+    ///
+    /// A non-set operand is a caller error the type rules catch; falling back
+    /// to `Set(Int)` here keeps the builder total without inventing a *scalar*
+    /// sort for something that is structurally a set.
+    fn set_result_sort(&mut self, a: TermId) -> SortId {
+        match self.get(a).map(|t| t.sort) {
+            Some(s) if self.sorts.get(s).is_some_and(crate::sort::Sort::is_set) => s,
+            _ => {
+                let int = self.sorts.int_sort;
+                self.sorts.set(int)
+            }
+        }
+    }
+
     /// Create an array store operation
     pub fn mk_store(&mut self, array: TermId, index: TermId, value: TermId) -> TermId {
         let sort = self.get(array).map_or(self.sorts.int_sort, |t| t.sort);

@@ -103,6 +103,10 @@ impl Z3Sort {
             Some(SortKind::Real) => Z3SortKind::Real,
             Some(SortKind::BitVec(_)) => Z3SortKind::BitVec,
             Some(SortKind::Array { .. }) => Z3SortKind::Array,
+            // No Z3 analogue: Z3 models finite sets as `Array(elem, Bool)`,
+            // so reporting `Array` here would tell a caller the sort has a
+            // domain and a range that it does not have.
+            Some(SortKind::Set(_)) => Z3SortKind::Other,
             Some(SortKind::Datatype(_)) => Z3SortKind::Datatype,
             Some(SortKind::Uninterpreted(_)) => Z3SortKind::Uninterpreted,
             // `RoundingMode` reports `Other` rather than folding into

@@ -192,6 +192,15 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                             return false;
                         }
                     }
+                    // The carried sort is the whole payload.
+                    TermKind::SetEmpty(a) => {
+                        let TermKind::SetEmpty(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::False => {
                         if !matches!(rt.kind, TermKind::False) {
                             return false;
@@ -255,6 +264,8 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::StrToInt(a)
                     | TermKind::IntToStr(a)
                     | TermKind::StrToCode(a)
+                    | TermKind::SetSingleton(a)
+                    | TermKind::SetCard(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FpAbs(a)
                     | TermKind::FpNeg(a)
@@ -317,6 +328,11 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::Le(a, b)
                     | TermKind::Gt(a, b)
                     | TermKind::Ge(a, b)
+                    | TermKind::SetUnion(a, b)
+                    | TermKind::SetInter(a, b)
+                    | TermKind::SetMinus(a, b)
+                    | TermKind::SetMember(a, b)
+                    | TermKind::SetSubset(a, b)
                     | TermKind::Select(a, b)
                     | TermKind::BvConcat(a, b)
                     | TermKind::BvAnd(a, b)

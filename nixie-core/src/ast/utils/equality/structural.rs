@@ -62,6 +62,15 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                             return false;
                         }
                     }
+                    // The carried sort is the whole payload.
+                    TermKind::SetEmpty(a) => {
+                        let TermKind::SetEmpty(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::IntConst(a) => {
                         let TermKind::IntConst(b) = &rt.kind else {
                             return false;
@@ -120,6 +129,8 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::StrToInt(a)
                     | TermKind::IntToStr(a)
                     | TermKind::StrToCode(a)
+                    | TermKind::SetSingleton(a)
+                    | TermKind::SetCard(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FpAbs(a)
                     | TermKind::FpNeg(a)
@@ -183,6 +194,11 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::Le(a, b)
                     | TermKind::Gt(a, b)
                     | TermKind::Ge(a, b)
+                    | TermKind::SetUnion(a, b)
+                    | TermKind::SetInter(a, b)
+                    | TermKind::SetMinus(a, b)
+                    | TermKind::SetMember(a, b)
+                    | TermKind::SetSubset(a, b)
                     | TermKind::Select(a, b)
                     | TermKind::BvConcat(a, b)
                     | TermKind::BvAnd(a, b)

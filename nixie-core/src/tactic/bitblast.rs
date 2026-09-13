@@ -125,12 +125,17 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
+                | TermKind::SetEmpty(_)
                 | TermKind::Var(_) => {
                     if self.is_bv_sort(term.sort) {
                         return true;
                     }
                 }
-                TermKind::Not(a) | TermKind::Neg(a) | TermKind::BvNot(a) => stack.push(*a),
+                TermKind::Not(a)
+                | TermKind::Neg(a)
+                | TermKind::SetSingleton(a)
+                | TermKind::SetCard(a)
+                | TermKind::BvNot(a) => stack.push(*a),
                 TermKind::BvExtract { arg, .. } => stack.push(*arg),
                 TermKind::And(args)
                 | TermKind::Or(args)
@@ -154,6 +159,11 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::Le(a, b)
                 | TermKind::Gt(a, b)
                 | TermKind::Ge(a, b)
+                | TermKind::SetUnion(a, b)
+                | TermKind::SetInter(a, b)
+                | TermKind::SetMinus(a, b)
+                | TermKind::SetMember(a, b)
+                | TermKind::SetSubset(a, b)
                 | TermKind::Select(a, b)
                 | TermKind::StrConcat(a, b)
                 | TermKind::StrAt(a, b)

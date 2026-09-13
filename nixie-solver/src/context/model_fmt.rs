@@ -172,6 +172,11 @@ enum SortNameFrame {
         /// The rendered domain text.
         domain: String,
     },
+    /// The element sort is being rendered; wrapping it finishes `(Set ..)`.
+    SetAfter {
+        /// The set sort this frame will finish.
+        sort: SortId,
+    },
     /// A parametric application `(name arg...)` collecting its arguments in
     /// order.
     Parametric {
@@ -557,6 +562,7 @@ impl Context {
                 // future sort kind with children cannot silently skip the
                 // pre-pass (and lose its memoization).
                 match &node.kind {
+                    SortKind::Set(elem) => scan.push(*elem),
                     SortKind::Array { domain, range } => {
                         scan.push(*domain);
                         scan.push(*range);
@@ -590,6 +596,11 @@ impl Context {
                     break "Unknown".to_string();
                 };
                 let leaf = match &s.kind {
+                    SortKind::Set(elem) => {
+                        pending.push(SortNameFrame::SetAfter { sort: current });
+                        current = *elem;
+                        continue;
+                    }
                     SortKind::Array { domain, range } => {
                         pending.push(SortNameFrame::RangeAfter {
                             sort: current,
@@ -674,6 +685,12 @@ impl Context {
                     }
                     Some(SortNameFrame::Finish { sort, domain }) => {
                         text = format!("(Array {domain} {text})");
+                        if shared.contains(&sort) {
+                            memo.insert(sort, text.clone());
+                        }
+                    }
+                    Some(SortNameFrame::SetAfter { sort }) => {
+                        text = format!("(Set {text})");
                         if shared.contains(&sort) {
                             memo.insert(sort, text.clone());
                         }
@@ -824,6 +841,9 @@ impl Context {
                     SortKind::Bool => break "false".to_string(),
                     SortKind::Int => break "0".to_string(),
                     SortKind::Real => break "0.0".to_string(),
+                    // The empty set is ground and exists at every element
+                    // sort, so no witness has to be minted for it.
+                    SortKind::Set(_) => break "(as set.empty (Set ?))".to_string(),
                     // The empty string is the canonical ground `String`
                     // value; the old `?` fallback was not valid SMT-LIB
                     // output at all.

@@ -275,6 +275,20 @@ impl Solver {
                 // here so that constraints like `(> (select a 0) 7)` are tracked
                 // by the arithmetic solver and model values are extracted
                 // correctly.
+                // Finite sets: children are walked, but nothing is interned
+                // into the arithmetic solver — `set.card` produces an `Int`
+                // that no theory constrains yet, and interning it would let
+                // the tableau treat it as an ordinary free column.
+                TermKind::SetUnion(a, b)
+                | TermKind::SetInter(a, b)
+                | TermKind::SetMinus(a, b)
+                | TermKind::SetMember(a, b)
+                | TermKind::SetSubset(a, b) => {
+                    stack.push(*b);
+                    stack.push(*a);
+                }
+                TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
+                TermKind::SetEmpty(_) => {}
                 TermKind::Select(_, _) => {
                     self.has_array_ops = true;
                     let is_int = term.sort == manager.sorts.int_sort;

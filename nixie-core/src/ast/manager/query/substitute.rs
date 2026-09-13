@@ -776,6 +776,38 @@ impl TermManager {
             }
 
             // ======== Arrays ========
+            // Sets. The empty set has no children, so it substitutes to
+            // itself; everything else rebuilds through the builder so the
+            // result is interned and sorted exactly as if freshly constructed.
+            TermKind::SetEmpty(sort) => self.intern(TermKind::SetEmpty(sort), sort),
+            TermKind::SetSingleton(e) => {
+                let e = sub(e);
+                self.mk_set_singleton(e)
+            }
+            TermKind::SetUnion(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_set_union(a, b)
+            }
+            TermKind::SetInter(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_set_inter(a, b)
+            }
+            TermKind::SetMinus(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_set_minus(a, b)
+            }
+            TermKind::SetMember(x, s) => {
+                let (x, s) = (sub(x), sub(s));
+                self.mk_set_member(x, s)
+            }
+            TermKind::SetSubset(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_set_subset(a, b)
+            }
+            TermKind::SetCard(s) => {
+                let s = sub(s);
+                self.mk_set_card(s)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);

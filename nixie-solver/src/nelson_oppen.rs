@@ -65,6 +65,14 @@ pub enum TermTheory {
     BitVector,
     /// Extensional arrays.
     Array,
+    /// Finite sets: `set.union`, `set.inter`, `set.minus`, `set.member`,
+    /// `set.subset`, `set.card`.
+    ///
+    /// Not the same theory as `Array`, and deliberately so. A set is *finite*
+    /// and extensional and has a cardinality; an array is total and has
+    /// neither union nor cardinality. Folding the two together would purify
+    /// across a boundary that is not there and miss the one that is.
+    Set,
     /// Unicode strings and regular languages.
     String,
     /// IEEE-754 floating point.
@@ -96,6 +104,7 @@ impl TermTheory {
             Self::Datatype => 6,
             Self::Uf => 7,
             Self::Binder => 8,
+            Self::Set => 9,
         })
     }
 }
@@ -250,6 +259,18 @@ impl NelsonOppenCombiner {
             | TermKind::BvSle(_, _) => TermTheory::BitVector,
 
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => TermTheory::Array,
+            // `set.card` is listed here with the rest even though its result
+            // is an `Int`: theory *ownership* follows the operator, and the
+            // Int it produces becomes a shared interface term, which is
+            // exactly the Set/Arithmetic boundary cardinality reasoning needs.
+            TermKind::SetEmpty(_)
+            | TermKind::SetSingleton(_)
+            | TermKind::SetUnion(_, _)
+            | TermKind::SetInter(_, _)
+            | TermKind::SetMinus(_, _)
+            | TermKind::SetMember(_, _)
+            | TermKind::SetSubset(_, _)
+            | TermKind::SetCard(_) => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

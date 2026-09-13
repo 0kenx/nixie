@@ -296,6 +296,57 @@ impl<'a> Printer<'a> {
                 self.write_term(w, *rhs);
                 let _ = write!(w, ")");
             }
+            // SMT-LIB finite-set syntax, matching CVC5's spelling.
+            TermKind::SetEmpty(sort) => {
+                let _ = write!(w, "(as set.empty ");
+                self.write_sort(w, *sort);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetSingleton(e) => {
+                let _ = write!(w, "(set.singleton ");
+                self.write_term(w, *e);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetUnion(a, b) => {
+                let _ = write!(w, "(set.union ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetInter(a, b) => {
+                let _ = write!(w, "(set.inter ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetMinus(a, b) => {
+                let _ = write!(w, "(set.minus ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetMember(x, s) => {
+                let _ = write!(w, "(set.member ");
+                self.write_term(w, *x);
+                let _ = write!(w, " ");
+                self.write_term(w, *s);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetSubset(a, b) => {
+                let _ = write!(w, "(set.subset ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetCard(s) => {
+                let _ = write!(w, "(set.card ");
+                self.write_term(w, *s);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 let _ = write!(w, "(select ");
                 self.write_term(w, *array);
@@ -1003,6 +1054,11 @@ impl<'a> Printer<'a> {
                 }
                 SortKind::RoundingMode => {
                     let _ = write!(w, "RoundingMode");
+                }
+                SortKind::Set(elem) => {
+                    let _ = write!(w, "(Set ");
+                    stack.push(Step::Text(")"));
+                    stack.push(Step::Sort(*elem));
                 }
                 SortKind::Array { domain, range } => {
                     let _ = write!(w, "(Array ");

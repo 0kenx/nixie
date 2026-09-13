@@ -130,6 +130,8 @@ fn hash_visit(
             width.hash(hasher);
         }
         TermKind::StringLit(s) => s.hash(hasher),
+        // The sort *is* the payload: two empty sets differ only by it.
+        TermKind::SetEmpty(sort) => sort.0.hash(hasher),
         TermKind::Var(spur) => spur.hash(hasher),
 
         TermKind::Not(a)
@@ -139,6 +141,8 @@ fn hash_visit(
         | TermKind::StrToInt(a)
         | TermKind::IntToStr(a)
         | TermKind::StrToCode(a)
+        | TermKind::SetSingleton(a)
+        | TermKind::SetCard(a)
         | TermKind::StrFromCode(a) => stack.push(HashTask::Visit(*a)),
 
         TermKind::BvExtract { high, low, arg } => {
@@ -168,6 +172,11 @@ fn hash_visit(
         | TermKind::Le(a, b)
         | TermKind::Gt(a, b)
         | TermKind::Ge(a, b)
+        | TermKind::SetUnion(a, b)
+        | TermKind::SetInter(a, b)
+        | TermKind::SetMinus(a, b)
+        | TermKind::SetMember(a, b)
+        | TermKind::SetSubset(a, b)
         | TermKind::Select(a, b)
         | TermKind::BvConcat(a, b)
         | TermKind::BvAnd(a, b)

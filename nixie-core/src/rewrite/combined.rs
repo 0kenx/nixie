@@ -287,6 +287,16 @@ impl CombinedRewriter {
 
             // Array
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => RewriterKind::Array,
+            // No set rewriter yet: `None` means "left alone", which is always
+            // sound — a missing simplification costs time, never soundness.
+            TermKind::SetEmpty(_)
+            | TermKind::SetSingleton(_)
+            | TermKind::SetUnion(_, _)
+            | TermKind::SetInter(_, _)
+            | TermKind::SetMinus(_, _)
+            | TermKind::SetMember(_, _)
+            | TermKind::SetSubset(_, _)
+            | TermKind::SetCard(_) => RewriterKind::None,
 
             // String
             TermKind::StringLit(_)
