@@ -3680,6 +3680,21 @@ impl Solver {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
+            // A finite-field term reaching the Tseitin encoder means the
+            // eager FF dispatch declined the goal (mixed logic, Boolean
+            // structure beyond its scope, or the dispatch's budget). No
+            // engine here owns field semantics — an FF atom is not a free
+            // Boolean — so the honesty gate degrades any resulting `Sat` to
+            // `Unknown`; see `Solver::ff_terms_unconstrained`.
+            TermKind::FfConst { .. }
+            | TermKind::FfAdd(_)
+            | TermKind::FfMul(_)
+            | TermKind::FfNeg(_)
+            | TermKind::FfBitsum(_) => {
+                self.ff_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
             TermKind::Select(_, _) | TermKind::Store(_, _, _) => {
                 // Array operations - theory terms
                 self.has_array_ops = true;

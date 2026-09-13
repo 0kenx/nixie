@@ -575,6 +575,7 @@ impl Context {
                     | SortKind::BitVec(_)
                     | SortKind::FloatingPoint { .. }
                     | SortKind::RoundingMode
+                    | SortKind::FiniteField(_)
                     | SortKind::Uninterpreted(_)
                     | SortKind::Parameter(_)
                     | SortKind::Datatype(_) => {}
@@ -616,6 +617,16 @@ impl Context {
                     SortKind::BitVec(w) => format!("(_ BitVec {w})"),
                     SortKind::FloatingPoint { eb, sb } => format!("(_ FloatingPoint {eb} {sb})"),
                     SortKind::RoundingMode => "RoundingMode".to_string(),
+                    SortKind::FiniteField(id) => {
+                        let modulus = self
+                            .terms
+                            .sorts
+                            .field_table()
+                            .get(*id)
+                            .map(|f| f.modulus().to_string())
+                            .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
+                        format!("(_ FiniteField {modulus})")
+                    }
                     // An uninterpreted sort's name is interned by the *term*
                     // manager (`Parser::parse_sort` for `declare-sort` names
                     // and `TermManager::reglan_sort` both call
@@ -856,6 +867,18 @@ impl Context {
                     // The canonical default rounding mode (matches
                     // `ValueFactory`'s default for the sort).
                     SortKind::RoundingMode => break "roundNearestTiesToEven".to_string(),
+                    // The field's zero element, spelled as its SMT-LIB
+                    // literal so the default re-reads as itself.
+                    SortKind::FiniteField(id) => {
+                        let zero = self
+                            .terms
+                            .sorts
+                            .field_table()
+                            .get(*id)
+                            .map(|f| format!("#f0m{}", f.modulus()))
+                            .unwrap_or_else(|| format!("#f0m(field {})", id.raw()));
+                        break zero;
+                    }
                     // A constant array whose every entry is the range's
                     // default value.  Descending into the range charges no
                     // constructor expansion – the sort graph alone is

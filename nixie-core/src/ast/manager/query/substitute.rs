@@ -674,6 +674,7 @@ impl TermManager {
             | TermKind::IntConst(_)
             | TermKind::RealConst(_)
             | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
             | TermKind::Var(_)
             | TermKind::StringLit(_)
             | TermKind::FpLit { .. }
@@ -684,6 +685,16 @@ impl TermManager {
             | TermKind::FpNaN { .. } => {
                 unreachable!("leaves are resolved directly in Expand, never scheduled as Combine")
             }
+
+            // ======== Finite fields ========
+            // Fallible builders behind a total helper: normal form when the
+            // operands allow it (always, for interned nodes), exact re-intern
+            // otherwise. See `intern_ff_substituted`. `FfConst` is a leaf and
+            // is handled above.
+            TermKind::FfAdd(_)
+            | TermKind::FfMul(_)
+            | TermKind::FfNeg(_)
+            | TermKind::FfBitsum(_) => self.intern_ff_substituted(kind, sort),
 
             // ======== Boolean connectives ========
             TermKind::Not(a) => {

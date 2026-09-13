@@ -403,6 +403,30 @@ pub enum TermKind {
         sb: u32,
     },
 
+    // Finite-field operations (SMT-LIB `QF_FF`, the [OKTB23] signature:
+    // four operators, one predicate). Values are normalized into `[0, p)` at
+    // construction, which is load-bearing for hash-consing: `#f8m7` and
+    // `#f1m7` must be the same `TermId` or the rewriter's constant folding
+    // and the encoder's polynomial construction disagree about when two
+    // literals are equal.
+    /// Finite-field numeral, normalized into `[0, p)`.
+    FfConst {
+        /// The field element's value in `[0, p)`.
+        value: BigInt,
+        /// The field it lives in.
+        field: crate::sort::field::FieldId,
+    },
+    /// Field addition, n-ary ≥ 2 (single operands are collapsed by the
+    /// builder's normal form).
+    FfAdd(SmallVec<[TermId; 4]>),
+    /// Field multiplication, n-ary ≥ 2.
+    FfMul(SmallVec<[TermId; 4]>),
+    /// Field negation. The normal form rewrites this to `(-1)·t`, so this
+    /// variant exists for API-built terms before simplification.
+    FfNeg(TermId),
+    /// Little-endian bit-sum: `Σ 2ⁱ · bᵢ` over field-element operands.
+    FfBitsum(SmallVec<[TermId; 4]>),
+
     // Uninterpreted functions
     /// Function application
     Apply {
@@ -545,6 +569,7 @@ impl Term {
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
+                | TermKind::FfConst { .. }
         )
     }
 

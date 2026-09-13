@@ -145,6 +145,8 @@ pub(crate) struct ContextState {
     pub(crate) encode_depth_exceeded: bool,
     /// `set_terms_unconstrained` flag at the time of push
     pub(crate) set_terms_unconstrained: bool,
+    /// `ff_terms_unconstrained` flag at the time of push
+    pub(crate) ff_terms_unconstrained: bool,
     /// `dt_axioms_incomplete` flag at the time of push
     pub(crate) dt_axioms_incomplete: bool,
     /// Snapshot of the incremental array-theory index's journals at push, so
@@ -331,6 +333,7 @@ impl super::Solver {
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
             set_terms_unconstrained: _, // SNAPSHOT
+            ff_terms_unconstrained: _, // SNAPSHOT
             has_array_ops: _, // SNAPSHOT
             array_theory: _,  // SCOPED: snapshot/`pop` via `array_theory_scope`
             // in `ContextState` (entries are encoded at `assert` time, not as
@@ -443,6 +446,7 @@ impl super::Solver {
         debug_assert_eq!(self.has_array_ops, state.has_array_ops);
         debug_assert_eq!(self.encode_depth_exceeded, state.encode_depth_exceeded);
         debug_assert_eq!(self.set_terms_unconstrained, state.set_terms_unconstrained);
+        debug_assert_eq!(self.ff_terms_unconstrained, state.ff_terms_unconstrained);
         debug_assert_eq!(self.dt_axioms_incomplete, state.dt_axioms_incomplete);
     }
 }

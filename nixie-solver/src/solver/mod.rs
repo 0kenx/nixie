@@ -625,6 +625,12 @@ pub struct Solver {
     /// on an assignment no set satisfies, which is a wrong answer. This flag
     /// degrades exactly that case to `Unknown`.
     pub(super) set_terms_unconstrained: bool,
+    /// Honesty gate (soundness) for finite fields: `true` once any FF-sorted
+    /// term reaches the Tseitin encoder. The FF decision procedure
+    /// (`check_ff.rs`) runs as an eager whole-problem dispatch; if an FF term
+    /// still reached CDCL(T), no engine owns it, and a `Sat` would rest on an
+    /// assignment no field satisfies. Degrades exactly that case to `Unknown`.
+    pub(super) ff_terms_unconstrained: bool,
     /// Set to `true` when any array `select`/`store` operation is encoded.  Gates
     /// the lazy array-axiom instantiation refinement (see
     /// [`Solver::instantiate_array_axioms`]) so non-array problems pay no cost.
@@ -1142,6 +1148,7 @@ impl Solver {
             fp_constraint_cache: FxHashMap::default(),
             encode_depth_exceeded: false,
             set_terms_unconstrained: false,
+            ff_terms_unconstrained: false,
             has_array_ops: false,
             array_select_terms: Vec::new(),
             array_store_terms: Vec::new(),
@@ -1412,6 +1419,13 @@ impl Solver {
         // set theory is wired into Nelson-Oppen, a `Sat` over set atoms is not
         // a model of anything.
         if result == SolverResult::Sat && self.set_terms_unconstrained {
+            self.model = None;
+            self.unsat_core = None;
+            return SolverResult::Unknown;
+        }
+        // Honesty gate (soundness): see `ff_terms_unconstrained`. An FF term
+        // that reached the CDCL(T) layer has no engine behind it.
+        if result == SolverResult::Sat && self.ff_terms_unconstrained {
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -4527,6 +4541,7 @@ impl Solver {
         self.all_assertions_bv_fragment = false;
         self.context_stack.push(ContextState {
             set_terms_unconstrained: self.set_terms_unconstrained,
+            ff_terms_unconstrained: self.ff_terms_unconstrained,
             num_assertions: self.assertions.len(),
             num_vars: self.var_to_term.len(),
             has_false_assertion: self.has_false_assertion,

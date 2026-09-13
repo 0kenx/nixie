@@ -334,6 +334,52 @@ false (the committed-existential dodge from pass four, now the only
 remaining mechanism).  Model repair (Z3's `add_blocking_clause`) remains
 the fix.
 
+## Sixth pass (2026-09-13): the dodge's emission-side root cause found; repairs built, measured, reverted
+
+**Root cause (emission side), precise:** `deep_simplify_cached` had no
+`Forall`/`Exists` arms — quantifier nodes were *opaque* to the
+instantiation post-simplifier.  A tautological-antecedent instance
+(`(forall x. P(x) => P(x)) => subset(z,z)`) therefore kept its wrapper,
+and the SAT core dodged the consequence by committing the wrapper's free
+Boolean FALSE.  Descending under the binder (letting the existing
+`p -> p` collapse fire) plus collapsing constant bodies (`forall x. true
+-> true`, sound under SMT-LIB's non-empty domains) turns such instances
+into forcing units at emission — structurally removing the dodge for the
+tautological class.
+
+**Built and measured, then reverted:** the binder descent + constant
+collapse, macro ground-pinning on satisfaction (`SatisfiedWithPins`:
+certifying a macro's defining axiom also emits its defining instances at
+the universe tuples, so *other* axioms over the same function instantiate
+forcing-ly), simplest-macro preference inside `solve_macros`, and a
+productive-check refund of the per-quantifier cap.  All sound (each
+verified against the FFT/Rodin/differential screens), and each moved the
+set-family convergence one step further — q14 certifies, q18's residual
+falsifier isolates to *compound* universe elements
+(`union(b,a), union(b,a)`) whose diagonal pins the enumerative seeder can
+no longer emit (its per-quantifier budget is spent by the time the
+compound term enters the universe).
+
+**Why reverted:** the collapses change every MBQI instance's clause
+shape, which shifts the SAT trajectory — the 600-rerun convergence pins
+(`scope_rebase_tests`) went 88s -> 132-167s single-threaded user time
+(a 1.5-1.9x trajectory cost, not a code-path cost; bisected against
+clean HEAD in a worktree).  Per the benchmarking discipline
+(`docs/BENCHMARKING.md`), a trajectory-shifting change needs the
+matched-null protocol before landing, and the verdict upside was not
+realized (the set family still answers `unknown`).  The designs are
+recorded here for a re-land *together with* the blocking-clause model
+repair, measured as one unit.
+
+**Remaining mechanism (final form):** the universe admits compound
+constructor terms (`union(b,a)`) as elements; definitional closure over
+them needs pins the seeder's exhausted budget cannot emit.  The repair
+is Z3's `add_blocking_clause` model repair at the escalation's
+duplicate-falsifier point: block the arrangement (the falsifier's
+supporting commitments), forcing the next model to either produce the
+witness or flip — plus re-landing the binder-descent collapses with the
+matched-null measurement.
+
 ## Verification
 
 - `cargo build --all-features` clean; `cargo nextest run` over the six

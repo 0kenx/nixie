@@ -7,7 +7,10 @@
 //! - BitVec(n): Bit vectors of width n
 //! - Array(domain, range): Arrays mapping domain to range
 
+pub mod field;
 pub mod inference;
+
+use field::{FieldDesc, FieldError, FieldId, FieldTable};
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -106,6 +109,16 @@ pub enum SortKind {
     /// Datatype sort
     /// Reference to a datatype definition by name
     Datatype(crate::interner::Spur),
+    /// Finite-field sort `(_ FiniteField <order>)`, identified by its
+    /// interned [`FieldId`] in the [`FieldTable`] owned by
+    /// [`SortManager`].
+    ///
+    /// A `u32` payload rather than the modulus itself: `SortKind` is the
+    /// interner key (hashed and compared on every `Sorts::intern` lookup),
+    /// and the ZK moduli are 254 bits wide — the id keeps comparisons O(1)
+    /// and gives the per-field derived data a home computed once. See
+    /// `sort::field` for the design.
+    FiniteField(FieldId),
 }
 
 /// A sort in the SMT-LIB2 sense
@@ -153,6 +166,21 @@ impl Sort {
     pub fn set_element(&self) -> Option<SortId> {
         match self.kind {
             SortKind::Set(e) => Some(e),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a finite-field sort
+    #[must_use]
+    pub fn is_finite_field(&self) -> bool {
+        matches!(self.kind, SortKind::FiniteField(_))
+    }
+
+    /// The [`FieldId`] of a finite-field sort.
+    #[must_use]
+    pub fn finite_field(&self) -> Option<FieldId> {
+        match self.kind {
+            SortKind::FiniteField(id) => Some(id),
             _ => None,
         }
     }
@@ -282,6 +310,8 @@ pub struct SortManager {
     parametric_defs: FxHashMap<crate::interner::Spur, ParametricSortDef>,
     /// Datatype definitions (name -> definition)
     datatypes: FxHashMap<crate::interner::Spur, DataTypeDef>,
+    /// Finite fields interned by `(_ FiniteField <order>)` sorts.
+    fields: FieldTable,
 }
 
 impl Default for SortManager {
@@ -312,6 +342,7 @@ impl SortManager {
             parametric_decls: FxHashMap::default(),
             parametric_defs: FxHashMap::default(),
             datatypes: FxHashMap::default(),
+            fields: FieldTable::new(),
         };
 
         // Pre-allocate common sorts
@@ -384,6 +415,37 @@ impl SortManager {
     /// Create a floating-point sort with custom exponent and significand widths
     pub fn float_sort(&mut self, eb: u32, sb: u32) -> SortId {
         self.intern(SortKind::FloatingPoint { eb, sb })
+    }
+
+    /// Intern the finite-field sort of prime order `p`, whose numeral was
+    /// parsed arbitrarily wide.
+    ///
+    /// Errors honestly when the order is not a prime this build can certify
+    /// (composite, 0, 1): a non-prime order must never be silently
+    /// reinterpreted as ℤ_n. See [`FieldTable::intern_prime`].
+    pub fn finite_field(&mut self, p: num_bigint::BigUint) -> Result<SortId, FieldError> {
+        let id = self.fields.intern_prime(p)?;
+        Ok(self.intern(SortKind::FiniteField(id)))
+    }
+
+    /// Look up an already-interned finite-field sort by order, without
+    /// interning (or classifying) anything.
+    #[must_use]
+    pub fn find_finite_field(&self, p: &num_bigint::BigUint) -> Option<SortId> {
+        let id = self.fields.find(p)?;
+        self.find(&SortKind::FiniteField(id))
+    }
+
+    /// The finite-field table (primality evidence, moduli).
+    #[must_use]
+    pub fn field_table(&self) -> &FieldTable {
+        &self.fields
+    }
+
+    /// A field's description, by id.
+    #[must_use]
+    pub fn field_desc(&self, id: FieldId) -> Option<&FieldDesc> {
+        self.fields.get(id)
     }
 
     /// Get or create Float16 sort (IEEE 754 half precision: 5 exponent, 11 significand)
@@ -711,6 +773,7 @@ impl SortManager {
                 | SortKind::RoundingMode
                 | SortKind::Uninterpreted(_)
                 | SortKind::Datatype(_)
+                | SortKind::FiniteField(_)
                 // A parameter not in `subst` stays free.
                 | SortKind::Parameter(_) => id,
                 SortKind::Set(elem) => {
@@ -761,6 +824,10 @@ impl SortManager {
             SortKind::FloatingPoint { eb, sb } => Some(format!("FloatingPoint({}, {})", eb, sb)),
             SortKind::RoundingMode => Some("RoundingMode".to_string()),
             SortKind::Set(_) => Some("Set".to_string()),
+            SortKind::FiniteField(id) => self
+                .fields
+                .get(*id)
+                .map(|f| format!("(_ FiniteField {})", f.modulus())),
             SortKind::Array { .. } => Some("Array".to_string()),
             // `try_resolve`, not `resolve`, and that is not defensiveness.
             // There are **two** interners in play — a `TermManager`'s and this

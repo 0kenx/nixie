@@ -11,6 +11,7 @@ use portable_atomic::{AtomicU32, Ordering};
 
 mod builder;
 pub mod bv_fold;
+pub mod ff_fold;
 mod query;
 mod rounding_mode;
 pub mod str_fold;

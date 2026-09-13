@@ -39,6 +39,7 @@ pub use egraph::{EClass, EClassId, EGraph, EGraphStats, ENode, ENodeKind};
 pub use interpolation::{InterpolationContext, InterpolationStats};
 pub use manager::bv_fold;
 pub use manager::bv_fold::bv_wrap_unsigned;
+pub use manager::ff_fold::FfBuildError;
 pub use manager::str_fold;
 pub use manager::{GCStatistics, SubstitutionBuilder, TermManager};
 pub use model::{FunctionInterpretation, Model, ModelValue};

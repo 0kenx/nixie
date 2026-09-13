@@ -21,6 +21,32 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         TermKind::RealConst(_) => Ok(manager.sorts.real_sort),
         TermKind::BitVecConst { .. } | TermKind::StringLit(_) => Ok(term.sort),
 
+        // Finite-field terms live in the field their first operand lives in;
+        // a numeral carries its field in the kind.
+        TermKind::FfConst { field, .. } => manager
+            .sorts
+            .find(&crate::sort::SortKind::FiniteField(*field))
+            .ok_or_else(|| {
+                NixieError::Internal("finite-field sort not interned for its numeral".to_string())
+            }),
+        TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
+            let first = args.first().copied().ok_or_else(|| {
+                NixieError::Internal("finite-field operator without operands".to_string())
+            })?;
+            match manager.get(first) {
+                Some(t) => Ok(t.sort),
+                None => Err(NixieError::Internal(
+                    "finite-field operand term not found".to_string(),
+                )),
+            }
+        }
+        TermKind::FfNeg(arg) => match manager.get(*arg) {
+            Some(t) => Ok(t.sort),
+            None => Err(NixieError::Internal(
+                "finite-field operand term not found".to_string(),
+            )),
+        },
+
         // Variables already have assigned sorts
         TermKind::Var(_) => Ok(term.sort),
 
@@ -350,6 +376,14 @@ fn format_sort(sort_id: SortId, sorts: &SortManager) -> String {
                         out.push_str(&format!("(_ FloatingPoint {} {})", eb, sb));
                     }
                     SortKind::RoundingMode => out.push_str("RoundingMode"),
+                    SortKind::FiniteField(id) => {
+                        let modulus = sorts
+                            .field_table()
+                            .get(*id)
+                            .map(|f| f.modulus().to_string())
+                            .unwrap_or_else(|| format!("<unknown field {}>", id.raw()));
+                        out.push_str(&format!("(_ FiniteField {modulus})"));
+                    }
                     SortKind::Set(elem) => {
                         // "(Set " <element> ")"
                         out.push_str("(Set ");

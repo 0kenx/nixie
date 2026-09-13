@@ -467,11 +467,6 @@ impl ModelChecker {
             }
         };
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-            eprintln!(
-                "[mc] check q={:?}: model.macros = {}",
-                q.term,
-                model.macros.len()
-            );
             let printer = nixie_core::smtlib::Printer::new(manager);
             eprintln!("[mc] orig  = {}", printer.print_term(q.body));
             eprintln!("[mc] body' = {}", printer.print_term(body_completed));
@@ -1120,6 +1115,11 @@ fn push_children(kind: &TermKind, out: &mut ChildList) {
             out.push(*b);
         }
         TermKind::SetEmpty(_) => {}
+        TermKind::FfConst { .. } => {}
+        TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
+            out.extend(args.iter().copied());
+        }
+        TermKind::FfNeg(a) => out.push(*a),
         TermKind::And(args) | TermKind::Or(args) | TermKind::Add(args) | TermKind::Mul(args) => {
             out.extend(args.iter().copied());
         }
@@ -1856,7 +1856,8 @@ fn rebuild_with(
         | TermKind::FpMinusInfinity { .. }
         | TermKind::FpPlusZero { .. }
         | TermKind::FpMinusZero { .. }
-        | TermKind::FpNaN { .. } => {
+        | TermKind::FpNaN { .. }
+        | TermKind::FfConst { .. } => {
             return Err("leaf scheduled as fold");
         }
         TermKind::Let { .. } | TermKind::Match { .. } => return Err("binder in rebuild"),
@@ -1864,6 +1865,19 @@ fn rebuild_with(
             return Err("quantifier handled by its own fold");
         }
 
+        // Finite fields: rebuilt through the total normal-form helper (the
+        // fallible constructors cannot fail on interned nodes; see
+        // `intern_ff_substituted`).
+        TermKind::FfAdd(args) => {
+            manager.intern_ff_substituted(TermKind::FfAdd(nary(args.len())?), sort)
+        }
+        TermKind::FfMul(args) => {
+            manager.intern_ff_substituted(TermKind::FfMul(nary(args.len())?), sort)
+        }
+        TermKind::FfBitsum(args) => {
+            manager.intern_ff_substituted(TermKind::FfBitsum(nary(args.len())?), sort)
+        }
+        TermKind::FfNeg(_) => manager.intern_ff_substituted(kind.clone(), sort),
         TermKind::Not(_) => manager.mk_not(one(0)?),
         TermKind::And(args) => manager.mk_and(nary(args.len())?),
         TermKind::Or(args) => manager.mk_or(nary(args.len())?),

@@ -125,6 +125,7 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::IntConst(_)
                 | TermKind::RealConst(_)
                 | TermKind::BitVecConst { .. }
+                | TermKind::FfConst { .. }
                 | TermKind::SetEmpty(_)
                 | TermKind::Var(_) => {
                     if self.is_bv_sort(term.sort) {
@@ -141,7 +142,11 @@ impl<'a> BitBlastTactic<'a> {
                 | TermKind::Or(args)
                 | TermKind::Add(args)
                 | TermKind::Mul(args)
-                | TermKind::Distinct(args) => stack.extend(args.iter().copied()),
+                | TermKind::Distinct(args)
+                | TermKind::FfAdd(args)
+                | TermKind::FfMul(args)
+                | TermKind::FfBitsum(args) => stack.extend(args.iter().copied()),
+                TermKind::FfNeg(a) => stack.push(*a),
                 // String constructs whose operands cannot carry BV content.
                 TermKind::StringLit(_)
                 | TermKind::StrLen(_)

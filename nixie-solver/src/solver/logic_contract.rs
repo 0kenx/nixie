@@ -46,6 +46,8 @@ pub struct LogicSpec {
     pub strings: bool,
     /// Datatypes.
     pub datatypes: bool,
+    /// Prime finite fields (`QF_FF`).
+    pub ff: bool,
     /// Quantifiers permitted.
     pub quantifiers: bool,
 }
@@ -63,6 +65,7 @@ impl LogicSpec {
         fp: false,
         strings: false,
         datatypes: false,
+        ff: false,
         quantifiers: false,
     };
 
@@ -483,6 +486,14 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
         LogicSpec {
             fp: true,
             arith: true,
+            ..LogicSpec::NONE
+        },
+    ),
+    // --- Finite fields ---
+    (
+        "QF_FF",
+        LogicSpec {
+            ff: true,
             ..LogicSpec::NONE
         },
     ),
@@ -1079,6 +1090,7 @@ pub struct Capabilities {
     pub fp: bool,
     pub strings: bool,
     pub datatypes: bool,
+    pub ff: bool,
 }
 
 impl Capabilities {
@@ -1115,6 +1127,7 @@ impl Capabilities {
                             SortFamily::Fp => caps.fp = true,
                             SortFamily::String => caps.strings = true,
                             SortFamily::Datatype => caps.datatypes = true,
+                            SortFamily::Ff => caps.ff = true,
                             SortFamily::Other => {}
                         }
                     }
@@ -1136,6 +1149,7 @@ impl Capabilities {
                         Some(SortFamily::Fp) => caps.fp = true,
                         Some(SortFamily::String) => caps.strings = true,
                         Some(SortFamily::Datatype) => caps.datatypes = true,
+                        Some(SortFamily::Ff) => caps.ff = true,
                         // This AST represents many BUILTINS as generic
                         // Apply (`str.len`, `str.indexof`, …, and declared
                         // functions) — sort shape alone cannot separate
@@ -1309,6 +1323,7 @@ impl Capabilities {
                             SortFamily::Fp => caps.fp = true,
                             SortFamily::String => caps.strings = true,
                             SortFamily::Datatype => caps.datatypes = true,
+                            SortFamily::Ff => caps.ff = true,
                             SortFamily::Other => {}
                         }
                     }
@@ -1380,6 +1395,8 @@ enum SortFamily {
     Fp,
     String,
     Datatype,
+    /// Prime finite fields.
+    Ff,
     Other,
 }
 
@@ -1392,6 +1409,7 @@ fn sort_family(s: SortId, manager: &TermManager) -> Option<SortFamily> {
         SortKind::String => SortFamily::String,
         SortKind::Uninterpreted(_) => SortFamily::Other,
         SortKind::Datatype(_) => SortFamily::Datatype,
+        SortKind::FiniteField(_) => SortFamily::Ff,
         _ => SortFamily::Other,
     })
 }
@@ -1409,6 +1427,7 @@ impl Capabilities {
         self.bv |= other.bv;
         self.fp |= other.fp;
         self.strings |= other.strings;
+        self.ff |= other.ff;
         self.datatypes |= other.datatypes;
     }
 }
@@ -1451,6 +1470,9 @@ pub fn validate(spec: &LogicSpec, caps: &Capabilities) -> Option<String> {
     }
     if caps.datatypes && !spec.datatypes {
         return Some("datatypes not allowed in this logic".into());
+    }
+    if caps.ff && !spec.ff {
+        return Some("finite fields not allowed in this logic".into());
     }
     None
 }

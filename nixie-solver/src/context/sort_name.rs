@@ -212,6 +212,22 @@ impl Context {
                         _ => Err(Self::malformed_sort_error(name)),
                     }
                 }
+                // `(_ FiniteField <order>)`: the order is an
+                // arbitrary-precision numeral, so it parses as `BigUint`
+                // (a 254-bit ZK prime does not fit `u32`). Interning
+                // classifies primality once; a composite order is an
+                // honest error, never a silent reinterpretation as Z_n.
+                [u, kw, order] if u.as_str() == "_" && kw.as_str() == "FiniteField" => {
+                    match order.parse::<num_bigint::BigUint>() {
+                        Ok(p) => self
+                            .terms
+                            .sorts
+                            .finite_field(p)
+                            .map(SortExprStep::Resolved)
+                            .map_err(|e| NixieError::Unsupported(e.to_string())),
+                        _ => Err(Self::malformed_sort_error(name)),
+                    }
+                }
                 [head, domain, range] if head.as_str() == "Array" => Ok(SortExprStep::Array {
                     domain_expr: std::mem::take(domain),
                     range_expr: std::mem::take(range),

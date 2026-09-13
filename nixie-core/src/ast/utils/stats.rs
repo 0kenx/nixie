@@ -237,6 +237,7 @@ fn combine_complexity(
             | TermKind::IntConst(_)
             | TermKind::RealConst(_)
             | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
             | TermKind::StringLit(_)
             | TermKind::SetEmpty(_)
             | TermKind::Var(_),
@@ -252,7 +253,8 @@ fn combine_complexity(
             | TermKind::StrToCode(a)
             | TermKind::SetSingleton(a)
             | TermKind::SetCard(a)
-            | TermKind::StrFromCode(a),
+            | TermKind::StrFromCode(a)
+            | TermKind::FfNeg(a),
         ) => 2 + get(*a),
 
         Some(TermKind::BvExtract { arg, .. }) => 2 + get(*arg),
@@ -262,7 +264,10 @@ fn combine_complexity(
             | TermKind::Or(args)
             | TermKind::Add(args)
             | TermKind::Mul(args)
-            | TermKind::Distinct(args),
+            | TermKind::Distinct(args)
+            | TermKind::FfAdd(args)
+            | TermKind::FfMul(args)
+            | TermKind::FfBitsum(args),
         ) => args.len() + 1 + args.iter().map(|&a| get(a)).sum::<usize>(),
 
         Some(

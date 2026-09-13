@@ -1014,11 +1014,11 @@ impl Inference {
                     // A binder's variable must have a type before its body is
                     // walked. Lowering renames every binder uniquely, so a flat
                     // environment is enough and no scope stack is needed.
-                    if let Some(var) = node.binder()
-                        && !self.env.contains_key(var)
-                    {
-                        let v = self.fresh()?;
-                        self.env.insert(var.clone(), v);
+                    for var in node.binders() {
+                        if !self.env.contains_key(var) {
+                            let v = self.fresh()?;
+                            self.env.insert(var.clone(), v);
+                        }
                     }
                     stack.push(Step::Build(node));
                     for child in node.as_ref().children() {
@@ -1164,6 +1164,40 @@ impl Inference {
                 self.unify(ts, want)?;
                 let te = self.child(expr)?;
                 Ok(self.set_of(te)?)
+            }
+            // A fold's signature, from `Apalache.tla`:
+            //
+            //     ApaFoldSet     : ((a, b) => a, a, Set(b)) => a
+            //     ApaFoldSeqLeft : ((a, b) => a, a, Seq(b)) => a
+            //
+            // The accumulator is the base's type and the result's, which is
+            // what makes a fold typeable at all without an operator type: the
+            // two parameters are ordinary names in the environment, unified
+            // against the base and the collection's element.
+            Kera::Fold {
+                over,
+                acc,
+                elem,
+                base,
+                collection,
+                body,
+            } => {
+                let ta = self.name_ty(acc)?;
+                let te = self.name_ty(elem)?;
+                let tbase = self.child(base)?;
+                self.unify(ta, tbase)?;
+                let tcoll = self.child(collection)?;
+                let want = match over {
+                    crate::kera::FoldOver::Set => self.set_of(te)?,
+                    crate::kera::FoldOver::SeqLeft => self.mk(Ty::Seq(te))?,
+                };
+                self.unify(tcoll, want)?;
+                // The operator returns the accumulator's type. This is the
+                // constraint that catches `ApaFoldSet(LAMBDA a, b: a > b, …)`,
+                // where the body is a Boolean and the base is not.
+                let tbody = self.child(body)?;
+                self.unify(tbody, ta)?;
+                Ok(ta)
             }
             Kera::SetBin(_, a, b) => {
                 let ta = self.child(a)?;

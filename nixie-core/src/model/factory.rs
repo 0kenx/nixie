@@ -124,6 +124,13 @@ impl ValueFactory {
                 SortKind::BitVec(width) => break Value::BitVec(width, 0),
                 // Positive zero: sign bit clear, all-zero exponent and mantissa.
                 SortKind::FloatingPoint { .. } => break Value::FloatingPoint(false, 0, 0),
+                // The field's zero element (see `model::Value::FiniteField`).
+                SortKind::FiniteField(field) => {
+                    break Value::FiniteField {
+                        value: num_bigint::BigInt::from(0),
+                        field,
+                    };
+                }
                 // The reserved five-element `RoundingMode` sort: named
                 // inhabitants, so the default is the canonical `RNE`.
                 // (Ported from upstream v0.3.3.)

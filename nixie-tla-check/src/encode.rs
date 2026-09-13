@@ -25,9 +25,9 @@
 //! cross-check in `examples/encodecheck.rs` compares the two on every ground
 //! definition of the corpora.
 
-use crate::arena::{Member, SetCell, Value, cardinality, eq_values, member_of};
+use crate::arena::{Member, SetCell, Value, cardinality, eq_values, ite_values, member_of};
 use nixie_core::{SortId, TermId, TermManager};
-use nixie_tla::kera::{ArithOp, CmpOp, Kera, KeraRef, Name, SetOp};
+use nixie_tla::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use thiserror::Error;
@@ -70,6 +70,14 @@ pub type Result<T> = core::result::Result<T, EncodeError>;
 
 /// Default maximum encoding depth.
 pub const DEFAULT_MAX_DEPTH: usize = 512;
+
+/// The SMT name standing for `CHOOSE v : TRUE` read as a Boolean.
+///
+/// TLA+ says `CHOOSE` over a predicate nothing pins down picks *some* fixed
+/// value, the same one wherever the expression is written -- so this is one
+/// shared free constant, not a fresh one per occurrence. It is the `ELSE`
+/// branch of `TLC!Assert`.
+const CHOOSE_ANY_BOOL: &str = "@tla_choose_any_bool";
 
 /// How set-valued terms reach the solver.
 ///
@@ -380,12 +388,15 @@ impl Encoder {
     fn field_name(&self, index: &KeraRef) -> Option<String> {
         match index.as_ref() {
             Kera::Str(name) => Some(crate::sorts::record_field(name)),
-            Kera::Int(_) => {
-                let n = literal_int(index)?;
+            // Anything else is tried as a tuple index, which is an integer —
+            // and one that need not be written as a literal, since a `.cfg`
+            // substitution leaves arithmetic behind. A term that is not a
+            // ground integer falls through to `None`, which is the refusal.
+            _ => {
+                let n = ground_int(index)?;
                 let i = usize::try_from(&n).ok().filter(|k| *k >= 1)?;
                 Some(crate::sorts::tuple_field(i - 1))
             }
-            _ => None,
         }
     }
 
@@ -639,6 +650,35 @@ impl Encoder {
         match saved {
             Some(v) => self.bound.insert(var.clone(), v),
             None => self.bound.remove(var),
+        };
+        out
+    }
+
+    /// Encode `body` once with two names bound at the same time.
+    ///
+    /// A fold's operator takes an accumulator and an element, and the two have
+    /// to be in scope together. Nesting [`Encoder::with_bound`] would do it,
+    /// but it also has to *unbind* in the right order, and doing that by hand
+    /// at the call site is how a binding leaks.
+    fn with_two_bound(
+        &mut self,
+        first: &Name,
+        fv: Rc<Value>,
+        second: &Name,
+        sv: Rc<Value>,
+        body: &KeraRef,
+        tm: &mut TermManager,
+    ) -> Result<Rc<Value>> {
+        let saved_first = self.bound.insert(first.clone(), fv);
+        let saved_second = self.bound.insert(second.clone(), sv);
+        let out = self.value(body, tm);
+        match saved_second {
+            Some(v) => self.bound.insert(second.clone(), v),
+            None => self.bound.remove(second),
+        };
+        match saved_first {
+            Some(v) => self.bound.insert(first.clone(), v),
+            None => self.bound.remove(first),
         };
         out
     }
@@ -1034,14 +1074,16 @@ impl Encoder {
                 }
                 self.mk_set(members)
             }
-            // `a..b` is enumerable only when both ends are literal. A symbolic
-            // bound has no finite candidate list, and inventing one would
-            // silently check a different specification.
+            // `a..b` is enumerable only when both ends are *ground*. A
+            // symbolic bound has no finite candidate list, and inventing one
+            // would silently check a different specification — but ground is
+            // not the same as literal, and reading it as literal is what kept
+            // `0 .. N-1` out after a `.cfg` had already pinned `N`.
             Kera::Range(a, b) => {
-                let lo = literal_int(a).ok_or_else(|| {
+                let lo = ground_int(a).ok_or_else(|| {
                     EncodeError::NotEnumerable("`..` with a non-literal lower bound".into())
                 })?;
-                let hi = literal_int(b).ok_or_else(|| {
+                let hi = ground_int(b).ok_or_else(|| {
                     EncodeError::NotEnumerable("`..` with a non-literal upper bound".into())
                 })?;
                 let yes = tm.mk_bool(true);
@@ -1330,7 +1372,7 @@ impl Encoder {
                     // heterogeneous tuple has no well-sorted answer, and is
                     // refused rather than approximated.
                     Value::Tuple(parts) => {
-                        let Some(n) = literal_int(i) else {
+                        let Some(n) = ground_int(i) else {
                             return Err(EncodeError::Unsupported(
                                 "a tuple indexed by a non-literal".into(),
                             ));
@@ -1396,7 +1438,7 @@ impl Encoder {
                 let target = self.value(fun, tm)?;
                 match &*target {
                     Value::Tuple(parts) => {
-                        let Some(n) = literal_int(index) else {
+                        let Some(n) = ground_int(index) else {
                             return Err(EncodeError::Unsupported(
                                 "`EXCEPT` on a tuple at a non-literal index".into(),
                             ));
@@ -1556,6 +1598,153 @@ impl Encoder {
                 }
             }
 
+            // A fold, which is `FoldSetRule` / `FoldSeqRule` in Apalache.
+            //
+            // The accumulator starts at the base and is stepped once per
+            // element, with the operator's body encoded afresh each time —
+            // instantiation, exactly as a binder over a set already works
+            // here. That is what keeps the result quantifier-free.
+            //
+            // What makes a *set* fold harder than a sequence fold is that an
+            // arena candidate list is an over-approximation in two ways at
+            // once: a candidate may not be in the set, and two candidates may
+            // denote the same value. A step therefore only takes effect when
+            // the candidate is present **and** is not a duplicate of an
+            // earlier present one, which is the same guard `cardinality` uses
+            // and the same one Apalache builds in `SetOps.dedup`. Without the
+            // second half, `ApaFoldSet(+, 0, {x, y})` would answer `x + y`
+            // when `x = y`.
+            Kera::Fold {
+                over,
+                acc,
+                elem,
+                base,
+                collection,
+                body,
+            } => {
+                let mut a = self.value(base, tm)?;
+                match over {
+                    FoldOver::Set => {
+                        // A fold needs a candidate list, exactly as a bounded
+                        // quantifier does, so it goes through the same
+                        // coercion: a set-sorted term this encoder built is a
+                        // union of singletons and its candidates read back off
+                        // it, while a genuinely opaque set variable has none
+                        // and is declined. Answering from the base alone would
+                        // be the shape of the bug Apalache fixed for infinite
+                        // sets (their issue 1691), and the same wrong answer.
+                        let cell = self.set(collection, tm)?;
+                        for (i, m) in cell.members.iter().enumerate() {
+                            let mut counts = vec![m.present];
+                            for earlier in &cell.members[..i] {
+                                let same = self.shape(eq_values(&m.value, &earlier.value, tm))?;
+                                let dup = tm.mk_and([earlier.present, same]);
+                                counts.push(tm.mk_not(dup));
+                            }
+                            let counts = tm.mk_and(counts);
+                            let stepped = self.with_two_bound(
+                                acc,
+                                Rc::clone(&a),
+                                elem,
+                                Rc::clone(&m.value),
+                                body,
+                                tm,
+                            )?;
+                            let picked = ite_values(counts, &stepped, &a, tm)
+                                .ok_or(EncodeError::ShapeClash)?;
+                            a = Rc::new(picked);
+                        }
+                    }
+                    // A sequence has neither problem: every element is there,
+                    // once, in order. It does have to *be* a sequence — a
+                    // literal tuple, which is what a TLA+ sequence is — and a
+                    // sequence-sorted state variable has no encoding yet, so
+                    // it is declined rather than approximated.
+                    FoldOver::SeqLeft => {
+                        let items = match &*self.value(collection, tm)? {
+                            Value::Tuple(items) => items.clone(),
+                            _ => {
+                                return Err(EncodeError::Unsupported(
+                                    "a fold over a sequence that is not a literal".into(),
+                                ));
+                            }
+                        };
+                        for item in items {
+                            a = self.with_two_bound(acc, a, elem, item, body, tm)?;
+                        }
+                    }
+                }
+                Ok(a)
+            }
+
+            // TLC's tracing and assertion operators, encoded as `TLC.tla`
+            // *defines* them rather than approximated:
+            //
+            //     Print(out, val)  == val
+            //     PrintT(out)      == TRUE
+            //     Assert(val, out) == IF val = TRUE THEN TRUE
+            //                                       ELSE CHOOSE v : TRUE
+            //
+            // `out` is the string TLC would print. It cannot reach the value,
+            // so it is deliberately not encoded: declining a specification
+            // because its *message* has no encoding would be a refusal about
+            // the wrong term.
+            //
+            // The `ELSE` branch is the whole difficulty. `CHOOSE v : TRUE` is
+            // a value TLA+ leaves unspecified -- some fixed member of the
+            // universe, the same one at every occurrence -- so a failing
+            // `Assert` does **not** have the value `FALSE`. Encoding it as
+            // `FALSE` would turn TLC's abort into a violation the
+            // specification does not have; encoding it as `TRUE` would hide
+            // one. It is encoded as a single shared free Boolean, which is
+            // exactly what "unspecified" means and is the only reading that
+            // neither manufactures nor hides a counterexample.
+            //
+            // The free Boolean is chosen by the solver *within the query*, so
+            // a failing `Assert` under an invariant still reports a
+            // `Violation` -- it means "there is a behaviour, and a reading of
+            // the unspecified value, under which the invariant fails", which
+            // is a genuine failure to establish it and is what TLC reports by
+            // halting. In `Init` or `Next` the same freedom means the state is
+            // *not* pruned, so no counterexample is deleted. That is the
+            // asymmetry the rest of the encoder keeps: a `Violation` may be
+            // spurious, `NoViolationWithin` stays sound.
+            Kera::Opaque(name, args)
+                if matches!(
+                    (name.as_str(), args.len()),
+                    ("Print", 2) | ("PrintT", 1) | ("Assert", 2)
+                ) =>
+            {
+                match name.as_str() {
+                    "PrintT" => scalar(tm.mk_bool(true)),
+                    "Print" => self.value(&args[1], tm),
+                    // `Assert`. Inference already unifies the condition with
+                    // `BOOLEAN`, so `val = TRUE` is `val`; the check below is
+                    // what makes that a fact rather than a belief.
+                    _ => {
+                        let encoded = self.value(&args[0], tm)?;
+                        let Value::Scalar(cond) = &*encoded else {
+                            return Err(EncodeError::Unsupported(
+                                "`Assert` of a condition that is not a scalar".into(),
+                            ));
+                        };
+                        let cond = *cond;
+                        let bool_sort = tm.sorts.bool_sort;
+                        if self.sort_of(cond, tm)? != bool_sort {
+                            return Err(EncodeError::Unsupported(
+                                "`Assert` of a condition that is not Boolean".into(),
+                            ));
+                        }
+                        // One name for every occurrence: `CHOOSE` picks the
+                        // same value each time it is written, and two
+                        // independent free Booleans would let one failing
+                        // `Assert` be read two ways at once.
+                        let arbitrary = tm.mk_var(CHOOSE_ANY_BOOL, bool_sort);
+                        scalar(tm.mk_or([cond, arbitrary]))
+                    }
+                }
+            }
+
             // Standard-module operators whose meaning is arena-level.
             // Cardinality follows the set's representation too: the theory
             // decides it for a native set, the de-duplicating sum for an
@@ -1618,14 +1807,38 @@ fn scalar(t: TermId) -> Result<Rc<Value>> {
 }
 
 /// The integer a term denotes, if it is a literal (possibly negated).
-///
-/// Used only where a *candidate list* has to be built, which is the one place
-/// a symbolic value cannot be carried: `a..b` needs to know how many elements
-/// there are, not merely how to compare them.
 fn literal_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
     match term.as_ref() {
         Kera::Int(d) => d.parse().ok(),
         Kera::Neg(a) => literal_int(a).map(|v| -v),
+        _ => None,
+    }
+}
+
+/// The integer a **ground** term denotes.
+///
+/// Used where a *candidate list* or a component index has to be built, which
+/// is the one place a symbolic value cannot be carried: `a..b` needs to know
+/// how many elements there are, not merely how to compare them, and a
+/// heterogeneous tuple has no well-sorted answer for a dynamic index.
+///
+/// A literal is not enough, and assuming it was is what kept a large part of
+/// the corpus out. `CONSTANT N = 4` is a *substitution*, so `0 .. N-1` becomes
+/// `0 .. (4-1)` — as ground as `0 .. 3` and rejected all the same. The value
+/// has to be computed, not pattern-matched.
+///
+/// It is computed by `nixie-tla`'s evaluator, which is the right authority
+/// rather than a convenience: it is the implementation of TLA+ arithmetic that
+/// `bench/tla_eval` checks against TLC, and a second constant folder here
+/// would be a second semantics to keep in agreement. It fails closed — a free
+/// name, an overflow or the depth limit all give `None`, which is the refusal
+/// that was already there.
+fn ground_int(term: &KeraRef) -> Option<num_bigint::BigInt> {
+    if let Some(n) = literal_int(term) {
+        return Some(n);
+    }
+    match nixie_tla::Evaluator::new().eval(term) {
+        Ok(nixie_tla::Value::Int(i)) => Some(i.into()),
         _ => None,
     }
 }

@@ -296,7 +296,16 @@ impl CombinedRewriter {
             | TermKind::SetMinus(_, _)
             | TermKind::SetMember(_, _)
             | TermKind::SetSubset(_, _)
-            | TermKind::SetCard(_) => RewriterKind::None,
+            | TermKind::SetCard(_)
+            // Finite-field terms are already in normal form at construction
+            // (`mk_ff_*` folds), so no rewriter pass applies. Sound for the
+            // same reason as the sets arm: a missing simplification costs
+            // time, never soundness.
+            | TermKind::FfConst { .. }
+            | TermKind::FfAdd(_)
+            | TermKind::FfMul(_)
+            | TermKind::FfNeg(_)
+            | TermKind::FfBitsum(_) => RewriterKind::None,
 
             // String
             TermKind::StringLit(_)

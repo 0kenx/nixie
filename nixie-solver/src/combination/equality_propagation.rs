@@ -557,6 +557,7 @@ impl EqualityPropagator {
             | TermKind::IntConst(_)
             | TermKind::RealConst(_)
             | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
             | TermKind::Var(_)
             | TermKind::StringLit(_)
             | TermKind::FpLit { .. }
@@ -650,7 +651,13 @@ impl EqualityPropagator {
             | TermKind::FpIsNaN(_)
             | TermKind::FpIsNegative(_)
             | TermKind::FpIsPositive(_)
-            | TermKind::FpToReal(_) => plain(kind),
+            | TermKind::FpToReal(_)
+            // Finite-field operators carry no payload beyond their
+            // discriminant.
+            | TermKind::FfAdd(_)
+            | TermKind::FfMul(_)
+            | TermKind::FfNeg(_)
+            | TermKind::FfBitsum(_) => plain(kind),
 
             // ---- Indexed bit-vector operator: the bounds are part of the
             // operator, not arguments.

@@ -27,7 +27,7 @@
 //! reports [`crate::LowerErrorKind::InlineLimit`] rather than looping.
 
 use crate::error::{LowerError, LowerErrorKind, Result};
-use crate::kera::{ArithOp, CmpOp, Kera, KeraRef, Name, SetOp};
+use crate::kera::{ArithOp, CmpOp, FoldOver, Kera, KeraRef, Name, SetOp};
 use nixie_tla_syntax::Span;
 use nixie_tla_syntax::ast::{
     Bound, CaseArm, ExceptSel, Expr, ExprKind, Module, Pattern, QuantKind, Unit, UnitKind,
@@ -216,13 +216,32 @@ enum Frame<'a> {
     PopInline,
     /// Expand a function definition's `bounds`/`body` as `[x \in S |-> e]`.
     ExpandFun(&'a [Bound], &'a Expr),
-    /// Build that function definition from `1 + 1` values (domain, body).
-    BuildFun(Name),
+    /// Build a fold from `3` values (base, collection, operator body).
+    BuildFold {
+        /// Whether the collection is a set or a sequence.
+        over: FoldOver,
+        /// The name the operator's accumulator parameter was renamed to.
+        acc: Name,
+        /// The name its element parameter was renamed to.
+        elem: Name,
+    },
+    /// Build that function definition from `domains + 1` values: one term per
+    /// bound variable's domain, then the body. Several domains become a
+    /// product, matching `[x \in S, y \in T |-> e]`.
+    BuildFun {
+        /// The variable the function binds.
+        var: Name,
+        /// How many domains are on the value stack.
+        domains: usize,
+    },
     /// Restore operator definitions shadowed by a `LET`.
     PopLetDefs(Vec<(String, Option<Def<'a>>)>),
     /// Push a ready-made kernel value (a record field name in an `EXCEPT`
     /// path, which has no surface expression of its own).
     PushLiteral(KeraRef),
+    /// Pop `n` values and push them as one tuple. Used for a multi-argument
+    /// `EXCEPT` selector, `![i, j]`, which is one index and not two.
+    BuildTuple(usize),
     /// Enter an instance: pop the lowered `WITH` replacements and the member's
     /// arguments, and look through the instantiated module under them.
     PushInstanceCtx {
@@ -713,6 +732,17 @@ impl<'a> Lowerer<'a> {
                     self.inline_depth = self.inline_depth.saturating_sub(1);
                 }
                 Frame::PushLiteral(v) => values.push(v),
+                Frame::BuildTuple(n) => {
+                    let at = values.len().checked_sub(n).ok_or_else(|| {
+                        LowerError::unsupported(
+                            "an `EXCEPT` index",
+                            "internal: missing index expressions",
+                            expr.span,
+                        )
+                    })?;
+                    let parts: Vec<KeraRef> = values.split_off(at);
+                    values.push(Kera::Tuple(parts).rc());
+                }
                 Frame::PushInstanceCtx {
                     module,
                     subst_names,
@@ -777,46 +807,99 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
+                // `f[x \in S] == e` at a use site: it denotes a *value*, so
+                // it expands as `[x \in S |-> e]`.
+                //
+                // `f[x \in S, y \in T] == e` is a function of one variable
+                // ranging over `S \X T`, exactly as the expression form
+                // `[x \in S, y \in T |-> e]` already was — the two differ
+                // only in where they are written, and lowering them
+                // differently was the whole defect. Nesting binders instead
+                // would be a different function: one that returns a function.
                 Frame::ExpandFun(bounds, body) => {
+                    let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
                     let mut scope = HashMap::new();
-                    let mut names = Vec::new();
-                    for b in bounds {
-                        for p in &b.patterns {
-                            names.push(self.bind_pattern(p, &mut scope));
+                    let var = if total == 1 {
+                        let mut first = None;
+                        for b in bounds {
+                            for p in &b.patterns {
+                                first = Some(self.bind_pattern(p, &mut scope));
+                            }
                         }
-                    }
-                    let Some(first) = names.first().cloned() else {
+                        first
+                    } else if total == 0 {
+                        None
+                    } else {
+                        Some(self.bind_product(bounds, &mut scope))
+                    };
+                    let Some(var) = var else {
                         return Err(LowerError::unsupported(
                             "a function definition with no bound variable",
                             "internal",
                             expr.span,
                         ));
                     };
-                    if names.len() != 1 {
-                        return Err(LowerError::unsupported(
-                            "a multi-variable function definition",
-                            "`f[x \\in S, y \\in T] == …` is not lowered yet; write it as a \
-                             function of one tuple variable",
-                            expr.span,
-                        ));
-                    }
-                    stack.push(Frame::BuildFun(first));
+                    stack.push(Frame::BuildFun {
+                        var,
+                        domains: total,
+                    });
                     stack.push(Frame::PopScope);
                     stack.push(Frame::Expand(body));
                     stack.push(Frame::PushScope(scope));
-                    if let Some(b) = bounds.first() {
-                        stack.push(Frame::Expand(&b.domain));
+                    for b in bounds.iter().rev() {
+                        for _ in 0..b.patterns.len() {
+                            stack.push(Frame::Expand(&b.domain));
+                        }
                     }
                 }
-                Frame::BuildFun(var) => {
-                    let (Some(body), Some(set)) = (values.pop(), values.pop()) else {
+                Frame::BuildFun { var, domains } => {
+                    let Some(body) = values.pop() else {
                         return Err(LowerError::unsupported(
                             "a function definition",
+                            "internal: missing body",
+                            expr.span,
+                        ));
+                    };
+                    let mut doms = Vec::with_capacity(domains);
+                    for _ in 0..domains {
+                        let Some(d) = values.pop() else {
+                            return Err(LowerError::unsupported(
+                                "a function definition",
+                                "internal: missing domain",
+                                expr.span,
+                            ));
+                        };
+                        doms.push(d);
+                    }
+                    doms.reverse();
+                    let set = if doms.len() == 1 {
+                        doms.swap_remove(0)
+                    } else {
+                        Kera::Times(doms).rc()
+                    };
+                    values.push(Kera::FunDef { var, set, body }.rc());
+                }
+                Frame::BuildFold { over, acc, elem } => {
+                    let (Some(body), Some(collection), Some(base)) =
+                        (values.pop(), values.pop(), values.pop())
+                    else {
+                        return Err(LowerError::unsupported(
+                            "a fold",
                             "internal: missing children",
                             expr.span,
                         ));
                     };
-                    values.push(Kera::FunDef { var, set, body }.rc());
+                    values.push(
+                        Kera::Fold {
+                            over,
+                            acc,
+                            elem,
+                            base,
+                            collection,
+                            body,
+                        }
+                        .rc(),
+                    );
                 }
                 Frame::Build(e, n) => {
                     let built = self.build(e, &mut values, n)?;
@@ -1109,25 +1192,22 @@ impl<'a> Lowerer<'a> {
         Some(CtxResolution::Def(def.clone()))
     }
 
-    /// Bind one fresh variable over the product of `bounds`, projecting the
-    /// components out of it.
+    /// Bind one fresh variable standing for a *tuple* of the `bounds`'
+    /// variables, with each original name bound to its projection, and return
+    /// that variable.
     ///
-    /// Shared by `[x \in S, y \in T |-> e]` and `{e : x \in S, y \in T}`:
-    /// both range over every *combination*, and both must end up with a single
-    /// kernel binder. Nesting binders instead is wrong for the set map — it
-    /// yields a set of sets — and wrong for the function, whose domain is the
-    /// product.
-    fn expand_product_binder(
+    /// Shared by every multi-variable binder, and shared on purpose: the
+    /// projection rule is a semantic decision (`x` is component `i` of the
+    /// bound tuple, counting across all the bounds, and a tuple pattern
+    /// projects again inside that), and two copies of it would be two
+    /// semantics to keep in agreement.
+    fn bind_product(
         &mut self,
-        e: &'a Expr,
         bounds: &'a [Bound],
-        body: &'a Expr,
-        stack: &mut Vec<Frame<'a>>,
-    ) {
-        let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
+        scope: &mut HashMap<String, Binding<'a>>,
+    ) -> Name {
         let tv = self.fresh_name("arg");
         let tvar = Kera::Var(tv.clone()).rc();
-        let mut scope = HashMap::new();
         let mut i = 0usize;
         for b in bounds {
             for p in &b.patterns {
@@ -1148,6 +1228,27 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        tv
+    }
+
+    /// Bind one fresh variable over the product of `bounds`, projecting the
+    /// components out of it.
+    ///
+    /// Shared by `[x \in S, y \in T |-> e]` and `{e : x \in S, y \in T}`:
+    /// both range over every *combination*, and both must end up with a single
+    /// kernel binder. Nesting binders instead is wrong for the set map — it
+    /// yields a set of sets — and wrong for the function, whose domain is the
+    /// product.
+    fn expand_product_binder(
+        &mut self,
+        e: &'a Expr,
+        bounds: &'a [Bound],
+        body: &'a Expr,
+        stack: &mut Vec<Frame<'a>>,
+    ) {
+        let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
+        let mut scope = HashMap::new();
+        let tv = self.bind_product(bounds, &mut scope);
         self.binder_names.insert(e.span.start.offset, vec![tv]);
         stack.push(Frame::Build(e, total + 1));
         stack.push(Frame::PopScope);
@@ -1158,6 +1259,105 @@ impl<'a> Lowerer<'a> {
                 stack.push(Frame::Expand(&b.domain));
             }
         }
+    }
+
+    /// Whether this application is one of Apalache's folds rather than a
+    /// definition that happens to share the name.
+    ///
+    /// The `Apa` prefix exists to reserve these names, so in practice the
+    /// answer is yes. What this guards is the one case where it is not — and
+    /// it cannot simply defer whenever a definition exists, because
+    /// `Apalache.tla` defines both names itself, `RECURSIVE`, and deferring
+    /// would defer to *that*. So a definition wins only when the application
+    /// does not look like a fold: its first argument is not a two-parameter
+    /// operator, and no reading of it as a fold was ever going to work.
+    fn folds_here(&self, name: &str, args: &'a [Expr]) -> bool {
+        if self.lookup(name).is_none() && !self.defs.contains_key(name) {
+            return true;
+        }
+        let Some(first) = args.first() else {
+            return false;
+        };
+        matches!(
+            self.as_operator(first),
+            Some(Binding::Op { params, .. }) if params.len() == 2
+        )
+    }
+
+    /// Lower `ApaFoldSet(Op, base, S)` / `ApaFoldSeqLeft(Op, base, seq)`.
+    ///
+    /// The operator's body is lowered **once**, with its two parameters left
+    /// free and renamed to fresh names; [`Kera::Fold`] records which names
+    /// they are, and whoever consumes the fold binds them. Lowering it once is
+    /// the point: a set's members are not known here, so there is nothing to
+    /// unroll against, and the encoder is where the candidate list lives.
+    ///
+    /// The parameters are renamed rather than kept because the body is lowered
+    /// into a term that may sit inside an enclosing binder. Every binder
+    /// lowering introduces is unique, and a fold's parameters have to join that
+    /// discipline: otherwise a fold under `\E p \in S` whose operator also
+    /// calls a parameter `p` would capture it.
+    fn expand_fold(
+        &mut self,
+        e: &'a Expr,
+        over: FoldOver,
+        args: &'a [Expr],
+        span: Span,
+        stack: &mut Vec<Frame<'a>>,
+    ) -> Result<()> {
+        let [op, base, collection] = args else {
+            return Err(LowerError::unsupported(
+                "a fold",
+                "internal: a fold takes three arguments",
+                span,
+            ));
+        };
+        let Some(Binding::Op { params, body }) = self.as_operator(op) else {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its first argument must be an operator: pass a defined \
+                 two-parameter operator or a `LAMBDA`",
+                op.span,
+            ));
+        };
+        if params.len() != 2 {
+            return Err(LowerError::new(
+                LowerErrorKind::Arity {
+                    name: "the folding operator".into(),
+                    expected: 2,
+                    found: params.len(),
+                },
+                op.span,
+            ));
+        }
+        if params.iter().any(|(_, arity)| *arity > 0) {
+            return Err(LowerError::unsupported(
+                "this fold",
+                "its operator takes an operator of its own, which the kernel \
+                 has no way to carry",
+                op.span,
+            ));
+        }
+        let acc = self.fresh_name(&params[0].0);
+        let elem = self.fresh_name(&params[1].0);
+        let mut scope = HashMap::new();
+        scope.insert(
+            params[0].0.clone(),
+            Binding::Value(Kera::Var(acc.clone()).rc()),
+        );
+        scope.insert(
+            params[1].0.clone(),
+            Binding::Value(Kera::Var(elem.clone()).rc()),
+        );
+        self.binder_names
+            .insert(e.span.start.offset, vec![acc.clone(), elem.clone()]);
+        stack.push(Frame::BuildFold { over, acc, elem });
+        stack.push(Frame::PopScope);
+        stack.push(Frame::Expand(body));
+        stack.push(Frame::PushScope(scope));
+        stack.push(Frame::Expand(collection));
+        stack.push(Frame::Expand(base));
+        Ok(())
     }
 
     fn expand(
@@ -1352,6 +1552,26 @@ impl<'a> Lowerer<'a> {
                 let Some(id) = head.base() else {
                     return Err(LowerError::unsupported("an empty name", "internal", span));
                 };
+                // Apalache's folds take an *operator* as their first argument,
+                // and they are intercepted here rather than resolved. Two
+                // reasons, both load-bearing:
+                //
+                // * `Apalache.tla` defines them `RECURSIVE`, peeling one
+                //   `CHOOSE __x \in __S` at a time. Inlining that reaches the
+                //   depth limit, so the specification does not lower at all
+                //   wherever that module is on the search path.
+                // * Unresolved, the operator argument lowered to a bare
+                //   `Opaque(name, [])`: the *identity* survived and the body
+                //   did not, so nothing downstream could apply it.
+                //
+                // A local `LET` or a parameter of the same name still wins, so
+                // a specification that defines its own `ApaFoldSet` keeps it.
+                if !head.is_qualified()
+                    && let Some(over) = fold_kind(&id.name, args.len())
+                    && self.folds_here(&id.name, args)
+                {
+                    return self.expand_fold(e, over, args, span, stack);
+                }
                 // A parameter bound to a value cannot be applied: higher-order
                 // parameters are inlined as values, and applying one needs the
                 // operator itself, not its level.
@@ -1559,36 +1779,13 @@ impl<'a> Lowerer<'a> {
                 // Children, in order: the base, then per update every index
                 // expression followed by the replacement value. `@` is bound
                 // around each value by a `BindExceptAt` frame.
-                let nchildren: usize = 1 + updates
-                    .iter()
-                    .map(|u| {
-                        1 + u
-                            .path
-                            .iter()
-                            .map(|s| match s {
-                                ExceptSel::Index(ix) => ix.len(),
-                                ExceptSel::Field(_) => 1,
-                            })
-                            .sum::<usize>()
-                    })
-                    .sum::<usize>();
+                let nchildren: usize = 1 + updates.iter().map(|u| 1 + u.path.len()).sum::<usize>();
                 stack.push(Frame::Build(e, nchildren));
                 // Each update needs to know the shape of the ones before it,
                 // both to find the function on the shared value stack and to
                 // rebuild what `@` refers to. Collected forwards, then used as
                 // the frames are pushed in reverse.
-                let path_lens: Vec<usize> = updates
-                    .iter()
-                    .map(|u| {
-                        u.path
-                            .iter()
-                            .map(|s| match s {
-                                ExceptSel::Index(ix) => ix.len(),
-                                ExceptSel::Field(_) => 1,
-                            })
-                            .sum()
-                    })
-                    .collect();
+                let path_lens: Vec<usize> = updates.iter().map(|u| u.path.len()).collect();
                 for (k, u) in updates.iter().enumerate().rev() {
                     let path_len = path_lens.get(k).copied().unwrap_or(0);
                     stack.push(Frame::PopScope);
@@ -1599,7 +1796,23 @@ impl<'a> Lowerer<'a> {
                     });
                     for sel in u.path.iter().rev() {
                         match sel {
+                            // One selector is one *index*, and `![i, j]` is a
+                            // single application of a function of two
+                            // arguments — which in TLA+ is a function of the
+                            // pair. Flattening it into two steps reads it as
+                            // `f[i][j]`, a different function and a different
+                            // value; TLC gives
+                            // `[f EXCEPT ![1,2] = 99][<<1,2>>] = 99`, not a
+                            // nested update. `ExprKind::FnApply` already
+                            // builds the tuple, so this is also what makes the
+                            // two agree.
+                            ExceptSel::Index(ix) if ix.len() == 1 => {
+                                for i in ix {
+                                    stack.push(Frame::Expand(i));
+                                }
+                            }
                             ExceptSel::Index(ix) => {
+                                stack.push(Frame::BuildTuple(ix.len()));
                                 for i in ix.iter().rev() {
                                     stack.push(Frame::Expand(i));
                                 }
@@ -1954,14 +2167,7 @@ fn build_except(
         .ok_or_else(|| LowerError::unsupported("an `EXCEPT`", "internal: no base", span))?;
     let mut at = 1usize;
     for u in updates {
-        let path_len: usize = u
-            .path
-            .iter()
-            .map(|s| match s {
-                ExceptSel::Index(ix) => ix.len(),
-                ExceptSel::Field(_) => 1,
-            })
-            .sum();
+        let path_len: usize = u.path.len();
         let path: Vec<KeraRef> = kids
             .get(at..at + path_len)
             .map(<[KeraRef]>::to_vec)
@@ -2117,5 +2323,19 @@ impl core::fmt::Display for DescribeKind<'_> {
             _ => "this construct",
         };
         f.write_str(s)
+    }
+}
+
+/// The fold an operator name denotes, if it is one of Apalache's.
+///
+/// Only the two whose signatures `Apalache.tla` pins down. The community
+/// modules' `FoldSet` / `FoldLeft` take their operator differently, and reading
+/// one signature as another would fold the wrong argument silently, so they are
+/// deliberately not guessed at here.
+fn fold_kind(name: &str, argc: usize) -> Option<FoldOver> {
+    match (name, argc) {
+        ("ApaFoldSet", 3) => Some(FoldOver::Set),
+        ("ApaFoldSeqLeft", 3) => Some(FoldOver::SeqLeft),
+        _ => None,
     }
 }

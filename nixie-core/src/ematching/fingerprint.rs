@@ -173,6 +173,10 @@ impl FingerprintCache {
                 value.hash(&mut hasher);
                 width.hash(&mut hasher);
             }
+            TermKind::FfConst { value, field } => {
+                value.hash(&mut hasher);
+                field.raw().hash(&mut hasher);
+            }
             TermKind::StringLit(s) => {
                 s.hash(&mut hasher);
             }
@@ -198,13 +202,16 @@ impl FingerprintCache {
             TermKind::Add(args)
             | TermKind::Mul(args)
             | TermKind::And(args)
-            | TermKind::Or(args) => {
+            | TermKind::Or(args)
+            | TermKind::FfAdd(args)
+            | TermKind::FfMul(args)
+            | TermKind::FfBitsum(args) => {
                 for &arg in args.iter() {
                     let arg_fp = self.compute(arg, manager);
                     arg_fp.0.hash(&mut hasher);
                 }
             }
-            TermKind::Not(inner) | TermKind::Neg(inner) => {
+            TermKind::Not(inner) | TermKind::Neg(inner) | TermKind::FfNeg(inner) => {
                 let inner_fp = self.compute(*inner, manager);
                 inner_fp.0.hash(&mut hasher);
             }

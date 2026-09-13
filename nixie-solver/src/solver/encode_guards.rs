@@ -471,11 +471,15 @@ impl Solver {
             | TermKind::Or(args)
             | TermKind::Add(args)
             | TermKind::Mul(args)
-            | TermKind::Distinct(args) => {
+            | TermKind::Distinct(args)
+            | TermKind::FfAdd(args)
+            | TermKind::FfMul(args)
+            | TermKind::FfBitsum(args) => {
                 for &a in args {
                     push(a);
                 }
             }
+            TermKind::FfNeg(a) => push(*a),
             TermKind::Xor(a, b)
             | TermKind::Implies(a, b)
             | TermKind::Eq(a, b)
@@ -625,6 +629,7 @@ impl Solver {
             | TermKind::IntConst(_)
             | TermKind::RealConst(_)
             | TermKind::BitVecConst { .. }
+            | TermKind::FfConst { .. }
             | TermKind::StringLit(_)
             | TermKind::FpLit { .. }
             | TermKind::FpPlusInfinity { .. }

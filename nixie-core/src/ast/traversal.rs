@@ -98,6 +98,7 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::IntConst(_)
         | TermKind::RealConst(_)
         | TermKind::BitVecConst { .. }
+        | TermKind::FfConst { .. }
         | TermKind::StringLit(_)
         // The empty set's only payload is its sort, which is not a child.
         | TermKind::SetEmpty(_)
@@ -107,6 +108,7 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         TermKind::Not(a)
         | TermKind::Neg(a)
         | TermKind::BvNot(a)
+        | TermKind::FfNeg(a)
         | TermKind::StrLen(a)
         | TermKind::StrToInt(a)
         | TermKind::IntToStr(a)
@@ -187,7 +189,10 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::Or(args)
         | TermKind::Add(args)
         | TermKind::Mul(args)
-        | TermKind::Distinct(args) => {
+        | TermKind::Distinct(args)
+        | TermKind::FfAdd(args)
+        | TermKind::FfMul(args)
+        | TermKind::FfBitsum(args) => {
             children.extend(args.iter().copied());
         }
 
