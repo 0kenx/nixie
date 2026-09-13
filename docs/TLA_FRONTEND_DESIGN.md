@@ -588,13 +588,17 @@ Booleans about them. Bounded model checking went **18 → 31** specifications, 1
 which 12 were read against their source and confirmed, 3 flagged possibly-spurious, and none
 unflagged and wrong.
 
-**A wrong `sat` in the solver fell out of this**, and is worth recording here because it is
-what the arena bought beyond coverage. `Cardinality` is a sum of `ite`s guarded by element
-equalities; with string elements those conditions are string equalities, and a string equality
-used as an `ite` *condition* is not decided —
-`docs/studies/2026-09-13-string-equality-under-ite-false-sat.md` has a controlled reproducer
-with no TLA+ in it. The encoding was deliberately **not** reshaped to avoid the `ite`: that
-would hide a live soundness bug rather than fix it.
+**A wrong `sat` in the solver fell out of this, and has since been fixed**, which is worth
+recording because it is what the arena bought beyond coverage. `Cardinality` is a sum of
+`ite`s guarded by element equalities; with string elements those guards are string equalities,
+and *any* string equality that reached the solver as something other than a foldable top-level
+assertion was a free Boolean. Two causes, neither the one first suspected: `mk_eq` did not
+fold distinct string literals, and EUF did not mark string literals as distinguished values —
+a mechanism floating-point literals already used.
+`docs/studies/2026-09-13-string-literal-distinctness-false-sat.md` records both, and the two
+wrong hypotheses the controls eliminated first. The encoding was deliberately **not** reshaped
+to avoid the `ite`: that would have hidden a live soundness bug rather than fixed it, and the
+blocked test would have gone green while the solver stayed wrong.
 
 What is still blocked is a set-valued **state variable** (78): a set built by an expression has
 its candidates from that expression, and `s@1` has nowhere to get them from yet.

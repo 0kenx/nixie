@@ -225,3 +225,112 @@ fn cardinality_still_degrades_to_unknown() {
     });
     assert_eq!(got, SolverResult::Unknown);
 }
+
+// ---------------------------------------------------------------------------
+// String-literal distinctness — regressions for a false `sat`
+// ---------------------------------------------------------------------------
+//
+// Found through the TLA+ arena's `Cardinality` encoding, which guards each
+// indicator with an element equality. Two independent gaps made a string
+// equality undecidable whenever it reached the solver as anything other than
+// a top-level assertion (which preprocessing folds):
+//
+//   1. `mk_eq` folded `IntConst`, `Bool` and `BitVecConst` but not `StringLit`;
+//   2. EUF never marked string literals as distinguished values, so merging
+//      classes holding `"a"` and `"b"` raised no conflict.
+//
+// Both directions matter: the fix must decide the unsatisfiable cases *without*
+// simply assuming equalities false, so a genuinely satisfiable case is checked
+// too.
+
+/// Gap 1: two distinct string literals forced equal through a clause.
+#[test]
+fn distinct_string_literals_cannot_be_equal() {
+    let got = solve(|tm| {
+        let bs = tm.sorts.bool_sort;
+        let p = tm.mk_var("p", bs);
+        let a = tm.mk_string_lit("a");
+        let b = tm.mk_string_lit("b");
+        let eq = tm.mk_eq(a, b);
+        let clause = tm.mk_or([eq, p]);
+        let np = tm.mk_not(p);
+        vec![clause, np]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Gap 2: one variable forced equal to two distinct literals, both through
+/// clauses so that preprocessing cannot fold either.
+#[test]
+fn a_variable_cannot_equal_two_string_literals() {
+    let got = solve(|tm| {
+        let ss = tm.sorts.string_sort();
+        let bs = tm.sorts.bool_sort;
+        let x = tm.mk_var("x", ss);
+        let p = tm.mk_var("p", bs);
+        let q = tm.mk_var("q", bs);
+        let a = tm.mk_string_lit("a");
+        let b = tm.mk_string_lit("b");
+        let ea = tm.mk_eq(x, a);
+        let eb = tm.mk_eq(x, b);
+        let c1 = tm.mk_or([ea, p]);
+        let c2 = tm.mk_or([eb, q]);
+        let np = tm.mk_not(p);
+        let nq = tm.mk_not(q);
+        vec![c1, np, c2, nq]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Two variables pinned to different literals cannot be equal — the shape the
+/// `Cardinality` de-duplication actually builds.
+#[test]
+fn variables_at_distinct_literals_are_distinct() {
+    let got = solve(|tm| {
+        let ss = tm.sorts.string_sort();
+        let (x, y) = (tm.mk_var("x", ss), tm.mk_var("y", ss));
+        let a = tm.mk_string_lit("a");
+        let b = tm.mk_string_lit("b");
+        let ea = tm.mk_eq(x, a);
+        let eb = tm.mk_eq(y, b);
+        let xy = tm.mk_eq(x, y);
+        let one = tm.mk_int(1);
+        let zero = tm.mk_int(0);
+        let ite = tm.mk_ite(xy, one, zero);
+        let is_zero = tm.mk_eq(ite, zero);
+        let n = tm.mk_not(is_zero);
+        vec![ea, eb, n]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The same spellings of one literal *must* still merge freely, so the marks
+/// do not make equal strings look different.
+#[test]
+fn equal_string_literals_still_merge() {
+    let got = solve(|tm| {
+        let ss = tm.sorts.string_sort();
+        let (x, y) = (tm.mk_var("x", ss), tm.mk_var("y", ss));
+        let a1 = tm.mk_string_lit("a");
+        let a2 = tm.mk_string_lit("a");
+        let e1 = tm.mk_eq(x, a1);
+        let e2 = tm.mk_eq(y, a2);
+        let xy = tm.mk_eq(x, y);
+        // `x = "a"`, `y = "a"`, and `x != y` is a contradiction.
+        let nxy = tm.mk_not(xy);
+        vec![e1, e2, nxy]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// ...and a genuinely satisfiable string problem is still `Sat`, so the fix is
+/// not "assume every equality false".
+#[test]
+fn an_open_string_equality_is_still_satisfiable() {
+    let got = solve(|tm| {
+        let ss = tm.sorts.string_sort();
+        let (x, y) = (tm.mk_var("x", ss), tm.mk_var("y", ss));
+        vec![tm.mk_eq(x, y)]
+    });
+    assert_eq!(got, SolverResult::Sat);
+}

@@ -213,17 +213,20 @@ fn strings_are_atoms() {
     }
 }
 
-/// `Cardinality` over string elements is blocked by a **solver** defect, not
-/// by the encoding: a string equality used as an `ite` condition is not
-/// decided, and the de-duplicating sum is exactly that shape. See
-/// `docs/studies/2026-09-13-string-equality-under-ite-false-sat.md` and
-/// `examples/strite.rs`, which reproduces it with no TLA+ at all.
+/// `Cardinality` over string elements — the case that found a **false `sat`**
+/// in the solver and was `#[ignore]`d until it was fixed.
 ///
-/// Left as a live test rather than deleted, so it turns green on its own when
-/// the defect is fixed. The encoding was deliberately *not* reshaped to avoid
-/// the `ite`: that would hide a wrong `sat` rather than fix it.
+/// The de-duplicating sum guards each indicator with an element equality, so
+/// with string elements those guards are string equalities. Two gaps made
+/// them undecidable: `mk_eq` did not fold distinct string literals, and EUF
+/// never marked string literals as distinguished values. Both are fixed; see
+/// `docs/studies/2026-09-13-string-literal-distinctness-false-sat.md` and
+/// `examples/strite.rs`, which reproduces the whole family with no TLA+.
+///
+/// The encoding was deliberately never reshaped to dodge the `ite`: that would
+/// have hidden the bug rather than fixed it, and the test would have gone
+/// green while the solver stayed wrong.
 #[test]
-#[ignore = "blocked by a solver defect: string equality under `ite` is not decided"]
 fn cardinality_over_strings() {
     for b in [
         "Cardinality({\"a\", \"b\"}) = 2",

@@ -385,6 +385,16 @@ impl TermManager {
                     return self.mk_bool(a == b);
                 }
             }
+            // String literals, for the same reason and in the same direction
+            // as the numeric arms above. Their absence was a soundness bug,
+            // not a missed optimisation: `nixie-solver` wires no string
+            // theory, so an unfolded `(= "a" "b")` atom is a free Boolean the
+            // SAT layer may set true, and `(or (= "a" "b") p) /\ ~p` answered
+            // `sat`. Two distinct string literals are distinct values by
+            // construction, exactly as two `IntConst` terms are.
+            (Some(TermKind::StringLit(a)), Some(TermKind::StringLit(b))) => {
+                return self.mk_bool(a == b);
+            }
             // Boolean constants
             (Some(TermKind::True), Some(TermKind::True)) => return self.true_id,
             (Some(TermKind::False), Some(TermKind::False)) => return self.true_id,

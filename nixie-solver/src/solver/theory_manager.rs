@@ -473,6 +473,9 @@ pub(crate) struct TheoryManager<'a> {
     /// share those bits – into one EUF class, which turned a satisfiable
     /// `(distinct (g a) (g b))` into `unsat`.
     interned_bv_constants: FxHashMap<(SmallVec<[u64; 2]>, u32), u32>,
+    /// One distinguished-value id per distinct string literal, so that every
+    /// spelling of `"a"` shares an id and `"a"` can never merge with `"b"`.
+    interned_string_constants: FxHashMap<String, u32>,
     /// Canonical EUF nodes for Boolean true and false values.
     /// Used to track Bool-valued function applications in EUF:
     /// when `f(x)` is assigned true by the SAT solver, we merge its EUF node
@@ -688,6 +691,7 @@ impl<'a> TheoryManager<'a> {
             dl_pure: pure_dl,
             sparse_dl: sparse_dl || pure_dl,
             interned_bv_constants: FxHashMap::default(),
+            interned_string_constants: FxHashMap::default(),
             ite_const_axioms: Self::build_ite_const_axioms(
                 var_to_constraint,
                 ite_result_terms,
@@ -1156,6 +1160,7 @@ impl<'a> TheoryManager<'a> {
         }
         self.diff.reset();
         self.interned_bv_constants.clear();
+        self.interned_string_constants.clear();
         self.bool_true_node = None;
         self.bool_false_node = None;
         self.processed_equalities.clear();
@@ -3064,6 +3069,26 @@ impl<'a> TheoryManager<'a> {
             if let Some(value) = super::fp_fold::fp_const_value(term, manager) {
                 self.euf
                     .declare_fp_const(term, super::fp_fold::fp_const_key(&value));
+                return self.euf.intern(term);
+            }
+            // String literals: the same distinguished-value treatment as
+            // floats and bit-vectors above. `nixie-solver` wires no string
+            // theory, so EUF is the only thing that can keep two literals
+            // apart, and without a mark it keeps them apart only when the
+            // atom survives to be folded. A congruence chain that equates a
+            // node merged with `"a"` and one merged with `"b"` -- `x = "a"`,
+            // `x = "b"`, both reached through clauses rather than as top-level
+            // assertions -- produced no conflict and answered `sat`.
+            //
+            // Keyed by the string's own text, so every spelling of the same
+            // literal shares one id and merges freely, while two different
+            // literals can never land in one class. One mark per literal,
+            // O(k) rather than the C(k,2) pairwise disequality edges.
+            if let TermKind::StringLit(text) = &t.kind {
+                let text = text.clone();
+                let next = self.euf.fresh_value_id();
+                let id = *self.interned_string_constants.entry(text).or_insert(next);
+                self.euf.declare_value_const(term, id);
                 return self.euf.intern(term);
             }
             if let TermKind::BitVecConst { value, width } = &t.kind {
