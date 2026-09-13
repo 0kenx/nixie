@@ -97,6 +97,22 @@ pub struct LoadedSpec {
 }
 
 impl LoadedSpec {
+    /// A spec consisting of one already-parsed module.
+    ///
+    /// The single-file case, with nothing to resolve: no `EXTENDS` are
+    /// followed, so `missing` and `cycles` are empty by construction rather
+    /// than by assumption. Anything the module extends stays unresolved, which
+    /// is exactly what a caller that did not ask for a search path should get.
+    #[must_use]
+    pub fn single(parsed: crate::ParsedFile) -> Self {
+        Self {
+            root: parsed.module.name.name.clone(),
+            modules: vec![(parsed.module.name.name.clone(), parsed.module)],
+            missing: Vec::new(),
+            cycles: Vec::new(),
+        }
+    }
+
     /// The root module.
     #[must_use]
     pub fn root_module(&self) -> Option<&Module> {

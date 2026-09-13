@@ -27,7 +27,7 @@
 
 use nixie_core::{SortId, TermId, TermManager};
 use nixie_tla::kera::{ArithOp, CmpOp, Kera, KeraRef};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 /// Why a kernel term could not be encoded.
@@ -57,7 +57,13 @@ pub const DEFAULT_MAX_DEPTH: usize = 512;
 pub struct Encoder {
     /// Free names given a sort by the caller.
     sorts: HashMap<String, SortId>,
-    vars: HashMap<String, TermId>,
+    /// Names declared `VARIABLE`, whose value differs from step to step.
+    state: HashSet<String>,
+    /// One SMT variable per (name, step). A constant has a single entry at
+    /// step 0, because its value does not change.
+    vars: HashMap<(String, u32), TermId>,
+    /// The step the term currently being encoded is read at. `'` raises it.
+    step: u32,
     max_depth: usize,
     depth: usize,
 }
@@ -68,15 +74,58 @@ impl Encoder {
     pub fn new() -> Self {
         Self {
             sorts: HashMap::new(),
+            state: HashSet::new(),
             vars: HashMap::new(),
+            step: 0,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
         }
     }
 
-    /// Declare the sort of a free name, so it can be encoded as a variable.
+    /// Declare the sort of a rigid name — a `CONSTANT`, or a parameter.
+    ///
+    /// Its value is the same in every state, so it encodes to one SMT variable
+    /// however many steps are unrolled.
     pub fn declare(&mut self, name: impl Into<String>, sort: SortId) {
         self.sorts.insert(name.into(), sort);
+    }
+
+    /// Declare the sort of a `VARIABLE`, whose value differs per step.
+    ///
+    /// A state variable encodes to a *family* of SMT variables, one per step,
+    /// which is what makes an unrolling possible. Getting this distinction
+    /// wrong in either direction is a soundness bug, not an inefficiency: a
+    /// constant treated as a state variable can change value mid-trace, and a
+    /// state variable treated as rigid can never change at all.
+    pub fn declare_state(&mut self, name: impl Into<String>, sort: SortId) {
+        let name = name.into();
+        self.state.insert(name.clone());
+        self.sorts.insert(name, sort);
+    }
+
+    /// Encode a term as read in state `step`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Encoder::encode`].
+    pub fn encode_at(&mut self, term: &KeraRef, step: u32, tm: &mut TermManager) -> Result<TermId> {
+        self.depth = 0;
+        self.step = step;
+        let out = self.go(term, tm);
+        self.step = 0;
+        out
+    }
+
+    /// The SMT variable standing for `name` in state `step`, if it is declared.
+    #[must_use]
+    pub fn var_at(&self, name: &str, step: u32) -> Option<TermId> {
+        let key = if self.state.contains(name) { step } else { 0 };
+        self.vars.get(&(name.to_string(), key)).copied()
+    }
+
+    /// The names declared as state variables.
+    pub fn state_names(&self) -> impl Iterator<Item = &str> {
+        self.state.iter().map(String::as_str)
     }
 
     /// Encode a kernel term.
@@ -114,15 +163,42 @@ impl Encoder {
                 Ok(tm.mk_int(value))
             }
             Kera::Var(n) => {
-                if let Some(t) = self.vars.get(n.as_str()) {
+                // A rigid name is the same variable at every step; only a
+                // `VARIABLE` gets one per step.
+                let step = if self.state.contains(n.as_str()) {
+                    self.step
+                } else {
+                    0
+                };
+                let key = (n.0.clone(), step);
+                if let Some(t) = self.vars.get(&key) {
                     return Ok(*t);
                 }
                 let Some(sort) = self.sorts.get(n.as_str()).copied() else {
                     return Err(EncodeError::UnknownSort(n.to_string()));
                 };
-                let t = tm.mk_var(n.as_str(), sort);
-                self.vars.insert(n.0.clone(), t);
+                let smt_name = if self.state.contains(n.as_str()) {
+                    format!("{n}@{step}")
+                } else {
+                    n.0.clone()
+                };
+                let t = tm.mk_var(&smt_name, sort);
+                self.vars.insert(key, t);
                 Ok(t)
+            }
+            // `x'` is `x` read one step later. Priming distributes over
+            // everything in TLA+ — `(x + 1)'` is `x' + 1` — so raising the step
+            // for the whole subterm is the definition, not an approximation.
+            Kera::Prime(a) => {
+                let Some(next) = self.step.checked_add(1) else {
+                    return Err(EncodeError::Unsupported(
+                        "a term primed past the step limit".into(),
+                    ));
+                };
+                let saved = std::mem::replace(&mut self.step, next);
+                let out = self.go(a, tm);
+                self.step = saved;
+                out
             }
             Kera::Not(a) => {
                 let x = self.go(a, tm)?;
@@ -201,7 +277,6 @@ impl Default for Encoder {
 fn describe(k: &Kera) -> String {
     let s = match k {
         Kera::Str(_) => "a string literal",
-        Kera::Prime(_) => "`'`",
         Kera::Forall { .. } | Kera::Exists { .. } => "a quantifier",
         Kera::Choose { .. } | Kera::ChooseUnbounded { .. } => "`CHOOSE`",
         Kera::In(_, _) => "`\\in`",
