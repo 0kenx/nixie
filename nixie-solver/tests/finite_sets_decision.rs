@@ -600,3 +600,37 @@ fn a_quantified_membership_is_never_answered_sat() {
     solver.assert(is_empty, &mut tm);
     assert_ne!(solver.check(&mut tm), SolverResult::Sat);
 }
+
+// ---- the honesty gate is scoped ----
+
+/// `set.card` of an opaque set is not reduced, so the gate goes up and a `Sat`
+/// resting on it degrades to `Unknown`. Retracting that assertion must bring
+/// the gate back down: a `push`/`pop` pair that leaves it raised poisons every
+/// later answer in the outer scope.
+#[test]
+fn popping_lowers_the_set_honesty_gate() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let s = tm.mk_var("s", set_int);
+    let mut solver = Solver::new();
+
+    solver.push();
+    let card = tm.mk_set_card(s);
+    let three = tm.mk_int(3);
+    let claim = tm.mk_eq(card, three);
+    solver.assert(claim, &mut tm);
+    assert_eq!(
+        solver.check(&mut tm),
+        SolverResult::Unknown,
+        "an unreduced cardinality must not be answered"
+    );
+    solver.pop();
+
+    // Nothing about sets is left asserted, so this is an ordinary `Sat`.
+    let x = tm.mk_var("x", int);
+    let one = tm.mk_int(1);
+    let plain = tm.mk_eq(x, one);
+    solver.assert(plain, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}

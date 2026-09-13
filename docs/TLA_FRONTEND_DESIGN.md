@@ -486,7 +486,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 | 3 | Naive encoding *(arithmetic/propositional fragment landed)*; state variables, priming and bounded model checking *(landed)*; the arena encoding for sets *(open)* | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
-| 6 | O3 set theory *(landed: sort, 8 operators, Nelson-Oppen dispatch, decision procedure, cardinality)*; function theory *(open)* | Verdict-preserving; encoding-size and conflict-count deltas |
+| 6 | O3 set theory *(landed: sort, 8 operators, Nelson-Oppen dispatch, decision procedure, cardinality)*; function theory *(landed: domain + graph, exact `DOMAIN`, domain-relative equality, `[S -> T]`)* | Verdict-preserving; encoding-size and conflict-count deltas |
 | 7+ | O4–O9, then temporal | Per-item, as above |
 
 Milestone 3 before anything clever is load-bearing: the naive encoding is what gives us an
@@ -522,7 +522,9 @@ load-bearing, not tidiness.
 **Measured on the corpora** (`bench/tla_bmc/METHODOLOGY.md`): of 905 modules, 315 have an
 `Init`/`Next`/`Inv` triple under the naming conventions, 81 prepare (type check *and* have a
 sort for every state variable), and 18 are checked at depth 4 — 9 with no violation in the
-bound and 9 with a counterexample. What blocks the rest is the useful half of the number:
+bound and 9 with a counterexample. (Current numbers: **160** prepared, **39** checked. The
+table below is the snapshot that drove the next three stages, kept because each line is what
+motivated the work that cleared it.) What blocks the rest is the useful half of the number:
 
 | | blocked by |
 |---|---|
@@ -638,6 +640,56 @@ their sources rather than trusting the count:
 
 What is still blocked is a set whose *element* sort has no SMT sort — `Set(Set(<<Int, Int>>))`
 needs tuples to be sortable, which structural values are not.
+
+**The function theory is the other half of O3, and it is landed.** A TLA+ function is a
+*domain* and a *graph*; an SMT array is only the graph. `arena::Value::Fun` carries both — the
+graph as an array, so `f[x]` is a select and `[f EXCEPT ![i] = v]` a store, and the domain as a
+**set-sorted term**, which is only possible because the set theory landed first.
+
+Carrying the domain is not a refinement of an approximation, it closes a hole in the direction
+that **hides** a counterexample. Array equality compares every index, so
+`[x \in {1} |-> 0]` and `[x \in {1, 2} |-> 0]` — different TLA+ functions — read as equal
+whenever the array happens to agree at 2. Equality is now `same domain /\ same graph`, which is
+*stricter* than TLA+ and therefore errs the safe way; and it is **exact** whenever both graphs
+were built here, because every graph stores over one canonical base array per array sort and so
+agrees automatically everywhere it does not store. Sharing that base is load-bearing rather
+than a saving: a fresh base per constructor would leave two syntactically identical function
+literals free to differ.
+
+Three things follow, and each was previously refused or wrong:
+
+- `DOMAIN f` is exact for a constructed function, not declined.
+- `f \in [S -> T]` — how most specifications state a function variable's type in `TypeOK` —
+  is *statable*: "the domain is `S`, and every value on it is in `T`". It goes back through the
+  ordinary `\in` dispatch, so `[S -> Nat]` becomes `>= 0` rather than an opaque set.
+- A function-typed `VARIABLE` is **two** SMT variables, `f@k` and `f@k$dom`. `UNCHANGED f` then
+  pins the domain too, which an array alone could not say.
+
+The bridge between the two set encodings runs both ways now. `Encoder::candidates_of` reads an
+arena candidate list *back off* a set-sorted term, which is what makes `\A i \in DOMAIN f : P`
+work: a bounded quantifier is instantiated per candidate, and every set this encoder builds is a
+union of (conditional) singletons — the normal form CVC5 uses for a set constant. A genuinely
+opaque set (a state variable) has no candidate list and is refused by that name.
+
+Measured: the ground cross-check went **817 → 847** definitions, still **zero disagreements**
+and zero `Unknown` — function-valued definitions are now claimed by equality against the
+evaluator's own function rather than skipped. Bounded model checking went **35 → 39**
+specifications.
+
+And the blocker moved again, informatively. The largest single cause was
+`a function constructor [x \in S |-> e] has no encoding` (39); that line is gone, and what
+those specifications hit next is **`1..N` for a symbolic `N`** (23) — a `CONSTANT` with no
+value, which is what the `.cfg` supplies. The next unlock is config parsing, not more theory.
+
+What is still refused, by name: a function whose *values* are themselves functions (the inner
+domain would be lost), a function over an empty domain with no sort to give it, and `[S -> T]`
+as a value rather than as a membership test — it has `|T|^|S|` members.
+
+One measurement hygiene fix came with it: the corpus harnesses sort their inputs and `Bmc`
+sorts the names it declares. `find` hands back directory order, which is not stable between
+invocations, and `Inference::free_names` comes off a `HashMap` — so `SortId`s, `TermId`s and
+the reported examples all varied from run to run. Two consecutive runs are now byte-identical,
+which is the minimum bar for a number to mean anything.
 
 **Three ways a correct checker can answer the wrong question**, all found by reading the
 specifications behind reported violations rather than trusting the count:

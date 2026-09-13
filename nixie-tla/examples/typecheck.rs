@@ -18,7 +18,13 @@ fn main() {
     let mut shapes: BTreeMap<String, usize> = BTreeMap::new();
     let mut free_shapes: BTreeMap<String, usize> = BTreeMap::new();
 
-    for path in std::env::args().skip(1) {
+    // Sorted, so two runs over the same corpus are comparable: the shell's
+    // `find` hands back directory order, which is not stable between
+    // invocations, and an unordered walk makes the reported examples (and the
+    // truncated lists) shuffle from run to run for no reason.
+    let mut paths: Vec<String> = std::env::args().skip(1).collect();
+    paths.sort();
+    for path in paths {
         let mut loader = nixie_tla_syntax::Loader::new();
         if let Some(l) = &lib {
             for d in l.split(':').filter(|d| !d.is_empty()) {

@@ -112,6 +112,14 @@ pub struct Encoder {
     /// One SMT variable per (name, step). A constant has a single entry at
     /// step 0, because its value does not change.
     vars: HashMap<(String, u32), TermId>,
+    /// The companion *domain* variable of a function-sorted name.
+    ///
+    /// A TLA+ function is a domain and a graph, and an SMT array is only the
+    /// graph — so a function-typed `VARIABLE` needs two SMT variables, not
+    /// one. Keyed exactly like [`Encoder::vars`], so a state variable gets a
+    /// domain per step and a `CONSTANT` gets one for the whole unrolling:
+    /// a constant function's domain cannot change either.
+    var_domains: HashMap<(String, u32), TermId>,
     /// The step the term currently being encoded is read at. `'` raises it.
     step: u32,
     /// Whether any encoded term relied on a function's domain not being
@@ -133,6 +141,8 @@ pub struct Encoder {
     /// needs no scope stack; what it does need is to be popped, because the
     /// same binder is entered once per member.
     bound: HashMap<Name, Rc<Value>>,
+    /// Counter for the synthetic names [`Encoder::membership`] binds.
+    fresh: u32,
     /// Ceiling on candidates in any one set.
     max_candidates: usize,
     max_depth: usize,
@@ -147,11 +157,13 @@ impl Encoder {
             sorts: HashMap::new(),
             state: HashSet::new(),
             vars: HashMap::new(),
+            var_domains: HashMap::new(),
             step: 0,
             domain_unmodelled: false,
             set_encoding: SetEncoding::default(),
             node_sorts: HashMap::new(),
             bound: HashMap::new(),
+            fresh: 0,
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -291,6 +303,12 @@ impl Encoder {
             Value::Record(_) => Err(EncodeError::Unsupported(
                 "a record where a single value is needed".into(),
             )),
+            // A function is a domain *and* a graph; handing back the graph
+            // alone would silently drop the domain, which is the half that
+            // makes equality right.
+            Value::Fun { .. } => Err(EncodeError::Unsupported(
+                "a function where a single value is needed".into(),
+            )),
         }
     }
 
@@ -312,10 +330,119 @@ impl Encoder {
     fn set(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetCell> {
         match &*self.value(term, tm)? {
             Value::Set(s) => Ok(s.clone()),
-            Value::Scalar(_) | Value::Tuple(_) | Value::Record(_) => Err(
+            // A set-sorted term where a candidate list is wanted. That is not
+            // automatically a refusal: a term *this encoder built* is a union
+            // of singletons, so its candidates can be read back off it. Only a
+            // genuinely opaque one — a set variable — has none.
+            Value::Scalar(t) => {
+                let t = *t;
+                match self.candidates_of(t, 0, tm) {
+                    Some(members) => Ok(SetCell { members }),
+                    None => Err(EncodeError::NotEnumerable(
+                        "a set-valued term with no candidate list to enumerate".to_string(),
+                    )),
+                }
+            }
+            Value::Tuple(_) | Value::Record(_) | Value::Fun { .. } => Err(
                 EncodeError::NotEnumerable("a value used as a set".to_string()),
             ),
         }
+    }
+
+    /// Read an arena candidate list back off a set-sorted term.
+    ///
+    /// The inverse of [`Encoder::native_set_of`], and the reason the hybrid
+    /// works at all: a bounded quantifier is *instantiated* per candidate, so
+    /// `\A i \in DOMAIN f : P(i)` needs a candidate list for a domain that
+    /// is, by now, a set-sorted term. Every set this encoder builds is a union
+    /// of (conditional) singletons — the normal form CVC5 uses for a set
+    /// constant — so the list is recoverable exactly.
+    ///
+    /// `None` for anything else, which is an honest refusal rather than an
+    /// approximation: a set *variable* has no candidate list, and inventing
+    /// one would check a different specification.
+    fn candidates_of(
+        &mut self,
+        set: TermId,
+        depth: usize,
+        tm: &mut TermManager,
+    ) -> Option<Vec<Member>> {
+        use nixie_core::TermKind;
+        // The term was built by this encoder, so it is as deep as the
+        // specification is; bounded anyway, and a refusal beyond the bound.
+        if depth > self.max_depth {
+            return None;
+        }
+        let kind = tm.get(set).map(|t| t.kind.clone())?;
+        match kind {
+            TermKind::SetEmpty(_) => Some(Vec::new()),
+            TermKind::SetSingleton(e) => Some(vec![Member {
+                value: Rc::new(Value::Scalar(e)),
+                present: tm.mk_bool(true),
+            }]),
+            TermKind::SetUnion(a, b) => {
+                let mut xs = self.candidates_of(a, depth + 1, tm)?;
+                xs.extend(self.candidates_of(b, depth + 1, tm)?);
+                (xs.len() <= self.max_candidates).then_some(xs)
+            }
+            // The same three rules the arena uses for `\cup`, `\cap` and
+            // `\`: an intersection keeps the left candidates guarded by
+            // membership on the right, a difference by its negation.
+            TermKind::SetInter(a, b) => {
+                let xs = self.candidates_of(a, depth + 1, tm)?;
+                self.guard_by_membership(xs, b, false, tm)
+            }
+            TermKind::SetMinus(a, b) => {
+                let xs = self.candidates_of(a, depth + 1, tm)?;
+                self.guard_by_membership(xs, b, true, tm)
+            }
+            // A conditional set contributes each branch under its condition.
+            TermKind::Ite(c, a, b) => {
+                let not_c = tm.mk_not(c);
+                let mut out = Vec::new();
+                for (guard, side) in [(c, a), (not_c, b)] {
+                    for m in self.candidates_of(side, depth + 1, tm)? {
+                        out.push(Member {
+                            present: tm.mk_and([guard, m.present]),
+                            value: m.value,
+                        });
+                    }
+                }
+                (out.len() <= self.max_candidates).then_some(out)
+            }
+            _ => None,
+        }
+    }
+
+    /// Strengthen each candidate by membership (or non-membership) in `other`.
+    ///
+    /// `None` if a candidate has no SMT term to test with, which cannot happen
+    /// for a list [`Encoder::candidates_of`] built — every one of those comes
+    /// from a singleton. Refused rather than left unguarded all the same: an
+    /// unguarded candidate is claimed *present* when it may not be, and a
+    /// spurious member of the set an invariant quantifies over can satisfy an
+    /// existential that should have failed, which hides a violation.
+    fn guard_by_membership(
+        &mut self,
+        members: Vec<Member>,
+        other: TermId,
+        negated: bool,
+        tm: &mut TermManager,
+    ) -> Option<Vec<Member>> {
+        let mut out = Vec::with_capacity(members.len());
+        for m in members {
+            let Value::Scalar(e) = &*m.value else {
+                return None;
+            };
+            let inside = tm.mk_set_member(*e, other);
+            let g = if negated { tm.mk_not(inside) } else { inside };
+            let present = tm.mk_and([m.present, g]);
+            out.push(Member {
+                present,
+                value: m.value,
+            });
+        }
+        Some(out)
     }
 
     fn value(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<Rc<Value>> {
@@ -366,6 +493,95 @@ impl Encoder {
         r.ok_or(EncodeError::ShapeClash)
     }
 
+    /// The sort of an encoded term.
+    fn sort_of(&self, t: TermId, tm: &TermManager) -> Result<SortId> {
+        tm.get(t)
+            .map(|d| d.sort)
+            .ok_or_else(|| EncodeError::Unsupported("a term with no sort".into()))
+    }
+
+    /// An arena candidate list as a single set-sorted term.
+    ///
+    /// The bridge between the two set encodings, and it only goes this way:
+    /// candidates carry a `present` Boolean, which becomes a conditional
+    /// singleton, whereas a set-sorted term has no candidate list to recover.
+    ///
+    /// `element` is passed rather than read off the first candidate because an
+    /// empty domain has no candidate to read it from, and guessing there would
+    /// build the empty set at the wrong sort — a different value.
+    fn native_set_of(
+        &mut self,
+        members: &[Member],
+        element: SortId,
+        tm: &mut TermManager,
+    ) -> Result<TermId> {
+        let set_sort = tm.sorts.set(element);
+        let empty = tm.mk_set_empty_at(set_sort);
+        let mut acc = empty;
+        for m in members {
+            let Value::Scalar(k) = &*m.value else {
+                return Err(EncodeError::Unsupported(
+                    "a set whose members have no SMT sort, used as a function domain".into(),
+                ));
+            };
+            if self.sort_of(*k, tm)? != element {
+                return Err(EncodeError::Unsupported(
+                    "a function domain whose members do not share one sort".into(),
+                ));
+            }
+            let single = tm.mk_set_singleton(*k);
+            // A candidate that may not be present contributes conditionally.
+            // `ite` at a set sort is decided by the set theory, so this needs
+            // no case split of its own.
+            let piece = tm.mk_ite(m.present, single, empty);
+            acc = tm.mk_set_union(acc, piece);
+        }
+        Ok(acc)
+    }
+
+    /// The shared base array every function graph is built on; see
+    /// [`crate::arena::fun_base`] for why it is shared.
+    fn fun_base(&mut self, array_sort: SortId, tm: &mut TermManager) -> TermId {
+        crate::arena::fun_base(array_sort, tm)
+    }
+
+    /// The element sort of a set-sorted term.
+    fn element_sort_of(&self, set: TermId, tm: &TermManager) -> Result<SortId> {
+        let sort = self.sort_of(set, tm)?;
+        match tm.sorts.get(sort).map(|s| &s.kind) {
+            Some(nixie_core::SortKind::Set(e)) => Ok(*e),
+            _ => Err(EncodeError::Unsupported(
+                "a term used as a set that does not have a set sort".into(),
+            )),
+        }
+    }
+
+    /// `value \in set`, where `value` is already encoded and `set` is not.
+    ///
+    /// Goes back through the ordinary `\in` dispatch rather than picking a
+    /// membership encoding here, by binding the value to a synthetic name.
+    /// That is not a trick for its own sake: `\in` has four different
+    /// encodings depending on the set — a standard infinite set, a native set
+    /// term, an arena candidate list — and reproducing the choice at a second
+    /// site is how the two drift apart.
+    fn membership(&mut self, v: Rc<Value>, set: &KeraRef, tm: &mut TermManager) -> Result<TermId> {
+        let name = Name(format!("@img{}", self.fresh));
+        self.fresh = self.fresh.wrapping_add(1);
+        let node: KeraRef = Rc::new(Kera::In(Rc::new(Kera::Var(name.clone())), Rc::clone(set)));
+        let saved = self.bound.insert(name.clone(), v);
+        let out = self.value(&node, tm);
+        match saved {
+            Some(x) => self.bound.insert(name, x),
+            None => self.bound.remove(&name),
+        };
+        match &*out? {
+            Value::Scalar(t) => Ok(*t),
+            _ => Err(EncodeError::Unsupported(
+                "a membership test that did not produce a Boolean".into(),
+            )),
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
     fn go_inner(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<Rc<Value>> {
         match term.as_ref() {
@@ -406,8 +622,11 @@ impl Encoder {
                     0
                 };
                 let key = (n.0.clone(), step);
-                if let Some(t) = self.vars.get(&key) {
-                    return scalar(*t);
+                if let Some(t) = self.vars.get(&key).copied() {
+                    return match self.var_domains.get(&key).copied() {
+                        Some(domain) => Ok(Rc::new(Value::Fun { domain, array: t })),
+                        None => scalar(t),
+                    };
                 }
                 let Some(sort) = self.sorts.get(n.as_str()).copied() else {
                     return Err(EncodeError::UnknownSort(n.to_string()));
@@ -418,7 +637,23 @@ impl Encoder {
                     n.0.clone()
                 };
                 let t = tm.mk_var(&smt_name, sort);
-                self.vars.insert(key, t);
+                self.vars.insert(key.clone(), t);
+                // A function-sorted name gets its domain as a second variable.
+                // Without it the name would be a bare graph, and `f = g`, and
+                // `DOMAIN f`, would both be answered by the array alone — the
+                // first unsoundly (see `arena::eq_values`), the second not at
+                // all.
+                if let Some(nixie_core::SortKind::Array { domain, .. }) =
+                    tm.sorts.get(sort).map(|s| s.kind.clone())
+                {
+                    let set_sort = tm.sorts.set(domain);
+                    let d = tm.mk_var(&format!("{smt_name}$dom"), set_sort);
+                    self.var_domains.insert(key, d);
+                    return Ok(Rc::new(Value::Fun {
+                        domain: d,
+                        array: t,
+                    }));
+                }
                 scalar(t)
             }
             // `x'` is `x` read one step later. Priming distributes over
@@ -474,6 +709,43 @@ impl Encoder {
             //
             // Membership in them *is* exactly expressible, so it is encoded
             // rather than declined:
+            // `f \in [S -> T]`: exactly "the domain is `S`, and every value on
+            // it is in `T`". This is how `TypeOK` states a function variable's
+            // type in most specifications, so it is worth encoding rather than
+            // declining — and it is only *statable* because the function value
+            // carries its domain.
+            //
+            // The set of functions itself is still refused as a value: `[S -> T]`
+            // has `|T|^|S|` members and enumerating it is not a plan.
+            Kera::In(f, s) if matches!(s.as_ref(), Kera::FunSet { .. }) => {
+                let Kera::FunSet { set, cod } = s.as_ref() else {
+                    return Err(EncodeError::Unsupported("a function set".into()));
+                };
+                let value = self.value(f, tm)?;
+                let Value::Fun { domain, array } = &*value else {
+                    return Err(EncodeError::Unsupported(
+                        "`\\in [S -> T]` applied to something that is not a function".into(),
+                    ));
+                };
+                let (domain, array) = (*domain, *array);
+                let elem = self.element_sort_of(domain, tm)?;
+                let base = self.set_as_arena(set, tm)?;
+                let want = self.native_set_of(&base.members, elem, tm)?;
+                let mut conj = vec![tm.mk_eq(domain, want)];
+                for m in &base.members {
+                    let Value::Scalar(key) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "a function domain whose members have no SMT sort".into(),
+                        ));
+                    };
+                    let image = Rc::new(Value::Scalar(tm.mk_select(array, *key)));
+                    let inside = self.membership(image, cod, tm)?;
+                    // A candidate that is not in `S` constrains nothing.
+                    let absent = tm.mk_not(m.present);
+                    conj.push(tm.mk_or([absent, inside]));
+                }
+                scalar(tm.mk_and(conj))
+            }
             Kera::In(a, s) if standard_set(s).is_some() => {
                 let Some(name) = standard_set(s) else {
                     return Err(EncodeError::Unsupported("a standard set".into()));
@@ -800,6 +1072,78 @@ impl Encoder {
                     }
                 })
             }
+            // `[x \in S |-> e]` is the only place a TLA+ function is written
+            // down, and it is where both halves of a function value come from:
+            // the domain is `S`, and the graph is `e` evaluated at each of its
+            // members.
+            //
+            // The domain is enumerated by the arena — `S` is written in the
+            // specification, so its candidates are exactly what the arena
+            // computes — and then turned into one set-sorted term, so the
+            // resulting value carries a domain the solver can reason about
+            // rather than one the encoder merely knew at build time.
+            Kera::FunDef { var, set, body } => {
+                let base = self.set_as_arena(set, tm)?;
+                let mut entries = Vec::with_capacity(base.members.len());
+                for m in &base.members {
+                    let Value::Scalar(key) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "a function over a domain whose members have no SMT sort".into(),
+                        ));
+                    };
+                    let image = self.with_bound(var, Rc::clone(&m.value), body, tm)?;
+                    let Value::Scalar(val) = &*image else {
+                        return Err(EncodeError::Unsupported(
+                            "a function whose values are not single values".into(),
+                        ));
+                    };
+                    entries.push((*key, *val, m.present));
+                }
+                // Sorts come from the entries when there are any, and from the
+                // caller's type inference when there are none: `[x \in {} |-> e]`
+                // is a real function and its sort is not recoverable from the
+                // term. Declined rather than guessed.
+                let (dom_sort, rng_sort) = match entries.first() {
+                    Some((k, v, _)) => (self.sort_of(*k, tm)?, self.sort_of(*v, tm)?),
+                    None => {
+                        let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                            return Err(EncodeError::Unsupported(
+                                "a function over an empty domain, with no sort to give it".into(),
+                            ));
+                        };
+                        match tm.sorts.get(sort).map(|s| s.kind.clone()) {
+                            Some(nixie_core::SortKind::Array { domain, range }) => (domain, range),
+                            _ => {
+                                return Err(EncodeError::Unsupported(
+                                    "a function whose declared sort is not an array".into(),
+                                ));
+                            }
+                        }
+                    }
+                };
+                for (k, v, _) in &entries {
+                    if self.sort_of(*k, tm)? != dom_sort || self.sort_of(*v, tm)? != rng_sort {
+                        return Err(EncodeError::Unsupported(
+                            "a function whose domain or values do not share one sort".into(),
+                        ));
+                    }
+                }
+                let domain = self.native_set_of(&base.members, dom_sort, tm)?;
+                let array_sort = tm.sorts.array(dom_sort, rng_sort);
+                let mut array = self.fun_base(array_sort, tm);
+                for (key, val, present) in &entries {
+                    // A candidate that may not be present must not be written
+                    // unconditionally. The conditional is put on the *value*
+                    // rather than on the store, so every `ite` here is at the
+                    // range sort — the generic mux pass owns that, while an
+                    // `ite` between two arrays is left for the array theory to
+                    // recurse through and is better not built at all.
+                    let old = tm.mk_select(array, *key);
+                    let chosen = tm.mk_ite(*present, *val, old);
+                    array = tm.mk_store(array, *key, chosen);
+                }
+                Ok(Rc::new(Value::Fun { domain, array }))
+            }
             // A TLA+ function application is an array select, and `EXCEPT` is
             // a store. Both are exact *inside* the function's domain. Outside
             // it TLA+ leaves `f[x]` undefined while the array returns some
@@ -842,6 +1186,18 @@ impl Encoder {
                         };
                         Ok(Rc::clone(v))
                     }
+                    // The domain is carried, so nothing is being approximated
+                    // away here. `f[x]` for an `x` outside the domain is
+                    // *undefined* in TLA+ and the array answers with whatever
+                    // the base holds — the standard underspecified reading,
+                    // and the same one Apalache takes.
+                    Value::Fun { array, .. } => {
+                        let idx = self.go(i, tm)?;
+                        scalar(tm.mk_select(*array, idx))
+                    }
+                    // A bare array with no domain: a function reached through
+                    // a select (`f[x][y]`), where the inner sort carries no
+                    // domain of its own.
                     Value::Scalar(arr) => {
                         let idx = self.go(i, tm)?;
                         self.domain_unmodelled = true;
@@ -886,6 +1242,20 @@ impl Encoder {
                         let mut fields = fields.clone();
                         fields.insert(name.clone(), self.value(value, tm)?);
                         Ok(Rc::new(Value::Record(fields)))
+                    }
+                    // `[f EXCEPT ![i] = v]` has the *same domain* as `f` —
+                    // `EXCEPT` never extends a function. An `i` outside that
+                    // domain leaves the result unspecified in TLA+; storing it
+                    // anyway writes at a point domain-relative equality does
+                    // not look at, so it changes no answer.
+                    Value::Fun { domain, array } => {
+                        let idx = self.go(index, tm)?;
+                        let val = self.go(value, tm)?;
+                        let array = tm.mk_store(*array, idx, val);
+                        Ok(Rc::new(Value::Fun {
+                            domain: *domain,
+                            array,
+                        }))
                     }
                     Value::Scalar(arr) => {
                         let idx = self.go(index, tm)?;
@@ -933,6 +1303,8 @@ impl Encoder {
                             .collect();
                         self.mk_set(members)
                     }
+                    // Exact, which is the whole point of carrying a domain.
+                    Value::Fun { domain, .. } => scalar(*domain),
                     Value::Scalar(_) | Value::Set(_) => Err(EncodeError::Unsupported(
                         "`DOMAIN` of a function the array encoding does not carry a domain for"
                             .into(),

@@ -4758,6 +4758,14 @@ impl Solver {
             self.has_array_ops = state.has_array_ops;
             self.encode_depth_exceeded = state.encode_depth_exceeded;
             self.dt_axioms_incomplete = state.dt_axioms_incomplete;
+            // The set gate is raised by an assertion whose set constraints
+            // this reduction does not cover. Retract the assertion and the
+            // gap goes with it, so the flag has to come back down — it was
+            // snapshotted on `push` and, until now, never restored, which
+            // left every later `Sat` in the outer scope reading `Unknown`.
+            // Conservative rather than wrong, but it made a `push`/`pop` pair
+            // permanently poison the session.
+            self.set_terms_unconstrained = state.set_terms_unconstrained;
 
             // The Tseitin memo is retracted per entry, by the
             // `TrailOp::EncodedTermAdded` arm of the undo loop above – not

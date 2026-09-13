@@ -127,7 +127,11 @@ fn unencodable_constructs_are_declined_by_name() {
         ("<<1, 2>>", "tuple"),
         ("[a |-> 1]", "record"),
         ("2 ^ 3", "^"),
-        ("[x \\in {1} |-> x]", "function constructor"),
+        // A function encodes now, but like a tuple or a record it is not a
+        // single SMT value — it is a domain *and* a graph — so asking for one
+        // term is declined by name rather than silently handing back the
+        // graph and losing the domain.
+        ("[x \\in {1} |-> x]", "function"),
     ] {
         let e = encode_err(body);
         let EncodeError::Unsupported(what) = &e else {
