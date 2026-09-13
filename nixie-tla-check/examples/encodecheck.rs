@@ -17,6 +17,35 @@ use std::collections::BTreeMap;
 use nixie_core::TermManager;
 use nixie_solver::SolverResult;
 
+/// The evaluator's value as an encoder value, so the two can be compared.
+///
+/// Returns `None` for a value the encoder has no representation for yet —
+/// tuples, records and functions — so those are skipped rather than claimed.
+fn literal_of(
+    v: &nixie_tla::Value,
+    tm: &mut TermManager,
+) -> Option<std::rc::Rc<nixie_tla_check::Value>> {
+    use nixie_tla_check::{Member, SetCell, Value as EV};
+    let out = match v {
+        nixie_tla::Value::Bool(b) => EV::Scalar(tm.mk_bool(*b)),
+        nixie_tla::Value::Int(n) => EV::Scalar(tm.mk_int(num_bigint::BigInt::from(*n))),
+        nixie_tla::Value::Set(xs) => {
+            let yes = tm.mk_bool(true);
+            let mut members = Vec::with_capacity(xs.len());
+            for x in xs {
+                members.push(Member {
+                    value: literal_of(x, tm)?,
+                    present: yes,
+                });
+            }
+            EV::Set(SetCell { members })
+        }
+        // Strings, tuples, records and functions have no literal form here yet.
+        _ => return None,
+    };
+    Some(std::rc::Rc::new(out))
+}
+
 fn main() {
     let lib = std::env::var("NIXIE_TLA_LIB").ok();
     let mut checked = 0usize;
@@ -62,7 +91,7 @@ fn main() {
 
             let mut tm = TermManager::new();
             let mut enc = nixie_tla_check::Encoder::new();
-            let encoded = match enc.encode(&k, &mut tm) {
+            let encoded = match enc.encode_value(&k, &mut tm) {
                 Ok(t) => t,
                 Err(e) => {
                     *unencodable.entry(format!("{e}")).or_default() += 1;
@@ -70,16 +99,27 @@ fn main() {
                 }
             };
 
-            // Build the claim the evaluator is making, as a formula.
+            // Build the claim the evaluator is making, as a formula. A
+            // set-valued definition is claimed by *extensional equality* with
+            // the literal set the evaluator produced, which is what checks the
+            // arena's values rather than only Booleans about them.
+            let Some(literal) = literal_of(&value, &mut tm) else {
+                continue;
+            };
+            let Some(same) = nixie_tla_check::arena::eq_values(&encoded, &literal, &mut tm) else {
+                *unencodable
+                    .entry("shape clash between evaluator and encoder".to_string())
+                    .or_default() += 1;
+                continue;
+            };
             let claim = match &value {
-                nixie_tla::Value::Bool(true) => encoded,
-                nixie_tla::Value::Bool(false) => tm.mk_not(encoded),
-                nixie_tla::Value::Int(n) => {
-                    let lit = tm.mk_int(num_bigint::BigInt::from(*n));
-                    tm.mk_eq(encoded, lit)
-                }
-                // Sets, functions and the rest are not encodable yet.
-                _ => continue,
+                // `A == FALSE` is claimed as `~A`, not `A = FALSE`, so a
+                // Boolean definition still exercises the propositional path.
+                nixie_tla::Value::Bool(false) => tm.mk_not(match &*encoded {
+                    nixie_tla_check::Value::Scalar(t) => *t,
+                    nixie_tla_check::Value::Set(_) => continue,
+                }),
+                _ => same,
             };
             checked += 1;
 

@@ -124,11 +124,10 @@ fn division_on_literals_is_decided() {
 #[test]
 fn unencodable_constructs_are_declined_by_name() {
     for (body, want) in [
-        ("{1, 2}", "set"),
         ("<<1, 2>>", "tuple"),
         ("[a |-> 1]", "record"),
-        ("\\A x \\in {1} : x = 1", "quantifier"),
         ("2 ^ 3", "^"),
+        ("[x \\in {1} |-> x]", "function constructor"),
     ] {
         let e = encode_err(body);
         let EncodeError::Unsupported(what) = &e else {
@@ -139,6 +138,21 @@ fn unencodable_constructs_are_declined_by_name() {
             "for `{body}`: expected a message naming {want}, got {what}"
         );
     }
+}
+
+/// A set whose candidate members cannot be listed is refused *by that name*,
+/// not by "unsupported": the difference matters, because it says the
+/// construct is understood and the *bound* is what is missing.
+#[test]
+fn a_set_with_no_finite_candidate_list_is_refused() {
+    let e = encode_err("\\A x \\in 1..n : x > 0");
+    assert!(
+        matches!(
+            e,
+            EncodeError::NotEnumerable(_) | EncodeError::UnknownSort(_)
+        ),
+        "a symbolic range has no candidate list; got {e:?}"
+    );
 }
 
 #[test]

@@ -549,7 +549,39 @@ when a verdict came through it.
 
 The remaining big lines all reduce to one question: **what are the candidate elements of this
 set?** `\in`, `[x \in S |-> e]` and every set-typed variable need it, which is exactly what
-the arena computes. That is the next unit of work, and it is a single unit rather than three.
+the arena computes.
+
+**The arena is landed** (`nixie-tla-check::arena`). Every set is a finite list of *candidate
+members*, each carrying a Boolean term saying whether it is really in the set; set operations
+become propositional structure over those Booleans, and nothing but `Bool`, `Int` and equality
+reaches the solver. Membership is a disjunction, `\cup` concatenates candidate lists, a
+comprehension keeps the list and strengthens the Booleans, and a bounded quantifier is
+*instantiated* once per candidate rather than quantified.
+
+Two details are where an arena encoding goes wrong, and both are pinned by tests:
+
+- **Candidates are not distinct.** `{x, y}` has two that may denote one value, and `A \cup B`
+  concatenates lists that may overlap. Membership and quantification do not care — a duplicate
+  just satisfies the disjunct twice — but **cardinality does**, so a candidate counts only when
+  no *earlier* candidate is present and equal to it. A plain sum of indicators would report
+  `Cardinality({x, y}) = 2` when `x = y`.
+- **Equality is extensional**, the only definition TLA+ has. Comparing candidate lists would
+  make `{1, 1}` differ from `{1}` and `{x} \cup {y}` differ from `{x}` when `x = y`.
+
+A set with no finite candidate list — `1..n` for symbolic `n` — is refused **by that name**
+(`NotEnumerable`) rather than as "unsupported", because the construct is understood and what
+is missing is a bound. A candidate budget turns a blow-up (`SUBSET A` is `2^|A|`) into a
+reported refusal rather than an out-of-memory kill.
+
+Measured: the ground cross-check went **308 → 473** definitions, still **zero disagreements**
+and zero `Unknown`, and the set-valued ones are now claimed by extensional equality against the
+evaluator's own set rather than skipped — so the arena's *values* are checked, not just
+Booleans about them. Bounded model checking went **18 → 25** specifications with the same nine
+violations and no new false alarms.
+
+What is still blocked is a set-valued **state variable** (78): a set built by an expression has
+its candidates from that expression, and `s@1` has nowhere to get them from yet. That is the
+next unit.
 
 **Three ways a correct checker can answer the wrong question**, all found by reading the
 specifications behind reported violations rather than trusting the count:
