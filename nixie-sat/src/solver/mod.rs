@@ -3872,6 +3872,13 @@ impl Solver {
 
     /// Solve the currently registered clause set without assumptions.
     pub fn solve(&mut self) -> SolverResult {
+        // cadical `init_search_limits`: the *initial* elimination limit is
+        // `scale(elimint)` over the parsed formula's clause/variable ratio
+        // (the constructor's flat interval cannot know the formula).  Set
+        // once, before any phase has run; phase ends re-scale thereafter.
+        if self.elim_phases == 0 {
+            self.lim_elim = self.scaled_elim_interval(u64::from(self.config.elim_interval));
+        }
         // Env-gated CNF snapshot (blast-vs-search split tool): the first
         // solve entry writes the current formula — live clauses plus
         // level-0 trail units — to NIXIE_DUMP_CNF. One-shot per process.
