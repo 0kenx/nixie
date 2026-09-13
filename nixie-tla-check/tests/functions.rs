@@ -250,3 +250,28 @@ Inv  == \A i \in s : i < 3
         );
     }
 }
+
+// ---- a tuple is a function on `1..n` ----
+//
+// TLA+ has no separate sequence type, so the two spellings denote one value.
+// The evaluator normalises them into one representation; the encoder cannot,
+// because a function-typed state variable has no candidate list to turn into
+// a tuple — so `arena::eq_values` crosses the two by the definition instead.
+
+#[test]
+fn a_tuple_equals_the_function_on_its_indices() {
+    holds("<<2, 4, 6>> = [i \\in 1..3 |-> 2 * i]");
+    holds("[i \\in 1..3 |-> 2 * i] = <<2, 4, 6>>");
+}
+
+#[test]
+fn a_different_value_makes_them_unequal() {
+    fails("<<2, 4, 7>> = [i \\in 1..3 |-> 2 * i]");
+}
+
+/// A different domain is a different function, tuple or not.
+#[test]
+fn a_shorter_tuple_is_not_the_same_function() {
+    fails("<<2, 4>> = [i \\in 1..3 |-> 2 * i]");
+    fails("<<2, 4, 6>> = [i \\in 2..4 |-> 2 * i]");
+}
