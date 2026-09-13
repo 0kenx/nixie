@@ -173,11 +173,19 @@ fn prepare(
     manager: &TermManager,
 ) -> Option<Preparation> {
     let harvested = harvest(assertions, manager)?;
-    // A goal with no quantifier is the ground solver's business; certifying it
-    // here would only duplicate work.
-    if !harvested.has_quantifier {
-        return None;
-    }
+    // A GROUND goal is certified by the same machinery: with no bound
+    // variables there are no symbols to enumerate (`region_stable` holds
+    // trivially), so the pipeline degenerates to one exhaustive evaluation
+    // of every assertion under the model — exactly what the big-constant
+    // `sat` honesty gate needs (`certify_quantified_sat`: a model over an
+    // abstracted wide constant is accepted only if the ORIGINAL assertions
+    // evaluate true, `BigInt`-exact).  The old blanket refusal — "the
+    // ground solver's business" — predates that gate and meant every
+    // ground goal carrying a wide constant answered `unknown` on the `sat`
+    // side (e.g. `(> (+ (mod (+ x 2^63) 3) y) 2)`), however good the model.
+    // Declining is still what happens when evaluation cannot decide
+    // (unsupported operators, unassigned free constants): `verify`'s
+    // `Unsupported` propagates as `false`.
     // A real-sorted symbol is the real engine's business; the region argument
     // below is written for `Int` and does not transfer.
     if harvested

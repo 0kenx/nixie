@@ -12,6 +12,7 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::interner::Spur;
 use nixie_core::sort::SortId;
 use num_bigint::BigInt;
+use num_traits::{Euclid, Zero};
 use smallvec::SmallVec;
 
 #[allow(unused_imports)]
@@ -287,6 +288,50 @@ fn combine(
             CertValue::Int(acc)
         }
         TermKind::Sub(_, _) => CertValue::Int(int_at(0)? - int_at(1)?),
+        TermKind::Div(_, _) => {
+            // SMT-LIB Euclidean integer division (the exact semantics the
+            // builder's constant folder and `arith_axioms` use: the unique
+            // `q` with `m = n·q + r`, `0 ≤ r < |n|`), or exact rational
+            // division when an operand is real.  A zero divisor is
+            // UNINTERPRETED per SMT-LIB — decline rather than invent a
+            // value, so a model resting on it stays uncertified (`Unknown`),
+            // never wrongly trusted.
+            let rat_at = |i: usize| -> Option<num_rational::BigRational> {
+                args.get(i).and_then(|v| match v {
+                    CertValue::Int(n) => Some(num_rational::BigRational::from(n.clone())),
+                    CertValue::Real(r) => Some(r.clone()),
+                    _ => None,
+                })
+            };
+            match (args.first(), args.get(1)) {
+                (Some(CertValue::Int(a)), Some(CertValue::Int(b))) => {
+                    if b.is_zero() {
+                        return Err(EvalError::Unsupported);
+                    }
+                    CertValue::Int(a.div_euclid(b))
+                }
+                _ => {
+                    let (a, b) = (
+                        rat_at(0).ok_or(EvalError::Unsupported)?,
+                        rat_at(1).ok_or(EvalError::Unsupported)?,
+                    );
+                    if b.is_zero() {
+                        return Err(EvalError::Unsupported);
+                    }
+                    CertValue::Real(a / b)
+                }
+            }
+        }
+        TermKind::Mod(_, _) => {
+            // Euclidean remainder, `0 ≤ r < |n|` — Int-sort only (a
+            // Real-sorted `Mod` is not an SMT-LIB term).  Zero divisor:
+            // uninterpreted, decline.
+            let (a, b) = (int_at(0)?, int_at(1)?);
+            if b.is_zero() {
+                return Err(EvalError::Unsupported);
+            }
+            CertValue::Int(a.rem_euclid(b))
+        }
         TermKind::Mul(_) => {
             let mut acc = BigInt::from(1);
             for i in 0..args.len() {

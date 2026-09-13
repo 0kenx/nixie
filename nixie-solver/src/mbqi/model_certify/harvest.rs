@@ -108,9 +108,22 @@ pub(crate) fn supported_children(kind: &TermKind) -> Option<SmallVec<[TermId; 4]
         | TermKind::Le(l, r)
         | TermKind::Gt(l, r)
         | TermKind::Ge(l, r) => SmallVec::from_slice(&[*l, *r]),
+        TermKind::Div(l, r) | TermKind::Mod(l, r) => {
+            // Euclidean `div`/`mod` are part of the vocabulary since the
+            // evaluator grew exact `div_euclid`/`rem_euclid` arms (a
+            // zero divisor still declines there — uninterpreted per
+            // SMT-LIB).  Note the soundness shape: these children take
+            // `Position::Value` in `region_stable`, so a *bound variable*
+            // under a division is rejected — the region-enumeration
+            // argument does not hold for `div`'s jumps — while ground
+            // goals (the big-const `sat` certification this serves)
+            // evaluate exactly.  The historical blanket exclusion is why
+            // `(> (+ (mod (+ x 2^63) 3) y) 2)`-shaped goals answered
+            // `unknown` whenever a wide constant demanded certification.
+            SmallVec::from_slice(&[*l, *r])
+        }
         TermKind::Ite(c, t, e) => SmallVec::from_slice(&[*c, *t, *e]),
-        // Everything else – `Div`/`Mod` (whose SMT-LIB corner cases the
-        // certifier does not reproduce), reals, bit-vectors, arrays, strings,
+        // Everything else – reals, bit-vectors, arrays, strings,
         // floating point, datatypes – is outside the vocabulary.
         _ => return None,
     };

@@ -125,6 +125,61 @@ non-foldable nesting) answers `Unknown` rather than a verdict.
   disagreements**, 174 decisive agreements (1 unresolved: Z3 itself
   `Unknown` on `array_unique.smt2`) — `bench/z3_parity/run_parity.sh`.
 
+## Continuation (2026-09-14): the follow-up differential fuzz and what it found
+
+A targeted random differential against z3 over the changed surface (mixed
+Int/Real formulas, `div`/`mod`, strict inequalities, wide constants; 1,300
+instances, models validated via z3 on nixie-`sat`-vs-z3-`unknown` splits)
+found **zero verdict disagreements and zero refuted models** — but chasing
+the `unknown` gap it measured turned up four more defects, all fixed the
+same day:
+
+5. **`/` was `div`.**  The parser routed SMT-LIB `/` (real division,
+   `Real`-sorted result even over `Int` operands) through the integer
+   constructor whose sort came from the *lhs*: `(/ 7 2) = 3` answered
+   **`sat`** and `(/ 7 2) > 3` answered **`unsat`** — both wrong (the
+   truth is `7/2`).  Fixed with a dedicated `mk_rdiv` (`/` semantics:
+   `Real` result, exact quotient folding, reciprocal linearization
+   `(/ x c) ≡ (* x (1/c))` for numeral `c` — Z3's `arith_rewriter` policy),
+   and parse-time sort checks: `div`/`mod` require `Int` operands (the
+   standard-mandated error, matching the existing bit-vector width rule;
+   z3's silent `to_int` coercion is nonstandard and deliberately not
+   imitated).
+6. **Mixed `Int`/`Real` sums were sorted by `args[0]`.**  `(+ xi yr)` was
+   `Int`-sorted while `(+ yr xi)` was `Real`-sorted — one value, two
+   labels, and the `Int` label feeds integer-only row reasoning a row
+   whose value can be fractional.  Fixed: the arithmetic builders unify
+   the operand sorts (`Int` unless an operand is `Real`, per the
+   standard's subsort rule).
+7. **Mixed numeric comparisons/equalities did not fold.**  `3.5 = 3`
+   survived as a structural atom; `mk_eq`/`mk_lt`/`mk_le`/`mk_gt`/`mk_ge`
+   now fold `Int`/`Real` numeral pairs as exact rationals.
+8. **The model certifier could not certify `div`/`mod` or ground goals.**
+   The big-constant `sat` honesty gate accepts a model only through
+   `model_certify`, which (a) had no `Div`/`Mod` vocabulary and (b)
+   blanket-refused quantifier-free goals — so any ground goal carrying a
+   wide constant answered `unknown` on the `sat` side however good its
+   model (`(> (+ (mod (+ x 2^63) 3) y) 2)` among them).  The evaluator
+   gained exact Euclidean `div_euclid`/`rem_euclid` arms (zero divisor
+   declines — uninterpreted per SMT-LIB), the harvest admits `Div`/`Mod`
+   children (as `Position::Value`, so a *bound variable* under a division
+   still rejects — the region-enumeration argument does not hold for
+   `div`'s jumps), and ground goals certify by evaluating the assertions
+   under the recorded model.
+
+Measured effect of 5–8 on the fuzz gap: `unknown`-where-z3-decides fell
+from 54% to 31%; the remainder is symbolic real division (`(/ x y)` —
+honestly gated: the defining identity is nonlinear) and hard disjunctive
+instances that exhaust the conflict budget (both sound).
+
+Verification for 5–8: full workspace suite (11,216 tests), doc tests,
+clippy/fmt/rustdoc gates clean, Z3 parity 0 disagreements (177 benchmarks),
+differential bench with model validation 0 disagreements / 0 invalid
+models, and the 1,300-instance random differential above.  Regressions in
+`nixie-solver/tests/arith_wide_literal_regressions.rs` (the `/`-vs-`div`
+semantics pair, mixed-sort pins, ill-sorted parse errors, ground
+certification) and the builder folding tests in `nixie-core`.
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves
@@ -135,6 +190,9 @@ non-foldable nesting) answers `Unknown` rather than a verdict.
   attempted here.
 - A `div`/`mod` with a symbolic or out-of-`i64` divisor keeps its
   pre-existing (honest) gate.
+- Symbolic real division `(/ x y)` (variable divisor) keeps its honest
+  gate: the defining identity `x = y·q` is nonlinear.  Division by a
+  numeral constant is linearized exactly (item 5).
 
 ## History
 

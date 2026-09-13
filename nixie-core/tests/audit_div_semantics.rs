@@ -325,7 +325,10 @@ fn to_int_of_negative_constant_floors_toward_neg_inf() {
     // to_int(-3.5) = floor(-3.5) = -4.
     let mut m = TermManager::new();
     let cmds = parse_script("(assert (< (to_int -3.5) 0))", &mut m).expect("parse");
-    // Reach into the term: (< to_int(-3.5) 0). to_int side must be Int(-4).
+    // `to_int` folds to IntConst(-4) and the comparison of two numerals
+    // folds at construction now, so the whole assertion IS `true`; pin both
+    // halves.  (The standalone `to_int` term is inspected via its own
+    // command because the comparison no longer survives as an `Lt` node.)
     let assert_t = cmds
         .into_iter()
         .find_map(|c| match c {
@@ -333,10 +336,26 @@ fn to_int_of_negative_constant_floors_toward_neg_inf() {
             _ => None,
         })
         .expect("assert");
-    let TermKind::Lt(lhs, _) = &m.get(assert_t).expect("term").kind else {
-        panic!("expected Lt");
+    assert!(
+        matches!(&m.get(assert_t).expect("term").kind, TermKind::True),
+        "(-4 < 0) must fold to true"
+    );
+    // to_int(-3.5) as its own parsed assertion, via a distinct constant so
+    // the surrounding equality does not fold it away:
+    let mut m2 = TermManager::new();
+    let cmds2 =
+        parse_script("(declare-const x Int)(assert (= (to_int -3.5) x))", &mut m2).expect("parse");
+    let eq = cmds2
+        .into_iter()
+        .find_map(|c| match c {
+            Command::Assert(t) => Some(t),
+            _ => None,
+        })
+        .expect("assert");
+    let TermKind::Eq(lhs, _) = &m2.get(eq).expect("term").kind else {
+        panic!("expected Eq");
     };
-    match &m.get(*lhs).expect("lhs").kind {
+    match &m2.get(*lhs).expect("lhs").kind {
         TermKind::IntConst(n) => {
             assert_eq!(*n, num_bigint::BigInt::from(-4), "floor(-3.5) must be -4")
         }

@@ -117,7 +117,14 @@ fn real_division_stays_in_arithmetic() {
         (assert (= (/ x 3.0) 1.0))
         "#,
     );
-    let _ = eq_side_matching(&m, asserts[0], |k| matches!(k, TermKind::Div(_, _)));
+    // `(/ x 3.0)` over a NUMERAL divisor now linearizes at construction into
+    // `(* x (1/3))` (Z3's `arith_rewriter` policy), which is still an
+    // arithmetic node — the test's actual claim — and is decidable where a
+    // bare real `Div` is deliberately left undefined by `arith_axioms`.  A
+    // SYMBOLIC divisor keeps the `Div` node.
+    let _ = eq_side_matching(&m, asserts[0], |k| {
+        matches!(k, TermKind::Div(_, _) | TermKind::Mul(_))
+    });
 }
 
 #[test]

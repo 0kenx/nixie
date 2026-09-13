@@ -28,6 +28,7 @@
 //! linear parse with an honesty gate on overflow.
 
 use nixie_core::TermManager;
+use nixie_core::ast::TermKind;
 use nixie_solver::{Solver, SolverResult};
 use num_bigint::BigInt;
 
@@ -220,4 +221,122 @@ fn nested_constant_overflow_is_gated_never_wrapped() {
     s.assert(tm.mk_not(claim), &mut tm);
     let r = s.check(&mut tm);
     assert_ne!(r, SolverResult::Sat, "a valid claim must never be Sat");
+}
+
+// ======== `/` vs `div`: SMT-LIB division semantics ========
+
+/// `/` is REAL division: `(/ 7 2)` is `7/2`, not Euclidean `3`.  Routing `/`
+/// through the integer constructor answered `(/ 7 2) = 3` with `sat` and
+/// `(/ 7 2) > 3` with `unsat` — both wrong.
+#[test]
+fn real_slash_is_not_integer_division() {
+    let mut tm = TermManager::new();
+    let seven = tm.mk_int(7);
+    let two = tm.mk_int(2);
+    let q = tm.mk_rdiv(seven, two);
+    // the node is Real-sorted and folds to 7/2
+    match &tm.get(q).expect("term").kind {
+        TermKind::RealConst(r) => assert_eq!(*r, num_rational::Rational64::new(7, 2)),
+        other => panic!("(/ 7 2) must fold to RealConst(7/2), got {other:?}"),
+    }
+    // ...and comparisons over it are exact
+    let three = tm.mk_int(3);
+    let eq_three = tm.mk_eq(q, three); // 3.5 = 3 is false
+    assert!(matches!(
+        &tm.get(eq_three).expect("term").kind,
+        TermKind::False
+    ));
+    let gt_three = tm.mk_gt(q, three); // 3.5 > 3 is true
+    assert!(matches!(
+        &tm.get(gt_three).expect("term").kind,
+        TermKind::True
+    ));
+}
+
+/// `div` stays Euclidean integer division on the same literals.
+#[test]
+fn int_div_stays_euclidean() {
+    let mut tm = TermManager::new();
+    let seven = tm.mk_int(7);
+    let two = tm.mk_int(2);
+    let q = tm.mk_div(seven, two);
+    match &tm.get(q).expect("term").kind {
+        TermKind::IntConst(n) => assert_eq!(*n, num_bigint::BigInt::from(3)),
+        other => panic!("(div 7 2) must fold to 3, got {other:?}"),
+    }
+}
+
+/// Real division by a numeral constant linearizes (`(/ x 3.0)` ≡
+/// `(* x (1/3))`) and is decidable.
+#[test]
+fn real_division_by_constant_is_decidable() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(declare-const x Real)(assert (= (/ x 3.0) 2.0))(check-sat)(get-value (x))",
+        )
+        .expect("script");
+    assert!(out[0].contains("sat"), "{}", out[0]);
+    // the printer may render the rational 6 as `6`, `6.0` or `(/ 6.0 1.0)`
+    assert!(
+        out[1].contains("x 6.0")
+            || out[1].contains("x (/ 6.0")
+            || out[1].trim_end_matches(')').contains("x 6"),
+        "{}",
+        out[1]
+    );
+}
+
+/// Mixed `Int`/`Real` arithmetic gets the REAL sort whichever way the
+/// operands are ordered (`Int` is a subsort of `Real`): `(+ xi yr)` used to
+/// be `Int`-sorted when written operand-first, feeding integer-only
+/// reasoning a row whose value can be fractional.
+#[test]
+fn mixed_int_real_add_is_real_sorted_either_order() {
+    let mut tm = TermManager::new();
+    let xi = tm.mk_var("xi", tm.sorts.int_sort);
+    let yr = tm.mk_var("yr", tm.sorts.real_sort);
+    let half = tm.mk_real(num_rational::Rational64::new(1, 2));
+    let a = tm.mk_add([xi, yr]);
+    let b = tm.mk_add([yr, xi]);
+    let c = tm.mk_add([xi, half]);
+    for t in [a, b, c] {
+        let node = tm.get(t).expect("term");
+        assert_eq!(
+            node.sort, tm.sorts.real_sort,
+            "mixed add must be Real-sorted"
+        );
+    }
+    // and a mixed sum with a fractional offset stays satisfiable
+    let mut s = nixie_solver::Solver::new();
+    let xi2 = tm.mk_var("xi", tm.sorts.int_sort);
+    let half2 = tm.mk_real(num_rational::Rational64::new(1, 2));
+    let sum = tm.mk_add([xi2, half2]);
+    let claim = tm.mk_eq(sum, half2);
+    s.assert(claim, &mut tm);
+    assert_eq!(s.check(&mut tm), nixie_solver::SolverResult::Sat); // xi = 0
+}
+
+/// Ill-sorted `mod`/`div` (a Real operand) is a parse error — the
+/// standard-mandated answer.  (z3 silently coerces via `to_int`, a
+/// nonstandard extension; nixie rejects, exactly as it rejects mixed-width
+/// bit-vector operands.)
+#[test]
+fn ill_sorted_mod_and_div_are_parse_errors() {
+    use nixie_solver::Context;
+    for bad in [
+        "(declare-const x Real)(assert (= (mod x 3) 1))",
+        "(assert (= (mod 1.5 3) 1))",
+        "(declare-const x Real)(assert (= (div x 2) 1))",
+    ] {
+        let mut ctx = Context::new();
+        let script = format!("{bad}(check-sat)");
+        // a parse error aborts the script (no verdict is produced at all)
+        let err = ctx
+            .execute_script(&script)
+            .expect_err("ill-sorted mod/div must be rejected at parse time");
+        let msg = format!("{err}");
+        assert!(msg.contains("Int"), "unexpected error: {msg}");
+    }
 }

@@ -142,6 +142,46 @@ impl Parser<'_> {
     /// `(_ BitVec w)` sort. `TermManager`'s `mk_bv_*` constructors have no
     /// error channel and take the left operand's width on a mismatch, so the
     /// parser is the layer that must reject it – exactly where Z3 does.
+    /// SMT-LIB sort check: `mod`/`div` require `Int` operands.
+    fn check_int_operands(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
+        let sort_of = |t: TermId| self.manager.get(t).map(|n| n.sort);
+        let int = self.manager.sorts.int_sort;
+        for (name, t) in [("first", x), ("second", y)] {
+            if sort_of(t).is_some_and(|s| s != int) {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!(
+                        "operands of {op} must have sort Int ({name} operand does not)"
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// SMT-LIB sort check: `/` accepts `Int`/`Real` operands only (the `Int`
+    /// ones coerce up to `Real`; anything else — bit-vectors, strings, ... —
+    /// is a sort error).
+    fn check_arith_operands(&self, op: &str, args: &[TermId]) -> Result<()> {
+        let int = self.manager.sorts.int_sort;
+        let real = self.manager.sorts.real_sort;
+        for &t in args {
+            let Ok(sort) = self.manager.get(t).map(|n| n.sort).ok_or(()) else {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!("operand of {op} has no sort"),
+                });
+            };
+            if sort != int && sort != real {
+                return Err(NixieError::ParseError {
+                    position: self.lexer.position(),
+                    message: format!("operands of {op} must have Int or Real sorts"),
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn check_bv_binary_widths(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
         let (xw, yw) = (self.bv_sort_width(x), self.bv_sort_width(y));
         match (xw, yw) {
@@ -458,6 +498,15 @@ impl Parser<'_> {
         if is_same_width_bv_op(op) {
             self.check_bv_binary_widths(op, x, y)?;
         }
+        // SMT-LIB sort check: `mod` and `div` are Int × Int → Int.  A Real
+        // operand is a sort error (the standard has no coercion *down* from
+        // Real), and accepting it would intern a term whose semantics the
+        // theories do not define — z3 silently coerces via `to_int`, which
+        // is a nonstandard extension; the standard-mandated answer is an
+        // error, exactly like the bit-vector width rule above.
+        if matches!(op, "mod" | "div") {
+            self.check_int_operands(op, x, y)?;
+        }
         let term = match op {
             "mod" => self.manager.mk_mod(x, y),
             "select" => self.manager.mk_select(x, y),
@@ -761,19 +810,40 @@ impl Parser<'_> {
                     result
                 }
             }
-            // Integer (Euclidean) division and real division are both
-            // left-associative n-ary. Real `/` is routed to the same general
-            // division term kind (which the rewriter/evaluator interpret as
-            // exact rational division) so QF_LRA constraints stay in the
-            // arithmetic theory instead of degrading to a Bool apply.
+            // Integer (Euclidean) `div` and real `/` are both
+            // left-associative n-ary, but they are DIFFERENT operations:
+            // `div : Int × Int → Int` (checked above), while
+            // `/ : Real × Real → Real` with `Int` operands coerced up
+            // (`Int` is a subsort of `Real`), so `(/ 7 2)` is the rational
+            // `7/2`, not Euclidean `3`.  Routing `/` through the integer
+            // constructor was a silent wrong-semantics class
+            // (`(/ 7 2) = 3` answered `sat`), so `/` builds through
+            // [`TermManager::mk_rdiv`], whose result sort is `Real` and
+            // whose constant cases fold exactly (quotient of numerals,
+            // reciprocal linearization for a numeral divisor).
             "div" | "/" => {
                 let Some((&first, rest)) = args.split_first() else {
                     return Err(self.min_arity_err(op, 1, 0));
                 };
                 self.charge_fold_depth(chain_depth(args.len(), 1))?;
+                let real_semantics = op == "/";
+                if real_semantics {
+                    self.check_arith_operands(op, args)?;
+                } else {
+                    // `div` is Int × Int; the pairwise check covers each
+                    // chained step (`(div a b c)` = `(div (div a b) c)`).
+                    for &next in rest {
+                        self.check_int_operands(op, first, next)?;
+                    }
+                    self.check_int_operands(op, first, first)?;
+                }
                 let mut result = first;
                 for &next in rest {
-                    result = self.manager.mk_div(result, next);
+                    result = if real_semantics {
+                        self.manager.mk_rdiv(result, next)
+                    } else {
+                        self.manager.mk_div(result, next)
+                    };
                 }
                 result
             }

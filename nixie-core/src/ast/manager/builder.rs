@@ -41,6 +41,31 @@ use num_traits::{Euclid, One, ToPrimitive, Zero};
 //   never disagree about a value.
 // ---------------------------------------------------------------------------
 
+/// The SMT-LIB sort of an arithmetic node over `operands`: `Int` unless an
+/// operand is `Real`-sorted (`Int` is a subsort of `Real`, so one Real
+/// operand makes the node Real).  This is the standard's mixed-arithmetic
+/// rule and the fix for a whole mislabeling class: `mk_add` used to take the
+/// sort from `args[0]`, so `(+ xi yr)` was `Int`-sorted while `(+ yr xi)`
+/// was `Real`-sorted — the same value, two labels, and the `Int` label
+/// feeds integer-only reasoning (`assert_eq`'s GCD test, strict-inequality
+/// tightening) a row whose value can be fractional.
+fn unified_arith_sort<'a>(
+    fallback: TermId,
+    operands: impl IntoIterator<Item = &'a TermId>,
+    manager: &TermManager,
+) -> SortId {
+    let mut sort = manager
+        .get(fallback)
+        .map_or(manager.sorts.int_sort, |t| t.sort);
+    let real_sort = manager.sorts.real_sort;
+    for &t in operands {
+        if manager.get(t).is_some_and(|n| n.sort == real_sort) {
+            sort = real_sort;
+        }
+    }
+    sort
+}
+
 /// View a term as an integer constant (for folding), by value.
 #[must_use]
 fn int_const_of(t: TermId, manager: &TermManager) -> Option<BigInt> {
@@ -60,6 +85,30 @@ fn real_const_of(t: TermId, manager: &TermManager) -> Option<BigRational> {
         )),
         _ => None,
     }
+}
+
+/// Fold a comparison of two numeric constants (Int/Real mixtures compare
+/// as exact rationals — `Int` is a subsort of `Real`), returning the
+/// truth value when both sides are numerals.  Z3's `arith_rewriter` folds
+/// numeral comparisons; without this, `3.5 > 3` survived as an atom only
+/// the tableau could close.
+fn numeric_cmp_fold(
+    lhs: TermId,
+    rhs: TermId,
+    manager: &TermManager,
+) -> Option<core::cmp::Ordering> {
+    let as_big = |t: TermId| -> Option<BigRational> {
+        match &manager.get(t)?.kind {
+            TermKind::IntConst(n) => Some(BigRational::from(n.clone())),
+            TermKind::RealConst(r) => Some(BigRational::new(
+                BigInt::from(*r.numer()),
+                BigInt::from(*r.denom()),
+            )),
+            _ => None,
+        }
+    };
+    let (a, b) = (as_big(lhs)?, as_big(rhs)?);
+    Some(a.cmp(&b))
 }
 
 /// Narrow a `BigRational` back to the `Rational64` a `RealConst` stores.
@@ -315,6 +364,27 @@ impl TermManager {
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => {
                 return self.mk_bool(a == b);
             }
+            // Mixed numeric constants (`Int` and `Real` are comparable:
+            // `Int` is a subsort of `Real`): compare as exact rationals.
+            // Without this, `3.5 = 3` survived as a structural `Eq` node
+            // and could be answered `sat`.
+            (Some(TermKind::IntConst(_)), Some(TermKind::RealConst(_)))
+            | (Some(TermKind::RealConst(_)), Some(TermKind::IntConst(_)))
+            | (Some(TermKind::RealConst(_)), Some(TermKind::RealConst(_))) => {
+                let as_big = |k: &Option<TermKind>| -> Option<BigRational> {
+                    match k {
+                        Some(TermKind::IntConst(n)) => Some(BigRational::from(n.clone())),
+                        Some(TermKind::RealConst(r)) => Some(BigRational::new(
+                            BigInt::from(*r.numer()),
+                            BigInt::from(*r.denom()),
+                        )),
+                        _ => None,
+                    }
+                };
+                if let (Some(a), Some(b)) = (as_big(&lhs_kind), as_big(&rhs_kind)) {
+                    return self.mk_bool(a == b);
+                }
+            }
             // Boolean constants
             (Some(TermKind::True), Some(TermKind::True)) => return self.true_id,
             (Some(TermKind::False), Some(TermKind::False)) => return self.true_id,
@@ -376,7 +446,7 @@ impl TermManager {
             0 => self.mk_int(0),
             1 => args[0],
             _ => {
-                let sort = self.get(args[0]).map_or(self.sorts.int_sort, |t| t.sort);
+                let sort = unified_arith_sort(args[0], &args, self);
                 // Classify once: integer numerals, real numerals, the rest.
                 let mut int_sum: Option<BigInt> = None;
                 let mut real_sum: Option<BigRational> = None;
@@ -455,7 +525,7 @@ impl TermManager {
     /// Folds when both operands are numerals of the same family (exact in
     /// `BigInt` / `BigRational`); a non-uniform pair keeps its shape.
     pub fn mk_sub(&mut self, lhs: TermId, rhs: TermId) -> TermId {
-        let sort = self.get(lhs).map_or(self.sorts.int_sort, |t| t.sort);
+        let sort = unified_arith_sort(lhs, &[lhs, rhs], self);
         if let (Some(a), Some(b)) = (int_const_of(lhs, self), int_const_of(rhs, self)) {
             return self.mk_int(a - b);
         }
@@ -498,7 +568,7 @@ impl TermManager {
             0 => self.mk_int(1),
             1 => args[0],
             _ => {
-                let sort = self.get(args[0]).map_or(self.sorts.int_sort, |t| t.sort);
+                let sort = unified_arith_sort(args[0], &args, self);
                 // Exact integer product of the IntConst arguments.
                 let mut int_prod: Option<BigInt> = None;
                 let mut rest: SmallVec<[TermId; 4]> = SmallVec::new();
@@ -585,15 +655,44 @@ impl TermManager {
 
     /// Create a division
     ///
-    /// Integer `div` folds to the exact **Euclidean** quotient
-    /// (`div_euclid`) whenever both operands are integer numerals and the
-    /// divisor is non-zero – the same semantics the theory's defining axioms
-    /// assert, so the folder and the axiomatiser agree on every value.  Real
-    /// division folds to the exact `BigRational` quotient when representable.
-    /// A zero divisor never folds: SMT-LIB defines `(div m 0)` / `(/ m 0.0)`
-    /// as uninterpreted, and the surviving term is what carries that meaning.
+    /// `mk_div` is the **`div`** (integer, Euclidean) constructor: the
+    /// node's sort follows the unified operand sort, and two integer
+    /// numerals fold to the exact `div_euclid` quotient – the same
+    /// semantics the theory's defining axioms assert, so the folder and the
+    /// axiomatiser agree on every value.  A zero divisor never folds
+    /// (SMT-LIB: uninterpreted).  For SMT-LIB **`/`** (real division, whose
+    /// result is `Real` even over `Int` operands) use [`Self::mk_rdiv`].
     pub fn mk_div(&mut self, lhs: TermId, rhs: TermId) -> TermId {
-        let sort = self.get(lhs).map_or(self.sorts.int_sort, |t| t.sort);
+        self.mk_div_at(lhs, rhs, false)
+    }
+
+    /// Create SMT-LIB **real division** (`/`): the result is `Real`-sorted
+    /// even when both operands are `Int`-sorted (`Int` is a subsort of
+    /// `Real`, so `(/ 7 2)` is the rational `7/2`, not Euclidean `3`).
+    ///
+    /// Routing `/` through the integer constructor was a silent
+    /// wrong-semantics class: `(/ 7 2) = 3` came back `sat` (should be
+    /// `unsat`) and `(/ 7 2) > 3` came back `unsat` (should be `sat`).
+    ///
+    /// Folding mirrors the real division path of the shared constructor: two numerals
+    /// fold to the exact `BigRational` quotient; division by a nonzero
+    /// numeral constant linearizes into multiplication by its exact
+    /// reciprocal (`(/ x c) ≡ (* x (1/c))`, Z3's `arith_rewriter` policy),
+    /// which makes it decidable; a symbolic or zero divisor keeps the
+    /// `Div` node (zero: uninterpreted per SMT-LIB).
+    pub fn mk_rdiv(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        self.mk_div_at(lhs, rhs, true)
+    }
+
+    /// The shared division constructor.  `force_real` selects SMT-LIB `/`
+    /// semantics (result sort `Real`) over `div` semantics (unified operand
+    /// sort); the parser chooses per the operator token.
+    fn mk_div_at(&mut self, lhs: TermId, rhs: TermId, force_real: bool) -> TermId {
+        let sort = if force_real {
+            self.sorts.real_sort
+        } else {
+            unified_arith_sort(lhs, &[lhs, rhs], self)
+        };
         if sort == self.sorts.int_sort
             && let (Some(a), Some(b)) = (int_const_of(lhs, self), int_const_of(rhs, self))
             && !b.is_zero()
@@ -608,11 +707,27 @@ impl TermManager {
                 real_const_of(lhs, self).or_else(|| int_const_of(lhs, self).map(BigRational::from));
             let b =
                 real_const_of(rhs, self).or_else(|| int_const_of(rhs, self).map(BigRational::from));
-            if let (Some(a), Some(b)) = (a, b)
-                && !b.is_zero()
-                && let Some(r) = narrow_rational(a / b)
+            if let (Some(a), Some(b_ref)) = (a.as_ref(), b.as_ref())
+                && !b_ref.is_zero()
+                && let Some(r) = narrow_rational(a / b_ref)
             {
                 return self.mk_real(r);
+            }
+            // Real division by a NONZERO CONSTANT linearizes exactly:
+            // `(/ x c) ≡ (* x (1/c))` in the rationals (Z3's `arith_rewriter`
+            // does the same rewrite).  This is what makes real division by
+            // numerals DECIDABLE — the reciprocal of a `Rational64` is its
+            // numerator/denominator swap, so it is always representable —
+            // where the bare `Div` node is deliberately left undefined by
+            // `arith_axioms` (its defining identity `x = y·q` is nonlinear)
+            // and every atom mentioning it gates to `unknown`.  A symbolic
+            // or zero divisor keeps the `Div` node (zero: uninterpreted per
+            // SMT-LIB).
+            if let Some(c) = b.filter(|c| !c.is_zero())
+                && let Some(recip) = narrow_rational(BigRational::from(BigInt::from(1)) / c)
+            {
+                let recip_term = self.mk_real(recip);
+                return self.mk_mul([lhs, recip_term]);
             }
         }
         self.intern(TermKind::Div(lhs, rhs), sort)
@@ -638,6 +753,9 @@ impl TermManager {
 
     /// Create a less-than comparison
     pub fn mk_lt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(ord) = numeric_cmp_fold(lhs, rhs, self) {
+            return self.mk_bool(ord == core::cmp::Ordering::Less);
+        }
         // Irreflexivity, on hash-consed identity (the same rule
         // `mk_str_lt` applies; Z3's `arith_rewriter` folds these too).
         if lhs == rhs {
@@ -649,6 +767,9 @@ impl TermManager {
 
     /// Create a less-than-or-equal comparison
     pub fn mk_le(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(ord) = numeric_cmp_fold(lhs, rhs, self) {
+            return self.mk_bool(ord != core::cmp::Ordering::Greater);
+        }
         // Reflexivity, on hash-consed identity.
         if lhs == rhs {
             return self.mk_true();
@@ -659,6 +780,9 @@ impl TermManager {
 
     /// Create a greater-than comparison
     pub fn mk_gt(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(ord) = numeric_cmp_fold(lhs, rhs, self) {
+            return self.mk_bool(ord == core::cmp::Ordering::Greater);
+        }
         // Irreflexivity, on hash-consed identity.
         if lhs == rhs {
             return self.mk_false();
@@ -669,6 +793,9 @@ impl TermManager {
 
     /// Create a greater-than-or-equal comparison
     pub fn mk_ge(&mut self, lhs: TermId, rhs: TermId) -> TermId {
+        if let Some(ord) = numeric_cmp_fold(lhs, rhs, self) {
+            return self.mk_bool(ord != core::cmp::Ordering::Less);
+        }
         // Reflexivity, on hash-consed identity.  This one decides the
         // tautological-quantifier class (`forall u. u >= u` used to burn
         // every MBQI round enumerating no-op instances and end `unknown`).

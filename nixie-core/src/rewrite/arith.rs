@@ -931,15 +931,18 @@ mod tests {
     fn test_lt_constants() {
         let (mut manager, mut ctx, mut rewriter) = setup();
 
+        // The builder folds numeral comparisons at construction (Z3
+        // rewriter layering), so the rewriter sees an already-folded term;
+        // pin the composed outcome.
         let two = manager.mk_int(2);
         let five = manager.mk_int(5);
         let lt = manager.mk_lt(two, five);
 
-        let result = rewriter.rewrite(lt, &mut ctx, &mut manager);
-        assert!(result.was_rewritten());
-
-        let t = manager.get(result.term()).expect("term should exist");
+        let t = manager.get(lt).expect("term should exist");
         assert!(matches!(t.kind, TermKind::True));
+
+        let result = rewriter.rewrite(lt, &mut ctx, &mut manager);
+        assert!(!result.was_rewritten());
     }
 
     #[test]

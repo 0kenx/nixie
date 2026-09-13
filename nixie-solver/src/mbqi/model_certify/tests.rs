@@ -100,11 +100,25 @@ fn broken_idempotence_is_not_certified() {
 /// A quantifier-free goal is the ground solver's business.
 #[test]
 fn quantifier_free_goal_is_declined() {
+    // Ground goals are no longer blanket-declined: the big-constant `sat`
+    // honesty gate certifies them by evaluating the assertions under the
+    // recorded model (`certify`'s enumeration degenerates to one exhaustive
+    // pass when there is nothing to enumerate).  What still declines is a
+    // ground goal whose pinned model CONTRADICTS it — the certification
+    // question, not a sat question.
     let mut goal = IntGoal::new();
     let zero = goal.lit(0);
+    let one = goal.lit(1);
     let f_zero = goal.app("f", zero);
     let assertion = goal.manager.mk_eq(f_zero, zero);
-    assert!(!certify(&[assertion], &FxHashMap::default(), &goal.manager));
+    // Pin f(0) = 1 in the "model"; `(= (f 0) 0)` is false under it.
+    let mut assignments = FxHashMap::default();
+    assignments.insert(f_zero, one);
+    assert!(!certify(&[assertion], &assignments, &goal.manager));
+    // ...and the same pin the other way round certifies.
+    let mut ok = FxHashMap::default();
+    ok.insert(f_zero, zero);
+    assert!(certify(&[assertion], &ok, &goal.manager));
 }
 
 /// An unsatisfiable universal must not certify however the default is chosen.
