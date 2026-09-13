@@ -118,6 +118,17 @@ const MAX_UNIVERSE_FOR_RESTRICTION: usize = 32;
 /// Maximum size (in visited nodes) of one evaluation before declining.
 const MAX_EVALUATED_BODY_SIZE: usize = 20_000;
 
+/// Lifetime bound on `check_veto` second opinions (see there).
+const MAX_VETO_CHECKS: usize = 32;
+
+/// Hard cap on nested checks per quantifier across the whole `ModelChecker`
+/// lifetime: a forced rerun's model *moves* (learned clauses change the
+/// search) on every rerun, re-arming the same-model gate, so only a
+/// lifetime cap bounds what a re-checked goal can spend.  Two gives a
+/// converging quantifier one early check (round 0's model is usually
+/// partial) and one against the settled model.
+const MAX_CHECKS_PER_QUANTIFIER: u32 = 2;
+
 /// Nesting depth guard: the nested solver's own quantifier loop must never
 /// recurse without bound.  Depth 2 allows exactly one level of re-entry —
 /// the aux goal of a `forall`-`exists` body (e.g. the set-theory axiom
@@ -193,6 +204,17 @@ pub(crate) struct ModelChecker {
     last_model_signature: FxHashMap<TermId, u64>,
     /// Total nested checks spent per quantifier (hard lifetime cap).
     checks_of: FxHashMap<TermId, u32>,
+    /// Model signatures at which the nested refutation *found a falsifier*
+    /// for a quantifier (the aux `sat` verdict, with the Skolems confined
+    /// to the finite universe).  A legacy "satisfied on the whole universe"
+    /// claim for the same quantifier under the same model is then
+    /// demonstrably wrong — the falsifier lives at a domain point the tuple
+    /// check missed or mis-evaluated — and `is_vetoed` lets the caller
+    /// refuse the verdict.  The memory is per-signature, so a genuinely
+    /// moved model re-earns its certification.
+    falsified_at: FxHashMap<TermId, Vec<u64>>,
+    /// Second opinions spent (see [`ModelChecker::check_veto`]).
+    veto_checks: usize,
     /// Last decline reason, for stats/debugging.
     pub(crate) last_decline: Option<&'static str>,
 }
@@ -211,6 +233,8 @@ impl ModelChecker {
             conflicts_spent: 0,
             last_model_signature: FxHashMap::default(),
             checks_of: FxHashMap::default(),
+            falsified_at: FxHashMap::default(),
+            veto_checks: 0,
             last_decline: None,
         }
     }
@@ -221,6 +245,120 @@ impl ModelChecker {
     /// ask again (the fresh lemma perturbs the ground model, so the next
     /// completed model will differ anyway — the signature reset is
     /// belt-and-braces for the case where it does not).
+    /// Record that `quantifier` was falsified under the current model (the
+    /// aux-`sat` verdict).  See [`ModelChecker::falsified_at`].
+    pub(crate) fn mark_falsified(&mut self, quantifier: TermId, signature: u64) {
+        self.falsified_at
+            .entry(quantifier)
+            .or_default()
+            .push(signature);
+    }
+
+    /// Soundness gate for the legacy finite-exhaustion `Satisfied`: has the
+    /// completed model *demonstrably failed* this quantifier at a domain
+    /// point (an aux-`sat` verdict with the Skolems confined to the finite
+    /// universe)?
+    ///
+    /// This bypasses the cost caps by design: it runs only in the rare
+    /// moment the sampling engines are about to certify the whole goal from
+    /// their own tuple evaluations — an evaluation with a documented liar
+    /// in its lookup path (stale-entry TermId matches, the Rodin
+    /// false-`sat`) — so this is the second opinion that either clears the
+    /// verdict (`false`) or vetoes it (`true`, including on an
+    /// undetermined check: a wrong `unknown` costs completeness, an
+    /// unvetted liar costs soundness).  Results are memoized per
+    /// (quantifier, model signature).
+    pub(crate) fn check_veto(
+        &mut self,
+        q: &QuantifiedFormula,
+        model: &CompletedModel,
+        logic: Option<&str>,
+        manager: &mut TermManager,
+    ) -> bool {
+        if !q.is_universal || q.bound_vars.is_empty() {
+            return false;
+        }
+        let signature = completed_model_signature(model);
+        if self.is_vetoed(q.term, signature) {
+            return true;
+        }
+        // Lifetime bound on second opinions: a forced rerun moves the model
+        // (fresh signatures) on every rerun, so an unbounded veto budget
+        // would be re-paid hundreds of times.  Once spent, the veto is
+        // answered conservatively (`true` — refuse the legacy verdict),
+        // which costs completeness only.
+        if self.veto_checks >= MAX_VETO_CHECKS {
+            return true;
+        }
+        self.veto_checks += 1;
+        let Some(_guard) = NestingGuard::enter() else {
+            // Cannot run a second opinion here: stay conservative.
+            return true;
+        };
+        // The completed model's entry tables must be chain-able for the
+        // evaluation; over-budget tables leave the check undetermined.
+        for interp in model.function_interps.values() {
+            if interp.entries.len() > MAX_ENTRIES_PER_FUNC {
+                return true;
+            }
+        }
+        let mut bound_names: FxHashSet<Spur> = FxHashSet::default();
+        for &(name, _) in &q.bound_vars {
+            bound_names.insert(name);
+        }
+        if collect_nested_binder_names(q.body, manager, &mut bound_names).is_err() {
+            return true;
+        }
+        let else_table = choose_else_table(model, manager);
+        let body_completed =
+            match CompletionEval::run(q.body, model, &bound_names, &else_table, manager) {
+                Ok(body) => body,
+                Err(_) => return true,
+            };
+        let mut skolem_terms: Vec<(Spur, SortId, TermId)> = Vec::new();
+        for &(name, sort) in &q.bound_vars {
+            let sk_name = format!("mbqi!veto{}", self.skolem_counter);
+            self.skolem_counter = self.skolem_counter.wrapping_add(1);
+            let sk = manager.mk_var(&sk_name, sort);
+            skolem_terms.push((name, sort, sk));
+        }
+        match self.aux_refute(body_completed, &skolem_terms, model, logic, manager) {
+            Ok(SolverResult::Unsat) => false,
+            Ok(_) => {
+                // Parity with the escalation's else-search: the closed-world
+                // completion (Bool-valued else forced false) is an equally
+                // legitimate total interpretation, and a goal certified
+                // under it is genuinely satisfied — clear the veto.
+                let closed_else = closed_world_else_table(model, manager);
+                if let Ok(body_closed) =
+                    CompletionEval::run(q.body, model, &bound_names, &closed_else, manager)
+                    && body_closed != body_completed
+                    && matches!(
+                        self.aux_refute(body_closed, &skolem_terms, model, logic, manager),
+                        Ok(SolverResult::Unsat)
+                    )
+                {
+                    return false;
+                }
+                self.mark_falsified(q.term, signature);
+                true
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// The signature of a completed model (see [`completed_model_signature`]).
+    pub(crate) fn signature_of(&self, model: &CompletedModel) -> u64 {
+        completed_model_signature(model)
+    }
+
+    /// Whether `quantifier` was falsified under this exact model.
+    pub(crate) fn is_vetoed(&self, quantifier: TermId, signature: u64) -> bool {
+        self.falsified_at
+            .get(&quantifier)
+            .is_some_and(|sigs| sigs.contains(&signature))
+    }
+
     pub(crate) fn mark_productive(&mut self, quantifier: TermId) {
         self.last_model_signature.remove(&quantifier);
     }
@@ -254,36 +392,13 @@ impl ModelChecker {
         // change the search) on every one of its hundreds of reruns, each
         // move re-arming the same-model gate.  After this many nested
         // checks the quantifier has had its chance; the landed value.
-        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= 1 {
+        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= MAX_CHECKS_PER_QUANTIFIER {
             self.last_decline = Some("per-quantifier check budget exhausted");
             return ModelCheckOutcome::Declined;
         }
         *self.checks_of.entry(q.term).or_insert(0) += 1;
 
-        // Same-model re-checks are the only ones the budget bounds: a check
-        // against a moved model is always in budget.  The signature hashes
-        // the whole completed model — every (term, value) pair and every
-        // function entry — because a length/count pair cannot see a value
-        // *flip* (a lemma committing `member(sk,b) = true` over the same
-        // term count reads as "unchanged" and the gate froze the loop).
-        let mut hasher = rustc_hash::FxHasher::default();
-        use core::hash::Hash;
-        model.assignments.len().hash(&mut hasher);
-        for (&k, &v) in &model.assignments {
-            k.0.hash(&mut hasher);
-            v.0.hash(&mut hasher);
-        }
-        model.function_interps.len().hash(&mut hasher);
-        for interp in model.function_interps.values() {
-            interp.entries.len().hash(&mut hasher);
-            for entry in &interp.entries {
-                for &a in &entry.args {
-                    a.0.hash(&mut hasher);
-                }
-                entry.result.0.hash(&mut hasher);
-            }
-        }
-        let signature: u64 = core::hash::Hasher::finish(&hasher);
+        let signature = completed_model_signature(model);
         if self.last_model_signature.get(&q.term).copied() == Some(signature) {
             self.last_decline = Some("completed model unchanged since last check");
             return ModelCheckOutcome::Declined;
@@ -350,57 +465,46 @@ impl ModelChecker {
             }
         }
 
-        // Skolemize the bound variables; restrict finite-sort Skolems to the
-        // model's universe.
-        let mut aux = Solver::new();
-        aux.set_logic(logic.unwrap_or("ALL"));
+        // Skolemize the bound variables.
         let mut skolem_terms: Vec<(Spur, SortId, TermId)> = Vec::new();
         for &(name, sort) in &q.bound_vars {
             let sk_name = format!("mbqi!sk{}", self.skolem_counter);
             self.skolem_counter = self.skolem_counter.wrapping_add(1);
             let sk = manager.mk_var(&sk_name, sort);
             skolem_terms.push((name, sort, sk));
-            // Restrict finite-domain Skolems to the model's universe (Z3's
-            // `restrict_to_universe` under `is_finite`).  ONLY uninterpreted
-            // sorts qualify: their completed model *is* the finite universe
-            // (finite-model semantics), so the restriction loses no points.
-            // An interpreted sort's universe entry is merely a *sample* of
-            // the model's values — restricting an Int/Real Skolem to it
-            // would fabricate an unsat verdict out of values the skolem was
-            // never allowed to take (the false-`Satisfied` on
-            // `2v+1 = y` with the falsifier outside the sample).
-            let finite_universe = manager
-                .sorts
-                .get(sort)
-                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
-                .then(|| model.universe(sort))
-                .flatten();
-            if let Some(universe) = finite_universe
-                && !universe.is_empty()
-                && universe.len() <= MAX_UNIVERSE_FOR_RESTRICTION
-            {
-                let restriction: Vec<TermId> =
-                    universe.iter().map(|&u| manager.mk_eq(sk, u)).collect();
-                aux.assert(manager.mk_or(restriction), manager);
+        }
+        let _ = &skolem_terms;
+
+        // Refute the completed interpretation (primary else choice).
+        let result = self.aux_refute(body_completed, &skolem_terms, model, logic, manager);
+        // Else-search (Z3 `smt_model_finder`'s default search, bounded to
+        // one candidate): when the primary completion admits a falsifier,
+        // retry with every *Bool-valued* function's else forced to `false`
+        // — the closed-world completion under which membership-style axioms
+        // are vacuously satisfied off their entry tables.  Both are total
+        // extensions of the same entries, so an `unsat` under either is a
+        // sound satisfaction proof; the search only affects which
+        // completions we can certify.
+        let result = if result.as_ref().is_ok_and(|r| *r == SolverResult::Sat) {
+            let closed_else = closed_world_else_table(model, manager);
+            let body_closed =
+                CompletionEval::run(q.body, model, &bound_names, &closed_else, manager)
+                    .ok()
+                    .filter(|body| *body != body_completed);
+            if let Some(body_closed) = body_closed {
+                let retry = self.aux_refute(body_closed, &skolem_terms, model, logic, manager);
+                if retry.as_ref().is_ok_and(|r| *r == SolverResult::Unsat) {
+                    if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                        eprintln!("[mc] aux verdict (closed-world else): satisfied");
+                    }
+                    self.last_decline = None;
+                    return ModelCheckOutcome::Satisfied;
+                }
             }
-        }
-
-        // not body'[sk]  — refute the completed interpretation.
-        let substitution = skolem_var_map(&skolem_terms, manager);
-        let skolemized = manager.substitute(body_completed, &substitution);
-        let goal = manager.mk_not(skolemized);
-        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-            let printer = nixie_core::smtlib::Printer::new(manager);
-            eprintln!("[mc] goal = {}", printer.print_term(goal));
-        }
-        aux.assert(goal, manager);
-
-        self.checks_performed += 1;
-        let limits = ResourceLimits::new()
-            .with_max_conflicts(AUX_CONFLICT_LIMIT)
-            .with_max_decisions(AUX_DECISION_LIMIT);
-        let result = aux.check_with_limits(manager, &limits);
-        self.conflicts_spent = self.conflicts_spent.saturating_add(AUX_CONFLICT_LIMIT);
+            result
+        } else {
+            result
+        };
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
             eprintln!("[mc] aux verdict: {:?}", result);
         }
@@ -492,13 +596,19 @@ impl ModelChecker {
                 }
 
                 if mined.is_empty() {
-                    // No instantiation-set combination falsifies under this
-                    // completion: the falsifier lives at an irrelevant
-                    // point, and instantiating there only churns.  Decline
-                    // and let the legacy engines (or a later round's model)
-                    // decide.
+                    // No instantiation-set combination falsifies, but the
+                    // unrestricted Skolem (confined to the finite universe by
+                    // the restriction clause) DID: the completed model fails
+                    // this quantifier at a domain point the sampling tuple
+                    // check never saw or mis-evaluated.  There is no useful
+                    // lemma to mine, so report the empty counterexample —
+                    // the caller treats an aux-`sat` verdict as a veto on
+                    // any legacy "satisfied on the whole universe" claim
+                    // (the Rodin false-`sat` shape).
                     self.last_decline = Some("no relevant falsifier");
-                    return ModelCheckOutcome::Declined;
+                    return ModelCheckOutcome::Counterexample {
+                        substitutions: Vec::new(),
+                    };
                 }
                 self.last_decline = None;
                 if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
@@ -522,6 +632,64 @@ impl ModelChecker {
                 ModelCheckOutcome::Declined
             }
         }
+    }
+
+    /// Build the nested refutation goal for `body` (a completed-model
+    /// evaluation with the Skolem substitution applied) and check it:
+    /// `unsat` means the completed model satisfies the quantifier.
+    ///
+    /// Budgets: one nested solve per call (conflicts/decisions capped;
+    /// `checks_performed`/`conflicts_spent` advance so the global caps
+    /// bound the total).
+    fn aux_refute(
+        &mut self,
+        body: TermId,
+        skolem_terms: &[(Spur, SortId, TermId)],
+        model: &CompletedModel,
+        logic: Option<&str>,
+        manager: &mut TermManager,
+    ) -> core::result::Result<SolverResult, crate::resource_limits::ResourceExhausted> {
+        let mut aux = Solver::new();
+        aux.set_logic(logic.unwrap_or("ALL"));
+        // Restrict finite-domain Skolems to the model's universe (Z3's
+        // `restrict_to_universe` under `is_finite`).  ONLY uninterpreted
+        // sorts qualify: their completed model *is* the finite universe
+        // (finite-model semantics), so the restriction loses no points.
+        // An interpreted sort's universe entry is merely a *sample* of the
+        // model's values — restricting an Int/Real Skolem to it would
+        // fabricate an unsat verdict out of values the skolem was never
+        // allowed to take (the false-`Satisfied` on `2v+1 = y` with the
+        // falsifier outside the sample).
+        for &(_name, sort, sk) in skolem_terms {
+            let finite_universe = manager
+                .sorts
+                .get(sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+                .then(|| model.universe(sort))
+                .flatten();
+            if let Some(universe) = finite_universe
+                && !universe.is_empty()
+                && universe.len() <= MAX_UNIVERSE_FOR_RESTRICTION
+            {
+                let restriction: Vec<TermId> =
+                    universe.iter().map(|&u| manager.mk_eq(sk, u)).collect();
+                aux.assert(manager.mk_or(restriction), manager);
+            }
+        }
+
+        // not body[sk]  — refute the completed interpretation.
+        let substitution = skolem_var_map(skolem_terms, manager);
+        let skolemized = manager.substitute(body, &substitution);
+        let goal = manager.mk_not(skolemized);
+        aux.assert(goal, manager);
+
+        self.checks_performed += 1;
+        let limits = ResourceLimits::new()
+            .with_max_conflicts(AUX_CONFLICT_LIMIT)
+            .with_max_decisions(AUX_DECISION_LIMIT);
+        let verdict = aux.check_with_limits(manager, &limits);
+        self.conflicts_spent = self.conflicts_spent.saturating_add(AUX_CONFLICT_LIMIT);
+        verdict
     }
 
     /// Build the per-sort *instantiation sets* and the value→term map for
@@ -665,6 +833,117 @@ fn choose_else_table(model: &CompletedModel, manager: &mut TermManager) -> FxHas
     for (&func, interp) in &model.function_interps {
         if let Some(else_val) = choose_else(interp, model, manager) {
             table.insert(func, else_val);
+        }
+    }
+    table
+}
+
+/// Whether the completed body still applies some *Bool-valued* function at
+/// a position whose arguments mention a bound variable — the vacuity shape
+/// the closed-world else-search exists for (`member(x, s)` with symbolic
+/// `x`).  Cheap structural scan over the already-built body, so the retry
+/// costs nothing on arithmetic goals.
+fn body_uses_bool_fn_at_symbolic_position(
+    body: TermId,
+    model: &CompletedModel,
+    manager: &TermManager,
+) -> bool {
+    let mut bool_fns: FxHashSet<Spur> = FxHashSet::default();
+    for (&func, interp) in &model.function_interps {
+        if interp.range == manager.sorts.bool_sort {
+            bool_fns.insert(func);
+        }
+    }
+    if bool_fns.is_empty() {
+        return false;
+    }
+    // Walk with the bound-variable names unknown here; approximate by
+    // treating every Var as symbolic (over-approximation only gates a
+    // *retry*, never a verdict).
+    let mut stack = vec![body];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(term) = stack.pop() {
+        if !visited.insert(term) || visited.len() > 20_000 {
+            return false;
+        }
+        let Some(node) = manager.get(term) else {
+            continue;
+        };
+        if let TermKind::Apply { func, args } = &node.kind
+            && bool_fns.contains(func)
+            && args.iter().any(|&a| term_mentions_var(a, manager))
+        {
+            return true;
+        }
+        let mut children: SmallVec<[TermId; 4]> = SmallVec::new();
+        push_children(&node.kind, &mut children);
+        stack.extend(children.iter().copied());
+    }
+    false
+}
+
+/// Whether `term` contains any `Var` node (an over-approximation of
+/// "mentions a bound variable" — see [`body_uses_bool_fn_at_symbolic_position`]).
+fn term_mentions_var(term: TermId, manager: &TermManager) -> bool {
+    let mut stack = vec![term];
+    let mut visited: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(t) = stack.pop() {
+        if !visited.insert(t) || visited.len() > 20_000 {
+            return false;
+        }
+        let Some(node) = manager.get(t) else {
+            continue;
+        };
+        if matches!(node.kind, TermKind::Var(_)) {
+            return true;
+        }
+        let mut children: SmallVec<[TermId; 4]> = SmallVec::new();
+        push_children(&node.kind, &mut children);
+        stack.extend(children.iter().copied());
+    }
+    false
+}
+
+/// A value-sensitive signature of the completed model: every (term, value)
+/// pair and every function entry is hashed.  A length/count pair cannot see
+/// a value *flip* (a lemma committing `member(sk,b) = true` over the same
+/// term count reads as "unchanged"), so the veto and re-check gates keyed on
+/// this must observe flips.
+fn completed_model_signature(model: &CompletedModel) -> u64 {
+    use core::hash::Hash;
+    let mut hasher = rustc_hash::FxHasher::default();
+    model.assignments.len().hash(&mut hasher);
+    for (&k, &v) in &model.assignments {
+        k.0.hash(&mut hasher);
+        v.0.hash(&mut hasher);
+    }
+    model.function_interps.len().hash(&mut hasher);
+    for interp in model.function_interps.values() {
+        interp.entries.len().hash(&mut hasher);
+        for entry in &interp.entries {
+            for &a in &entry.args {
+                a.0.hash(&mut hasher);
+            }
+            entry.result.0.hash(&mut hasher);
+        }
+    }
+    core::hash::Hasher::finish(&hasher)
+}
+
+/// The closed-world else table: every *Bool-valued* function's else forced
+/// to `false`, everything else as [`choose_else_table`] picks.  A candidate
+/// completion for the else-search — legitimate (a total extension of the
+/// same entries) and verified by the nested refutation before anything is
+/// concluded from it.
+fn closed_world_else_table(
+    model: &CompletedModel,
+    manager: &mut TermManager,
+) -> FxHashMap<Spur, TermId> {
+    let mut table = choose_else_table(model, manager);
+    let false_term = manager.mk_false();
+    for (&func, interp) in &model.function_interps {
+        if interp.range == manager.sorts.bool_sort {
+            table.insert(func, false_term);
         }
     }
     table

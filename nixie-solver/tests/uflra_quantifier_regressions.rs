@@ -140,6 +140,54 @@ fn derived_universal_over_int_is_not_falsely_satisfied() {
     assert_eq!(last_status(&output), "unsat");
 }
 
+/// The Rodin shape (AUFLIA, `:status unsat`, minimized from
+/// `20170829-Rodin/smt4688353851435564037`): rounds of heavy instantiation
+/// leave the goal quantifiers with exhausted budgets or stale tuple
+/// evaluations, and the *legacy* finite-exhaustion `Satisfied` then
+/// certified a model the completed interpretation demonstrably refutes —
+/// a false `sat` that many pre-compile binaries also answer.  The nested
+/// checker's second opinion (`check_veto`) now gates that verdict: an
+/// aux-`sat` under the finite-universe restriction — a falsifier at a
+/// domain point the tuple check missed or mis-evaluated — vetoes it.
+/// Pinned: the goal may be decided `unsat` (it is), or honestly `unknown`;
+/// never `sat`.
+#[test]
+fn rodin_goal_quantifiers_are_never_falsely_satisfied() {
+    let output = run(r#"
+        (set-logic AUFLIA)
+        (declare-sort B 0)
+        (declare-sort R 0)
+        (declare-fun LBT (B) Bool)
+        (declare-fun OCC (B) Bool)
+        (declare-fun TRK (B B) Bool)
+        (declare-fun rdy (R) Bool)
+        (declare-fun rtbl (B R) Bool)
+        (declare-fun b () B)
+        (declare-fun r () R)
+        ;; hyp1: a ready route's table rows are unoccupied
+        (assert (forall ((r0 R))
+          (=> (rdy r0)
+              (forall ((x B))
+                (not (and (exists ((x0 R)) (and (rtbl x x0) (= x0 r0)))
+                          (OCC x)))))))
+        (assert (LBT b))
+        ;; hyp3: no track from b
+        (assert (not (exists ((x1 B)) (TRK b x1))))
+        (assert (rdy r))
+        ;; goal (negated): some occupied block x2 routes to r, and it is b
+        (assert (not (forall ((x2 B))
+          (=> (and (exists ((x3 R)) (and (rtbl x2 x3) (= x3 r)))
+                   (OCC x2))
+              (= x2 b)))))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "unsat" || status == "unknown",
+        "a Rodin goal with :status unsat must never be answered sat; got {status}"
+    );
+}
+
 /// The A2+A3 alternation shape (the `set16` family's engine, minimized):
 /// a witness axiom (`~subset(s1,s2) => exists x. member(x,s1) /\ ~member(x,s2)`)
 /// together with the subset-extensionality axiom.  Satisfiable (subset true

@@ -182,24 +182,90 @@ missing relative to Z3's `smt_model_finder` is candidate else/default
 searches per function (search, verify, revise) — still true for the *else*
 choices, but the primary blocker is layer 5 above.
 
+## Third pass (2026-09-13): nested-∃ skolemization landed; a false-`sat` found, contained, and root-caused
+
+**Landed:**
+
+1. **NNF-Skolemization of the witness-in-implication shape**
+   (`exists_skolem::head_is_rewritable_quantifier` +
+   `contains_positive_exists`): an asserted `forall` whose body carries
+   an `exists` at *definite positive polarity* — the A2 set-theory axiom
+   `(=> (not (subset s1 s2)) (exists x ...))` — is now Skolemized at
+   assert (`forall s. (not P) => phi s (sk s)`), so its instances carry a
+   *ground* witness term and the ground solver searches for the witness
+   instead of committing a free Boolean.  Both-polarity positions (`ite`
+   conditions, `xor`, Boolean `=`) do not trigger (their NNF negative
+   copies make the `exists` a universal; Skolemizing would weaken).  The
+   minimized A2+A3 pair now answers `sat` (z3 agrees) — the first
+   set-family verdict — though the full `set16` still needs per-function
+   else-search to converge.
+
+2. **A pre-existing false-`sat`, found by the 200-file differential and
+   root-caused through three wrong containment hypotheses.**
+   `AUFLIA/20170829-Rodin/smt4688353851435564037` (`:status unsat`, z3
+   `unsat`) answered `sat` — and dozens of archived `precompile/`
+   binaries answer `sat` too, so the defect is old; the second commit's
+   universe-seeding fix merely made it *reachable* again.  The chain:
+
+   - *Not* the instantiation-budget hole (that veto — budget-exhausted
+     quantifiers no longer ride along as "satisfied" — is a real
+     hardening, but not this instance's mechanism).
+   - *Not* the empty-mining mask (the aux-`sat`-with-no-relevant-falsifier
+     case now reports an empty counterexample so the caller can veto).
+   - The mechanism: the **legacy finite-exhaustion `Satisfied`** certified
+     a model the completed interpretation demonstrably refutes — the
+     nested checker finds falsifiers *inside the finite universe* at the
+     very tuples the sampling evaluation claims are true (a stale-entry
+     TermId lookup in `evaluate_under_model`'s path).  Fix:
+     `ModelChecker::check_veto` — a second opinion at the moment the
+     legacy verdict is about to be accepted, memoized per (quantifier,
+     model signature), with else-search parity (the closed-world
+     completion can clear it), conservative on undetermined checks
+     (`unknown` costs completeness; an unvetted liar costs soundness), and
+     a 32-check lifetime budget.  The gate is evaluated **last** in the
+     conjunction — evaluating it eagerly cost the 600-rerun convergence
+     pins 20x (a nested solve per round per quantifier on goals the cheap
+     gates disqualify anyway; found by a per-file A/B bisect in a clean
+     worktree: 55s HEAD vs 1718s mine, then 66s with the lazy ordering).
+
+3. **The closed-world else-search** (bounded, one candidate): when the
+   primary completion admits a falsifier, retry with every Bool-valued
+   function's `else` forced `false` — the completion under which
+   membership-style axioms are vacuously satisfied off their entry tables.
+   Both are total extensions of the same entries, so an `unsat` under
+   either is a sound satisfaction proof.  Gated on the body actually
+   applying a Bool-valued function at a symbolic-argument position, so
+   arithmetic goals pay nothing.
+
+**Still open:** `set9`/`set16`/`set19` converge their `subset` tables to
+the target model but the final `Satisfied` needs per-function else
+search (the `union`/`intersection` Set-valued functions' defaults),
+which is the real `smt_model_finder` project.  The Rodin-class hole is
+closed at the verdict gate; the legacy evaluator's stale-entry lookup
+itself remains (every certification now passes the second opinion, so it
+can only cost `unknown`, never a wrong `sat`).
+
 ## Verification
 
-- `cargo build --all-features` clean; `cargo nextest run --workspace
-  --all-features` **11230/11230**, 0 timeouts (main tree; concurrent agents'
-  in-flight files excluded from my staging); `cargo clippy -p nixie-solver
-  --all-features --all-targets -- -D warnings` clean and `cargo doc -D
-  warnings` clean (verified in a clean worktree of HEAD + my files — the
-  shared tree's `nixie-sat` WIP blocks the dependency build); `cargo fmt
-  --all -- --check` clean on every file I touch.
+- `cargo build --all-features` clean; `cargo nextest run` over the six
+  core crates **9083/9083**, 0 timeouts (whole-workspace runs blocked by
+  concurrent agents' in-flight `nixie-tla-check`); `cargo clippy -p
+  nixie-solver --all-features --all-targets -- -D warnings` clean, `cargo
+  doc -D warnings` clean, `cargo fmt --all -- --check` clean on every file
+  I touch; the heaviest rerun pin measured single-threaded at 74 s vs 55 s
+  clean HEAD (A/B worktree bisect).
+- 200-file random differential (AUFLIA/UFLRA/UFLIA, 10 s budget): **zero
+  wrong answers** — this is the screen that caught the Rodin false-`sat`.
 - `./bench/z3_parity/run_parity.sh` (z3 4.16.0): **176 Correct / 1
   Inconclusive** (the pre-existing `array_unique`, z3-side `Unknown`); the
   two FFT corpus files were added to the suite
   (`benchmarks/UFLRA/fft_62048{7,5}.smt2`) so the gap stays closed.
-- Regressions: `nixie-solver/tests/uflra_quantifier_regressions.rs` (6
+- Regressions: `nixie-solver/tests/uflra_quantifier_regressions.rs` (7
   tests) — the FFT shape, the spelled-out instance (assert path), the ground
-  congruence pair (unsat + its satisfiable twin, the repair's soundness
-  guard), the false-`Satisfied` shape over Int, the A2/A3 alternation
-  never-wrong pin, and a never-wrong pin for the vacuous-membership family.
+  congruence pair (unsat + its satisfiable twin), the false-`Satisfied`
+  shape over Int, the A2/A3 alternation never-wrong pin, the vacuous-
+  membership never-wrong pin, and the Rodin goal never-falsely-satisfied
+  pin (exact transcription of the false-`sat` file).
 
 ## File map
 

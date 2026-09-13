@@ -66,6 +66,7 @@
 //! Reference: Z3's `ast/normal_forms/nnf.cpp` / `qe` Skolemization of asserted
 //! existentials.
 
+use crate::prelude::FxHashSet;
 use nixie_core::ast::{TermId, TermKind, TermManager};
 
 use crate::skolemization::SkolemizationContext;
@@ -129,7 +130,12 @@ pub(crate) fn skolemize_asserted_existentials(
 /// Whether a conjunct's head is a quantifier obligation this module owns:
 /// a plain `Exists`, or a negated `Forall` / `Exists` (an existential in
 /// disguise, and a polarity-flipped universal, respectively – see the module
-/// docs).
+/// docs), or a plain `Forall` whose body carries a **positive-polarity
+/// `Exists`** – the witness-in-implication shape
+/// `forall s. (~P s) => (exists x. phi s x)` whose un-rewritten instances
+/// carry the `exists` as an opaque Tseitin Boolean the SAT core can set
+/// freely, so the witness is never forced into the model (the set-theory
+/// A2 axiom; see the 2026-09-12 UFLRA study).
 fn head_is_rewritable_quantifier(term: TermId, manager: &TermManager) -> bool {
     match manager.get(term).map(|t| &t.kind) {
         Some(TermKind::Exists { .. }) => true,
@@ -137,8 +143,86 @@ fn head_is_rewritable_quantifier(term: TermId, manager: &TermManager) -> bool {
             manager.get(*inner).map(|t| &t.kind),
             Some(TermKind::Forall { .. } | TermKind::Exists { .. })
         ),
+        Some(TermKind::Forall { body, .. }) => contains_positive_exists(*body, manager),
         _ => false,
     }
+}
+
+/// Whether `body` contains an `Exists` that lands at **definite positive
+/// polarity** – the positions NNF-Skolemization may replace by a Skolem
+/// function of the enclosing universal variables.
+///
+/// The walk mirrors the NNF polarity rules: `not` flips, `and`/`or` preserve,
+/// an implication's premise is negative and its consequent positive.  A
+/// *both-polarity* position (an `ite` condition, `xor`, Boolean `=`) is not
+/// descended: NNF duplicates such a subterm into both polarities, the
+/// negative copy turns the `exists` into a universal, and Skolemizing it
+/// would be a weakening – so the trigger must stay silent there and the
+/// conjunct keeps its quantifier (completeness only, never soundness).
+fn contains_positive_exists(body: TermId, manager: &TermManager) -> bool {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Pol {
+        Pos,
+        Neg,
+        Both,
+    }
+    fn flip(pol: Pol) -> Pol {
+        match pol {
+            Pol::Pos => Pol::Neg,
+            Pol::Neg => Pol::Pos,
+            Pol::Both => Pol::Both,
+        }
+    }
+    fn pol_byte(pol: Pol) -> u8 {
+        match pol {
+            Pol::Pos => 0,
+            Pol::Neg => 1,
+            Pol::Both => 2,
+        }
+    }
+
+    let mut stack: Vec<(TermId, Pol)> = vec![(body, Pol::Pos)];
+    let mut visited: FxHashSet<(TermId, u8)> = FxHashSet::default();
+    while let Some((term, pol)) = stack.pop() {
+        if !visited.insert((term, pol_byte(pol))) {
+            continue;
+        }
+        if visited.len() > 100_000 {
+            return false;
+        }
+        let Some(node) = manager.get(term) else {
+            continue;
+        };
+        match &node.kind {
+            TermKind::Exists { .. } if pol == Pol::Pos => return true,
+            TermKind::Exists { body, .. } | TermKind::Forall { body, .. } => {
+                if pol != Pol::Both {
+                    stack.push((*body, pol));
+                }
+            }
+            TermKind::Not(a) => stack.push((*a, flip(pol))),
+            TermKind::And(args) | TermKind::Or(args) => {
+                for &a in args {
+                    stack.push((a, pol));
+                }
+            }
+            TermKind::Implies(a, b) => {
+                stack.push((*a, flip(pol)));
+                stack.push((*b, pol));
+            }
+            TermKind::Ite(c, t, e) => {
+                stack.push((*c, Pol::Both));
+                stack.push((*t, pol));
+                stack.push((*e, pol));
+            }
+            // Both-polarity positions: an `exists` under them is not
+            // skolemizable (its NNF negative copy is a universal).
+            TermKind::Xor(..) | TermKind::Eq(..) | TermKind::Distinct(_) => {}
+            // Non-Boolean spines cannot contain a quantifier.
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Flatten the assertion's top-level `And` spine into its conjuncts, or return
