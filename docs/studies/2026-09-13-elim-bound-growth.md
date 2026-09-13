@@ -312,6 +312,43 @@ same-formula differential (follow-up 6's design) is the remaining
 route, with the gate difference noted as a known state confounder to
 neutralize in the harness.
 
+## Follow-up 8 (same day): the controlled differential RAN — the root cause found and armed (`3036fe32`)
+
+The same-formula experiment executed with the new
+`NIXIE_DUMP_ELIM_ENTRY` (dumps originals + level-0 units at the first
+elimination phase) and a LOGGING cadical with every pass but
+elimination disabled (`-P1 --probe=false --subsume=false …`):
+
+- **cadical eliminates 123 841 variables on OUR OWN dumped formula**
+  where our eliminator eliminates 74 757 — the gap was *inside the
+  eliminators*, not upstream state;
+- the first divergence at pop #0: cadical's first pops are one-sided
+  variables being ELIMINATED (`elim_resolvents_are_bounded` returns
+  `lim.elimbound >= 0` for them — true from phase 1): zero resolvents,
+  retire the pure side with the pure literal as the extension witness.
+  Our port SKIPPED one-sided vars ("leave it to the pure-literal pass")
+  — a decision predating sound witness reconstruction; 17 572 such
+  skips in round 1 are the cascade starter;
+- **`NIXIE_ELIM_ONESIDED`** ports it (in-round one-sided elimination
+  via the existing `elim_retire_pivot_clauses` witness machinery):
+  Timetable round 1 **74 757 → 91 788** — parity with cadical's
+  own-pipeline 91 067;
+- the 60 s screen: 229 → 221 (−8 cap conversions, 0 disagreements) but
+  **conflicts geomean 0.974 — the best aggregate of every elimination
+  variant tried** (all clock/schedule variants were ≥ 1.0).  Per the
+  landing bar (completions must not lose) it ships default-off as the
+  sixth amplitude arm; the default is bit-identical to `107b7868`;
+- mp1 model validity with the arm on: total model, 0 falsified clauses
+  (the one-sided witness reconstruction works).
+
+The program-level conclusion sharpens: the 60 s mini-bench cap
+anti-correlates with elimination amplitude **five independent ways**
+(indexed schedule, scaled clock, combo, live gate, one-sided
+elimination) — while the aggregate-conflicts direction favors the
+amplitude arms (this one at 0.974).  Whether the standing screen's cap
+is the right acceptance metric for elimination work is the recorded
+program question.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
