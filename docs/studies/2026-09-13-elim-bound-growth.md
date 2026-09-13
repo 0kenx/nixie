@@ -259,7 +259,36 @@ Closing it needs the same-state differential (eliminate one variable
 with both engines on identical state, diff the resolvent sets) — the
 next session's concrete entry point for the Timetable class.
 
-## Verdict
+## Follow-up 6 (same day): the differential ran — small-file near-parity, divergence is upstream (`d1fe26d5`)
+
+Tools built: `NIXIE_LOG_ELIMDTL` (per-variable decision trace —
+outcome + per-pair class counts, landed) and a LOGGING-enabled cadical
+(`cp -r ../temp/cadical/{src,scripts,contrib,configure,test,LICENSE,README*,makefile*,VERSION} /tmp/cadical-log/ && ./configure -l && make` — the
+reference tree untouched; LOG gates on `--log=true`, *not* verbose).
+
+6s167-opt differential (both engines fully traced): **cadical 3 280
+eliminated whole-run vs ours 3 228 — 1.6 % apart.**  The core
+eliminator semantics agree at small scale; the Timetable 75 149-vs-91 067
+gap does **not** reproduce here.  The ordered traces diverge at pop #0
+(ours: a one-sided var; cadical: an eliminated var — upstream
+preprocessing/pure-literal/probing removed different things), so trace
+alignment cannot isolate the eliminator on diverged states.
+
+Timetable-side aggregate anatomy of our round 1 (the dtl trace, 384 k
+decided tries): too_many_res 72.3 %, elim 19.6 %, one_sided 4.6 %,
+occ_limit 3.5 % — and the occ-limit gate's raw-vs-flushed divergence
+offers ~4.3 k recoverable vars (raw in (100, 140]); the 69 %-too-many-res
+mass is where cadical's extra eliminations live, but the bidirectional
+outcome mismatches (593 ours-elim/cad-refuse vs 437 reverse) confirm
+state contamination rather than a one-sided gate strictness.
+
+**The recorded controlled experiment** (next session): dump our formula
+at Timetable phase-1 entry (originals + units; search at 2 k conflicts
+has fired no inprocessing yet), feed the identical CNF to both
+eliminators (cadical `-P1` with probe/condition off; ours with the
+phase forced on it), diff the per-var traces from a truly common
+state.  Alternatively, close the occ-limit gate's raw-vs-flushed
+divergence first (~4.3 k vars on Timetable) and re-measure the gap.
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
 60 s cap including the first Timetable solve, 0 verdict disagreements
