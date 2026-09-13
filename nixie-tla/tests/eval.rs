@@ -3,8 +3,9 @@
 //! These pin the semantics unit by unit; `bench/tla_eval` checks the same
 //! evaluator against TLC over the corpora.
 
-use nixie_tla::{EvalErrorKind, Evaluator, Lowerer};
+use nixie_tla::{EvalErrorKind, Evaluator, Lowerer, Value};
 use nixie_tla_syntax::parse_file;
+use std::collections::HashMap;
 
 fn eval(body: &str) -> String {
     let src = format!("---- MODULE M ----\nEXTENDS Integers\n{body}\n====\n");
@@ -22,6 +23,40 @@ fn eval(body: &str) -> String {
     match Evaluator::new().eval(&k) {
         Ok(v) => v.to_string(),
         Err(e) => panic!("evaluation failed: {e}"),
+    }
+}
+
+/// Lower `A` in a module that declares `x` and `y`, for the action tests.
+fn lower_action(body: &str) -> nixie_tla::KeraRef {
+    let src = format!("---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\n{body}\n====\n");
+    let parsed = parse_file(&src).expect("parses");
+    let m = parsed.module;
+    let mut low = Lowerer::new();
+    low.add_module(&m);
+    low.lower_named(&m, "A").expect("lowers")
+}
+
+fn state(pairs: &[(&str, Value)]) -> HashMap<String, Value> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), v.clone()))
+        .collect()
+}
+
+/// Evaluate `A` as an action between two states.
+fn act(body: &str, now: &[(&str, Value)], then: &[(&str, Value)]) -> String {
+    let k = lower_action(body);
+    match Evaluator::new().eval_action(&k, &state(now), &state(then)) {
+        Ok(v) => v.to_string(),
+        Err(e) => panic!("evaluation failed: {e}"),
+    }
+}
+
+fn act_err(body: &str, now: &[(&str, Value)], then: &[(&str, Value)]) -> EvalErrorKind {
+    let k = lower_action(body);
+    match Evaluator::new().eval_action(&k, &state(now), &state(then)) {
+        Ok(v) => panic!("expected an error, got {v}"),
+        Err(e) => e,
     }
 }
 
@@ -621,5 +656,124 @@ fn a_multi_argument_selector_then_a_field() {
              A == [r EXCEPT ![1, 2].a = 22][<<1, 2>>]"
         ),
         "[a |-> 22, b |-> 2]"
+    );
+}
+
+// ---- actions: `x'` ----
+//
+// `'` is not a different variable. `e'` is the *same* expression evaluated in
+// the successor state, so priming distributes through everything inside it —
+// which is why the evaluator carries a mode rather than looking up a name
+// spelled `x'`.
+
+#[test]
+fn a_primed_variable_reads_the_next_state() {
+    assert_eq!(
+        act(
+            "A == x' = x + 1",
+            &[("x", Value::Int(1))],
+            &[("x", Value::Int(2))]
+        ),
+        "TRUE"
+    );
+    assert_eq!(
+        act(
+            "A == x' = x + 1",
+            &[("x", Value::Int(1))],
+            &[("x", Value::Int(3))]
+        ),
+        "FALSE"
+    );
+}
+
+#[test]
+fn unchanged_compares_the_two_states() {
+    assert_eq!(
+        act(
+            "A == UNCHANGED x",
+            &[("x", Value::Int(7))],
+            &[("x", Value::Int(7))]
+        ),
+        "TRUE"
+    );
+    assert_eq!(
+        act(
+            "A == UNCHANGED x",
+            &[("x", Value::Int(7))],
+            &[("x", Value::Int(8))]
+        ),
+        "FALSE"
+    );
+}
+
+/// Priming distributes: `(x + y)'` is `x' + y'`, not `x' + y`.
+#[test]
+fn priming_distributes_over_an_expression() {
+    assert_eq!(
+        act(
+            "A == (x + y)' = 30",
+            &[("x", Value::Int(1)), ("y", Value::Int(2))],
+            &[("x", Value::Int(10)), ("y", Value::Int(20))],
+        ),
+        "TRUE"
+    );
+}
+
+/// A binder's variable is not a state variable, so it is not re-read from the
+/// successor state even under a prime.
+#[test]
+fn a_binder_under_a_prime_is_not_a_state_variable() {
+    let f_now = Value::Tuple(vec![Value::Int(1), Value::Int(2)]);
+    let f_next = Value::Tuple(vec![Value::Int(2), Value::Int(3)]);
+    assert_eq!(
+        act(
+            "A == \\A i \\in {1, 2} : (x[i])' = x[i] + 1",
+            &[("x", f_now)],
+            &[("x", f_next)],
+        ),
+        "TRUE"
+    );
+}
+
+/// A constant is unchanged by the step, so it falls through to the ordinary
+/// environment even under a prime — which is what a constant is.
+#[test]
+fn an_unprimed_name_in_an_action_reads_the_current_state() {
+    assert_eq!(
+        act(
+            "A == <<x, x'>> = <<1, 2>>",
+            &[("x", Value::Int(1))],
+            &[("x", Value::Int(2))],
+        ),
+        "TRUE"
+    );
+}
+
+/// TLA+ has no `x''`: priming selects the successor state, and there is only
+/// one. Reported rather than flattened to a single prime.
+#[test]
+fn a_double_prime_is_an_error() {
+    let e = act_err(
+        "A == x'' = 1",
+        &[("x", Value::Int(1))],
+        &[("x", Value::Int(2))],
+    );
+    assert!(
+        matches!(&e, EvalErrorKind::Unsupported(m) if m.contains("double prime")),
+        "got {e}"
+    );
+}
+
+/// And outside an action there is no next state to read, so `'` stays the
+/// honest refusal it was — a ground definition that mentions it has no value.
+#[test]
+fn a_prime_outside_an_action_is_still_refused() {
+    let k = lower_action("A == x' = 1");
+    let e = Evaluator::new()
+        .eval_state(&k, &state(&[("x", Value::Int(1))]))
+        .expect_err("a state predicate has no next state");
+    assert!(
+        matches!(&e, EvalErrorKind::Unsupported(m) if m.contains("outside an action")),
+        "got {e}"
     );
 }
