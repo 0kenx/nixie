@@ -467,11 +467,6 @@ impl ModelChecker {
             }
         };
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-            eprintln!(
-                "[mc] check q={:?}: model.macros = {}",
-                q.term,
-                model.macros.len()
-            );
             let printer = nixie_core::smtlib::Printer::new(manager);
             eprintln!("[mc] orig  = {}", printer.print_term(q.body));
             eprintln!("[mc] body' = {}", printer.print_term(body_completed));
