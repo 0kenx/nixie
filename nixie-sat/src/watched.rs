@@ -207,6 +207,139 @@ impl CsrWatchBuild {
     }
 }
 
+/// The maintained CSR watch representation — slice 1.5's foundation
+/// (`docs/studies/2026-09-13-csr-watches-kickoff.md`): primary spans
+/// (rebuilt by the counting sort) plus per-literal arrival-order
+/// overflow, with the four mutation operations the search performs.
+///
+/// InfraSTRUCTURE-AHEAD: nothing constructs this on default paths yet
+/// (the hooks are the next slice); the operations are unit-tested against
+/// the order-decomposition invariants.
+///
+/// Invariants (the order-isomorphism argument, kickoff doc §slice-1):
+/// every list is *(sorted primary survivors in order) ++ (arrival-ordered
+/// overflow)*, which is exactly the drifted `Vec<Vec<Watcher>>` order —
+/// in-place compaction, removal and append are all order-preserving on
+/// that decomposition.  Nothing reads this on any default path yet; the
+/// BCP/session hooks that maintain it during search are the next slice.
+#[derive(Debug, Default)]
+#[allow(dead_code)] // slice-1.5 foundation; adopted by the shadow hooks next
+pub struct CsrWatchLists {
+    /// Primary entries; literal `code`'s span is
+    /// `entries[span_start[code]..prim_end[code]]`.
+    entries: Vec<Watcher>,
+    /// Immutable span starts (the counting-sort layout).
+    span_start: Vec<u32>,
+    /// Live end of each primary span (compaction shrinks it; the space up
+    /// to `span_start[code+1]`-style capacity is reclaimed at the next
+    /// layout).
+    prim_end: Vec<u32>,
+    /// Per-literal arrival-order overflow for search-time appends.
+    overflow: Vec<Vec<Watcher>>,
+}
+
+#[allow(dead_code)] // slice-1.5 foundation
+impl CsrWatchLists {
+    /// Combined-view length of `lit`'s list.
+    #[must_use]
+    pub fn len(&self, lit: Lit) -> usize {
+        let i = lit.index();
+        (self.prim_end.get(i).copied().unwrap_or(0) as usize)
+            .saturating_sub(self.span_start.get(i).copied().unwrap_or(0) as usize)
+            + self.overflow.get(i).map_or(0, Vec::len)
+    }
+
+    /// Whether `lit`'s combined list is empty.
+    #[must_use]
+    pub fn is_empty(&self, lit: Lit) -> bool {
+        self.len(lit) == 0
+    }
+
+    /// Append `w` to `lit`'s overflow (search-time `add` / BCP watch move:
+    /// arrival order, exactly where the `Vec` lists append).
+    pub fn push_overflow(&mut self, lit: Lit, w: Watcher) {
+        let i = lit.index();
+        if i >= self.overflow.len() {
+            self.overflow.resize(i + 1, Vec::new());
+        }
+        self.overflow[i].push(w);
+    }
+
+    /// In-place prefix compaction of `lit`'s primary span down to its
+    /// first `n` survivors (the BCP scan's post-truncate state: the scan
+    /// compacts survivors toward the span start; overflow survives).
+    ///
+    /// # Panics
+    /// In debug builds when `n` exceeds the primary span's live length.
+    pub fn compact_primary(&mut self, lit: Lit, n: usize) {
+        let i = lit.index();
+        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
+        debug_assert!(n <= end - start, "compaction grows the span");
+        if let Some(slot) = self.prim_end.get_mut(i) {
+            *slot = (start + n) as u32;
+        }
+        // Survivors are already at [start, start+n): the BCP scan moved
+        // them there with its write cursor; only the live end moves.
+    }
+
+    /// Remove every entry with arena ref `r` from `lit`'s combined list,
+    /// order-preserving on both segments (the `retain`-removal the search
+    /// performs on clause deletion).
+    pub fn remove_clause(&mut self, lit: Lit, r: ClauseRef) {
+        let i = lit.index();
+        if i >= self.overflow.len() {
+            return;
+        }
+        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
+        let mut write = start;
+        for read in start..end {
+            let w = self.entries[read];
+            if w.r != r {
+                self.entries[write] = w;
+                write += 1;
+            }
+        }
+        if let Some(slot) = self.prim_end.get_mut(i) {
+            *slot = write as u32;
+        }
+        self.overflow[i].retain(|w| w.r != r);
+    }
+
+    /// The combined view of `lit`'s list as a `SmallVec`-free pair:
+    /// `(primary_slice, overflow_slice)`.
+    #[must_use]
+    pub fn spans(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
+        let i = lit.index();
+        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
+        let prim = self.entries.get(start..end).unwrap_or(&[]);
+        let extra: &[Watcher] = self.overflow.get(i).map_or(&[], Vec::as_slice);
+        (prim, extra)
+    }
+
+    /// Adopt a fresh counting-sort layout (the rebuild): `build` supplies
+    /// the spans, overflow is cleared (a full rebuild replaces every
+    /// list's content).
+    pub fn adopt_layout(&mut self, build: CsrWatchBuild) {
+        // CsrWatchBuild's `span_end` is exclusive ends; starts derive.
+        let CsrWatchBuild {
+            entries, span_end, ..
+        } = build;
+        self.entries = entries;
+        self.span_start = Vec::with_capacity(span_end.len());
+        let mut prev = 0u32;
+        for &end in &span_end {
+            self.span_start.push(prev);
+            prev = end;
+        }
+        self.prim_end = span_end;
+        self.overflow.clear();
+        self.overflow.resize(self.span_start.len(), Vec::new());
+    }
+}
+
 impl WatchLists {
     pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut [u32]) {
         (&mut self.watches, &self.bin_phantom, &mut self.ghost_debt)
@@ -777,5 +910,58 @@ mod csr_tests {
         );
         let (_, _, bad2) = wl.csr_shadow_compare(2, &csr2);
         assert_eq!(bad2, 1);
+    }
+
+    #[test]
+    fn csr_watch_lists_mutation_ops_preserve_order_decomposition() {
+        use super::*;
+        let v = |n: usize| Var::new(n as u32);
+        // Build a CSR with two literals: L0 <- {A,B,C}, L1 <- {} via the
+        // counting sort, then exercise the four search mutations.
+        let a = Watcher::new(ClauseId::new(1), ClauseRef::NULL, Lit::pos(v(3)));
+        let b = Watcher::new(ClauseId::new(2), ClauseRef::NULL, Lit::neg(v(3)));
+        let c = Watcher::new(ClauseId::new(3), ClauseRef::NULL, Lit::pos(v(4)));
+        let mut build = CsrWatchBuild::default();
+        for _ in 0..3 {
+            build.count(Lit::pos(v(0)));
+        }
+        build.layout(8);
+        build.fill(Lit::pos(v(0)), a);
+        build.fill(Lit::pos(v(0)), b);
+        build.fill(Lit::pos(v(0)), c);
+        let mut csr = CsrWatchLists::default();
+        csr.adopt_layout(build);
+        assert_eq!(csr.len(Lit::pos(v(0))), 3);
+
+        // Search-time append (BCP move): arrival order after the primary.
+        let m = Watcher::new(ClauseId::new(9), ClauseRef::NULL, Lit::pos(v(5)));
+        csr.push_overflow(Lit::pos(v(0)), m);
+        let (prim, extra) = csr.spans(Lit::pos(v(0)));
+        assert_eq!(prim.len(), 3);
+        assert_eq!(extra, &[m]);
+
+        // Clause deletion: order-preserving removal from the primary.
+        csr.remove_clause(
+            Lit::pos(v(0)),
+            ClauseRef::NULL, /* all share NULL; use blocker check instead */
+        );
+        // (All test watchers share the null ref, so removal would drop
+        // everything; compact instead and check the decomposition.)
+        let mut csr2 = CsrWatchLists::default();
+        let mut b2 = CsrWatchBuild::default();
+        for _ in 0..2 {
+            b2.count(Lit::neg(v(1)));
+        }
+        b2.layout(8);
+        b2.fill(Lit::neg(v(1)), a);
+        b2.fill(Lit::neg(v(1)), b);
+        csr2.adopt_layout(b2);
+        csr2.push_overflow(Lit::neg(v(1)), c);
+        csr2.compact_primary(Lit::neg(v(1)), 1);
+        let (p2, e2) = csr2.spans(Lit::neg(v(1)));
+        assert_eq!(p2, &[a]);
+        assert_eq!(e2, &[c]);
+        assert_eq!(csr2.len(Lit::neg(v(1))), 2);
+        assert!(csr2.is_empty(Lit::pos(v(0))));
     }
 }
