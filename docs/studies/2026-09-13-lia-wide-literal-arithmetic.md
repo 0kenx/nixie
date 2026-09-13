@@ -280,6 +280,47 @@ the solver. The sweep ships as
 `bench/differential/debug_panic_sweep.py` so the next theory that grows
 boundary arithmetic can re-run it in one command.
 
+## Continuation 4 (2026-09-14): the oracle stratified over SMT-LIB, and inside the simplex
+
+The debug-panic oracle, stratified over a 615-file sample of
+`smt-lib/non-incremental` (40 per logic family, seed 20260915), found three
+panics — two unchecked sites inside the simplex, one canary in the SAT core:
+
+14. **`update_assignment` multiplied unchecked** (`mul_r64_fast`'s
+    non-integer fallback): a product/sum that left `Rational64` width
+    PANICKED in debug (QF_NIA/VeryMax reproducer) and silently WRAPPED in
+    release — a corrupted assignment vector the pivots then reasoned over.
+    Fixed with checked accumulation plus an EXACT fallback: an i64 overflow
+    mid-sum retries that one row in `BigRational` and narrows the final —
+    intermediates legitimately overflow while the final fits (denominators
+    cancel), so the retry recovers completeness — and only a final that
+    still does not fit sets `resource_limit`, the existing honest-`Unknown`
+    channel.  `check`/`pivot`/`on_nonbasic_bound_change`/`state_feasible`/
+    `dual_simplex` all bail on the flag before deciding or propagating.
+    Same pattern for the delta-propagation sums (`delta_acc` +
+    `derive_bound_exact`): operands are given bounds and reasons are IDs,
+    so an exact final that fits is a sound bound.
+15. **Two canaries recorded for their owners** (deliberately left loud):
+    * `QF_NIA/.../From_T2__streamserver...` still trips the delta-vs-full-
+      re-evaluation `debug_assert` in `pivot` (got ≠ want with compounding
+      pivot denominators ~3^16): the canary for arithmetic that leaves
+      representable range inside the LP's incremental bookkeeping — the
+      named entry point for the wide-LP project.
+    * `AUFLIA/20170829-Rodin/smt3878551918658299427` (and one sibling)
+      trips `debug_verify_model_input` (`learn.rs`): an intermediate `Sat`
+      candidate whose assignment violates an ORIGINAL clause — the CDCL(T)
+      fixpoint gap class that assert exists to catch.  SAT-core territory;
+      reproducer recorded here for the owning agent.
+
+Release verdicts on both canary instances are `unknown` before and after
+(no regression, no fabricated verdict); the fixes remove the aborts and
+the wrapped-arithmetic exposure.
+
+Verification: 11,330 workspace tests, all gates clean; Z3 parity 0
+disagreements; differential with model validation 0 disagreements, 88/88
+models valid; 1,200 fuzz instances clean; the stratified SMT-LIB sweep's
+two hard panics gone.
+
 ## Residual known incompleteness (sound, documented)
 
 - A constant sum that overflows `i64` *only in the linear parse* (leaves

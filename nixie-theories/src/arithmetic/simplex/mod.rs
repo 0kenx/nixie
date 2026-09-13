@@ -951,6 +951,11 @@ impl Simplex {
         if !self.assignment_current {
             self.crash_basis();
             self.assignment_current = true;
+            if self.resource_limit {
+                // The re-derivation overflowed: propagating deltas from a
+                // partially wrapped vector would fabricate consequences.
+                return;
+            }
         }
         let var = idx as VarId;
         let old = self.assignment[idx];
@@ -1552,6 +1557,13 @@ impl Simplex {
             self.crash_basis();
             self.assignment_current = true;
         }
+        if self.resource_limit {
+            // `update_assignment` overflowed during the re-derivation: the
+            // assignment vector is not trustworthy, so no feasibility verdict
+            // may rest on it.  `Ok(())` + the flag is the documented
+            // resource-limit signal the theory solver turns into `Unknown`.
+            return Ok(());
+        }
         if self.soi_enabled {
             self.make_feasible_soi()
         } else {
@@ -2014,6 +2026,9 @@ impl Simplex {
     pub fn dual_simplex(&mut self) -> Result<(), Vec<u32>> {
         self.resource_limit = false;
         self.update_assignment();
+        if self.resource_limit {
+            return Ok(());
+        }
         for _ in 0..self.max_pivots {
             let violating = self.find_violating();
             if violating.is_none() {
@@ -2241,6 +2256,13 @@ impl Simplex {
         if !self.assignment_current {
             self.crash_basis();
             self.assignment_current = true;
+            if self.resource_limit {
+                // The re-derivation overflowed (`update_assignment`'s checked
+                // path): same contract as a mid-pivot overflow below — no
+                // structural mutation happened, and the flag makes every
+                // caller report `Unknown`.
+                return false;
+            }
         }
 
         #[cfg(feature = "profiling")]
@@ -2537,12 +2559,22 @@ impl Simplex {
                 }
             }
         }
-        for (var, expr) in &self.tableau {
+        // CHECKED row-value derivation: a product or sum that leaves
+        // `Rational64` width (large coefficients against wide model values —
+        // the QF_NIA/VeryMax family reaches this through `crash_basis`)
+        // aborts the re-derivation and sets `resource_limit`, the existing
+        // "give up honestly" channel: every consumer then reports `Unknown`
+        // instead of trusting a wrapped value.  Unchecked, this PANICKED in
+        // debug and silently WRAPPED in release — a corrupted assignment
+        // vector the pivots would then reason over.
+        let mut overflow = false;
+        'rows: for (var, expr) in &self.tableau {
             let var_idx = *var as usize;
             if var_idx >= num_vars {
                 continue;
             }
-            let mut val = DeltaRational::from_rational(expr.constant);
+            let mut real = expr.constant;
+            let mut delta = Rational64::zero();
             let mut has_stale_ref = false;
             for (v, c) in &expr.terms {
                 let v_idx = *v as usize;
@@ -2550,12 +2582,102 @@ impl Simplex {
                     has_stale_ref = true;
                     break;
                 }
-                val += self.assignment[v_idx] * *c;
+                let a = &self.assignment[v_idx];
+                let prod = (
+                    num_traits::CheckedMul::checked_mul(&a.real, c),
+                    num_traits::CheckedMul::checked_mul(&a.delta, c),
+                );
+                match prod {
+                    (Some(pr), Some(pd)) => match (
+                        num_traits::CheckedAdd::checked_add(&real, &pr),
+                        num_traits::CheckedAdd::checked_add(&delta, &pd),
+                    ) {
+                        (Some(r2), Some(d2)) => {
+                            real = r2;
+                            delta = d2;
+                        }
+                        _ => {
+                            // The i64 pipeline overflowed MID-SUM.  That
+                            // does not mean the ROW's value is out of
+                            // range: denominators cancel, and an
+                            // intermediate can leave `i64` while the final
+                            // fits.  Recompute THIS row exactly
+                            // (`BigRational`, cold path) and narrow the
+                            // final; only a final that still does not fit
+                            // declines the derivation.
+                            match Self::update_row_exact(&self.assignment, expr, num_vars) {
+                                Some(val) => {
+                                    self.assignment[var_idx] = val;
+                                    continue 'rows;
+                                }
+                                None => {
+                                    overflow = true;
+                                    break 'rows;
+                                }
+                            }
+                        }
+                    },
+                    _ => match Self::update_row_exact(&self.assignment, expr, num_vars) {
+                        Some(val) => {
+                            self.assignment[var_idx] = val;
+                            continue 'rows;
+                        }
+                        None => {
+                            overflow = true;
+                            break 'rows;
+                        }
+                    },
+                }
             }
             if !has_stale_ref {
-                self.assignment[var_idx] = val;
+                self.assignment[var_idx] = DeltaRational { real, delta };
             }
         }
+        if overflow {
+            // Leave the vector partially recomputed but flagged: no
+            // structural state changed, and every consumer routes to the
+            // honest give-up.
+            self.resource_limit = true;
+            self.assignment_current = false;
+        }
+    }
+
+    /// Exact (`BigRational`) fallback for one row's assignment value when
+    /// the `i64` pipeline overflowed mid-derivation.  `None` = the row's
+    /// final value itself does not fit `Rational64` (the honest give-up).
+    fn update_row_exact(
+        assignment: &[DeltaRational],
+        expr: &LinExpr,
+        num_vars: usize,
+    ) -> Option<DeltaRational> {
+        let big = |r: &Rational64| -> num_rational::BigRational {
+            num_rational::BigRational::new(
+                num_bigint::BigInt::from(*r.numer()),
+                num_bigint::BigInt::from(*r.denom()),
+            )
+        };
+        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
+            Some(Rational64::new(
+                num_traits::ToPrimitive::to_i64(r.numer())?,
+                num_traits::ToPrimitive::to_i64(r.denom())?,
+            ))
+        };
+        let mut real = big(&expr.constant);
+        let mut delta = num_rational::BigRational::zero();
+        for (v, c) in &expr.terms {
+            let v_idx = *v as usize;
+            if v_idx >= num_vars {
+                return None; // stale ref: no exact value either
+            }
+            let a = &assignment[v_idx];
+            let cb = big(c);
+            real += big(&a.real) * &cb;
+            delta += big(&a.delta) * &cb;
+        }
+        Some(DeltaRational {
+            real: narrow(&real)?,
+            delta: narrow(&delta)?,
+        })
     }
     /// Explain why a conflict occurred using Farkas lemma
     ///
@@ -2653,12 +2775,71 @@ impl Simplex {
             }
         }
     }
+
+    /// Exact (`BigRational`) recomputation of one directional implied bound
+    /// for `expr`: `lower == true` derives the LOWER sum (positive
+    /// coefficients take lower bounds, negative take upper), `false` the
+    /// upper.  `None` when the exact final still does not fit
+    /// `Rational64` or a term's variable has no bound on the needed side.
+    fn derive_bound_exact(&self, expr: &LinExpr, lower: bool) -> Option<DeltaRational> {
+        let big = |r: &Rational64| -> num_rational::BigRational {
+            num_rational::BigRational::new(
+                num_bigint::BigInt::from(*r.numer()),
+                num_bigint::BigInt::from(*r.denom()),
+            )
+        };
+        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
+            Some(Rational64::new(
+                num_traits::ToPrimitive::to_i64(r.numer())?,
+                num_traits::ToPrimitive::to_i64(r.denom())?,
+            ))
+        };
+        let mut real = big(&expr.constant);
+        let mut delta = num_rational::BigRational::zero();
+        for (v, c) in &expr.terms {
+            let vi = *v as usize;
+            let positive = *c > Rational64::zero();
+            let want_lower = if lower { positive } else { !positive };
+            let bound = if want_lower {
+                &self.lower[vi]
+            } else {
+                &self.upper[vi]
+            };
+            let Some(b) = bound else { return None };
+            let cb = big(c);
+            real += big(&b.value.real) * &cb;
+            delta += big(&b.value.delta) * &cb;
+        }
+        Some(DeltaRational {
+            real: narrow(&real)?,
+            delta: narrow(&delta)?,
+        })
+    }
+
+    /// Checked accumulate `sum += value * coef` for the delta-propagation
+    /// sums: `None` on `Rational64` overflow, which declines the derivation
+    /// (propagation is an optimization; a wrapped bound would fabricate a
+    /// consequence the row does not entail — the same class the
+    /// `update_assignment` fix closes on the assignment side).
+    fn delta_acc(sum: &mut DeltaRational, value: &DeltaRational, coef: &Rational64) -> Option<()> {
+        let pr = num_traits::CheckedMul::checked_mul(&value.real, coef)?;
+        let pd = num_traits::CheckedMul::checked_mul(&value.delta, coef)?;
+        sum.real = num_traits::CheckedAdd::checked_add(&sum.real, &pr)?;
+        sum.delta = num_traits::CheckedAdd::checked_add(&sum.delta, &pd)?;
+        Some(())
+    }
+
     /// Derive bounds for a basic variable from bounds on non-basic variables
     ///
     /// For basic variable x_i = c + sum(a_j * x_j):
     /// - Lower bound: sum of (a_j * lower(x_j) if a_j > 0, a_j * upper(x_j) if a_j < 0)
     /// - Upper bound: sum of (a_j * upper(x_j) if a_j > 0, a_j * lower(x_j) if a_j < 0)
     fn derive_basic_bound(&self, basic_var: VarId, expr: &LinExpr) -> Option<PropagatedBound> {
+        // Overflow in a propagation sum (delta_acc's `None`) retries the
+        // whole directional sum EXACTLY (`BigRational`, cold path): the
+        // operands are given `Rational64` bounds and the reasons are IDs,
+        // not arithmetic, so an exact final that fits is a sound bound —
+        // only a final that still overflows declines (the honest bound).
         let idx = basic_var as usize;
         let mut lower_sum = DeltaRational::from_rational(expr.constant);
         let mut lower_reasons: SmallVec<[u32; 4]> = SmallVec::new();
@@ -2667,7 +2848,9 @@ impl Simplex {
             let var_idx = *var as usize;
             if *coef > Rational64::zero() {
                 if let Some(lo) = &self.lower[var_idx] {
-                    lower_sum += lo.value * *coef;
+                    if Self::delta_acc(&mut lower_sum, &lo.value, coef).is_none() {
+                        lower_sum = self.derive_bound_exact(expr, true)?;
+                    }
                     // Carry EVERY antecedent of this bound (primary + auxiliary),
                     // not just its primary reason: when `lo` is itself a
                     // propagated bound derived from several reasons, dropping its
@@ -2681,7 +2864,9 @@ impl Simplex {
                 }
             } else {
                 if let Some(hi) = &self.upper[var_idx] {
-                    lower_sum += hi.value * *coef;
+                    if Self::delta_acc(&mut lower_sum, &hi.value, coef).is_none() {
+                        lower_sum = self.derive_bound_exact(expr, true)?;
+                    }
                     lower_reasons.extend(hi.all_reasons());
                 } else {
                     can_derive_lower = false;
@@ -2710,7 +2895,9 @@ impl Simplex {
             let var_idx = *var as usize;
             if *coef > Rational64::zero() {
                 if let Some(hi) = &self.upper[var_idx] {
-                    upper_sum += hi.value * *coef;
+                    if Self::delta_acc(&mut upper_sum, &hi.value, coef).is_none() {
+                        upper_sum = self.derive_bound_exact(expr, false)?;
+                    }
                     upper_reasons.extend(hi.all_reasons());
                 } else {
                     can_derive_upper = false;
@@ -2718,7 +2905,9 @@ impl Simplex {
                 }
             } else {
                 if let Some(lo) = &self.lower[var_idx] {
-                    upper_sum += lo.value * *coef;
+                    if Self::delta_acc(&mut upper_sum, &lo.value, coef).is_none() {
+                        upper_sum = self.derive_bound_exact(expr, false)?;
+                    }
                     upper_reasons.extend(lo.all_reasons());
                 } else {
                     can_derive_upper = false;
@@ -2973,6 +3162,10 @@ impl Simplex {
         if !self.assignment_current {
             self.crash_basis();
             self.assignment_current = true;
+            if self.resource_limit {
+                // Overflowed re-derivation: no model may be snapshotted.
+                return false;
+            }
         }
         self.find_violating().is_none()
     }
