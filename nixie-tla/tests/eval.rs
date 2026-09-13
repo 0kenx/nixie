@@ -478,3 +478,148 @@ fn a_local_definition_of_a_fold_name_wins() {
         "42"
     );
 }
+
+// ---- multi-variable function definitions ----
+//
+// `f[x \in S, y \in T] == e` is a function of *one* variable ranging over
+// `S \X T`, exactly as `[x \in S, y \in T |-> e]` is. The two differ only in
+// where they are written; lowering them differently was the defect.
+
+#[test]
+fn a_two_variable_function_definition() {
+    assert_eq!(
+        eval("f[x \\in {1, 2}, y \\in {10, 20}] == x + y\nA == f[<<2, 20>>]"),
+        "22"
+    );
+}
+
+/// Its domain is the product, not the first bound.
+#[test]
+fn a_two_variable_function_definition_has_a_product_domain() {
+    assert_eq!(
+        eval("f[x \\in {1, 2}, y \\in {10}] == x + y\nA == DOMAIN f"),
+        "{<<1, 10>>, <<2, 10>>}"
+    );
+}
+
+/// Two names in one bound range over the same set, and each is its own
+/// component.
+#[test]
+fn two_names_in_one_bound() {
+    assert_eq!(eval("f[x, y \\in {1, 2}] == x - y\nA == f[<<1, 2>>]"), "-1");
+}
+
+/// The definition form and the expression form must agree.
+#[test]
+fn the_definition_and_expression_forms_agree() {
+    assert_eq!(
+        eval(
+            "f[x \\in {1, 2}, y \\in {3, 4}] == x * y\n\
+             g == [x \\in {1, 2}, y \\in {3, 4} |-> x * y]\n\
+             A == f = g"
+        ),
+        "TRUE"
+    );
+}
+
+/// Three variables, so the product is not merely a pair.
+#[test]
+fn a_three_variable_function_definition() {
+    assert_eq!(
+        eval("f[x \\in {1}, y \\in {2}, z \\in {3}] == x + y + z\nA == f[<<1, 2, 3>>]"),
+        "6"
+    );
+}
+
+/// A tuple pattern inside a multi-variable definition projects again.
+#[test]
+fn a_tuple_pattern_in_a_multi_variable_definition() {
+    assert_eq!(
+        eval("f[<<x, y>> \\in {<<1, 2>>}, z \\in {10}] == x + y + z\nA == f[<<<<1, 2>>, 10>>]"),
+        "13"
+    );
+}
+
+// ---- a multi-argument EXCEPT selector ----
+//
+// `[f EXCEPT ![i, j] = v]` is **one** application of a function of two
+// arguments, which in TLA+ is a function of the pair — so it updates `f` at
+// `<<i, j>>`. Flattening the selector into two path steps reads it as
+// `f[i][j]`: a different function and a different value. TLC settles it.
+//
+//     f == [i \in 1..2, j \in 1..2 |-> 10*i + j]
+//     [f EXCEPT ![1,2] = 99][<<1,2>>]   = 99
+//     [f EXCEPT ![1,2] = 99]            = (<<1,1>> :> 11 @@ <<1,2>> :> 99
+//                                          @@ <<2,1>> :> 21 @@ <<2,2>> :> 22)
+
+const GRID: &str = "f == [i \\in 1..2, j \\in 1..2 |-> 10*i + j]\n";
+
+#[test]
+fn a_multi_argument_except_selector_updates_one_point() {
+    assert_eq!(
+        eval(&format!("{GRID}A == [f EXCEPT ![1, 2] = 99][<<1, 2>>]")),
+        "99"
+    );
+}
+
+/// And leaves every other point alone — in particular `<<2, 1>>`, which a
+/// reading of `![1,2]` as `f[1][2]` would have had no way to touch either, and
+/// `<<1, 1>>`, which such a reading would have destroyed.
+#[test]
+fn a_multi_argument_except_selector_leaves_the_rest_alone() {
+    assert_eq!(
+        eval(&format!(
+            "{GRID}A == LET g == [f EXCEPT ![1, 2] = 99] \
+             IN <<g[<<1, 1>>], g[<<2, 1>>], g[<<2, 2>>]>>"
+        )),
+        "<<11, 21, 22>>"
+    );
+}
+
+/// The domain does not change: an update is not an extension.
+#[test]
+fn a_multi_argument_except_selector_keeps_the_domain() {
+    assert_eq!(
+        eval(&format!(
+            "{GRID}A == DOMAIN [f EXCEPT ![1, 2] = 99] = DOMAIN f"
+        )),
+        "TRUE"
+    );
+}
+
+/// Nested brackets are the *other* form and still nest: `![i][j]` updates the
+/// function that `f[i]` returns.
+#[test]
+fn nested_except_selectors_still_nest() {
+    assert_eq!(
+        eval(
+            "g == [i \\in 1..2 |-> [j \\in 1..2 |-> 10*i + j]]\n\
+             A == [g EXCEPT ![1][2] = 99]"
+        ),
+        "<<<<11, 99>>, <<21, 22>>>>"
+    );
+}
+
+/// `@` in a multi-argument selector is the old value at that one point.
+#[test]
+fn at_in_a_multi_argument_selector() {
+    assert_eq!(
+        eval(&format!(
+            "{GRID}A == [f EXCEPT ![1, 2] = @ + 100][<<1, 2>>]"
+        )),
+        "112"
+    );
+}
+
+/// A multi-argument selector followed by a field, which is the shape that
+/// found this: `![1,2].a`.
+#[test]
+fn a_multi_argument_selector_then_a_field() {
+    assert_eq!(
+        eval(
+            "r == [i \\in 1..2, j \\in 1..2 |-> [a |-> i, b |-> j]]\n\
+             A == [r EXCEPT ![1, 2].a = 22][<<1, 2>>]"
+        ),
+        "[a |-> 22, b |-> 2]"
+    );
+}
