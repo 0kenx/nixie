@@ -197,11 +197,19 @@ Two levels, and the second one is what makes the rest tractable:
 **One deliberate divergence from Apalache's Keramelizer.** It expands set operations away:
 `A \cup B` becomes a comprehension, `\subseteq` becomes a quantifier. That is right when the
 backend is an opaque SMT solver with no set theory — the expansion is the only way to say it.
-Nixie has `nixie-theories/src/set`, so `\cup`, `\cap`, `\`, `SUBSET` and `UNION` stay *in* the
-kernel, which is what lets the encoder hand them to a set theory instead of blowing them into
-quantifiers first (O3). Expanding them here would destroy exactly the structure that
-optimisation needs, and it cannot be recovered afterwards. `\subseteq` is the one exception: it
-is a quantifier in every encoding, so nothing is lost.
+`\cup`, `\cap`, `\`, `SUBSET` and `UNION` stay *in* the kernel here, because expanding them
+destroys exactly the structure O3 needs and it cannot be recovered afterwards. `\subseteq` is
+the one exception: it is a quantifier in every encoding, so nothing is lost.
+
+**Correction (2026-09-13).** This divergence was originally justified by "Nixie has
+`nixie-theories/src/set`". That premise was checked before building on it and is weaker than
+stated: the module exists, but there is no `SortKind::Set`, no set term kinds, and no
+`TermTheory::Set` in Nelson-Oppen, and nothing outside `nixie-theories` references `SetSolver`.
+It is a standalone decision procedure beside the solver, not a theory inside it — see
+`docs/studies/2026-09-13-set-theory-not-reachable-from-solver.md`. The divergence still stands,
+on a different and stronger ground: keeping the set constructors is what lets *both* the naive
+encoding and the later lazy theory be expressed from one IR. What changes is that milestone 3
+must not wait on O3, and O3 is four pieces of solver work rather than a wiring task.
 
 Pass pipeline, mirroring Apalache's: configuration (`Init`/`Next`/`Inv` from the `.cfg`) →
 desugaring → inlining (operators, `LET`-`IN`, `LAMBDA`) → Snowcat typing → normalisation and
@@ -474,7 +482,7 @@ Plus the standing gates: `cargo build --all-features`, `cargo nextest run --work
 | # | Deliverable | Gate |
 |---|---|---|
 | 1 | `nixie-tla-syntax`: lexer, layout, Pratt parser *(landed, 905/907)*; level checker *(landed, under-reporting)* | Parser differential vs SANY on the corpus |
-| 2 | Surface IR + KerA *(landed)* + lowering *(landed, 93.8%)* + `INSTANCE` *(landed)*; Snowcat typing, pass pipeline *(open)* | IR isomorphism on the same corpus |
+| 2 | Surface IR + KerA *(landed)* + lowering *(landed, 93.8%)* + `INSTANCE` *(landed)*; type inference *(landed, 90.9%)*; pass pipeline *(open)* | IR isomorphism on the same corpus |
 | 3 | Naive encoding onto existing theories *(started: arithmetic/propositional fragment landed in `nixie-tla-check`)* | Apalache + TLC differential agree on verdicts |
 | 4 | O1 symmetry generators handed to `nixie-sat` | Matched-null discipline, ≥10 seeds |
 | 5 | O2 CHC lowering to `nixie-spacer` | New answers on specs Apalache cannot decide |
@@ -525,8 +533,51 @@ oracle to test the clever ones against.
   Trusted coverage over the corpora went 76.8% → 89.6% of definitions.
 
   A downstream pass must still not treat "no level errors" as "level-correct".
-- How much of Snowcat's inference is needed when `@type:` annotations are present? Parity says
-  all of it; a staged path may accept annotated specs first.
+- **Type inference is implemented, with no annotations at all.** `nixie-tla::types` is a
+  unification-based inferencer in the Snowcat tradition, and it types **3 953 of 4 349**
+  corpus definitions (90.9%) without reading a single `@type:` annotation. Two departures
+  from Snowcat, both borrowed rather than invented:
+
+  - **Records are row types** (Rémy/Wand). Lowering turns `r.foo` into
+    `FunApp(r, Str("foo"))`, which establishes only that `r` *has* a `foo` field; a closed
+    record type would have to reject that or invent the remaining fields. Record literals are
+    closed, so the two meet at the definition site. Apalache's type system 1.2 moved to rows
+    for the same reason.
+  - **Tuples, sequences and functions unify** rather than being kept apart. `<<a, b>>` *is* a
+    function with domain `{1, 2}` in TLA+; `Len(<<1, 2>>)` is not a coercion. Apalache keeps
+    them distinct and needs an annotation to cross over, which rejects specifications that are
+    well typed under the language's own semantics.
+
+  It refuses to guess. `f[1]` where nothing constrains `f` fits a tuple, a sequence and a
+  function, and the three encode differently, so it is **reported** (97 definitions, 2.2%).
+  `DOMAIN f` is deliberately *not* in that category: `Fun(d, r)` is the top of the shape
+  lattice — a tuple, a sequence and a record are each a function — so committing there rules
+  nothing out, whereas committing on an index would force a tuple to be homogeneous.
+
+  Three corpus-found defects are worth recording, because all three come from the same root:
+  TLA+ writes several different shapes with one syntax, so the shape is not decidable at the
+  node where it appears.
+
+  1. `<<>>` typed as a **0-tuple**. Unifying that with `Seq(e)` equates zero components, so it
+     succeeded *vacuously* and the arity-0 shape survived; every later index into that
+     sequence then failed. `<<>>` is the empty sequence. (78 state variables.)
+  2. Tuple literals of **different arity** were a mismatch. A set of counterexample traces is
+     written `{<<3, 5, 7, 8>>, <<2, 4, 6, 7, 8>>}`; two tuples of different length can only
+     share a type by being sequences, so that is what they become. (75 definitions.)
+  3. An **open row could not meet a function**. `IOUtils!IOEnv` is
+     `CHOOSE r \in [STRING -> STRING] : TRUE` and specifications write `IOEnv.GRAPH`; both
+     spellings are the same operation. The record survives the meet, not the function, because
+     keeping the function would impose homogeneity on every field and reject ordinary
+     heterogeneous records. (12 definitions.)
+
+  What it does **not** do is variant records: `[type: {"1a"}, bal: B] \cup [type: {"1b"},
+  acc: A, bal: B]` is the standard message idiom and needs variant types, which is what
+  Apalache added `Variant` for. 152 definitions (3.5%). Width subtyping does not rescue this
+  either — the join drops `acc`, so `m.acc` after filtering on `m.type` is still ill typed.
+
+  Remaining question: how much *more* is bought by reading `@type:` annotations, given that
+  inference alone reaches 90.9%? The answer is probably "the variant records and little
+  else", which would make annotations a feature for the hard 3.5% rather than a prerequisite.
 - Does `nixie-spacer`'s generalisation hold up over the array/ADT state encodings O2 needs, or
   does O2 need a state abstraction first? Unknown until measured.
 - Apalache's current temporal fragment — see Step 0 above.
