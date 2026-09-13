@@ -235,6 +235,12 @@ impl Encoder {
             Value::Set(_) => Err(EncodeError::Unsupported(
                 "a set where a single value is needed".into(),
             )),
+            Value::Tuple(_) => Err(EncodeError::Unsupported(
+                "a tuple where a single value is needed".into(),
+            )),
+            Value::Record(_) => Err(EncodeError::Unsupported(
+                "a record where a single value is needed".into(),
+            )),
         }
     }
 
@@ -242,9 +248,9 @@ impl Encoder {
     fn set(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<SetCell> {
         match &*self.value(term, tm)? {
             Value::Set(s) => Ok(s.clone()),
-            Value::Scalar(_) => Err(EncodeError::NotEnumerable(
-                "a value used as a set".to_string(),
-            )),
+            Value::Scalar(_) | Value::Tuple(_) | Value::Record(_) => Err(
+                EncodeError::NotEnumerable("a value used as a set".to_string()),
+            ),
         }
     }
 
@@ -308,6 +314,10 @@ impl Encoder {
                     .map_err(|_| EncodeError::Unsupported(format!("the numeral `{digits}`")))?;
                 scalar(tm.mk_int(value))
             }
+            // A TLA+ string is an atom: it is only ever compared for equality
+            // and never taken apart. `StringLit` gives that exactly, and the
+            // string theory is already in Nelson-Oppen.
+            Kera::Str(text) => scalar(tm.mk_string_lit(text)),
             Kera::Var(n) => {
                 // A binder's variable shadows everything: it stands for the
                 // candidate member currently being instantiated.
@@ -513,6 +523,88 @@ impl Encoder {
                 self.mk_set(members)
             }
 
+            // ---- tuples and records ----
+            // Structural, not an SMT value: TLA+ tuples and records are
+            // heterogeneous, so flattening them into an array would force
+            // every component to one sort.
+            Kera::Tuple(xs) => {
+                let mut parts = Vec::with_capacity(xs.len());
+                for x in xs {
+                    parts.push(self.value(x, tm)?);
+                }
+                Ok(Rc::new(Value::Tuple(parts)))
+            }
+            Kera::Record(fs) => {
+                let mut fields = std::collections::BTreeMap::new();
+                for (k, v) in fs {
+                    fields.insert(k.clone(), self.value(v, tm)?);
+                }
+                Ok(Rc::new(Value::Record(fields)))
+            }
+            // `[a : S, b : T]` is the set of records with one field drawn from
+            // each set — a cartesian product over the field sets.
+            Kera::RecordSet(fs) => {
+                /// A partial record under construction, with the guard that
+                /// says every field chosen so far is really in its set.
+                type Partial = (Vec<(String, Rc<Value>)>, TermId);
+                let mut combos: Vec<Partial> = vec![(Vec::new(), tm.mk_bool(true))];
+                for (name, set) in fs {
+                    let cell = self.set(set, tm)?;
+                    let mut next = Vec::new();
+                    for (prefix, guard) in &combos {
+                        for m in &cell.members {
+                            let mut fields = prefix.clone();
+                            fields.push((name.clone(), Rc::clone(&m.value)));
+                            next.push((fields, tm.mk_and([*guard, m.present])));
+                        }
+                    }
+                    if next.len() > self.max_candidates {
+                        return Err(EncodeError::TooManyCandidates {
+                            limit: self.max_candidates,
+                        });
+                    }
+                    combos = next;
+                }
+                let members = combos
+                    .into_iter()
+                    .map(|(fields, present)| Member {
+                        value: Rc::new(Value::Record(fields.into_iter().collect())),
+                        present,
+                    })
+                    .collect();
+                self.mk_set(members)
+            }
+            // `A \X B \X ...` is the set of tuples, one component per set.
+            Kera::Times(sets) => {
+                let mut combos: Vec<(Vec<Rc<Value>>, TermId)> =
+                    vec![(Vec::new(), tm.mk_bool(true))];
+                for set in sets {
+                    let cell = self.set(set, tm)?;
+                    let mut next = Vec::new();
+                    for (prefix, guard) in &combos {
+                        for m in &cell.members {
+                            let mut parts = prefix.clone();
+                            parts.push(Rc::clone(&m.value));
+                            next.push((parts, tm.mk_and([*guard, m.present])));
+                        }
+                    }
+                    if next.len() > self.max_candidates {
+                        return Err(EncodeError::TooManyCandidates {
+                            limit: self.max_candidates,
+                        });
+                    }
+                    combos = next;
+                }
+                let members = combos
+                    .into_iter()
+                    .map(|(parts, present)| Member {
+                        value: Rc::new(Value::Tuple(parts)),
+                        present,
+                    })
+                    .collect();
+                self.mk_set(members)
+            }
+
             // ---- binders over a set ----
             // Instantiated, not quantified: one copy of the body per candidate.
             Kera::Forall { var, set, body } => {
@@ -570,17 +662,95 @@ impl Encoder {
             // value, which admits behaviours the specification does not have:
             // that can manufacture a counterexample, never hide one.
             Kera::FunApp(f, i) => {
-                let arr = self.go(f, tm)?;
-                let idx = self.go(i, tm)?;
-                self.domain_unmodelled = true;
-                scalar(tm.mk_select(arr, idx))
+                let target = self.value(f, tm)?;
+                match &*target {
+                    // A tuple is a function on `1..n`, so a literal index
+                    // selects a component. A non-literal index into a
+                    // heterogeneous tuple has no well-sorted answer, and is
+                    // refused rather than approximated.
+                    Value::Tuple(parts) => {
+                        let Some(n) = literal_int(i) else {
+                            return Err(EncodeError::Unsupported(
+                                "a tuple indexed by a non-literal".into(),
+                            ));
+                        };
+                        let idx = usize::try_from(&n).ok().filter(|k| *k >= 1);
+                        let Some(v) = idx.and_then(|k| parts.get(k - 1)) else {
+                            return Err(EncodeError::Unsupported(format!(
+                                "index {n} into a {}-tuple",
+                                parts.len()
+                            )));
+                        };
+                        Ok(Rc::clone(v))
+                    }
+                    // A record is a function on its field names; `r.f` lowers
+                    // to exactly this shape.
+                    Value::Record(fields) => {
+                        let Kera::Str(name) = i.as_ref() else {
+                            return Err(EncodeError::Unsupported(
+                                "a record indexed by a non-literal field name".into(),
+                            ));
+                        };
+                        let Some(v) = fields.get(name) else {
+                            return Err(EncodeError::Unsupported(format!(
+                                "field `{name}`, which the record does not have"
+                            )));
+                        };
+                        Ok(Rc::clone(v))
+                    }
+                    Value::Scalar(arr) => {
+                        let idx = self.go(i, tm)?;
+                        self.domain_unmodelled = true;
+                        scalar(tm.mk_select(*arr, idx))
+                    }
+                    Value::Set(_) => Err(EncodeError::Unsupported(
+                        "a set applied as a function".into(),
+                    )),
+                }
             }
             Kera::Except { fun, index, value } => {
-                let arr = self.go(fun, tm)?;
-                let idx = self.go(index, tm)?;
-                let val = self.go(value, tm)?;
-                self.domain_unmodelled = true;
-                scalar(tm.mk_store(arr, idx, val))
+                let target = self.value(fun, tm)?;
+                match &*target {
+                    Value::Tuple(parts) => {
+                        let Some(n) = literal_int(index) else {
+                            return Err(EncodeError::Unsupported(
+                                "`EXCEPT` on a tuple at a non-literal index".into(),
+                            ));
+                        };
+                        let at = usize::try_from(&n).ok().filter(|k| *k >= 1);
+                        let Some(at) = at.filter(|k| *k <= parts.len()) else {
+                            return Err(EncodeError::Unsupported(format!(
+                                "`EXCEPT` at index {n} of a {}-tuple",
+                                parts.len()
+                            )));
+                        };
+                        let mut parts = parts.clone();
+                        parts[at - 1] = self.value(value, tm)?;
+                        Ok(Rc::new(Value::Tuple(parts)))
+                    }
+                    Value::Record(fields) => {
+                        let Kera::Str(name) = index.as_ref() else {
+                            return Err(EncodeError::Unsupported(
+                                "`EXCEPT` on a record at a non-literal field".into(),
+                            ));
+                        };
+                        if !fields.contains_key(name) {
+                            return Err(EncodeError::Unsupported(format!(
+                                "`EXCEPT` on field `{name}`, which the record does not have"
+                            )));
+                        }
+                        let mut fields = fields.clone();
+                        fields.insert(name.clone(), self.value(value, tm)?);
+                        Ok(Rc::new(Value::Record(fields)))
+                    }
+                    Value::Scalar(arr) => {
+                        let idx = self.go(index, tm)?;
+                        let val = self.go(value, tm)?;
+                        self.domain_unmodelled = true;
+                        scalar(tm.mk_store(*arr, idx, val))
+                    }
+                    Value::Set(_) => Err(EncodeError::Unsupported("`EXCEPT` on a set".into())),
+                }
             }
             Kera::Cmp(op, a, b) => {
                 let x = self.go(a, tm)?;
@@ -592,6 +762,40 @@ impl Encoder {
                     CmpOp::Ge => tm.mk_ge(x, y),
                 })
             }
+            // `DOMAIN` is exact for the structural values: a tuple's domain is
+            // `1..n` and a record's is its field names. For an array-backed
+            // function it is not represented at all, and is refused rather
+            // than answered with something plausible.
+            Kera::Domain(f) => {
+                let target = self.value(f, tm)?;
+                let yes = tm.mk_bool(true);
+                match &*target {
+                    Value::Tuple(parts) => {
+                        let members = (1..=parts.len())
+                            .map(|i| Member {
+                                value: Rc::new(Value::Scalar(tm.mk_int(i as i64))),
+                                present: yes,
+                            })
+                            .collect();
+                        self.mk_set(members)
+                    }
+                    Value::Record(fields) => {
+                        let members = fields
+                            .keys()
+                            .map(|k| Member {
+                                value: Rc::new(Value::Scalar(tm.mk_string_lit(k))),
+                                present: yes,
+                            })
+                            .collect();
+                        self.mk_set(members)
+                    }
+                    Value::Scalar(_) | Value::Set(_) => Err(EncodeError::Unsupported(
+                        "`DOMAIN` of a function the array encoding does not carry a domain for"
+                            .into(),
+                    )),
+                }
+            }
+
             // Standard-module operators whose meaning is arena-level.
             Kera::Opaque(name, args) => match (name.as_str(), args.len()) {
                 ("Cardinality", 1) => {

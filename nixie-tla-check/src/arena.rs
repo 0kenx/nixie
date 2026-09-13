@@ -24,6 +24,21 @@
 //! x \in S            \/_i (in_i /\ x = m_i)
 //! ```
 //!
+//! # Why tuples and records are structural too
+//!
+//! They live in the same `Value` enum and are taken apart by the encoder
+//! before anything reaches the solver. The reason is TLA+'s, not a
+//! convenience: `<<1, "a">>` is a perfectly ordinary tuple, and an SMT array
+//! forces one sort across every index, so an array-backed tuple could only
+//! ever be homogeneous. A record has the same problem with knobs on, since its
+//! fields are named rather than numbered.
+//!
+//! Making them structural also makes `DOMAIN` exact where an array cannot be:
+//! a tuple's domain is `1..n` and a record's is its field names, both of which
+//! are known here. For an array-backed function the domain is not represented
+//! at all, and `DOMAIN` on one is refused rather than answered with something
+//! plausible.
+//!
 //! # The one thing to be careful about
 //!
 //! Candidate members are **not** distinct. `{x, y}` has two candidates that
@@ -36,9 +51,15 @@
 //! a sum of indicator variables.
 
 use nixie_core::{TermId, TermManager};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 /// A TLA+ value as the encoder represents it.
+///
+/// Only [`Value::Scalar`] has an SMT sort. The others are *structural*: they
+/// exist in the encoder and are taken apart before anything reaches the
+/// solver, which is what lets TLA+'s heterogeneous tuples and records be
+/// encoded at all — an SMT array would force every component to one sort.
 #[derive(Debug, Clone)]
 pub enum Value {
     /// Anything with an SMT sort of its own: `Int`, `Bool`, `Str`, an
@@ -46,6 +67,18 @@ pub enum Value {
     Scalar(TermId),
     /// A finite set, as a list of candidates.
     Set(SetCell),
+    /// A tuple, component by component.
+    ///
+    /// In TLA+ a tuple *is* a function on `1..n`, so `t[i]` for a literal `i`
+    /// selects a component. Components may have different types, which is why
+    /// this is structural rather than an array.
+    Tuple(Vec<Rc<Value>>),
+    /// A record, field by field.
+    ///
+    /// A record is a function on its field names, so `r.f` and `r["f"]` are
+    /// the same operation and both land here. Sorted by name, so two records
+    /// written in a different order compare equal.
+    Record(BTreeMap<String, Rc<Value>>),
 }
 
 /// A set, represented by the values it might contain.
@@ -107,6 +140,31 @@ pub fn eq_values(a: &Value, b: &Value, tm: &mut TermManager) -> Option<TermId> {
             let fwd = subset_of(s, t, tm)?;
             let bwd = subset_of(t, s, tm)?;
             Some(tm.mk_and([fwd, bwd]))
+        }
+        // Componentwise, and a length mismatch is `FALSE` rather than a shape
+        // error: two tuples of different arity are both tuples and TLA+ says
+        // they are simply not equal.
+        (Value::Tuple(xs), Value::Tuple(ys)) => {
+            if xs.len() != ys.len() {
+                return Some(tm.mk_bool(false));
+            }
+            let mut conj = Vec::with_capacity(xs.len());
+            for (x, y) in xs.iter().zip(ys.iter()) {
+                conj.push(eq_values(x, y, tm)?);
+            }
+            Some(tm.mk_and(conj))
+        }
+        // Likewise: records with different field sets are different values,
+        // not a type error to report.
+        (Value::Record(xs), Value::Record(ys)) => {
+            if xs.len() != ys.len() || xs.keys().ne(ys.keys()) {
+                return Some(tm.mk_bool(false));
+            }
+            let mut conj = Vec::with_capacity(xs.len());
+            for (x, y) in xs.values().zip(ys.values()) {
+                conj.push(eq_values(x, y, tm)?);
+            }
+            Some(tm.mk_and(conj))
         }
         _ => None,
     }

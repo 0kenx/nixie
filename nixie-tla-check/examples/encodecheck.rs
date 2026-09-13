@@ -29,6 +29,21 @@ fn literal_of(
     let out = match v {
         nixie_tla::Value::Bool(b) => EV::Scalar(tm.mk_bool(*b)),
         nixie_tla::Value::Int(n) => EV::Scalar(tm.mk_int(num_bigint::BigInt::from(*n))),
+        nixie_tla::Value::Str(t) => EV::Scalar(tm.mk_string_lit(t)),
+        nixie_tla::Value::Tuple(xs) => {
+            let mut parts = Vec::with_capacity(xs.len());
+            for x in xs {
+                parts.push(literal_of(x, tm)?);
+            }
+            EV::Tuple(parts)
+        }
+        nixie_tla::Value::Record(fs) => {
+            let mut fields = std::collections::BTreeMap::new();
+            for (k, v) in fs {
+                fields.insert(k.clone(), literal_of(v, tm)?);
+            }
+            EV::Record(fields)
+        }
         nixie_tla::Value::Set(xs) => {
             let yes = tm.mk_bool(true);
             let mut members = Vec::with_capacity(xs.len());
@@ -40,7 +55,7 @@ fn literal_of(
             }
             EV::Set(SetCell { members })
         }
-        // Strings, tuples, records and functions have no literal form here yet.
+        // Functions have no literal form here yet.
         _ => return None,
     };
     Some(std::rc::Rc::new(out))
@@ -117,7 +132,11 @@ fn main() {
                 // Boolean definition still exercises the propositional path.
                 nixie_tla::Value::Bool(false) => tm.mk_not(match &*encoded {
                     nixie_tla_check::Value::Scalar(t) => *t,
-                    nixie_tla_check::Value::Set(_) => continue,
+                    // A `FALSE` definition that encoded to a structural value
+                    // is a shape clash, not something to claim.
+                    nixie_tla_check::Value::Set(_)
+                    | nixie_tla_check::Value::Tuple(_)
+                    | nixie_tla_check::Value::Record(_) => continue,
                 }),
                 _ => same,
             };
