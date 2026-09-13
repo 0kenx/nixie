@@ -81,6 +81,50 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
     }
 }
 
+/// The statically known members a set is confined to, if there are any.
+///
+/// Cardinality is only exact when the answer is `Some`. The recursion is finer
+/// than "every leaf is a literal", because two of the three operators only
+/// ever *shrink* their left operand:
+///
+/// ```text
+/// set.empty        known, with no members at all
+/// set.singleton x  known: {x}
+/// a \cup b         known iff BOTH are: a union can grow past either side
+/// a \cap b         known iff EITHER is: the result is inside both
+/// a \minus b       known iff `a` is:    the result is inside `a`
+/// anything else    unknown: an opaque set variable may hold anything
+/// ```
+///
+/// So `S \cap v` and `S \minus v` have exact cardinalities even when `v` is an
+/// unconstrained set variable, which is the common shape in practice and one a
+/// coarser rule would decline.
+///
+/// The returned list may contain duplicates and terms that are only
+/// *candidates* — membership still decides which are really in. That is what
+/// makes the de-duplication in [`cardinality_axiom`] necessary.
+fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermId>> {
+    // Bounded: the walk follows a term the user wrote.
+    const MAX_SUPPORT_DEPTH: usize = 64;
+    if depth > MAX_SUPPORT_DEPTH {
+        return None;
+    }
+    match shape_of(set, manager) {
+        Shape::Empty => Some(Vec::new()),
+        Shape::Singleton(e) => Some(vec![e]),
+        Shape::Union(a, b) => {
+            let mut xs = support(a, manager, depth + 1)?;
+            xs.extend(support(b, manager, depth + 1)?);
+            Some(xs)
+        }
+        Shape::Inter(a, b) => {
+            support(a, manager, depth + 1).or_else(|| support(b, manager, depth + 1))
+        }
+        Shape::Minus(a, _) => support(a, manager, depth + 1),
+        Shape::Opaque => None,
+    }
+}
+
 /// Whether a term is set-sorted.
 fn is_set_sorted(t: TermId, manager: &TermManager) -> bool {
     manager
@@ -112,8 +156,8 @@ struct Survey {
     set_equalities: Vec<(TermId, TermId, TermId)>,
     /// `(set.subset a b)` atoms.
     subsets: Vec<(TermId, TermId, TermId)>,
-    /// Whether any `set.card` was seen, which this reduction does not cover.
-    saw_cardinality: bool,
+    /// `set.card(s)` terms seen, paired with their argument.
+    cardinalities: Vec<(TermId, TermId)>,
 }
 
 impl Survey {
@@ -158,7 +202,7 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
                 }
             }
             TermKind::SetSubset(a, b) => out.subsets.push((t, *a, *b)),
-            TermKind::SetCard(_) => out.saw_cardinality = true,
+            TermKind::SetCard(a) => out.cardinalities.push((t, *a)),
             TermKind::Eq(a, b) if is_set_sorted(*a, manager) => {
                 out.set_equalities.push((t, *a, *b));
             }
@@ -200,7 +244,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     if s.sets.is_empty() {
         return Reduction {
             axioms,
-            incomplete: s.saw_cardinality,
+            incomplete: !s.cardinalities.is_empty(),
         };
     }
 
@@ -331,8 +375,57 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         }
     }
 
-    Reduction {
-        axioms,
-        incomplete: s.saw_cardinality,
+    // `set.card`, exact where the members are confined to a known list and
+    // *declined* otherwise: an under-constrained cardinality is a free
+    // integer, and a model that picks one arbitrarily is not a model.
+    let mut incomplete = false;
+    for &(card_term, set) in &s.cardinalities {
+        match support(set, manager, 0) {
+            Some(sup) => axioms.push(cardinality_axiom(card_term, set, &sup, manager)),
+            None => incomplete = true,
+        }
     }
+
+    Reduction { axioms, incomplete }
+}
+
+/// `(= (set.card s) n)`, where `n` counts the members of `s` once each.
+///
+/// The candidates in `support` are **not distinct**: `{x} \cup {y}` has two and
+/// they denote one value when `x = y`. A plain sum of indicators would report
+/// `2` for every model that equates them. A candidate therefore counts only
+/// when no **earlier** candidate is both present and equal to it, which picks
+/// exactly one representative per equivalence class.
+///
+/// This is the same de-duplicating sum the TLA+ arena builds
+/// (`nixie-tla-check::arena::cardinality`), and it is the shape that exposed
+/// the string-literal false `sat`: the guards are element equalities, so they
+/// have to be decided for the count to mean anything.
+fn cardinality_axiom(
+    card_term: TermId,
+    set: TermId,
+    support: &[TermId],
+    manager: &mut TermManager,
+) -> TermId {
+    let zero = manager.mk_int(0);
+    let one = manager.mk_int(1);
+    let mut terms: Vec<TermId> = Vec::with_capacity(support.len());
+    for (i, &e) in support.iter().enumerate() {
+        let present = manager.mk_set_member(e, set);
+        let mut counts = vec![present];
+        for &earlier in &support[..i] {
+            let earlier_in = manager.mk_set_member(earlier, set);
+            let same = manager.mk_eq(e, earlier);
+            let dup = manager.mk_and([earlier_in, same]);
+            counts.push(manager.mk_not(dup));
+        }
+        let fresh = manager.mk_and(counts);
+        terms.push(manager.mk_ite(fresh, one, zero));
+    }
+    let total = if terms.is_empty() {
+        zero
+    } else {
+        manager.mk_add(terms)
+    };
+    manager.mk_eq(card_term, total)
 }
