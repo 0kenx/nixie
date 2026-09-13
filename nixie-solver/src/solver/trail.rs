@@ -193,6 +193,12 @@ impl super::Solver {
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.
+            lemma_binder_registered: _, // NOT trailed: monotone dedup of
+            // already-registered lemma binders; a popped scope un-registers
+            // the binder from MBQI while the dedup entry merely prevents a
+            // redundant re-registration (completeness only, never a wrong
+            // verdict — the guarded clause is a valid consequence either
+            // way).
             has_bv_ring_ops: _, // NOT trailed: monotone routing input; a stale
             // `true` after pop only keeps the lazy route.
             bv_preprocess_at_count: _, // NOT trailed: a stale value only

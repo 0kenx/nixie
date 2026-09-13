@@ -472,11 +472,6 @@ impl MBQIIntegration {
             }
 
             self.stats.num_counterexamples += cex_result.counterexamples.len();
-            // Progress that *decides* something: a counterexample-driven (or
-            // checker-mined) fresh lemma.  The enumerative engine's seed
-            // lemmas below are not progress — they mint candidate terms, not
-            // refutation steps — so they must not block the escalation.
-            let mut added_for_quantifier = false;
 
             for cex in &cex_result.counterexamples {
                 if !self.budget.consume(quantifier.term, 1) {
@@ -498,7 +493,6 @@ impl MBQIIntegration {
                     self.record_instantiation(&inst);
                     callback.on_instantiation(&inst);
                     all_instantiations.push(inst);
-                    added_for_quantifier = true;
                 }
             }
 
@@ -571,15 +565,13 @@ impl MBQIIntegration {
                                     self.record_instantiation(&inst);
                                     callback.on_instantiation(&inst);
                                     all_instantiations.push(inst);
-                                    added_for_quantifier = true;
+                                    // A fresh lemma came out of this check:
+                                    // forget the model signature so a later
+                                    // round may ask again even if the model
+                                    // happens not to move.
+                                    self.model_checker.mark_productive(quantifier.term);
                                 }
                             }
-                        }
-                        if added_for_quantifier {
-                            // A fresh lemma came out of this check: forget
-                            // the model signature so a later round may ask
-                            // again even if the model happens not to move.
-                            self.model_checker.mark_productive(quantifier.term);
                         }
                     }
                     ModelCheckOutcome::Declined => {}

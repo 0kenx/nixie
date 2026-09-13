@@ -368,6 +368,10 @@ pub struct Solver {
     /// 600-rerun convergence pins in `scope_rebase_tests` re-run the whole
     /// search on identical terms).
     pub(super) last_iface_repair_vocab: usize,
+    /// Lemma binders already registered by
+    /// [`Solver::register_unit_lemma_quantifiers`] (dedup; the registries
+    /// themselves are append-only).
+    pub(super) lemma_binder_registered: FxHashSet<TermId>,
     /// Memoized [`PreprocessOutcome`] of the current assertion set, with the
     /// assertion count it was computed at (see
     /// [`Self::bv_preprocess_assertions`]); cleared on push/pop/reset so a
@@ -1039,6 +1043,7 @@ impl Solver {
             has_quantifiers: false,
             next_skolem_id: 0,
             last_iface_repair_vocab: 0,
+            lemma_binder_registered: FxHashSet::default(),
             next_distinct_id: 0,
             has_injective_distinct: false,
             injective_distinct_specs: Vec::new(),
@@ -1798,6 +1803,170 @@ impl Solver {
     ///
     /// Non-linear or unparseable arguments are skipped (there is no
     /// definitional linear row to state); that costs completeness only.
+    /// Register the nested quantifiers of a *unit-asserted* instantiation
+    /// lemma with the quantifier engines.
+    ///
+    /// An instantiation of `forall x. body` can itself contain quantifiers
+    /// (`body`'s nested binders survive the substitution).  The encoder
+    /// turns such a lemma's quantifier nodes into free Booleans unless an
+    /// engine owns them, so the SAT core can silently pick a truth value
+    /// their real meaning does not have — the A3 set-theory lemma
+    /// `(forall x. member(x,b) => member(x,a)) => subset(b,a)` then never
+    /// forces its witness and the MBQI loop freezes (the set9/16/19
+    /// stall).  Registering the binders restores ownership: instances flow,
+    /// and the `Satisfied` certification covers them like any other
+    /// quantifier (a lying free Boolean can no longer hide).
+    ///
+    /// Soundness: only a lemma asserted as a *unit* may register (a
+    /// guarded instance `!q | body[t]` does not assert `body[t]`
+    /// unconditionally, and `add_guarded_quantifier` covers only whole
+    /// `Forall` nodes); and only binders in a *definite polarity* —
+    /// positive universals and negative existentials become universals
+    /// (their instances are valid consequences of the unit), positive
+    /// existentials and negative universals become existentials (witness
+    /// obligations).  A binder under a both-polarity position (an `ite`
+    /// condition, `xor`, `=` on Booleans) is left unregistered:
+    /// registration there would assert consequences the lemma does not
+    /// have.  Non-Boolean spines are not descended (a quantifier below
+    /// arithmetic is impossible; one passed as a Bool *argument* to a
+    /// function is legal but rare, and leaving it unregistered costs
+    /// completeness only).
+    fn register_unit_lemma_quantifiers(&mut self, lemma: TermId, manager: &mut TermManager) {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum Pol {
+            Pos,
+            Neg,
+            Both,
+        }
+        fn flip(pol: Pol) -> Pol {
+            match pol {
+                Pol::Pos => Pol::Neg,
+                Pol::Neg => Pol::Pos,
+                Pol::Both => Pol::Both,
+            }
+        }
+        fn pol_byte(pol: Pol) -> u8 {
+            match pol {
+                Pol::Pos => 0,
+                Pol::Neg => 1,
+                Pol::Both => 2,
+            }
+        }
+
+        // (term, polarity), DAG-visited per polarity.
+        let mut stack: Vec<(TermId, Pol)> = vec![(lemma, Pol::Pos)];
+        let mut visited: FxHashSet<(TermId, u8)> = FxHashSet::default();
+        while let Some((term, pol)) = stack.pop() {
+            if !visited.insert((term, pol_byte(pol))) {
+                continue;
+            }
+            if visited.len() > 100_000 {
+                return;
+            }
+            let Some(node) = manager.get(term).cloned() else {
+                continue;
+            };
+            match node.kind {
+                TermKind::Forall { body, .. } => {
+                    if pol != Pol::Both {
+                        // Positive universal / negative existential: a
+                        // universal obligation.  Negative universal /
+                        // positive existential: a witness obligation.
+                        let as_universal = pol == Pol::Pos;
+                        self.register_lemma_binder(term, as_universal, manager);
+                        stack.push((body, pol));
+                    }
+                }
+                TermKind::Exists { body, .. } => {
+                    if pol != Pol::Both {
+                        let as_universal = pol == Pol::Neg;
+                        self.register_lemma_binder(term, as_universal, manager);
+                        stack.push((body, pol));
+                    }
+                }
+                TermKind::Not(a) => stack.push((a, flip(pol))),
+                TermKind::And(args) | TermKind::Or(args) => {
+                    for &a in args.iter() {
+                        stack.push((a, pol));
+                    }
+                }
+                TermKind::Implies(a, b) => {
+                    stack.push((a, flip(pol)));
+                    stack.push((b, pol));
+                }
+                TermKind::Ite(c, t, e) => {
+                    stack.push((c, Pol::Both));
+                    stack.push((t, pol));
+                    stack.push((e, pol));
+                }
+                // Both-polarity positions: descending would need per-child
+                // polarity tracking these constructs do not have.
+                TermKind::Xor(..) | TermKind::Eq(..) | TermKind::Distinct(_) => {}
+                // Non-Boolean spines cannot contain a quantifier.
+                _ => {}
+            }
+        }
+    }
+
+    /// Register one lemma binder (deduped) with MBQI and e-matching.
+    ///
+    /// A *universal* binder is registered **guarded** by its own literal
+    /// (`add_guarded_quantifier`): the unit lemma asserts the binder only
+    /// as a subformula, so its instances are valid consequences exactly
+    /// when the binder's Boolean is true — emitting them as units (the
+    /// spine registration) would assert `forall x. phi` outright and, with
+    /// the lemma's other conjuncts, manufacture conflicts the goal does not
+    /// have (the A2/A3 set-theory false-`unsat`: the guarded instance's
+    /// `member(sk,b) -> member(sk,a)` units collided with A2's witness).
+    /// An *existential* binder is a witness obligation the engine searches
+    /// for; failing to witness it keeps the round honest (`Unknown`), never
+    /// a verdict.
+    fn register_lemma_binder(
+        &mut self,
+        term: TermId,
+        as_universal: bool,
+        manager: &mut TermManager,
+    ) {
+        if !self.lemma_binder_registered.insert(term) {
+            return;
+        }
+        let Some(node) = manager.get(term).cloned() else {
+            return;
+        };
+        let matches_binder = matches!(&node.kind, TermKind::Forall { .. } if as_universal)
+            || matches!(&node.kind, TermKind::Exists { .. } if !as_universal);
+        if !matches_binder {
+            // Polarity says universal but the node is an Exists (or vice
+            // versa): the registration kind and the binder disagree, which
+            // the polarity walk must never produce.  Refuse rather than
+            // mis-register.
+            return;
+        }
+        if as_universal {
+            // The lemma's encode (which runs before this registration)
+            // Tseitin-encoded the binder node, so its SAT variable exists.
+            // Without one there is no guard to condition the instances on,
+            // and registering ungauarded would be unsound — decline.
+            let Some(&var) = self.term_to_var.get(&term) else {
+                self.lemma_binder_registered.remove(&term);
+                return;
+            };
+            self.mbqi
+                .add_guarded_quantifier(term, nixie_sat::Lit::pos(var), manager);
+        } else {
+            self.mbqi.add_quantifier(term, manager);
+        }
+        // Deliberately NOT registered with the e-matching engine: its
+        // emission path is unit clauses only (`add_clause([lit])`), which
+        // would drop the guard the MBQI path honors — the e-matched
+        // instance of a guarded binder asserted outright is exactly the
+        // collision that produced the A2/A3 false-`unsat`.
+        self.has_quantifiers = true;
+        // The binder's ground subterms are candidates for other
+        // quantifiers' instantiations (mirrors the assert path).
+        self.mbqi.collect_ground_terms(term, manager);
+    }
+
     fn intern_compound_uf_args_into_arith(&mut self, manager: &TermManager) {
         /// Bound on the number of fresh interface terms per call: the pass
         /// is O(apps × parse) and a pathological lemma set should not
@@ -3619,7 +3788,14 @@ impl Solver {
                                 // no guard and keep the unit clause.
                                 let clause: Vec<Lit> = match self.mbqi.guard_of(inst.quantifier) {
                                     Some(g) => vec![g.negate(), lit],
-                                    None => vec![lit],
+                                    None => {
+                                        // A unit lemma really asserts its
+                                        // body, so its nested binders can be
+                                        // given to the quantifier engines
+                                        // (see `register_unit_lemma_quantifiers`).
+                                        self.register_unit_lemma_quantifiers(inst.result, manager);
+                                        vec![lit]
+                                    }
                                 };
                                 let ok = self.sat.add_clause(clause);
                                 let _ = ok;
@@ -3656,6 +3832,7 @@ impl Solver {
                             let mut ematch_unsat = false;
                             for lemma in ematch_lemmas {
                                 let lit = self.encode(lemma, manager);
+                                self.register_unit_lemma_quantifiers(lemma, manager);
                                 if self.sat.add_clause([lit]) {
                                     new_clauses_added += 1;
                                 } else {

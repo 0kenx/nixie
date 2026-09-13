@@ -1411,6 +1411,16 @@ impl UninterpretedSortHandler {
             // flipped a `never-sat` pin).  Empty-domain seeding is the
             // Rodin case this exists for -- SMT-LIB domains are non-empty,
             // so a sort with no values still needs its first element.
+            //
+            // "Nothing about" must consider *entry arguments* too: a
+            // Bool-valued function over the sort (`subset (Set Set) Bool`)
+            // contributes entries whose ARGS are exactly the sort's ground
+            // domain elements while its values are all Bool — an
+            // assignments-only check then sees "no values" for a sort
+            // whose two-element universe is staring at it through every
+            // entry, seeds 8 synthetic `u!i` elements anyway, and the
+            // universe blow-up derails the whole MBQI convergence (the
+            // set9/16/19 family).
             let has_values = model
                 .assignments
                 .values()
@@ -1418,7 +1428,22 @@ impl UninterpretedSortHandler {
                 || model
                     .assignments
                     .keys()
-                    .any(|k| manager.get(*k).is_some_and(|t| t.sort == sort));
+                    .any(|k| manager.get(*k).is_some_and(|t| t.sort == sort))
+                || model.function_interps.values().any(|interp| {
+                    interp.domain.iter().enumerate().any(|(i, &d)| {
+                        d == sort
+                            && interp.entries.iter().any(|e| {
+                                e.args.get(i).is_some_and(|&a| {
+                                    manager.get(a).is_some_and(|t| t.sort == sort)
+                                })
+                            })
+                    }) || (interp.range == sort
+                        && interp
+                            .entries
+                            .iter()
+                            .any(|e| manager.get(e.result).is_some_and(|t| t.sort == sort)))
+                });
+
             if has_values {
                 continue;
             }

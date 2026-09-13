@@ -118,10 +118,6 @@ const MAX_UNIVERSE_FOR_RESTRICTION: usize = 32;
 /// Maximum size (in visited nodes) of one evaluation before declining.
 const MAX_EVALUATED_BODY_SIZE: usize = 20_000;
 
-/// Hard cap on nested checks per quantifier across the whole `ModelChecker`
-/// lifetime (see [`ModelChecker::checks_of`]).
-const MAX_CHECKS_PER_QUANTIFIER: u32 = 1;
-
 /// Nesting depth guard: the nested solver's own quantifier loop must never
 /// recurse without bound.  Depth 2 allows exactly one level of re-entry —
 /// the aux goal of a `forall`-`exists` body (e.g. the set-theory axiom
@@ -187,9 +183,6 @@ pub(crate) struct ModelChecker {
     checks_performed: usize,
     /// Conflict budgets consumed by nested checks so far.
     conflicts_spent: u64,
-    /// Total nested checks spent per quantifier (the hard lifetime cap;
-    /// see [`ModelChecker::last_model_signature`] for the cheap gate).
-    checks_of: FxHashMap<TermId, u32>,
     /// Size of the completed model's assignment table when this quantifier
     /// was last checked.  A check against a *changed* model is always in
     /// budget (the model moved, so the previous verdicts say nothing); a
@@ -197,7 +190,9 @@ pub(crate) struct ModelChecker {
     /// outcome that is already known, and those are what the signature gate
     /// below refuses — the re-checked-goal (verdict-cache bypass) and
     /// thrashing-round cases.
-    last_model_signature: FxHashMap<TermId, (usize, usize)>,
+    last_model_signature: FxHashMap<TermId, u64>,
+    /// Total nested checks spent per quantifier (hard lifetime cap).
+    checks_of: FxHashMap<TermId, u32>,
     /// Last decline reason, for stats/debugging.
     pub(crate) last_decline: Option<&'static str>,
 }
@@ -214,18 +209,18 @@ impl ModelChecker {
             skolem_counter: 0,
             checks_performed: 0,
             conflicts_spent: 0,
-            checks_of: FxHashMap::default(),
             last_model_signature: FxHashMap::default(),
+            checks_of: FxHashMap::default(),
             last_decline: None,
         }
     }
 
     /// Record that the check of `quantifier` was productive (its mined
-    /// counterexample became a fresh instantiation), forgetting the model
-    /// signature so the very same model may be checked again if a later
-    /// round asks (the fresh lemma perturbs the ground model, so the next
-    /// completed model will differ anyway — this is belt-and-braces for the
-    /// case where it does not).
+    /// counterexample became a fresh instantiation): the fruitless streak
+    /// resets and the model signature is forgotten, so a later round may
+    /// ask again (the fresh lemma perturbs the ground model, so the next
+    /// completed model will differ anyway — the signature reset is
+    /// belt-and-braces for the case where it does not).
     pub(crate) fn mark_productive(&mut self, quantifier: TermId) {
         self.last_model_signature.remove(&quantifier);
     }
@@ -254,26 +249,41 @@ impl ModelChecker {
             self.last_decline = Some("conflict budget exhausted");
             return ModelCheckOutcome::Declined;
         }
-        // Hard lifetime cap per quantifier: a forced re-check re-runs the
-        // whole MBQI loop, and the re-run's model can *move* (learned
-        // clauses change the search) even on an unchanged goal, so the
-        // same-signature gate below cannot alone bound the re-check cost.
-        // After this many nested checks the quantifier has had its chance.
-        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= MAX_CHECKS_PER_QUANTIFIER {
+        // Hard lifetime cap per quantifier: the global budgets bound the
+        // total, but a forced rerun's model can *move* (learned clauses
+        // change the search) on every one of its hundreds of reruns, each
+        // move re-arming the same-model gate.  After this many nested
+        // checks the quantifier has had its chance; the landed value.
+        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= 1 {
             self.last_decline = Some("per-quantifier check budget exhausted");
             return ModelCheckOutcome::Declined;
         }
         *self.checks_of.entry(q.term).or_insert(0) += 1;
+
         // Same-model re-checks are the only ones the budget bounds: a check
-        // against a moved model is always in budget.  The signature combines
-        // the assignment count with the total function-entry count, so any
-        // new pin (ground or lemma-derived) moves it.
-        let total_entries: usize = model
-            .function_interps
-            .values()
-            .map(|interp| interp.entries.len())
-            .sum();
-        let signature = (model.assignments.len(), total_entries);
+        // against a moved model is always in budget.  The signature hashes
+        // the whole completed model — every (term, value) pair and every
+        // function entry — because a length/count pair cannot see a value
+        // *flip* (a lemma committing `member(sk,b) = true` over the same
+        // term count reads as "unchanged" and the gate froze the loop).
+        let mut hasher = rustc_hash::FxHasher::default();
+        use core::hash::Hash;
+        model.assignments.len().hash(&mut hasher);
+        for (&k, &v) in &model.assignments {
+            k.0.hash(&mut hasher);
+            v.0.hash(&mut hasher);
+        }
+        model.function_interps.len().hash(&mut hasher);
+        for interp in model.function_interps.values() {
+            interp.entries.len().hash(&mut hasher);
+            for entry in &interp.entries {
+                for &a in &entry.args {
+                    a.0.hash(&mut hasher);
+                }
+                entry.result.0.hash(&mut hasher);
+            }
+        }
+        let signature: u64 = core::hash::Hasher::finish(&hasher);
         if self.last_model_signature.get(&q.term).copied() == Some(signature) {
             self.last_decline = Some("completed model unchanged since last check");
             return ModelCheckOutcome::Declined;
@@ -416,7 +426,7 @@ impl ModelChecker {
                 // a usable binding source; term-level mining needs neither.
                 let else_table = choose_else_table(model, manager);
                 let (inst_sets, value_to_term) =
-                    self.build_instantiation_set(&skolem_terms, model, manager);
+                    self.build_instantiation_set(&skolem_terms, &bound_names, model, manager);
                 let mut skolem_map: FxHashMap<TermId, TermId> = FxHashMap::default();
                 for &(name, sort, sk) in &skolem_terms {
                     let name_str = manager.resolve_str(name).to_string();
@@ -527,12 +537,29 @@ impl ModelChecker {
     fn build_instantiation_set(
         &mut self,
         skolem_terms: &[(Spur, SortId, TermId)],
+        bound_names: &FxHashSet<Spur>,
         model: &CompletedModel,
         manager: &mut TermManager,
     ) -> (FxHashMap<SortId, Vec<TermId>>, FxHashMap<TermId, TermId>) {
         /// Cap on the size of one sort's instantiation set.
         const MAX_INST_SET: usize = 16;
         let _ = skolem_terms;
+
+        // The model's assignment table and entry arguments can contain
+        // *encoding artifacts* — terms whose free variables are named like
+        // quantifier bound variables (the encoder internalized the body
+        // with its binders as constants).  Such a term is not a ground
+        // domain element; instantiating with it emits a lemma about a
+        // stray global constant (the `?s1 := ?s2` junk bindings).
+        let mentions_bound = |term: TermId| -> bool {
+            nixie_core::ast::traversal::collect_free_vars_including_patterns(term, manager)
+                .iter()
+                .any(|&v| {
+                    manager.get(v).is_some_and(
+                        |n| matches!(n.kind, TermKind::Var(name) if bound_names.contains(&name)),
+                    )
+                })
+        };
 
         let mut sorts: FxHashMap<SortId, (Vec<TermId>, FxHashMap<TermId, TermId>)> =
             FxHashMap::default();
@@ -552,17 +579,24 @@ impl ModelChecker {
                 entry.1.entry(value).or_insert(term);
             };
 
-        // Entry arguments (normalized to values) and results.
+        // Entry arguments (normalized to values) and results.  Skip
+        // artifacts that mention bound-variable names (see
+        // `mentions_bound`).
         for interp in model.function_interps.values() {
             for entry in &interp.entries {
                 for (i, &arg) in entry.args.iter().enumerate() {
                     let Some(&domain_sort) = interp.domain.get(i) else {
                         continue;
                     };
+                    if mentions_bound(arg) {
+                        continue;
+                    }
                     let norm = model.assignments.get(&arg).copied().unwrap_or(arg);
                     value_of(domain_sort, norm, arg, &mut sorts);
                 }
-                value_of(interp.range, entry.result, entry.result, &mut sorts);
+                if !mentions_bound(entry.result) {
+                    value_of(interp.range, entry.result, entry.result, &mut sorts);
+                }
             }
         }
         // Assigned terms of each sort (compound terms first, so they win
@@ -572,6 +606,9 @@ impl ModelChecker {
             let Some(node) = manager.get(term) else {
                 continue;
             };
+            if mentions_bound(term) || mentions_bound(value) {
+                continue;
+            }
             assigned.push((node.sort, term, value));
         }
         assigned.sort_by_key(|(sort, term, value)| {
@@ -1084,14 +1121,25 @@ impl<'a> CompletionEval<'a> {
                         }
                         TermKind::Exists { vars, patterns, .. } => {
                             let folded = evaluated.first().copied().unwrap_or(term);
-                            manager.intern_term(
-                                TermKind::Exists {
-                                    vars: vars.clone(),
-                                    body: folded,
-                                    patterns: patterns.clone(),
-                                },
-                                node.sort,
-                            )
+                            // Dually: `exists x. c` is `c` for a pointwise
+                            // constant body (`exists x. false` refuted the
+                            // A2 axiom's witness under the completion, and
+                            // the un-mined falsifier froze the loop).
+                            if manager
+                                .get(folded)
+                                .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False))
+                            {
+                                folded
+                            } else {
+                                manager.intern_term(
+                                    TermKind::Exists {
+                                        vars: vars.clone(),
+                                        body: folded,
+                                        patterns: patterns.clone(),
+                                    },
+                                    node.sort,
+                                )
+                            }
                         }
                         TermKind::Eq(..) => {
                             let (a, b) = two(&evaluated);

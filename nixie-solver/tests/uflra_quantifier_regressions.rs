@@ -140,6 +140,44 @@ fn derived_universal_over_int_is_not_falsely_satisfied() {
     assert_eq!(last_status(&output), "unsat");
 }
 
+/// The A2+A3 alternation shape (the `set16` family's engine, minimized):
+/// a witness axiom (`~subset(s1,s2) => exists x. member(x,s1) /\ ~member(x,s2)`)
+/// together with the subset-extensionality axiom.  Satisfiable (subset true
+/// except the one ground-false pair, with a member witness for it), and the
+/// convergence machinery now reaches the target subset table — but the
+/// final `Satisfied` is blocked by the assert path's nested-`exists` gap
+/// (see the study): an asserted `forall` whose body carries the `exists` in
+/// a non-head position is registered unskolemized, so its instances carry
+/// an opaque `exists` Boolean and the witness is never forced into the
+/// model.  Pinned as never-wrong: `sat` once that gap closes, `unknown`
+/// meanwhile — never `unsat` (the spurious-`unsat` shape a first cut of
+/// the nested-binder registration produced, by emitting a guarded
+/// binder's instances as e-matching units).
+#[test]
+fn witness_extensionality_alternation_is_never_wrong() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort Set 0)
+        (declare-fun member (Real Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set))
+          (=> (not (subset ?s1 ?s2))
+              (exists ((?x Real)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set))
+          (=> (forall ((?x Real)) (=> (member ?x ?s1) (member ?x ?s2)))
+              (subset ?s1 ?s2))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (not (subset b a)))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "sat" || status == "unknown",
+        "a satisfiable witness/extensionality pair must never be refuted; got {status}"
+    );
+}
+
 /// The set-theory sat shape (the `set16` family, minimized): axioms over
 /// `Bool`-valued functions on an uninterpreted sort with a `Real` member
 /// index.  The completed model with `else = false` satisfies every axiom
