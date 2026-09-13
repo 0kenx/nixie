@@ -20,6 +20,33 @@ memcpy-rebuild it replaces.  The ELS study's surgery lost by 9.7 %
 *because* normalization at `Vec<Vec<Watcher>>` is entry-major; at CSR
 the same normalization is span-local.
 
+## Slice 1.5 status (`3c60cf6d`) + the economics measurement
+
+A `perf` profile of the current si2 solve (23 527 conflicts — it now
+*solves*, unlike when the ELS study wrote "~8 % of si2-class walls";
+target/perf profile, 4 431 samples) re-prices the cluster:
+
+| symbol | self % |
+|---|---|
+| `eliminate_phase` | 18.8 |
+| BCP `list_kernel::scan` (×2 frames) | 15.2 |
+| `subsume_round` | 9.3 |
+| **`rebuild_watches_and_binary_graph`** | **5.3** |
+| `substitute_equivalent_literals_round` | 5.0 |
+| `refresh_binary_graph` | 2.0 |
+
+The ELS cluster is ~12 % of wall → the incremental-surgery ceiling
+(~2-3 %) is real.  `CsrWatchLists` (the maintained-CSR mutation
+operations) has landed with unit tests; the next slice threads one
+optional shadow sink through `list_kernel`'s `push_watch`/
+`push_watch_unique` (the move funnel) and the session-kernel
+compaction, validating the drifted state per rebuild.
+
+**Corrected slice ordering** (found during this analysis): reads cannot
+switch before writes are maintained — the migration order is
+1 (shadow build ✓) → 1.5 (mutation maintenance, structure ✓ hooks next)
+→ read switch → BCP span switch → drop the Vec lists → ELS surgery.
+
 ## Slice 1 result (landed same day, `1c8a1a99`)
 
 `CsrWatchBuild` (the `RoundOccs` pattern adapted to `Watcher` entries)
