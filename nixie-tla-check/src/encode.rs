@@ -71,6 +71,14 @@ pub type Result<T> = core::result::Result<T, EncodeError>;
 /// Default maximum encoding depth.
 pub const DEFAULT_MAX_DEPTH: usize = 512;
 
+/// The SMT name standing for `CHOOSE v : TRUE` read as a Boolean.
+///
+/// TLA+ says `CHOOSE` over a predicate nothing pins down picks *some* fixed
+/// value, the same one wherever the expression is written -- so this is one
+/// shared free constant, not a fresh one per occurrence. It is the `ELSE`
+/// branch of `TLC!Assert`.
+const CHOOSE_ANY_BOOL: &str = "@tla_choose_any_bool";
+
 /// How set-valued terms reach the solver.
 ///
 /// The two are kept side by side on purpose. The design doc's O3 is the claim
@@ -1553,6 +1561,74 @@ impl Encoder {
                         "`DOMAIN` of a function the array encoding does not carry a domain for"
                             .into(),
                     )),
+                }
+            }
+
+            // TLC's tracing and assertion operators, encoded as `TLC.tla`
+            // *defines* them rather than approximated:
+            //
+            //     Print(out, val)  == val
+            //     PrintT(out)      == TRUE
+            //     Assert(val, out) == IF val = TRUE THEN TRUE
+            //                                       ELSE CHOOSE v : TRUE
+            //
+            // `out` is the string TLC would print. It cannot reach the value,
+            // so it is deliberately not encoded: declining a specification
+            // because its *message* has no encoding would be a refusal about
+            // the wrong term.
+            //
+            // The `ELSE` branch is the whole difficulty. `CHOOSE v : TRUE` is
+            // a value TLA+ leaves unspecified -- some fixed member of the
+            // universe, the same one at every occurrence -- so a failing
+            // `Assert` does **not** have the value `FALSE`. Encoding it as
+            // `FALSE` would turn TLC's abort into a violation the
+            // specification does not have; encoding it as `TRUE` would hide
+            // one. It is encoded as a single shared free Boolean, which is
+            // exactly what "unspecified" means and is the only reading that
+            // neither manufactures nor hides a counterexample.
+            //
+            // The free Boolean is chosen by the solver *within the query*, so
+            // a failing `Assert` under an invariant still reports a
+            // `Violation` -- it means "there is a behaviour, and a reading of
+            // the unspecified value, under which the invariant fails", which
+            // is a genuine failure to establish it and is what TLC reports by
+            // halting. In `Init` or `Next` the same freedom means the state is
+            // *not* pruned, so no counterexample is deleted. That is the
+            // asymmetry the rest of the encoder keeps: a `Violation` may be
+            // spurious, `NoViolationWithin` stays sound.
+            Kera::Opaque(name, args)
+                if matches!(
+                    (name.as_str(), args.len()),
+                    ("Print", 2) | ("PrintT", 1) | ("Assert", 2)
+                ) =>
+            {
+                match name.as_str() {
+                    "PrintT" => scalar(tm.mk_bool(true)),
+                    "Print" => self.value(&args[1], tm),
+                    // `Assert`. Inference already unifies the condition with
+                    // `BOOLEAN`, so `val = TRUE` is `val`; the check below is
+                    // what makes that a fact rather than a belief.
+                    _ => {
+                        let encoded = self.value(&args[0], tm)?;
+                        let Value::Scalar(cond) = &*encoded else {
+                            return Err(EncodeError::Unsupported(
+                                "`Assert` of a condition that is not a scalar".into(),
+                            ));
+                        };
+                        let cond = *cond;
+                        let bool_sort = tm.sorts.bool_sort;
+                        if self.sort_of(cond, tm)? != bool_sort {
+                            return Err(EncodeError::Unsupported(
+                                "`Assert` of a condition that is not Boolean".into(),
+                            ));
+                        }
+                        // One name for every occurrence: `CHOOSE` picks the
+                        // same value each time it is written, and two
+                        // independent free Booleans would let one failing
+                        // `Assert` be read two ways at once.
+                        let arbitrary = tm.mk_var(CHOOSE_ANY_BOOL, bool_sort);
+                        scalar(tm.mk_or([cond, arbitrary]))
+                    }
                 }
             }
 
