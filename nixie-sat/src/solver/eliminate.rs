@@ -61,6 +61,21 @@ pub(super) fn elim_dtl_enabled() -> bool {
     }
 }
 
+/// `NIXIE_ELIM_ONESIDED=1`: eliminate one-sided (pure) variables inside
+/// BVE, cadical parity — see the one-sided branch in `elim_try_variable`.
+pub fn elim_onesided_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("NIXIE_ELIM_ONESIDED").is_ok())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// cadical `elimocclim`: skip a variable whose heavier-side occurrence list
 /// is longer than this.
 const ELIM_OCC_LIMIT: usize = 100;
@@ -572,6 +587,60 @@ impl Solver {
         // The very first phase schedules every active variable (cadical's
         // fresh-variable flags start marked).
         if self.elim_phases == 0 {
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_DUMP_ELIM_ENTRY").is_ok() {
+                // Controlled-differential dump (phase-1 yield-gap study):
+                // the exact formula the eliminator is about to see — live
+                // original clauses plus every level-0 trail literal as a
+                // unit — written once at the first elimination phase.
+                // Feeding this CNF to a reference eliminator with its
+                // other passes disabled puts both engines on the identical
+                // state, so per-variable trace divergences become true
+                // semantic differences rather than upstream contamination.
+                use std::fmt::Write as _;
+                let mut out = String::new();
+                let mut n_clauses = 0usize;
+                for id in self.clauses.iter_ids() {
+                    if self
+                        .clauses
+                        .get(id)
+                        .is_some_and(|c| !c.deleted && !c.learned && c.lits.len() >= 2)
+                    {
+                        n_clauses += 1;
+                    }
+                }
+                let units = self
+                    .trail
+                    .level_start(1)
+                    .min(self.trail.assignments().len());
+                n_clauses += units;
+                let _ = writeln!(out, "p cnf {} {}", self.num_vars, n_clauses);
+                for id in self.clauses.iter_ids() {
+                    if let Some(c) = self.clauses.get(id)
+                        && !c.deleted
+                        && !c.learned
+                        && c.lits.len() >= 2
+                    {
+                        for &lit in c.lits.iter() {
+                            let _ = write!(out, "{} ", lit.to_dimacs());
+                        }
+                        let _ = writeln!(out, "0");
+                    }
+                }
+                for i in 0..units {
+                    let lit = self.trail.assignments()[i];
+                    let _ = writeln!(out, "{} 0", lit.to_dimacs());
+                }
+                let path = std::env::var("NIXIE_DUMP_ELIM_ENTRY").unwrap_or_default();
+                if std::fs::write(&path, out).is_err() {
+                    eprintln!("[elim-entry-dump] failed to write {path}");
+                } else {
+                    eprintln!(
+                        "[elim-entry-dump] wrote {path}: {n_clauses} clauses over {} vars",
+                        self.num_vars
+                    );
+                }
+            }
             for idx in 0..self.num_vars {
                 self.mark_elim_one(Var::new(idx as u32));
             }
@@ -1069,10 +1138,40 @@ impl Solver {
             );
         }
         if raw_pos == 0 || raw_neg == 0 {
-            // Pure/one-sided variable: leave it to the pure-literal pass
-            // (our model reconstruction only covers resolution
-            // elimination).
-            if dtl {
+            // Pure/one-sided variable — cadical ELIMINATES it inside BVE
+            // (`elim_resolvents_are_bounded` returns `lim.elimbound >= 0`,
+            // true from the first phase): zero resolvents (one side is
+            // empty), then `mark_eliminated_clauses_as_garbage` retires
+            // the non-empty side with the pure literal as the extension
+            // witness (v true satisfies every dropped clause — they are
+            // the only clauses containing v).  Measured on the controlled
+            // differential (same formula, both eliminators): cadical
+            // eliminates 123 841 to our 74 757 in round 1, and our
+            // 17 572 one-sided skips are the cascade starter — retiring
+            // them in-round re-marks their clause variables and feeds the
+            // rest of the schedule.  The extension-stack reconstruction
+            // (2026-09-13) covers the witness exactly; the old
+            // "leave it to the pure-literal pass" skip predated sound
+            // reconstruction for this shape.
+            //
+            // Measured (`NIXIE_ELIM_ONESIDED`, 2026-09-13 screen): the
+            // amplitude is real (Timetable round 1: 74 757 -> 91 788,
+            // matching cadical's own-pipeline 91 067) and the aggregate
+            // conflicts IMPROVE (0.974 geomean, the best of every
+            // elimination variant tried) — but the 60 s corpus screen
+            // loses 8 cap-conversion cells (229 -> 221, 0 disagreements),
+            // so the mechanism ships default-off as the sixth amplitude
+            // arm.  The 60 s cap's anti-correlation with elimination
+            // amplitude is now confirmed five independent ways.
+            if self.elim_bound >= 0 && elim_onesided_enabled() {
+                self.elim_retire_pivot_clauses(ctx, pivot);
+                self.elim_var_flag[v.index()] = true;
+                ctx.eliminated += 1;
+                ctx.dirty = true;
+                if dtl {
+                    eprintln!("[dtl]   v={} -> one_sided_elim", v.index() + 1);
+                }
+            } else if dtl {
                 eprintln!("[dtl]   v={} -> one_sided", v.index() + 1);
             }
             return;
@@ -2790,6 +2889,16 @@ mod definition_tests {
         s.add_clause_dimacs(&[1, 3]); // x ∨ b   (x side)
         s.add_clause_dimacs(&[-1, 2]); // ¬x ∨ a
         s.add_clause_dimacs(&[-1, -2]); // ¬x ∨ ¬a  (¬x side alone: x→a, x→¬a)
+        // Freeze the protection variables: they are one-sided (only
+        // positive occurrences), and the in-round one-sided elimination
+        // (cadical parity, 2026-09-13) would retire the protection clauses
+        // before the definition extractor reaches `x` — the old fixture
+        // relied on one-sided variables surviving to the pure-literal
+        // pass.  Frozen variables are refused by every elimination gate.
+        // `b` (var 3) is one-sided too — eliminating it would empty `x`'s
+        // positive side and turn `x` itself one-sided before the
+        // definition extractor runs.
+        s.freeze_theory_vars((3..=13).map(|i| Var::new(i - 1)));
         for i in 4..=13 {
             s.add_clause_dimacs(&[2, i]); // a ∨ d_i
             s.add_clause_dimacs(&[-2, i]); // ¬a ∨ d_i
