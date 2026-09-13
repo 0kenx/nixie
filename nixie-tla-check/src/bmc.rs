@@ -168,6 +168,8 @@ pub struct Bmc {
     action_constraints: Vec<KeraRef>,
     /// Parts of the configuration that were read and not acted on.
     unapplied_config: Vec<String>,
+    /// A deterministic per-query budget, in conflicts.
+    conflict_limit: Option<u64>,
 }
 
 impl Bmc {
@@ -463,6 +465,7 @@ impl Bmc {
             state_constraints,
             action_constraints,
             unapplied_config: unapplied,
+            conflict_limit: None,
         })
     }
 
@@ -521,6 +524,18 @@ impl Bmc {
             let violated = tm.mk_not(inv);
 
             let mut solver = Solver::new();
+            // A **deterministic** budget per query, not a wall-clock timeout.
+            // Some specifications now reach the solver with hundreds of set
+            // and datatype terms and do not finish in any useful time; a
+            // corpus harness that hangs is not a measurement. A clock would
+            // bound it too, and would make the verdict depend on machine load
+            // — the corpus numbers stopped being reproducible the moment they
+            // did. Conflicts are counted by the solver itself, so the same
+            // input gives the same answer on any machine, and running out
+            // reports `Unknown` like any other undecided query.
+            if let Some(limit) = self.conflict_limit {
+                solver.set_conflict_limit(limit);
+            }
             for a in &assumed {
                 solver.assert(*a, tm);
             }
@@ -579,6 +594,16 @@ impl Bmc {
     #[must_use]
     pub fn dropped_assumptions(&self) -> usize {
         self.dropped_assumptions
+    }
+
+    /// Bound each solver query to `conflicts`, deterministically.
+    ///
+    /// Off by default, because a bound turns a decidable query into `Unknown`
+    /// and a checker should not do that unasked. A harness running a whole
+    /// corpus wants one; a caller checking a single specification usually does
+    /// not.
+    pub fn set_conflict_limit(&mut self, conflicts: u64) {
+        self.conflict_limit = Some(conflicts);
     }
 
     /// What the configuration said that this check did not act on.
