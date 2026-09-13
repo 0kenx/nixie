@@ -169,6 +169,43 @@ raise `elim_interval`) so the bound-growth cycle fires at cadical's
 cadence — the amplitude is now *reachable*; the open question is only
 when it should run.
 
+## Follow-up 3 (same day): cadical's `scale()` clock also loses — the flat-2k default is defended from both sides (`93703871` + revert `951b1a53`)
+
+The recorded next experiment (gate phases to cadical's cadence) was
+run as the faithful port: `lim.elim = conflicts + scale(elimint ×
+(phases+1))` with cadical's `limit.cpp` `scale()` — `log2(live_
+irredundant / active_vars)` when the ratio exceeds 2, applied to the
+initial limit at solve entry and at every phase end.  Timetable's
+cadence matches cadical exactly (phase 1 at 5 279 conflicts, phase 2 at
+18 066 vs cadical's 12.5 k/18.7 k — the residual gap is cadical's
+marks-gated first phase).
+
+**The screen loses symmetrically: 229 → 205 solved cells (−24)**
+(records under `precompile/93703871/benchmark/runs/sc24f/`; 0
+disagreements) — but with the *opposite* sign on conflicts: geomean
+**0.968** (the search itself is 3 % cheaper per both-decided verdict)
+while conversions collapse (g2-slp −5, mp1-klieber −4, rbsat −3,
+summle −3: files whose early elimination the flat clock was feeding).
+
+The two experiments bracket the default:
+
+| arm | clock | schedule | cells | conflicts gm |
+|---|---|---|---|---|
+| indexed (`281de4c0`) | flat 2k | update-in-place | 220 → 200 | 1.049 |
+| **default (`107b7868`)** | **flat 2k** | **duplicate heap** | **229** | 1.000 |
+| scaled (`93703871`) | log2-ratio | duplicate heap | 229 → 205 | 0.968 |
+
+Neither single-step departure from the default wins: earlier-and-
+richer elimination overruns easy files; later elimination starves the
+files that needed it.  The search (restarts, phase saving, probe
+interleave) has co-adapted to the flat-2k schedule over the whole
+2026-09 program — cadical's clock assumes cadical's search.  The
+amplitude levers are real and now individually reachable (the indexed
+schedule unlocks the bound cycle; the scaled clock matches cadical's
+cadence) — but each must arrive packaged with a cadence *our* search
+tolerates, which is a joint search, not a clock swap.  Recorded for
+the next session as the standing question of the Timetable class.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
