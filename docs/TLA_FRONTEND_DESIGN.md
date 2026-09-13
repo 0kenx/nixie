@@ -745,6 +745,80 @@ mismatches**, and an empty comparison is a hard failure rather than a clean
 sheet. The number in this document before today came from a run where a
 hand-made `tlcout/` happened to exist.
 
+**Tuples and records are single-constructor datatypes.** They were structural
+only — taken apart by the encoder before anything reached the solver, with no
+SMT sort. The stated reason was that an SMT array forces one sort across every
+index, so `<<1, "a">>` could not be array-backed; that is true, and it does not
+apply to a datatype, where each field carries its own sort. Z3 and CVC5 model
+TLA-style tuples and records exactly this way.
+
+Having a sort was the largest single cause on the blocked list — **61**
+specifications whose three lines were one root: `Set(<<Str, Str>>)`,
+`[color: Str, pos: Int, q: Int]`, `(Str -> [clientIdCounter: Int, …])`.
+
+| | before | after |
+|---|---|---|
+| prepared | 160 | **200** |
+| checked at depth 4 | 46 | **50** |
+| ground cross-check | 847 | **850**, still zero disagreements |
+
+The `Set`/`record`/`function` lines of "state type has no sort yet" went
+14/16/20 → 0/0/4, and what those specifications hit *next* is the encoder: "a
+set-valued term with no candidate list" rose 16 → 34 and `1..N` for symbolic
+`N` 21 → 31.
+
+The structural form stays primary — it is what makes a literal index and an
+exact `DOMAIN` work — and the datatype is what a value **reifies into** when
+something needs one term. The sort's name is a function of the field names and
+their sorts rather than of the TLA+ type, because the encoder holds values and
+sorts and never the inferred type; a name derived from the type would be one it
+could not recompute, and the two must agree or the value built and the sort
+assigned are different datatypes that merely look alike. An **open** record is
+refused: inference marks one open when it only saw field accesses, so a
+datatype over the known fields would make two records differing only in the
+rest compare equal, which hides a counterexample.
+
+**A wrong `sat` in the set theory fell out of this**, and it is the structural
+kind. `TermTheory::Set` is classified in Nelson-Oppen and **nothing consumes
+it**: the whole of finite sets is the ground reduction, so `set.member` is not
+a congruence-closed symbol and two membership atoms over sets the solver
+equates *at solve time* are unrelated SAT variables. The reduction bridges only
+equalities it can *read*, so `5 \in (store a 1 {})[1]` answered `sat` — the
+array theory merges the select with the empty set, and nothing carries that to
+the membership. Two set variables equated through `f(x)`/`f(y)` with `x = y`
+failed the same way; an equality written down worked. Now every pair with an
+opaque side is related, which is what congruence would have given. What this
+does *not* do is fix the shape: a ground reduction cannot be
+congruence-complete, and CVC5 keeps membership indexed by equivalence class for
+exactly that reason. The real repair is a theory solver, not an axiom.
+
+**And that fix exposed a wrong `unsat` in the same file.** The extensionality
+witness was named from a counter that restarts on every `reduce` call — and
+`reduce` runs per `assert` over the whole stack — so one hash-consed variable
+could be handed to two different pairs and forced to witness two unrelated
+disequalities. It surfaced as a counterexample the checker had been finding and
+suddenly missed. Witnesses are keyed on their pair now.
+
+The wrong `sat` was not hypothetical on the corpus: `Consensus_epr.tla`
+reported a violation at step 0 of an invariant its own `Init` makes vacuously
+true. Closing it removed that violation and **cost one verdict** —
+`DiningPhilosophers.tla` went from `NoViolationWithin` to `Unknown`, because
+the extra axioms make its query far harder. That is the safe direction (a claim
+withdrawn, not a claim invented), and it is the price of a ground reduction
+standing in for a theory solver.
+
+The harness needed a **deterministic per-query budget** to go with it: some
+specifications now reach the solver with hundreds of set and datatype terms and
+do not finish in any useful time, and a corpus run that hangs is not a
+measurement. It is counted in *conflicts*, not seconds, so the verdict does not
+depend on machine load — the numbers here stopped being reproducible the last
+time anything depended on a clock. At 20 000 conflicts the whole corpus runs in
+**4m16s**.
+
+Final state of the run: 200 prepared, **50 checked**, 33 with no violation, 15
+violations (1 under a dropped `ASSUME`, **0** with unapplied `.cfg`), 2
+undecided.
+
 One measurement hygiene fix came with it: the corpus harnesses sort their inputs and `Bmc`
 sorts the names it declares. `find` hands back directory order, which is not stable between
 invocations, and `Inference::free_names` comes off a `HashMap` — so `SortId`s, `TermId`s and

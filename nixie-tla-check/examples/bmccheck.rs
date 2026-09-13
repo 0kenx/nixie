@@ -35,6 +35,17 @@ fn main() {
     // instead of the summary, so two runs can be diffed spec by spec. A
     // summary that moves by one is not a finding until you can name the one.
     let list = std::env::var("NIXIE_BMC_LIST").is_ok_and(|v| v == "1");
+    // A deterministic per-query budget. Some specifications now reach the
+    // solver with hundreds of set and datatype terms and do not finish in any
+    // useful time — `Consensus_epr.tla` ran for twenty minutes and counting —
+    // and a corpus harness that hangs is not a measurement. Conflicts rather
+    // than seconds, so the same input gives the same verdict on any machine;
+    // the numbers stopped being reproducible the last time something here
+    // depended on the clock.
+    let limit: u64 = std::env::var("NIXIE_BMC_CONFLICTS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20_000);
     let mut prepared = 0usize;
     let mut checked = 0usize;
     let mut no_violation = 0usize;
@@ -149,7 +160,12 @@ fn main() {
             constraints: &constraints,
         };
         let mut bmc = match Bmc::prepare_with_config(&spec, module, roles, use_cfg, &mut tm) {
-            Ok(b) => b,
+            Ok(mut b) => {
+                // Deterministic, so two runs over the corpus agree; see
+                // `Bmc::set_conflict_limit`.
+                b.set_conflict_limit(limit);
+                b
+            }
             Err(e) => {
                 let key = reason(&e);
                 if list {
