@@ -368,7 +368,7 @@ impl Evaluator {
                         });
                     }
                 }
-                Ok(Value::Fun(out))
+                Ok(Value::fun(out))
             }
             Kera::FunApp(f, a) => {
                 let func = self.go(f, env)?;
@@ -601,7 +601,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
         (":>", 2) => {
             let mut m = BTreeMap::new();
             m.insert(arg(0)?.clone(), arg(1)?.clone());
-            Ok(Value::Fun(m))
+            Ok(Value::fun(m))
         }
         ("@@", 2) => {
             let as_fun = |v: &Value| -> Result<BTreeMap<Value, Value>> {
@@ -628,7 +628,7 @@ fn standard_operator(name: &str, args: &[Value]) -> Result<Value> {
             for (k, v) in left {
                 out.insert(k, v);
             }
-            Ok(Value::Fun(out))
+            Ok(Value::fun(out))
         }
 
         // `Print` and `PrintT` are TLC's tracing operators: they return their
@@ -736,7 +736,7 @@ fn update(base: Value, at: Value, to: Value) -> Result<Value> {
                 return Err(EvalErrorKind::OutOfDomain(format!("{at}")));
             }
             m.insert(at, to);
-            Ok(Value::Fun(m))
+            Ok(Value::fun(m))
         }
         Value::Tuple(mut xs) => {
             let Value::Int(i) = at else {
