@@ -492,38 +492,6 @@ impl Solver {
             || self.elim_mark_count > 0
     }
 
-    /// cadical `Internal::scale` for the elimination clock: multiply by
-    /// `log2(live_irredundant / active_variables)` when the ratio exceeds 2
-    /// (flat 1.0 below).  Counted in one pass over the live database —
-    /// phase ends are rare relative to the phase's own cost, and the ratio
-    /// needs the *live* counts (`num_original()` is polluted by retirements
-    /// that never decrement it — the ballast-erratum trap).
-    pub(super) fn scaled_elim_interval(&self, base: u64) -> u64 {
-        let live_irr = self
-            .clauses
-            .iter_ids()
-            .filter(|&id| {
-                self.clauses
-                    .get(id)
-                    .is_some_and(|c| !c.deleted && !c.learned)
-            })
-            .count();
-        let active = (0..self.num_vars)
-            .filter(|&i| {
-                let v = Var::new(i as u32);
-                !self.trail.is_assigned(v) && !self.var_eliminated(v)
-            })
-            .count();
-        let ratio = if active > 0 {
-            live_irr as f64 / active as f64
-        } else {
-            1.0
-        };
-        let factor = if ratio <= 2.0 { 1.0 } else { ratio.log2() };
-        let scaled = base as f64 * factor;
-        if scaled < 1.0 { 1 } else { scaled as u64 }
-    }
-
     /// Scheduled elimination entry for the conflict handler: backtracks to
     /// the root and runs one phase. Returns `Unsat` if elimination derived
     /// the empty clause.
@@ -772,17 +740,8 @@ impl Solver {
             .level_start(1)
             .min(self.trail.assignments().len());
 
-        // cadical: `lim.elim = conflicts + scale (elimint * (phases + 1))`.
-        // `scale` (cadical `limit.cpp`) stretches every elimination
-        // interval by log2 of the live clause/variable ratio — clause-dense
-        // instances phase far less often (Timetable-class: ratio ≈ 6-9 →
-        // factor ≈ 2.6-3.2, first phase at ~5-6 k conflicts instead of
-        // 2 k).  The port's flat interval fired the (now richer) phases
-        // too early for easy files to amortize — the measured -20-cell
-        // regression of the indexed-schedule screen
-        // (`docs/studies/2026-09-13-elim-bound-growth.md`, follow-up 2).
-        let interval = self
-            .scaled_elim_interval(u64::from(self.config.elim_interval) * (self.elim_phases + 1));
+        // cadical: `lim.elim = conflicts + elimint * (phases + 1)`.
+        let interval = self.config.elim_interval * (self.elim_phases + 1);
         self.lim_elim = self.stats.conflicts.saturating_add(interval);
 
         if eliminated_total == 0 && phase_complete && self.elim_bound >= ELIM_BOUND_MAX {
