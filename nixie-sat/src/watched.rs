@@ -1,7 +1,7 @@
 //! Two-watched literal scheme
 
 use crate::clause::ClauseId;
-use crate::literal::Lit;
+use crate::literal::{Lit, Var};
 use crate::memory::{ClauseArena, ClauseRef, CompactionPlan};
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -14,7 +14,7 @@ use smallvec::SmallVec;
 /// A stable identity is fetched from the clause header only for a live reason.
 /// Observers retain an identity word because they classify deleted blocker hits
 /// even after garbage collection has coalesced deleted headers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Watcher {
     /// The clause being watched
     #[cfg(any(
@@ -123,6 +123,90 @@ pub struct WatchSnapshot {
     ghost_debt: Vec<u32>,
 }
 
+/// A CSR-form watch build (count → layout → fill), the `RoundOccs`
+/// pattern (`solver/eliminate.rs`) adapted to [`Watcher`] entries —
+/// slice 1 of the CSR-watches migration
+/// (`docs/studies/2026-09-13-csr-watches-kickoff.md`).
+/// Validation infrastructure only: nothing reads it on any default path.
+#[derive(Debug, Default)]
+pub struct CsrWatchBuild {
+    /// Concatenated entries; literal `code`'s filled span is
+    /// `entries[prim_end-position]` — see `prim_end`.
+    entries: Vec<Watcher>,
+    /// Exclusive end offset of each literal's span (the layout).
+    span_end: Vec<u32>,
+    /// Fill cursor: absolute write position of each literal's span.
+    /// Starts at the span's beginning after [`Self::layout`] and advances
+    /// to the span end as [`Self::fill`] appends.
+    cursor: Vec<u32>,
+    /// Per-literal counts accumulated by [`Self::count`] (consumed by
+    /// [`Self::layout`]).
+    counts: Vec<u32>,
+}
+
+impl CsrWatchBuild {
+    /// Counting pass: one key per (clause, watched-literal) pair the
+    /// caller will later fill, in fill order (order within a literal is
+    /// preserved by the counting sort).
+    pub fn count(&mut self, lit: Lit) {
+        let idx = lit.index();
+        if idx >= self.counts.len() {
+            self.counts.resize(idx + 1, 0);
+        }
+        self.counts[idx] = self.counts[idx].saturating_add(1);
+    }
+
+    /// Prefix-sum the counts into span extents and size the entry buffer
+    /// (`RoundOccs::layout`'s counting sort).  After this, `count` must
+    /// not be called again; `fill` each counted pair.
+    pub fn layout(&mut self, num_lits: usize) {
+        self.counts.resize(num_lits, 0);
+        self.span_end = vec![0; num_lits];
+        self.cursor = vec![0; num_lits];
+        let mut acc = 0u32;
+        for (i, &n) in self.counts.iter().enumerate() {
+            self.cursor[i] = acc;
+            acc = acc.saturating_add(n);
+            self.span_end[i] = acc;
+        }
+        self.entries = Vec::with_capacity(acc as usize);
+        self.entries.resize(
+            acc as usize,
+            Watcher::new(ClauseId::NULL, ClauseRef::NULL, Lit::pos(Var::new(0))),
+        );
+    }
+
+    /// Fill pass: write `w` into `lit`'s span at the cursor.  The caller
+    /// MUST fill each literal's entries in exactly the order
+    /// [`Self::count`] saw them.
+    #[inline]
+    pub fn fill(&mut self, lit: Lit, w: Watcher) {
+        let idx = lit.index();
+        debug_assert!(idx < self.cursor.len());
+        let at = self.cursor[idx] as usize;
+        debug_assert!(
+            at < self.span_end[idx] as usize,
+            "fill overruns the counted span for literal {lit:?}"
+        );
+        self.entries[at] = w;
+        self.cursor[idx] += 1;
+    }
+
+    /// The filled span of `lit`'s entries (empty before [`Self::layout`]).
+    pub fn span(&self, lit: Lit) -> &[Watcher] {
+        let idx = lit.index();
+        if idx >= self.span_end.len() {
+            return &[];
+        }
+        let start = if idx == 0 {
+            0
+        } else {
+            self.span_end[idx - 1] as usize
+        };
+        &self.entries[start..self.span_end[idx] as usize]
+    }
+}
+
 impl WatchLists {
     pub(crate) fn propagation_parts(&mut self) -> (&mut [Vec<Watcher>], &[u32], &mut [u32]) {
         (&mut self.watches, &self.bin_phantom, &mut self.ghost_debt)
@@ -202,6 +286,51 @@ impl WatchLists {
     #[allow(dead_code)]
     pub fn get(&self, lit: Lit) -> &[Watcher] {
         self.watches.get(lit.index()).map_or(&[], |w| w.as_slice())
+    }
+
+    /// CSR shadow validation (`NIXIE_CSR_SHADOW=1`, slice 1 of the
+    /// CSR-watches migration — `docs/studies/2026-09-13-csr-watches-kickoff.md`).
+    ///
+    /// Rebuilds the watch state **independently** as a CSR (two sweeps:
+    /// count → layout → fill, the `RoundOccs` pattern) from the caller's
+    /// iteration, then compares every literal's CSR span against the live
+    /// per-literal `Vec` list entry-for-entry, **order included**.  Passing
+    /// validates that the CSR layout reproduces the rebuild's contents and
+    /// per-list order exactly — the representation's claim — and the
+    /// elapsed time is an upper bound for the eventual merged build (the
+    /// shadow runs the two sweeps alone; the real build will share the
+    /// rebuild's existing sweep).
+    ///
+    /// Returns `(literals_compared, entries_compared, mismatched_literals)`.
+    /// Zero-cost when the lists are empty of differences — callers gate on
+    /// the env flag.
+    pub fn csr_shadow_compare(
+        &self,
+        num_vars: usize,
+        csr: &CsrWatchBuild,
+    ) -> (usize, usize, usize) {
+        let mut lits = 0usize;
+        let mut entries = 0usize;
+        let mut bad = 0usize;
+        for code in 0..num_vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let span = csr.span(lit);
+            let list = self.get(lit);
+            lits += 1;
+            entries += list.len();
+            if span != list {
+                bad += 1;
+                if bad <= 4 {
+                    eprintln!(
+                        "[csr-shadow] literal {lit:?}: csr len {} vs list len {} (first divergence at {:?})",
+                        span.len(),
+                        list.len(),
+                        span.iter().zip(list.iter()).position(|(a, b)| a != b)
+                    );
+                }
+            }
+        }
+        (lits, entries, bad)
     }
 
     /// Get mutable access to the watch list for a literal
@@ -546,5 +675,107 @@ mod tests {
         ))]
         assert_eq!(wl.get(lit)[0].clause, clause);
         assert_eq!(wl.get(lit)[0].blocker, blocker);
+    }
+}
+
+/// `NIXIE_CSR_SHADOW=1`: run the CSR shadow validation at every watch
+/// rebuild (slice 1 of the CSR-watches migration — see
+/// `docs/studies/2026-09-13-csr-watches-kickoff.md`).  Diagnostic only:
+/// the flag adds two validation sweeps per rebuild and never feeds any
+/// solver decision.
+pub fn csr_shadow_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_SHADOW")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
+mod csr_tests {
+    #[test]
+    fn csr_watch_build_roundtrip_preserves_order() {
+        use super::*;
+        let v = |n: usize| Var::new(n as u32);
+        let lits = [
+            Lit::pos(v(0)),
+            Lit::neg(v(0)),
+            Lit::pos(v(1)),
+            Lit::neg(v(1)),
+        ];
+        // Count: lit0 <- {A,B}, lit1 <- {C}, lit2 <- {D,A} (arrival order)
+        let pairs = [
+            (
+                0usize,
+                Watcher::new(ClauseId::new(1), ClauseRef::NULL, lits[2]),
+            ),
+            (0, Watcher::new(ClauseId::new(2), ClauseRef::NULL, lits[3])),
+            (1, Watcher::new(ClauseId::new(3), ClauseRef::NULL, lits[0])),
+            (2, Watcher::new(ClauseId::new(1), ClauseRef::NULL, lits[3])),
+            (2, Watcher::new(ClauseId::new(4), ClauseRef::NULL, lits[0])),
+        ];
+        let mut csr = CsrWatchBuild::default();
+        for (code, _) in &pairs {
+            csr.count(Lit::from_code(*code as u32));
+        }
+        csr.layout(4);
+        for (code, w) in &pairs {
+            csr.fill(Lit::from_code(*code as u32), *w);
+        }
+        assert_eq!(csr.span(lits[0]).len(), 2);
+        assert_eq!(csr.span(lits[1]).len(), 1);
+        assert_eq!(csr.span(lits[2]).len(), 2);
+        assert_eq!(csr.span(lits[3]).len(), 0);
+        // Arrival order preserved within each span.
+        assert_eq!(csr.span(lits[0])[0].blocker, lits[2]);
+        assert_eq!(csr.span(lits[0])[1].blocker, lits[3]);
+        #[cfg(any(
+            feature = "bcp-groups",
+            feature = "bcp-regions",
+            feature = "clause-traffic"
+        ))]
+        {
+            assert_eq!(csr.span(lits[2])[0].clause.0, 1);
+            assert_eq!(csr.span(lits[2])[1].clause.0, 4);
+        }
+        // Order check independent of the clause-id field: the two spans'
+        // blockers differ, so compare the arrival order via blockers.
+        assert_eq!(csr.span(lits[2])[0].blocker, lits[3]);
+        assert_eq!(csr.span(lits[2])[1].blocker, lits[0]);
+    }
+
+    #[test]
+    fn csr_shadow_compare_detects_divergence() {
+        use super::*;
+        let mut wl = WatchLists::new(2);
+        let w = Watcher::new(ClauseId::new(7), ClauseRef::NULL, Lit::neg(Var::new(1)));
+        wl.add(Lit::pos(Var::new(0)), w);
+        // Matching CSR: zero mismatches.
+        let mut csr = CsrWatchBuild::default();
+        csr.count(Lit::pos(Var::new(0)));
+        csr.layout(4);
+        csr.fill(Lit::pos(Var::new(0)), w);
+        let (lits, entries, bad) = wl.csr_shadow_compare(2, &csr);
+        assert_eq!((lits, entries, bad), (4, 1, 0));
+        // Divergent CSR (different entry): exactly one mismatched literal.
+        let mut csr2 = CsrWatchBuild::default();
+        csr2.count(Lit::pos(Var::new(0)));
+        csr2.layout(4);
+        // Diverge in the blocker (always compiled; the clause-id field is
+        // feature-gated).
+        csr2.fill(
+            Lit::pos(Var::new(0)),
+            Watcher::new(ClauseId::new(8), ClauseRef::NULL, Lit::pos(Var::new(1))),
+        );
+        let (_, _, bad2) = wl.csr_shadow_compare(2, &csr2);
+        assert_eq!(bad2, 1);
     }
 }
