@@ -206,6 +206,33 @@ cadence) — but each must arrive packaged with a cadence *our* search
 tolerates, which is a joint search, not a clock swap.  Recorded for
 the next session as the standing question of the Timetable class.
 
+## Follow-up 4 (same day): the 2×2 matrix completes — the combo loses too (`06011ff4`, worktree-only, never landed)
+
+The obvious untested cell: indexed + scaled together (the scaled clock
+fixes indexed's early-phase overrun; indexed's completing phases could
+recover what scaled's lateness starved).  Both reimplemented on a
+worktree (reverts-of-reverts), anatomy on Timetable: phase 1 at 5 279
+conflicts eliminates a best-yet **79 079** complete in 8.5 M
+resolutions — but its richer residue re-blocks completion (inter-round
+subsume 4 696/19 568 → 22 852 marks; the bound stays 0).
+
+**Screen: 229 → 214 (−15)**, conflicts gm **1.061** (worst of the
+four), 0 disagreements.  The complete matrix (cells under
+`precompile/06011ff4/`, binary preserved):
+
+| clock \ schedule | duplicate heap | indexed |  |
+|---|---|---|---|
+| **flat 2k** | **229 (1.000)** | 200 (1.049) |  |
+| **log₂-ratio** | 205 (0.968) | 214 (1.061) |  |
+
+The default dominates its entire measured neighborhood.  The
+elimination-clock/amplitude thread closes here: the schedule is a
+measured local optimum, and the remaining amplitude routes are the
+deeper ones already recorded — the inter-round subsume quiescence
+(the erratum's "subsume-phase strength": a completing round's residue
+must not create marks) and a joint search redesign (cadence + schedule
++ restart policy measured together, not swapped piecemeal).
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
