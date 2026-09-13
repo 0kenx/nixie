@@ -349,6 +349,32 @@ amplitude arms (this one at 0.974).  Whether the standing screen's cap
 is the right acceptance metric for elimination work is the recorded
 program question.
 
+## Follow-up 9 (same day): the wide-cap check — losses are cap artifacts, but no reversal
+
+The 60 s losers + hard-class files re-run at the 300 s cap, default vs
+`NIXIE_ELIM_ONESIDED` (9 files × 5 seeds × 2 arms):
+
+- **every file 5/5 on both arms** — the −8 cells were pure cap
+  artifacts (6.5 k-conflict Timetable solves simply cost more wall than
+  60 s allows at that clause mass);
+- but the arm does **not** convert that into wide-cap wins: cell-equal
+  everywhere, conflicts mixed and mostly worse on this sample
+  (j3037 1.22 M vs 506 k, af-synthesis 2.65 M vs 1.57 M,
+  g2-slp 1.71 M vs 1.38 M; si2 better 134 k vs 144 k; frb45 and
+  mp1-klieber bit-identical — no one-sided variables in their rounds);
+  **Timetable itself times out under the arm at 300 s** (default: 5/5,
+  ~6.5 k conflicts average) — the better round-1 elimination does not
+  translate into a better search trajectory on the very file it was
+  aimed at.
+
+The program question gets its nuance: the 60 s cap *does* misjudge
+amplitude arms (five-way confirmation + this), but the one-sided arm is
+not a wide-cap winner either — its best datum remains the corpus-wide
+0.974 conflicts geomean.  It stands as measured infrastructure; the
+amplitude→search-trajectory translation (why a 17 k-variable-richer
+elimination can still slow the solve) is the deeper open question this
+program now ends on.
+
 ## Verdict
 
 **Landed as the default** (`107b7868`): +11/−5 solved cells at the
