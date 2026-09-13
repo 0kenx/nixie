@@ -336,6 +336,18 @@ impl Inference {
         self
     }
 
+    /// The type inferred for a specific node of a term already passed to
+    /// [`Inference::infer`].
+    ///
+    /// Keyed by pointer identity, like the inference memo itself, so a shared
+    /// subterm answers once. Needed by consumers that must know a node's type
+    /// where the node itself does not carry one — the empty set literal `{}`
+    /// being the motivating case: its element type comes from context.
+    #[must_use]
+    pub fn node_ty(&self, node: &KeraRef) -> Option<TyId> {
+        self.memo.get(&Rc::as_ptr(node)).copied()
+    }
+
     /// The type assigned to a free name, if it appeared.
     #[must_use]
     pub fn free_name(&self, name: &str) -> Option<TyId> {

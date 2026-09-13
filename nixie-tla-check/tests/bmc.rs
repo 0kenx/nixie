@@ -170,10 +170,12 @@ fn a_missing_definition_is_named() {
     );
 }
 
-/// A specification whose state does not map to a sort yet is declined by name,
-/// never checked with a substitute sort.
+/// A **set-valued state variable** is checked, which the arena encoding could
+/// never do: its candidate members are whatever the transition relation puts
+/// there, so there is no statically knowable list. The solver's finite-set
+/// sort carries it instead.
 #[test]
-fn an_unencodable_state_type_is_declined() {
+fn a_set_valued_state_variable_is_checked() {
     let src = r"
 ---- MODULE Sets ----
 EXTENDS Integers
@@ -183,10 +185,69 @@ Next == s' = s
 Inv  == 1 \in s
 ====
 ";
-    assert!(matches!(
-        setup_err(src, "Init", "Next", "Inv"),
-        SetupError::NoSort { .. }
-    ));
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 3),
+        Outcome::NoViolationWithin(3)
+    );
+}
+
+/// ...and a violation in one is found, so the previous test is not passing
+/// merely because nothing is constrained.
+#[test]
+fn a_set_valued_state_variable_can_violate() {
+    let src = r"
+---- MODULE SetsBad ----
+EXTENDS Integers
+VARIABLE s
+Init == s = {1}
+Next == s' = s
+Inv  == 2 \in s
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 3),
+        Outcome::Violation { step: 0 }
+    );
+}
+
+/// A set that **grows** across steps — the shape the arena cannot express at
+/// all, because `s@1`'s members depend on the action taken.
+#[test]
+fn a_growing_set_is_tracked_across_steps() {
+    let src = r"
+---- MODULE Grow ----
+EXTENDS Integers
+CONSTANT v
+VARIABLE s
+Init == s = {}
+Next == s' = s \cup {v}
+Inv  == ~(v \in s)
+====
+";
+    // After one step `v` is in `s`, so the invariant fails at step 1.
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 4),
+        Outcome::Violation { step: 1 }
+    );
+}
+
+/// Set difference removes, and the invariant survives.
+#[test]
+fn set_difference_across_steps() {
+    let src = r"
+---- MODULE Shrink ----
+EXTENDS Integers
+CONSTANT v
+VARIABLE s
+Init == s = {v}
+Next == s' = s \ {v}
+Inv  == ~(2 \in s) \/ 2 = v
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "Inv", 3),
+        Outcome::NoViolationWithin(3)
+    );
 }
 
 /// `ASSUME` constrains the `CONSTANT`s, and dropping it turns "holds for the
@@ -245,7 +306,7 @@ EXTENDS Integers
 CONSTANT N, S
 VARIABLE x
 ASSUME N > 3
-ASSUME S = {1, 2}
+ASSUME S = <<1, 2>>
 Init == x = 0
 Next == x' = x
 Inv  == x < N
@@ -262,7 +323,7 @@ Inv  == x < N
     assert_eq!(
         bmc.dropped_assumptions(),
         1,
-        "the set-valued assumption has no encoding yet and must be reported"
+        "an assumption over a tuple-typed constant has no sort and must be reported"
     );
 }
 
@@ -484,5 +545,69 @@ Inv  == f[k] = 0
     assert!(
         bmc.encoder().domain_unmodelled(),
         "a verdict reached through a function application must say the domain was not modelled"
+    );
+}
+
+/// `Nat` is **not** an arbitrary set. Encoding it as an opaque set constant
+/// leaves it unconstrained, so the solver may decide `0 \notin Nat` and report
+/// `TypeOK == x \in Nat` violated in the initial state — a false
+/// counterexample, found on `AddTwo.tla`.
+///
+/// Membership in the standard infinite sets is exactly expressible, so it is
+/// encoded rather than declined: `x \in Nat` is `x >= 0`.
+#[test]
+fn membership_in_nat_is_not_a_free_choice() {
+    let src = r"
+---- MODULE AddTwoish ----
+EXTENDS Naturals
+VARIABLE x
+Init == x = 0
+Next == x' = x + 2
+TypeOK == x \in Nat
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "TypeOK", 4),
+        Outcome::NoViolationWithin(4),
+        "x starts at 0 and only grows, so it is always a natural"
+    );
+}
+
+/// ...and the encoding is not simply "always true": a variable that goes
+/// negative really does leave `Nat`.
+#[test]
+fn leaving_nat_is_detected() {
+    let src = r"
+---- MODULE Countdown ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 1
+Next == x' = x - 1
+TypeOK == x \in Nat
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "TypeOK", 4),
+        Outcome::Violation { step: 2 },
+        "1, 0, then -1 leaves Nat at step 2"
+    );
+}
+
+/// `Int` contains every integer, so membership is trivially true rather than
+/// an unconstrained atom.
+#[test]
+fn membership_in_int_is_trivially_true() {
+    let src = r"
+---- MODULE AnyInt ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == x' = x - 1
+TypeOK == x \in Int
+====
+";
+    assert_eq!(
+        check(src, "Init", "Next", "TypeOK", 3),
+        Outcome::NoViolationWithin(3)
     );
 }

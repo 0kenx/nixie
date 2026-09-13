@@ -37,7 +37,7 @@ use nixie_tla::types::Inference;
 use nixie_tla::{Kera, KeraRef, Lowerer};
 use nixie_tla_syntax::{LoadedSpec, Module, UnitKind};
 
-use crate::encode::{EncodeError, Encoder};
+use crate::encode::{EncodeError, Encoder, SetEncoding};
 use crate::sorts::sort_of;
 
 /// What a bounded check found.
@@ -234,7 +234,12 @@ impl Bmc {
         }
 
         let state = state_variables(module);
-        let mut encoder = Encoder::new();
+        // Native sets, not the arena. A set-valued **state variable** has no
+        // statically knowable candidate list — `s@1` holds whatever the
+        // transition relation puts there — so the arena cannot represent one
+        // at all. The solver's finite-set sort can, which is the whole reason
+        // the theory was built.
+        let mut encoder = Encoder::new().with_set_encoding(SetEncoding::Native);
         let names: Vec<(String, nixie_tla::TyId)> = inf
             .free_names()
             .map(|(n, id)| (n.to_string(), id))
@@ -262,6 +267,26 @@ impl Bmc {
                 encoder.declare_state(name, sort);
             } else {
                 encoder.declare(name, sort);
+            }
+        }
+
+        // Hand the encoder the sort of every node whose term cannot sort
+        // itself. `{}` is the case that matters: an empty set literal has no
+        // element to take an element sort from, and an empty set at the wrong
+        // element sort is a different value — so it is supplied, not guessed.
+        let mut nodes: Vec<KeraRef> = Vec::new();
+        for root in [&init_k, &next_k, &inv_k]
+            .into_iter()
+            .chain(typed_assumptions.iter())
+        {
+            collect_empty_sets(root, &mut nodes);
+        }
+        for node in nodes {
+            if let Some(id) = inf.node_ty(&node)
+                && let Ok(ty) = inf.to_type(id)
+                && let Ok(sort) = sort_of(&ty, tm)
+            {
+                encoder.declare_node_sort(&node, sort);
             }
         }
 
@@ -385,6 +410,23 @@ fn lower_one<'a>(
             name: name.to_string(),
             why: e.to_string(),
         })
+}
+
+/// Every empty-set literal reachable from `root`.
+///
+/// Explicit stack and pointer-deduplicated: a lowered term is a shared DAG.
+fn collect_empty_sets(root: &KeraRef, out: &mut Vec<KeraRef>) {
+    let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
+    let mut stack = vec![root.clone()];
+    while let Some(t) = stack.pop() {
+        if !seen.insert(std::rc::Rc::as_ptr(&t)) {
+            continue;
+        }
+        if matches!(t.as_ref(), Kera::SetEnum(xs) if xs.is_empty()) {
+            out.push(t.clone());
+        }
+        stack.extend(t.as_ref().children().into_iter().cloned());
+    }
 }
 
 /// Whether the module defines `name` with no parameters.

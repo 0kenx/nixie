@@ -46,7 +46,15 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
             let spur = tm.intern_str(&format!("TlaOpaque{n}"));
             Ok(tm.sorts.intern(nixie_core::SortKind::Uninterpreted(spur)))
         }
-        Type::Set(_) => Err(NoSort("a set".into())),
+        // A TLA+ set maps onto the solver's finite-set sort, which is the one
+        // place a *state variable* of set type can live: the arena encoding
+        // needs a statically known candidate list, and `s@1` has nowhere to
+        // get one from. The theory carries membership, the binary operations,
+        // extensional equality and cardinality itself.
+        Type::Set(e) => {
+            let elem = sort_of(e, tm)?;
+            Ok(tm.sorts.set(elem))
+        }
         Type::Seq(_) => Err(NoSort("a sequence".into())),
         // A TLA+ function maps onto an SMT array, which is a theory the solver
         // already has. What an array does **not** carry is the domain, and
