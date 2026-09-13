@@ -1416,6 +1416,11 @@ pub struct Solver {
     pub(super) diag_elim_added: u64,
     pub(super) diag_elim_bw_retired: u64,
     pub(super) diag_elim_otf_shrunk: u64,
+    /// Round diagnostics (`NIXIE_LOG_ELIM`): variables popped from the
+    /// elimination schedule (cadical's `tried`) and the schedule remainder
+    /// at the round's end.
+    pub(super) diag_elim_tried: usize,
+    pub(super) diag_elim_remain: usize,
     /// Learnt clause for conflict analysis
     pub(super) learnt: SmallVec<[Lit; 32]>,
     /// Seen flags for conflict analysis
@@ -2229,6 +2234,8 @@ impl Solver {
             diag_elim_added: 0,
             diag_elim_bw_retired: 0,
             diag_elim_otf_shrunk: 0,
+            diag_elim_tried: 0,
+            diag_elim_remain: 0,
             learnt: SmallVec::new(),
             seen: Vec::new(),
             analyze_stack: Vec::new(),

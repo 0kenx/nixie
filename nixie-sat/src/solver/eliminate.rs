@@ -41,8 +41,6 @@
 use super::*;
 use crate::literal::LBool;
 
-use std::collections::BinaryHeap;
-
 pub(super) use super::equiv::SubstOutcome;
 
 /// cadical `elimocclim`: skip a variable whose heavier-side occurrence list
@@ -84,7 +82,7 @@ enum ElimResolve {
 /// Elimination score rank for the schedule heap: smaller = tried earlier.
 /// Pure literals rank first (`0` bucket, most occurrences = smallest),
 /// then ascending `pos*neg + pos + neg` (cadical `compute_elim_score`).
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct ElimRank(u8, u64);
 
 impl ElimRank {
@@ -97,6 +95,153 @@ impl ElimRank {
             let prod = u64::from(pos) * u64::from(neg);
             let sum = u64::from(pos + neg);
             ElimRank(1, prod + sum)
+        }
+    }
+}
+
+/// Position-mapped min-heap for the elimination schedule — cadical
+/// `heap<elim_more>` semantics: **one entry per variable**, re-scored in
+/// place when its occurrence counts change (`update`), popped lowest-score
+/// first with the variable index as the tie-break.
+///
+/// The previous `BinaryHeap<Reverse<(ElimRank, u32)>>` allowed ranked
+/// *duplicates*: a variable whose score worsened (occurrences grew — the
+/// resolvent-neighbour case) kept its stale better rank and popped early,
+/// spending the resolution budget on big lists ahead of turn.  Measured on
+/// Timetable round 1: 729 023 pops (schedule fully drained) vs cadical's
+/// 403 731 (8 444 remaining) for *fewer* eliminations (74 757 vs 91 067 at
+/// the same 10 M-resolution budget) — the duplicate-order distortion is
+/// the recorded phase-1 yield-gap lead (see
+/// `docs/studies/2026-09-13-elim-bound-growth.md`).
+#[derive(Debug, Default)]
+struct IndexedSchedule {
+    /// Min-heap entries `(rank, var)`; the root is the lowest
+    /// `(ElimRank, var)` pair.
+    heap: Vec<(ElimRank, u32)>,
+    /// `pos[var]` = index into `heap`, or -1 when absent.
+    pos: Vec<i32>,
+}
+
+impl IndexedSchedule {
+    fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    /// Drain every entry (unordered), clearing the position map.
+    fn drain(&mut self) -> impl Iterator<Item = (ElimRank, u32)> + '_ {
+        for &(.., v) in &self.heap {
+            self.pos[v as usize] = -1;
+        }
+        std::mem::take(&mut self.heap).into_iter()
+    }
+
+    #[inline]
+    fn contains(&self, var: u32) -> bool {
+        self.pos.get(var as usize).is_some_and(|&p| p >= 0)
+    }
+
+    #[inline]
+    fn less(&self, a: (ElimRank, u32), b: (ElimRank, u32)) -> bool {
+        a < b
+    }
+
+    /// Swap two heap slots, keeping `pos` consistent: capture the entries
+    /// first, swap, then write both positions (writing position of an entry
+    /// read *after* the swap targets the wrong variable — the bookkeeping
+    /// bug this centralises against).
+    #[inline]
+    fn swap_slots(&mut self, i: usize, j: usize) {
+        let a = self.heap[i].1;
+        let b = self.heap[j].1;
+        self.heap.swap(i, j);
+        self.pos[a as usize] = j as i32;
+        self.pos[b as usize] = i as i32;
+    }
+
+    fn sift_up(&mut self, mut i: usize) {
+        while i > 0 {
+            let parent = (i - 1) / 2;
+            if self.less(self.heap[i], self.heap[parent]) {
+                self.swap_slots(i, parent);
+                i = parent;
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn sift_down(&mut self, mut i: usize) {
+        loop {
+            let l = 2 * i + 1;
+            let r = l + 1;
+            let mut best = i;
+            if l < self.heap.len() && self.less(self.heap[l], self.heap[best]) {
+                best = l;
+            }
+            if r < self.heap.len() && self.less(self.heap[r], self.heap[best]) {
+                best = r;
+            }
+            if best == i {
+                break;
+            }
+            self.swap_slots(i, best);
+            i = best;
+        }
+    }
+
+    /// Insert `var` at `rank` (must be absent).
+    fn push(&mut self, rank: ElimRank, var: u32) {
+        debug_assert!(!self.contains(var), "duplicate schedule push for var {var}");
+        if var as usize >= self.pos.len() {
+            self.pos.resize(var as usize + 1, -1);
+        }
+        self.pos[var as usize] = self.heap.len() as i32;
+        self.heap.push((rank, var));
+        self.sift_up(self.heap.len() - 1);
+    }
+
+    /// Pop the lowest `(rank, var)` entry.
+    fn pop(&mut self) -> Option<(ElimRank, u32)> {
+        if self.heap.is_empty() {
+            return None;
+        }
+        let last = self.heap.len() - 1;
+        self.swap_slots(0, last);
+        let out = self.heap.pop();
+        if let Some(&(.., v)) = out.as_ref() {
+            self.pos[v as usize] = -1;
+        }
+        if !self.heap.is_empty() {
+            self.sift_down(0);
+        }
+        out
+    }
+
+    /// cadical `schedule.update`: re-score a contained variable in place.
+    fn update(&mut self, var: u32, rank: ElimRank) {
+        debug_assert!(self.contains(var), "update of an unscheduled var {var}");
+        let i = self.pos[var as usize] as usize;
+        let old = self.heap[i].0;
+        self.heap[i].0 = rank;
+        if rank < old {
+            self.sift_up(i);
+        } else if old < rank {
+            self.sift_down(i);
+        }
+    }
+
+    /// Insert or re-score — cadical `elim_update_removed_lit`'s
+    /// `contains ? update : push_back`.
+    #[inline]
+    fn reschedule(&mut self, var: u32, rank: ElimRank) {
+        if self.contains(var) {
+            self.update(var, rank);
+        } else {
+            self.push(rank, var);
         }
     }
 }
@@ -301,7 +446,10 @@ struct Eliminator {
     /// marked (same scheme as `subsume.rs`).
     mark: Vec<i8>,
     /// Elimination schedule (min-heap on `ElimRank`).
-    schedule: BinaryHeap<std::cmp::Reverse<(ElimRank, u32)>>,
+    schedule: IndexedSchedule,
+    /// Variables popped from the schedule this round, including retries
+    /// (cadical's `tried` diagnostic: pops minus the schedule remainder).
+    tried: usize,
     /// Backward-subsumption work list of freshly added resolvents and
     /// shrunken clauses. Consumed FIFO through [`Self::bw_head`]: entries
     /// before the head are processed, the tail is pending.
@@ -381,7 +529,8 @@ impl Eliminator {
             noccs: vec![0; n],
             val,
             mark: vec![0; n],
-            schedule: BinaryHeap::new(),
+            schedule: IndexedSchedule::default(),
+            tried: 0,
             backward: Vec::new(),
             bw_head: 0,
             units: SmallVec::new(),
@@ -626,6 +775,8 @@ impl Solver {
         self.diag_elim_added = 0;
         self.diag_elim_bw_retired = 0;
         self.diag_elim_otf_shrunk = 0;
+        self.diag_elim_tried = 0;
+        self.diag_elim_remain = 0;
         let mut phase_complete = false;
         let mut round = 1usize;
         let mut eliminated_total = 0usize;
@@ -637,7 +788,7 @@ impl Solver {
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_LOG_ELIM").is_ok() {
                 eprintln!(
-                    "[elim]   round {}: eliminated={} complete={} dirty={} units={} resolutions={} added={} bw_retired={} otf_shrunk={}",
+                    "[elim]   round {}: eliminated={} complete={} dirty={} units={} resolutions={} added={} bw_retired={} otf_shrunk={} tried={tried} remain={remain}",
                     round,
                     eliminated,
                     complete,
@@ -646,7 +797,9 @@ impl Solver {
                     self.elim_resolutions_total,
                     self.diag_elim_added,
                     self.diag_elim_bw_retired,
-                    self.diag_elim_otf_shrunk
+                    self.diag_elim_otf_shrunk,
+                    tried = self.diag_elim_tried,
+                    remain = self.diag_elim_remain
                 );
             }
             eliminated_total += eliminated;
@@ -921,15 +1074,16 @@ impl Solver {
                     ctx.noccs[Lit::pos(Var::new(idx as u32)).code() as usize],
                     ctx.noccs[Lit::neg(Var::new(idx as u32)).code() as usize],
                 );
-                ctx.schedule.push(std::cmp::Reverse((rank, idx as u32)));
+                ctx.schedule.push(rank, idx as u32);
             }
         }
         self.elim_mark_count = 0;
 
-        while let Some(std::cmp::Reverse((_, v))) = ctx.schedule.pop() {
+        while let Some((_, v)) = ctx.schedule.pop() {
             if self.trivially_unsat {
                 break;
             }
+            ctx.tried += 1;
             if ctx.resolutions >= ctx.resolution_limit {
                 ctx.resolution_aborted = true;
                 self.mark_elim_one(Var::new(v));
@@ -947,13 +1101,17 @@ impl Solver {
         // including a pivot interrupted inside its pair product. Otherwise
         // draining the round-local heap loses the only scheduling marks.
         if ctx.resolution_aborted {
-            for std::cmp::Reverse((_, v)) in ctx.schedule.drain() {
+            for (.., v) in ctx.schedule.drain() {
                 self.mark_elim_one(Var::new(v));
             }
         }
         let eliminated = ctx.eliminated;
         let dirty = ctx.dirty;
         let units = ctx.units;
+        // Diagnostics only (`NIXIE_LOG_ELIM` round line): the schedule
+        // accounting cadical prints as "tried X variables (Y remain)".
+        self.diag_elim_tried = ctx.tried;
+        self.diag_elim_remain = ctx.schedule.len();
 
         // cadical `mark_redundant_clauses_with_eliminated_variables_as_garbage`:
         // learned (redundant) clauses mentioning an eliminated variable are
@@ -1706,8 +1864,7 @@ impl Solver {
                     ctx.noccs[Lit::pos(v).code() as usize],
                     ctx.noccs[Lit::neg(v).code() as usize],
                 );
-                ctx.schedule
-                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+                ctx.schedule.reschedule(v.index() as u32, rank);
             }
         }
         // Physical removal from `occs` is lazy (filtered on access).
@@ -1820,8 +1977,7 @@ impl Solver {
                     ctx.noccs[Lit::pos(v).code() as usize],
                     ctx.noccs[Lit::neg(v).code() as usize],
                 );
-                ctx.schedule
-                    .push(std::cmp::Reverse((rank, v.index() as u32)));
+                ctx.schedule.reschedule(v.index() as u32, rank);
             }
         }
         // The shrunken clause may now subsume others: queue it.
