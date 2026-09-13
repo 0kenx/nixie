@@ -64,9 +64,28 @@ enum Shape {
     Union(TermId, TermId),
     Inter(TermId, TermId),
     Minus(TermId, TermId),
+    /// `(ite c a b)` at a set sort.
+    ///
+    /// Structured, and it must be treated as such here rather than left
+    /// opaque. The generic mux pass ([`Solver::eliminate_nonbool_ite`]) does
+    /// own this sort, but it runs *after* this reduction, so by the time the
+    /// conditional equalities exist the survey that would have picked them up
+    /// has already happened. Leaving it opaque made `(= (ite c {1} {2}) {})`
+    /// answer `Sat` — a wrong `sat`, since neither branch is empty.
+    ///
+    /// [`Solver::eliminate_nonbool_ite`]: super::Solver::eliminate_nonbool_ite
+    Ite(TermId, TermId, TermId),
     /// A set-sorted variable or other opaque term: it has no structure, so its
     /// membership atoms are free and constrained only by the relations the
     /// problem states about it.
+    ///
+    /// Sound only because every *structured* set-sorted term is either matched
+    /// above or reaches its structure through EUF congruence: `f(x)`,
+    /// `(select a i)` and a datatype selector are all opaque *as terms* but are
+    /// merged with whatever they are equal to, and a membership atom over a
+    /// merged term is congruent to one over its representative. A bound
+    /// variable is the case that is **not** rescued that way, which is why
+    /// [`survey`] refuses to walk under a binder.
     Opaque,
 }
 
@@ -77,6 +96,7 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
         Some(TermKind::SetUnion(a, b)) => Shape::Union(*a, *b),
         Some(TermKind::SetInter(a, b)) => Shape::Inter(*a, *b),
         Some(TermKind::SetMinus(a, b)) => Shape::Minus(*a, *b),
+        Some(TermKind::Ite(c, a, b)) => Shape::Ite(*c, *a, *b),
         _ => Shape::Opaque,
     }
 }
@@ -121,6 +141,13 @@ fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermI
             support(a, manager, depth + 1).or_else(|| support(b, manager, depth + 1))
         }
         Shape::Minus(a, _) => support(a, manager, depth + 1),
+        // The result *is* one of the branches, so the two supports together
+        // confine it — the same argument as a union, and it needs both.
+        Shape::Ite(_, a, b) => {
+            let mut xs = support(a, manager, depth + 1)?;
+            xs.extend(support(b, manager, depth + 1)?);
+            Some(xs)
+        }
         Shape::Opaque => None,
     }
 }
@@ -177,6 +204,29 @@ impl Survey {
 /// Walk the formulas, collecting set terms, element terms and set relations.
 ///
 /// Explicit stack: an asserted formula is user input and may nest arbitrarily.
+///
+/// # Walking under a binder
+///
+/// This descends into quantifier bodies, and a bound variable in this AST is
+/// an ordinary named `Var` — so a set-sorted bound name is the *same*
+/// hash-consed term as a free one of that name, and any axiom mentioning it
+/// is emitted at the top level, where the name reads free.
+///
+/// That is sound, and the argument is worth writing down because the shape
+/// looks like variable capture. Every axiom [`reduce`] emits is a **tautology
+/// of the theory of finite sets in all of its variables** — `e \in {y}` is
+/// `e = y` for *every* `e` and `y`, `(= a b)` implies agreement on every
+/// element for *every* `a` and `b`. Reading a bound name as a free one
+/// therefore instantiates a valid universally-quantified lemma at a fresh
+/// variable, which is still valid. The unguarded arms (`Empty`, `Singleton`)
+/// are over ground constructors, and the guarded arms carry their own
+/// hypothesis.
+///
+/// What it is not is *complete*: a membership atom that only exists after a
+/// quantifier is instantiated never gets an axiom of its own, because
+/// instantiation happens after this runs. The cost of that is `Unknown`, not a
+/// wrong answer — memberships over an opaque set are free atoms the SAT layer
+/// owns, and an instantiated copy is the same term.
 fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
     let mut out = Survey::default();
     let mut seen: FxHashSet<TermId> = FxHashSet::default();
@@ -321,6 +371,15 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     let not_b = manager.mk_not(ib);
                     let both = manager.mk_and([ia, not_b]);
                     axioms.push(manager.mk_eq(atom, both));
+                }
+                // `e \in (ite c a b)` is `ite c (e \in a) (e \in b)`: the
+                // condition is a Bool the SAT layer already owns, so this
+                // needs no case split of its own.
+                Shape::Ite(c, a, b) => {
+                    let ia = manager.mk_set_member(e, a);
+                    let ib = manager.mk_set_member(e, b);
+                    let picked = manager.mk_ite(c, ia, ib);
+                    axioms.push(manager.mk_eq(atom, picked));
                 }
                 // An opaque set's members are free; only the relations the
                 // problem states constrain them.
