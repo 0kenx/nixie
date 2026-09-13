@@ -245,6 +245,46 @@ closed at the verdict gate; the legacy evaluator's stale-entry lookup
 itself remains (every certification now passes the second opinion, so it
 can only cost `unknown`, never a wrong `sat`).
 
+## Fourth pass (2026-09-13): the set-family divergence mechanism, isolated
+
+Three sound refinements landed, and the `set16` divergence is now isolated
+to a single precisely-scoped mechanism:
+
+1. **Bool-valued else is closed-world by default** (`choose_else`): the
+   entry-mode heuristic flipped a Bool function's else to `true` once a
+   lemma round pushed its true entries past its false ones — every fresh
+   domain point then read `member(x, s) = true`, the union/intersection
+   axioms failed at *every* new candidate, and the loop diverged over the
+   infinite `Real` index domain.  `false`-unless-pinned is the standard
+   finite-model reading (Z3's `get_some_value(Bool)`).
+
+2. **Redundant entries collapse** (`fold_apply` + the entry-cap gate): the
+   enumerative seeder pins the function at every fresh candidate point,
+   and pins that agree with the else are pure noise — thousands of
+   `member(x, s) = false` entries burying the structural pins and blowing
+   the ite chain past every cap.  Entries whose result equals the else
+   leaf are skipped; the cap counts only chain-relevant entries.
+
+3. **The residual mechanism (next session, precisely scoped)**: the SAT
+   core commits a nested-`forall` binder's guard **false** to dodge its
+   consequence — `A3[a,b] = (forall x. member(x,a) => member(x,b)) =>
+   subset(a,b)` with the antecedent vacuously true under the closed-world
+   completion, so committing the binder's Boolean false is the only way
+   to keep `subset(a,b)` unconstrained.  The completed model inherits the
+   lying commitment (its assignment table reads the quantifier Boolean
+   straight from the SAT core), the falsifier mining finds (a,b) every
+   round, the instance is a duplicate, and the loop exhausts its rounds.
+   The binder's committed-false is an existential claim (∃x.¬φ) that
+   needs a *witness*; no finite instantiation set refutes a committed
+   existential.  The fix is Z3's `add_blocking_clause` model repair:
+   when the completed model proves the binder's body constantly true
+   (constant-collapse) while the SAT core commits it false, exclude that
+   model arrangement (block the conjunction of the commitments the lie
+   rests on) — the next model must either produce a witness or flip the
+   Boolean.  Also: `sync_guard_commitments` marking such a guard
+   `guard_inactive` (vacuously satisfied) is the loophole that lets the
+   dodge stand; lemma-registered binders should not get that treatment.
+
 ## Verification
 
 - `cargo build --all-features` clean; `cargo nextest run` over the six
@@ -256,6 +296,10 @@ can only cost `unknown`, never a wrong `sat`).
   clean HEAD (A/B worktree bisect).
 - 200-file random differential (AUFLIA/UFLRA/UFLIA, 10 s budget): **zero
   wrong answers** — this is the screen that caught the Rodin false-`sat`.
+- Fourth pass: 150-file differential zero wrong; the heaviest rerun pin
+  63 s single-threaded (55 s clean HEAD); the set-family rounds now run
+  their full budget productively (the flat `subset` table is reached)
+  instead of diverging.
 - `./bench/z3_parity/run_parity.sh` (z3 4.16.0): **176 Correct / 1
   Inconclusive** (the pre-existing `array_unique`, z3-side `Unknown`); the
   two FFT corpus files were added to the suite

@@ -110,7 +110,7 @@ const TOTAL_CHECK_BUDGET: usize = 512;
 /// Truncating a chain would misrepresent the completed model (an entry
 /// argument would silently evaluate to the `else`), so an over-budget
 /// function *declines the quantifier* instead — never a partial chain.
-const MAX_ENTRIES_PER_FUNC: usize = 256;
+const MAX_ENTRIES_PER_FUNC: usize = 1024;
 
 /// Maximum universe size for the finite-sort Skolem restriction clause.
 const MAX_UNIVERSE_FOR_RESTRICTION: usize = 32;
@@ -420,12 +420,26 @@ impl ModelChecker {
             return ModelCheckOutcome::Declined;
         }
 
-        // Total interpretation: an else value for every function we may need.
+        // Total interpretation: an else value for every function we may
+        // need.  The entry cap counts *chain-relevant* entries — those
+        // whose result differs from the function's else — because the
+        // ite-chain construction (see `fold_apply`) skips the rest: the
+        // enumerative seeder's thousands of default-valued pins must not
+        // bury the structural ones.
+        let else_preview = choose_else_table(model, manager);
         for interp in model.function_interps.values() {
-            if interp.entries.len() > MAX_ENTRIES_PER_FUNC {
+            let Some(&else_val) = else_preview.get(&interp.name) else {
+                continue;
+            };
+            let relevant = interp
+                .entries
+                .iter()
+                .filter(|e| value_equal(e.result, else_val, manager) != Some(true))
+                .count();
+            if relevant > MAX_ENTRIES_PER_FUNC {
                 if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     eprintln!(
-                        "[mc] declined: fn {} has {} entries",
+                        "[mc] declined: fn {} has {relevant} relevant entries ({} total)",
                         interp.name.into_inner().get(),
                         interp.entries.len()
                     );
@@ -962,6 +976,18 @@ fn choose_else(
 ) -> Option<TermId> {
     if let Some(else_val) = interp.else_value {
         return Some(else_val);
+    }
+    // Bool-valued functions take the closed-world default (`false`)
+    // BEFORE the entry mode: once a lemma round pushes the true entries
+    // past the false ones, the mode flips the else to `true`, every fresh
+    // domain point then reads `member(x, s) = true`, the union/intersection
+    // axioms fail at *every* new candidate, and the instantiation loop
+    // diverges over the infinite index domain (the set9/16/19 stall).
+    // `false`-unless-pinned is the standard finite-model reading (Z3's
+    // `get_some_value(Bool)`); sound as a completion like any other.
+    if interp.range == manager.sorts.bool_sort {
+        let false_term = manager.mk_false();
+        return Some(false_term);
     }
     if let Some((most_common, _)) = entry_result_mode(&interp.entries) {
         return Some(most_common);
@@ -1618,6 +1644,16 @@ impl<'a> CompletionEval<'a> {
             // of this check), and its condition could never legitimately
             // fire.  Skip it.
             if entry.args.iter().any(|&a| self.is_symbolic(a, manager)) {
+                continue;
+            }
+            // Redundant entry: a result equal to the else leaf is subsumed
+            // by it.  The enumerative seeder pins the function at every
+            // fresh candidate point (each round's new Real index terms),
+            // and when those pins agree with the closed-world default they
+            // are pure noise — thousands of `member(x, s) = false` entries
+            // that bury the structural pins and blow the ite chain past
+            // every cap (the set16 divergence).
+            if value_equal(entry.result, else_leaf, manager) == Some(true) {
                 continue;
             }
             // Skip entries a concrete evaluated argument can never hit.
