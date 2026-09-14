@@ -204,3 +204,43 @@ arena sweep is the real slice-5 economics — measure it before
 building the production surgery.  (The experiment ships default-off
 and the default path is bit-identical: 6s167 33 028 conflicts
 re-verified.)
+
+## The position index landed — exact through real drift; the surgery's
+remaining mystery localized (same day, second increment)
+
+**Landed**: `CsrWatchLists::positions` — a ref → watched-literal-codes
+index (BTreeMap, deterministic) maintained by the same funnels as the
+entries (`push_overflow`, `remove_clause`, the scan notifications with
+their leaving ref, `relocate` rekeying, `adopt_layout` rebuild,
+`clear_all`).  **Validated**: `csr_index_audit` reports 0 missing / 0
+stale positions out of 351 k refs through si2's real drift — the
+dual-write machinery observes every position change, exactly as
+designed.  The index-driven surgical removal
+(`csr_surgery_remove_clause`) replaces the pair-assumed one.
+
+**Two defects the nets caught** (both fixed): the relocate rekey called
+`live_identity` on lingering dead entries — a panic the compaction
+test caught; HashMap iteration order made `WatchLists`'s Debug output
+nondeterministic — the kernel-equivalence test caught it (BTreeMap).
+
+**The experiment's shape lesson**: CSR-only surgical edits desync the
+dual-write mirror — any later scan of a diverged literal trips the
+precondition and *suspends the mirror for that scan* (the one-time
+warning is easy to miss; a backtrace probe is now wired at the site).
+The BVE-path hooks (retire/strengthen/resolvent-arming inside
+elimination rounds) are therefore **removed** — BVE's inter-round
+propagations scan diverged lists.  The surgery is now confined to the
+**ELS rewrite-loop window** (`els_surgery_window`), which is scan-free
+from edits to the re-adopting rebuild.  Result: BVE-round audits are
+clean (live-with-wrong-count 0–1).
+
+**Remaining mystery (next session's entry)**: the ELS round itself
+still fails its audit (158 k wrong-count at si2 `@6003`) with one
+precondition violation immediately before it — the symbolized
+backtrace points at `sweep_equivalence_candidates → sweep_assign_unit →
+propagate` — i.e. a scan fires somewhere around the ELS window despite
+the loop being scan-free by construction.  Prime suspects: the
+pre-search ELS fixpoint loop's between-round activity
+(`mod.rs:4181ff`), or the mid-search caller interleaving sweep at the
+same boundary.  The probe set (entry counters, index audit, contract
+audit, backtrace gate) is all in place to pin it quickly.

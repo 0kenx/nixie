@@ -391,7 +391,7 @@ impl Solver {
                             if bcp_stats {
                                 crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
                             }
-                            self.watches.shadow_scan_remove();
+                            self.watches.shadow_scan_remove(watcher.r);
                             continue;
                         }
                     };
@@ -511,7 +511,7 @@ impl Solver {
                                                 ..watcher
                                             },
                                         );
-                                        self.watches.shadow_scan_remove();
+                                        self.watches.shadow_scan_remove(watcher.r);
                                         found = true;
                                     }
                                 }
@@ -540,7 +540,7 @@ impl Solver {
                                 );
                             }
                         }
-                        self.watches.shadow_scan_remove();
+                        self.watches.shadow_scan_remove(watcher.r);
                         continue;
                     }
                     if new_searched != searched {

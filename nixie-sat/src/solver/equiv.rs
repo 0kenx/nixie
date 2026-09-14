@@ -50,30 +50,6 @@ impl Solver {
         els_surgery_enabled() && self.watches.csr_active()
     }
 
-    /// Arm watchers for a freshly added BVE resolvent (CSR-surgery
-    /// coverage): new clauses get no `Vec`-side watchers until the rebuild
-    /// re-arms everything, so the shadow must mirror that arming eagerly or
-    /// the multiset oracle reports them missing.  Watcher shape matches the
-    /// rebuild's fill for a live long clause.
-    pub(super) fn csr_surgery_arm_resolvent(
-        &mut self,
-        rid: crate::clause::ClauseId,
-        r: &[crate::literal::Lit],
-    ) {
-        if !self.csr_surgery_on() || r.len() < 3 {
-            return;
-        }
-        let Some(ref_) = self.clauses.ref_of(rid) else {
-            return;
-        };
-        self.watches
-            .csr_surgery_add(r[0].negate(), Watcher::new(rid, ref_, r[1]));
-        self.watches
-            .csr_surgery_add(r[1].negate(), Watcher::new(rid, ref_, r[0]));
-        self.csr_surgery_ops += 2;
-        self.csr_surgery_fired = true;
-    }
-
     fn els_csr_surgery_shrink(
         &mut self,
         cid: ClauseId,
@@ -88,9 +64,8 @@ impl Solver {
         if c.lits.len() >= 3 && (c.lits[0], c.lits[1]) == (a, b) {
             return; // watched pair unchanged by the rewrite
         }
-        self.watches.csr_surgery_remove(a.negate(), r);
-        self.watches.csr_surgery_remove(b.negate(), r);
-        self.csr_surgery_ops += 2;
+        self.watches.csr_surgery_remove_clause(r);
+        self.csr_surgery_ops += 1;
         self.csr_surgery_fired = true;
         if c.lits.len() >= 3 {
             let (na, nb) = (c.lits[0], c.lits[1]);
@@ -278,6 +253,10 @@ impl Solver {
         }
 
         // ======== Rewrite every live clause through the map. ========
+        // The surgery window: from here to the rebuild below nothing scans
+        // (loop, bookkeeping, rebuild are scan-free), so the CSR-only
+        // surgical edits cannot hit the dual-write mirror's precondition.
+        self.els_surgery_window = els_surgery_enabled() && self.watches.csr_active();
         let live_ids: Vec<ClauseId> = self.clauses.iter_ids().collect();
         let mut new_units: SmallVec<[Lit; 64]> = SmallVec::new();
         let mut eliminated = 0usize;
@@ -300,7 +279,7 @@ impl Solver {
             // re-point the CSR shadow's watchers surgically (slice-5
             // experiment; the Vec side is rebuilt wholesale as ground truth
             // and the rebuild's multiset oracle checks the equivalence).
-            let surg_old = if els_surgery_enabled() && self.watches.csr_active() {
+            let surg_old = if self.els_surgery_window {
                 match (
                     self.clauses
                         .get(cid)
@@ -399,6 +378,7 @@ impl Solver {
             }
         }
 
+        self.els_surgery_window = false;
         // ======== Record model-reconstruction map + branching-skip flag. ========
         // `equiv_substitution[v]` is the CUMULATIVE representative literal for
         // `v` across all substitution rounds (identity `pos(v)` if never
@@ -629,6 +609,21 @@ impl Solver {
         // at the end replaces the shadow's baseline (mirroring the fill's
         // `add`s would double-maintain into a state that is discarded).
         let drifted_shadow = self.watches.csr_take();
+        #[cfg(feature = "std")]
+        if crate::watched::csr_shadow_enabled()
+            && let Some(dsh) = drifted_shadow.as_ref()
+        {
+            let vec_entries: usize = (0..num_vars * 2)
+                .map(|code| self.watches.get(Lit::from_code(code as u32)).len())
+                .sum();
+            eprintln!(
+                "[csr-shadow] entry@{}: csr_entries={} vec_entries={} index_refs={}",
+                self.stats.conflicts,
+                dsh.debug_total_entries(),
+                vec_entries,
+                dsh.debug_index_refs()
+            );
+        }
         // Reuse the existing outer allocation (2026-09-12): a fresh
         // `WatchLists::new` allocated `2·num_vars` empty `Vec` headers every
         // rebuild (si2-class: 6 ELS rounds x ~2.6 M headers zeroed plus
@@ -804,6 +799,10 @@ impl Solver {
                 eprintln!(
                     "[csr-surgery] oracle@{}: ops={} entries={total} live-with-wrong-count={wrong_live} stale-on-dead-or-short={stale_dead}",
                     self.stats.conflicts, self.csr_surgery_ops
+                );
+                let (irefs, imissing, istale) = surg.csr_index_audit();
+                eprintln!(
+                    "[csr-surgery] index: refs={irefs} with-missing-positions={imissing} with-stale-positions={istale}"
                 );
                 self.csr_surgery_fired = false;
                 self.csr_surgery_ops = 0;
