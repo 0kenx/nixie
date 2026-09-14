@@ -109,3 +109,52 @@ design verbatim) A/B'd against memcpy-rebuild on the si2 class.
 Runners: `outputs/csr_slice2_corpus_check.py` (three-arm corpus check +
 drift), `outputs/csr_slice2_ab_serial.py` (serial wall A/B — only under
 quiescent load).
+
+## Slice 4/5 entry point: design, economics, and the safety-net handoff (2026-09-14 close)
+
+**The dual-write cost, measured** (`perf stat` instructions, pinned
+core, profile-perf build at `8a91386c`): flag-ON vs flag-OFF —
+6s167 +27.3 %, si2 +23.1 %.  Decomposition: the flag carries two pure
+diagnostics that production would not pay — the fresh two-sweep build
+and the drifted comparison per rebuild (6s167: 37 rebuilds × ~0.3 ms ≈
+2 % of run; si2: 14 × 12–18 ms ≈ 16 %), leaving a **true mirror cost
+of ~25 % (6s167) / ~8 % (si2)**.  Slice 4's instruction-level
+economics are therefore not clearly positive by themselves: it trades
+the Vec-side work (mem::take/put-back per literal, pushes, the rebuild
+fill, the Vec-of-Vecs churn) against a similar amount of CSR-side
+work.  Its wins are **memory** (the ~2.6 M per-literal Vec headers and
+slack on si2-class, the transient clone in snapshots) and — the real
+prize — **unlocking slice 5** (ELS rewatching surgery, the ~5.3 %
+watch-rebuild half plus the surgery design space).  The migration
+should be justified on those, not on raw instruction counts.
+
+**Slice 4 decomposition** (each step keeps the full net; land green or
+not at all):
+
+1. *Read switch* (`NIXIE_CSR_READ=1`, diagnostic-gated while the drift
+   net still exists): `get`/`len`/`count` consumers move to a
+   two-span combined-view API.  ~50 sites (16 in propagate.rs alone)
+   plus nixie-solver's watched_propagator/propagation_opt consumers.
+   Unconditional read-switch alone would make the mirror cost default
+   (a measured regression) — hence the gate.
+2. *BCP span switch*: the kernels' `&mut [Watcher]` + take/put-back
+   become two-segment scans — the slice-2 mirror's `pw`/`ow`
+   segment logic IS the design (it already tracks exactly what each
+   segment's write cursor must do); `entries`-span borrows split
+   cleanly from `overflow`/`prim_end` field borrows, so no take/put-
+   back is needed at all.
+3. *The flip* (one commit): CSR becomes the only representation,
+   Vecs deleted, drift comparison retired — **the safety net
+   disappears exactly when it is needed**, so the gate is full
+   trajectory identity against the pre-flip binary (conflicts/
+   decisions/propagations bit-identical) + the corpus screen + Z3
+   parity, and the E2E model/proof checks.
+
+**Slice 5 can start BEFORE slice 4 — inside the shadow** (this is the
+load-bearing realization): implement the ELS rewatching surgery on the
+shadow CSR (surgical span updates for the clauses ELS touched) while
+the Vec side still runs its rebuild.  The per-rebuild drifted
+comparison then becomes an **exact equivalence oracle**: drift=0 ⟺
+the surgery produced precisely what the rebuild would have.  Develop
+and prove the surgery with the net up; only the *payoff* (deleting the
+rebuild) waits for slice 4.
