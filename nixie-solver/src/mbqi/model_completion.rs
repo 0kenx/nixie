@@ -63,6 +63,17 @@ pub struct CompletedModel {
     /// needs a per-element reflexive pin and the seeding chases compound
     /// terms forever.
     pub macros: FxHashMap<Spur, MacroDef>,
+    /// Frozen ground-universe views (see [`Self::ground_universe`]):
+    /// computed once at completion, after the universes are final.
+    pub ground_universes: FxHashMap<SortId, Vec<TermId>>,
+    /// The defining quantifier behind each solved macro's *winning*
+    /// definition (quantifier term -> functions it defines).  Certifying
+    /// that quantifier against the completed model also certifies its
+    /// definition, so the satisfaction path can emit the defining
+    /// instances at universe tuples (`SatisfiedWithPins`) — pinning the
+    /// function at compound elements the enumerative seeder's exhausted
+    /// budget can no longer reach.
+    pub macro_sources: FxHashMap<TermId, Vec<Spur>>,
     /// Generation number
     pub generation: u32,
 }
@@ -76,6 +87,8 @@ impl CompletedModel {
             universes: FxHashMap::default(),
             defaults: FxHashMap::default(),
             macros: FxHashMap::default(),
+            ground_universes: FxHashMap::default(),
+            macro_sources: FxHashMap::default(),
             generation: 0,
         }
     }
@@ -95,9 +108,78 @@ impl CompletedModel {
         self.universes.get(&sort).map(|v| v.as_slice())
     }
 
+    /// The sort's universe restricted to **ground** elements: no `Var`
+    /// nodes and no free variables anywhere inside.
+    ///
+    /// The harvested universe contains bound-variable artifact terms —
+    /// entry args and assignment values keyed by terms named like bound
+    /// variables (the encoder internalizes quantified bodies with their
+    /// binders as constants).  Such an "element" is not a domain element,
+    /// and every consumer that reasons "X is in the universe ⇒ X is a
+    /// domain element" — the finite-sort Skolem restriction, falsifier
+    /// mining, defining-pin tuples — must go through this filter:
+    /// instantiating with an artifact emits a lemma about a stray global
+    /// constant (`?s1 := ?s2` junk bindings), and evaluating at one
+    /// fabricates facts about a point no model contains.
+    pub fn ground_universe(&self, sort: SortId, manager: &TermManager) -> Option<Vec<TermId>> {
+        // The frozen view, when this model went through `complete()`
+        // (every model the engines see does).
+        if let Some(frozen) = self.ground_universes.get(&sort) {
+            return Some(frozen.clone());
+        }
+        self.universe(sort).map(|universe| {
+            universe
+                .iter()
+                .copied()
+                .filter(|&element| {
+                    !nixie_core::ast::traversal::collect_free_vars_including_patterns(
+                        element, manager,
+                    )
+                    .iter()
+                    .any(|&v| {
+                        manager
+                            .get(v)
+                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                    })
+                })
+                .collect()
+        })
+    }
+
     /// Add a value to a sort's universe
     pub fn add_to_universe(&mut self, sort: SortId, value: TermId) {
         self.universes.entry(sort).or_default().push(value);
+    }
+
+    /// Precompute every sort's ground universe (see [`Self::ground_universe`]):
+    /// the ground filter walks every element's free variables, and the
+    /// consumers (`choose_else`, the mining sets, the Skolem restriction,
+    /// the defining pins) reach it per function, per quantifier, per round —
+    /// far too hot to recompute per call.  Call once, after the last
+    /// mutation of `universes` (the completion's step 9 does).
+    pub fn freeze_ground_universes(&mut self, manager: &TermManager) {
+        let sorts: Vec<SortId> = self.universes.keys().copied().collect();
+        for sort in sorts {
+            let Some(universe) = self.universes.get(&sort) else {
+                continue;
+            };
+            let ground: Vec<TermId> = universe
+                .iter()
+                .copied()
+                .filter(|&element| {
+                    !nixie_core::ast::traversal::collect_free_vars_including_patterns(
+                        element, manager,
+                    )
+                    .iter()
+                    .any(|&v| {
+                        manager
+                            .get(v)
+                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                    })
+                })
+                .collect();
+            self.ground_universes.insert(sort, ground);
+        }
     }
 
     /// Get the default value for a sort
@@ -465,7 +547,9 @@ impl ModelCompleter {
             // conjunction macro inherits their `else` at symbolic points
             // and breaks the equality axiom's own check.  Both are sound
             // completions (each is an asserted axiom); this only picks the
-            // one that evaluates most robustly.
+            // one that evaluates most robustly.  (`solve_macros` already
+            // applies the same preference when it sees the candidates; this
+            // defends against future callers that bypass it.)
             let candidate = (macro_def.bound_vars.clone(), macro_def.body);
             match completed.macros.entry(func_name) {
                 std::collections::hash_map::Entry::Vacant(v) => {
@@ -482,6 +566,15 @@ impl ModelCompleter {
                     }
                 }
             }
+            // Record the winning definition's source quantifier (a function
+            // is listed under exactly the quantifier whose body won the
+            // preference above, which `definitions()` already collapsed to
+            // one winner per function).
+            completed
+                .macro_sources
+                .entry(macro_def.quantifier)
+                .or_default()
+                .push(func_name);
         }
 
         // Step 3: Complete function interpretations (projections, else values)
@@ -505,6 +598,11 @@ impl ModelCompleter {
 
         // Step 8: Ensure every function has a complete interpretation
         completed.complete_function_interpretations();
+
+        // Step 9: freeze the ground-universe views (the universes are
+        // immutable from here on; the model only ever crosses rounds by
+        // value).
+        completed.freeze_ground_universes(manager);
 
         Ok(completed)
     }
@@ -923,7 +1021,7 @@ impl MacroSolver {
     }
 
     /// Try to solve quantifiers as macros
-    pub fn solve_macros(
+    fn solve_macros(
         &mut self,
         quantifiers: &[QuantifiedFormula],
         manager: &mut TermManager,
@@ -933,9 +1031,34 @@ impl MacroSolver {
         for quant in quantifiers {
             if let Some(macro_def) = self.try_extract_macro(quant, manager)? {
                 self.stats.num_macros_found += 1;
-                let interp = self.macro_to_interpretation(&macro_def, manager)?;
-                results.insert(macro_def.func_name, interp);
-                self.macros.insert(macro_def.func_name, macro_def);
+                // When several axioms define the same function (the set
+                // family defines `seteq` both as equality and as the
+                // double-subset conjunction), keep the *simplest* body:
+                // the equality macro unfolds independently of other
+                // functions' entries, while the conjunction macro inherits
+                // their `else` at symbolic points and breaks the equality
+                // axiom's own check.  Both are sound completions (each is
+                // an asserted axiom); this only picks the one that
+                // evaluates most robustly.  The preference must live HERE:
+                // a plain `insert` collapses to the last candidate before
+                // any downstream tie-break can see the alternatives.
+                let replace = match self.macros.get(&macro_def.func_name) {
+                    None => true,
+                    Some(incumbent) => {
+                        let challenger_size =
+                            nixie_core::ast::traversal::collect_subterms(macro_def.body, manager)
+                                .len();
+                        let incumbent_size =
+                            nixie_core::ast::traversal::collect_subterms(incumbent.body, manager)
+                                .len();
+                        challenger_size < incumbent_size
+                    }
+                };
+                if replace {
+                    let interp = self.macro_to_interpretation(&macro_def, manager)?;
+                    results.insert(macro_def.func_name, interp);
+                    self.macros.insert(macro_def.func_name, macro_def);
+                }
             }
         }
 

@@ -861,10 +861,29 @@ impl EnumerativeInstantiator {
 
         for &(_name, sort) in bound_vars {
             let mut domain = Vec::new();
-
-            // Use universe if available
-            if let Some(universe) = model.universe(sort) {
-                domain.extend_from_slice(universe);
+            // Use the universe if available — as the model's *distinguished
+            // values*, not its raw terms: two universe elements the model
+            // assigns the same value (`union(a,b)` and `b`) are the same
+            // domain point, and instantiating at both emits a lemma that is
+            // syntactically fresh but semantically redundant — the ground
+            // model does not move, yet the round counts as productive, the
+            // rounds never saturate, and the compound closure
+            // (`union(union(a,b),a)`, ...) grows the universe and the entry
+            // tables without bound (the set-family divergence).  Z3's
+            // instantiation set is exactly the distinct values
+            // (`restrict_sks_to_inst_set` + `value2expr`); one
+            // representative term per value.  Ground elements only: the
+            // harvested universe contains bound-variable artifact terms,
+            // and instantiating at one emits a lemma about a stray global
+            // constant.
+            if let Some(universe) = model.ground_universe(sort, manager) {
+                let mut seen_values: FxHashSet<TermId> = FxHashSet::default();
+                for element in universe {
+                    let value = model.assignments.get(&element).copied().unwrap_or(element);
+                    if seen_values.insert(value) {
+                        domain.push(element);
+                    }
+                }
             }
 
             // Add default integer candidates from -2 to 5

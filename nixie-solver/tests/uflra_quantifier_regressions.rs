@@ -35,6 +35,18 @@ fn run(script: &str) -> Vec<String> {
         .expect("script should parse and run")
 }
 
+/// Run with a bounded wall-clock budget: the set-family goals honestly
+/// answer `unknown` only after their full round budget, which is minutes
+/// of productive-spin rounds — fine for the solver, too slow for a
+/// regression pin (the never-wrong property is verdict-level and does not
+/// need the full budget).
+fn run_bounded(script: &str, timeout_ms: u64) -> Vec<String> {
+    let mut ctx = Context::new();
+    ctx.set_timeout_ms(timeout_ms);
+    ctx.execute_script(script)
+        .expect("script should parse and run")
+}
+
 fn last_status(output: &[String]) -> &str {
     output
         .iter()
@@ -258,5 +270,118 @@ fn set_theory_axioms_over_vacuous_membership_are_never_wrong() {
     assert!(
         status == "sat" || status == "unknown",
         "a satisfiable set-theory axiom set must never be refuted; got {status}"
+    );
+}
+
+/// The `set16` corpus shape (reconstructed verbatim; the on-disk corpus
+/// is `.gitignore`d external data): ten set-theory axioms over an
+/// uninterpreted `Set` sort with a `Real` member index, `a = a ∩ b` and
+/// `¬(b ⊆ a)`.  z3 answers `sat`; the honest nixie answer may be `sat`
+/// or `unknown` (the else-table search that closes the family is the
+/// `smt_model_finder` project).  It must **never** answer `unsat`: the
+/// ground layer's own two/three-element models satisfy every axiom the
+/// instantiation engines actually emitted.
+#[test]
+fn set16_family_is_never_wrong() {
+    let output = run_bounded(
+        r#"
+        (set-logic UFLRA)
+        (declare-sort Set 0)
+        (declare-fun member (Real Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (not (subset ?s1 ?s2)) (exists ((?x Real)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (forall ((?x Real)) (=> (member ?x ?s1) (member ?x ?s2))) (subset ?s1 ?s2))))
+        (declare-fun seteq (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (= ?s1 ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun union (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (union ?s1 ?s2)) (or (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun intersection (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (intersection ?s1 ?s2)) (and (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun difference (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (difference ?s1 ?s2)) (and (member ?x ?s1) (not (member ?x ?s2))))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (= a (intersection a b)))
+        (assert (not (subset b a)))
+        (check-sat)
+    "#,
+        8_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "sat" || status == "unknown",
+        "the set16 family is satisfiable (z3: sat); got {status}"
+    );
+}
+
+/// The universe-distinctness fold's groundness guard: the completed
+/// model's universes contain bound-variable artifact terms (entry args
+/// harvested by `collect_universes_from_model`), and folding
+/// `(= ?s1 ?s2)` to `false` for symbolic operands fabricates a
+/// pointwise-constant body the completion does not justify — on
+/// `(or (not (= s1 s2)) (not (seteq s1 s2)))`-shaped bodies it would
+/// certify satisfaction of an axiom that fails at every diagonal
+/// (`seteq(z,z) = (z=z) = true`, so the disjunct is false there).  z3
+/// refutes this goal; the fold must never turn it into `sat`.
+#[test]
+fn set16_diagonal_diseq_disjunct_is_never_falsely_satisfied() {
+    let output = run_bounded(
+        r#"
+        (set-logic UFLRA)
+        (declare-sort Set 0)
+        (declare-fun member (Real Set) Bool)
+        (declare-fun subset (Set Set) Bool)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (=> (and (member ?x ?s1) (subset ?s1 ?s2)) (member ?x ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (not (subset ?s1 ?s2)) (exists ((?x Real)) (and (member ?x ?s1) (not (member ?x ?s2)))))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (=> (forall ((?x Real)) (=> (member ?x ?s1) (member ?x ?s2))) (subset ?s1 ?s2))))
+        (declare-fun seteq (Set Set) Bool)
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (= ?s1 ?s2))))
+        (assert (forall ((?s1 Set) (?s2 Set)) (= (seteq ?s1 ?s2) (and (subset ?s1 ?s2) (subset ?s2 ?s1)))))
+        (declare-fun union (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (union ?s1 ?s2)) (or (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun intersection (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (intersection ?s1 ?s2)) (and (member ?x ?s1) (member ?x ?s2)))))
+        (declare-fun difference (Set Set) Set)
+        (assert (forall ((?x Real) (?s1 Set) (?s2 Set)) (= (member ?x (difference ?s1 ?s2)) (and (member ?x ?s1) (not (member ?x ?s2))))))
+        (declare-fun a () Set)
+        (declare-fun b () Set)
+        (assert (= a (intersection a b)))
+        (assert (not (subset b a)))
+        (assert (forall ((?s1 Set) (?s2 Set)) (or (not (= ?s1 ?s2)) (not (seteq ?s1 ?s2)))))
+        (check-sat)
+    "#,
+        8_000,
+    );
+    let status = last_status(&output);
+    assert!(
+        status == "unsat" || status == "unknown",
+        "the diagonal disjunct is refuted by the seteq definition (z3: unsat); a fabricated \
+         pointwise-true fold must never certify it; got {status}"
+    );
+}
+
+/// The emission-side binder collapse: an instance of
+/// `(forall z. (forall x. P(x) => P(x)) => g(z))` must reach the ground
+/// solver with its tautological antecedent folded away — the forcing unit
+/// `g(z)` — instead of a wrapper the SAT core can dodge by committing the
+/// binder's free Boolean FALSE.  With `(not (g 0))` asserted the goal is
+/// refuted exactly by the instance at `z := 0`.
+#[test]
+fn tautological_antecedent_instance_becomes_a_forcing_unit() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-fun f (Real) Bool)
+        (declare-fun g (Real) Bool)
+        (assert (forall ((z Real))
+          (=> (forall ((x Real)) (=> (f x) (f x))) (g z))))
+        (assert (not (g 0.0)))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert_eq!(
+        status, "unsat",
+        "the instance at z := 0 must force (g 0) against (not (g 0))"
     );
 }

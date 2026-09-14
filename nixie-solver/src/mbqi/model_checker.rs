@@ -129,6 +129,18 @@ const MAX_VETO_CHECKS: usize = 32;
 /// partial) and one against the settled model.
 const MAX_CHECKS_PER_QUANTIFIER: u32 = 2;
 
+/// Lifetime bound on else-revision solves for one `ModelChecker` (see the
+/// revision search in `check`): the search is completeness-only, and an
+/// unbounded per-check budget multiplied the heaviest convergence pin's
+/// cost ~2.5x (every falsified check over non-Bool defaults re-searching).
+const MAX_LIFETIME_REVISION_SOLVES: u32 = 16;
+
+/// Hard *total* bound on nested solves per quantifier per solve (no
+/// reset): see the streak comment at its use site — a converging
+/// quantifier may reset its wasted-solve streak, but never past this
+/// many solves in one `ModelChecker` lifetime.
+const MAX_TOTAL_CHECKS_PER_QUANTIFIER: u32 = 4;
+
 /// Nesting depth guard: the nested solver's own quantifier loop must never
 /// recurse without bound.  Depth 2 allows exactly one level of re-entry —
 /// the aux goal of a `forall`-`exists` body (e.g. the set-theory axiom
@@ -163,6 +175,31 @@ impl Drop for NestingGuard {
 
 use core::sync::atomic::Ordering;
 
+/// One falsifier mined from a completed model, with the evidence its
+/// evaluation rested on (see [`ModelChecker::check`]).
+#[derive(Debug)]
+pub(crate) struct MinedFalsifier {
+    /// Bound-variable name -> ground falsifying term.
+    pub(crate) substitution: FxHashMap<Spur, TermId>,
+    /// The ground atoms whose completed values this falsifier's evaluation
+    /// consumed: `(atom, value)` pairs, `atom` a Bool-sorted term and
+    /// `value` its completed truth value (a `True`/`False` term).  Used to
+    /// build the Z3-style blocking clause (`add_blocking_clause`): the
+    /// arrangement "every one of these atoms takes exactly this value"
+    /// demonstrably fails the quantifier, so excluding it from the next
+    /// candidate model is sound (see `fully_pinned`).
+    pub(crate) commitments: Vec<(TermId, TermId)>,
+    /// Whether the evaluation consumed *only* recorded commitments — every
+    /// function application resolved through an entry or an assignment hit,
+    /// no `else` fallthrough, macro expansion, sort default or universe
+    /// fold.  Only then is the falsification a function of the commitments
+    /// alone, and only then may a blocking clause over them be emitted: a
+    /// falsifier that leaned on a free completion choice can be repaired by
+    /// revising the completion instead, and blocking the ground-visible part
+    /// of such an arrangement could exclude a genuine solution.
+    pub(crate) fully_pinned: bool,
+}
+
 /// The outcome of checking one universal quantifier against the completed
 /// model.
 #[derive(Debug)]
@@ -177,8 +214,8 @@ pub(crate) enum ModelCheckOutcome {
     /// the same already-instantiated pair until the round budget dies).  The
     /// caller builds the (always sound) instantiation lemmas from them.
     Counterexample {
-        /// Bound-variable name -> ground falsifying term, one map per falsifier.
-        substitutions: Vec<FxHashMap<Spur, TermId>>,
+        /// The mined falsifiers, one per falsifying combination.
+        falsifiers: Vec<MinedFalsifier>,
     },
     /// The checker could not run (budget, unsupported construct, nesting):
     /// the caller falls back to its existing counterexample search.
@@ -202,8 +239,21 @@ pub(crate) struct ModelChecker {
     /// below refuses — the re-checked-goal (verdict-cache bypass) and
     /// thrashing-round cases.
     last_model_signature: FxHashMap<TermId, u64>,
-    /// Total nested checks spent per quantifier (hard lifetime cap).
+    /// Wasted-solve streak per quantifier (see [`MAX_CHECKS_PER_QUANTIFIER`]):
+    /// incremented only when a nested solve produced neither a fresh
+    /// instantiation (the caller refunds via [`ModelChecker::mark_productive`])
+    /// nor a satisfaction verdict; reset by either.
     checks_of: FxHashMap<TermId, u32>,
+    /// Total nested solves per quantifier (never reset — see
+    /// [`MAX_TOTAL_CHECKS_PER_QUANTIFIER`]).
+    total_checks_of: FxHashMap<TermId, u32>,
+    /// Model signatures at which the nested refutation *certified* the
+    /// quantifier (the aux-`unsat` verdict, possibly via the closed-world
+    /// else retry).  The dual of [`ModelChecker::falsified_at`]: a
+    /// certification is model-relative, so it is remembered per signature
+    /// — a later round against the *same* completed model reuses it
+    /// without re-paying the nested solve, and a moved model re-earns it.
+    certified_at: FxHashMap<TermId, Vec<u64>>,
     /// Model signatures at which the nested refutation *found a falsifier*
     /// for a quantifier (the aux `sat` verdict, with the Skolems confined
     /// to the finite universe).  A legacy "satisfied on the whole universe"
@@ -213,6 +263,8 @@ pub(crate) struct ModelChecker {
     /// refuse the verdict.  The memory is per-signature, so a genuinely
     /// moved model re-earns its certification.
     falsified_at: FxHashMap<TermId, Vec<u64>>,
+    /// Else-revision solves spent (see [`MAX_LIFETIME_REVISION_SOLVES`]).
+    revision_solves: u32,
     /// Second opinions spent (see [`ModelChecker::check_veto`]).
     veto_checks: usize,
     /// Last decline reason, for stats/debugging.
@@ -233,7 +285,10 @@ impl ModelChecker {
             conflicts_spent: 0,
             last_model_signature: FxHashMap::default(),
             checks_of: FxHashMap::default(),
+            total_checks_of: FxHashMap::default(),
+            certified_at: FxHashMap::default(),
             falsified_at: FxHashMap::default(),
+            revision_solves: 0,
             veto_checks: 0,
             last_decline: None,
         }
@@ -361,6 +416,14 @@ impl ModelChecker {
 
     pub(crate) fn mark_productive(&mut self, quantifier: TermId) {
         self.last_model_signature.remove(&quantifier);
+        // Productive-check refund of the wasted-solve streak: a check that
+        // produced a fresh instantiation paid for itself, and a quantifier
+        // that keeps producing is exactly the one the streak cap should
+        // not silence mid-convergence (the set family's definitional axioms
+        // mine one diagonal per round against a moving model).  The global
+        // budgets still bound the total, so the refund cannot unbound a
+        // single solve.
+        self.checks_of.insert(quantifier, 0);
     }
 
     /// Check the universal quantifier `q` against the completed `model`.
@@ -387,18 +450,44 @@ impl ModelChecker {
             self.last_decline = Some("conflict budget exhausted");
             return ModelCheckOutcome::Declined;
         }
-        // Hard lifetime cap per quantifier: the global budgets bound the
+        // Wasted-solve streak per quantifier: the global budgets bound the
         // total, but a forced rerun's model can *move* (learned clauses
         // change the search) on every one of its hundreds of reruns, each
-        // move re-arming the same-model gate.  After this many nested
-        // checks the quantifier has had its chance; the landed value.
-        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= MAX_CHECKS_PER_QUANTIFIER {
+        // move re-arming the same-model gate.  Only *wasted* solves count
+        // (a duplicate-falsifier solve, a liar's empty counterexample);
+        // fresh lemmas and certifications reset the streak — a converging
+        // quantifier never hits the cap, a doomed one stops re-paying.
+        //
+        // The landed accounting is a streak with a *hard total* underneath
+        // (`MAX_TOTAL_CHECKS_PER_QUANTIFIER`): a pure streak (no total)
+        // was measured to multiply the heaviest convergence pin's cost by
+        // ~2.3x on top of everything else — a quantifier that keeps
+        // mining semantically-fresh-but-unproductive lemmas on a moving
+        // model (the set family's compound-closure chase) resets its own
+        // streak forever, and a re-checked goal re-pays that hundreds of
+        // times.  The total bounds that; the streak still gives a
+        // converging quantifier more than the old flat cap of 2.
+        if self.checks_of.get(&q.term).copied().unwrap_or(0) >= MAX_CHECKS_PER_QUANTIFIER
+            || self.total_checks_of.get(&q.term).copied().unwrap_or(0)
+                >= MAX_TOTAL_CHECKS_PER_QUANTIFIER
+        {
             self.last_decline = Some("per-quantifier check budget exhausted");
             return ModelCheckOutcome::Declined;
         }
-        *self.checks_of.entry(q.term).or_insert(0) += 1;
+        *self.total_checks_of.entry(q.term).or_insert(0) += 1;
 
         let signature = completed_model_signature(model);
+        // A certification remembered for this exact model is reused without
+        // re-paying the nested solve (the dual of `falsified_at`'s veto
+        // memory).
+        if self
+            .certified_at
+            .get(&q.term)
+            .is_some_and(|sigs| sigs.contains(&signature))
+        {
+            self.last_decline = None;
+            return ModelCheckOutcome::Satisfied;
+        }
         if self.last_model_signature.get(&q.term).copied() == Some(signature) {
             self.last_decline = Some("completed model unchanged since last check");
             return ModelCheckOutcome::Declined;
@@ -512,9 +601,106 @@ impl ModelChecker {
                     if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
                         eprintln!("[mc] aux verdict (closed-world else): satisfied");
                     }
+                    self.certified_at.entry(q.term).or_default().push(signature);
+                    self.checks_of.insert(q.term, 0);
                     self.last_decline = None;
                     return ModelCheckOutcome::Satisfied;
                 }
+            }
+            result
+        } else {
+            result
+        };
+        // Bounded per-function else-revision — Z3's `smt_model_finder`
+        // "search, verify, revise" for the *non-Bool* constructors: a
+        // falsified body whose evaluation leaned on a Set-valued
+        // function's default (`union`'s arbitrary `else` violates its own
+        // defining axiom at the A2-witness point: `member(sk,b)` is pinned
+        // true, `member(sk,c)` false, so `member(sk, union(b,c))` must read
+        // true — which no default pinning of every compound can chase
+        // down) is repaired by revising exactly that default: each
+        // candidate value (the function's own entry results, then the
+        // range sort's universe elements) defines an equally legitimate
+        // total extension of the same entries, verified by the same
+        // nested refutation before anything is concluded.  Bounded: at
+        // most a handful of functions, candidates and revision solves per
+        // check — the *search* is heuristic, the *verification* exact.
+        let result = if result.as_ref().is_ok_and(|r| *r == SolverResult::Sat) {
+            /// How many functions one check may revise.
+            const MAX_REVISED_FUNCS: usize = 4;
+            /// Candidate defaults tried per function.
+            const MAX_ELSE_CANDIDATES: usize = 8;
+            let base_else = choose_else_table(model, manager);
+            let (_, _, _, consulted) =
+                CompletionEval::run_recorded(q.body, model, &bound_names, &base_else, manager);
+            let mut revised_funcs = 0usize;
+            for func in consulted {
+                if revised_funcs >= MAX_REVISED_FUNCS
+                    || self.revision_solves >= MAX_LIFETIME_REVISION_SOLVES
+                {
+                    break;
+                }
+                let Some(interp) = model.function_interps.get(&func) else {
+                    continue;
+                };
+                // Bool-valued defaults are the closed-world retry's domain.
+                if interp.range == manager.sorts.bool_sort {
+                    continue;
+                }
+                let Some(&current_else) = base_else.get(&func) else {
+                    continue;
+                };
+                // Candidates: the function's own entry results first (a
+                // value the model already uses for it), then the range
+                // sort's ground universe elements.
+                let mut candidates: Vec<TermId> = Vec::new();
+                for entry in &interp.entries {
+                    if !candidates.contains(&entry.result) {
+                        candidates.push(entry.result);
+                    }
+                }
+                if let Some(universe) = model.ground_universe(interp.range, manager) {
+                    for element in universe {
+                        if !candidates.contains(&element) {
+                            candidates.push(element);
+                        }
+                    }
+                }
+                for (tried_for_func, candidate) in candidates.into_iter().enumerate() {
+                    if tried_for_func >= MAX_ELSE_CANDIDATES
+                        || self.revision_solves >= MAX_LIFETIME_REVISION_SOLVES
+                        || candidate == current_else
+                    {
+                        break;
+                    }
+                    let mut revised = base_else.clone();
+                    revised.insert(func, candidate);
+                    let Ok(body_revised) =
+                        CompletionEval::run(q.body, model, &bound_names, &revised, manager)
+                    else {
+                        continue;
+                    };
+                    if body_revised == body_completed {
+                        continue;
+                    }
+                    self.revision_solves += 1;
+                    if matches!(
+                        self.aux_refute(body_revised, &skolem_terms, model, logic, manager),
+                        Ok(SolverResult::Unsat)
+                    ) {
+                        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                            eprintln!(
+                                "[mc] aux verdict (revised else for fn {:?}): satisfied",
+                                func.into_inner().get()
+                            );
+                        }
+                        self.certified_at.entry(q.term).or_default().push(signature);
+                        self.checks_of.insert(q.term, 0);
+                        self.last_decline = None;
+                        return ModelCheckOutcome::Satisfied;
+                    }
+                }
+                revised_funcs += 1;
             }
             result
         } else {
@@ -526,6 +712,11 @@ impl ModelChecker {
 
         match result {
             Ok(SolverResult::Unsat) => {
+                // A certification for this exact model: remembered so later
+                // rounds against the same completed model reuse it, and a
+                // productive outcome (resets the wasted-solve streak).
+                self.certified_at.entry(q.term).or_default().push(signature);
+                self.checks_of.insert(q.term, 0);
                 self.last_decline = None;
                 ModelCheckOutcome::Satisfied
             }
@@ -573,10 +764,27 @@ impl ModelChecker {
                             .sorts
                             .get(sort)
                             .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
-                            .then(|| model.universe(sort))
+                            .then(|| model.ground_universe(sort, manager))
                             .flatten()
                             .filter(|u| !u.is_empty() && u.len() <= MAX_UNIVERSE_FOR_RESTRICTION)
-                            .map(|u| u.to_vec());
+                            // One representative per *model value*: two
+                            // elements the model assigns the same value are
+                            // the same domain point, and a falsifier at one
+                            // is a falsifier at the other — mining both
+                            // emits a semantically-redundant lemma that
+                            // keeps the rounds "productive" while the model
+                            // never moves (the productive-spin shape; see
+                            // `build_small_domains` for the enumerative
+                            // twin of this normalization).
+                            .map(|u| {
+                                let mut seen: FxHashSet<TermId> = FxHashSet::default();
+                                u.into_iter()
+                                    .filter(|e| {
+                                        let v = model.assignments.get(e).copied().unwrap_or(*e);
+                                        seen.insert(v)
+                                    })
+                                    .collect::<Vec<_>>()
+                            });
                         finite_universe
                             .unwrap_or_else(|| inst_sets.get(&sort).cloned().unwrap_or_default())
                     })
@@ -589,7 +797,7 @@ impl ModelChecker {
                 }
 
                 let false_term = manager.mk_false();
-                let mut mined: Vec<FxHashMap<Spur, TermId>> = Vec::new();
+                let mut mined: Vec<MinedFalsifier> = Vec::new();
                 let mut odometer = vec![0usize; sets.len()];
                 let mut tried = 0usize;
                 'combo: loop {
@@ -597,7 +805,9 @@ impl ModelChecker {
                         break;
                     }
                     tried += 1;
-                    // Evaluate the completed body under this combination.
+                    // Evaluate the completed body under this combination,
+                    // recording the ground commitments the evaluation leans
+                    // on (for the blocking clause; see `run_recorded`).
                     let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
                     for (i, &(name, sort, _)) in skolem_terms.iter().enumerate() {
                         let value = sets[i][odometer[i]];
@@ -606,8 +816,14 @@ impl ModelChecker {
                     }
                     let substituted = manager.substitute(body_completed, &subst);
                     let empty_bound: FxHashSet<Spur> = FxHashSet::default();
-                    let evaluated =
-                        CompletionEval::run(substituted, model, &empty_bound, &else_table, manager);
+                    let (evaluated, commitments, free_choice, _consulted) =
+                        CompletionEval::run_recorded(
+                            substituted,
+                            model,
+                            &empty_bound,
+                            &else_table,
+                            manager,
+                        );
                     if evaluated.is_ok_and(|t| t == false_term) {
                         let mut falsifying: FxHashMap<Spur, TermId> = FxHashMap::default();
                         for (i, &(name, _, _)) in skolem_terms.iter().enumerate() {
@@ -615,7 +831,11 @@ impl ModelChecker {
                             let chosen = value_to_term.get(&raw).copied().unwrap_or(raw);
                             falsifying.insert(name, chosen);
                         }
-                        mined.push(falsifying);
+                        mined.push(MinedFalsifier {
+                            substitution: falsifying,
+                            commitments,
+                            fully_pinned: !free_choice,
+                        });
                     }
                     // Advance the odometer (variable 0 fastest).
                     for i in 0..odometer.len() {
@@ -641,26 +861,38 @@ impl ModelChecker {
                     // any legacy "satisfied on the whole universe" claim
                     // (the Rodin false-`sat` shape).
                     self.last_decline = Some("no relevant falsifier");
+                    // A wasted solve (no minable falsifier at all — the
+                    // liar shape): counts toward the streak unless the
+                    // caller's veto path learns something fresh.
+                    *self.checks_of.entry(q.term).or_insert(0) += 1;
                     return ModelCheckOutcome::Counterexample {
-                        substitutions: Vec::new(),
+                        falsifiers: Vec::new(),
                     };
                 }
                 self.last_decline = None;
                 if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     let printer = nixie_core::smtlib::Printer::new(manager);
-                    for falsifying in &mined {
-                        let subs: Vec<String> = falsifying
+                    for falsifier in &mined {
+                        let subs: Vec<String> = falsifier
+                            .substitution
                             .iter()
                             .map(|(k, v)| {
                                 format!("{} := {}", manager.resolve_str(*k), printer.print_term(*v))
                             })
                             .collect();
-                        eprintln!("[mc] cex bindings: {}", subs.join(", "));
+                        eprintln!(
+                            "[mc] cex bindings: {} [pinned={}, commitments={}]",
+                            subs.join(", "),
+                            falsifier.fully_pinned,
+                            falsifier.commitments.len()
+                        );
                     }
                 }
-                ModelCheckOutcome::Counterexample {
-                    substitutions: mined,
-                }
+                // The solve ran and did not certify: a wasted solve unless
+                // the caller mines a fresh instantiation from these
+                // falsifiers (`mark_productive` then resets the streak).
+                *self.checks_of.entry(q.term).or_insert(0) += 1;
+                ModelCheckOutcome::Counterexample { falsifiers: mined }
             }
             Ok(SolverResult::Unknown) | Err(_) => {
                 self.last_decline = Some("nested check undetermined");
@@ -685,6 +917,7 @@ impl ModelChecker {
         manager: &mut TermManager,
     ) -> core::result::Result<SolverResult, crate::resource_limits::ResourceExhausted> {
         let mut aux = Solver::new();
+        aux.debug_tag = Some("-aux");
         aux.set_logic(logic.unwrap_or("ALL"));
         // Restrict finite-domain Skolems to the model's universe (Z3's
         // `restrict_to_universe` under `is_finite`).  ONLY uninterpreted
@@ -700,7 +933,7 @@ impl ModelChecker {
                 .sorts
                 .get(sort)
                 .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
-                .then(|| model.universe(sort))
+                .then(|| model.ground_universe(sort, manager))
                 .flatten();
             if let Some(universe) = finite_universe
                 && !universe.is_empty()
@@ -719,11 +952,23 @@ impl ModelChecker {
         aux.assert(goal, manager);
 
         self.checks_performed += 1;
+        let conflicts_before = aux.stats().conflicts;
         let limits = ResourceLimits::new()
             .with_max_conflicts(AUX_CONFLICT_LIMIT)
             .with_max_decisions(AUX_DECISION_LIMIT);
         let verdict = aux.check_with_limits(manager, &limits);
-        self.conflicts_spent = self.conflicts_spent.saturating_add(AUX_CONFLICT_LIMIT);
+        // Charge the conflicts actually spent, not the per-check cap: the
+        // global budget exists to bound real work, and a nested solve that
+        // decides its goal in a handful of conflicts must not burn a full
+        // cap's worth (the broadened escalation runs several checks per
+        // round; cap-charging exhausted the global budget after 12 checks
+        // and silenced the certification the loop needs to converge).
+        let spent = aux
+            .stats()
+            .conflicts
+            .saturating_sub(conflicts_before)
+            .max(1);
+        self.conflicts_spent = self.conflicts_spent.saturating_add(spent);
         verdict
     }
 
@@ -1044,7 +1289,9 @@ fn sort_default(sort: SortId, model: &CompletedModel, manager: &mut TermManager)
         Some(SortKind::Int) => Some(manager.mk_int(BigInt::from(0))),
         Some(SortKind::Real) => Some(manager.mk_real(Rational64::new(0, 1))),
         Some(SortKind::BitVec(width)) => Some(manager.mk_bitvec(BigInt::from(0), *width)),
-        Some(SortKind::Uninterpreted(_)) => model.universe(sort).and_then(|u| u.first().copied()),
+        Some(SortKind::Uninterpreted(_)) => model
+            .ground_universe(sort, manager)
+            .and_then(|u| u.first().copied()),
         _ => None,
     }
 }
@@ -1258,7 +1505,34 @@ struct CompletionEval<'a> {
     nodes_visited: usize,
     /// Current macro-unfolding nesting (see [`MAX_MACRO_DEPTH`]).
     macro_depth: u32,
+    /// Whether this evaluation records its supporting commitments and free
+    /// choices (see [`CompletionEval::run_recorded`]).
+    recording: bool,
+    /// The ground atoms whose completed values the evaluation consumed:
+    /// `(atom, value)` with `atom` Bool-sorted and `value` its truth value.
+    commitments: Vec<(TermId, TermId)>,
+    /// Whether any value was resolved through a *free* completion choice
+    /// (an `else` fallthrough, a macro expansion, a sort default, a
+    /// universe fold) rather than a ground-model fact.
+    free_choice: bool,
+    /// Functions whose `else` default this evaluation consulted (the
+    /// revision targets for the bounded else-search — Z3's
+    /// `smt_model_finder` "search, verify, revise": a falsified body whose
+    /// evaluation leaned on a function's default is repaired by revising
+    /// *that* default, not by pinning every compound point).
+    else_consulted: FxHashSet<Spur>,
 }
+
+/// The evidence one recorded evaluation collects (see
+/// [`CompletionEval::run_recorded`]): the result, the supporting
+/// commitments, whether a free completion choice was consumed, and which
+/// functions' `else` defaults were consulted.
+type RecordedRun = (
+    Result<TermId, &'static str>,
+    Vec<(TermId, TermId)>,
+    bool,
+    FxHashSet<Spur>,
+);
 
 /// Bound on macro-unfolding nesting inside one evaluation.  The
 /// occurs-check in the macro solver forbids self-reference, so finite
@@ -1283,8 +1557,70 @@ impl<'a> CompletionEval<'a> {
             symbolic: FxHashMap::default(),
             nodes_visited: 0,
             macro_depth: 0,
+            recording: false,
+            commitments: Vec::new(),
+            free_choice: false,
+            else_consulted: FxHashSet::default(),
         };
         eval.eval(root, manager)
+    }
+
+    /// Evaluate `root` while recording the evaluation's supporting
+    /// commitments and free choices.  The caller uses the evidence to build
+    /// a Z3-style blocking clause (`add_blocking_clause`): when a falsifier
+    /// is `fully_pinned` (no free choice consumed), the falsification is a
+    /// function of the recorded commitments alone, so excluding that value
+    /// arrangement from the next candidate model loses no solution.
+    fn run_recorded(
+        root: TermId,
+        model: &'a CompletedModel,
+        bound: &'a FxHashSet<Spur>,
+        else_table: &'a FxHashMap<Spur, TermId>,
+        manager: &mut TermManager,
+    ) -> RecordedRun {
+        let mut eval = Self {
+            model,
+            bound,
+            else_table,
+            cache: FxHashMap::default(),
+            symbolic: FxHashMap::default(),
+            nodes_visited: 0,
+            macro_depth: 0,
+            recording: true,
+            commitments: Vec::new(),
+            free_choice: false,
+            else_consulted: FxHashSet::default(),
+        };
+        let result = eval.eval(root, manager);
+        let evidence = core::mem::take(&mut eval.commitments);
+        let consulted = core::mem::take(&mut eval.else_consulted);
+        (result, evidence, eval.free_choice, consulted)
+    }
+
+    /// The functions whose `else` default the recorded evaluation
+    /// consulted (see [`CompletionEval::else_consulted`]).
+    fn consulted_else_defaults(&self) -> Vec<Spur> {
+        self.else_consulted.iter().copied().collect()
+    }
+
+    /// Record a commitment: the ground atom `term` resolved to `value`.
+    /// Bool-sorted terms commit directly; other sorts commit through the
+    /// equality atom `term = value` (the caller drops clauses whose atoms
+    /// the ground solver never internalized).
+    fn record_commitment(&mut self, term: TermId, value: TermId, manager: &mut TermManager) {
+        if !self.recording {
+            return;
+        }
+        let is_bool = manager
+            .get(term)
+            .is_some_and(|n| n.sort == manager.sorts.bool_sort);
+        if is_bool {
+            self.commitments.push((term, value));
+        } else {
+            let atom = manager.mk_eq(term, value);
+            let truth = manager.mk_true();
+            self.commitments.push((atom, truth));
+        }
     }
 
     /// Whether `term` (transitively) mentions a bound-variable name.
@@ -1396,6 +1732,7 @@ impl<'a> CompletionEval<'a> {
                     // satisfaction verdict (the round-1 false-`sat` shape).
                     if !self.is_symbolic(term, manager) {
                         if let Some(&value) = self.model.assignments.get(&term) {
+                            self.record_commitment(term, value, manager);
                             self.cache.insert(term, value);
                             values.push(value);
                             continue;
@@ -1462,14 +1799,31 @@ impl<'a> CompletionEval<'a> {
                         }
                         TermKind::Forall { vars, patterns, .. } => {
                             let folded = evaluated.first().copied().unwrap_or(term);
-                            manager.intern_term(
-                                TermKind::Forall {
-                                    vars: vars.clone(),
-                                    body: folded,
-                                    patterns: patterns.clone(),
-                                },
-                                node.sort,
-                            )
+                            // A pointwise-constant body makes the binder that
+                            // constant (`forall x. true -> true`, dually to the
+                            // `Exists` arm below): SMT-LIB sorts are all
+                            // non-empty, so `forall x. false -> false` and
+                            // `exists x. true -> true` fold exactly as well.
+                            // Leaving a constant-bodied `forall` symbolic kept
+                            // A3's completed body `(forall x. true) => false`
+                            // opaque to the aux solver's own (budgeted)
+                            // quantifier loop instead of the plain `false` it
+                            // pointwise is.
+                            if manager
+                                .get(folded)
+                                .is_some_and(|t| matches!(t.kind, TermKind::True | TermKind::False))
+                            {
+                                folded
+                            } else {
+                                manager.intern_term(
+                                    TermKind::Forall {
+                                        vars: vars.clone(),
+                                        body: folded,
+                                        patterns: patterns.clone(),
+                                    },
+                                    node.sort,
+                                )
+                            }
                         }
                         TermKind::Exists { vars, patterns, .. } => {
                             let folded = evaluated.first().copied().unwrap_or(term);
@@ -1503,7 +1857,7 @@ impl<'a> CompletionEval<'a> {
                                     Some(_) => manager.mk_false(),
                                     None => {
                                         // Uninterpreted-sort equality: two
-                                        // *distinct universe representatives*
+                                        // *ground* universe representatives
                                         // of the same sort are unequal by
                                         // construction (the universe is a
                                         // set of pairwise-distinct
@@ -1513,6 +1867,25 @@ impl<'a> CompletionEval<'a> {
                                         // and the falsifier the aux check
                                         // found at `(z,z)` is never mined
                                         // (the set-family diagonal stall).
+                                        //
+                                        // Groundness of BOTH operands is
+                                        // load-bearing: the universe
+                                        // contains bound-variable artifact
+                                        // terms (entry args harvested by
+                                        // `collect_universes_from_model`),
+                                        // and folding symbolic operands
+                                        // fabricates `?s1 != ?s2` — with
+                                        // it both a fake falsifier and, on
+                                        // `(distinct s1 s2) \/ psi`-shaped
+                                        // bodies, a fabricated pointwise
+                                        // `true` the completion does not
+                                        // justify (a false-`Satisfied`).
+                                        // The fold is also a *universe*
+                                        // fact, not a ground-model pin, so
+                                        // it counts as a free choice for
+                                        // blocking-clause purposes.
+                                        let a_symbolic = self.is_symbolic(a, manager);
+                                        let b_symbolic = self.is_symbolic(b, manager);
                                         let verdict = (|| {
                                             let na = manager.get(a)?;
                                             let nb = manager.get(b)?;
@@ -1527,8 +1900,12 @@ impl<'a> CompletionEval<'a> {
                                             let uni = self.model.universe(na.sort)?;
                                             let a_in = uni.contains(&a);
                                             let b_in = uni.contains(&b);
-                                            (a_in && b_in).then_some(false)
+                                            (!a_symbolic && !b_symbolic && a_in && b_in)
+                                                .then_some(false)
                                         })();
+                                        if self.recording && matches!(verdict, Some(false)) {
+                                            self.free_choice = true;
+                                        }
                                         match verdict {
                                             Some(false) => manager.mk_false(),
                                             _ => manager.mk_eq(a, b),
@@ -1709,6 +2086,14 @@ impl<'a> CompletionEval<'a> {
         if let Some((bound_vars, body)) = self.model.macros.get(&func).cloned() {
             if self.macro_depth < MAX_MACRO_DEPTH {
                 self.macro_depth += 1;
+                // A macro read is a definitional-axiom reduction, not a
+                // ground-model fact: for blocking purposes it is a free
+                // choice (the defining axiom itself may be the quantifier
+                // under check, and the reduction consults other functions'
+                // entries at symbolic points).
+                if self.recording {
+                    self.free_choice = true;
+                }
                 let result =
                     self.fold_macro_application(&bound_vars, body, evaluated_args, manager);
                 self.macro_depth -= 1;
@@ -1728,21 +2113,46 @@ impl<'a> CompletionEval<'a> {
             if let Some(interp) = interp {
                 for entry in &interp.entries {
                     if args_match(entry, evaluated_args, self.model, manager) {
+                        // An entry hit is a ground-model fact (the table is
+                        // harvested from the ground solver's pinned
+                        // applications): commit the atom `f(args) = result`.
+                        if self.recording {
+                            let args: ChildList = evaluated_args.iter().copied().collect();
+                            let app = manager.intern_term(TermKind::Apply { func, args }, sort);
+                            let atom = manager.mk_eq(app, entry.result);
+                            let truth = manager.mk_true();
+                            self.commitments.push((atom, truth));
+                        }
                         return Ok(entry.result);
                     }
                 }
             }
             if let Some(&else_val) = self.else_table.get(&func) {
+                // An `else` fallthrough is a completion choice, not a
+                // ground-model pin.
+                if self.recording {
+                    self.free_choice = true;
+                    self.else_consulted.insert(func);
+                }
                 return Ok(else_val);
             }
             // No interpretation and no else: keep the application as a free
             // ground term (unconstrained by the model; the nested solver
             // sees it as itself).
+            if self.recording {
+                self.free_choice = true;
+            }
             let args: ChildList = evaluated_args.iter().copied().collect();
             return Ok(manager.intern_term(TermKind::Apply { func, args }, sort));
         }
 
         // Symbolic argument: the entry table as an ite chain, else leaf.
+        if self.recording {
+            // The chain encodes entries under symbolic conditions — not a
+            // ground pin the blocking clause can lean on.
+            self.free_choice = true;
+            self.else_consulted.insert(func);
+        }
         let else_leaf = match self.else_table.get(&func) {
             Some(&else_val) => else_val,
             None => {

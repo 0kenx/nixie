@@ -47,7 +47,7 @@ pub use types::{
     SolverResult, Statistics, TheoryMode, UnsatCore,
 };
 
-use crate::mbqi::{MBQIIntegration, MBQIResult};
+use crate::mbqi::{InstantiationReason, MBQIIntegration, MBQIResult};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::simplify::Simplifier;
@@ -202,6 +202,11 @@ pub struct Solver {
     /// restored by `pop` (see [`ContextState`](super::trail::ContextState)),
     /// cleared by `reset`.
     pub(super) unowned_quantifier_seen: bool,
+    /// Debug-channel tag for this solver's `[qround]` trace: nested
+    /// (model-checker aux) solvers tag their rounds so the trace does not
+    /// conflate them with the outer solve's rounds.  Never read on any
+    /// semantic path.
+    pub(crate) debug_tag: Option<&'static str>,
     /// Next unused Skolem symbol id.
     ///
     /// Skolem symbols are named positionally (`sk!N` / `skf!N`) and names are
@@ -1067,6 +1072,7 @@ impl Solver {
             nlsat: None,
             mbqi: MBQIIntegration::new(),
             unowned_quantifier_seen: false,
+            debug_tag: None,
             ematch_engine: EmatchingEngine::new(EmatchingConfig::default()),
             has_quantifiers: false,
             next_skolem_id: 0,
@@ -1423,6 +1429,9 @@ impl Solver {
         // sound, but a `Sat` may rest on constraints the truncation lost and
         // must degrade to `Unknown`.
         if result == SolverResult::Sat && self.encode_depth_exceeded {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: encode depth exceeded");
+            }
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -1431,6 +1440,9 @@ impl Solver {
         // set theory is wired into Nelson-Oppen, a `Sat` over set atoms is not
         // a model of anything.
         if result == SolverResult::Sat && self.set_terms_unconstrained {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: set terms unconstrained");
+            }
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -1451,6 +1463,9 @@ impl Solver {
             && self.arith_defs_incomplete(manager)
             && !self.nl_dispatch_answered
         {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: arith defs incomplete");
+            }
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -1471,6 +1486,9 @@ impl Solver {
             && self.arith_abstracted_big_const
             && !self.certify_quantified_sat(manager)
         {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: arith big-const abstraction uncertified");
+            }
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -1480,6 +1498,9 @@ impl Solver {
         // `Unsat` from a subset of the axioms is still `Unsat`; a `Sat` is a
         // guess and is reported as `Unknown`.
         if result == SolverResult::Sat && self.dt_axioms_incomplete {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: dt axioms incomplete");
+            }
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -3780,8 +3801,84 @@ impl Solver {
                     }
 
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
+                    // Model-repair blocking clauses (Z3's
+                    // `add_blocking_clause` analogue): each clause excludes
+                    // one value arrangement that demonstrably fails a
+                    // quantifier — the duplicate falsifier's supporting
+                    // commitments, which the evaluation consumed through
+                    // ground-model pins only (see
+                    // `MinedFalsifier::fully_pinned`).  Emitting the clause
+                    // here forces the next candidate model to differ in at
+                    // least one commitment: either produce the witness a
+                    // committed-false dodge claims, or flip the commitment.
+                    //
+                    // Soundness: the falsification is a function of the
+                    // recorded commitments alone, so any model agreeing
+                    // with all of them also fails the (asserted) quantifier
+                    // — the clause excludes only non-solutions.  A
+                    // commitment whose atom the ground solver never
+                    // internalized drops the *whole* clause (skipping it
+                    // instead would strengthen the clause into a claim the
+                    // commitments never made).
+                    for commitments in self.mbqi.take_model_repair_clauses() {
+                        let mut lits: Vec<Lit> = Vec::with_capacity(commitments.len());
+                        let mut complete = true;
+                        for (atom, value) in commitments {
+                            let Some(&var) = self.term_to_var.get(&atom) else {
+                                complete = false;
+                                break;
+                            };
+                            // Block `atom = value`: contribute the literal
+                            // that disagrees with the committed value.
+                            let value_true = manager
+                                .get(value)
+                                .is_some_and(|t| matches!(t.kind, TermKind::True));
+                            let lit = if value_true {
+                                Lit::neg(var)
+                            } else {
+                                Lit::pos(var)
+                            };
+                            lits.push(lit);
+                        }
+                        if complete && !lits.is_empty() {
+                            self.sat.add_clause(lits);
+                        }
+                    }
                     if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
-                        eprintln!("[qround] iter={mbqi_iteration} result={mbqi_result:?}");
+                        let tag = self.debug_tag.unwrap_or("");
+                        let desc = match &mbqi_result {
+                            MBQIResult::NoQuantifiers => "NoQuantifiers".to_string(),
+                            MBQIResult::Satisfied => "Satisfied".to_string(),
+                            MBQIResult::NewInstantiations(v) => {
+                                let mut reasons = String::new();
+                                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                                    let mut counts: FxHashMap<&str, usize> = FxHashMap::default();
+                                    for inst in v {
+                                        *counts
+                                            .entry(match inst.reason {
+                                                InstantiationReason::ModelBased => "model",
+                                                InstantiationReason::EMatching => "ematch",
+                                                InstantiationReason::Conflict => "conflict",
+                                                InstantiationReason::Enumerative => "enum",
+                                                InstantiationReason::User => "user",
+                                                InstantiationReason::Theory => "theory",
+                                            })
+                                            .or_default() += 1;
+                                    }
+                                    for (k, c) in &counts {
+                                        reasons.push_str(&format!(" {k}x{c}"));
+                                    }
+                                }
+                                format!("NewInstantiations({}){reasons}", v.len())
+                            }
+                            MBQIResult::Conflict { .. } => "Conflict".to_string(),
+                            MBQIResult::InstantiationLimit => "InstantiationLimit".to_string(),
+                            MBQIResult::Unknown => "Unknown".to_string(),
+                        };
+                        eprintln!(
+                            "[qround{tag}] iter={mbqi_iteration} result={desc} mc_declined={:?}",
+                            self.mbqi.model_checker_last_decline()
+                        );
                     }
                     match mbqi_result {
                         MBQIResult::NoQuantifiers => {
@@ -3809,6 +3906,9 @@ impl Solver {
                         MBQIResult::Satisfied => {
                             // All quantifiers satisfied by the current model.
                             if self.downgrade_if_injective_model_dishonest(manager) {
+                                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                                    eprintln!("[qround] Satisfied downgraded: injective-dishonest");
+                                }
                                 return SolverResult::Unknown;
                             }
                             self.unsat_core = None;
@@ -3825,6 +3925,11 @@ impl Solver {
                             // ...)` forgotten).
                             if self.unowned_quantifier_seen && !self.certify_quantified_sat(manager)
                             {
+                                if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                                    eprintln!(
+                                        "[qround] Satisfied downgraded: unowned quantifier uncertified"
+                                    );
+                                }
                                 return SolverResult::Unknown;
                             }
                             return SolverResult::Sat;

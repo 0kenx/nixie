@@ -194,6 +194,7 @@ impl super::Solver {
             euf: _,                     // SCOPED: reset by `rebase_theory_state`
             arith: _,                   // SCOPED: reset by `rebase_theory_state`
             bv: _,                      // SCOPED: reset by `rebase_theory_state`
+            debug_tag: _,               // debug only: never read on a semantic path
             last_iface_repair_vocab: _, // RESET BY PUSH/POP: the memo is
             // invalidated there (usize::MAX), so a popped scope's smaller
             // vocabulary always re-runs the idempotent repair.

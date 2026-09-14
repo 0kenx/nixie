@@ -56,3 +56,15 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'package(nixie-cli) and (test(timeout) or test(bench))'
 test-group = 'nixie-cli-subprocess'
 threads-required = 1
+
+# The heaviest 600-rerun convergence pin measures trajectory, not code
+# cost: debug-profile single-threaded it runs ~95-165s depending on the
+# machine (see docs/studies/2026-09-14-uflra-handoff-executed.md for the
+# cost decomposition of the MBQI emission-collapse unit that sits on it,
+# and docs/studies/2026-09-12-*.md for its history). Under the full
+# suite's parallel load its wall time inflates past the default 3x60s,
+# which terminated an otherwise-passing test. Widen, following the
+# pete_cxs_bp precedent above.
+[[profile.default.overrides]]
+filter = 'test(re_running_the_search_on_an_unchanged_goal_converges)'
+slow-timeout = { period = "60s", terminate-after = 5 }

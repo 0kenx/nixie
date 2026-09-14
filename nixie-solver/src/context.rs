@@ -454,6 +454,9 @@ impl Context {
             && self.solver.array_atoms_need_theory(&self.terms)
             && !self.solver.array_axioms_saturated
         {
+            if std::env::var_os("NIXIE_DEBUG_QROUNDS").is_some() {
+                eprintln!("[qround] Sat downgraded: array atoms need theory");
+            }
             result = SolverResult::Unknown;
         }
 
