@@ -157,6 +157,15 @@ impl Solver {
                     ghosts,
                     code
                 );
+                if let Ok(t) = std::env::var("NIXIE_CSR_CONTENT_TRACE")
+                    && t == code.to_string()
+                {
+                    let refs: Vec<String> = watches
+                        .iter()
+                        .map(|w| format!("{}:{}", w.r.byte_offset(), w.blocker.code()))
+                        .collect();
+                    eprintln!("[content] code={} refs={:?}", code, refs);
+                }
             }
             // Swapped-state preparation (fallible, unwrap-free): copy the
             // span out and take the overflow so the kernel's CSR access

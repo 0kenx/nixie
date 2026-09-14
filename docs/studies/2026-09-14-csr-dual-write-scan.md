@@ -638,3 +638,41 @@ compaction tick debt — `relocate` now takes the debt array).
 Tree restored to flip-A (green: 1092 tests, 33 028).  The full re-apply
 recipe + all five investigation sections make the next session's
 entry mechanical.
+
+## Commit B, fifth attempt: the divergence's exact content identified
+(the dedup-suppressed repair pair) — parked at the cleaning asymmetry
+
+The content trace (`NIXIE_CSR_CONTENT_TRACE=<code>`, landed alongside
+the charge trace) captures the scanned scratch's entries at every scan.
+The first divergent scan of literal 8440:
+
+```
+A: ["788528:8428", "873856:9093", "873904:9092", "1077664:4490", "1040872:162"]
+B: ["788528:8428", "873856:9093", "873904:9092"]
+```
+
+**A's two extra entries are exactly the flapping repair pair.**  Their
+pushes were issued during other literals' scans (repairs re-registering
+the clause's watched pair under 8440); B's `push_watch_unique` dedup
+suppressed both because **B's CSR still contained same-ref entries
+under 8440 that A's Vec had already dropped**.  The stale entries were
+cleaned from B later (B's next-next list shows them gone), but by then
+the re-registration window had passed — the clause ran unwatched under
+8440 until the next rebuild (consistent with the watch dumps matching
+at every rebuild).
+
+Also landed in passing (principled): **the take-semantics fix** — the
+roundtrip's materialize now EMPTIES the live segments (`take_combined`)
+matching the old `mem::take` exactly, so mid-scan self-dedups read an
+empty list; plus the ghost-debt recording moved into the CSR relocation
+pass.  Both survive in the re-apply recipe regardless of the cure.
+
+**The root-cause boundary (the next session's single question)**: which
+cleaning path dropped the same-ref entries from A's `Vec` but left them
+in B's CSR between two 8440-scans?  Candidates: the Vec's lazy
+dead-entry removal at *other* literals' scans interacting with the
+mirror's segment bookkeeping; the relocate's ref rewrites desyncing a
+`remove_clause(lit, r_old)` from the entry's current `r`; or the span
+tail's visibility.  The instrument to answer it: a per-ref mutation log
+(when did ref 1077664's entry under 8440 leave A's Vec vs B's CSR) —
+one env, two runs, diff.
