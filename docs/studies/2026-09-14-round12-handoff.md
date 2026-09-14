@@ -5,6 +5,23 @@
 > `docs/studies/2026-09-14-amplitude-trajectory-answer.md` (item 2),
 > `docs/studies/2026-09-14-metric-decision.md` (item 3).
 
+## Late addition (same day): slice 5 STARTED and hit its measured blocker
+
+`3e9b2b51` + `bd06ae67`: the ELS CSR-surgery experiment landed
+(`NIXIE_ELS_CSR_SURGERY=1`, default-off) — surgical watcher re-pointing
+on the shadow at every clause mutation, with the rebuild's per-clause
+**contract oracle** (live long ⟺ exactly two watchers) as the
+equivalence net.  The oracle works and delivered the result: hooks are
+complete and exact where pairs are normalized (BVE rounds audit clean),
+but **watch-position drift** breaks pair-assumed removals after search
+intervals (si2 ELS round: 158 k clauses wrong-counted) — the 2026-09-12
+Vec-surgery normalization problem, now precisely measured on CSR.
+**Slice 5's named prerequisite: a ref→watched-positions index maintained
+by the dual-write hooks (they observe every position change); its
+maintenance cost vs the rebuild's arena sweep is the economics to
+measure before building the production surgery.**  See the appended
+section in `2026-09-14-csr-dual-write-scan.md`.
+
 ## What closed this round
 
 1. **CSR dual-write BCP scan landed** (`0e005231`, slices 2+3): the
