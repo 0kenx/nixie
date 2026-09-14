@@ -736,6 +736,29 @@ impl Model {
                         frames.push(EvalFrame::EqLhs { term: current, rhs });
                         current = lhs;
                     }
+                    // The array theory. Without these, `(get-value)` on an
+                    // array term cannot answer: a `select` evaluates to
+                    // itself, so every point of a function looks
+                    // unconstrained even when a `store` chain pins it. That
+                    // is what `docs/studies/2026-09-14-no-model-for-array-\
+                    // variables.md` recorded, and it is what a TLA+ sequence
+                    // -- a length and a `store` chain -- needs in order to be
+                    // read back out of a model at all.
+                    TermKind::Select(arr, index) => {
+                        frames.push(EvalFrame::SelectArr {
+                            term: current,
+                            index,
+                        });
+                        current = arr;
+                    }
+                    TermKind::Store(arr, index, value) => {
+                        frames.push(EvalFrame::StoreArr {
+                            term: current,
+                            index,
+                            value,
+                        });
+                        current = arr;
+                    }
                     // `(let ((n v) ...) body)`: substitute the bindings into
                     // the body and evaluate that. encode.rs leaves `let`
                     // un-expanded (it encodes the body with the bound vars
@@ -955,6 +978,54 @@ impl Model {
                         // The selected branch's value is the `ite`'s value.
                         memo.insert(term, value);
                     }
+                    EvalFrame::SelectArr { term, index } => {
+                        frames.push(EvalFrame::SelectIdx {
+                            term,
+                            array_val: value,
+                        });
+                        current = index;
+                        continue 'open;
+                    }
+                    EvalFrame::SelectIdx { term, array_val } => {
+                        let v = select_in(self, manager, array_val, value);
+                        memo.insert(term, v);
+                        value = v;
+                    }
+                    EvalFrame::StoreArr {
+                        term,
+                        index,
+                        value: v,
+                    } => {
+                        frames.push(EvalFrame::StoreIdx {
+                            term,
+                            array_val: value,
+                            value: v,
+                        });
+                        current = index;
+                        continue 'open;
+                    }
+                    EvalFrame::StoreIdx {
+                        term,
+                        array_val,
+                        value: v,
+                    } => {
+                        frames.push(EvalFrame::StoreVal {
+                            term,
+                            array_val,
+                            index_val: value,
+                        });
+                        current = v;
+                        continue 'open;
+                    }
+                    EvalFrame::StoreVal {
+                        term,
+                        array_val,
+                        index_val,
+                    } => {
+                        let v = manager.mk_store(array_val, index_val, value);
+                        memo.insert(term, v);
+                        value = v;
+                    }
                     EvalFrame::EqLhs { term, rhs } => {
                         frames.push(EvalFrame::EqRhs {
                             term,
@@ -1090,6 +1161,78 @@ fn term_kind_is_false(term: TermId, manager: &TermManager) -> bool {
 /// Each variant carries the original term it evaluates (the memo key for its
 /// finished value) plus per-operator progress; a frame that still needs an
 /// operand pushes itself back and re-enters the open loop.
+/// `(select a i)` where `a` and `i` are already evaluated.
+///
+/// Walks the `store` chain: a write at an index *equal* to `i` is the answer,
+/// a write at a *different* index is skipped, and anything else stops the
+/// walk. Terms are hash-consed, so two constants are equal exactly when they
+/// are the same `TermId` — which is what makes both tests decidable without
+/// calling back into the solver.
+///
+/// Stopping is not failing. A `select` that cannot be reduced is returned as
+/// itself, and the model is consulted for it first: that is the honest answer
+/// for a point nothing in the query constrained, and it is the same thing an
+/// unassigned variable evaluates to.
+///
+/// Bounded, because a malformed chain must not spin: an array term is finite,
+/// but this walks it without a `seen` set.
+fn select_in(model: &Model, manager: &mut TermManager, array: TermId, index: TermId) -> TermId {
+    /// A store chain longer than this is not something a query built.
+    const MAX_CHAIN: usize = 1_000_000;
+    let mut cur = array;
+    for _ in 0..MAX_CHAIN {
+        // Resolve the link before reading it. A chain does not arrive as one
+        // nested `store`: each `Append` writes onto the *previous* sequence's
+        // graph, so the base of one link is a name — `@sf(h@1)` — whose own
+        // chain is another model assignment. Following those is the walk.
+        //
+        // This does not recurse through the chain: `Model::eval` returns an
+        // assignment without descending into it, so each call resolves one
+        // link and the walk stays a loop.
+        let resolved = model.eval(cur, manager);
+        let Some(TermKind::Store(base, at, written)) =
+            manager.get(resolved).map(|t| t.kind.clone())
+        else {
+            break;
+        };
+        // The chain's own index and value are evaluated as the walk reaches
+        // them. They are not evaluated already: a chain that came from a model
+        // *assignment* is the raw term the assertion pinned, so an index like
+        // `len(h) + 1` arrives as arithmetic and would match nothing. This
+        // does not recurse through the chain — each call evaluates one small
+        // index term — so the walk stays a loop.
+        let at = model.eval(at, manager);
+        if at == index {
+            return model.eval(written, manager);
+        }
+        // Two *constants* that are not the same term are different values, so
+        // the write cannot be the one being read. Anything else — a variable
+        // index, say — might alias, and the walk stops rather than guess.
+        if !(is_constant(manager, at) && is_constant(manager, index)) {
+            break;
+        }
+        cur = base;
+    }
+    let sel = manager.mk_select(cur, index);
+    model.get(sel).unwrap_or(sel)
+}
+
+/// Whether a term is a literal, and so equal to another exactly when it is the
+/// same hash-consed term.
+fn is_constant(manager: &TermManager, t: TermId) -> bool {
+    matches!(
+        manager.get(t).map(|x| &x.kind),
+        Some(
+            TermKind::True
+                | TermKind::False
+                | TermKind::IntConst(_)
+                | TermKind::RealConst(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::StringLit(_)
+        )
+    )
+}
+
 enum EvalFrame {
     /// `not` – one operand.
     Not { term: TermId },
@@ -1128,6 +1271,28 @@ enum EvalFrame {
     /// The child's value *is* this term's value (`ite` on a constant
     /// condition evaluating only the selected branch).
     Forward { term: TermId },
+    /// `select` – waiting on the array.
+    SelectArr { term: TermId, index: TermId },
+    /// `select` – waiting on the index.
+    SelectIdx { term: TermId, array_val: TermId },
+    /// `store` – waiting on the array.
+    StoreArr {
+        term: TermId,
+        index: TermId,
+        value: TermId,
+    },
+    /// `store` – waiting on the index.
+    StoreIdx {
+        term: TermId,
+        array_val: TermId,
+        value: TermId,
+    },
+    /// `store` – waiting on the stored value.
+    StoreVal {
+        term: TermId,
+        array_val: TermId,
+        index_val: TermId,
+    },
     /// `=` – waiting on the left operand.
     EqLhs { term: TermId, rhs: TermId },
     /// `=` – waiting on the right operand.

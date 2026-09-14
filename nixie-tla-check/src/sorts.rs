@@ -55,7 +55,26 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
             let elem = sort_of(e, tm)?;
             Ok(tm.sorts.set(elem))
         }
-        Type::Seq(_) => Err(NoSort("a sequence".into())),
+        // A sequence is a **length and a graph**: a datatype holding an `Int`
+        // and an array from `1..` to the element sort. That is Apalache's
+        // proto-sequence in substance, and it is what TLA+ says a sequence is —
+        // a function on `1..Len(s)` — with the length carried alongside,
+        // because an array alone cannot say where the sequence stops.
+        //
+        // Equality is the datatype's, so it compares the array at *every*
+        // index and not only below the length: stricter than TLA+. That is the
+        // same trade `Type::Fun` makes above and it errs the same way round.
+        // In a positive position it costs nothing, because every sequence this
+        // encoder builds is a chain of stores over one shared base array
+        // (`arena::fun_base`), so two sequences with the same elements agree
+        // past the length by construction and the solver can always satisfy
+        // the extra conjunct. Under a negation it can tell two TLA+-equal
+        // sequences apart, which manufactures a counterexample and cannot hide
+        // one.
+        Type::Seq(e) => {
+            let elem = sort_of(e, tm)?;
+            Ok(seq_sort(elem, tm))
+        }
         // A TLA+ function maps onto an SMT array, which is a theory the solver
         // already has. What an array does **not** carry is the domain, and
         // that shows up in two places. Both err in the same direction, which
@@ -119,6 +138,44 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
             }
             Ok(declare_struct(&fields, tm))
         }
+    }
+}
+
+/// The selector holding a sequence's length.
+pub(crate) const SEQ_LEN: &str = "@sl";
+/// The selector holding a sequence's elements, as an array from `1..`.
+pub(crate) const SEQ_FUN: &str = "@sf";
+
+/// The datatype sort of `Seq(elem)`.
+///
+/// Named by its fields like every other struct here, so two sequences of the
+/// same element sort are the same sort wherever they are built.
+pub(crate) fn seq_sort(elem: SortId, tm: &mut TermManager) -> SortId {
+    let int = tm.sorts.int_sort;
+    let arr = tm.sorts.array(int, elem);
+    declare_struct(
+        &[(SEQ_LEN.to_string(), int), (SEQ_FUN.to_string(), arr)],
+        tm,
+    )
+}
+
+/// The element sort of a sequence sort, if this is one.
+///
+/// Recognised by its selectors rather than by a flag: `@sl` and `@sf` are
+/// reserved here exactly so a sequence cannot be confused with a record that
+/// happens to have two fields.
+#[must_use]
+pub(crate) fn seq_element(sort: SortId, tm: &TermManager) -> Option<SortId> {
+    let fields = struct_fields(sort, tm)?;
+    let [(a, _), (b, arr)] = fields.as_slice() else {
+        return None;
+    };
+    if a != SEQ_LEN || b != SEQ_FUN {
+        return None;
+    }
+    match tm.sorts.get(*arr).map(|s| &s.kind) {
+        Some(nixie_core::SortKind::Array { range, .. }) => Some(*range),
+        _ => None,
     }
 }
 

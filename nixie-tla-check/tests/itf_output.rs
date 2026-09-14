@@ -119,15 +119,7 @@ Inv  == 3 \in s
     );
     assert_eq!(st["r"], json!({ "a": { "#bigint": "1" }, "b": true }));
     assert_eq!(st["w"], json!("hello"));
-    // The *shape* of a tuple, not its contents. A component the query never
-    // probed comes back defaulted — a defect in the solver's model, written up
-    // in `docs/studies/2026-09-14-model-completion-overrides-datatype-fields.md`
-    // and pinned by `tests/traces.rs`. This module is responsible for the
-    // format; the decoder's values are tested where the decoder is.
-    let tup = st["p"]["#tup"].as_array().expect("a #tup");
-    assert_eq!(tup.len(), 2);
-    assert!(tup[0]["#bigint"].is_string(), "{tup:?}");
-    assert!(tup[1].is_string(), "{tup:?}");
+    assert_eq!(st["p"], json!({ "#tup": [{ "#bigint": "1" }, "x"] }));
 }
 
 /// A TLA+ function is an ITF **map**: an array of `[key, value]` pairs,
@@ -148,25 +140,31 @@ Inv  == q[1] = 8
         1,
     );
     let st = &t["states"][0];
-    let q = st["q"]["#tup"].as_array().expect("a #tup");
-    assert_eq!(q.len(), 2, "{:?}", st["q"]);
+    assert_eq!(
+        st["q"],
+        json!({ "#tup": [{ "#bigint": "7" }, { "#bigint": "8" }] })
+    );
     // A function is a `#map`: an array of `[key, value]` pairs, because a key
-    // may be any expression where a JSON object key may not. The keys here are
-    // the domain, which is recovered exactly; the values sit behind the
-    // array-model gap in
-    // `docs/studies/2026-09-14-no-model-for-array-variables.md`, so this pins
-    // the encoding and leaves the values to `tests/traces.rs`.
+    // may be any expression where a JSON object key may not.
     let m = st["f"]["#map"].as_array().expect("a #map");
     assert_eq!(m.len(), 2, "{:?}", st["f"]);
-    let mut keys: Vec<&str> = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for pair in m {
         let p = pair.as_array().expect("a [key, value] pair");
         assert_eq!(p.len(), 2);
-        keys.push(p[0].as_str().expect("a string key"));
-        assert!(p[1]["#bigint"].is_string(), "{p:?}");
+        pairs.push((
+            p[0].as_str().expect("a string key").to_string(),
+            p[1]["#bigint"].as_str().expect("a value").to_string(),
+        ));
     }
-    keys.sort_unstable();
-    assert_eq!(keys, ["a", "b"]);
+    pairs.sort();
+    assert_eq!(
+        pairs,
+        [
+            ("a".to_string(), "1".to_string()),
+            ("b".to_string(), "1".to_string())
+        ]
+    );
 }
 
 /// Two runs over the same specification produce the same document. A trace

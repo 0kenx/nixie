@@ -705,6 +705,63 @@ impl Encoder {
         out
     }
 
+    /// The empty sequence at a sequence sort.
+    ///
+    /// Built over the **shared** base array, which is what makes two sequences
+    /// with the same elements equal: the datatype's equality compares the
+    /// array at every index, so two empty sequences over different bases would
+    /// compare unequal. See [`crate::arena::fun_base`] for the same argument
+    /// about functions.
+    fn empty_seq(&mut self, sort: SortId, elem: SortId, tm: &mut TermManager) -> Result<TermId> {
+        let int = tm.sorts.int_sort;
+        let arr = tm.sorts.array(int, elem);
+        let base = self.fun_base(arr, tm);
+        let zero = tm.mk_int(num_bigint::BigInt::from(0));
+        let name = tm
+            .sorts
+            .datatype_name(sort)
+            .ok_or(EncodeError::ShapeClash)?
+            .to_string();
+        Ok(tm.mk_dt_constructor(&name, [zero, base], sort))
+    }
+
+    /// `Len(s)`.
+    fn seq_len(&self, seq: TermId, tm: &mut TermManager) -> TermId {
+        let int = tm.sorts.int_sort;
+        tm.mk_dt_selector(crate::sorts::SEQ_LEN, seq, int)
+    }
+
+    /// The graph of `s`, as an array from `1..`.
+    fn seq_fun(&self, seq: TermId, elem: SortId, tm: &mut TermManager) -> TermId {
+        let int = tm.sorts.int_sort;
+        let arr = tm.sorts.array(int, elem);
+        tm.mk_dt_selector(crate::sorts::SEQ_FUN, seq, arr)
+    }
+
+    /// `Append(s, e)` — `e` written one past the end, and the length raised.
+    fn seq_append(
+        &mut self,
+        seq: TermId,
+        e: TermId,
+        sort: SortId,
+        tm: &mut TermManager,
+    ) -> Result<TermId> {
+        let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+            return Err(EncodeError::ShapeClash);
+        };
+        let len = self.seq_len(seq, tm);
+        let fun = self.seq_fun(seq, elem, tm);
+        let one = tm.mk_int(num_bigint::BigInt::from(1));
+        let next = tm.mk_add([len, one]);
+        let stored = tm.mk_store(fun, next, e);
+        let name = tm
+            .sorts
+            .datatype_name(sort)
+            .ok_or(EncodeError::ShapeClash)?
+            .to_string();
+        Ok(tm.mk_dt_constructor(&name, [next, stored], sort))
+    }
+
     fn shape(&self, r: Option<TermId>) -> Result<TermId> {
         r.ok_or(EncodeError::ShapeClash)
     }
@@ -1185,6 +1242,33 @@ impl Encoder {
             // Structural, not an SMT value: TLA+ tuples and records are
             // heterogeneous, so flattening them into an array would force
             // every component to one sort.
+            // `<<…>>` is a tuple *and* a sequence — TLA+ does not distinguish
+            // them — so which one it encodes to is decided by the sort the
+            // caller's type inference gave this node, not by the term. `<<>>`
+            // is the case that forces it: an empty tuple has no component to
+            // take a sort from, and `history = <<>>` where `history` is a
+            // `Seq(Str)` is comparing against the empty *sequence*.
+            Kera::Tuple(xs)
+                if self
+                    .node_sorts
+                    .get(&Rc::as_ptr(term))
+                    .copied()
+                    .and_then(|s| crate::sorts::seq_element(s, tm))
+                    .is_some() =>
+            {
+                let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                    return Err(EncodeError::ShapeClash);
+                };
+                let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+                    return Err(EncodeError::ShapeClash);
+                };
+                let mut seq = self.empty_seq(sort, elem, tm)?;
+                for x in xs {
+                    let v = self.go(x, tm)?;
+                    seq = self.seq_append(seq, v, sort, tm)?;
+                }
+                scalar(seq)
+            }
             Kera::Tuple(xs) => {
                 let mut parts = Vec::with_capacity(xs.len());
                 for x in xs {
@@ -1683,13 +1767,28 @@ impl Encoder {
                     // sequence-sorted state variable has no encoding yet, so
                     // it is declined rather than approximated.
                     FoldOver::SeqLeft => {
-                        let items = match &*self.value(collection, tm)? {
-                            Value::Tuple(items) => items.clone(),
-                            _ => {
-                                return Err(EncodeError::Unsupported(
-                                    "a fold over a sequence that is not a literal".into(),
-                                ));
+                        // Read off the *kernel* term rather than the encoded
+                        // value. `<<…>>` is a tuple and a sequence at once, so
+                        // whether it encodes to a structural tuple or to a
+                        // sequence datatype depends on the sort inference gave
+                        // it — and a fold over a literal does not care which.
+                        // Taking the components here is exact either way.
+                        let items: Vec<Rc<Value>> = match collection.as_ref() {
+                            Kera::Tuple(xs) => {
+                                let mut out = Vec::with_capacity(xs.len());
+                                for x in xs {
+                                    out.push(self.value(x, tm)?);
+                                }
+                                out
                             }
+                            _ => match &*self.value(collection, tm)? {
+                                Value::Tuple(items) => items.clone(),
+                                _ => {
+                                    return Err(EncodeError::Unsupported(
+                                        "a fold over a sequence that is not a literal".into(),
+                                    ));
+                                }
+                            },
                         };
                         for item in items {
                             a = self.with_two_bound(acc, a, elem, item, body, tm)?;
@@ -1697,6 +1796,47 @@ impl Encoder {
                     }
                 }
                 Ok(a)
+            }
+
+            // The `Sequences` operators, on the datatype `sorts::seq_sort`
+            // builds: a length and an array from `1..`. Every one of them is
+            // exact — nothing here approximates — and the ones that are not
+            // here are declined by name.
+            Kera::Opaque(name, args)
+                if matches!(
+                    (name.as_str(), args.len()),
+                    ("Len", 1) | ("Append", 2) | ("Head", 1)
+                ) =>
+            {
+                let target = self.go(&args[0], tm)?;
+                let sort = self.sort_of(target, tm)?;
+                let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+                    return Err(EncodeError::Unsupported(format!(
+                        "`{name}` applied to something that is not a sequence"
+                    )));
+                };
+                match name.as_str() {
+                    "Len" => scalar(self.seq_len(target, tm)),
+                    "Append" => {
+                        let e = self.go(&args[1], tm)?;
+                        if self.sort_of(e, tm)? != elem {
+                            return Err(EncodeError::Unsupported(
+                                "`Append` of a value at the wrong element sort".into(),
+                            ));
+                        }
+                        let out = self.seq_append(target, e, sort, tm)?;
+                        scalar(out)
+                    }
+                    // `Head(s)` is `s[1]`. TLA+ leaves it *undefined* on the
+                    // empty sequence, and so does this: the array's value at
+                    // index 1 is then whatever the base holds, which is an
+                    // unconstrained term — some value, never a chosen one.
+                    _ => {
+                        let fun = self.seq_fun(target, elem, tm);
+                        let one = tm.mk_int(num_bigint::BigInt::from(1));
+                        scalar(tm.mk_select(fun, one))
+                    }
+                }
             }
 
             // TLC's tracing and assertion operators, encoded as `TLC.tla`

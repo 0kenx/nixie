@@ -1,6 +1,7 @@
 # A model's datatype field contradicts the assertion that pinned it
 
-**Status:** open defect in `nixie-solver`, found 2026-09-14.
+**Status:** **fixed** 2026-09-14, same day. Kept because the shape of the
+bug and how it was found are worth having on record.
 **Severity:** wrong `(get-value …)`; the `sat`/`unsat` verdict is unaffected.
 
 ## What happens
@@ -57,19 +58,23 @@ is wrong.
   gate covers: the solver answers `sat`, which is right, and evaluates both
   assertions to `TRUE`.
 
-## Where to look
+## The cause, and the fix
 
-`nixie-solver`'s model construction and completion — specifically whatever
-assigns a value to a selector application, and the sort-default completion that
-appears to overwrite it. The reproducer above is four lines and does not need
-the TLA+ front end; it is worth lifting into `nixie-solver`'s own tests as the
-regression once the fix lands.
+`build_model` extracts values from asserted equalities whose SAT variable is
+true, and its selection recognised **arithmetic, bit-vector and
+uninterpreted-function** terms only. A string-sorted name was therefore never
+picked as the "variable" side of `x = "a"`, the equality was skipped, and a
+default of `""` was installed later — a model value contradicting the very
+assertion that pinned it.
 
-## Why it was not fixed here
+The fix is a branch ahead of that selection: when exactly one side of a true
+equality is a string literal and the other has no assignment yet, record it.
+The equality holds in this model, so the two sides denote the same string and
+recording one as the other's value states only what the query already forced.
 
-It is in a different crate than the slice that found it, that crate had
-in-flight edits from another agent at the time, and the fix wants a solver
-author's judgement about where completion should and should not run. The
-consequence is pinned by
-`nixie-tla-check/tests/traces.rs::a_tuple_field_the_query_did_not_probe_comes_back_defaulted`,
-which will start failing — correctly — when the model is fixed.
+It was found and fixed on the same day, by the same mechanism: the trace replay
+in `nixie-tla-check` decoded the state, the evaluator said `Init` was FALSE for
+it, and the disagreement was visible instead of being carried silently inside a
+counterexample nobody reads.
+`nixie-tla-check/tests/traces.rs::a_tuple_valued_variable_decodes` is the
+regression.
