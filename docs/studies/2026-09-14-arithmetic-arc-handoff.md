@@ -21,7 +21,15 @@ items below.
 
 ## Open items, in priority order
 
-1. **Invalid-model snapshot divergence (SAT core, item 17).**
+1. ~~**Invalid-model snapshot divergence (SAT core, item 17).**~~ **CLOSED
+   2026-09-15** — see the study's Continuation 6 (items 18–20): the
+   divergence was elimination-*reintroduction* (pure-literal pins, BVE
+   ext-stack witnesses, and a poisoned `equiv_substitution` grown tail),
+   fixed with per-layer regressions in `nixie-sat`. The reproducer family
+   sweeps panic-free. Remaining from this item: rerun
+   `bench_diff --validate-models` when the external corpora return to the
+   shared tree (they were removed mid-session 2026-09-15; the 14
+   `[corpus-missing]` workspace-test failures are that, nothing else).
    Through the `final_check`/rejection/re-entry cycle, the candidate the
    search accepts and the candidate `save_model` snapshots disagree on a
    variable's value. My guard fix (item 16) contains the symptom
