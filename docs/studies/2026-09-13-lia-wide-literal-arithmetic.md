@@ -473,3 +473,69 @@ family that fired) and the parity corpus (177); mixed-arith differential
 fuzz 2,200 instances across 6 seeds (4 release, 2 debug): 0 verdict
 disagreements, 0 refuted models. `bench_diff --validate-models` was not
 run — it needs the vanished corpus; rerun when the corpora return.
+
+## Continuation 7 (2026-09-15): open item 3 — symbolic real division decided via NL dispatch
+
+`(/ x y)` with a symbolic divisor (the handoff's item 3) is decided by the
+nonlinear dispatcher now, closing the named half of the fuzz `unknown`-gap
+remainder. Four coordinated changes:
+
+21. **The encoding** (`nixie-theories/src/nlsat.rs`): a Real-sorted `Div`
+    node (the parser's `/`; node sort is the exact discriminator against
+    Euclidean `div`) translates to a fresh quotient variable `t` under the
+    **guarded defining clause `(y = 0) ∨ (y·t − x = 0)`**, conjoined by the
+    dispatcher as a two-literal clause — never a unit (it is a disjunction)
+    and never the Euclidean remainder identities (those force an integer
+    quotient on `2.5`). SMT-LIB's zero-divisor corner is faithful: a
+    constant-zero divisor emits *no* clause (the term is uninterpreted, `t`
+    floats; forcing `x = 0` through the degenerate clause would be wrong),
+    and identical division terms share one `t` (operand-pair key ≡ hashcons
+    term identity), which is the congruence `(/ a 0)` needs. The first cut
+    of the clause had the guard **inverted** (`¬(y=0) ∨ y·t=x` satisfies
+    itself for every nonzero divisor and drops the identity) — caught by the
+    `x=9 ∧ y=2 ∧ (/ x y)=5` differential as a wrong `sat`, fixed, and pinned
+    by `real_division_unsat_twin_stays_honest`.
+22. **A latent wrong-`sat` in `NlsatSolver`, closed**
+    (`witness_algebraic.rs`): `algebraic_model_is_verified` returned `true`
+    for every *rational* model without checking anything — `Sat` was the
+    search's word alone. Harmless while all clauses were units (watches
+    force their Booleans); the moment genuine disjunctions exist, `decide()`
+    can assign an Eq-atom Boolean its arithmetic does not support. The gate
+    now concretely verifies every atom *and every clause* against the final
+    assignment, rational or algebraic (the codebase's
+    model-certify-before-`Sat` rule). Regressions:
+    `eq_disjunction_clause_is_sat`, `division_shaped_clause_set_never_
+    reports_wrong_sat`, `contradictory_eq_units_are_unsat`.
+23. **Routing** (`check_nlsat.rs`): `term_is_nonlinear` flags Real-sorted
+    division (and now *walks into* `Div`/`Mod` operands, so a product hidden
+    under a `div` is detected); `assertions_have_int_arith` no longer counts
+    a bare Int numeral as "Int-sorted arithmetic" (SMT-LIB coerces Int
+    literals in Real contexts — counting them sent pure-Real goals with
+    decimal-free literals to the integer backend; the `has_real_symbols`
+    unsat-guard made that benign, but NRA is the right engine).
+    `check_with_arith_refinement`'s `arith_defs_incomplete` gate no longer
+    vetoes verdicts from the dispatcher that *encoded exactly those terms*
+    (`nl_dispatch_answered`, cleared per check) — the gate exists for the
+    linear path's free Booleans.
+24. **Trust split, documented**: division goals keep the NRA dispatcher's
+    historical Eq-distrust for `unsat` (now extended to the Eq-bearing
+    defining clauses), so their refutations fall through honestly; `sat` is
+    verified concretely. Known residual: a free dividend/divisor whose
+    witness needs values the greedy sampler cannot enumerate (e.g. `x/y > 3`
+    with both free — the defining identity couples them, and the resampler
+    enumerates small integers) stays `unknown`: pre-existing sampler
+    capacity, the same class as coupled products with free operands; and
+    QF_LIRA-*declared* symbolic division still routes linear (the
+    declared-logic contract; open logics auto-detect).
+
+Measured: the previously-gated classes `(= x 5) (= y 2) (= (/ x y) 2.5)`,
+nested `(/ x (/ y 2))`, zero-divisor `(= y 0) (= (/ x y) 5)`, and
+NIRA-beside-division all now match z3. Verification: 11,564/11,579
+workspace tests (15 failures all `[corpus-missing]` — the corpora are still
+absent from the shared tree), clippy/fmt/rustdoc clean for the touched
+crates, Z3 parity 176/177 correct + 0 disagreements (z3 4.16.0), mixed-arith
+differential fuzz 2,600 instances across 6 seeds (4 release + 2 debug):
+0 verdict disagreements, 0 refuted models; debug-panic sweep over the
+parity corpus clean. New regressions:
+`nixie-solver/tests/real_division_dispatch.rs` (8 tests) and three
+`nixie-nlsat` witness tests.

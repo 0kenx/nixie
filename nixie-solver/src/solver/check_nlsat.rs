@@ -903,12 +903,17 @@ fn assertions_have_int_arith(manager: &TermManager, assertions: &[TermId]) -> bo
         let Some(term) = manager.get(id) else {
             continue;
         };
+        // A bare Int NUMERAL does not count as "Int-sorted arithmetic":
+        // SMT-LIB coerces Int literals in Real contexts (`(> xr 3)` is a
+        // Real constraint), so counting them routed pure-Real formulas with
+        // decimal-free literals to the integer backend. Any genuinely
+        // integer problem still matches through its Int-sorted variables or
+        // compound terms (a formula of numerals alone folds at build time).
         if term.sort == int_sort
             && matches!(
                 term.kind,
                 TermKind::Var(_)
                     | TermKind::Select(_, _)
-                    | TermKind::IntConst(_)
                     | TermKind::Add(_)
                     | TermKind::Mul(_)
                     | TermKind::Sub(_, _)

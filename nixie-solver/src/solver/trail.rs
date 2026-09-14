@@ -348,9 +348,12 @@ impl super::Solver {
             array_witness_budget_exhausted: _, // recomputed (per-check flag)
             arith_purify: _,                   // rebuilt from assertions each check
             arith_defined_terms: _,            // TRAIL: ArithDefinedTermAdded
-            arith_const_axiom_pairs: _,        // TRAIL: ArithConstAxiomAdded
-            care_split_pairs: _,               // TRAIL: CareSplitAdded
-            numeric_eq_split_pairs: _,         // dedup across `check`s; SAT base
+            nl_dispatch_answered: _,           // NOT trailed: per-check flag,
+            // cleared at every check_core entry; a pop mid-check cannot
+            // leave a stale verdict attribution behind.
+            arith_const_axiom_pairs: _, // TRAIL: ArithConstAxiomAdded
+            care_split_pairs: _,        // TRAIL: CareSplitAdded
+            numeric_eq_split_pairs: _,  // dedup across `check`s; SAT base
             // clauses survive `pop`, so a stale entry only suppresses re-emitting
             // a clause that is still present (sound).
             dt_axiom_instances: _,       // TRAIL: DtAxiomInstanceAdded
