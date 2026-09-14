@@ -55,28 +55,18 @@ pinned constant `Apply` arguments — the `pr30#3` class — and walked past
 arrays). Pinned, not purified: the array theory matches indices by `TermId`,
 so a proxy would change which writes a read is judged to alias.
 
-## NOT landed — pick this up first
-
-`b177fab5` in the worktree **`/tmp/wt-selidx`** (detached, rebased onto
-`8512a2f8`):
+## Landed as `618f7a16` (was: not landed — pick this up first)
 
 > `refactor(solver): name the constant-pin map for what it now holds`
 > `quant_uf_const_pins` -> `interface_const_pins`,
 > `pin_quantified_uf_const_arg` -> `pin_interface_const`, six files.
 
-Why it exists: the `quant_` meant *quantified* (the map was populated only for
-functions in `quantifier_uf_funcs`). Fix #2 gave it a second population that
-has nothing to do with quantifiers, so the name described half of it. It also
-moves a `trail.rs` comment that sat on the pin map but described
-`numarg_proxies`, and drops a dead `continue`.
-
-**Do not rename it to `qf_*`.** `QF_*` is the SMT-LIB *logic-name* pattern and
-appears in this repo only as string literals in `logic_contract.rs`; reading
-`quant_` as quantifier-free inverts the meaning.
-
-To land: `git -C /tmp/wt-selidx log -1`, confirm it still rebases onto `main`,
-then ff-merge. Delete the worktree afterwards (`git worktree remove`); its
-target dir was already cleaned.
+Landed on `main` directly from the primary checkout (the worktree
+`/tmp/wt-selidx` held a byte-identical copy; the worktree and its target dir
+are deleted). The `qf_*` renaming trap is recorded in the commit message:
+`QF_*` is the SMT-LIB logic-name pattern and appears in this repo only as
+string literals in `logic_contract.rs`; reading `quant_` as quantifier-free
+inverts the meaning.
 
 ## Verification status — read this carefully
 
@@ -98,12 +88,20 @@ five are the known-slow set (`scope_rebase_tests` x4,
 isolation, four passed; `odd_width_identity_pairs_hold` still hit the 180 s
 nextest cap, having passed at 135 s / 143 s / 153 s in three earlier runs.
 
-**Outstanding, and the first thing to do after landing:** re-run that one test
-on an idle machine. It is pure BV and the change only touches Int/Real-sorted
-constants, so a real interaction would be surprising — but it is not confirmed
-and should not be written up as if it were.
+**Was outstanding at handoff time, and the first thing to do after landing:**
+re-run that one test on an idle machine. It is pure BV and the change only
+touches Int/Real-sorted constants, so a real interaction would be surprising —
+but it is not confirmed and should not be written up as if it were.
 
-## The corpus check — NOT done
+**Confirmed 2026-09-15** (after landing `618f7a16`): the test binary built at
+HEAD, run directly with no nextest cap — **passed** in 679 s at load average
+58.8 falling to 21.5 on the 20-core box (the 135-153 s idle history plus that
+load is consistent). The test is deterministic (fixed-seed LCG), so the pass
+is load-independent and the 180 s cap was load, not regression — as
+suspected. Both halves of the known-slow five are now individually confirmed;
+nothing about this arc is unverified.
+
+## The corpus check — measured 2026-09-15
 
 Before fix #2, the 905-module corpus stood at (`run_fix.txt` in the session
 scratchpad):
@@ -116,23 +114,71 @@ prepared 228, checked at depth 4: 90
     of which decoded but not replayed:  2
 ```
 
-The two non-replays are `Rec3.tla` (`Next` from state 0 is FALSE — fix #2) and
-one `ASSUME` that exceeds the 4096-element set limit (not a wrong answer).
-**Expect 1, not 2, after fix #2** — `Rec3.tla` alone now reports *no
-counterexample of 3 step(s) or fewer*. The re-run was started and killed by
-machine memory pressure; it has not been measured.
+After fix #2 + the rename (measured on the tree at `5f495e55`, 2026-09-15
+00:11; the round-13 SAT work was in flight on other crates and touches
+neither the TLA front-end nor the array/arith path):
 
-Do measure it. This exact check is what caught a **false attribution** in
-study #1, which originally claimed `Rec3.tla` was one of the two specs that
-defect explained. It was not — it was defect #2 — and only the corpus re-run
-revealed it. That correction is recorded in both studies.
+```
+905 modules loaded, prepared 227, checked at depth 4: 90
+  no violation within the bound : 67   (was 66 — Rec3.tla moved here)
+  violations found              : 20   (was 21)
+    of which replayed end to end     : 19
+    of which decoded but not replayed:  1   (was 2 — the prediction held)
+  solver undecided              : 3
+```
 
-Runner: `bash <scratchpad>/corpus.sh > out.txt` after
-`cargo build --release -p nixie-tla-check --example bmccheck`. ~9 min idle.
+The one remaining non-replay is exactly the predicted non-defect:
+
+```
+1  did not replay: `ASSUME` #0 could not be evaluated: a set exceeded the limit of 4096 elements
+```
+
+`Rec3.tla` verified directly: `no-violation` at depth 4. The blocked-causes
+table also confirms the ranking corrections below: set-shaped causes
+47 + 11 + 10 + 4 = 72, `..` with a non-literal upper bound 22 — of which,
+as corrected, 17 have no `.cfg` at all, so refusing them is correct.
+
+**One caveat, stated precisely.** `prepared` reads 227 against the baseline's
+228; every *checked* tally (90 checked, 67/20/19/1/3) matches the prediction
+exactly, so the ±1 never reaches a checked specification. Investigated: the
+prepare path is byte-identical between the baseline tree and the measured tree
+(`nixie-tla-*` and `nixie-core` untouched in `bb71b91f..5f495e55`; encoding
+happens at `check`, not `prepare`), no corpus file changed on disk since
+before the baseline (`find -newermt` is empty), and 227 reproduces across two
+independent runs of this invocation. Two files fail to load under any search
+path tried (`test30-true.tla` declares `MODULE test31` under the wrong
+filename; `FoldDefined.tla` fails despite `Apalache.tla` itself loading), so
+the baseline's unrecoverable `corpus.sh` most plausibly differed from the
+reconstruction below by one file. Verdicts that were the point of the check
+are unaffected.
+
+This exact check is what caught a **false attribution** in study #1, which
+originally claimed `Rec3.tla` was one of the two specs that defect explained.
+It was not — it was defect #2 — and only the corpus re-run revealed it. That
+correction is recorded in both studies.
+
+The scratchpad (with `corpus.sh` and `run_fix.txt`) was cleaned up, so the run
+was reconstructed; the corpus is apalache + tlaplus-examples under
+`/media/data/proj/temp/` (907 `.tla` files, 905 modules loaded —
+communitymodules is **not** in it; adding it gives 983):
+
+```bash
+cargo build --release -p nixie-tla-check --example bmccheck
+export NIXIE_TLA_LIB=/media/data/proj/temp/apalache/test/tla:\
+:/media/data/proj/temp/communitymodules:/media/data/proj/temp/tlaplus-examples
+./target/release/examples/bmccheck \
+  $(find /media/data/proj/temp/apalache /media/data/proj/temp/tlaplus-examples \
+      -name '*.tla' | sort)
+```
+
+~9 min idle; 26 min at load average 50-70 (verdicts are conflict-bounded at
+20 000, so they are load-independent). Commit the runner next time instead of
+leaving it in a scratchpad — the ±1 above is what that omission cost.
 
 ## Open work, ranked
 
-1. **The corpus re-run and the one BV test** (above). Cheap, and closes this arc.
+1. ~~**The corpus re-run and the one BV test**~~ — **done 2026-09-15**, both
+   measured (see above); the arc is closed. Next: item 2.
 2. **`pete_5s` costs 5.5x** from fix #1 (3.16/3.16/3.35 s -> 17.61/17.63/18.29 s,
    n=3 each, settled load). Not volume — 101 trichotomy clauses over the whole
    run — but **202 unguided `lt`/`gt` atoms**, the free-comparator thrash the
