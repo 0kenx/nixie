@@ -133,12 +133,18 @@ Per `AGENTS.md` #2, fixing one layer proves nothing about the others.
 ## The cost, stated honestly
 
 `pete_5s` (QF_UFIDL, `arrangement_round_regressions`) still answers `unsat`,
-and goes from **3.1 s to 31.8 s** in a debug build. The cause is *not* clause
-volume: the instance gains **101** trichotomy clauses over its whole run. It
-is the 202 new `lt`/`gt` atoms, which arrive with no phase guidance and are
-free decision fodder — the same shape the injective-map A-family suppression
-was introduced for ("each free comparator-ish atom conflicts only at
-final_check, one arrangement per full re-descent").
+and gets **≈5.5× slower**: 3.16 / 3.16 / 3.35 s at the parent commit against
+17.61 / 17.63 / 18.29 s with the fix (debug build, n = 3 each, settled load,
+same checkout). Wall clock is a *reported* cost here, never a policy input;
+an earlier single reading of 31.8 s was taken while the machine was building
+under other agents and is discarded.
+
+The cause is *not* clause volume: the instance gains **101** trichotomy
+clauses over its whole run. It is the 202 new `lt`/`gt` atoms, which arrive
+with no phase guidance and are free decision fodder — the same shape the
+injective-map A-family suppression was introduced for ("each free
+comparator-ish atom conflicts only at final_check, one arrangement per full
+re-descent").
 
 This is a soundness fix, so the matched-null rule does not gate it (a wrong
 answer is a bug at n=1). The cost is real and is the follow-up:
