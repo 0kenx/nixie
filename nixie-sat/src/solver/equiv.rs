@@ -18,6 +18,91 @@ use super::*;
 use crate::literal::LBool;
 use smallvec::SmallVec;
 
+/// `NIXIE_ELS_CSR_SURGERY=1` (slice-5 experiment, developed inside the
+/// shadow): re-point the CSR shadow's watchers surgically at each ELS
+/// rewrite (retire/shrink) instead of letting the rebuild replace them —
+/// while the `Vec` side still rebuilds wholesale.  The rebuild's multiset
+/// oracle (`csr_multiset_compare`) then verifies the surgery produced
+/// exactly the entry SET the rebuild would have (order is allowed to
+/// differ: a production surgery is a screen-gated heuristic change, and
+/// the order-sensitive drift comparison resumes only after the layout is
+/// re-adopted).  Requires `NIXIE_CSR_SHADOW=1`.
+pub(super) fn els_surgery_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_ELS_CSR_SURGERY")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+impl Solver {
+    /// Whether CSR-surgery hooks are active (experiment gate: the flag AND
+    /// a live shadow).
+    pub(super) fn csr_surgery_on(&self) -> bool {
+        els_surgery_enabled() && self.watches.csr_active()
+    }
+
+    /// Arm watchers for a freshly added BVE resolvent (CSR-surgery
+    /// coverage): new clauses get no `Vec`-side watchers until the rebuild
+    /// re-arms everything, so the shadow must mirror that arming eagerly or
+    /// the multiset oracle reports them missing.  Watcher shape matches the
+    /// rebuild's fill for a live long clause.
+    pub(super) fn csr_surgery_arm_resolvent(
+        &mut self,
+        rid: crate::clause::ClauseId,
+        r: &[crate::literal::Lit],
+    ) {
+        if !self.csr_surgery_on() || r.len() < 3 {
+            return;
+        }
+        let Some(ref_) = self.clauses.ref_of(rid) else {
+            return;
+        };
+        self.watches
+            .csr_surgery_add(r[0].negate(), Watcher::new(rid, ref_, r[1]));
+        self.watches
+            .csr_surgery_add(r[1].negate(), Watcher::new(rid, ref_, r[0]));
+        self.csr_surgery_ops += 2;
+        self.csr_surgery_fired = true;
+    }
+
+    fn els_csr_surgery_shrink(
+        &mut self,
+        cid: ClauseId,
+        old: Option<(Lit, Lit, crate::memory::ClauseRef)>,
+    ) {
+        let Some((a, b, r)) = old else {
+            return;
+        };
+        let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) else {
+            return;
+        };
+        if c.lits.len() >= 3 && (c.lits[0], c.lits[1]) == (a, b) {
+            return; // watched pair unchanged by the rewrite
+        }
+        self.watches.csr_surgery_remove(a.negate(), r);
+        self.watches.csr_surgery_remove(b.negate(), r);
+        self.csr_surgery_ops += 2;
+        self.csr_surgery_fired = true;
+        if c.lits.len() >= 3 {
+            let (na, nb) = (c.lits[0], c.lits[1]);
+            self.watches
+                .csr_surgery_add(na.negate(), Watcher::new(cid, r, nb));
+            self.watches
+                .csr_surgery_add(nb.negate(), Watcher::new(cid, r, na));
+            self.csr_surgery_ops += 2;
+        }
+    }
+}
+
 /// Outcome of one substitution pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SubstOutcome {
@@ -210,6 +295,24 @@ impl Solver {
         let mut lits: Vec<Lit> = Vec::new();
 
         for cid in live_ids {
+            // ELS-rewatching surgery hook (NIXIE_ELS_CSR_SURGERY=1): capture
+            // the pre-rewrite watched pair so retire/shrink below can
+            // re-point the CSR shadow's watchers surgically (slice-5
+            // experiment; the Vec side is rebuilt wholesale as ground truth
+            // and the rebuild's multiset oracle checks the equivalence).
+            let surg_old = if els_surgery_enabled() && self.watches.csr_active() {
+                match (
+                    self.clauses
+                        .get(cid)
+                        .filter(|c| !c.deleted && c.lits.len() >= 3),
+                    self.clauses.ref_of(cid),
+                ) {
+                    (Some(c), Some(r)) => Some((c.lits[0], c.lits[1], r)),
+                    _ => None,
+                }
+            } else {
+                None
+            };
             // Rewrite semantics follow cadical `decompose.cpp` exactly:
             // evaluate every literal (and its representative) against the
             // level-0 trail while building the replacement clause –
@@ -259,6 +362,7 @@ impl Solver {
                 }
             }
             if satisfied {
+                // retire_clause's central hook drops the shadow watchers.
                 self.retire_clause(cid);
                 continue;
             }
@@ -288,6 +392,9 @@ impl Solver {
                 }
                 _ => {
                     self.clauses.shrink(cid, &lits);
+                    // After the shrink: the helper reads the rewritten
+                    // clause to decide the new watched pair.
+                    self.els_csr_surgery_shrink(cid, surg_old);
                 }
             }
         }
@@ -503,7 +610,14 @@ impl Solver {
         // included.  This is the empirical order-isomorphism proof the
         // dual-write scan exists to produce.
         #[cfg(feature = "std")]
-        if crate::watched::csr_shadow_enabled() && self.watches.csr_active() {
+        if crate::watched::csr_shadow_enabled()
+            && self.watches.csr_active()
+            // The ELS surgery experiment desynced the shadow's ORDER (the
+            // entry sets are compared by the multiset oracle below); the
+            // order-sensitive drift comparison resumes next rebuild, after
+            // the layout is re-adopted.
+            && !self.csr_surgery_fired
+        {
             let (lits, entries, bad) = self.watches.csr_drifted_compare(num_vars);
             eprintln!(
                 "[csr-shadow] drift@{}: lits={lits} entries={entries} mismatched={bad}",
@@ -514,7 +628,7 @@ impl Solver {
         // reconstruct the `Vec` lists wholesale and the fresh layout adopted
         // at the end replaces the shadow's baseline (mirroring the fill's
         // `add`s would double-maintain into a state that is discarded).
-        let _drifted_shadow = self.watches.csr_take();
+        let drifted_shadow = self.watches.csr_take();
         // Reuse the existing outer allocation (2026-09-12): a fresh
         // `WatchLists::new` allocated `2·num_vars` empty `Vec` headers every
         // rebuild (si2-class: 6 ELS rounds x ~2.6 M headers zeroed plus
@@ -664,6 +778,36 @@ impl Solver {
                 self.stats.conflicts,
                 t0.elapsed().as_micros()
             );
+            // The ELS surgery experiment's equivalence oracle: the shadow
+            // holds the SURGICALLY updated state; the Vec lists above hold
+            // the rebuilt ground truth.  Multiset equality per literal
+            // (order-insensitive — the production surgery accepts an
+            // order change, gated by the screen, not trajectory identity)
+            // proves the surgery produced exactly the rebuild's entry sets.
+            if self.csr_surgery_fired
+                && let Some(surg) = drifted_shadow.as_ref()
+            {
+                use crate::watched::ClauseAuditState;
+                let clauses = &self.clauses;
+                let (total, wrong_live, stale_dead) =
+                    self.watches.csr_surgery_contract_audit(surg, |off| {
+                        match crate::memory::ClauseRef::from_byte_offset(off) {
+                            Some(r) => match clauses.get_by_ref(r) {
+                                Some(c) if !c.deleted && c.lits.len() >= 3 => {
+                                    ClauseAuditState::LiveLong
+                                }
+                                _ => ClauseAuditState::DeadOrShort,
+                            },
+                            None => ClauseAuditState::DeadOrShort,
+                        }
+                    });
+                eprintln!(
+                    "[csr-surgery] oracle@{}: ops={} entries={total} live-with-wrong-count={wrong_live} stale-on-dead-or-short={stale_dead}",
+                    self.stats.conflicts, self.csr_surgery_ops
+                );
+                self.csr_surgery_fired = false;
+                self.csr_surgery_ops = 0;
+            }
             let mut adopted = crate::watched::CsrWatchLists::default();
             adopted.adopt_layout(csr);
             self.watches.csr_set(adopted);
