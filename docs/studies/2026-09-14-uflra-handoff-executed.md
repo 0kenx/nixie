@@ -192,7 +192,23 @@ incl. the UFLRA `misc/set*` and the AUFLIA Rodin tree). The
 `bench/z3_parity` suite (in-repo) is intact and was the verification
 gate. `set16` was reconstructed verbatim from this study's record and
 pinned as a test. The 150-file differential screen of the handoff could
-not be run as specified; substitute: the parity suite (177 files) plus
-the reconstruction probes above. Re-fetch SMT-LIB (StarExec space 239)
-before the next differential screen; `set9`/`set19` could not be
-reconstructed (content not recorded anywhere — only `set16` was).
+not be run as specified; **substitute screen (run post-landing with the
+`precompile/15fbf617` release binary, z3 4.16.0, 12 s budget)**: every
+in-repo `bench/{z3_parity/benchmarks,extended_theories,regression}`
+file — **224 files: 213 definitive agreements, 11 inconclusive
+(unknown/err on either side, in both directions), 0 wrong answers**.
+Re-fetch SMT-LIB (StarExec space 239) before the next prescribed screen;
+`set9`/`set19` could not be reconstructed (content not recorded
+anywhere — only `set16` was).
+
+## Post-landing record
+
+- Landed as `533ae756` (the unit) + `15fbf617` (clippy/fmt hygiene on
+  another agent's concurrent simplex landing: two needless `mut`,
+  formatting) after two rebases onto concurrently-moving `main`.
+- Release binaries cached: `precompile/533ae756/` and
+  `precompile/15fbf617/` (same build, exact-SHA entries).
+- The heaviest convergence pin carries a `terminate-after = 5` nextest
+  override (`.config/nextest.toml`), following the `pete_cxs_bp`
+  precedent: debug single-threaded 2m42s, but the full suite's parallel
+  load inflates wall time past the 3x60s default.
