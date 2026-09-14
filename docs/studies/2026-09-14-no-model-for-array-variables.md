@@ -1,6 +1,7 @@
 # An array-sorted variable has no value in the model
 
-**Status:** open gap in `nixie-solver`, found 2026-09-14.
+**Status:** **fixed** 2026-09-14, same day. Kept because both halves are
+worth having on record, and because the second half is subtler than it looks.
 **Severity:** `(get-value)` on an array term cannot answer; the `sat`/`unsat`
 verdict is unaffected.
 
@@ -43,24 +44,49 @@ only recovers points something asked about. A function `Init` pins with a store
 chain and the invariant never selects from is unrecoverable, and its trace
 cannot be replayed.
 
-Measured cost today: **none on the corpus** — all 19 reported violations are
-over scalar state, and 18 of them replay (the 19th is a resource limit, not
-this). The cost is on the shape rather than the count, and it is pinned by
-`nixie-tla-check/tests/traces.rs::a_function_built_by_init_is_not_replayable_yet`.
+Measured cost at the time: **none on the corpus** — all 19 reported violations
+were over scalar state. The cost was on the shape rather than the count, which
+is exactly why it was worth fixing before the shape arrived: sequences made it
+the difference between a trace and no trace.
+`nixie-tla-check/tests/traces.rs::a_function_built_by_init_decodes` and
+`a_sequence_valued_variable_decodes` are the regressions.
 
-## What the fix looks like
+## The fix
 
 Both halves, in `nixie-solver`:
 
-* Array model construction: give an array-sorted term a value — the natural one
-  is the store chain the theory already has, or a `FuncInterp` of explicit
-  points plus a default, which is what Z3 and CVC5 return for
-  `(get-value (as-array …))`.
-* `Model::eval`: add the `select`/`store` cases, reducing
-  `select(store(a, j, v), i)` to `v` when `i` and `j` are equal constants, to
-  `select(a, i)` when they are distinct constants, and leaving it alone when
-  neither can be decided. The frame machine already has the shape for a
-  two-child operator (`EqLhs` / `EqRhs`).
+* **Array model construction.** `build_model` already reads values out of
+  asserted equalities whose SAT variable is true; it now does so for an
+  array-sorted equality too, recording the `store` chain as the name's value.
+  The equality holds in this model, so the two sides denote the same array and
+  this states only what the query already forced. An occurs check declines a
+  name that appears in its own value.
+
+* **`Model::eval` learned `select` and `store`**, with the reduction walking a
+  chain: a write at an index *equal* to the one being read is the answer, a
+  write at a *different* index is skipped, and anything else stops the walk and
+  returns the `select` as itself — which is the honest answer for a point
+  nothing constrained.
+
+Two things about that walk were not obvious and cost a round each:
+
+1. **The chain's own indices must be evaluated as the walk reaches them.** A
+  chain that came from a model *assignment* is the raw term the assertion
+  pinned, so an index arrives as arithmetic — `Len(h) + 1`, not `2` — and would
+  match nothing.
+
+2. **The links must be resolved through the model too.** A chain is not one
+  nested `store`: each `Append` writes onto the *previous* sequence's graph, so
+  the base of one link is a name whose own chain is another model assignment.
+  Following those is the walk. Neither step recurses through the chain, because
+  `Model::eval` returns an assignment without descending into it.
+
+## What it unblocked
+
+TLA+ sequences, which are a length and a `store` chain, and with them the
+counterexamples of the specifications `intent` generates — where every
+behaviour carries a `history : Seq(Str)` grown by `Append`. Before this a trace
+for one of those could not be read back at all.
 
 ## Related
 

@@ -124,6 +124,13 @@ pub fn decode(
 /// user-written; bounded so a malformed one cannot spin.
 const MAX_DEPTH: usize = 64;
 
+/// How long a decoded sequence may be.
+///
+/// A model that says a sequence has a billion elements is not describing a
+/// state a bounded check reached; it is a value nothing constrained. Refused
+/// rather than materialised.
+const MAX_SEQ_LEN: usize = 4096;
+
 fn decode_at(
     term: TermId,
     sort: SortId,
@@ -172,6 +179,38 @@ fn decode_at(
                     "a string the model did not decide".into(),
                 )),
             }
+        }
+        // A **sequence** before a record, because a sequence is a datatype
+        // too — a length and an array — and `@sl`/`@sf` are reserved so the
+        // two cannot be confused. It decodes to a TLA+ tuple, which is what a
+        // sequence is.
+        SortKind::Datatype(_) if crate::sorts::seq_element(sort, tm).is_some() => {
+            let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+                return Err(DecodeError::Unsupported(
+                    "a sequence with no element sort".into(),
+                ));
+            };
+            let int = tm.sorts.int_sort;
+            let arr = tm.sorts.array(int, elem);
+            let len_t = tm.mk_dt_selector(crate::sorts::SEQ_LEN, term, int);
+            let Value::Int(len) = decode_at(len_t, int, None, model, tm, depth + 1)? else {
+                return Err(DecodeError::Undecided("a sequence length".into()));
+            };
+            // A negative or absurd length is not a sequence. Refused rather
+            // than clamped: a trace with a made-up length is a trace of a
+            // behaviour the specification does not have.
+            let n = usize::try_from(len)
+                .ok()
+                .filter(|n| *n <= MAX_SEQ_LEN)
+                .ok_or_else(|| DecodeError::Unsupported(format!("a sequence of length {len}")))?;
+            let fun = tm.mk_dt_selector(crate::sorts::SEQ_FUN, term, arr);
+            let mut items = Vec::with_capacity(n);
+            for i in 1..=n {
+                let idx = tm.mk_int(num_bigint::BigInt::from(i));
+                let at = tm.mk_select(fun, idx);
+                items.push(decode_at(at, elem, None, model, tm, depth + 1)?);
+            }
+            Ok(Value::Tuple(items))
         }
         // A tuple or a record. Which one is told by the selector names, not by
         // the sort: `crate::sorts` prefixes a tuple component `@t` and a record

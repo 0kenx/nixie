@@ -1831,6 +1831,7 @@ impl Solver {
                     self.mark_subsume_lits(r.iter());
                     let rid = self.clauses.add_original(r.iter().copied());
                     self.proof_set_clause_id(rid, pfid);
+                    self.csr_surgery_arm_resolvent(rid, r);
                     for &lit in r {
                         if ctx.lit_val(lit) == 0 {
                             let code = lit.code() as usize;
@@ -1844,6 +1845,7 @@ impl Solver {
                 }
             } else {
                 let rid = self.clauses.add_original(r.iter().copied());
+                self.csr_surgery_arm_resolvent(rid, r);
                 for &lit in r {
                     if ctx.lit_val(lit) == 0 {
                         let code = lit.code() as usize;
@@ -1916,6 +1918,18 @@ impl Solver {
     fn elim_retire_clause_lits(&mut self, ctx: &mut Eliminator, cid: ClauseId, lits: &[Lit]) {
         if self.clauses.get(cid).is_none_or(|c| c.deleted) {
             return;
+        }
+        // CSR-surgery coverage (NIXIE_ELS_CSR_SURGERY=1): retirements must
+        // drop the shadow's watchers for the pre-retire watched pair, or
+        // the rebuild's multiset oracle reports them as stale entries.
+        if self.csr_surgery_on()
+            && lits.len() >= 3
+            && let Some(r) = self.clauses.ref_of(cid)
+        {
+            self.watches.csr_surgery_remove(lits[0].negate(), r);
+            self.watches.csr_surgery_remove(lits[1].negate(), r);
+            self.csr_surgery_fired = true;
+            self.csr_surgery_ops += 2;
         }
         // Deletion lines need no justification in LRAT (they only shrink
         // the active set the checker propagates over), so retired
@@ -2023,6 +2037,27 @@ impl Solver {
             _ => {}
         }
         self.clauses.shrink(cid, &new_lits);
+        // CSR-surgery coverage: a strengthen that moves the watched pair
+        // must re-point the shadow's watchers (mirroring what subsume's
+        // rewatching strengthen already does through the watch API).
+        if self.csr_surgery_on()
+            && lits.len() >= 3
+            && let Some(r) = self.clauses.ref_of(cid)
+            && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
+            && (c.lits[0], c.lits[1]) != (lits[0], lits[1])
+        {
+            self.watches.csr_surgery_remove(lits[0].negate(), r);
+            self.watches.csr_surgery_remove(lits[1].negate(), r);
+            self.csr_surgery_ops += 2;
+            self.csr_surgery_fired = true;
+            if c.lits.len() >= 3 {
+                self.watches
+                    .csr_surgery_add(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
+                self.watches
+                    .csr_surgery_add(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
+                self.csr_surgery_ops += 2;
+            }
+        }
         // Recompute the stored LBD over the shrunken literal set (learned
         // clauses keep the `lbd <= len` invariant; originals have no LBD).
         if self.clauses.get(cid).is_some_and(|c| c.learned) {

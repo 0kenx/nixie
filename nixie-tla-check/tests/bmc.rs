@@ -299,19 +299,21 @@ Inv  == x < N
 /// assumptions means more states look reachable, so a `Violation` may be an
 /// artefact rather than a real trace.
 ///
-/// The unsortable constant here used to be a tuple. Tuples are datatypes now,
-/// so that assumption encodes; a **sequence** is the shape that still has no
-/// sort, and the test follows it rather than pretending the old one still
-/// fails.
+/// The unsortable constant here has been chased twice. It was a tuple until
+/// tuples became datatypes, then a sequence until sequences got a sort. What
+/// is left is an **open record** — one where inference only ever saw a field
+/// access, so the value may carry fields the type does not list — which is
+/// refused on purpose, because a datatype over the known fields would make two
+/// records that differ only in the rest compare equal.
 #[test]
 fn dropped_assumptions_are_counted_not_silent() {
     let src = r"
 ---- MODULE Dropped ----
-EXTENDS Integers, Sequences
-CONSTANT N, S
+EXTENDS Integers
+CONSTANT N, R
 VARIABLE x
 ASSUME N > 3
-ASSUME Len(S) = 2
+ASSUME R.f = 2
 Init == x = 0
 Next == x' = x
 Inv  == x < N
@@ -328,7 +330,7 @@ Inv  == x < N
     assert_eq!(
         bmc.dropped_assumptions(),
         1,
-        "an assumption over a sequence-typed constant has no sort and must be reported"
+        "an assumption over an open-record constant has no sort and must be reported"
     );
 }
 

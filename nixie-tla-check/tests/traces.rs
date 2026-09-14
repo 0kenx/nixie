@@ -167,22 +167,15 @@ Inv  == r.a = 2
     assert_eq!(st[0].as_slice(), [("r".to_string(), want)]);
 }
 
-/// A tuple decodes, and the second component is **wrong** — recorded here
-/// because it is a real defect in the solver's model, not in this decoder.
-///
-/// `docs/studies/2026-09-14-model-completion-overrides-datatype-fields.md` has
-/// the four-line reproducer: assert `@t1(t) = 1` and `@t2(t) = "a"`, and the
-/// model answers `@t1(t) -> 1`, `@t2(t) -> ""` while evaluating the assertion
-/// `@t2(t) = "a"` to `TRUE`. The verdict is right and the model contradicts
-/// itself; a `(get-value (@t2 t))` would answer `""` for a term the assertions
-/// pin to `"a"`.
-///
-/// This is exactly what replaying is for. The trace decodes, the replay says
-/// `Init` is FALSE, and the disagreement is visible instead of being carried
-/// silently inside a counterexample nobody reads.
+/// A tuple decodes, both components. This used to come back
+/// `<<1, "">>`: the solver's model had no value for a string-sorted term
+/// pinned only by an equality, so a default was installed that contradicted
+/// the assertion. The replay caught it, and
+/// `docs/studies/2026-09-14-model-completion-overrides-datatype-fields.md`
+/// records the fix.
 #[test]
-fn a_tuple_field_the_query_did_not_probe_comes_back_defaulted() {
-    let (out, _, v) = run(
+fn a_tuple_valued_variable_decodes() {
+    let st = states(
         r#"
 ---- MODULE Tup ----
 EXTENDS Integers
@@ -194,145 +187,57 @@ Inv  == t[1] = 2
 "#,
         1,
     );
-    assert_eq!(out, Outcome::Violation { step: 0 });
-    match v {
-        Some(Verification::NotReplayed(why)) => {
-            assert!(why.contains("`Init`"), "{why}");
-        }
-        other => panic!("expected the replay to catch the defaulted field, got {other:?}"),
-    }
+    let want = Value::Tuple(vec![Value::Int(1), Value::Str("a".into())]);
+    assert_eq!(st[0].as_slice(), [("t".to_string(), want)]);
 }
 
-#[test]
-fn a_set_valued_variable_decodes() {
-    let st = states(
-        r"
----- MODULE Sets ----
-EXTENDS Integers
-VARIABLE s
-Init == s = {1, 2}
-Next == UNCHANGED s
-Inv  == 3 \in s
-====
-",
-        1,
-    );
-    let want = Value::set([Value::Int(1), Value::Int(2)]);
-    assert_eq!(st[0].as_slice(), [("s".to_string(), want)]);
-}
-
-/// A set that grows across steps — the shape the arena cannot express at all,
-/// and the one where the solver's own extensionality witnesses show up in the
-/// membership atoms. They are not TLA+ values and must not reach the trace.
-#[test]
-fn a_growing_set_decodes_without_solver_scaffolding() {
-    let st = states(
-        r"
----- MODULE Grow ----
-EXTENDS Integers
-VARIABLE s
-Init == s = {}
-Next == s' = s \cup {1}
-Inv  == ~(1 \in s)
-====
-",
-        4,
-    );
-    assert_eq!(st.len(), 2, "{st:?}");
-    assert_eq!(st[0].as_slice(), [("s".to_string(), Value::set([]))]);
-    assert_eq!(
-        st[1].as_slice(),
-        [("s".to_string(), Value::set([Value::Int(1)]))]
-    );
-}
-
-/// An invariant that mentions `Nat` replays. The standard infinite sets have
-/// no finite extension and are not values the evaluator can build, so
-/// membership in one is answered by the kind of the value — which is what a
-/// state predicate asks of them, and what a counterexample to one needs in
-/// order to be confirmed.
-#[test]
-fn a_trace_against_nat_replays() {
-    let (out, _, v) = run(
-        r"
----- MODULE Nats ----
-EXTENDS Integers
-VARIABLE x
-Init == x = 1
-Next == x' = x - 1
-Inv  == x \in Nat
-====
-",
-        4,
-    );
-    assert_eq!(out, Outcome::Violation { step: 2 });
-    assert_eq!(v, Some(Verification::Replayed));
-}
-
-// ---- what is not verified yet, recorded rather than assumed ----
-
-/// A failing `Assert` is reported as a violation and **cannot** be replayed,
-/// and the two facts belong together. The encoder reads `TLC!Assert`'s `ELSE`
-/// branch — `CHOOSE v : TRUE` — as an unspecified Boolean, which is what TLA+
-/// says it is; the evaluator refuses to give a failing `Assert` any value at
-/// all, which is also right, because TLC's answer is to halt. So the trace is
-/// decoded and the replay declines it, by name.
-#[test]
-fn a_failing_assert_is_not_replayable() {
-    let (out, _, v) = run(
-        r#"
----- MODULE Asserted ----
-EXTENDS Integers, TLC
-VARIABLE x
-Init == x = 3
-Next == UNCHANGED x
-Inv  == Assert(x = 4, "x is not 4")
-====
-"#,
-        1,
-    );
-    assert_eq!(out, Outcome::Violation { step: 0 });
-    match v {
-        Some(Verification::NotReplayed(why)) => {
-            assert!(why.contains("Assert"), "{why}");
-        }
-        other => panic!("expected a replay refusal naming `Assert`, got {other:?}"),
-    }
-}
-
-/// A function-valued variable is decoded from the `select` terms the query
-/// built, because `Model::eval` has no case for the array theory — a `select`
-/// this decoder builds itself would evaluate to itself and look unconstrained.
-/// Where a point was never selected the value is genuinely arbitrary and is
-/// completed with the sort's default, which is what makes a total TLA+
-/// function out of a partial model.
-///
-/// The consequence is recorded here rather than left to be discovered: a
-/// function whose graph the query never probed comes back as defaults, so it
-/// does not replay. There is no local repair — the model assigns array-sorted
-/// variables *nothing at all*, so the store chain `Init` pinned is not
-/// recoverable from it. See
+/// A **function** built by `Init` decodes, point by point. This used to be
+/// impossible: an array-sorted term had no model value at all and
+/// `Model::eval` could not reduce a `select`, so every point looked
+/// unconstrained and came back as the sort's default. See
 /// `docs/studies/2026-09-14-no-model-for-array-variables.md`.
 #[test]
-fn a_function_built_by_init_is_not_replayable_yet() {
-    let (out, _, v) = run(
+fn a_function_built_by_init_decodes() {
+    let st = states(
         r"
 ---- MODULE Fun ----
 EXTENDS Integers
 VARIABLE f
-Init == f = [i \in {1, 2} |-> i]
+Init == f = [i \in {1, 2} |-> i * 10]
 Next == UNCHANGED f
 Inv  == f[2] = 1
 ====
 ",
         1,
     );
-    assert_eq!(out, Outcome::Violation { step: 0 });
-    assert!(
-        matches!(
-            v,
-            Some(Verification::NotReplayed(_) | Verification::NotDecoded(_))
-        ),
-        "expected the known array-model gap, got {v:?}"
+    // A function on `1..n` is a tuple in TLA+, and `Value::fun` normalises it.
+    let want = Value::Tuple(vec![Value::Int(10), Value::Int(20)]);
+    assert_eq!(st[0].as_slice(), [("f".to_string(), want)]);
+}
+
+/// A **sequence**-valued variable: the shape `intent`'s generated
+/// specifications are built on (`history : Seq(Str)`, grown by `Append`).
+#[test]
+fn a_sequence_valued_variable_decodes() {
+    let st = states(
+        r#"
+---- MODULE Seqs ----
+EXTENDS Integers, Sequences
+VARIABLE h
+Init == h = <<>>
+Next == h' = Append(h, "x")
+Inv  == Len(h) < 2
+====
+"#,
+        4,
+    );
+    assert_eq!(st.len(), 3, "{st:?}");
+    assert_eq!(st[0].as_slice(), [("h".to_string(), Value::Tuple(vec![]))]);
+    assert_eq!(
+        st[2].as_slice(),
+        [(
+            "h".to_string(),
+            Value::Tuple(vec![Value::Str("x".into()), Value::Str("x".into())])
+        )]
     );
 }

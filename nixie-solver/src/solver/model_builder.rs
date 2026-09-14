@@ -84,6 +84,69 @@ impl Solver {
             }
 
             if let Constraint::Eq(lhs, rhs) = constraint {
+                // An **array-sorted** equality: `x = (store … )`. Neither side
+                // is a constant in the arithmetic sense, so the code below
+                // skips it — and then nothing in the model answers for `x`,
+                // and every `select` through it is unreducible. That is what
+                // `docs/studies/2026-09-14-no-model-for-array-variables.md`
+                // recorded: an array-sorted variable had no value at all.
+                //
+                // The equality is assigned *true* in this model, so the two
+                // sides denote the same array and recording one as the other's
+                // value states exactly what the query already forced. It is
+                // not a literal, but `Model::eval` returns terms, and its
+                // `select`/`store` reduction is what turns it back into an
+                // element.
+                // A **string** equality, `x = "issued"`. The selection below
+                // recognises arithmetic, bit-vector and uninterpreted-function
+                // terms only, so a string-sorted name fell through and took a
+                // default of `""` later — a model value contradicting the very
+                // assertion that pinned it, which is what
+                // `docs/studies/2026-09-14-model-completion-overrides-\
+                // datatype-fields.md` recorded.
+                {
+                    let lit = |t: TermId| {
+                        manager
+                            .get(t)
+                            .is_some_and(|d| matches!(d.kind, TermKind::StringLit(_)))
+                    };
+                    let pair = match (lit(*lhs), lit(*rhs)) {
+                        (false, true) => Some((*lhs, *rhs)),
+                        (true, false) => Some((*rhs, *lhs)),
+                        _ => None,
+                    };
+                    if let Some((name, value)) = pair
+                        && model.get(name).is_none()
+                    {
+                        model.set(name, value);
+                        continue;
+                    }
+                }
+                if is_array_sorted(manager, *lhs) && is_array_sorted(manager, *rhs) {
+                    let written = |t: TermId| {
+                        manager
+                            .get(t)
+                            .is_some_and(|d| matches!(d.kind, TermKind::Store(..)))
+                    };
+                    let pair = if written(*rhs) {
+                        Some((*lhs, *rhs))
+                    } else if written(*lhs) {
+                        Some((*rhs, *lhs))
+                    } else {
+                        None
+                    };
+                    if let Some((name, value)) = pair
+                        && model.get(name).is_none()
+                        // `x = (store x i v)` would make evaluating `x`
+                        // descend into itself forever. A name that occurs in
+                        // its own value is left unassigned, which is the
+                        // answer it had before.
+                        && !occurs_in(manager, name, value)
+                    {
+                        model.set(name, value);
+                    }
+                    continue;
+                }
                 // Check if one side is a tracked variable and the other is a constant.
                 // Also handle Apply terms (uninterpreted function applications) that are
                 // not in arith_terms due to the restriction on Apply terms with arith args.
@@ -2535,4 +2598,51 @@ pub(crate) fn ground_default_term(manager: &mut TermManager, sort: SortId) -> Op
             value = Some(built);
         }
     }
+}
+
+/// Whether a term has an array sort.
+fn is_array_sorted(manager: &TermManager, t: TermId) -> bool {
+    manager.get(t).is_some_and(|d| {
+        matches!(
+            manager.sorts.get(d.sort).map(|s| &s.kind),
+            Some(nixie_core::SortKind::Array { .. })
+        )
+    })
+}
+
+/// Whether `needle` appears in the array structure of `haystack`.
+///
+/// Belt and braces. `Model::eval` reads an assignment and stops — it does not
+/// descend into it — so a self-referential value cannot make it recurse, and
+/// `select_in`'s walk is bounded anyway. This refuses to record one regardless,
+/// because a model entry that says a term is built from itself is not a value.
+///
+/// Walks only the ways an array term is formed, which is all that can be on
+/// the right of an array equality; anything else is a leaf.
+fn occurs_in(manager: &TermManager, needle: TermId, haystack: TermId) -> bool {
+    /// Past this, assume it might occur. Declining to assign is always safe:
+    /// the name keeps the value it had, which is none.
+    const BUDGET: usize = 100_000;
+    let mut seen: rustc_hash::FxHashSet<TermId> = rustc_hash::FxHashSet::default();
+    let mut stack = vec![haystack];
+    let mut budget = BUDGET;
+    while let Some(t) = stack.pop() {
+        if t == needle {
+            return true;
+        }
+        match budget.checked_sub(1) {
+            Some(b) => budget = b,
+            None => return true,
+        }
+        if !seen.insert(t) {
+            continue;
+        }
+        match manager.get(t).map(|d| d.kind.clone()) {
+            Some(TermKind::Store(a, i, v)) => stack.extend([a, i, v]),
+            Some(TermKind::Select(a, i)) => stack.extend([a, i]),
+            Some(TermKind::Ite(c, a, b)) => stack.extend([c, a, b]),
+            _ => {}
+        }
+    }
+    false
 }

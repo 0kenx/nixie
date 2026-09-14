@@ -483,7 +483,7 @@ impl Bmc {
             .chain(state_constraints.iter())
             .chain(action_constraints.iter())
         {
-            collect_empty_sets(root, &mut nodes);
+            collect_unsortable(root, &mut nodes);
         }
         for node in nodes {
             if let Some(id) = inf.node_ty(&node)
@@ -934,14 +934,20 @@ fn lower_one<'a>(
 /// Every empty-set literal reachable from `root`.
 ///
 /// Explicit stack and pointer-deduplicated: a lowered term is a shared DAG.
-fn collect_empty_sets(root: &KeraRef, out: &mut Vec<KeraRef>) {
+fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
     let mut seen: std::collections::HashSet<*const Kera> = std::collections::HashSet::new();
     let mut stack = vec![root.clone()];
     while let Some(t) = stack.pop() {
         if !seen.insert(std::rc::Rc::as_ptr(&t)) {
             continue;
         }
-        if matches!(t.as_ref(), Kera::SetEnum(xs) if xs.is_empty()) {
+        // `{}` is the motivating case — an empty set literal has no element
+        // to take a sort from. `<<…>>` is here for a different reason: a tuple
+        // literal *is* a sequence in TLA+, and which of the two it encodes to
+        // is a question only the inferred type can answer.
+        if matches!(t.as_ref(), Kera::SetEnum(xs) | Kera::Tuple(xs) if xs.is_empty())
+            || matches!(t.as_ref(), Kera::Tuple(_))
+        {
             out.push(t.clone());
         }
         stack.extend(t.as_ref().children().into_iter().cloned());

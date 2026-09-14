@@ -570,6 +570,13 @@ pub(crate) type PropagationParts<'a> = (
     &'a mut Option<CsrWatchLists>,
 );
 
+/// Clause state for the surgery contract audit ([`WatchLists::
+/// csr_surgery_contract_audit`]).
+pub(crate) enum ClauseAuditState {
+    LiveLong,
+    DeadOrShort,
+}
+
 impl WatchLists {
     pub(crate) fn propagation_parts(&mut self) -> PropagationParts<'_> {
         (
@@ -619,6 +626,75 @@ impl WatchLists {
         self.csr.is_some()
     }
 
+    /// CSR-only surgical removal (the ELS-rewatching experiment,
+    /// `NIXIE_ELS_CSR_SURGERY=1`): remove every entry with arena ref `r`
+    /// from `lit`'s combined view, touching ONLY the shadow — the `Vec`
+    /// side is rebuilt wholesale and serves as the experiment's ground
+    /// truth.  Order-preserving on both segments.
+    pub(crate) fn csr_surgery_remove(&mut self, lit: Lit, r: ClauseRef) {
+        if let Some(csr) = &mut self.csr {
+            csr.remove_clause(lit, r);
+        }
+    }
+
+    /// CSR-only surgical append (the ELS-rewatching experiment): the
+    /// arrival-order overflow push, shadow-only.
+    pub(crate) fn csr_surgery_add(&mut self, lit: Lit, w: Watcher) {
+        if let Some(csr) = &mut self.csr {
+            csr.push_overflow(lit, w);
+        }
+    }
+
+    /// The surgery experiment's equivalence oracle, per-clause contract
+    /// form: scan the detached (surgically updated) CSR once and count
+    /// watchers per arena ref.  The production surgery's invariant is that
+    /// every live long clause keeps exactly two live watchers (wherever
+    /// drift + surgery left them — the rebuild's re-normalization to
+    /// stored literal order is churn the surgery deliberately does NOT
+    /// reproduce) and every dead/binary clause keeps none.  Returns
+    /// `(total_entries, live_long_with_wrong_count, dead_or_short_with_entries)`.
+    pub(crate) fn csr_surgery_contract_audit(
+        &self,
+        csr: &CsrWatchLists,
+        mut clause_state: impl FnMut(usize) -> ClauseAuditState,
+    ) -> (usize, usize, usize) {
+        let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut total = 0usize;
+        let n = csr.span_start.len().max(csr.overflow.len());
+        for code in 0..n {
+            let lit = Lit::from_code(code as u32);
+            let (prim, extra) = csr.spans(lit);
+            total += prim.len() + extra.len();
+            for w in prim.iter().chain(extra.iter()) {
+                *counts.entry(w.r.byte_offset()).or_insert(0) += 1;
+            }
+        }
+        let mut wrong_live = 0usize;
+        let mut stale_dead = 0usize;
+        for (off, count) in counts {
+            match clause_state(off) {
+                ClauseAuditState::LiveLong => {
+                    if count != 2 {
+                        wrong_live += 1;
+                    }
+                }
+                ClauseAuditState::DeadOrShort => stale_dead += 1,
+            }
+        }
+        (total, wrong_live, stale_dead)
+    }
+
+    /// Order-insensitive (multiset) comparison of the shadow against the
+    /// live `Vec` lists — the surgery experiment's equivalence oracle.  The
+    /// order-sensitive drifted comparison cannot be used once surgery has
+    /// edited the shadow in drift order while the `Vec` rebuilt in id
+    /// order; a production surgery accepts (and screens) that order change,
+    /// so the oracle validates the ENTRY SETS per literal.
+    /// Returns `(literals, entries, mismatched_literals)`.
+    /// Compare the CSR shadow against the live lists, order-insensitively
+    /// (multiset of (ref, blocker) per literal) — see [`Self::csr_multiset_compare_with`].
+    /// (detached) CSR — the surgery experiment's oracle form: the rebuild
+    /// detaches the surgically-updated shadow at entry and compares it
     /// Compare the **drifted** shadow against the drifted `Vec` lists,
     /// entry-for-entry, order included (the dual-write validation; called
     /// at every watch rebuild before either representation resets).

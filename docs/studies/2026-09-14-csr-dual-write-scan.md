@@ -158,3 +158,49 @@ comparison then becomes an **exact equivalence oracle**: drift=0 ⟺
 the surgery produced precisely what the rebuild would have.  Develop
 and prove the surgery with the net up; only the *payoff* (deleting the
 rebuild) waits for slice 4.
+
+## Slice 5 started inside the shadow: the oracle works, and it found the
+real blocker — watch-position drift (`NIXIE_ELS_CSR_SURGERY=1`)
+
+The ELS-rewatching surgery was implemented on the shadow CSR (the
+design above): surgical hooks re-point the CSR's watchers at every
+clause mutation — the ELS rewrite loop's shrink, BVE's central
+`elim_retire_clause_lits` / `elim_shrink_clause` / resolvent arming,
+and the general `retire_clause` — while the `Vec` side still rebuilds
+wholesale as ground truth.  The rebuild runs a **contract oracle** on
+the detached surgical state: every live long clause must keep exactly
+two watchers, every dead/binary clause none (`csr_surgery_contract_audit`;
+the rebuild's re-normalization of untouched clauses to stored literal
+order is churn the surgery deliberately does not reproduce, so
+literal-granularity comparison is the wrong bar — the oracle design
+went through three refinements to learn that: (ref, blocker) multisets
+fail on blocker drift, ref multisets fail on the rebuild's
+re-normalization, the per-clause contract is the invariant that
+matters).
+
+**Findings, in order:**
+
+1. *The hooks' coverage is complete and their pair-tracking is exact
+   where pairs are normalized*: BVE-round rebuilds audit clean
+   (wrong-count 0, stale ≈ 0-100 of ~700 k entries).
+2. *The blocker is watch-position drift*: ELS rounds that follow a
+   search interval fail the audit massively — si2 `@6003` after 4 k
+   conflicts of drift: **158 465 live clauses with wrong watcher
+   counts** (entries 1.1 M vs ~700 k — pair-assumed removals miss the
+   actual watch positions, then fresh adds pile duplicates); 6s167
+   shows the same shape (7-11 k wrong-count at ELS rounds, 0 at
+   adjacent BVE rounds).  During search the BCP moves watches and only
+   re-normalizes *visited* clauses' stored order, so the assumption
+   "watched pair == (lits[0], lits[1])" decays for unvisited clauses —
+   exactly the normalization problem that sank the 2026-09-12 `Vec`
+   surgery, now measured precisely on the CSR.
+
+**The named next step for slice 5**: a ref → watched-positions index.
+The dual-write machinery already observes every position change (scan
+moves, repairs, attaches, removals), so maintaining the index there is
+natural; the surgery's removals then key on actual positions instead
+of assumed pairs.  The index's maintenance cost vs the rebuild's
+arena sweep is the real slice-5 economics — measure it before
+building the production surgery.  (The experiment ships default-off
+and the default path is bit-identical: 6s167 33 028 conflicts
+re-verified.)
