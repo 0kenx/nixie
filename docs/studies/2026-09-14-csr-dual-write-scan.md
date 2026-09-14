@@ -523,3 +523,42 @@ dead-Vec reads (`get` becomes a combined-view iteration in tests), and
 resume the deletion.  The backups of the attempt are NOT preserved
 (the tree is restored to flip-A, fully green: 1092 tests, 33 028); the
 roundtrip design is documented here and takes ~1 h to re-apply.
+
+## Commit B, second attempt: the divergence bisected to a single
+restart decision after the elim phase @4000 (parked again, precisely)
+
+The roundtrip was re-applied and the divergence chased with the
+propagation-ladder and elim-log diffs.  New facts, each narrowing:
+
+- The **extra originals are sweep witnesses** (a binary and a ternary
+  matching the sweep's equivalence-witness shapes) — but
+  `NIXIE_SWEEP=0` converges only up to ~5 k conflicts and diverges
+  later (73 400 vs 69 156), so the sweep amplifies but is not the
+  root.
+- The sweep's environment reader at `sweep.rs:1261` was still on the
+  dead `Vec` — fixed to `iter_combined` (this fix is correct for
+  flip-A too and landed separately).
+- The **propagation ladder** splits the trajectories inside the elim
+  phase at conflicts 4 000: identical through 3 950, ~3.3 k fewer
+  propagations inside the phase's own subsume/BVE rounds, **while every
+  logged round line matches** (same eliminations, same resolutions).
+- The first *post*-phase divergence is one extra `reused_trails`
+  (25 vs 26) — a single restart/trail-reuse decision fired
+  differently immediately after the phase.
+
+**The refined suspect class**: tick accounting or lazily-dead entry
+mass crossing the phase boundary — the phase's logged yields are
+identical, so the difference lives in *unlogged* state the restart
+schedule reads (tick totals, list-length charges).  Note the mirror
+world and the roundtrip world differ in exactly one observable here:
+the roundtrip's dematerialize compacts eagerly at scan end (kept
+prefix), while the mirror's Vec kept its pre-compaction length between
+the take and the put-back — any consumer of the length in that window
+(the tick charge is computed pre-scan, so that is *not* it; but the
+phase's inter-round consumers may read lengths between scans).
+
+Next session's entry: diff the tick counters (`ticks_focused`/
+`ticks_stable`) old-vs-new at conflicts 3 960/4 000/4 050, then
+instrument the first reused-trails decision's inputs.  The attempt's
+edits remain ~1 h to re-apply from this section + the previous one;
+the tree is restored to flip-A (green: 1092×2 configs, 33 028).
