@@ -281,3 +281,50 @@ purely economic and structural: the production surgery needs slice 4
 rebuild's watch half outright), and the cost model to beat is the
 touched-mass × span-scan vs the rebuild's arena sweep (the ops counters
 and entry counters landed here are the measurement instruments).
+
+## Slice 5 economics, measured: batched surgery is a wash on mass
+rewrites, a 46× win on sparse rounds (same day, fourth increment)
+
+Instrumentation (`csr_surgery_visits`/`csr_surgery_nanos` in the oracle
+line, against the same round's two-sweep `build=`us — the post-slice-4
+watch-rebuild cost):
+
+- **Per-ref removal (the first shape): 3–4× LOSS** on si2's mid-search
+  ELS rounds (525 ms vs 141 ms at `@4000`; 1.6 B entry visits).  Root
+  cause: ELS re-points every clause to its two *smallest-code* literals
+  — the densest lists in the formula (~1 800 entries) — and a span scan
+  per ref pays O(refs × span).
+- **The cure, measured feasible then built**: primary spans are
+  *strictly sorted by ref byte-offset* (verified 100 % of spans across
+  all rounds — the fill pushes in clause-id order, arena offsets
+  allocate monotonically, compaction preserves order), and better, the
+  removals can be **batched by literal**: collect `(ref, positions)`
+  from the index during the window, then one filtered pass per
+  *distinct* touched literal.  The batch collapsed the visits 1.6 B →
+  0.7 M (2 300×) and the time 525 → 129 ms.  One ordering bug the
+  oracle caught immediately: re-points must **defer their adds** until
+  after the removal flush (a re-point onto a literal the clause already
+  watches would have its fresh entry deleted by the batch) — fixed, all
+  audits green again.
+- **The verdict table** (si2, batched surgery vs two-sweep build):
+
+  | round | surgery | build | ratio |
+  |---|---|---|---|
+  | `@0` (pre-search, sparse) | 2.5 ms | 116 ms | **0.02 (46× win)** |
+  | `@4000`–`@20939` (mass ELS rewrites) | 80–129 ms | 64–112 ms | 0.96–1.37 (wash) |
+
+  On whole-formula rewrites the touched-literal mass *is* the whole
+  watch content, so the surgery's span passes and the rebuild's two
+  arena sweeps are the same work by construction — the wash is
+  structural, not tunable.  The sparse regime (subsume/BVE-class
+  rounds — ~8 of si2's 14 rebuilds) is where surgical re-pointing
+  pays, and it pays 46×.
+
+**Slice 5 closes with a complete measured map**: correctness proven
+(contract oracle green end-to-end), the production shape identified
+(batched-by-literal removal via the position index, deferred adds), and
+the economics bounded (wash on ELS, 46× on sparse mutators).  The
+payoff path runs through slice 4 (CSR-primary): wire the batched
+surgery into the sparse-mutator rebuilds (subsume/BVA/BVE rounds), keep
+the counting-sort rebuild for mass rewrites (ELS), and the ~5 % si2
+watch-rebuild cost splits into its efficient halves.

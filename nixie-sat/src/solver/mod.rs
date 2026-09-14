@@ -1922,6 +1922,15 @@ pub struct Solver {
     pub(super) els_surgery_window: bool,
     /// Surgical ops applied since the last rebuild (diagnostics only).
     pub(super) csr_surgery_ops: u64,
+    /// Batched surgery: removals collected during the ELS window, applied
+    /// once per round by `flush_csr_surgery` (one filtered pass per
+    /// distinct literal — the per-ref scan pays O(refs×span) on the
+    /// densest literals; the batch pays O(distinct spans)).
+    pub(super) csr_surgery_pending: Vec<(crate::memory::ClauseRef, smallvec::SmallVec<[u32; 2]>)>,
+    /// Deferred surgical adds (applied after the removal flush — a
+    /// re-point onto a literal the clause already watches must not have
+    /// its fresh entry deleted by the batch).
+    pub(super) csr_surgery_pending_adds: Vec<(crate::literal::Lit, crate::watched::Watcher)>,
     /// Conflict threshold for the next elimination phase (cadical `lim.elim`).
     pub(super) lim_elim: u64,
     /// Level-0 trail length at the last elimination phase (cadical
@@ -2413,6 +2422,8 @@ impl Solver {
             elim_bound: 0,
             elim_phases: 0,
             csr_surgery_fired: false,
+            csr_surgery_pending: Vec::new(),
+            csr_surgery_pending_adds: Vec::new(),
             els_surgery_window: false,
             csr_surgery_ops: 0,
             lim_elim: elim_interval,
@@ -4703,8 +4714,9 @@ impl Solver {
             && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
             && c.lits.len() >= 3
             && let Some(r) = self.clauses.ref_of(cid)
+            && let Some(pos) = self.watches.csr_positions_of(r)
         {
-            self.watches.csr_surgery_remove_clause(r);
+            self.csr_surgery_pending.push((r, pos));
             self.csr_surgery_ops += 1;
             self.csr_surgery_fired = true;
         }

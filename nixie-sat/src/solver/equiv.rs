@@ -58,16 +58,37 @@ impl Solver {
         if c.lits.len() >= 3 && (c.lits[0], c.lits[1]) == (a, b) {
             return; // watched pair unchanged by the rewrite
         }
-        self.watches.csr_surgery_remove_clause(r);
-        self.csr_surgery_ops += 1;
-        self.csr_surgery_fired = true;
+        let _ = (a, b);
+        if let Some(pos) = self.watches.csr_positions_of(r) {
+            self.csr_surgery_pending.push((r, pos));
+            self.csr_surgery_ops += 1;
+            self.csr_surgery_fired = true;
+        }
         if c.lits.len() >= 3 {
             let (na, nb) = (c.lits[0], c.lits[1]);
-            self.watches
-                .csr_surgery_add(na.negate(), Watcher::new(cid, r, nb));
-            self.watches
-                .csr_surgery_add(nb.negate(), Watcher::new(cid, r, na));
+            // Deferred: applied after the removal flush (a re-point onto a
+            // literal the clause already watches must survive the batch).
+            self.csr_surgery_pending_adds
+                .push((na.negate(), Watcher::new(cid, r, nb)));
+            self.csr_surgery_pending_adds
+                .push((nb.negate(), Watcher::new(cid, r, na)));
             self.csr_surgery_ops += 2;
+        }
+    }
+
+    /// Apply the window's collected removals batched by literal (the
+    /// production surgery shape), THEN the deferred adds — order is
+    /// load-bearing (see the pending-adds field).
+    fn flush_csr_surgery(&mut self) {
+        if !self.csr_surgery_pending.is_empty() {
+            let pending = std::mem::take(&mut self.csr_surgery_pending);
+            self.watches.csr_surgery_flush(&pending);
+        }
+        if !self.csr_surgery_pending_adds.is_empty() {
+            let adds = std::mem::take(&mut self.csr_surgery_pending_adds);
+            for (lit, w) in adds {
+                self.watches.csr_surgery_add(lit, w);
+            }
         }
     }
 }
@@ -372,6 +393,9 @@ impl Solver {
             }
         }
 
+        // Batched surgical removals: one filtered pass per distinct literal
+        // while still inside the scan-free window.
+        self.flush_csr_surgery();
         self.els_surgery_window = false;
         // ======== Record model-reconstruction map + branching-skip flag. ========
         // `equiv_substitution[v]` is the CUMULATIVE representative literal for
@@ -798,6 +822,16 @@ impl Solver {
                 eprintln!(
                     "[csr-surgery] index: refs={irefs} with-missing-positions={imissing} with-stale-positions={istale}"
                 );
+                eprintln!(
+                    "[csr-surgery] economics: surgery={}us ({} entry visits) vs rebuild-build={}us",
+                    self.watches.csr_surgery_nanos / 1000,
+                    self.watches.csr_surgery_visits,
+                    t0.elapsed().as_micros()
+                );
+                let (sorted, total) = surg.span_sortedness();
+                eprintln!("[csr-surgery] spans sorted-by-ref: {sorted}/{total}");
+                self.watches.csr_surgery_visits = 0;
+                self.watches.csr_surgery_nanos = 0;
                 self.csr_surgery_fired = false;
                 self.csr_surgery_ops = 0;
             }
