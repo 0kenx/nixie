@@ -66,6 +66,13 @@ pub struct CompletedModel {
     /// Frozen ground-universe views (see [`Self::ground_universe`]):
     /// computed once at completion, after the universes are final.
     pub ground_universes: FxHashMap<SortId, Vec<TermId>>,
+    /// Every tracked quantifier's bound-variable name, frozen with the
+    /// ground universes.  A `Var` term is an *artifact* exactly when its
+    /// name is one of these (the encoder's stray binder constants): free
+    /// constants are legitimate elements, quantifier strays are not, and
+    /// the same rule governs the universe filter, the entry harvest, and
+    /// the falsifier-mining evaluation's symbolic set.
+    pub bound_var_names: FxHashSet<Spur>,
     /// The defining quantifier behind each solved macro's *winning*
     /// definition (quantifier term -> functions it defines).  Certifying
     /// that quantifier against the completed model also certifies its
@@ -88,6 +95,7 @@ impl CompletedModel {
             defaults: FxHashMap::default(),
             macros: FxHashMap::default(),
             ground_universes: FxHashMap::default(),
+            bound_var_names: FxHashSet::default(),
             macro_sources: FxHashMap::default(),
             generation: 0,
         }
@@ -127,6 +135,7 @@ impl CompletedModel {
         if let Some(frozen) = self.ground_universes.get(&sort) {
             return Some(frozen.clone());
         }
+        let names = &self.bound_var_names;
         self.universe(sort).map(|universe| {
             universe
                 .iter()
@@ -137,9 +146,10 @@ impl CompletedModel {
                     )
                     .iter()
                     .any(|&v| {
-                        manager
-                            .get(v)
-                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                        manager.get(v).is_some_and(|n| match n.kind {
+                            TermKind::Var(name) => names.contains(&name),
+                            _ => false,
+                        })
                     })
                 })
                 .collect()
@@ -157,7 +167,26 @@ impl CompletedModel {
     /// the defining pins) reach it per function, per quantifier, per round —
     /// far too hot to recompute per call.  Call once, after the last
     /// mutation of `universes` (the completion's step 9 does).
-    pub fn freeze_ground_universes(&mut self, manager: &TermManager) {
+    pub fn freeze_ground_universes(
+        &mut self,
+        quantifiers: &[QuantifiedFormula],
+        manager: &TermManager,
+    ) {
+        self.bound_var_names = quantifiers
+            .iter()
+            .flat_map(|q| q.bound_vars.iter().map(|(n, _)| *n))
+            .collect();
+        let names = self.bound_var_names.clone();
+        let is_artifact = |element: TermId| {
+            nixie_core::ast::traversal::collect_free_vars_including_patterns(element, manager)
+                .iter()
+                .any(|&v| {
+                    manager.get(v).is_some_and(|n| match n.kind {
+                        TermKind::Var(name) => names.contains(&name),
+                        _ => false,
+                    })
+                })
+        };
         let sorts: Vec<SortId> = self.universes.keys().copied().collect();
         for sort in sorts {
             let Some(universe) = self.universes.get(&sort) else {
@@ -166,19 +195,36 @@ impl CompletedModel {
             let ground: Vec<TermId> = universe
                 .iter()
                 .copied()
-                .filter(|&element| {
-                    !nixie_core::ast::traversal::collect_free_vars_including_patterns(
-                        element, manager,
-                    )
-                    .iter()
-                    .any(|&v| {
-                        manager
-                            .get(v)
-                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
-                    })
-                })
+                .filter(|&element| !is_artifact(element))
                 .collect();
             self.ground_universes.insert(sort, ground);
+        }
+    }
+
+    /// Drop every entry whose arguments mention a tracked bound-variable
+    /// name: such an entry is an encoding artifact (the encoder
+    /// internalizes quantified bodies with their binders as constants,
+    /// and the ground model's assignment rows for those applications are
+    /// harvested as *wildcard* entries — `[x, y] -> v` matches every
+    /// application and poisons the completion: it survived the falsifier
+    /// substitution in the 2026-09-14 false-`sat` and fabricated chain
+    /// conditions).  Call after `freeze_ground_universes` sets the names.
+    pub fn drop_artifact_entries(&mut self, manager: &TermManager) {
+        let names = self.bound_var_names.clone();
+        let is_artifact_args = |args: &[TermId]| {
+            args.iter().any(|&a| {
+                nixie_core::ast::traversal::collect_free_vars_including_patterns(a, manager)
+                    .iter()
+                    .any(|&v| {
+                        manager.get(v).is_some_and(|n| match n.kind {
+                            TermKind::Var(name) => names.contains(&name),
+                            _ => false,
+                        })
+                    })
+            })
+        };
+        for interp in self.function_interps.values_mut() {
+            interp.entries.retain(|e| !is_artifact_args(&e.args));
         }
     }
 
@@ -601,8 +647,15 @@ impl ModelCompleter {
 
         // Step 9: freeze the ground-universe views (the universes are
         // immutable from here on; the model only ever crosses rounds by
-        // value).
-        completed.freeze_ground_universes(manager);
+        // value).  The artifact filter is by bound-variable NAME: a free
+        // constant is a legitimate element, a quantifier's stray encoding
+        // constant is not.  The same name set drives the entry harvest
+        // filter (step 9b).
+        completed.freeze_ground_universes(quantifiers, manager);
+        // Step 9b: drop artifact-keyed (wildcard) entries — the
+        // encoder's binder-constant application rows poison the
+        // completion (see `drop_artifact_entries`).
+        completed.drop_artifact_entries(manager);
 
         Ok(completed)
     }
