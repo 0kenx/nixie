@@ -385,3 +385,35 @@ fn tautological_antecedent_instance_becomes_a_forcing_unit() {
         "the instance at z := 0 must force (g 0) against (not (g 0))"
     );
 }
+
+/// The `quant_fuzz` false-`unsat` (2026-09-14, found within 120 generated
+/// cases): a tautological-antecedent axiom over two disequal constants,
+/// where the falsifier miner's *substituted completed body* bakes in the
+/// entry-chain conditions — one of which is the asserted
+/// `(not (= c1 c0))`.  The (now removed) blocking-clause emission
+/// recorded that disequality as a "commitment" and blocked it, asserting
+/// `c1 = c0` against the assertion — instant refutation of a goal whose
+/// only models keep the constants distinct (z3: `sat`).  The verdict must
+/// never be `unsat`.
+#[test]
+fn tautological_axiom_over_disequal_constants_is_never_unsat() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort S 0)
+        (declare-fun c0 () S)
+        (declare-fun c1 () S)
+        (declare-fun P (S S) Bool)
+        (declare-fun M (Real S) Bool)
+        (assert (P c1 c0))
+        (assert (forall ((x S) (y S))
+          (=> (forall ((z S)) (=> (not (P y y)) (not (P y y)))) (P x y))))
+        (assert (not (= c1 c0)))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "sat" || status == "unknown",
+        "the axiom's antecedent is valid, so P is forced everywhere — satisfiable \
+         with c0 != c1 (z3: sat); got {status}"
+    );
+}

@@ -308,7 +308,7 @@ impl MBQIIntegration {
                     let MinedFalsifier {
                         substitution,
                         commitments,
-                        fully_pinned,
+                        ..
                     } = falsifier;
                     if let Some(ground_body) =
                         self.apply_substitution(quantifier, substitution, manager)
@@ -331,29 +331,28 @@ impl MBQIIntegration {
                             // (the check paid for itself).
                             self.model_checker.mark_productive(quantifier.term);
                             veto = false;
-                        } else if *fully_pinned && !commitments.is_empty() {
-                            // Z3's `add_blocking_clause`, adapted: the
-                            // falsifier's evaluation consumed only the
-                            // recorded ground commitments, so this exact
-                            // value arrangement demonstrably fails the
-                            // quantifier — exclude it from the next
-                            // candidate model.  The next model must differ
-                            // in at least one commitment: either produce
-                            // the witness a committed-false dodge claims,
-                            // or flip the commitment.  (Falsifiers that
-                            // leaned on a free completion choice — `else`,
-                            // macro, universe — carry no clause: their
-                            // repair is a completion revision, and blocking
-                            // the ground-visible part could exclude a
-                            // genuine solution.)
-                            self.model_repair_clauses.push(commitments.clone());
-                            if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-                                eprintln!(
-                                    "[mc] model repair: blocked {} commitments on duplicate falsifier of q={:?}",
-                                    commitments.len(),
-                                    quantifier.term
-                                );
-                            }
+                        } else if !commitments.is_empty() {
+                            // NOTE: a blocking clause over the falsifier's
+                            // recorded commitments was emitted here and is
+                            // REMOVED: the mining pass evaluates the
+                            // *substituted completed body*, whose ite-chains
+                            // already bake in completion choices (else
+                            // leaves, entry conditions), and those choices
+                            // are not flagged in that pass — while
+                            // chain-condition atoms that ARE asserted
+                            // constraints (`(not (= c1 c0))`) get recorded
+                            // as "commitments".  Blocking such an
+                            // arrangement asserts `c1 = c0` and refutes the
+                            // goal outright (the quant_fuzz false-`unsat`,
+                            // pinned by
+                            // `tautological_axiom_over_disequal_constants_is_sat`).
+                            // Z3's `add_blocking_clause` blocks on the AUX
+                            // context's *Skolem values* — a context where
+                            // blocking only diversifies the falsifier
+                            // search — never on main-solver commitments.
+                            // The commitment recording stays (diagnostics;
+                            // a future aux-side port may use it), but no
+                            // clause is ever emitted from it.
                         }
                     }
                 }
