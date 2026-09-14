@@ -223,9 +223,11 @@ search that would actually close the set family must be built
 monotonically, every certification against the current one) — recorded
 as a design requirement for that project.
 
-Landed as the follow-up commit; pins 9/9 (194s group, 3m00s heaviest
-single-threaded — within the unit's band, trajectory chaos), parity
-176/1/0, all 51 quantifier regressions pass.
+Landed as the follow-up commit (`ea461630`); pins 9/9 (194s group, 3m00s
+heaviest single-threaded — within the unit's band, trajectory chaos),
+parity 176/1/0, all 51 quantifier regressions pass, and the 224-file
+substitute differential re-run with the new release binary: **0 wrong
+answers** (213 agree / 11 inconclusive).
 
 ## Post-landing record
 
