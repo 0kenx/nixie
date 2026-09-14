@@ -331,6 +331,12 @@ quant_fuzz screen runs **CLEAN** (133 sat + 114 unsat decisive, 0
 disagreements), parity 176/1/0, pins 9/9, 52 quantifier regressions
 pass.
 
+Post-fix multi-seed evidence: seeds {41..46} x 300 cases against the
+landed `precompile/ae6cea17` release binary — **1800 generated goals,
+0 disagreements** (~1300 decisive verdicts matched; ~23% honest
+`unknown`).  The generator skews sat-heavy (z3: ~195 sat / ~103 unsat
+per 300) — a future unsat-forcing shape family would balance it.
+
 Lesson recorded: the two soundness shapes this arc (the else-revision
 divergence, this commitment blocking) were both in *my own* additions,
 both found by differential screens, and both resolved by removal rather
