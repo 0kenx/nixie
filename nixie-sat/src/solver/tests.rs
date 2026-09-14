@@ -1,3 +1,4 @@
+use super::equiv::SubstOutcome;
 use super::*;
 
 #[test]
@@ -2812,4 +2813,206 @@ fn big_overfilling_a_span_cannot_overwrite_its_neighbor() {
     }));
     assert!(result.is_err());
     assert_eq!(graph.iter().collect::<Vec<_>>(), before);
+}
+
+// ===========================================================================
+// Elimination-reintroduction soundness (2026-09-14/15, the Rodin
+// invalid-model root cause). CDCL(T) refinement loops add original clauses
+// between `solve_with_theory` rounds; destructive eliminations whose model
+// reconstruction promises something about the future clause set must detect
+// a reintroduced mention and restore the retired clauses
+// (`void_elimination_promises`), and every grown elimination map must keep
+// new variables at identity. One regression per defect layer, so an outer
+// fix cannot hide an inner one.
+// ===========================================================================
+
+/// Checks a total model against a list of original clauses (DIMACS).
+fn assert_model_satisfies(solver: &Solver, clauses: &[&[i32]], ctx: &str) {
+    for clause in clauses {
+        let satisfied = clause.iter().any(|&d| {
+            let lit = Lit::from_dimacs(d);
+            match solver.model_value(lit.var()) {
+                LBool::True => lit.is_pos(),
+                LBool::False => lit.is_neg(),
+                LBool::Undef => false,
+            }
+        });
+        assert!(
+            satisfied,
+            "{ctx}: model {:?} violates original clause {clause:?}",
+            (0..solver.num_vars())
+                .map(|i| solver.model_value(Var::new(i as u32)))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+/// Layer 1 — the pure-literal pin. A pure-positive variable is eliminated
+/// (clauses deleted, reconstruction pin recorded); the refinement loop then
+/// reintroduces the opposite polarity. The pin alone is no longer a sound
+/// reconstruction: pinning `x` true falsifies the reintroduced clause, while
+/// unpinning without restoring the deleted clauses could falsify those. The
+/// gatekeeper must void the pin *and* re-assert the deleted clauses, and the
+/// final model must satisfy the whole input.
+///
+/// Regression shape of Rodin/smt3878551918658299427 (invalid `Sat` witness:
+/// model forced `x` true against a live `(¬x ∨ y)` an instantiation lemma
+/// had reintroduced).
+#[test]
+fn pure_literal_pin_is_voided_and_restored_on_reintroduction() {
+    let mut solver = Solver::new();
+    let _x = solver.new_var(); // var 0
+    let _a = solver.new_var(); // var 1
+    let _b = solver.new_var(); // var 2
+    let _c = solver.new_var(); // var 3
+
+    // Phase 1: x occurs only positively.
+    solver.add_clause_dimacs(&[1, 2]); // x ∨ a
+    solver.add_clause_dimacs(&[1, 3]); // x ∨ b
+    solver.inprocess();
+    assert!(
+        solver
+            .pure_literal_reconstruction
+            .contains(&Lit::pos(Var::new(0))),
+        "fixture must actually eliminate x as pure"
+    );
+    assert_eq!(solver.pure_literal_reconstruction.len(), 1);
+    assert!(
+        solver
+            .pure_deleted_clauses
+            .iter()
+            .any(|(pin, retired)| *pin == Lit::pos(Var::new(0)) && retired.len() == 2),
+        "the pin must carry its two retired clauses"
+    );
+
+    // Phase 2 (refinement-loop shape): a later lemma reintroduces ¬x and the
+    // rest of the formula forces x = false (c = false).
+    assert!(solver.add_clause_dimacs(&[-1, 4])); // ¬x ∨ c
+    assert!(solver.add_clause_dimacs(&[-4])); // ¬c  ⇒ x = false
+    assert!(
+        !solver
+            .pure_literal_reconstruction
+            .contains(&Lit::pos(Var::new(0))),
+        "the opposite-polarity mention must void the pin"
+    );
+
+    let mut theory = NullTheory;
+    assert_eq!(solver.solve_with_theory(&mut theory), SolverResult::Sat);
+    // x = false (forced by ¬c through the reintroduced clause); the restored
+    // (x ∨ a), (x ∨ b) then force a = b = true.
+    assert!(solver.model_value(Var::new(0)).is_false());
+    assert!(solver.model_value(Var::new(1)).is_true());
+    assert!(solver.model_value(Var::new(2)).is_true());
+    assert!(
+        solver.model_value(Var::new(3)).is_false(),
+        "¬c was asserted; the model must not toggle c"
+    );
+    let cs: [&[i32]; 4] = [&[1, 2], &[1, 3], &[-1, 4], &[-4]];
+    assert_model_satisfies(&solver, &cs, "pure-pin reintroduction");
+}
+
+/// The pin's own polarity must NOT void it: a clause mentioning `+x` is
+/// satisfied by the pinned value forever, so no restoration is needed and
+/// the pin stays.
+#[test]
+fn pure_literal_pin_survives_own_polarity_mention() {
+    let mut solver = Solver::new();
+    let _x = solver.new_var(); // var 0
+    let _a = solver.new_var(); // var 1
+    solver.add_clause_dimacs(&[1, 2]); // x ∨ a
+    solver.inprocess();
+    assert!(
+        solver
+            .pure_literal_reconstruction
+            .contains(&Lit::pos(Var::new(0)))
+    );
+    solver.add_clause_dimacs(&[1, -2]); // mentions +x only
+    assert!(
+        solver
+            .pure_literal_reconstruction
+            .contains(&Lit::pos(Var::new(0))),
+        "own-polarity mention must keep the pin"
+    );
+    let mut theory = NullTheory;
+    assert_eq!(solver.solve_with_theory(&mut theory), SolverResult::Sat);
+    assert!(solver.model_value(Var::new(0)).is_true());
+    let cs: [&[i32]; 2] = [&[1, 2], &[1, -2]];
+    assert_model_satisfies(&solver, &cs, "pin own-polarity");
+}
+
+/// Layer 3 — the ELS substitution map's grown tail. Variables created after
+/// the first substitution round must start at identity in
+/// `equiv_substitution`; the old uniform resize fill marked every one of
+/// them as folded into the fill's variable, fabricating equivalence
+/// obligations (walk toggles against live clauses), skipping them in
+/// branching, and rewriting their later mentions into a foreign variable.
+#[test]
+fn equiv_substitution_grown_tail_stays_identity() {
+    let mut solver = Solver::new();
+    let _x0 = solver.new_var(); // var 0
+    let _x1 = solver.new_var(); // var 1
+    // Round-1 equivalence x0 ≡ x1 (both implications).
+    solver.add_clause_dimacs(&[-1, 2]);
+    solver.add_clause_dimacs(&[1, -2]);
+    assert_eq!(
+        solver.substitute_equivalent_literals_round(),
+        SubstOutcome::Ok
+    );
+    assert!(
+        solver.var_eliminated(Var::new(0)) || solver.var_eliminated(Var::new(1)),
+        "fixture must actually fold one of x0/x1"
+    );
+
+    // Variables created after the round (the refinement loop does this
+    // constantly): a *victim* constrained by ordinary clauses, and a fresh
+    // equivalence pair so the second round actually composes (it early-outs
+    // when nothing moves, and the compose step is where the map grows).
+    let x2 = solver.new_var(); // var 2 — the victim
+    let _x3 = solver.new_var(); // var 3
+    let _x4 = solver.new_var(); // var 4
+    let _x5 = solver.new_var(); // var 5
+    solver.add_clause_dimacs(&[3, 6]); // x2 ∨ x5
+    solver.add_clause_dimacs(&[-6]); // ¬x5 ⇒ x2 = true
+    solver.add_clause_dimacs(&[-4, 5]); // ¬x3 ∨ x4
+    solver.add_clause_dimacs(&[4, -5]); // x3 ∨ ¬x4   (x3 ≡ x4)
+
+    // Second round over the grown formula: the map must grow to identity.
+    assert_eq!(
+        solver.substitute_equivalent_literals_round(),
+        SubstOutcome::Ok
+    );
+    assert!(
+        !solver.var_eliminated(x2),
+        "a never-equated new variable must not read as eliminated"
+    );
+    assert_eq!(
+        solver.equiv_substitution.get(2),
+        Some(&Lit::pos(Var::new(2))),
+        "the grown tail must be identity, not the resize fill value"
+    );
+
+    // The fabricated-obligation symptom: x2 is forced true by (x2 ∨ x5) ∧
+    // ¬x5, and the model must keep it — a false value is a fabricated
+    // equivalence obligation toggling x2 onto the fill variable's value.
+    solver.add_clause_dimacs(&[-1]); // pin x0's class false for determinism
+    let mut theory = NullTheory;
+    assert_eq!(solver.solve_with_theory(&mut theory), SolverResult::Sat);
+    assert!(
+        solver.model_value(x2).is_true(),
+        "x2 is forced true by (x2 ∨ x5) ∧ ¬x5; a false value is a fabricated \
+         equivalence obligation toggling it"
+    );
+    assert_model_satisfies(
+        &solver,
+        &[
+            &[-1, 2],
+            &[1, -2],
+            &[3, 6],
+            &[-6],
+            &[-4, 5],
+            &[4, -5],
+            &[-1],
+        ],
+        "els grown tail",
+    );
 }

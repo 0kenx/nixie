@@ -379,3 +379,97 @@ commit `6be6cc25` ("reported rather than fixed: the arithmetic subsystem is
 another agent's territory"). This document is the fix's record; the original
 reproducer lives on as `nixie-tla-check/examples/widerepro.rs`, whose five
 wide-literal cases now all print `Unsat (correct)`.
+
+## Continuation 6 (2026-09-15): item 17 closed — the snapshot divergence was elimination-reintroduction, three layers deep
+
+The SAT-core snapshot divergence (item 17) is root-caused and fixed. The
+guard-time trail and the panic-time trail never disagreed — the divergence
+was between the *trail* (which satisfied every live clause) and the *model*
+`save_model` wrote: its pure-literal phase had pinned var 1778 to the
+polarity recorded when inprocessing eliminated it mid-search, and a clause
+added *after* that elimination (an MBQI instantiation lemma, `(¬g ∨ body)`,
+from `check_core`'s refinement loop) reintroduced the opposite polarity
+`¬x1778`. The pinned model violated live original clause 38293
+`(¬x1778 ∨ x11767)`. Release behavior: an invalid `sat` witness handed to
+the theory layer. Three layers, each with its own defect and regression:
+
+18. **Pure-literal pins are voided and their clauses restored on
+    remention.** Pure-literal elimination deletes clauses on a promise
+    about the *future clause set* ("no live clause carries the opposite
+    polarity"). CDCL(T) refinement breaks that promise between
+    `solve_with_theory` rounds; `save_model`'s unconditional pin then
+    forces the variable against a live clause. Fix (`nixie-sat`):
+    `add_clause` (and the assumptions intake) detects the opposite-polarity
+    mention, drops the pin, and **re-asserts every clause the pass retired**
+    through the full `add_clause` machinery — fresh ids, watches, proof
+    lines, unit/conflict handling — restoring exactly the information the
+    deletion removed. This is the sibling of the ELS gatekeeper
+    (`resolve_reintroduced_literal`, the SK-1 fix) which already existed for
+    ELS-folded variables; pure literals simply never got one. Unpinning
+    without restoring is unsound (the deleted clauses lose their
+    guarantee); pinning-as-unit is unsound too (a later opposite clause
+    would yield false `unsat`). Only restoration preserves decidability.
+    Regression: `pure_literal_pin_is_voided_and_restored_on_reintroduction`
+    (fails pre-fix at the pin-void assert), plus the own-polarity
+    non-trigger pin.
+19. **BVE-eliminated variables: resurrect + void the walk.** The same
+    refinement loop re-mentions BVE-eliminated variables *routinely* (lazy
+    Tseitin `encode_depth` clauses — the probe showed dozens per run), and
+    a new clause over such a variable constrains it while its retired
+    clauses exist only as extension-stack obligations whose backward walk
+    *toggles the pivot witness* — the toggle can falsify the new live
+    clause. `fatal_error`, the documented "refuse once a BVE-eliminated
+    variable was reintroduced" gate, was **never set anywhere** (dead
+    machinery). Fix: any remention resurrects the variable's witness
+    entries as live clauses, voids its walk obligations, and makes it
+    branchable again (`branchable()` — without this, a clause whose
+    satisfaction needs a *decision* on the variable, e.g. `(x ∨ y)` over
+    two eliminated vars with no propagation possible, can never be
+    satisfied and the model defaults both to false in violation). The
+    eliminated markers stay set so no later round re-eliminates it — which
+    is also what keeps the per-var walk skip exact. Regressions:
+    `bve_eliminated_var_remention_resurrects_its_retired_clauses` (unsat
+    twin) and `bve_remention_model_keeps_the_reintroduced_constraint` (sat
+    twin) — both fail pre-fix with the exact `debug_verify_model_input`
+    invalid-model panic. The fixtures use ternary parents: binary parents
+    leave stale binary-graph edges that propagate the entailed literal and
+    mask the mechanism.
+20. **`equiv_substitution`'s grown tail was poisoned.** The compose step
+    grew the map with `resize(num_vars, Lit::pos(Var::new(0)))` — a
+    *non-identity* fill. Every variable created after the first ELS round
+    (refinement-loop atoms and Tseitin helpers — all of them) became
+    fake-eliminated into var 0: skipped by branching, its later mentions
+    rewritten into a foreign variable by `resolve_reintroduced_literal`,
+    and — the observed flip — the compose loop pushed **fabricated
+    equivalence obligations** onto the extension stack, whose walk then
+    toggled the variable to var 0's value against live clauses. Fix: the
+    grown tail starts at identity. Regression:
+    `equiv_substitution_grown_tail_stays_identity` (fails pre-fix at the
+    fake-elimination assert; the compose step only runs when a round
+    actually moves, so the fixture needs a real equivalence among the new
+    variables to reach the resize).
+
+Two process finds worth recording: (a) the first cut of the gatekeeper
+early-out scanned `elim_var_flag` whole per `add_clause` — O(vars) per
+clause made define-heavy ingestion quadratic (2.5 s → 142 s, caught by
+`chained_defines_ingest_linearly`); the early-out must be O(1), with the
+flag consulted per-literal in the filter. (b) A candidate "resurrected
+clause over a *third* eliminated variable" cascade is real and handled:
+resurrection goes through `add_clause`, so the gatekeeper applies to the
+restored clauses themselves.
+
+**Verification:** 11,505/11,519 workspace tests on the merged tree (the
+14 failures are all `[corpus-missing]` — the external SMT/SAT corpora were
+removed from the shared tree mid-session by an outside intervention,
+independent of this change; they also fail on clean main); clippy/fmt/
+rustdoc clean for `nixie-sat`/`nixie-solver` (clippy `-D warnings` over
+the whole workspace currently trips on the freshly-landed
+`nixie-core` finite-field code — `zero_prefixed_literal` in
+`sort/field.rs`, collapsible ifs in `ast/manager/ff_fold.rs` — the owning
+agent's debt, not touched here); Z3 parity 0 disagreements (z3 4.16.0,
+176/177 correct + the 1 documented Z3-itself-Unknown); debug-panic sweep
+clean over the whole Rodin family (3,272 files, zero panics — the canary
+family that fired) and the parity corpus (177); mixed-arith differential
+fuzz 2,200 instances across 6 seeds (4 release, 2 debug): 0 verdict
+disagreements, 0 refuted models. `bench_diff --validate-models` was not
+run — it needs the vanished corpus; rerun when the corpora return.

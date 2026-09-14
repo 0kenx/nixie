@@ -4,7 +4,22 @@ use super::*;
 use crate::trail::{assign_undefined, prefetch_watch_payload, propagation_value};
 
 impl Solver {
+    #[inline]
     pub(super) fn propagate_session(&mut self) -> Option<ClauseId> {
+        // Const-generic MIRROR specialization: the whole driver (and the
+        // list kernel it calls) compiles without a single CSR check when
+        // the dual-write shadow is off — the flag-off binary must be
+        // instruction-identical to the pre-mirror code (measured: the
+        // per-literal Option checks alone cost 1.2% instructions on
+        // 6s167-class instances).
+        if self.watches.csr_active() {
+            self.propagate_session_inner::<true>()
+        } else {
+            self.propagate_session_inner::<false>()
+        }
+    }
+
+    fn propagate_session_inner<const MIRROR: bool>(&mut self) -> Option<ClauseId> {
         if !self.trail.has_pending_propagation() {
             return None;
         }
@@ -12,7 +27,7 @@ impl Solver {
         let values = session.values;
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
-        let (destinations, phantom, ghost_debt) = self.watches.propagation_parts();
+        let (destinations, phantom, ghost_debt, csr) = self.watches.propagation_parts();
         let graph = &self.binary_graph;
         let ticks = if self.stable {
             &mut self.ticks_stable
@@ -96,6 +111,14 @@ impl Solver {
                 }
             }
             let mut watches = core::mem::take(&mut destinations[code]);
+            // Dual-write BCP scan (CSR slice 2): snapshot the primary/
+            // overflow split before the list is scanned; the per-entry
+            // notifications below mirror keep/remove/move into the CSR.
+            if MIRROR {
+                if let Some(c) = csr.as_mut() {
+                    c.begin_scan(code, watches.len());
+                }
+            }
             #[cfg(feature = "bcp-work")]
             {
                 let work = &mut self.stats.propagation_work;
@@ -115,13 +138,14 @@ impl Solver {
             let mut result = if watches.is_empty() {
                 list_kernel::ScanResult::default()
             } else {
-                list_kernel::scan_list(
+                list_kernel::scan_list::<MIRROR>(
                     &mut watches,
                     !lit,
                     values,
                     &mut queue,
                     arena.reborrow(),
                     destinations,
+                    csr,
                 )
             };
             #[cfg(feature = "bcp-work")]
@@ -130,6 +154,11 @@ impl Solver {
                 .take_watch_scan(&mut result.work);
             watches.truncate(result.write);
             destinations[code] = watches;
+            if MIRROR {
+                if let Some(c) = csr.as_mut() {
+                    c.end_scan();
+                }
+            }
             if !result.conflict.is_null() {
                 queue.requeue();
                 return Some(result.conflict);

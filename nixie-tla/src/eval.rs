@@ -86,6 +86,14 @@ pub struct Evaluator {
     max_depth: usize,
     max_set: usize,
     depth: usize,
+    /// The values the state variables take *after* the step, for `'`.
+    ///
+    /// `None` for an ordinary evaluation, which is what keeps a ground
+    /// definition that mentions `'` an honest error rather than a value read
+    /// out of an empty map: a state predicate has no next state.
+    next: Option<HashMap<String, Value>>,
+    /// Whether the term being evaluated sits under a `'`.
+    primed: bool,
 }
 
 impl Default for Evaluator {
@@ -102,6 +110,8 @@ impl Evaluator {
             max_depth: DEFAULT_MAX_DEPTH,
             max_set: DEFAULT_MAX_SET,
             depth: 0,
+            next: None,
+            primed: false,
         }
     }
 
@@ -120,7 +130,51 @@ impl Evaluator {
     pub fn eval(&mut self, term: &KeraRef) -> Result<Value> {
         let mut env: HashMap<String, Value> = HashMap::new();
         self.depth = 0;
+        self.next = None;
+        self.primed = false;
         self.go(term, &mut env)
+    }
+
+    /// Evaluate a **state predicate** with the state variables bound.
+    ///
+    /// `Init` and an invariant are of this shape. `'` is still refused: there
+    /// is no next state to read it from, and answering from the current one
+    /// would silently check a different formula.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the term could not be evaluated. Never guesses.
+    pub fn eval_state(&mut self, term: &KeraRef, state: &HashMap<String, Value>) -> Result<Value> {
+        let mut env = state.clone();
+        self.depth = 0;
+        self.next = None;
+        self.primed = false;
+        self.go(term, &mut env)
+    }
+
+    /// Evaluate an **action** between two states.
+    ///
+    /// `Next` is of this shape. An unprimed name reads `state`, and a name
+    /// under a `'` reads `next` — which is what `'` means in TLA+: not a
+    /// different variable, but the *same* expression evaluated in the
+    /// successor state.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the term could not be evaluated. Never guesses.
+    pub fn eval_action(
+        &mut self,
+        term: &KeraRef,
+        state: &HashMap<String, Value>,
+        next: &HashMap<String, Value>,
+    ) -> Result<Value> {
+        let mut env = state.clone();
+        self.depth = 0;
+        self.next = Some(next.clone());
+        self.primed = false;
+        let out = self.go(term, &mut env);
+        self.next = None;
+        out
     }
 
     fn go(&mut self, term: &KeraRef, env: &mut HashMap<String, Value>) -> Result<Value> {
@@ -144,11 +198,46 @@ impl Evaluator {
                 .parse::<i128>()
                 .map(Value::Int)
                 .map_err(|_| EvalErrorKind::Overflow(format!("the literal {d}"))),
-            Kera::Var(n) => env
-                .get(n.as_str())
-                .cloned()
-                .ok_or_else(|| EvalErrorKind::FreeName(n.to_string())),
-            Kera::Prime(_) => Err(EvalErrorKind::Unsupported("`'`".into())),
+            // Under a `'`, a *state variable* takes its successor value. The
+            // successor map is consulted first and the ordinary environment
+            // second, which is the only order that can be right: a state
+            // variable is in both, and reading `env` first would hand back the
+            // value before the step.
+            //
+            // A binder's variable is not in the successor map, so it falls
+            // through — and cannot collide with a state variable's name
+            // either, because lowering renames every binder uniquely. A
+            // `CONSTANT` falls through for the same reason and is unchanged by
+            // the step, which is what a constant is.
+            Kera::Var(n) => {
+                if self.primed
+                    && let Some(next) = self.next.as_ref()
+                    && let Some(v) = next.get(n.as_str())
+                {
+                    return Ok(v.clone());
+                }
+                env.get(n.as_str())
+                    .cloned()
+                    .ok_or_else(|| EvalErrorKind::FreeName(n.to_string()))
+            }
+            Kera::Prime(a) => {
+                if self.next.is_none() {
+                    return Err(EvalErrorKind::Unsupported(
+                        "`'` outside an action (there is no next state to read)".into(),
+                    ));
+                }
+                // TLA+ has no `x''`: priming is not an operator that composes,
+                // it selects the successor state, and there is only one.
+                if self.primed {
+                    return Err(EvalErrorKind::Unsupported(
+                        "`''` (TLA+ has no double prime)".into(),
+                    ));
+                }
+                self.primed = true;
+                let out = self.go(a, env);
+                self.primed = false;
+                out
+            }
             Kera::Opaque(n, args) => {
                 let mut vals = Vec::with_capacity(args.len());
                 for a in args {

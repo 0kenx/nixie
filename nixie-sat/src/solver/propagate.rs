@@ -259,7 +259,11 @@ impl Solver {
             }
 
             // Take the current watch list, mutate it in place, then move it
-            // back once propagation for this literal is finished.
+            // back once propagation for this literal is finished.  The CSR
+            // dual-write mirror (slice 2) brackets exactly this window:
+            // begin before the take, per-entry notifications inside the
+            // scan, end after the put-back.
+            self.watches.shadow_begin_scan(lit);
             let mut watches = core::mem::take(self.watches.get_mut(lit));
             #[cfg(feature = "bcp-work")]
             {
@@ -357,6 +361,7 @@ impl Solver {
                         if write != read {
                             watches[write] = watcher;
                         }
+                        self.watches.shadow_scan_keep(watcher, None);
                         write += 1;
                         continue;
                     }
@@ -386,6 +391,7 @@ impl Solver {
                             if bcp_stats {
                                 crate::diag_bcp::DELETED_SKIPS.fetch_add(1, Relaxed);
                             }
+                            self.watches.shadow_scan_remove();
                             continue;
                         }
                     };
@@ -444,6 +450,7 @@ impl Solver {
                                     watches[write] = watcher;
                                 }
                                 watches[write].blocker = first;
+                                self.watches.shadow_scan_keep(watcher, Some(first));
                                 write += 1;
                                 found = true;
                             } else {
@@ -482,6 +489,7 @@ impl Solver {
                                             watches[write] = watcher;
                                         }
                                         watches[write].blocker = l;
+                                        self.watches.shadow_scan_keep(watcher, Some(l));
                                         write += 1;
                                         if bcp_stats {
                                             crate::diag_bcp::SATISFIED_REPL.fetch_add(1, Relaxed);
@@ -503,6 +511,7 @@ impl Solver {
                                                 ..watcher
                                             },
                                         );
+                                        self.watches.shadow_scan_remove();
                                         found = true;
                                     }
                                 }
@@ -531,6 +540,7 @@ impl Solver {
                                 );
                             }
                         }
+                        self.watches.shadow_scan_remove();
                         continue;
                     }
                     if new_searched != searched {
@@ -545,6 +555,7 @@ impl Solver {
                         watches[write] = watcher;
                     }
                     watches[write].blocker = first;
+                    self.watches.shadow_scan_keep(watcher, Some(first));
                     let reason = watcher.reason(&self.clauses);
 
                     if self.trail.lit_val_hot(first) < 0 {
@@ -619,6 +630,7 @@ impl Solver {
             }
 
             *self.watches.get_mut(lit) = watches;
+            self.watches.shadow_end_scan();
 
             if let Some(conflict) = conflict_found {
                 // The watch list was abandoned mid-scan, so `lit` is only

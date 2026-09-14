@@ -1840,6 +1840,24 @@ pub struct Solver {
     /// literal is forced to `true` in the reconstructed model (see
     /// [`Solver::save_model`]). At most one polarity per variable is recorded.
     pub(super) pure_literal_reconstruction: Vec<Lit>,
+    /// The original clauses pure-literal elimination retired, per recorded
+    /// pin (`pure_literal_reconstruction` and this table are pushed in
+    /// lockstep; one entry per pin). A clause retired for several pure
+    /// literals is listed under each of them (over-resurrection on any one
+    /// voiding is sound; under-resurrection is not).
+    ///
+    /// [`Solver::void_elimination_promises`] re-asserts these clauses as
+    /// live originals the moment a later `add_clause` mentions the pin's
+    /// opposite polarity — see that method for why the pin alone is then no
+    /// longer a sound model reconstruction.
+    pub(super) pure_deleted_clauses: Vec<(Lit, Vec<SmallVec<[Lit; 8]>>)>,
+    /// Variables whose extension-stack obligations were voided because a
+    /// later `add_clause` reintroduced them: their retired clauses have been
+    /// resurrected as live originals, so [`Solver::save_model`]'s backward
+    /// walk must no longer toggle their witnesses (a toggle could now
+    /// falsify one of the reintroduced live clauses — the walk's repair
+    /// direction was chosen against the *retired* obligation set only).
+    pub(super) ext_rementioned: rustc_hash::FxHashSet<Var>,
     /// One-shot latch: once equivalent-literal substitution has rewritten the
     /// clause database we must not run it again (a second pass would operate on
     /// already-substituted clauses and, for incremental callers, on top of
@@ -2372,6 +2390,8 @@ impl Solver {
             clause_bump_increment: 1.0,
             memory_optimizer: MemoryOptimizer::new(),
             pure_literal_reconstruction: Vec::new(),
+            pure_deleted_clauses: Vec::new(),
+            ext_rementioned: rustc_hash::FxHashSet::default(),
             equiv_substitution: Vec::new(),
             bve_def: Vec::new(),
             bve_order: Vec::new(),
@@ -3484,7 +3504,120 @@ impl Solver {
         }
     }
 
-    /// Add a clause
+    /// Reintroduction gatekeeper for elimination-time promises, called from
+    /// [`Self::add_clause`] and the assumptions intake.
+    ///
+    /// Destructive eliminations delete clauses on a *promise about the future
+    /// clause set*: pure-literal elimination pins the eliminated variable to
+    /// its one-sided polarity on the promise that no live clause ever carries
+    /// the opposite polarity; BVE retires a variable's clauses on the promise
+    /// that the extension-stack walk can always toggle the witness to repair
+    /// them. Both promises hold in a one-shot solve. Both are broken the
+    /// moment the caller asserts a new clause mentioning the eliminated
+    /// variable in a constraining polarity — and CDCL(T) refinement loops do
+    /// exactly that between `solve_with_theory` rounds (MBQI instantiation
+    /// lemmas and lazy Tseitin encodings re-mentioning atoms and helper
+    /// variables; observed as an invalid `Sat` witness on Rodin/
+    /// smt3878551918658299427: a pinned pure literal whose opposite polarity
+    /// a later instantiation lemma reintroduced).
+    ///
+    /// The sound response restores the information the elimination removed:
+    /// re-assert every clause retired for that variable as a live original
+    /// through the full [`Self::add_clause`] machinery (fresh ids, watches,
+    /// proof lines, unit/conflict handling), drop the pure pin, and void the
+    /// variable's extension-stack obligations so [`Self::save_model`]'s walk
+    /// stops toggling its witnesses. The search then enforces the
+    /// reintroduced clause and the restored ones together; overlap with any
+    /// elimination-time resolvents is harmless (they stay entailed), and a
+    /// variable is resurrected at most once — its eliminated marker stays
+    /// set, so no later round re-eliminates it.
+    fn void_elimination_promises(&mut self, lits: &[Lit]) {
+        // No pins recorded and no BVE obligation table built: nothing to
+        // guard (the common case — both tables start empty and stay empty
+        // until an elimination pass actually runs; `elim_var_flag` alone is
+        // checked per-literal below, keeping this O(1) — a whole-array scan
+        // here made define-heavy ingestions quadratic).
+        if self.pure_literal_reconstruction.is_empty() && self.bve_def.is_empty() {
+            return;
+        }
+        // (a) Pure-literal pins: only the *opposite* polarity voids the pin;
+        // a mention of the pin's own polarity is satisfied by the pin forever.
+        let voided_pins: Vec<Lit> = lits
+            .iter()
+            .filter_map(|l| {
+                let opp = l.negate();
+                self.pure_literal_reconstruction
+                    .iter()
+                    .find(|p| **p == opp)
+                    .copied()
+            })
+            .collect();
+        for pin in voided_pins {
+            self.pure_literal_reconstruction.retain(|p| *p != pin);
+            if let Some(pos) = self
+                .pure_deleted_clauses
+                .iter()
+                .position(|(p, _)| *p == pin)
+            {
+                let (_, retired) = self.pure_deleted_clauses.swap_remove(pos);
+                for clause in retired {
+                    self.add_clause(clause);
+                    if self.trivially_unsat {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // (b) Extension-stack witnesses: any mention of a BVE-eliminated
+        // variable constrains it, so its retired obligations must come back
+        // as live clauses and the walk must stop toggling it. ELS-eliminated
+        // variables never reach this point (the callers rewrite their
+        // mentions to the class representative first), which keeps the
+        // witness scan from touching equivalence implications.
+        let reintroduced: Vec<Var> = lits
+            .iter()
+            .map(|l| l.var())
+            .filter(|&v| {
+                !self.ext_rementioned.contains(&v)
+                    && ((self.bve_def.len() > v.index() && !self.bve_def[v.index()].is_empty())
+                        || (self.elim_var_flag.len() > v.index() && self.elim_var_flag[v.index()]))
+            })
+            .collect();
+        for var in reintroduced {
+            self.ext_rementioned.insert(var);
+            // Resurrect every extension-stack entry whose witness is `var` —
+            // exactly the clauses retired *by this variable's* elimination
+            // (both sides push the pivot as the witness).
+            let mut resurrect: Vec<SmallVec<[Lit; 8]>> = Vec::new();
+            let mut i = 0usize;
+            while i < self.ext_stack.len() {
+                // entry layout: witness, lit, ..., lit, SENTINEL
+                let end = self.ext_stack[i..]
+                    .iter()
+                    .position(|&c| c == u32::MAX)
+                    .map_or(self.ext_stack.len(), |p| i + p);
+                let witness = Lit::from_code(self.ext_stack[i]);
+                if witness.var() == var {
+                    let lits: SmallVec<[Lit; 8]> = self.ext_stack[i + 1..end]
+                        .iter()
+                        .map(|&c| Lit::from_code(c))
+                        .collect();
+                    resurrect.push(lits);
+                }
+                i = end + 1;
+            }
+            for clause in resurrect {
+                self.add_clause(clause);
+                if self.trivially_unsat {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Add a clause to the solver (original, non-learned). Returns `false`
+    /// when the clause itself completes a level-0 refutation.
     pub fn add_clause(&mut self, lits: impl IntoIterator<Item = Lit>) -> bool {
         let mut clause_lits: SmallVec<[Lit; 8]> = lits.into_iter().collect();
         // Parse/external additions are dirty for the first subsume round
@@ -3539,6 +3672,14 @@ impl Solver {
                 return true; // Tautology - always satisfied
             }
         }
+
+        // Gatekeeper, pure-literal / BVE member (the sibling of the ELS
+        // rewrite above): a clause that reintroduces the opposite polarity
+        // of a pure-literal pin, or any polarity of a variable whose clauses
+        // BVE retired, voids the promise those eliminations' model
+        // reconstruction relied on. Restore the retired clauses before this
+        // one is inserted so the search re-enforces the full input.
+        self.void_elimination_promises(&clause_lits);
 
         // Handle special cases
         match clause_lits.len() {
@@ -4339,6 +4480,9 @@ impl Solver {
         for l in assumptions.iter_mut() {
             *l = self.resolve_reintroduced_literal(*l);
         }
+        // Same reintroduction gatekeeper as `add_clause`: an assumption
+        // constrains the variable it mentions exactly as a clause would.
+        self.void_elimination_promises(&assumptions);
         let assumptions = assumptions.as_slice();
         // While this call is in flight, destructive inprocessing must not
         // fold assumption variables out of the search (cadical freezes
@@ -5187,6 +5331,11 @@ impl Solver {
         self.inproc_budgets = InprocBudgets::legacy();
         self.kissat_used_hist = [[0; 32]; 2];
         self.pure_literal_reconstruction.clear();
+        // Retired-clause bookkeeping for the pure pins above, and the
+        // reintroduced-variable set: both refer to the previous formula's
+        // eliminations.
+        self.pure_deleted_clauses.clear();
+        self.ext_rementioned.clear();
         // Elimination/ELS bookkeeping refers to the previous formula's
         // clauses and variables: stale extension-stack entries (and the
         // `bve_*`/equiv maps feeding `var_eliminated`) would corrupt model
