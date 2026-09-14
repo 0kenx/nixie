@@ -9,9 +9,10 @@ pub(super) mod certification;
 pub(super) mod check_array;
 pub(super) mod check_bv;
 pub(super) mod check_dt;
+#[cfg(feature = "nlsat")]
+pub(super) mod check_ff;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
-#[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -2400,6 +2401,26 @@ impl Solver {
         // engine below and then to the search, whose honesty gate
         // (`arith_atoms_need_theory`) answers `unknown` for the nonlinear
         // atoms no theory could take. (Upstream v0.3.3.)
+        // The eager finite-field dispatch (QF_FF Phase 3): pure
+        // conjunctive goals over one or more prime fields are decided
+        // whole-problem here, model validated exactly before `Sat`; a
+        // declined goal falls through to CDCL(T), whose honesty gate
+        // answers `unknown` rather than guessing.
+        if let Some(ff_result) = self.dispatch_ff_solver(manager) {
+            match ff_result {
+                SolverResult::Sat => {
+                    // The FF engine owns the field terms now: its model was
+                    // validated exactly (Step 5) before this `Sat`, so the
+                    // assert-time `ff_terms_unconstrained` tripwire no
+                    // longer applies — clearing it is what lets the honest
+                    // answer through instead of degrading to `unknown`.
+                    self.ff_terms_unconstrained = false;
+                    return SolverResult::Sat;
+                }
+                SolverResult::Unsat => return SolverResult::Unsat,
+                SolverResult::Unknown => {}
+            }
+        }
         #[cfg(feature = "nlsat")]
         if let Some(nl_result) = self.dispatch_nl_solver(manager) {
             match nl_result {

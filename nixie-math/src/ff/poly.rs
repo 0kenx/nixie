@@ -4,7 +4,7 @@
 //! coefficient-agnostic parts of `nixie_math::polynomial::Monomial`) to
 //! Montgomery-form coefficients. The 𝔽_p-specific `mul`/`add` reduce as
 //! they go, so **coefficient growth does not exist here** — the pathology
-//! that makes Gröbner bases over ℚ explode, and the reason the [OKTB23]
+//! that makes Gröbner bases over ℚ explode, and the reason the OKTB23
 //! procedure works at all.
 //!
 //! Determinism: iteration over a polynomial's terms goes through

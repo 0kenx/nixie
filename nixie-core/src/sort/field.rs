@@ -206,7 +206,7 @@ fn classify_primality(n: &BigUint) -> Primality {
         // 3,317,044,064,679,887,385,961,981 — above u64; assembled digit-wise
         // from its decimal representation to avoid a bignum literal.
         let mut v = BigUint::zero();
-        for chunk in [3u32, 317, 044, 064, 679, 887, 385, 961, 981] {
+        for chunk in [3u32, 317, 44, 64, 679, 887, 385, 961, 981] {
             v = v * BigUint::from(1_000u32) + BigUint::from(chunk);
         }
         v

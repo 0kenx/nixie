@@ -213,8 +213,7 @@ fn ff_mixed_fields_is_a_type_error() {
     let mut manager = TermManager::new();
     let script = "(assert (= (ff.add #f1m7 #f1m5) #f2m7))";
     let err = parse_script(script, &mut manager)
-        .err()
-        .expect("mixing F_7 and F_5 operands must be rejected");
+        .expect_err("mixing F_7 and F_5 operands must be rejected");
     assert!(
         err.to_string().contains("different fields"),
         "error must name the type error: {err}"
@@ -240,9 +239,7 @@ fn ff_reserved_prefix_is_not_a_free_function() {
     // exists to prevent).
     let mut manager = TermManager::new();
     let script = "(declare-const x (_ FiniteField 7)) (assert (= (ff.sub x #f1m7) #f2m7))";
-    let err = parse_script(script, &mut manager)
-        .err()
-        .expect("ff.sub does not exist");
+    let err = parse_script(script, &mut manager).expect_err("ff.sub does not exist");
     let msg = err.to_string();
     assert!(
         msg.contains("ff.sub") || msg.contains("not") || msg.contains("unknown"),

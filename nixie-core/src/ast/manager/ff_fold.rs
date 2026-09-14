@@ -62,10 +62,8 @@ impl TermManager {
     /// otherwise fabricate a sort whose modulus nobody established).
     pub fn ff_sort(&mut self, field: FieldId) -> Result<SortId, FfBuildError> {
         let kind = crate::sort::SortKind::FiniteField(field);
-        if self.sorts.find(&kind).is_none() {
-            if self.sorts.field_desc(field).is_none() {
-                return Err(FfBuildError::UnknownField(field));
-            }
+        if self.sorts.find(&kind).is_none() && self.sorts.field_desc(field).is_none() {
+            return Err(FfBuildError::UnknownField(field));
         }
         Ok(self.sorts.intern(kind))
     }
@@ -123,13 +121,12 @@ impl TermManager {
                 TermKind::FfMul(_) => !add,
                 _ => false,
             });
-            if same_kind {
-                if let Some(term) = self.get(a) {
-                    if let TermKind::FfAdd(inner) | TermKind::FfMul(inner) = &term.kind {
-                        out.extend(inner.iter().copied());
-                        continue;
-                    }
-                }
+            if same_kind
+                && let Some(term) = self.get(a)
+                && let TermKind::FfAdd(inner) | TermKind::FfMul(inner) = &term.kind
+            {
+                out.extend(inner.iter().copied());
+                continue;
             }
             out.push(a);
         }

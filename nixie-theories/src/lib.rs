@@ -80,6 +80,7 @@ pub mod datatype;
 pub mod diff_logic;
 pub mod error;
 pub mod euf;
+pub mod ff_theory;
 pub mod fp;
 pub mod fp_interval_prop;
 pub mod hashcons;

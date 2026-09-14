@@ -218,21 +218,31 @@ impl FieldCtx {
         if self.is_zero(a) {
             return self.zero();
         }
-        // p - a (a < p, a ≠ 0, so no borrow), already in Montgomery form
-        // because Montgomery form is a bijection on [0, p).
+        // p − a as an integer (a < p, a ≠ 0, so the result is in (0, p)),
+        // which IS the Montgomery form of −a: the Montgomery map is a
+        // bijection on [0, p) and linear mod p.
+        //
+        // Schoolbook subtraction: `sub = a[i] + borrow_in`; the borrow
+        // *subtracts* from the next limb. The first version of this loop
+        // computed `p[i] + borrow` — adding instead — which was invisible
+        // at one limb (no borrow propagation) and corrupted every field
+        // with p ≥ 2^64: BN254 goals answered a false `unsat` from the
+        // poisoned Gröbner cascade. Multi-limb negation is pinned by
+        // `multi_limb_field_axioms` below.
         let mut out = Limbs::with_capacity(self.n_limbs);
         let mut borrow = 0u128;
         for i in 0..self.n_limbs {
-            let d = u128::from(self.p_limbs[i]) + borrow;
-            let ai = u128::from(a[i]);
-            if d >= ai {
-                out.push((d - ai) as u64);
+            let sub = u128::from(a[i]) + borrow;
+            let pi = u128::from(self.p_limbs[i]);
+            if pi >= sub {
+                out.push((pi - sub) as u64);
                 borrow = 0;
             } else {
-                out.push((d + (1u128 << 64) - ai) as u64);
+                out.push((pi + (1u128 << 64) - sub) as u64);
                 borrow = 1;
             }
         }
+        debug_assert_eq!(borrow, 0, "a < p guarantees p - a does not underflow");
         out
     }
 

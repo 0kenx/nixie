@@ -220,7 +220,11 @@ pub fn grobner_basis(
             .monic_traced(f),
         );
     }
-    reduce_all(f, &mut basis, budget)?;
+    // Deliberately NO inter-reduction of the inputs here: Buchberger's
+    // pair criteria reason about the generators as given, and
+    // leading-term-reducing them first turns structured generators
+    // (`x² − x`) into cross-terms (`xs`, `xy`) that blow the loop up. The
+    // basis is inter-reduced once, after the pair loop.
 
     // Pair list with Gebauer–Möller criteria. Pairs are (i, j), i < j.
     let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -262,7 +266,35 @@ pub fn grobner_basis(
         if reduced.poly.is_zero() {
             continue;
         }
-        basis.push(reduced.monic_traced(f));
+        // Reduce the new element fully against the current basis before
+        // admitting it: keeps intermediate elements small and drops
+        // duplicates early (a remainder already spanned by the basis never
+        // enters). In-place on the new element only — existing indices
+        // stay valid.
+        let mut reduced = reduced.monic_traced(f);
+        let mut guard = 0;
+        loop {
+            guard += 1;
+            if guard > 10_000 {
+                break;
+            }
+            let (again, changed) = reduce_traced(f, &reduced, &basis, budget)?;
+            if !changed {
+                break;
+            }
+            reduced = if again.poly.is_zero() {
+                again
+            } else {
+                again.monic_traced(f)
+            };
+            if reduced.poly.is_zero() {
+                break;
+            }
+        }
+        if reduced.poly.is_zero() {
+            continue;
+        }
+        basis.push(reduced);
         let n = basis.len() - 1;
         for k in 0..n {
             if !criterion_applies(&basis, k, n) {
@@ -387,8 +419,11 @@ fn reduce_traced(
     Ok((current, changed))
 }
 
-/// Inter-reduce the basis in place (each element reduced against the
-/// others, deterministic left-to-right, monic-normalized).
+/// Inter-reduce the basis in place to the *reduced* Gröbner basis: each
+/// element's leading term reduced against the others (deterministic
+/// left-to-right), then every tail term reduced too — the tail pass is
+/// what turns `x + 2y − 3` into `x − c` once `y − c'` is present, i.e.
+/// the shape the model extraction reads.
 fn reduce_all(
     f: &FieldCtx,
     basis: &mut Vec<TracedPoly>,
@@ -403,8 +438,12 @@ fn reduce_all(
             .map(|(_, g)| g.clone())
             .collect();
         let g = basis[i].clone();
-        let (reduced, changed) = reduce_traced(f, &g, &others, budget)?;
-        if changed {
+        let (reduced, _changed) = reduce_traced(f, &g, &others, budget)?;
+        // Tail reduction: cancel any remaining reducible non-leading term.
+        let reduced = tail_reduce_traced(f, reduced, &others, budget)?;
+        // The monic re-normalization applies whether or not the leading-
+        // term reduction changed anything (tail reduction may have).
+        {
             basis[i] = if reduced.poly.is_zero() {
                 reduced
             } else {
@@ -416,9 +455,61 @@ fn reduce_all(
     Ok(())
 }
 
+/// Cancel every reducible term (not just the leading one) against the
+/// other elements' leading monomials, tracing the cofactors. Terminates:
+/// each cancellation replaces one term by strictly order-smaller monomials.
+fn tail_reduce_traced(
+    f: &FieldCtx,
+    p: TracedPoly,
+    others: &[TracedPoly],
+    budget: &mut GrobnerBudget,
+) -> Result<TracedPoly, GrobnerError> {
+    let mut current = p;
+    let mut progress = true;
+    while progress {
+        progress = false;
+        let Some(terms) = Some(current.poly.sorted_terms(DEGREVLEX)) else {
+            break;
+        };
+        'outer: for (m, _c) in terms.iter().rev() {
+            // smallest-first so leading terms keep priority in shape.
+            for g in others {
+                let Some(lmg) = g.poly.lm(DEGREVLEX) else {
+                    continue;
+                };
+                // No `m == lmg` skip here: a tail term that *equals*
+                // another element's leading monomial is exactly the case
+                // to cancel (the earlier guard inverted that and left
+                // `y + a·x + c` unreduced beside `x − c'`). `others`
+                // already excludes the element being reduced.
+                let Some(q) = monomial_div(m, &lmg) else {
+                    continue;
+                };
+                let lc_g = g.poly.lc(DEGREVLEX).cloned();
+                let Some(lc_g) = lc_g else {
+                    continue;
+                };
+                let Some(inv_g) = f.inv(&lc_g) else {
+                    continue;
+                };
+                let Some(c_m) = current.poly.get_term(m).cloned() else {
+                    continue;
+                };
+                let factor = f.mul(&c_m, &inv_g);
+                let sub = g.mul_monomial(f, &q).scale(f, &factor);
+                current = current.sub(f, &sub);
+                budget.charge(1)?;
+                progress = true;
+                break 'outer;
+            }
+        }
+    }
+    Ok(current)
+}
+
 impl GrobnerBasis {
     /// Whether the ideal is the whole ring: some basis element is a
-    /// nonzero constant. The [OKTB23] UNSAT test.
+    /// nonzero constant — the OKTB23 UNSAT test.
     #[must_use]
     pub fn contains_nonzero_constant(&self) -> bool {
         self.basis.iter().any(|g| g.poly.is_nonzero_constant())
