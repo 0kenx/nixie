@@ -445,6 +445,15 @@ impl ClauseDatabase {
     /// for invalid/deleted ids or growth attempts – an arena slot cannot
     /// grow, and relocating would invalidate ids held by watchers and
     /// reasons. Every in-solver rewrite site only shrinks.
+    /// Diagnostic: the saved watch-position cache of the clause at `id`.
+    #[must_use]
+    pub fn searched_of(&self, id: ClauseId) -> u8 {
+        self.ref_of(id)
+            .and_then(|r| self.arena.searched_of(r))
+            .unwrap_or(0)
+    }
+
+    /// Rewrite a live clause with a shorter or equal literal array.
     pub fn shrink(&mut self, id: ClauseId, new_lits: &[Lit]) -> bool {
         self.ref_of(id)
             .is_some_and(|r| self.arena.shrink(r, new_lits))

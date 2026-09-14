@@ -433,6 +433,22 @@ impl Trail {
             }
         }
         self.assignments.truncate(write);
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_BT_TRACE").is_ok() {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static BTN: AtomicU64 = AtomicU64::new(0);
+            let n = BTN.fetch_add(1, Ordering::Relaxed);
+            eprintln!("[bt] level={} new_len={}", level, write);
+            if let Ok(want) = std::env::var("NIXIE_BT_WHERE")
+                && want.parse::<u64>() == Ok(n)
+            {
+                eprintln!(
+                    "[bt-where] n={}\n{}",
+                    n,
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
 
         self.level_starts.truncate((level + 1) as usize);
         self.current_level = level;

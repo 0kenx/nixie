@@ -67,6 +67,10 @@ impl Solver {
     /// the budget, force failed literals, derive hyper-binaries. Returns
     /// `(probed, failed, hyper)`; `failed > 0` re-arms dependent passes.
     pub(super) fn probe_round(&mut self) -> (usize, usize, usize) {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_BT_TRACE").is_ok() {
+            eprintln!("[probe-round] start");
+        }
         if self.trail.decision_level() != 0 {
             self.backtrack_with_phase_saving(0);
         }
@@ -238,6 +242,10 @@ impl Solver {
     }
 
     fn probe_collect(&mut self, lit: Lit, mark: &mut [u8]) -> ProbeOutcome {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_BT_TRACE").is_ok() {
+            eprintln!("[probe-collect] lit={}", lit.code());
+        }
         mark.fill(0);
         self.trail.new_decision_level();
         self.trail.assign_decision(lit);

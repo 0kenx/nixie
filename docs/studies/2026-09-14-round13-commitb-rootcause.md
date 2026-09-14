@@ -119,3 +119,57 @@ worktree's B includes the BIG fix the recipe lacks.**
 11. Worktrees need the corpus symlinks (`smt-lib`, `satcomp2024/2025`,
     `satlib`) or the corpus tests fail `[corpus-missing]`; a nextest
     TIMEOUT can be pure parallel load — re-run before believing it.
+
+## Continuation (same day, second session): the root pinned to the post-phase decision; the phase's interior remains
+
+Five more instruments (all landed, same rules): `NIXIE_AWALK_TRACE`
+(per-analysis reason-walk steps `[astep]` with each reason clause's
+literals+levels, plus the raw learnt clause `[learnt]`), `NIXIE_CWRITE=<id>`
+(every arena write to one clause: `shrink`, `swap_lits`, the kernel's
+watch-move swap with its tail index, and `NIXIE_CVISIT`-style per-visit
+`searched`+tail-value profiles), `NIXIE_BT_TRACE` (every backtrack with
+level and new trail length), the searched-cache-inclusive DB digest, and
+per-clause full-literal dumps at a chosen conflict (`NIXIE_CLAUSE_AT`).
+
+**The chronology is now closed.**  Interleaving every event class
+(assignments with reasons, backtracks, watch visits/writes, analysis
+walks, conflicts, dequeues) in single runs of both binaries: the first
+diverging event anywhere is the **level-15 decision after the 16483
+inproc round — A decides literal 188 (var 94), B decides 191 (var 95)**.
+Everything previously observed — the differing clause-38260 literal
+order (a 3-cycle on tail positions 2..7), the differing learnt clause
+(same permutation), the differing saved-position swap (i=2 vs i=5), the
+differing tail-value profile at the clause's next visit, the differing
+backtrack — is *downstream of that decision*.  The decision reads the
+VMTF queue, whose search pointer the phase's bump sequence left at 3509
+(A) vs 4251 (B); the phase's bump sets differ by exactly one variable
+(4064, one extra resolution in one mini-conflict analysis inside the
+round), while the reason-walk steps of every phase analysis are
+event-identical.
+
+**Eliminated this session**: the searched/saved-position caches (a
+searched-inclusive digest still first diverges only at conflict 16484),
+the factor fresh-var bumps (tagged; absent from the divergent bump),
+probe backtracks (tagged; the probe does not run in the window), the
+distiller (does not read watch lists), and any pre-phase state
+difference (every digest, dump, and stream matches through 16483,
+including a per-conflict comparison of A's actually-scanned `Vec`
+against B's combined view).
+
+**The remaining suspect** — the only unlogged reader inside the round:
+**the learnt-clause minimizer's block walks**
+(`shrink_and_minimize_clause` resolves blocks against reason clauses
+below the conflict level without any step logging) and, if it runs in
+the default schedule, the legacy `vivification::propagate` (whole-DB
+iteration).  One of those reads a clause whose content the round itself
+had already rewritten differently — the rewrite order born in the same
+unlogged interior.  The next probe: `[bstep]` logging inside the block
+walk (same shape as `[astep]`) + a vivify candidate log; diff at the
+16483 round.  The B tree (`/tmp/wt-commitb`, branch `commitb-round13`)
+now carries the same probe family; both binaries are cached
+(`precompile/f5d1115e`, `precompile/scrap-commitb-round13`).
+
+Operational note: the per-visit clause-identity capture in the kernel is
+env-armed (`mut_trace::cwrite_target`, a `OnceLock`) — an unconditional
+`live.reason()` there cost enough on the hot path to timeout two
+reduce-arm tests; keep it lazy.

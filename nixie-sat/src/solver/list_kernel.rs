@@ -206,11 +206,35 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             );
         };
         let searched = live.searched();
+        #[cfg(feature = "std")]
+        let cid_visit = crate::mut_trace::cwrite_target().map(|_| live.reason());
+        #[cfg(feature = "std")]
+        if let Some(want) = crate::mut_trace::cwrite_target()
+            && cid_visit.is_some_and(|c| c.index() == want)
+        {
+            use std::fmt::Write as _;
+            let mut tv = String::new();
+            for &tl in live.lits().iter().skip(2) {
+                let _ = write!(tv, "{}:{},", tl.code(), propagation_value(values, tl));
+            }
+            eprintln!(
+                "[cvisit op={}] id={} searched={} blk={} tail={}",
+                crate::mut_trace::next_op(),
+                want,
+                searched,
+                watcher.blocker.code(),
+                tv
+            );
+        }
         let mut found = None;
         let mut new_searched = searched;
         let mut repair = None;
         let first;
         {
+            #[cfg(feature = "std")]
+            let cid_watch = crate::mut_trace::cwrite_target().map(|_| live.reason());
+            #[cfg(not(feature = "std"))]
+            let cid_watch: Option<ClauseId> = None;
             let lits = live.lits();
             if lits.len() < 2 {
                 repair = Some(None);
@@ -252,6 +276,19 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                                 }
                                 found = Some(Some(literal));
                             } else {
+                                #[cfg(feature = "std")]
+                                if let Some(want) = crate::mut_trace::cwrite_target()
+                                    && cid_watch.is_some_and(|c| c.index() == want)
+                                {
+                                    eprintln!(
+                                        "[cwrite op={}] kernel-swap id={} i={} moved={} old1={}",
+                                        crate::mut_trace::next_op(),
+                                        want,
+                                        i,
+                                        tail[i].code(),
+                                        pair[1].code()
+                                    );
+                                }
                                 core::mem::swap(&mut pair[1], &mut tail[i]);
                                 #[cfg(feature = "bcp-work")]
                                 {

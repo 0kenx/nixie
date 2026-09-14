@@ -142,7 +142,25 @@ impl Solver {
                                 h ^= (l.code() as u64).wrapping_mul(31 + (i as u64) * 100);
                                 h = h.rotate_left(3);
                             }
+                            if let Ok(want) = std::env::var("NIXIE_CLAUSE_AT")
+                                && want.parse::<u64>() == Ok(cid.index() as u64)
+                                && let Some(r) = self.clauses.ref_of(cid)
+                            {
+                                use std::fmt::Write as _;
+                                let mut ls = String::new();
+                                for &l in c.lits.iter() {
+                                    let _ = write!(ls, "{} ", l.code());
+                                }
+                                eprintln!(
+                                    "[clauseat] {} r={} lits={}",
+                                    self.stats.conflicts,
+                                    r.byte_offset(),
+                                    ls
+                                );
+                            }
                             h = h.rotate_left(7);
+                            h ^= (self.clauses.searched_of(cid) as u64).wrapping_mul(7717);
+                            h = h.rotate_left(5);
                         }
                     }
                     eprintln!("[dbd] {} live={} h={:016x}", self.stats.conflicts, live, h);
