@@ -1087,10 +1087,11 @@ impl Simplex {
         // compounds the staleness into every dependent.  Re-derive first.
         if !self.assignment_current {
             self.crash_basis();
-            self.assignment_current = true;
             if self.resource_limit {
                 // The re-derivation overflowed: propagating deltas from a
                 // partially wrapped vector would fabricate consequences.
+                // `crash_basis` left `assignment_current` false — the flag
+                // stays honest for the next consumer.
                 return;
             }
         }
@@ -1791,7 +1792,6 @@ impl Simplex {
         // changes and `pop` clear the flag, falling back to the full path.
         if !self.assignment_current {
             self.crash_basis();
-            self.assignment_current = true;
         }
         if self.resource_limit {
             // `update_assignment` overflowed during the re-derivation: the
@@ -1884,6 +1884,17 @@ impl Simplex {
             }
         }
         self.update_assignment();
+        // The flag may only say "current" through a FULL successful
+        // derivation: `update_assignment` breaks early on an exact-retry
+        // overflow, leaving later rows' assignments stale. Forcing the flag
+        // true at the guard sites (as they used to) let `check`'s
+        // entry-time `resource_limit = false` clear the only other
+        // witness, and later pivots consumed the stale vector — the delta
+        // formula inherited the stale base and (release) a phony violation
+        // drove an invalid conflict: a false `unsat` (the f1 differential
+        // class, root-caused 2026-09-15; reproducer under
+        // docs/studies/assets/2026-09-15/).
+        self.assignment_current = !self.resource_limit;
     }
     /// Pivot to make the solution feasible
     fn make_feasible(&mut self) -> Result<(), Vec<u32>> {
@@ -2539,7 +2550,6 @@ impl Simplex {
         // when it sees the flag, so no new invariant is introduced.
         if !self.assignment_current {
             self.crash_basis();
-            self.assignment_current = true;
             if self.resource_limit {
                 // The re-derivation overflowed (`update_assignment`'s checked
                 // path): same contract as a mid-pivot overflow below — no
@@ -4073,7 +4083,6 @@ impl Simplex {
     pub fn state_feasible(&mut self) -> bool {
         if !self.assignment_current {
             self.crash_basis();
-            self.assignment_current = true;
             if self.resource_limit {
                 // Overflowed re-derivation: no model may be snapshotted.
                 return false;

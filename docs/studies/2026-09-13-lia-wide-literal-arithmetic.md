@@ -795,7 +795,54 @@ written, else inline below):
   false `unsat` in the same subsystem compounds risk. It lives in this
   session's worktree record; rebuild from this description.
 
-**Priority for the next session: root-cause the f1 false `unsat` before any
-further wide-LP work.** Bisect inside slice 3's diff (the scaler, the intern
+**RESOLVED 2026-09-15 (same day, next session): see Continuation 14 — the
+root cause is the forced `assignment_current = true` at the re-derivation
+guard sites; fixed, verified, landed.** Bisect inside slice 3's diff (the scaler, the intern
 wiring, the item-32 encode gate) with the reproducer; the debug canary
 localizes the divergence; the release wrongness confirms it escapes.
+
+
+## Continuation 14 (2026-09-15): the f1 false `unsat` root-caused and fixed — the lying `assignment_current` flag
+
+38. **The mechanism, end to end** (bisected to `5bda924d` — slice 2, the
+    wide-row side table — by building the window's binaries: slices 1,
+    ff-Phase-5, and the mbqi fix all answer honestly): `update_assignment`
+    breaks its row loop EARLY when a row's exact (`BigRational`) retry
+    overflows, leaving every later row's assignment STALE, and signals
+    through the documented pair `resource_limit = true` +
+    `assignment_current = false`. The re-derivation guard sites
+    (`check`, `pivot`, `on_nonbasic_bound_change`, `state_feasible`)
+    then forced `assignment_current = true` UNCONDITIONALLY after
+    `crash_basis`, checking `resource_limit` only afterwards — and
+    `check` clears `resource_limit` at entry. With the flag lying
+    "current" and the limit cleared, the next pivot consumed the stale
+    vector: its delta formula inherited the stale base (the canary's
+    `got ≠ want`, off by exactly the stale row's error), and in RELEASE
+    the phony violation drove `explain_conflict` to an invalid clause —
+    a wrong `unsat`. The delta-vs-reeval debug assert was the canary all
+    along; the reproducer made it a 2-variable input.
+39. **The fix**: `crash_basis` alone owns the flag, ending with
+    `assignment_current = !resource_limit` — the flag may only say
+    "current" through a FULL successful derivation. The four guard sites
+    drop their forced `= true` (they keep their `resource_limit`
+    bail-outs; `reset`'s site stays — an empty state is trivially
+    current). f1 now answers honest `unknown` (z3: `sat`; the class
+    overflows the derivation, so unknown is the honest decline), the
+    debug canary is silent, and every wide-family win is preserved
+    (chain sat/unsat, cancellation, uniform-coefficient, mixed-magnitude
+    sat twin). Regression:
+    `stale_assignment_never_drives_false_unsat` (the f1 bytes, pinned
+    never-`unsat`).
+40. **Process debts recorded**: the false `unsat` lived on `main` for six
+    landings because the wide differential only gained the f1 shape
+    (`not/and` nesting over div/mod + wide constants) in its fourth
+    extension — the generator's shape coverage, not its seed count, was
+    the gap. And the first attribution (slice 3, by commit adjacency)
+    was wrong by one slice: binary-level bisection of the window
+    (df13616e..625957a9) pinned slice 2 in four builds.
+
+Verification: 23/23 wide-literal + division regressions; theories+solver
+suites green except standing `[corpus-missing]`; wide differential 1,100
+instances across 4 seeds (z3-error-aware): 0 disagreements, 0 refuted
+models; mixed fuzz, debug-panic sweep, Z3 parity 176/177 correct / 0
+disagreements (z3 4.16.0); fmt/clippy clean.

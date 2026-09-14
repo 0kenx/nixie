@@ -602,3 +602,31 @@ fn mixed_magnitude_wide_rows_stay_honest() {
         "v1 = -2^-63 contradicts v1 > 0; sat would be wrong"
     );
 }
+
+/// The stale-assignment false-`unsat` (2026-09-15, root-caused from the f1
+/// differential): `update_assignment` breaks early when a row's exact retry
+/// overflows, leaving later rows' assignments stale, and the guard sites
+/// forced `assignment_current = true` regardless — so after `check`'s
+/// entry-time `resource_limit = false` cleared the only other witness, a
+/// later pivot consumed the stale vector: the delta formula inherited the
+/// stale base and (in release) a phony violation drove an invalid conflict.
+/// A wrong `unsat` on a satisfiable mixed LIA goal with div/mod and wide
+/// constants. The fix: `crash_basis` alone owns the flag, setting it from
+/// `!resource_limit` — the flag may only say "current" through a FULL
+/// successful derivation. This pins the honest verdict (never `unsat`;
+/// the true answer is `sat`, and the overflow class declines honestly).
+#[test]
+fn stale_assignment_never_drives_false_unsat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(include_str!(
+            "../../docs/studies/assets/2026-09-15/false-unsat-f1.smt2"
+        ))
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(
+        last, "unsat",
+        "the goal is satisfiable (z3 agrees); unsat is the stale-assignment false verdict"
+    );
+}
