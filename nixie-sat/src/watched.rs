@@ -1229,6 +1229,42 @@ impl WatchLists {
         self.watches.get(lit.index()).map_or(&[], |w| w.as_slice())
     }
 
+    /// The CSR combined view (`NIXIE_CSR_READ=1`): primary span then
+    /// overflow — the reader-side API for the flip.  Empty pair when no
+    /// shadow exists (readers fall back to identical content).
+    #[must_use]
+    pub fn get_combined(&self, lit: Lit) -> (&[Watcher], &[Watcher]) {
+        self.csr.as_ref().map_or((&[], &[]), |c| c.spans(lit))
+    }
+
+    /// Whether CSR reads are live (the flag AND an adopted shadow —
+    /// before the first rebuild there is no CSR to read).
+    #[must_use]
+    pub fn csr_read_active(&self) -> bool {
+        #[cfg(feature = "std")]
+        {
+            crate::watched::csr_read_enabled() && self.csr.is_some()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            false
+        }
+    }
+
+    /// Flag-aware combined iteration for reader sites: the CSR view under
+    /// `NIXIE_CSR_READ=1`, the `Vec` list otherwise (identical content by
+    /// the drift invariant).
+    pub fn iter_combined(&self, lit: Lit) -> Box<dyn Iterator<Item = &Watcher> + '_> {
+        #[cfg(feature = "std")]
+        if crate::watched::csr_read_enabled()
+            && let Some(c) = self.csr.as_ref()
+        {
+            let (p, x) = c.spans(lit);
+            return Box::new(p.iter().chain(x.iter()));
+        }
+        Box::new(self.get(lit).iter())
+    }
+
     /// CSR shadow validation (`NIXIE_CSR_SHADOW=1`, slice 1 of the
     /// CSR-watches migration — `docs/studies/2026-09-13-csr-watches-kickoff.md`).
     ///
@@ -1645,6 +1681,26 @@ pub fn csr_scan_enabled() -> bool {
         static FLAG: OnceLock<bool> = OnceLock::new();
         *FLAG.get_or_init(|| {
             std::env::var("NIXIE_CSR_SCAN")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
+/// `NIXIE_CSR_READ=1` (slice 4's reader gate; requires the shadow):
+/// production readers iterate the CSR's combined view instead of the
+/// `Vec` lists.  Content-identical by the drift invariant — the gate
+/// proves the reader-side API, the last pre-flip surface.
+pub fn csr_read_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_READ")
                 .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         })
     }

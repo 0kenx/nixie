@@ -426,3 +426,32 @@ drift comparisons 100 % zero (37/37, 29/29, 101/101, 85/85, 33/33),
 shadow+scan+surgery configs.  The flip's remaining surface: the same
 treatment for the non-session take/put-back path, the reader switch
 (~25 sites), then the deletion commit.
+
+## The reader gate landed — all three pre-flip gates stack (`NIXIE_CSR_READ=1`)
+
+`NIXIE_CSR_READ=1` (shadow required): production readers iterate the
+CSR combined view (`get_combined` / `iter_combined` /
+`csr_read_active` — the predicate also requires an adopted shadow, the
+pre-first-rebuild window has none; two diagnostics caught exactly
+that).  The reader surface turned out to be **four production sites**
+(the sweep environment scan, the regions emptiness probe, the legacy
+loop's two repair-dedup reads) — the kickoff's "16 len / 13 get"
+counted scan machinery and internal API; nixie-solver's `watches` are
+its own theory-layer maps, untouched by the flip.
+
+**The stacked validation** (shadow + swapped-scan + CSR-read): 6s167 /
+si2 / x9-08075 — conflicts **bit-identical** (33 028 / 23 527 /
+641 631) with drift 37/37, 29/29, 97/97 zero; 1092 tests green in both
+flag-off and fully-stacked configs; clippy clean; default unchanged.
+
+**The flip is now one commit away**, with every surface pre-proven:
+session scan (swapped ✓), non-session scan (csr-mirror keeps the CSR
+correct; its direct-scan conversion is the flip's only new scan code,
+in the validated copy/two-pass shape), readers ✓, writers (CSR forms
+exist: `push_overflow`, `remove_clause`, `relocate`, `adopt_layout`,
+snapshot/restore).  The flip: force the CSR always-on, convert the
+non-session take/put-back, delete `watches: Vec<Vec<Watcher>>` + the
+mirror machinery + the VecScanMirror + the drift oracle itself; gates =
+full trajectory identity + corpus screen + Z3 parity + E2E model
+checks.  Post-flip: wire the batched surgery into the sparse-mutator
+rebuilds (the 46× regime).
