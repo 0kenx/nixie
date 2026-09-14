@@ -455,3 +455,35 @@ mirror machinery + the VecScanMirror + the drift oracle itself; gates =
 full trajectory identity + corpus screen + Z3 parity + E2E model
 checks.  Post-flip: wire the batched surgery into the sparse-mutator
 rebuilds (the 46× regime).
+
+## FLIP COMMIT A LANDED: the CSR is the primary representation on the
+default path (no flags)
+
+The decomposition held: commit A makes the CSR authoritative
+**unconditionally** — `WatchLists::new` constructs it (empty layout,
+everything overflow until the first rebuild adopts), the session kernel
+scans swapped-mode by default, the non-session path materializes the
+combined view into the taken list per scan (scratch-buffer form: the
+frame mirror maintains the CSR through the scan exactly as before), and
+production readers use the combined view always.  The `Vec` lists
+survive **one commit longer as the pure verification shadow** — the
+drift oracle stays up through the flip itself.
+
+Two post-flip defects the nets caught immediately (both the same
+class: code that wrote the `Vec` directly, masked pre-flip because the
+CSR did not exist before the first rebuild): the work-ledger test and
+the kernel test mutated blockers via `get_mut` — now dual-writing
+scaffolding helpers (`set_last_blocker` / `set_all_blockers`).
+
+**Validation**: 6s167 / si2 / x9-08075 / FmlaEquivChain — default
+(no env) conflicts **bit-identical** (33 028 / 23 527 / 641 631 /
+450 623) with the drift oracle 38/38, 30/30, 98/98, 102/102 zero
+through the flipped roles; 1092 tests green (default, shadow,
+shadow+surgery); clippy clean; **Z3 parity 4.16.0: 176 correct +
+1 inconclusive, identical to the tracked record**.
+
+**Commit B (the deletion)**: remove `watches: Vec<Vec<Watcher>>`, the
+VecScanMirror, the materialize round-trip, the frame mirror and the
+drift oracle — the CSR alone remains.  Gates: trajectory identity +
+corpus screen + parity + E2E model checks.  Then wire the batched
+surgery into the sparse-mutator rebuilds (the 46× regime).

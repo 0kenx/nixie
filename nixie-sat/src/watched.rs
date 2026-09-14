@@ -930,7 +930,7 @@ impl WatchLists {
             watches: vec![Vec::new(); num_vars * 2],
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
-            csr: None,
+            csr: Some(CsrWatchLists::default()),
             csr_surgery_visits: 0,
             csr_surgery_nanos: 0,
         }
@@ -1237,18 +1237,88 @@ impl WatchLists {
         self.csr.as_ref().map_or((&[], &[]), |c| c.spans(lit))
     }
 
+    /// Test scaffolding: overwrite the last entry's blocker in BOTH
+    /// representations (tests position blockers directly; post-flip the
+    /// CSR is authoritative and a `get_mut`-only write would desync it).
+    #[cfg(test)]
+    pub(crate) fn set_last_blocker(&mut self, lit: Lit, blocker: Lit) {
+        if let Some(w) = self
+            .watches
+            .get_mut(lit.index())
+            .and_then(|list| list.last_mut())
+        {
+            w.blocker = blocker;
+        }
+        if let Some(c) = self.csr.as_mut() {
+            let (p, x) = c.spans(lit);
+            let _ = p;
+            let code = lit.index();
+            let idx = if x.is_empty() {
+                let end = c.prim_end.get(code).copied().unwrap_or(0) as usize;
+                end.checked_sub(1).map(|e| (e, true))
+            } else {
+                x.len().checked_sub(1).map(|e| (e, false))
+            };
+            if let Some((idx, in_primary)) = idx {
+                if in_primary {
+                    let start = c.span_start.get(code).copied().unwrap_or(0) as usize;
+                    if let Some(w) = c.entries.get_mut(start + idx) {
+                        w.blocker = blocker;
+                    }
+                } else if let Some(w) = c.overflow.get_mut(code).and_then(|v| v.get_mut(idx)) {
+                    w.blocker = blocker;
+                }
+            }
+        }
+    }
+
+    /// Test scaffolding: overwrite every entry's blocker in BOTH
+    /// representations (see [`Self::set_last_blocker`]).
+    #[cfg(test)]
+    pub(crate) fn set_all_blockers(&mut self, lit: Lit, blocker: Lit) {
+        if let Some(list) = self.watches.get_mut(lit.index()) {
+            for w in list.iter_mut() {
+                w.blocker = blocker;
+            }
+        }
+        if let Some(c) = self.csr.as_mut() {
+            let code = lit.index();
+            let start = c.span_start.get(code).copied().unwrap_or(0) as usize;
+            let end = c.prim_end.get(code).copied().unwrap_or(0) as usize;
+            for w in &mut c.entries[start..end] {
+                w.blocker = blocker;
+            }
+            if let Some(v) = c.overflow.get_mut(code) {
+                for w in v.iter_mut() {
+                    w.blocker = blocker;
+                }
+            }
+        }
+    }
+
+    /// Materialize `lit`'s combined view into an owned `Vec` (the
+    /// non-session scan path's flip-A form: the `Vec` list becomes a
+    /// per-scan scratch buffer copied from the CSR — the authoritative
+    /// state — with the frame mirror maintaining the CSR through the scan
+    /// exactly as before).
+    pub(crate) fn take_combined_vec(&mut self, lit: Lit) -> Vec<Watcher> {
+        match self.csr.as_ref() {
+            Some(c) => {
+                let (p, x) = c.spans(lit);
+                let mut v = Vec::with_capacity(p.len() + x.len());
+                v.extend_from_slice(p);
+                v.extend_from_slice(x);
+                v
+            }
+            None => core::mem::take(self.get_mut(lit)),
+        }
+    }
+
     /// Whether CSR reads are live (the flag AND an adopted shadow —
     /// before the first rebuild there is no CSR to read).
     #[must_use]
     pub fn csr_read_active(&self) -> bool {
-        #[cfg(feature = "std")]
-        {
-            crate::watched::csr_read_enabled() && self.csr.is_some()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            false
-        }
+        self.csr.is_some()
     }
 
     /// Flag-aware combined iteration for reader sites: the CSR view under
