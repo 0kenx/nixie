@@ -1808,7 +1808,42 @@ impl Encoder {
                     ("Len", 1) | ("Append", 2) | ("Head", 1)
                 ) =>
             {
-                let target = self.go(&args[0], tm)?;
+                // A sequence has two shapes here, and the operators take
+                // either — the same discipline `set_repr` follows for sets.
+                // `<<"a", "b">>` is a tuple *and* a sequence, and which one it
+                // encoded to depends on the sort inference gave the literal;
+                // an operator that only understood the datatype would decline
+                // `Len(<<"a", "b">>)`, which is how this came up.
+                let value = self.value(&args[0], tm)?;
+                if let Value::Tuple(items) = &*value {
+                    let items = items.clone();
+                    return match name.as_str() {
+                        "Len" => {
+                            let n = i64::try_from(items.len()).map_err(|_| {
+                                EncodeError::Unsupported("a sequence longer than i64".into())
+                            })?;
+                            scalar(tm.mk_int(num_bigint::BigInt::from(n)))
+                        }
+                        "Append" => {
+                            let e = self.value(&args[1], tm)?;
+                            let mut out = items;
+                            out.push(e);
+                            Ok(Rc::new(Value::Tuple(out)))
+                        }
+                        // `Head(<<>>)` is undefined in TLA+. A structural
+                        // tuple has no value to offer for it and none is
+                        // invented.
+                        _ => items.first().map(Rc::clone).ok_or_else(|| {
+                            EncodeError::Unsupported("`Head` of the empty sequence".into())
+                        }),
+                    };
+                }
+                let Value::Scalar(target) = &*value else {
+                    return Err(EncodeError::Unsupported(format!(
+                        "`{name}` applied to something that is not a sequence"
+                    )));
+                };
+                let target = *target;
                 let sort = self.sort_of(target, tm)?;
                 let Some(elem) = crate::sorts::seq_element(sort, tm) else {
                     return Err(EncodeError::Unsupported(format!(
