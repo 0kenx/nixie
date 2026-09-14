@@ -246,6 +246,29 @@ Inv  == ~(1 \in s)
     );
 }
 
+/// An invariant that mentions `Nat` replays. The standard infinite sets have
+/// no finite extension and are not values the evaluator can build, so
+/// membership in one is answered by the kind of the value — which is what a
+/// state predicate asks of them, and what a counterexample to one needs in
+/// order to be confirmed.
+#[test]
+fn a_trace_against_nat_replays() {
+    let (out, _, v) = run(
+        r"
+---- MODULE Nats ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 1
+Next == x' = x - 1
+Inv  == x \in Nat
+====
+",
+        4,
+    );
+    assert_eq!(out, Outcome::Violation { step: 2 });
+    assert_eq!(v, Some(Verification::Replayed));
+}
+
 // ---- what is not verified yet, recorded rather than assumed ----
 
 /// A failing `Assert` is reported as a violation and **cannot** be replayed,
