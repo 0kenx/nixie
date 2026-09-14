@@ -203,10 +203,21 @@ fn decode_at(
                 .ok()
                 .filter(|n| *n <= MAX_SEQ_LEN)
                 .ok_or_else(|| DecodeError::Unsupported(format!("a sequence of length {len}")))?;
+            // Through the window: `s[i]` is `fun[off + i]`, and the offset is
+            // what `Tail` moves instead of copying elements.
+            let off_t = tm.mk_dt_selector(crate::sorts::SEQ_OFF, term, int);
+            let Value::Int(off) = decode_at(off_t, int, None, model, tm, depth + 1)? else {
+                return Err(DecodeError::Undecided("a sequence offset".into()));
+            };
             let fun = tm.mk_dt_selector(crate::sorts::SEQ_FUN, term, arr);
             let mut items = Vec::with_capacity(n);
             for i in 1..=n {
-                let idx = tm.mk_int(num_bigint::BigInt::from(i));
+                let at_i = off
+                    .checked_add(i128::try_from(i).map_err(|_| {
+                        DecodeError::Unsupported("a sequence index past i128".into())
+                    })?)
+                    .ok_or_else(|| DecodeError::Unsupported("a sequence index past i128".into()))?;
+                let idx = tm.mk_int(num_bigint::BigInt::from(at_i));
                 let at = tm.mk_select(fun, idx);
                 items.push(decode_at(at, elem, None, model, tm, depth + 1)?);
             }
@@ -218,12 +229,30 @@ fn decode_at(
         SortKind::Datatype(_) => {
             let fields = struct_fields(sort, tm)
                 .ok_or_else(|| DecodeError::Unsupported("a datatype with no constructor".into()))?;
+            // If the model hands back a *constructor*, read its arguments
+            // positionally. That is the case whenever the value came from
+            // somewhere the model assigns no selectors for — a record sitting
+            // inside a sequence, say, which is reached by reducing a `select`
+            // over a `store` chain and so is a term the query never applied a
+            // selector to.
+            let built = model.eval(term, tm);
+            let ctor_args = match tm.get(built).map(|t| t.kind.clone()) {
+                Some(TermKind::DtConstructor { args, .. }) if args.len() == fields.len() => {
+                    Some(args)
+                }
+                _ => None,
+            };
             let mut parts: Vec<(String, Value)> = Vec::with_capacity(fields.len());
-            for (name, fs) in &fields {
-                let sel = tm.mk_dt_selector(name, term, *fs);
+            for (i, (name, fs)) in fields.iter().enumerate() {
+                let at = match &ctor_args {
+                    Some(args) => *args.get(i).ok_or_else(|| {
+                        DecodeError::Unsupported("a constructor with too few arguments".into())
+                    })?,
+                    None => tm.mk_dt_selector(name, term, *fs),
+                };
                 parts.push((
                     name.clone(),
-                    decode_at(sel, *fs, None, model, tm, depth + 1)?,
+                    decode_at(at, *fs, None, model, tm, depth + 1)?,
                 ));
             }
             if parts.iter().all(|(n, _)| n.starts_with("@t")) {

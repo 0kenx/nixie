@@ -281,6 +281,17 @@ pub struct CsrWatchLists {
     scan: CsrScanFrame,
     /// Precondition-violation reporting is once per process.
     warned_precondition: bool,
+    /// ref → watched-literal codes (≤ 2 entries: one watcher per
+    /// (clause, literal)): the surgery experiment's position index.
+    /// Maintained by the same funnels as the entries themselves —
+    /// `push_overflow` (every append: attach, move, repair, surgery add),
+    /// `remove_clause`, the scan notifications, `relocate` rekeying, and
+    /// `adopt_layout` (rebuilt from the fresh spans).  The BCP moves
+    /// watches without touching stored clause order, so this index — not
+    /// `(lits[0], lits[1])` — is the ground truth for where a clause's
+    /// watchers actually live (the watch-position-drift finding,
+    /// 2026-09-14).
+    positions: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>>,
 }
 
 #[allow(dead_code)] // slice-1.5 foundation
@@ -308,6 +319,10 @@ impl CsrWatchLists {
             self.overflow.resize(i + 1, Vec::new());
         }
         self.overflow[i].push(w);
+        let slot = self.positions.entry(w.r.byte_offset()).or_default();
+        if !slot.contains(&(i as u32)) {
+            slot.push(i as u32);
+        }
     }
 
     /// In-place prefix compaction of `lit`'s primary span down to its
@@ -350,6 +365,12 @@ impl CsrWatchLists {
             *slot = write as u32;
         }
         self.overflow[i].retain(|w| w.r != r);
+        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+            slot.retain(|c| *c != i as u32);
+            if slot.is_empty() {
+                self.positions.remove(&r.byte_offset());
+            }
+        }
     }
 
     /// The combined view of `lit`'s list as a `SmallVec`-free pair:
@@ -383,6 +404,20 @@ impl CsrWatchLists {
         self.overflow.clear();
         self.overflow.resize(self.span_start.len(), Vec::new());
         self.scan = CsrScanFrame::default();
+        // Rebuild the position index from the fresh layout: the counting
+        // sort places every live clause's watchers at its span positions.
+        self.positions.clear();
+        for code in 0..self.span_start.len() {
+            let start = self.span_start[code];
+            let end = self.prim_end[code];
+            for off in start..end {
+                let w = self.entries[off as usize];
+                let slot = self.positions.entry(w.r.byte_offset()).or_default();
+                if !slot.contains(&(code as u32)) {
+                    slot.push(code as u32);
+                }
+            }
+        }
     }
 
     // ---- Dual-write BCP scan (slice 2) --------------------------------
@@ -407,6 +442,12 @@ impl CsrWatchLists {
                  combined {} vs vec {vec_len} — mirror suspended for this scan",
                 (p_len as u64) + (o_len as u64)
             );
+            #[cfg(feature = "std")]
+            eprintln!(
+                "[csr-shadow] backtrace:\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+            let _ = self.scan.active;
         }
         self.scan = CsrScanFrame {
             code,
@@ -449,9 +490,17 @@ impl CsrWatchLists {
     }
 
     /// Mirror a removed entry (deleted clause, repair, watch move-out):
-    /// advances the read cursor only.
-    pub(crate) fn scan_remove(&mut self) {
+    /// advances the read cursor and drops the position-index entry for
+    /// `r` under the scanned literal (the watch leaves this list).
+    pub(crate) fn scan_remove(&mut self, r: ClauseRef) {
         if self.scan.active {
+            let code = self.scan.code as u32;
+            if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+                slot.retain(|c| *c != code);
+                if slot.is_empty() {
+                    self.positions.remove(&r.byte_offset());
+                }
+            }
             self.scan.read += 1;
         }
     }
@@ -505,6 +554,27 @@ impl CsrWatchLists {
     /// (order-preserving in both segments, matching the `Vec` pass).
     pub(crate) fn relocate(&mut self, arena: &ClauseArena, plan: &CompactionPlan) {
         let relocated = plan.relocated();
+        // Rekey the position index (old → new byte offsets).  Entries of
+        // deleted clauses die with the compaction (their watchers are
+        // dropped below), so their index slots simply vanish — mirroring
+        // the Vec pass's is_deleted skip.
+        let mut rekeyed = std::collections::BTreeMap::new();
+        let old = std::mem::take(&mut self.positions);
+        for (off, lits) in old {
+            if let Some(r) = ClauseRef::from_byte_offset(off)
+                && !r.is_null()
+                && !arena.is_deleted(r)
+            {
+                // The identity load is now safe (live clause; the deleted
+                // case panicked in `live_identity` on lingering dead
+                // entries — the compaction-fires test caught it).
+                rekeyed.insert(
+                    relocated[arena.live_identity(r).index()].byte_offset(),
+                    lits,
+                );
+            }
+        }
+        self.positions = rekeyed;
         let n = self.span_start.len().max(self.overflow.len());
         for code in 0..n {
             if let (Some(&start), Some(end)) =
@@ -548,6 +618,54 @@ impl CsrWatchLists {
         }
     }
 
+    /// Diagnostics: total live entries / index size.
+    pub(crate) fn debug_total_entries(&self) -> usize {
+        let n = self.span_start.len().max(self.overflow.len());
+        (0..n)
+            .map(|code| {
+                let lit = Lit::from_code(code as u32);
+                let (prim, extra) = self.spans(lit);
+                prim.len() + extra.len()
+            })
+            .sum()
+    }
+
+    pub(crate) fn debug_index_refs(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// Index-consistency audit: rebuild actual ref→positions from a full
+    /// scan of the CSR and compare against the maintained index.  Returns
+    /// `(indexed_refs, refs_with_missing_position, refs_with_stale_position)`.
+    pub(crate) fn csr_index_audit(&self) -> (usize, usize, usize) {
+        let mut actual: std::collections::BTreeMap<usize, smallvec::SmallVec<[u32; 2]>> =
+            std::collections::BTreeMap::new();
+        let n = self.span_start.len().max(self.overflow.len());
+        for code in 0..n {
+            let lit = Lit::from_code(code as u32);
+            let (prim, extra) = self.spans(lit);
+            for w in prim.iter().chain(extra.iter()) {
+                let slot = actual.entry(w.r.byte_offset()).or_default();
+                if !slot.contains(&(code as u32)) {
+                    slot.push(code as u32);
+                }
+            }
+        }
+        let mut missing = 0usize;
+        let mut stale = 0usize;
+        for (off, indexed) in &self.positions {
+            match actual.get(off) {
+                None => stale += 1,
+                Some(a) => {
+                    if !indexed.iter().all(|c| a.contains(c)) {
+                        missing += 1;
+                    }
+                }
+            }
+        }
+        (self.positions.len(), missing, stale)
+    }
+
     /// Mirror `WatchLists::clear`: every list empties (the layout arrays
     /// reset; the next rebuild re-adopts a fresh layout).
     pub(crate) fn clear_all(&mut self) {
@@ -558,6 +676,7 @@ impl CsrWatchLists {
             list.clear();
         }
         self.scan = CsrScanFrame::default();
+        self.positions.clear();
     }
 }
 
@@ -626,14 +745,23 @@ impl WatchLists {
         self.csr.is_some()
     }
 
-    /// CSR-only surgical removal (the ELS-rewatching experiment,
-    /// `NIXIE_ELS_CSR_SURGERY=1`): remove every entry with arena ref `r`
-    /// from `lit`'s combined view, touching ONLY the shadow — the `Vec`
-    /// side is rebuilt wholesale and serves as the experiment's ground
-    /// truth.  Order-preserving on both segments.
-    pub(crate) fn csr_surgery_remove(&mut self, lit: Lit, r: ClauseRef) {
-        if let Some(csr) = &mut self.csr {
-            csr.remove_clause(lit, r);
+    /// CSR-only surgical removal by ACTUAL position (the ELS-rewatching
+    /// experiment, `NIXIE_ELS_CSR_SURGERY=1`): the position index says
+    /// which literals' lists hold `r`'s watchers — the BCP moves watches
+    /// without normalizing stored clause order, so `(lits[0], lits[1])`
+    /// is NOT where they live (the watch-position-drift finding).  One
+    /// call removes the clause's watchers wherever they are.  Touches
+    /// ONLY the shadow; the `Vec` side is rebuilt wholesale as ground
+    /// truth.
+    pub(crate) fn csr_surgery_remove_clause(&mut self, r: ClauseRef) {
+        let Some(csr) = &mut self.csr else {
+            return;
+        };
+        let Some(lits) = csr.positions.get(&r.byte_offset()).cloned() else {
+            return;
+        };
+        for code in lits {
+            csr.remove_clause(Lit::from_code(code), r);
         }
     }
 
@@ -658,7 +786,8 @@ impl WatchLists {
         csr: &CsrWatchLists,
         mut clause_state: impl FnMut(usize) -> ClauseAuditState,
     ) -> (usize, usize, usize) {
-        let mut counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut counts: std::collections::BTreeMap<usize, usize> =
+            std::collections::BTreeMap::new();
         let mut total = 0usize;
         let n = csr.span_start.len().max(csr.overflow.len());
         for code in 0..n {
@@ -671,11 +800,19 @@ impl WatchLists {
         }
         let mut wrong_live = 0usize;
         let mut stale_dead = 0usize;
+        let mut sampled = 0usize;
         for (off, count) in counts {
             match clause_state(off) {
                 ClauseAuditState::LiveLong => {
                     if count != 2 {
                         wrong_live += 1;
+                        if sampled < 5 {
+                            sampled += 1;
+                            eprintln!(
+                                "[csr-surgery] sample: ref {off} has {count} watchers, index says {:?}",
+                                csr.positions.get(&off)
+                            );
+                        }
                     }
                 }
                 ClauseAuditState::DeadOrShort => stale_dead += 1,
@@ -756,9 +893,9 @@ impl WatchLists {
     }
 
     /// Mirror a removed entry.
-    pub(crate) fn shadow_scan_remove(&mut self) {
+    pub(crate) fn shadow_scan_remove(&mut self, r: ClauseRef) {
         if let Some(csr) = &mut self.csr {
-            csr.scan_remove();
+            csr.scan_remove(r);
         }
     }
 
@@ -1515,7 +1652,7 @@ mod csr_tests {
                 for _ in 0..visits {
                     match rng.below(4) {
                         0 => {
-                            csr.scan_remove();
+                            csr.scan_remove(reference[script.len()].r);
                             script.push(None);
                         }
                         1 => {
@@ -1565,7 +1702,7 @@ mod csr_tests {
         csr.begin_scan(a.index(), 2);
         csr.scan_keep(w0, None);
         let moved = Watcher::new(ClauseId::new(99), ClauseRef::NULL, Lit::from_code(77));
-        csr.scan_remove(); // w1 leaves the list
+        csr.scan_remove(w1.r); // w1 leaves the list
         csr.scan_push(b, moved); // ...and lands in b's overflow
         let self_push = Watcher::new(ClauseId::new(98), ClauseRef::NULL, Lit::from_code(78));
         csr.scan_push(a, self_push); // dropped by end_scan (put-back parity)

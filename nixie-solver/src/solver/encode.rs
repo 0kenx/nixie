@@ -558,10 +558,23 @@ impl Solver {
         struct Level {
             terms: SmallVec<[(TermId, Rational64); 4]>,
             constant: BigRational,
+            /// This level's terms include a wide-constant COLUMN (the
+            /// big-const abstraction): the level is "non-constant" only by
+            /// abstraction, not by shape. When such a level makes a product
+            /// nonlinear, the failure is a WIDTH failure of an originally
+            /// linear term — it must gate the atom to `Unknown`
+            /// (`arith_parse_overflow`), because the structural
+            /// nonlinear-shape check cannot see it (the original term looks
+            /// like const·var) and an ungated atom is a free Boolean the
+            /// SAT core satisfies at will (wrong `sat` on
+            /// `(= v0 (+ (* 9223372036854775808 v1) 1))` with
+            /// `v0 = 0, v1 > 0`).
+            wide_const: bool,
         }
         impl Level {
             fn new() -> Self {
                 Level {
+                    wide_const: false,
                     terms: SmallVec::new(),
                     constant: BigRational::zero(),
                 }
@@ -648,6 +661,7 @@ impl Solver {
                                 // what kept the Verus `uHi 64 = 2^64`
                                 // family answerable only by `unknown`.
                                 cur.terms.push((id, sc));
+                                cur.wide_const = true;
                             }
                         },
 
@@ -821,6 +835,22 @@ impl Solver {
                             // is linear iff at most one factor is non-constant,
                             // so a second such factor makes it nonlinear.
                             if frame.non_const_factor.is_some() {
+                                // Unless the non-constancy is the big-const
+                                // ABSTRACTION's doing: a wide constant column
+                                // makes `const·var` parse as `var·var`, and
+                                // the shape check downstream cannot see the
+                                // difference. That is a width failure of a
+                                // linear term — record it so the honesty gate
+                                // answers `Unknown` instead of letting the
+                                // atom float free.
+                                let abstraction_caused = cur.wide_const
+                                    || frame
+                                        .non_const_factor
+                                        .as_ref()
+                                        .is_some_and(|l| l.wide_const);
+                                if abstraction_caused {
+                                    *overflow = true;
+                                }
                                 return None;
                             }
                             frame.non_const_factor =

@@ -705,6 +705,28 @@ impl Encoder {
         out
     }
 
+    /// The components of a **literal** sequence, for the right-hand side of
+    /// `\o`.
+    ///
+    /// Read off the kernel term where it is a tuple literal, so it works
+    /// whichever shape the literal encoded to — and refused otherwise, since a
+    /// symbolic sequence has no statically known number of elements to append.
+    fn seq_items(&mut self, term: &KeraRef, tm: &mut TermManager) -> Result<Vec<Rc<Value>>> {
+        if let Kera::Tuple(xs) = term.as_ref() {
+            let mut out = Vec::with_capacity(xs.len());
+            for x in xs {
+                out.push(self.value(x, tm)?);
+            }
+            return Ok(out);
+        }
+        match &*self.value(term, tm)? {
+            Value::Tuple(items) => Ok(items.clone()),
+            _ => Err(EncodeError::Unsupported(
+                "`\\o` with a right side that is not a literal sequence".into(),
+            )),
+        }
+    }
+
     /// The empty sequence at a sequence sort.
     ///
     /// Built over the **shared** base array, which is what makes two sequences
@@ -722,13 +744,36 @@ impl Encoder {
             .datatype_name(sort)
             .ok_or(EncodeError::ShapeClash)?
             .to_string();
-        Ok(tm.mk_dt_constructor(&name, [zero, base], sort))
+        Ok(tm.mk_dt_constructor(&name, [zero, zero, base], sort))
     }
 
     /// `Len(s)`.
     fn seq_len(&self, seq: TermId, tm: &mut TermManager) -> TermId {
         let int = tm.sorts.int_sort;
         tm.mk_dt_selector(crate::sorts::SEQ_LEN, seq, int)
+    }
+
+    /// Where `s`'s window starts in its graph: `s[i]` is `fun[off + i]`.
+    fn seq_off(&self, seq: TermId, tm: &mut TermManager) -> TermId {
+        let int = tm.sorts.int_sort;
+        tm.mk_dt_selector(crate::sorts::SEQ_OFF, seq, int)
+    }
+
+    /// `s[i]`, for a sequence in the datatype shape.
+    fn seq_at(
+        &mut self,
+        seq: TermId,
+        index: TermId,
+        sort: SortId,
+        tm: &mut TermManager,
+    ) -> Result<TermId> {
+        let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+            return Err(EncodeError::ShapeClash);
+        };
+        let off = self.seq_off(seq, tm);
+        let fun = self.seq_fun(seq, elem, tm);
+        let at = tm.mk_add([off, index]);
+        Ok(tm.mk_select(fun, at))
     }
 
     /// The graph of `s`, as an array from `1..`.
@@ -749,17 +794,20 @@ impl Encoder {
         let Some(elem) = crate::sorts::seq_element(sort, tm) else {
             return Err(EncodeError::ShapeClash);
         };
+        let off = self.seq_off(seq, tm);
         let len = self.seq_len(seq, tm);
         let fun = self.seq_fun(seq, elem, tm);
         let one = tm.mk_int(num_bigint::BigInt::from(1));
         let next = tm.mk_add([len, one]);
-        let stored = tm.mk_store(fun, next, e);
+        // One past the end *of the window*, not of the array.
+        let at = tm.mk_add([off, next]);
+        let stored = tm.mk_store(fun, at, e);
         let name = tm
             .sorts
             .datatype_name(sort)
             .ok_or(EncodeError::ShapeClash)?
             .to_string();
-        Ok(tm.mk_dt_constructor(&name, [next, stored], sort))
+        Ok(tm.mk_dt_constructor(&name, [off, next, stored], sort))
     }
 
     fn shape(&self, r: Option<TermId>) -> Result<TermId> {
@@ -1472,6 +1520,19 @@ impl Encoder {
             // that can manufacture a counterexample, never hide one.
             Kera::FunApp(f, i) => {
                 let target = self.value(f, tm)?;
+                // A **sequence** is indexed through its window: `s[i]` is
+                // `fun[off + i]`, and the index need not be a literal — which
+                // is the point, since `events[Len(events)]` is how a
+                // specification reads the last thing that happened.
+                if let Value::Scalar(seq) = &*target
+                    && let Ok(sort) = self.sort_of(*seq, tm)
+                    && crate::sorts::seq_element(sort, tm).is_some()
+                {
+                    let seq = *seq;
+                    let index = self.go(i, tm)?;
+                    let at = self.seq_at(seq, index, sort, tm)?;
+                    return scalar(at);
+                }
                 match &*target {
                     // A tuple is a function on `1..n`, so a literal index
                     // selects a component. A non-literal index into a
@@ -1805,10 +1866,59 @@ impl Encoder {
             Kera::Opaque(name, args)
                 if matches!(
                     (name.as_str(), args.len()),
-                    ("Len", 1) | ("Append", 2) | ("Head", 1)
+                    ("Len", 1) | ("Append", 2) | ("Head", 1) | ("Tail", 1) | ("\\o", 2)
                 ) =>
             {
-                let target = self.go(&args[0], tm)?;
+                // A sequence has two shapes here, and the operators take
+                // either — the same discipline `set_repr` follows for sets.
+                // `<<"a", "b">>` is a tuple *and* a sequence, and which one it
+                // encoded to depends on the sort inference gave the literal;
+                // an operator that only understood the datatype would decline
+                // `Len(<<"a", "b">>)`, which is how this came up.
+                let value = self.value(&args[0], tm)?;
+                if let Value::Tuple(items) = &*value {
+                    let items = items.clone();
+                    return match name.as_str() {
+                        "Len" => {
+                            let n = i64::try_from(items.len()).map_err(|_| {
+                                EncodeError::Unsupported("a sequence longer than i64".into())
+                            })?;
+                            scalar(tm.mk_int(num_bigint::BigInt::from(n)))
+                        }
+                        "Append" => {
+                            let e = self.value(&args[1], tm)?;
+                            let mut out = items;
+                            out.push(e);
+                            Ok(Rc::new(Value::Tuple(out)))
+                        }
+                        "Tail" => {
+                            if items.is_empty() {
+                                return Err(EncodeError::Unsupported(
+                                    "`Tail` of the empty sequence".into(),
+                                ));
+                            }
+                            Ok(Rc::new(Value::Tuple(items[1..].to_vec())))
+                        }
+                        "\\o" => {
+                            let rest = self.seq_items(&args[1], tm)?;
+                            let mut out = items;
+                            out.extend(rest);
+                            Ok(Rc::new(Value::Tuple(out)))
+                        }
+                        // `Head(<<>>)` is undefined in TLA+. A structural
+                        // tuple has no value to offer for it and none is
+                        // invented.
+                        _ => items.first().map(Rc::clone).ok_or_else(|| {
+                            EncodeError::Unsupported("`Head` of the empty sequence".into())
+                        }),
+                    };
+                }
+                let Value::Scalar(target) = &*value else {
+                    return Err(EncodeError::Unsupported(format!(
+                        "`{name}` applied to something that is not a sequence"
+                    )));
+                };
+                let target = *target;
                 let sort = self.sort_of(target, tm)?;
                 let Some(elem) = crate::sorts::seq_element(sort, tm) else {
                     return Err(EncodeError::Unsupported(format!(
@@ -1818,7 +1928,8 @@ impl Encoder {
                 match name.as_str() {
                     "Len" => scalar(self.seq_len(target, tm)),
                     "Append" => {
-                        let e = self.go(&args[1], tm)?;
+                        let v = self.value(&args[1], tm)?;
+                        let e = self.reify(&v, tm)?;
                         if self.sort_of(e, tm)? != elem {
                             return Err(EncodeError::Unsupported(
                                 "`Append` of a value at the wrong element sort".into(),
@@ -1827,14 +1938,58 @@ impl Encoder {
                         let out = self.seq_append(target, e, sort, tm)?;
                         scalar(out)
                     }
-                    // `Head(s)` is `s[1]`. TLA+ leaves it *undefined* on the
-                    // empty sequence, and so does this: the array's value at
-                    // index 1 is then whatever the base holds, which is an
-                    // unconstrained term — some value, never a chosen one.
-                    _ => {
+                    // `Tail(s)` moves the window forward by one and shortens
+                    // it. Nothing is copied and no element moves, which is the
+                    // whole reason the offset is in the representation.
+                    //
+                    // TLA+ leaves `Tail(<<>>)` undefined, and so does this: the
+                    // length becomes `-1`, a sequence nothing can read from,
+                    // rather than an error about a state the specification may
+                    // never reach.
+                    "Tail" => {
+                        let off = self.seq_off(target, tm);
+                        let len = self.seq_len(target, tm);
                         let fun = self.seq_fun(target, elem, tm);
                         let one = tm.mk_int(num_bigint::BigInt::from(1));
-                        scalar(tm.mk_select(fun, one))
+                        let minus = tm.mk_int(num_bigint::BigInt::from(-1));
+                        let off2 = tm.mk_add([off, one]);
+                        let len2 = tm.mk_add([len, minus]);
+                        let name = tm
+                            .sorts
+                            .datatype_name(sort)
+                            .ok_or(EncodeError::ShapeClash)?
+                            .to_string();
+                        scalar(tm.mk_dt_constructor(&name, [off2, len2, fun], sort))
+                    }
+                    // `s \o t` where `t` is a *literal*, which is the only
+                    // shape a bounded encoding can take exactly: appending its
+                    // elements one at a time. Concatenating two symbolic
+                    // sequences needs their lengths known, and is declined
+                    // rather than approximated.
+                    "\\o" => {
+                        let rest = self.seq_items(&args[1], tm)?;
+                        let mut out = target;
+                        for item in rest {
+                            // A record or a tuple element arrives *structural*
+                            // — field by field — and a sequence holds one term
+                            // per element, so it is reified into its datatype
+                            // here. This is the ordinary crossing between the
+                            // two forms, not a special case: a queue of
+                            // records is the shape every generated
+                            // specification uses.
+                            let e = self.reify(&item, tm)?;
+                            out = self.seq_append(out, e, sort, tm)?;
+                        }
+                        scalar(out)
+                    }
+                    // `Head(s)` is `s[1]`. TLA+ leaves it *undefined* on the
+                    // empty sequence, and so does this: the array's value
+                    // there is whatever the base holds, which is an
+                    // unconstrained term — some value, never a chosen one.
+                    _ => {
+                        let one = tm.mk_int(num_bigint::BigInt::from(1));
+                        let at = self.seq_at(target, one, sort, tm)?;
+                        scalar(at)
                     }
                 }
             }

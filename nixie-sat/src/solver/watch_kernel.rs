@@ -86,7 +86,7 @@ impl Cursor {
                     self.work.deleted += 1;
                 }
                 if MIRROR {
-                    destinations.shadow_scan_remove();
+                    destinations.shadow_scan_remove(watcher.r);
                 }
                 if COMPACT {
                     continue;
@@ -174,7 +174,7 @@ impl Cursor {
                                     },
                                 );
                                 if MIRROR {
-                                    destinations.shadow_scan_remove();
+                                    destinations.shadow_scan_remove(watcher.r);
                                 }
                                 if !COMPACT {
                                     live.set_searched(new_searched);
@@ -217,7 +217,7 @@ impl Cursor {
                     }
                 }
                 if MIRROR {
-                    destinations.shadow_scan_remove();
+                    destinations.shadow_scan_remove(watcher.r);
                 }
                 if COMPACT {
                     continue;

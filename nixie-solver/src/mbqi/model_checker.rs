@@ -129,12 +129,6 @@ const MAX_VETO_CHECKS: usize = 32;
 /// partial) and one against the settled model.
 const MAX_CHECKS_PER_QUANTIFIER: u32 = 2;
 
-/// Lifetime bound on else-revision solves for one `ModelChecker` (see the
-/// revision search in `check`): the search is completeness-only, and an
-/// unbounded per-check budget multiplied the heaviest convergence pin's
-/// cost ~2.5x (every falsified check over non-Bool defaults re-searching).
-const MAX_LIFETIME_REVISION_SOLVES: u32 = 16;
-
 /// Hard *total* bound on nested solves per quantifier per solve (no
 /// reset): see the streak comment at its use site — a converging
 /// quantifier may reset its wasted-solve streak, but never past this
@@ -263,8 +257,6 @@ pub(crate) struct ModelChecker {
     /// refuse the verdict.  The memory is per-signature, so a genuinely
     /// moved model re-earns its certification.
     falsified_at: FxHashMap<TermId, Vec<u64>>,
-    /// Else-revision solves spent (see [`MAX_LIFETIME_REVISION_SOLVES`]).
-    revision_solves: u32,
     /// Second opinions spent (see [`ModelChecker::check_veto`]).
     veto_checks: usize,
     /// Last decline reason, for stats/debugging.
@@ -288,7 +280,6 @@ impl ModelChecker {
             total_checks_of: FxHashMap::default(),
             certified_at: FxHashMap::default(),
             falsified_at: FxHashMap::default(),
-            revision_solves: 0,
             veto_checks: 0,
             last_decline: None,
         }
@@ -510,11 +501,13 @@ impl ModelChecker {
         }
 
         // Total interpretation: an else value for every function we may
-        // need.  The entry cap counts *chain-relevant* entries — those
-        // whose result differs from the function's else — because the
-        // ite-chain construction (see `fold_apply`) skips the rest: the
-        // enumerative seeder's thousands of default-valued pins must not
-        // bury the structural ones.
+        // need — the base choice merged with the globally accepted
+        // revision (see [`ModelChecker::accepted_else`]).  The entry cap
+        // counts *chain-relevant* entries — those whose result differs
+        // from the function's else — because the ite-chain construction
+        // (see `fold_apply`) skips the rest: the enumerative seeder's
+        // thousands of default-valued pins must not bury the structural
+        // ones.
         let else_preview = choose_else_table(model, manager);
         for interp in model.function_interps.values() {
             let Some(&else_val) = else_preview.get(&interp.name) else {
@@ -611,101 +604,19 @@ impl ModelChecker {
         } else {
             result
         };
-        // Bounded per-function else-revision — Z3's `smt_model_finder`
-        // "search, verify, revise" for the *non-Bool* constructors: a
-        // falsified body whose evaluation leaned on a Set-valued
-        // function's default (`union`'s arbitrary `else` violates its own
-        // defining axiom at the A2-witness point: `member(sk,b)` is pinned
-        // true, `member(sk,c)` false, so `member(sk, union(b,c))` must read
-        // true — which no default pinning of every compound can chase
-        // down) is repaired by revising exactly that default: each
-        // candidate value (the function's own entry results, then the
-        // range sort's universe elements) defines an equally legitimate
-        // total extension of the same entries, verified by the same
-        // nested refutation before anything is concluded.  Bounded: at
-        // most a handful of functions, candidates and revision solves per
-        // check — the *search* is heuristic, the *verification* exact.
-        let result = if result.as_ref().is_ok_and(|r| *r == SolverResult::Sat) {
-            /// How many functions one check may revise.
-            const MAX_REVISED_FUNCS: usize = 4;
-            /// Candidate defaults tried per function.
-            const MAX_ELSE_CANDIDATES: usize = 8;
-            let base_else = choose_else_table(model, manager);
-            let (_, _, _, consulted) =
-                CompletionEval::run_recorded(q.body, model, &bound_names, &base_else, manager);
-            let mut revised_funcs = 0usize;
-            for func in consulted {
-                if revised_funcs >= MAX_REVISED_FUNCS
-                    || self.revision_solves >= MAX_LIFETIME_REVISION_SOLVES
-                {
-                    break;
-                }
-                let Some(interp) = model.function_interps.get(&func) else {
-                    continue;
-                };
-                // Bool-valued defaults are the closed-world retry's domain.
-                if interp.range == manager.sorts.bool_sort {
-                    continue;
-                }
-                let Some(&current_else) = base_else.get(&func) else {
-                    continue;
-                };
-                // Candidates: the function's own entry results first (a
-                // value the model already uses for it), then the range
-                // sort's ground universe elements.
-                let mut candidates: Vec<TermId> = Vec::new();
-                for entry in &interp.entries {
-                    if !candidates.contains(&entry.result) {
-                        candidates.push(entry.result);
-                    }
-                }
-                if let Some(universe) = model.ground_universe(interp.range, manager) {
-                    for element in universe {
-                        if !candidates.contains(&element) {
-                            candidates.push(element);
-                        }
-                    }
-                }
-                for (tried_for_func, candidate) in candidates.into_iter().enumerate() {
-                    if tried_for_func >= MAX_ELSE_CANDIDATES
-                        || self.revision_solves >= MAX_LIFETIME_REVISION_SOLVES
-                        || candidate == current_else
-                    {
-                        break;
-                    }
-                    let mut revised = base_else.clone();
-                    revised.insert(func, candidate);
-                    let Ok(body_revised) =
-                        CompletionEval::run(q.body, model, &bound_names, &revised, manager)
-                    else {
-                        continue;
-                    };
-                    if body_revised == body_completed {
-                        continue;
-                    }
-                    self.revision_solves += 1;
-                    if matches!(
-                        self.aux_refute(body_revised, &skolem_terms, model, logic, manager),
-                        Ok(SolverResult::Unsat)
-                    ) {
-                        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
-                            eprintln!(
-                                "[mc] aux verdict (revised else for fn {:?}): satisfied",
-                                func.into_inner().get()
-                            );
-                        }
-                        self.certified_at.entry(q.term).or_default().push(signature);
-                        self.checks_of.insert(q.term, 0);
-                        self.last_decline = None;
-                        return ModelCheckOutcome::Satisfied;
-                    }
-                }
-                revised_funcs += 1;
-            }
-            result
-        } else {
-            result
-        };
+        // NOTE: a bounded per-function else-revision search (Z3's
+        // `smt_model_finder` "search, verify, revise" for non-Bool
+        // constructors) lived here and was removed: its certifications
+        // could rest on *different* one-shot interpretations for
+        // different quantifiers (q1 needing `union`'s else to be `b`, q2
+        // needing `a` — no single model of the conjunction exhibited), it
+        // demonstrated no win anywhere (set16's violating points are
+        // entry-shaped, not default-shaped), and making it globally
+        // consistent (one accepted revision merged into every later
+        // check) quadrupled the convergence pins' cost by reshaping every
+        // subsequent aux goal.  The entry-table search that would
+        // actually close the set family is recorded as its own project in
+        // docs/studies/2026-09-14-uflra-handoff-executed.md.
         if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
             eprintln!("[mc] aux verdict q={:?}: {:?}", q.term, result);
         }

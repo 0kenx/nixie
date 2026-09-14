@@ -141,7 +141,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             }
             entry.remove();
             if MIRROR && let Some(c) = csr.as_mut() {
-                c.scan_remove();
+                c.scan_remove(watcher.r);
             }
             if COMPACT {
                 continue;
@@ -244,7 +244,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             }
             entry.remove();
             if MIRROR && let Some(c) = csr.as_mut() {
-                c.scan_remove();
+                c.scan_remove(watcher.r);
             }
             if COMPACT {
                 continue;
@@ -273,7 +273,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             } else {
                 entry.remove();
                 if MIRROR && let Some(c) = csr.as_mut() {
-                    c.scan_remove();
+                    c.scan_remove(watcher.r);
                 }
                 if !COMPACT {
                     return scan::<true, MIRROR>(

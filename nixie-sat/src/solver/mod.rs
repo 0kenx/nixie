@@ -1916,6 +1916,10 @@ pub struct Solver {
     /// rebuild, which then runs the multiset equivalence oracle before
     /// re-adopting the fresh layout.
     pub(super) csr_surgery_fired: bool,
+    /// The ELS-rewatching surgery experiment's scan-free window: surgery
+    /// edits desync the dual-write mirror, safe only inside the ELS rewrite
+    /// loop (nothing scans between the edits and the rebuilding adopt).
+    pub(super) els_surgery_window: bool,
     /// Surgical ops applied since the last rebuild (diagnostics only).
     pub(super) csr_surgery_ops: u64,
     /// Conflict threshold for the next elimination phase (cadical `lim.elim`).
@@ -2409,6 +2413,7 @@ impl Solver {
             elim_bound: 0,
             elim_phases: 0,
             csr_surgery_fired: false,
+            els_surgery_window: false,
             csr_surgery_ops: 0,
             lim_elim: elim_interval,
             last_elim_fixed: 0,
@@ -4694,14 +4699,13 @@ impl Solver {
         // the multiset oracle reports them stale).  Covers every retire
         // site: subsume backward-subsumption, probing, sweep, vivify, ELS.
         // Runs before `clauses.remove` frees the arena slot.
-        if self.csr_surgery_on()
+        if self.els_surgery_window
             && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
             && c.lits.len() >= 3
             && let Some(r) = self.clauses.ref_of(cid)
         {
-            self.watches.csr_surgery_remove(c.lits[0].negate(), r);
-            self.watches.csr_surgery_remove(c.lits[1].negate(), r);
-            self.csr_surgery_ops += 2;
+            self.watches.csr_surgery_remove_clause(r);
+            self.csr_surgery_ops += 1;
             self.csr_surgery_fired = true;
         }
         if let Some(v) = self.clauses.get(cid).filter(|c| !c.deleted) {
