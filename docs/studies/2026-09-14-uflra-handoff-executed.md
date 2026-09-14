@@ -201,6 +201,32 @@ Re-fetch SMT-LIB (StarExec space 239) before the next prescribed screen;
 `set9`/`set19` could not be reconstructed (content not recorded
 anywhere — only `set16` was).
 
+## Post-landing audit: the else-revision removed (divergence vector)
+
+A follow-up audit of the landed unit found a theoretical soundness shape
+in the else-revision search: its certifications could rest on *different*
+one-shot interpretations for different quantifiers (q1 certified with
+`union`'s else revised to `b`, q2 with `a` — the round's `Satisfied` then
+exhibits no single model of the conjunction).  A live false-`sat` could
+not be constructed (probes collide the instances at ground level first —
+finite-universe mining meets `forall s. phi(f s))` and
+`forall s. not phi(f s))` at the same ground `s` before either
+certifies), but the vector was real.  Closing it the consistent way (one
+globally accepted revision merged into every later check) **quadrupled
+the convergence pins** (4/9 timeouts: the merged table reshapes every
+subsequent aux goal — trajectory cost, not code cost).  Decision:
+**remove the revision search entirely** — it demonstrated no win
+anywhere (set16's violating points are entry-shaped, not default-shaped),
+it is completeness-only, and it carried the vector.  The entry-table
+search that would actually close the set family must be built
+*globally-consistent from the start* (one interpretation, revised
+monotonically, every certification against the current one) — recorded
+as a design requirement for that project.
+
+Landed as the follow-up commit; pins 9/9 (194s group, 3m00s heaviest
+single-threaded — within the unit's band, trajectory chaos), parity
+176/1/0, all 51 quantifier regressions pass.
+
 ## Post-landing record
 
 - Landed as `533ae756` (the unit) + `15fbf617` (clippy/fmt hygiene on
