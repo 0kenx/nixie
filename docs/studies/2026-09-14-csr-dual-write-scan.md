@@ -244,3 +244,40 @@ pre-search ELS fixpoint loop's between-round activity
 (`mod.rs:4181ff`), or the mid-search caller interleaving sweep at the
 same boundary.  The probe set (entry counters, index audit, contract
 audit, backtrace gate) is all in place to pin it quickly.
+
+## The surgery is CORRECT — the mystery solved and the contract oracle
+green end-to-end (same day, third increment)
+
+The ELS-round failure's root cause: **two un-windowed hook leaks**.  The
+central `retire_clause` hook and BVE's `elim_retire_clause_lits` hook
+still gated on the env flag (`csr_surgery_on`) instead of the scan-free
+window — so every retirement during BVE rounds, subsume, vivify,
+probing *and the pre-search sweep* surgically edited the CS mid-drift,
+the next scan of a diverged literal tripped `begin_scan`'s precondition
+and **suspended the mirror for that scan** — and the suspension
+compounded silently (the warning prints once per process; the
+symbolized-backtrace probe at the site is what localized it: the first
+violation fires in the pre-search `sweep_round` propagate, before any
+ELS round).  Both hooks are now window-gated (the BVE one removed
+outright — BVE never runs inside the window).
+
+**Result — the experiment's question is answered**: with the leaks
+fixed,
+
+- `live-with-wrong-count = 0` at **every** contract audit across the
+  whole si2 solve AND 6s167 (whose audits also show
+  `stale-on-dead-or-short = 0`): every live long clause keeps exactly
+  two watchers through index-driven surgical re-pointing plus real
+  search drift;
+- trajectories are bit-identical with surgery on (si2 23 527/11 121
+  conflicts — the CS-only edits cannot perturb the search, verified);
+  the residual `stale-on-dead` entries on si2 (400-2 000 per rebuild)
+  are lazy-removal semantics — identical to what the `Vec` itself
+  carries for un-hooked retire paths between rebuilds.
+
+**Slice 5's correctness is proven inside the shadow.**  What remains is
+purely economic and structural: the production surgery needs slice 4
+(the CSR as the only representation — the surgery then replaces the
+rebuild's watch half outright), and the cost model to beat is the
+touched-mass × span-scan vs the rebuild's arena sweep (the ops counters
+and entry counters landed here are the measurement instruments).
