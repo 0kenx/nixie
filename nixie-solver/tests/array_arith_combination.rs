@@ -23,7 +23,6 @@ use nixie_solver::{Solver, SolverResult};
 /// `n1 = n0 + 1`, `n0 = 0`, so `n1` is `1` and `store(base, 1, 7)[n1]` is `7`.
 /// Asserting it is `2` is unsatisfiable. The solver answers `Sat`.
 #[test]
-#[ignore = "known wrong `sat`: see docs/studies/2026-09-14-array-index-equality-from-arithmetic.md"]
 fn select_at_an_arithmetically_equal_index() {
     let mut tm = TermManager::new();
     let int = tm.sorts.int_sort;
