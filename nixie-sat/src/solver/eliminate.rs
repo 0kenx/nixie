@@ -76,6 +76,21 @@ pub fn elim_onesided_enabled() -> bool {
     }
 }
 
+/// `NIXIE_ELIM_RESET_PHASES=<n>` (diagnostic, amplitude→trajectory study):
+/// after an elimination phase retires ≥ n variables, reset the carried
+/// phase tables (`phase`/`best`/`target`) — the ghost-attractor probe.
+/// `None` when unset.
+#[cfg(feature = "std")]
+fn elim_reset_phases_threshold() -> Option<u64> {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<Option<u64>> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("NIXIE_ELIM_RESET_PHASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+    })
+}
+
 /// cadical `elimocclim`: skip a variable whose heavier-side occurrence list
 /// is longer than this.
 const ELIM_OCC_LIMIT: usize = 100;
@@ -572,6 +587,58 @@ impl Solver {
         self.elim_mark_count += 1;
     }
 
+    /// Controlled-differential formula dump (phase-1 yield-gap study and
+    /// its successors): the exact formula the eliminator is about to see —
+    /// live original clauses plus every level-0 trail literal as a unit —
+    /// written to `path`.  Feeding this CNF to another engine puts both on
+    /// identical state, so per-variable divergences become true semantic
+    /// differences rather than upstream contamination.
+    #[cfg(feature = "std")]
+    fn dump_elim_state(&self, path: &str) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut n_clauses = 0usize;
+        for id in self.clauses.iter_ids() {
+            if self
+                .clauses
+                .get(id)
+                .is_some_and(|c| !c.deleted && !c.learned && c.lits.len() >= 2)
+            {
+                n_clauses += 1;
+            }
+        }
+        let units = self
+            .trail
+            .level_start(1)
+            .min(self.trail.assignments().len());
+        n_clauses += units;
+        let _ = writeln!(out, "p cnf {} {}", self.num_vars, n_clauses);
+        for id in self.clauses.iter_ids() {
+            if let Some(c) = self.clauses.get(id)
+                && !c.deleted
+                && !c.learned
+                && c.lits.len() >= 2
+            {
+                for &lit in c.lits.iter() {
+                    let _ = write!(out, "{} ", lit.to_dimacs());
+                }
+                let _ = writeln!(out, "0");
+            }
+        }
+        for i in 0..units {
+            let lit = self.trail.assignments()[i];
+            let _ = writeln!(out, "{} 0", lit.to_dimacs());
+        }
+        if std::fs::write(path, out).is_err() {
+            eprintln!("[elim-entry-dump] failed to write {path}");
+        } else {
+            eprintln!(
+                "[elim-entry-dump] wrote {path}: {n_clauses} clauses over {} vars",
+                self.num_vars
+            );
+        }
+    }
+
     /// One elimination *phase* (cadical `elim`): alternate elimination rounds
     /// with subsumption rounds until nothing changes or the round limit is
     /// hit, then grow the elimination bound if the phase completed and
@@ -589,60 +656,24 @@ impl Solver {
         if self.elim_phases == 0 {
             #[cfg(feature = "std")]
             if std::env::var("NIXIE_DUMP_ELIM_ENTRY").is_ok() {
-                // Controlled-differential dump (phase-1 yield-gap study):
-                // the exact formula the eliminator is about to see — live
-                // original clauses plus every level-0 trail literal as a
-                // unit — written once at the first elimination phase.
-                // Feeding this CNF to a reference eliminator with its
-                // other passes disabled puts both engines on the identical
-                // state, so per-variable trace divergences become true
-                // semantic differences rather than upstream contamination.
-                use std::fmt::Write as _;
-                let mut out = String::new();
-                let mut n_clauses = 0usize;
-                for id in self.clauses.iter_ids() {
-                    if self
-                        .clauses
-                        .get(id)
-                        .is_some_and(|c| !c.deleted && !c.learned && c.lits.len() >= 2)
-                    {
-                        n_clauses += 1;
-                    }
-                }
-                let units = self
-                    .trail
-                    .level_start(1)
-                    .min(self.trail.assignments().len());
-                n_clauses += units;
-                let _ = writeln!(out, "p cnf {} {}", self.num_vars, n_clauses);
-                for id in self.clauses.iter_ids() {
-                    if let Some(c) = self.clauses.get(id)
-                        && !c.deleted
-                        && !c.learned
-                        && c.lits.len() >= 2
-                    {
-                        for &lit in c.lits.iter() {
-                            let _ = write!(out, "{} ", lit.to_dimacs());
-                        }
-                        let _ = writeln!(out, "0");
-                    }
-                }
-                for i in 0..units {
-                    let lit = self.trail.assignments()[i];
-                    let _ = writeln!(out, "{} 0", lit.to_dimacs());
-                }
-                let path = std::env::var("NIXIE_DUMP_ELIM_ENTRY").unwrap_or_default();
-                if std::fs::write(&path, out).is_err() {
-                    eprintln!("[elim-entry-dump] failed to write {path}");
-                } else {
-                    eprintln!(
-                        "[elim-entry-dump] wrote {path}: {n_clauses} clauses over {} vars",
-                        self.num_vars
-                    );
-                }
+                self.dump_elim_state(&std::env::var("NIXIE_DUMP_ELIM_ENTRY").unwrap_or_default());
             }
             for idx in 0..self.num_vars {
                 self.mark_elim_one(Var::new(idx as u32));
+            }
+        } else {
+            // Same controlled-differential dump at any later phase entry
+            // (`NIXIE_DUMP_ELIM_PHASE=<n>`): the formula the eliminator is
+            // about to see at phase n — the amplitude→trajectory study's
+            // fresh-search decomposition (post-elimination formula vs the
+            // search state carried across the elimination boundary).
+            #[cfg(feature = "std")]
+            if let Ok(spec) = std::env::var("NIXIE_DUMP_ELIM_PHASE")
+                && spec
+                    .parse::<u32>()
+                    .is_ok_and(|n| u64::from(n) == self.elim_phases + 1)
+            {
+                self.dump_elim_state(&format!("{spec}-{}", spec));
             }
         }
 
@@ -832,6 +863,37 @@ impl Solver {
 
         if phase_complete {
             self.increase_elimination_bound();
+        }
+
+        // Diagnostic probe (`NIXIE_ELIM_RESET_PHASES=<min-eliminated>`, the
+        // amplitude→trajectory study): reset the carried phase state at the
+        // elimination boundary when the phase retired at least that many
+        // variables.  Tests the ghost-attractor hypothesis — stale phases
+        // steering the search into a region the elimination just removed —
+        // by making the search re-derive polarities the way a fresh solve
+        // would (activities, learned DB and restart state are untouched,
+        // so any recovery isolates the phase tables as the poison).
+        #[cfg(feature = "std")]
+        if eliminated_total >= 1
+            && let Some(threshold) = elim_reset_phases_threshold()
+            && eliminated_total >= threshold as usize
+        {
+            for phase in [
+                &mut self.phase,
+                &mut self.best_phase,
+                &mut self.target_phase,
+            ] {
+                phase.resize(self.num_vars, false);
+                phase.iter_mut().for_each(|p| *p = false);
+            }
+            self.best_assigned = 0;
+            self.target_assigned = 0;
+            self.no_conflict_until = self.trail.assignments().len();
+            self.rephased = None;
+            eprintln!(
+                "[elim-reset-phases] phase {} retired {} vars: phase tables reset",
+                self.elim_phases, eliminated_total
+            );
         }
 
         self.last_elim_eliminated = eliminated_total as u64;

@@ -777,3 +777,65 @@ fn a_prime_outside_an_action_is_still_refused() {
         "got {e}"
     );
 }
+
+// ---- the standard infinite sets ----
+//
+// `Nat`, `Int`, `Real` and `STRING` have no finite extension, so they are not
+// values this evaluator can build. Membership in one is still decidable — by
+// the *kind* of the value — and that is the only thing a state predicate ever
+// asks of them.
+
+#[test]
+fn membership_in_nat() {
+    assert_eq!(eval("A == 3 \\in Nat"), "TRUE");
+    assert_eq!(eval("A == 0 \\in Nat"), "TRUE");
+    assert_eq!(eval("A == -1 \\in Nat"), "FALSE");
+    assert_eq!(eval("A == \"x\" \\in Nat"), "FALSE");
+}
+
+#[test]
+fn membership_in_int() {
+    assert_eq!(eval("A == -1 \\in Int"), "TRUE");
+    assert_eq!(eval("A == 0 \\in Int"), "TRUE");
+    assert_eq!(eval("A == TRUE \\in Int"), "FALSE");
+}
+
+/// TLA+'s `Real` contains every integer, and a genuine real is not a value
+/// this evaluator has — so the answer is exact for everything it can be asked.
+#[test]
+fn membership_in_real() {
+    assert_eq!(eval("A == 3 \\in Real"), "TRUE");
+    assert_eq!(eval("A == \"x\" \\in Real"), "FALSE");
+}
+
+#[test]
+fn membership_in_string() {
+    assert_eq!(eval("A == \"x\" \\in STRING"), "TRUE");
+    assert_eq!(eval("A == 1 \\in STRING"), "FALSE");
+}
+
+/// `BOOLEAN` needs no special case: lowering expands it to `{FALSE, TRUE}`,
+/// which is an ordinary finite set.
+#[test]
+fn boolean_is_a_finite_set() {
+    assert_eq!(eval("A == TRUE \\in BOOLEAN"), "TRUE");
+    assert_eq!(eval("A == BOOLEAN"), "{FALSE, TRUE}");
+}
+
+/// And they stay unavailable everywhere else. An infinite set is not
+/// approximated by a finite prefix.
+#[test]
+fn an_infinite_set_is_not_a_value() {
+    assert!(matches!(eval_err("A == Nat"), EvalErrorKind::FreeName(n) if n == "Nat"));
+    assert!(matches!(
+        eval_err("A == \\A i \\in Nat : i >= 0"),
+        EvalErrorKind::FreeName(n) if n == "Nat"
+    ));
+}
+
+/// Negated membership is the ordinary `~`, so it follows for free.
+#[test]
+fn non_membership_in_nat() {
+    assert_eq!(eval("A == -1 \\notin Nat"), "TRUE");
+    assert_eq!(eval("A == 2 \\notin Nat"), "FALSE");
+}

@@ -13,6 +13,7 @@ pub(super) mod check_dt;
 pub(super) mod check_ff;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
+#[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -687,6 +688,15 @@ pub struct Solver {
     /// mentioning a term that is *not* in here has no theory semantics and
     /// `check` must answer `Unknown`.
     pub(super) arith_defined_terms: FxHashSet<TermId>,
+    /// Whether the *current* check's verdict came from the nonlinear
+    /// dispatcher (`dispatch_nl_solver` / `dispatch_ff_solver`), which
+    /// encodes the arithmetic terms the linear CDCL(T) path cannot
+    /// axiomatize (symbolic-divisor division, nonlinear products) as exact
+    /// polynomial constraints. The `arith_defs_incomplete` honesty gate
+    /// exists for the *linear* path — an undefined term there is a free
+    /// Boolean — and must not veto a verdict from the engine that decided
+    /// exactly those terms. Cleared at every `check_core` entry.
+    pub(super) nl_dispatch_answered: bool,
     /// z3-style triangle-axiom pairs `(ite-result term, const)` already
     /// asserted (see [`Solver::axiomatize_arith_constant_equalities`]).
     /// Trailed so the axiomatization is idempotent across repeated `check`s on
@@ -1159,6 +1169,7 @@ impl Solver {
             array_witness_mints: 0,
             array_witness_budget_exhausted: false,
             arith_defined_terms: FxHashSet::default(),
+            nl_dispatch_answered: false,
             arith_const_axiom_pairs: FxHashSet::default(),
             dt_axiom_instances: FxHashSet::default(),
             dt_axioms_incomplete: false,
@@ -1431,7 +1442,15 @@ impl Solver {
             self.unsat_core = None;
             return SolverResult::Unknown;
         }
-        if result == SolverResult::Sat && self.arith_defs_incomplete(manager) {
+        // `nl_dispatch_answered`: the nonlinear dispatcher encoded the
+        // very terms this gate is about (symbolic-divisor division has a
+        // guarded defining clause there; products are native), under its
+        // own trust rules — the linear path's "undefined term = free
+        // Boolean" hazard does not apply to its verdicts.
+        if result == SolverResult::Sat
+            && self.arith_defs_incomplete(manager)
+            && !self.nl_dispatch_answered
+        {
             self.model = None;
             self.unsat_core = None;
             return SolverResult::Unknown;
@@ -2225,6 +2244,8 @@ impl Solver {
     }
 
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
+        // Per-check: the flag describes THIS check's verdict only.
+        self.nl_dispatch_answered = false;
         self.array_axioms_saturated = false;
         self.array_witness_mints = 0;
         self.array_witness_budget_exhausted = false;
@@ -2406,9 +2427,11 @@ impl Solver {
         // whole-problem here, model validated exactly before `Sat`; a
         // declined goal falls through to CDCL(T), whose honesty gate
         // answers `unknown` rather than guessing.
+        #[cfg(feature = "nlsat")]
         if let Some(ff_result) = self.dispatch_ff_solver(manager) {
             match ff_result {
                 SolverResult::Sat => {
+                    self.nl_dispatch_answered = true;
                     // The FF engine owns the field terms now: its model was
                     // validated exactly (Step 5) before this `Sat`, so the
                     // assert-time `ff_terms_unconstrained` tripwire no
@@ -2424,8 +2447,14 @@ impl Solver {
         #[cfg(feature = "nlsat")]
         if let Some(nl_result) = self.dispatch_nl_solver(manager) {
             match nl_result {
-                SolverResult::Sat => return SolverResult::Sat,
-                SolverResult::Unsat => return SolverResult::Unsat,
+                SolverResult::Sat => {
+                    self.nl_dispatch_answered = true;
+                    return SolverResult::Sat;
+                }
+                SolverResult::Unsat => {
+                    self.nl_dispatch_answered = true;
+                    return SolverResult::Unsat;
+                }
                 SolverResult::Unknown => {}
             }
         }

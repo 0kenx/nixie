@@ -49,8 +49,15 @@ items below.
    checked-plus-exact-retry pattern from item 14 is the local version; the
    project is the systemic one). **Benchmarking-gated** — read
    `docs/BENCHMARKING.md` (matched nulls, ≥10 seeds) before starting.
-3. **Symbolic real division `(/ x y)`** (variable divisor): honest gate,
-   defining identity is nonlinear; wants NLSAT dispatch.
+3. ~~**Symbolic real division `(/ x y)`** (variable divisor)~~ **CLOSED
+   2026-09-15** (study items 21–24, `df13616e`): the NL dispatcher encodes
+   it — fresh quotient variable under the guarded defining clause
+   `(y = 0) ∨ (y·t − x = 0)` — with SMT-LIB zero-divisor semantics faithful.
+   The pinned-operand classes now match z3; residuals (documented in the
+   study): free-operand witnesses beyond the greedy sampler stay `unknown`
+   (pre-existing sampler capacity), refutations keep the NRA Eq-distrust,
+   and declared-linear QF_LIRA keeps its contract. The work also closed a
+   latent `NlsatSolver` wrong-`sat` (rational models were never verified).
 4. **B&B budget exhaustion on hard disjunctive LIA+div/mod** — the residual
    fuzz `unknown` class. Pure search-capacity work; heuristic rules apply
    (matched nulls or don't ship it).

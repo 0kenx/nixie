@@ -62,7 +62,7 @@
 use super::NlsatSolver;
 use crate::cad::CadPoint;
 use crate::cad_algebraic::{isolate_root_samples, open_sample};
-use crate::types::{Atom, AtomKind, IneqAtom, Literal};
+use crate::types::{Atom, AtomKind, IneqAtom, Lbool, Literal};
 use nixie_math::polynomial::{Polynomial, Var};
 
 /// What a search for an algebraic witness for one variable found.
@@ -362,12 +362,24 @@ impl NlsatSolver {
     /// `nixie_theories::nlsat::dispatch_nra_constraints` trusts this solver's
     /// verdict directly, without the model re-check its integer sibling does.
     pub(super) fn algebraic_model_is_verified(&self) -> bool {
-        if !self.assignment.has_algebraic_value() {
-            return true;
-        }
+        // The old code verified ALGEBRAIC models only, returning `true`
+        // unconditionally when every sampled value was rational: a rational
+        // model was trusted on the search's word alone. That was sound only
+        // while every clause was a UNIT (whose Boolean the watch machinery
+        // forces consistently with the arithmetic it propagates); the moment
+        // a genuine disjunction can be added (the real-division guarded
+        // defining clause `rhs = 0 ∨ rhs·t − lhs = 0`), `decide()` may
+        // assign an atom's Boolean a truth value its arithmetic does not
+        // support, and nothing downstream caught it — observed as a
+        // wrong `sat` on `(= y 2) (= x 9) (= (/ x y) 5)`. A `Sat` now
+        // requires the final assignment to *concretely* satisfy every atom
+        // and every clause, rational or algebraic (the codebase's
+        // model-certify-before-`Sat` rule).
         for atom in &self.atoms {
             let Atom::Ineq(ineq) = atom else {
-                return false; // Root atom: no exact path at an algebraic point.
+                // Root atom: no exact path at an algebraic point; and a
+                // rational model never proves a root-sample atom either.
+                return false;
             };
             let value = self.assignment.bool_value(ineq.bool_var);
             if value.is_undef() {
@@ -386,6 +398,36 @@ impl NlsatSolver {
             match ineq.evaluate_sign(&signs) {
                 Some(holds) if holds == value.is_true() => {}
                 _ => return false,
+            }
+        }
+        // Clause level: every clause must have a literal that is TRUE under
+        // the final assignment — a Boolean whose atom's arithmetic really
+        // holds (checked above) or a Boolean consistent with it. All-false
+        // (or false-plus-undef, which is a complete assignment pretending
+        // nothing) means the "model" satisfies the watched structure but
+        // not the formula.
+        for clause in self.clauses.clauses() {
+            let mut satisfied = false;
+            let mut all_false = true;
+            for &lit in clause.literals() {
+                match self.assignment.lit_value(lit) {
+                    Lbool::True => {
+                        satisfied = true;
+                        break;
+                    }
+                    Lbool::Undef => all_false = false,
+                    Lbool::False => {}
+                }
+            }
+            if !satisfied && all_false {
+                return false;
+            }
+            if !satisfied && !all_false {
+                // A clause with unassigned Booleans at a "complete"
+                // assignment: the search considers the model final, so it
+                // cannot lean on literals it never valued. Verified models
+                // must satisfy clauses outright.
+                return false;
             }
         }
         true
@@ -416,6 +458,71 @@ mod tests {
         let lit = solver.atom_literal(atom, true);
         solver.add_clause(vec![lit]);
         (solver, x)
+    }
+
+    /// A two-literal Eq disjunction is satisfiable by either disjunct.
+    /// Regression for multi-literal clause support: the dispatcher
+    /// historically only ever added units, and the model gate trusted every
+    /// rational model unconditionally, so nothing exercised (or protected)
+    /// clauses whose Booleans `decide` picks freely.
+    #[test]
+    fn eq_disjunction_clause_is_sat() {
+        let mut s = NlsatSolver::new();
+        let _x = s.new_arith_var();
+        let a = s.new_ineq_atom(Polynomial::univariate(0, &[rat(-2), rat(1)]), AtomKind::Eq);
+        let b = s.new_ineq_atom(Polynomial::univariate(0, &[rat(-3), rat(1)]), AtomKind::Eq);
+        let la = s.atom_literal(a, true);
+        let lb = s.atom_literal(b, true);
+        s.add_clause(vec![la, lb]); // x = 2 ∨ x = 3
+        assert_eq!(s.solve(), SolverResult::Sat);
+    }
+
+    /// The unsat shape behind the real-division encoding's defining clause:
+    /// a pinned divisor makes the guard disjunct false, and the identity
+    /// `2·t − x = 0` contradicts the pinned `t = 5`, `x = 9`. The verdict
+    /// may be `Unsat` (propagation finds it) or `Unknown` (the Eq-distrust
+    /// decline) — but NEVER `Sat`: with the guard's polarity inverted, this
+    /// exact shape produced a wrong `sat` (a rational model trusted on the
+    /// search's word alone).
+    #[test]
+    fn division_shaped_clause_set_never_reports_wrong_sat() {
+        let mut s = NlsatSolver::new();
+        // Vars: 0 = y, 1 = x, 2 = t.
+        let _y = s.new_arith_var();
+        let _x = s.new_arith_var();
+        let _t = s.new_arith_var();
+        let y2 = s.new_ineq_atom(Polynomial::univariate(0, &[rat(-2), rat(1)]), AtomKind::Eq);
+        let t5 = s.new_ineq_atom(Polynomial::univariate(2, &[rat(-5), rat(1)]), AtomKind::Eq);
+        let x9 = s.new_ineq_atom(Polynomial::univariate(1, &[rat(-9), rat(1)]), AtomKind::Eq);
+        // guard disjunct: y = 0
+        let y0 = s.new_ineq_atom(Polynomial::univariate(0, &[rat(0), rat(1)]), AtomKind::Eq);
+        // identity disjunct: 2·t − x = 0
+        let mut id = Polynomial::univariate(2, &[rat(0), rat(2)]);
+        // subtract x: coefficient −1 on var 1 — build via arithmetic on polys
+        id = Polynomial::sub(&id, &Polynomial::univariate(1, &[rat(0), rat(1)]));
+        let ident = s.new_ineq_atom(id, AtomKind::Eq);
+        s.add_clause(vec![s.atom_literal(y2, true)]);
+        s.add_clause(vec![s.atom_literal(t5, true)]);
+        s.add_clause(vec![s.atom_literal(x9, true)]);
+        s.add_clause(vec![s.atom_literal(y0, true), s.atom_literal(ident, true)]);
+        let verdict = s.solve();
+        assert_ne!(
+            verdict,
+            SolverResult::Sat,
+            "y=2, t=5, x=9 falsifies both disjuncts"
+        );
+    }
+
+    /// Contradictory Eq units: level-0 theory conflict, `Unsat`.
+    #[test]
+    fn contradictory_eq_units_are_unsat() {
+        let mut s = NlsatSolver::new();
+        let _x = s.new_arith_var();
+        let a = s.new_ineq_atom(Polynomial::univariate(0, &[rat(-2), rat(1)]), AtomKind::Eq);
+        let b = s.new_ineq_atom(Polynomial::univariate(0, &[rat(-3), rat(1)]), AtomKind::Eq);
+        s.add_clause(vec![s.atom_literal(a, true)]);
+        s.add_clause(vec![s.atom_literal(b, true)]);
+        assert_eq!(s.solve(), SolverResult::Unsat);
     }
 
     /// `x² = 2` alone is satisfiable, and the witness the search commits to is

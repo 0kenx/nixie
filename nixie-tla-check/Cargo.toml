@@ -21,6 +21,10 @@ thiserror = { workspace = true, default-features = true }
 # `TermManager::mk_int` takes `impl Into<BigInt>`; a wide TLA+ literal must
 # reach it without passing through `i64`.
 num-bigint = { workspace = true, features = ["std"] }
+# ITF (Apalache's ADR-015 counterexample format) is the interface every
+# downstream consumer already speaks - `itf-rs`, the trace viewer,
+# `tla-connect`'s model-based testing. Emitting it needs JSON.
+serde_json = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "deny"

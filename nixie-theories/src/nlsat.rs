@@ -66,6 +66,17 @@ pub struct TermPolyTranslator<'a> {
     pending_atoms: Vec<PolyAtom>,
     /// Set when a div/mod could not be fully encoded (non-constant divisor, …).
     divmod_incomplete: bool,
+    /// Fresh poly var per real-division term, keyed by the operand pair
+    /// (hashconsing makes equal `(Div a b)` nodes one TermId, so the pair is
+    /// a faithful term key): identical division terms share one quotient
+    /// variable — the term's value is a function of the term, which is what
+    /// congruence over `(/ a 0)` needs).
+    rdiv_cache: HashMap<(TermId, TermId), u32>,
+    /// Guarded defining clauses `rhs = 0 ∨ rhs·t − lhs = 0` for real
+    /// division, buffered here and conjoined by the dispatcher as
+    /// two-literal clauses (unit-asserting them would be wrong: each clause
+    /// is a disjunction).
+    pending_clauses: Vec<(PolyAtom, PolyAtom)>,
 }
 
 impl<'a> TermPolyTranslator<'a> {
@@ -79,6 +90,8 @@ impl<'a> TermPolyTranslator<'a> {
             divmod_cache: HashMap::new(),
             pending_atoms: Vec::new(),
             divmod_incomplete: false,
+            rdiv_cache: HashMap::new(),
+            pending_clauses: Vec::new(),
         }
     }
 
@@ -218,6 +231,50 @@ impl PolyVarSource for TermPolyTranslator<'_> {
             Some(Polynomial::from_var(r))
         }
     }
+
+    fn rdiv_leaf(
+        &mut self,
+        _manager: &TermManager,
+        lhs: TermId,
+        rhs: TermId,
+    ) -> Option<Polynomial> {
+        if let Some(&t) = self.rdiv_cache.get(&(lhs, rhs)) {
+            return Some(Polynomial::from_var(t));
+        }
+        let a = self.translate(lhs)?;
+        let b = self.translate(rhs)?;
+        let t = self.nlsat.nlsat_mut().new_arith_var();
+        // The quotient of real division is Real even in integer mode
+        // (`(/ 5 2)` is `2.5`); only Euclidean `div`/`mod` are Int ops.
+        self.nlsat.set_var_type(t, VarType::Real);
+        let t_poly = Polynomial::from_var(t);
+        // Guarded defining clause `(b = 0) ∨ (b·t − a = 0)`: either the
+        // divisor is zero (the term is uninterpreted, `t` unconstrained) or
+        // the identity `t = a/b` holds. The guard literal is the POSITIVE
+        // Eq `b = 0`; writing the negation instead would satisfy the clause
+        // for every NONZERO divisor and drop the identity entirely (a
+        // wrong-`sat` class caught by the `x=9, y=2, (/ x y)=5`
+        // differential). A constant ZERO divisor emits no clause at all
+        // (`(/ a 0)` uninterpreted; forcing `a = 0` through the degenerate
+        // clause would be wrong).
+        if !(b.is_constant() && b.constant_value().is_zero()) {
+            let bt = Polynomial::mul(&b, &t_poly);
+            self.pending_clauses.push((
+                PolyAtom {
+                    poly: b,
+                    kind: AtomKind::Eq,
+                    positive: true,
+                },
+                PolyAtom {
+                    poly: Polynomial::sub(&bt, &a),
+                    kind: AtomKind::Eq,
+                    positive: true,
+                },
+            ));
+        }
+        self.rdiv_cache.insert((lhs, rhs), t);
+        Some(t_poly)
+    }
 }
 
 // ========  ========
@@ -240,6 +297,20 @@ trait PolyVarSource {
         _lhs: TermId,
         _rhs: TermId,
         _is_div: bool,
+    ) -> Option<Polynomial> {
+        None
+    }
+
+    /// Encode an SMT-LIB real-division node `(/ lhs rhs)` (a `Div` node of
+    /// `Real` sort) as a polynomial leaf: a fresh variable for the quotient
+    /// under the guarded defining clause
+    /// `rhs = 0 ∨ rhs·t − lhs = 0` (buffered by the source as a side
+    /// clause). `None` means the source does not support real division.
+    fn rdiv_leaf(
+        &mut self,
+        _manager: &TermManager,
+        _lhs: TermId,
+        _rhs: TermId,
     ) -> Option<Polynomial> {
         None
     }
@@ -334,6 +405,20 @@ fn open_poly<S: PolyVarSource>(
             rhs: TermId,
             is_div: bool,
         },
+        /// SMT-LIB real division `(/ lhs rhs)` – a `Div` node whose SORT is
+        /// `Real` (the parser builds `div` with `Int` sort, `/` with `Real`
+        /// sort, so the node sort is exactly the discriminator). Semantically
+        /// a different operator from Euclidean `div`: over the reals with a
+        /// nonzero divisor it is the exact quotient, and with a zero divisor
+        /// it is *uninterpreted* (SMT-LIB) – so the source encodes it with a
+        /// fresh variable under the guarded defining clause
+        /// `rhs = 0 ∨ rhs·t − lhs = 0`, never with the Euclidean remainder
+        /// identities (those would force integer quotients on a real value:
+        /// `(/ 5 2)` is `2.5`, not `2`).
+        RDiv {
+            lhs: TermId,
+            rhs: TermId,
+        },
     }
     let shape = {
         let term = manager.get(term_id)?;
@@ -354,11 +439,23 @@ fn open_poly<S: PolyVarSource>(
             TermKind::Mul(args) => {
                 Shape::Op(PolyCombine::Mul, args.iter().rev().copied().collect())
             }
-            TermKind::Div(lhs, rhs) => Shape::DivMod {
-                lhs: *lhs,
-                rhs: *rhs,
-                is_div: true,
-            },
+            TermKind::Div(lhs, rhs) => {
+                // Node-sort discrimination: `/` builds a Real-sorted `Div`,
+                // `div` an Int-sorted one. Real sort routes to the real
+                // division encoding; Int keeps the Euclidean path.
+                if term.sort == manager.sorts.real_sort {
+                    Shape::RDiv {
+                        lhs: *lhs,
+                        rhs: *rhs,
+                    }
+                } else {
+                    Shape::DivMod {
+                        lhs: *lhs,
+                        rhs: *rhs,
+                        is_div: true,
+                    }
+                }
+            }
             TermKind::Mod(lhs, rhs) => Shape::DivMod {
                 lhs: *lhs,
                 rhs: *rhs,
@@ -378,6 +475,7 @@ fn open_poly<S: PolyVarSource>(
         Shape::DivMod { lhs, rhs, is_div } => {
             PolyOpened::Leaf(src.divmod_leaf(manager, lhs, rhs, is_div)?)
         }
+        Shape::RDiv { lhs, rhs } => PolyOpened::Leaf(src.rdiv_leaf(manager, lhs, rhs)?),
     })
 }
 
@@ -490,6 +588,25 @@ pub fn term_is_nonlinear(term_id: TermId, manager: &TermManager) -> bool {
                 stack.push(*rhs);
             }
             TermKind::Neg(inner) | TermKind::Not(inner) => stack.push(*inner),
+            // Real-sorted division (`/`) is nonlinear arithmetic in disguise:
+            // the linear CDCL(T) path cannot decide it at all (every atom
+            // mentioning it is honestly gated to `unknown`), while the NL
+            // dispatcher encodes it exactly (fresh quotient variable under
+            // the guarded defining clause). Flag it so dispatch engages.
+            // Int-sorted `div`/`mod` stay unflagged: the Euclidean axiom
+            // path in the CDCL(T) layer owns those — but their operands are
+            // still walked, so a product hidden under a `div` is detected.
+            TermKind::Div(lhs, rhs) => {
+                if term.sort == manager.sorts.real_sort {
+                    return true;
+                }
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
+            TermKind::Mod(lhs, rhs) => {
+                stack.push(*lhs);
+                stack.push(*rhs);
+            }
             // Walk into ite/let so nonlinear products nested under them are
             // detected (industrial QF_NIA VCs are let/ite-heavy; without this
             // NL dispatch never engaged and CDCL returned spurious sat).
@@ -1985,6 +2102,23 @@ pub(crate) fn solve_conjunction_nia(
             .atom_literal(atom_id, atom.positive);
         translator.nlsat.nlsat_mut().add_clause(vec![lit]);
     }
+    // Real-division guarded defining clauses (`rhs = 0 ∨ rhs·t − lhs = 0`):
+    // two-literal clauses, never units — each is a disjunction by
+    // construction (the defining identity binds only when the divisor is
+    // nonzero).
+    for (first, second) in &translator.pending_clauses {
+        let a_id = translator
+            .nlsat
+            .nlsat_mut()
+            .new_ineq_atom(first.poly.clone(), first.kind);
+        let a_lit = translator.nlsat.nlsat().atom_literal(a_id, first.positive);
+        let b_id = translator
+            .nlsat
+            .nlsat_mut()
+            .new_ineq_atom(second.poly.clone(), second.kind);
+        let b_lit = translator.nlsat.nlsat().atom_literal(b_id, second.positive);
+        translator.nlsat.nlsat_mut().add_clause(vec![a_lit, b_lit]);
+    }
 
     match translator.nlsat.solve() {
         SolverResult::Sat => {
@@ -2420,6 +2554,12 @@ struct RealPolyTranslator<'a> {
     manager: &'a TermManager,
     nlsat: &'a mut NlsatSolver,
     var_cache: HashMap<TermId, u32>,
+    /// Fresh poly var per real-division term (see `TermPolyTranslator`'s
+    /// `rdiv_cache` for why the operand pair is the key).
+    rdiv_cache: HashMap<(TermId, TermId), u32>,
+    /// Guarded defining clauses `rhs = 0 ∨ rhs·t − lhs = 0` for real
+    /// division, conjoined by the dispatcher as two-literal clauses.
+    pending_clauses: Vec<(PolyAtom, PolyAtom)>,
 }
 
 impl<'a> RealPolyTranslator<'a> {
@@ -2428,6 +2568,8 @@ impl<'a> RealPolyTranslator<'a> {
             manager,
             nlsat,
             var_cache: HashMap::new(),
+            rdiv_cache: HashMap::new(),
+            pending_clauses: Vec::new(),
         }
     }
 
@@ -2597,6 +2739,43 @@ impl PolyVarSource for RealPolyTranslator<'_> {
     fn var_for(&mut self, term_id: TermId) -> u32 {
         self.get_or_create_var(term_id)
     }
+
+    fn rdiv_leaf(
+        &mut self,
+        _manager: &TermManager,
+        lhs: TermId,
+        rhs: TermId,
+    ) -> Option<Polynomial> {
+        if let Some(&t) = self.rdiv_cache.get(&(lhs, rhs)) {
+            return Some(Polynomial::from_var(t));
+        }
+        let a = self.translate(lhs)?;
+        let b = self.translate(rhs)?;
+        let t = self.nlsat.new_arith_var();
+        let t_poly = Polynomial::from_var(t);
+        // Guarded defining clause `(b = 0) ∨ (b·t − a = 0)`; a constant ZERO
+        // divisor keeps `t` a free variable (`(/ a 0)` is uninterpreted
+        // per SMT-LIB — constraining `a` through the degenerate clause
+        // would be wrong). The guard literal is the POSITIVE Eq `b = 0`
+        // (see `TermPolyTranslator::rdiv_leaf` for the direction argument).
+        if !(b.is_constant() && b.constant_value().is_zero()) {
+            let bt = Polynomial::mul(&b, &t_poly);
+            self.pending_clauses.push((
+                PolyAtom {
+                    poly: b,
+                    kind: AtomKind::Eq,
+                    positive: true,
+                },
+                PolyAtom {
+                    poly: Polynomial::sub(&bt, &a),
+                    kind: AtomKind::Eq,
+                    positive: true,
+                },
+            ));
+        }
+        self.rdiv_cache.insert((lhs, rhs), t);
+        Some(t_poly)
+    }
 }
 
 /// Real-arithmetic analogue of [`extract_poly_atoms`]. See its documentation
@@ -2731,7 +2910,13 @@ pub fn dispatch_nra_constraints(
         return None;
     }
 
-    let unsat_is_trustworthy = poly_atoms.iter().all(|atom| atom.kind != AtomKind::Eq);
+    // Eq atoms stay distrusted for Unsat here (the historical guard of this
+    // dispatcher); a real-division side clause is Eq-bearing by construction,
+    // so any goal that used real division inherits the same conservative
+    // decline — its `Unsat` falls through to CDCL(T) rather than being
+    // reported on the strength of the defining clauses.
+    let unsat_is_trustworthy = poly_atoms.iter().all(|atom| atom.kind != AtomKind::Eq)
+        && translator.pending_clauses.is_empty();
     // See `dispatch_nia_constraints`: trusting Sat under a dropped (relaxed)
     // constraint is unsound, so only accept Sat when extraction was complete.
     let sat_is_trustworthy = !incomplete;
@@ -2740,6 +2925,19 @@ pub fn dispatch_nra_constraints(
         let atom_id = translator.nlsat.new_ineq_atom(atom.poly.clone(), atom.kind);
         let lit = translator.nlsat.atom_literal(atom_id, atom.positive);
         translator.nlsat.add_clause(vec![lit]);
+    }
+    // Real-division guarded defining clauses, conjoined as two-literal
+    // clauses (see `solve_conjunction_nia` for the encoding rationale).
+    for (first, second) in &translator.pending_clauses {
+        let a_id = translator
+            .nlsat
+            .new_ineq_atom(first.poly.clone(), first.kind);
+        let a_lit = translator.nlsat.atom_literal(a_id, first.positive);
+        let b_id = translator
+            .nlsat
+            .new_ineq_atom(second.poly.clone(), second.kind);
+        let b_lit = translator.nlsat.atom_literal(b_id, second.positive);
+        translator.nlsat.add_clause(vec![a_lit, b_lit]);
     }
 
     match translator.nlsat.solve() {

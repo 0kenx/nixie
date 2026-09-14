@@ -561,15 +561,17 @@ impl CsrWatchLists {
     }
 }
 
+/// The disjoint mutable parts the propagation session needs: destination
+/// lists, phantom ticks, ghost debt, and the CSR dual-write shadow.
+pub(crate) type PropagationParts<'a> = (
+    &'a mut [Vec<Watcher>],
+    &'a [u32],
+    &'a mut [u32],
+    &'a mut Option<CsrWatchLists>,
+);
+
 impl WatchLists {
-    pub(crate) fn propagation_parts(
-        &mut self,
-    ) -> (
-        &mut [Vec<Watcher>],
-        &[u32],
-        &mut [u32],
-        &mut Option<CsrWatchLists>,
-    ) {
+    pub(crate) fn propagation_parts(&mut self) -> PropagationParts<'_> {
         (
             &mut self.watches,
             &self.bin_phantom,
