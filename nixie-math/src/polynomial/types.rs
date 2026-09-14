@@ -360,7 +360,20 @@ impl Monomial {
     pub fn grevlex_cmp(&self, other: &Monomial) -> Ordering {
         match self.total_degree.cmp(&other.total_degree) {
             Ordering::Equal => {
-                // Reverse lex: compare from highest variable
+                // Reverse lex over the dense exponent vector: compare from
+                // the highest variable down; at the first (highest)
+                // position where the exponents differ, the monomial with
+                // the SMALLER exponent is greater. Sparse merge walk:
+                // when the sides name different variables, the side whose
+                // variable is HIGHER has a positive exponent where the
+                // other has zero — that is the highest difference, so the
+                // higher-variable side is smaller. (The first version of
+                // this walk ordered by the variable index without that
+                // inversion, which is not grevlex and not a term order:
+                // leading terms selected with it break the termination
+                // argument of Gröbner reduction, and any system whose
+                // monomials' top variables differ — six-plus random
+                // quadratics — looped until budget death.)
                 let mut i = self.vars.len();
                 let mut j = other.vars.len();
 
@@ -369,8 +382,8 @@ impl Monomial {
                     j -= 1;
 
                     match self.vars[i].var.cmp(&other.vars[j].var) {
-                        Ordering::Less => return Ordering::Less,
-                        Ordering::Greater => return Ordering::Greater,
+                        Ordering::Less => return Ordering::Greater,
+                        Ordering::Greater => return Ordering::Less,
                         Ordering::Equal => match self.vars[i].power.cmp(&other.vars[j].power) {
                             Ordering::Equal => {}
                             Ordering::Less => return Ordering::Greater,
