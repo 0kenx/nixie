@@ -309,8 +309,10 @@ Inv  == Assert(x = 4, "x is not 4")
 ///
 /// The consequence is recorded here rather than left to be discovered: a
 /// function whose graph the query never probed comes back as defaults, so it
-/// does not replay. Extending `Model::eval` with `select`/`store` is the fix,
-/// and it belongs in the solver.
+/// does not replay. There is no local repair — the model assigns array-sorted
+/// variables *nothing at all*, so the store chain `Init` pinned is not
+/// recoverable from it. See
+/// `docs/studies/2026-09-14-no-model-for-array-variables.md`.
 #[test]
 fn a_function_built_by_init_is_not_replayable_yet() {
     let (out, _, v) = run(
