@@ -1,0 +1,111 @@
+# CSR watch lists: the dual-write BCP scan landed (slice 2+3, 2026-09-14)
+
+Round-11 handoff item 1, executed.  The centerpiece the kickoff designed —
+the dual-write BCP scan — is landed and validated, together with the
+cold-path dual bookkeeping (slice 3 in the handoff's numbering, done in the
+same change because the drifted-state comparison is meaningless without it:
+every learned-clause attach between rebuilds would otherwise mismatch).
+`docs/studies/2026-09-13-csr-watches-kickoff.md` remains the design
+reference; this documents what landed, the validation evidence, and the
+perf arc.
+
+## What landed
+
+- **`CsrScanFrame` + the scan mirror** (`watched.rs`): `begin_scan`/
+  `scan_keep`/`scan_remove`/`scan_push`/`end_scan` on `CsrWatchLists`.
+  The frame snapshots the scanned literal's primary/overflow split before
+  the `Vec` list is taken; per-entry notifications resolve the *source
+  segment* from the notification count (`read < p_len` ⟺ primary), so
+  survivors compact into their own segment exactly where the `Vec` scan's
+  write cursor puts them.  `end_scan` compacts each segment's unvisited
+  tail behind its survivors and truncates the overflow — including
+  dropping mid-scan pushes into the scanned literal itself, which is
+  precisely what the `Vec` put-back overwrite does (the repair-can-target-
+  self shape is unit-tested).
+- **All three scan bodies dual-write**: `list_kernel::scan` (the session
+  path, default), `watch_kernel::Cursor::scan` (LRAT / lazy-HBR /
+  reason-stats), and the legacy inline loop in `propagate.rs` (bcp-stats /
+  oracle tests).  Watch moves (`push_watch`, `push_watch_unique`,
+  `destinations.add`) mirror as overflow appends; dedup reads the `Vec`
+  (ground truth), so `push_unique` stays exact.
+- **Cold paths**: `WatchLists::add`, `remove_clause`, `relocate_refs`,
+  `clear`, `packed_snapshot`/`restore` all mirror; `propagation_parts`
+  hands the session the CSR beside the destination slice.
+- **The rebuild** (`equiv.rs`) now does the two comparisons the plan
+  called for: the **drifted** CSR vs the drifted `Vec` lists (order
+  included) *before* either resets — the empirical order-isomorphism
+  proof — then the fresh-build comparison, then adopts the fresh layout
+  as the new drift baseline (`csr_take` detaches the shadow during the
+  fill; the fill uses the mirror-free `push_only`).
+- **Const-generic `MIRROR` specialization**: the session driver, both
+  kernel scans and the push helpers monomorphize over `MIRROR`; the
+  flag-off instantiations contain no CSR code at all (see the perf arc).
+  The legacy loop keeps runtime gating (diagnostics-only path).
+
+## Validation evidence
+
+- **Unit tests** (`watched.rs::csr_tests`): a 200-trial randomized
+  reference-model test (chained scans, early exits, blocker rewrites over
+  mixed primary/overflow lists), the move/self-push parity test, and a
+  `WatchLists`-level round trip incl. snapshot/restore and a fabricated-
+  divergence detection.  Full `nixie-sat` suite: 1054 passed with the
+  flag off **and** with `NIXIE_CSR_SHADOW=1`.
+- **Corpus (54 files, seed 0, 60 s cap)**: verdict + conflicts identical
+  across {treatment flag-off, treatment flag-on, pre-change baseline};
+  every apparent mismatch re-ran clean at a raised cap and was bit-
+  identical (conflicts/decisions/propagations/restarts) — wall-cap
+  censoring, the screen's known artifact class.
+- **Drift**: `mismatched=0` on every drift comparison across the corpus
+  (up to 101 rebuilds on FmlaEquivChain_4_6_6), on **all four driver
+  configurations**: default session, `NIXIE_REASON_STATS=1` (watch
+  kernel), `NIXIE_BCP_STATS=1` (legacy loop), `HYPER=1` (lazy hyper-
+  binary mutating between scan steps).  Conflicts identical across all
+  four (33028 / 23527 / 450623 on the three probe files).
+
+## The perf arc (flag-off cost)
+
+Wall A/B was unusable this round (load average 40-60 from concurrent
+agents), so the flag-off cost was measured with deterministic instruction
+counts (`perf stat -e cpu_core/instructions/u`, pinned core, ±0.02%
+reproducible; a dead-code canary build moved totals 0.02%, controlling
+layout noise):
+
+1. Naive runtime `Option` checks in the scan bodies: **+1.18%** on
+   6s167-class.  Fixed by const-generic `MIRROR` (off-path `scan`
+   instantiations are size-identical to baseline: 0x52c/0x50a bytes).
+2. The mirror branch outlined `WatchLists::add`/`remove_clause` out of
+   their inlined callers (+2%/+5% samples on si2/worker): `#[inline]`/
+   `#[inline(always)]` restored inlining (documented as load-bearing).
+3. The rebuild fill paid a dead mirror branch per entry while the shadow
+   is detached: `push_only` removed it.
+4. **Residual, accepted and recorded**: +0.55% (si2), +0.66% (6s167),
+   +1.46% (worker_550) instructions, deterministic, with **no hot spot**
+   — the high-resolution `perf diff` attributes worker's delta to
+   `main`/`dimacs_to_lit`/`quicksort` (untouched code), which the canary
+   shows pure layout cannot explain.  Primary screen metric (conflicts)
+   is bit-identical; the residual is an open attribution item for the
+   slice-4 reader switch, where the `Vec` side is dropped and the cost
+   profile inverts.  Do not re-litigate without the canary control.
+
+## Traps hit this round (additions to the handoff's list)
+
+- **Wall-clock A/B under concurrent agents is void** (load 40-60 on 20
+  cores moved the *baseline itself* 0.84→1.29 s between runs).  Use pinned-
+  core instruction counts with the canary control.
+- The workspace suite's 14 failures are all `[corpus-missing]` panics —
+  `smt-lib/` is absent from this machine's disk entirely (fails identically
+  at the baseline commit).  `NIXIE_CORPUS_MISSING=skip` trips the meta-test
+  guarding silent skips; the right check is "all failures are corpus-
+  missing".
+
+## Next session (unchanged from the kickoff, now unblocked)
+
+Slice 4: switch all readers to the combined view (`get`, `len`, subsume
+candidate scans, `as_mut_ptr` consumers), drop the `Vec` lists — the drift
+machinery landed here is exactly the maintenance the CSR needs to be the
+primary.  Then slice 5: ELS rewatching on CSR (the 2026-09-12 surgery
+design verbatim) A/B'd against memcpy-rebuild on the si2 class.
+
+Runners: `outputs/csr_slice2_corpus_check.py` (three-arm corpus check +
+drift), `outputs/csr_slice2_ab_serial.py` (serial wall A/B — only under
+quiescent load).

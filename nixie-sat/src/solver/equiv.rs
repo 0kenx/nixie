@@ -494,6 +494,27 @@ impl Solver {
 
     pub(super) fn rebuild_watches_and_binary_graph(&mut self) {
         let num_vars = self.num_vars;
+        // CSR dual-write drifted-state validation (slice 2,
+        // `docs/studies/2026-09-13-csr-watches-kickoff.md`): before either
+        // representation resets, the shadow — maintained since the previous
+        // rebuild through every BCP scan (keep/remove/move) and every
+        // cold-path mutation (attach, deletion, relocation, rollback) —
+        // must equal the drifted `Vec` lists entry-for-entry, order
+        // included.  This is the empirical order-isomorphism proof the
+        // dual-write scan exists to produce.
+        #[cfg(feature = "std")]
+        if crate::watched::csr_shadow_enabled() && self.watches.csr_active() {
+            let (lits, entries, bad) = self.watches.csr_drifted_compare(num_vars);
+            eprintln!(
+                "[csr-shadow] drift@{}: lits={lits} entries={entries} mismatched={bad}",
+                self.stats.conflicts
+            );
+        }
+        // Detach the shadow for the duration of the rebuild: the fills below
+        // reconstruct the `Vec` lists wholesale and the fresh layout adopted
+        // at the end replaces the shadow's baseline (mirroring the fill's
+        // `add`s would double-maintain into a state that is discarded).
+        let _drifted_shadow = self.watches.csr_take();
         // Reuse the existing outer allocation (2026-09-12): a fresh
         // `WatchLists::new` allocated `2·num_vars` empty `Vec` headers every
         // rebuild (si2-class: 6 ELS rounds x ~2.6 M headers zeroed plus
@@ -580,8 +601,12 @@ impl Solver {
                     binary_graph.build_edge(b.negate(), a, cid);
                     continue;
                 }
-                watches.add(a.negate(), Watcher::new(cid, r, b));
-                watches.add(b.negate(), Watcher::new(cid, r, a));
+                // The shadow is detached for the whole rebuild (csr_take
+                // above), so the fill uses the mirror-free push — the CSR
+                // baseline is adopted wholesale from the fresh layout at
+                // the end of this function.
+                watches.push_only(a.negate(), Watcher::new(cid, r, b));
+                watches.push_only(b.negate(), Watcher::new(cid, r, a));
             }
             learned_clause_ids.retain(|&cid| clauses.get(cid).is_some_and(|c| !c.deleted));
         }
@@ -593,8 +618,10 @@ impl Solver {
         // state independently as a CSR (count → layout → fill over the same
         // live long-clause set, in the same id order) and compare every
         // literal's span against the freshly built `Vec` lists, order
-        // included.  See `docs/studies/2026-09-13-csr-watches-kickoff.md`
-        // (slice 1); zero cost and zero reads when the flag is off.
+        // included.  The drifted comparison above validated the
+        // *maintenance*; this validates the *build*, and the adopted layout
+        // becomes the new dual-write baseline the next drift interval
+        // maintains from.  Zero cost and zero reads when the flag is off.
         #[cfg(feature = "std")]
         if crate::watched::csr_shadow_enabled() {
             use crate::watched::CsrWatchBuild;
@@ -637,6 +664,9 @@ impl Solver {
                 self.stats.conflicts,
                 t0.elapsed().as_micros()
             );
+            let mut adopted = crate::watched::CsrWatchLists::default();
+            adopted.adopt_layout(csr);
+            self.watches.csr_set(adopted);
         }
     }
 }
