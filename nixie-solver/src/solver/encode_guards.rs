@@ -31,6 +31,20 @@ impl Solver {
     /// constant) are gated; atoms with a valid linear parse, and BV atoms
     /// (handled by the BV solver), are ignored.
     pub(super) fn arith_atoms_need_theory(&self, manager: &TermManager) -> bool {
+        // A parse that failed on COEFFICIENT width leaves its atom with no
+        // constraint registration at all (the encode bails before
+        // `var_to_constraint` is populated), so the loop below cannot see
+        // it — the recorded `arith_parse_overflow` reasons are the only
+        // witness. Without this check such an atom is a free Boolean the
+        // SAT core satisfies at will: observed as a wrong `sat` on
+        // `(= v0 (+ (* 9223372036854775808 v1) 1))` (v0 = 0, v1 > 0 is
+        // unsatisfiable; the solver answered sat because the wide-
+        // coefficient equality vanished). Reasons are recorded only for
+        // encoded atoms, so gating on any record is conservative and
+        // sound.
+        if !self.arith_parse_overflow.is_empty() {
+            return true;
+        }
         for (var, constraint) in &self.var_to_constraint {
             let (lhs, rhs) = match constraint {
                 Constraint::Lt(l, r)

@@ -632,3 +632,52 @@ is lost:
     the standing `[corpus-missing]` set, wide differential 1,100 instances
     across 4 seeds + mixed fuzz 1,200 + debug-panic sweep + Z3 parity
     176/177 correct / 0 disagreements (z3 4.16.0).
+
+## Continuation 10 (2026-09-15): the wide-LP wall, slice 3 — positive rescaling decides the chain class; a wide-coefficient wrong-`sat` found and closed
+
+31. **Positive row rescaling at intern** (`scale_big_to_narrow`): a row
+    whose finals do not fit `Rational64` is rescaled by a POSITIVE factor
+    into width before any wide-store capture. Every constraint bound in
+    this encoding is ZERO (constants live in the row), and a positive
+    multiple of a row preserves zero bounds — so the scaled row carries
+    the same constraints with fitting coefficients and the FULL narrow
+    machinery applies. The scale's common denominator is a power of two
+    sized from the maximum magnitude, EXTENDED with small odd primes
+    stripped from that maximum: an odd numerator beyond `i64::MAX` is not
+    fixed by any power of two (the fraction is irreducible — the chain
+    class hits exactly `3·i64::MAX` shapes), and narrowing must go through
+    the REDUCED fraction, never the raw pair. A magnitude with no small
+    odd factor left (a `2^100`-scale prime, say) stays unrepresentable at
+    every scale — the wide store remains that fallback. Measured: the
+    40-deep `i64::MAX`-increment chain now decides BOTH directions
+    (`c7` sat, `c8` unsat), matching z3; a large-prime-constant goal
+    stays honestly `unknown` (pinned by regression).
+32. **A pre-existing wrong `sat`, found by the differential and closed**:
+    a COEFFICIENT past `i64` (`(= v0 (+ (* 9223372036854775808 v1) 1))`
+    with `v0 = 0, v1 > 0` — unsatisfiable) answered `sat` on landed
+    binaries two revisions back. Root cause: the big-const abstraction
+    turns a wide constant LEAF into an opaque COLUMN (a variable), so
+    `const·var` parses as `var·var` — the parse fails as "nonlinear"
+    with no overflow record, and the shape-based honesty gate sees a
+    linear-looking term, so the atom floats as a free Boolean the SAT
+    core satisfies at will. Two coordinated fixes: the parse records the
+    overflow when the nonlinearity was CAUSED by the abstraction
+    (`Level::wide_const` marking), and `arith_atoms_need_theory` gates on
+    any recorded reason (parse-failed atoms never reach
+    `var_to_constraint`, so the loop alone could not see them). Both
+    shapes now answer honest `unknown`; the additive wide-constant path
+    (the designed abstraction, certified-sat side) is unchanged.
+    Mid-development, a pivot-site linking-row variant (`var = σ·t`)
+    was built and REJECTED: a row between two basic variables breaks the
+    "rows reference only nonbasics" invariant (find_pivot_col offered a
+    basic variable as entering; the debug column checker caught it).
+    Recorded so it is not retried without redesign.
+
+Verification: 27/27 wide-literal + division regressions (new:
+`wide_chain_is_decidable_sat_after_scaling`,
+`large_prime_constant_rows_stay_honest`); theories+solver suites green
+except the standing `[corpus-missing]`; the wide differential — now
+generating `2^63`, `2^64+13` and `2^100`-prime COEFFICIENTS, the class
+that found item 32 — 1,150 instances across 4 seeds: 0 verdict
+disagreements, 0 refuted models; mixed fuzz, debug-panic sweep, and Z3
+parity 176/177 correct / 0 disagreements (z3 4.16.0).

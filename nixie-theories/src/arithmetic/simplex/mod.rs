@@ -1486,7 +1486,20 @@ impl Simplex {
             // pins-crossing conflict, for instance, needs no rows at all).
             match self.intern_substitute_exact(&expr) {
                 Some(exact) => substituted_expr = exact,
-                None => return self.intern_wide_row(expr),
+                None => {
+                    // The finals do not fit even exactly — but a POSITIVE
+                    // rescaling of the whole row may: every constraint
+                    // bound in this encoding is ZERO, which a positive
+                    // multiple preserves, so the scaled row carries the
+                    // same constraints while its coefficients fit
+                    // `Rational64` and the FULL narrow machinery (pivots,
+                    // propagation, conflicts) applies. Only a row beyond
+                    // any representable scaling lands in the wide store.
+                    match Self::scale_big_to_narrow(&self.intern_substitute_big(&expr)) {
+                        Some(scaled) => substituted_expr = scaled,
+                        None => return self.intern_wide_row(expr),
+                    }
+                }
             }
         }
         // Register every variable the (substituted) expression references
@@ -2521,7 +2534,9 @@ impl Simplex {
                     let exact = Self::substitute_row_big(&row, sc, &new_expr, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
                         Some(new_row) => row_updates.push((var, new_row)),
-                        None => wide_updates.push((var, exact)),
+                        None => {
+                            wide_updates.push((var, exact));
+                        }
                     }
                 }
             }
@@ -2895,6 +2910,98 @@ impl Simplex {
     /// exact retry: per-variable accumulation with basic rows substituted
     /// exactly, each final narrowed; `None` when a final does not fit
     /// `Rational64`.
+    /// Scale an exact row back into `Rational64` width by a POSITIVE
+    /// factor: normalize to integer coefficients (multiply by the
+    /// denominators' LCM), then divide by a common denominator chosen so
+    /// that every REDUCED fraction fits — a power of two sized from the
+    /// maximum magnitude, extended with SMALL ODD PRIME factors stripped
+    /// from that maximum (an odd numerator beyond `i64::MAX` is not fixed
+    /// by any power of two: the fraction is irreducible, so `3·i64::MAX`
+    /// needs the factor 3).
+    ///
+    /// The result is the same linear form up to a positive scalar
+    /// multiple — and a positive multiple of a row preserves every ZERO
+    /// bound (`slack = 0`, `slack ≤ 0`, `slack ≥ 0`), which is exactly
+    /// how the constraint sites encode atoms (constants live in the row,
+    /// bounds are zero). The scaled row therefore carries the same
+    /// constraints while its coefficients fit, and the FULL narrow
+    /// machinery (pivots, propagation, conflicts) applies. `None` when no
+    /// such scale exists (a magnitude with no small odd factors left —
+    /// or a denominator beyond `i64`): the caller falls back to the
+    /// wide-row store.
+    fn scale_big_to_narrow(expr: &BigLinExpr) -> Option<LinExpr> {
+        use num_traits::One;
+        // LCM of all denominators (terms + constant).
+        let mut lcm = num_bigint::BigInt::one();
+        for (_, c) in &expr.terms {
+            lcm = num_integer::lcm(lcm, c.denom().clone());
+        }
+        lcm = num_integer::lcm(lcm, expr.constant.denom().clone());
+        // Integer-normalize.
+        let int_terms: Vec<(VarId, num_bigint::BigInt)> = expr
+            .terms
+            .iter()
+            .map(|(v, c)| (*v, c.numer() * (&lcm / c.denom())))
+            .collect();
+        let int_const = expr.constant.numer() * (&lcm / expr.constant.denom());
+        // Max magnitude drives the common denominator.
+        let max_mag = int_terms
+            .iter()
+            .map(|(_, n)| n.abs())
+            .chain(core::iter::once(int_const.abs()))
+            .max()
+            .unwrap_or_else(num_bigint::BigInt::zero);
+        let bits = max_mag.bits();
+        // A numerator fits i64 iff it is < 2^63; keep 62 bits of headroom
+        // for sign and reduction.
+        let shift = bits.saturating_sub(62);
+        let mut denom = num_bigint::BigInt::one() << shift;
+        // Odd-factor relief: what must fit is the REDUCED numerator of
+        // `max_mag / denom` — for an ODD numerator a power-of-two
+        // denominator cancels nothing (`3·i64::MAX` over 8 stays
+        // irreducible with a 65-bit numerator), so small odd primes are
+        // pulled into the denominator until the reduced numerator fits. A
+        // magnitude with no small odd factor left stays unrepresentable at
+        // every scale — give up honestly (the wide store).
+        if !max_mag.is_zero() {
+            const SMALL_PRIMES: [u64; 11] = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
+            'strip: loop {
+                let reduced = num_rational::BigRational::new(max_mag.clone(), denom.clone());
+                if reduced.numer().bits() <= 62 {
+                    break;
+                }
+                for &p in &SMALL_PRIMES {
+                    let pb = num_bigint::BigInt::from(p);
+                    if (reduced.numer() % &pb).is_zero() {
+                        denom *= pb;
+                        continue 'strip;
+                    }
+                }
+                break 'strip;
+            }
+            let reduced = num_rational::BigRational::new(max_mag.clone(), denom.clone());
+            if reduced.numer().bits() > 62 {
+                return None; // no small-odd-factor relief: wide-store it
+            }
+        }
+        // Narrow through the REDUCED exact fraction (`n / denom`), never
+        // the raw pair: `Rational64::new(n, denom)` would store the
+        // unshifted numerator and overflow even when the reduced value
+        // fits.
+        let narrow_coef = |n: &num_bigint::BigInt| -> Option<Rational64> {
+            let r = num_rational::BigRational::new(n.clone(), denom.clone());
+            narrow_big_r64(&r)
+        };
+        let mut out = LinExpr::new();
+        out.constant = narrow_coef(&int_const)?;
+        for (v, n) in &int_terms {
+            if !n.is_zero() {
+                out.terms.push((*v, narrow_coef(n)?));
+            }
+        }
+        Some(out)
+    }
+
     fn intern_substitute_exact(&self, expr: &LinExpr) -> Option<LinExpr> {
         Self::narrow_big_lin(&self.intern_substitute_big(expr))
     }

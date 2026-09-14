@@ -430,14 +430,17 @@ fn wide_cancellation_bound_comparison_decides() {
     assert_eq!(out.last().map(String::as_str), Some("sat"));
 }
 
-/// The honest wall stays a wall: row CONSTANTS whose combination genuinely
-/// exceeds any `Rational64` final (`(2^40 − 1)·MAX ≈ 2^102` across a
-/// 40-deep chain) decline through `resource_limit` — `unknown`, never a
-/// wrapped verdict. This is the wide-LP project's remaining territory
-/// (exact row storage), pinned here so a future regression to a *wrong*
-/// verdict is caught.
+/// The wide-row scaling (2026-09-15, wide-LP slice 3): a row whose finals
+/// exceed `Rational64` is rescaled by a POSITIVE factor into width before
+/// any wide-store capture — every constraint bound in this encoding is
+/// ZERO, which a positive multiple preserves — so the 40-deep chain with
+/// `i64::MAX` increments (constants combining to `≈ 2^102`, the odd
+/// `3·i64::MAX` shapes needing odd-factor relief) now DECIDES both
+/// directions, matching z3. This test pins the satisfiable side: the
+/// chain plus `v0 = 1`, `v39 < 0` has a rational solution and the solver
+/// must find it.
 #[test]
-fn genuinely_wide_rows_stay_honest() {
+fn wide_chain_is_decidable_sat_after_scaling() {
     use nixie_solver::Context;
     let mut lines = vec![
         "(set-logic QF_LRA)".to_string(),
@@ -458,12 +461,38 @@ fn genuinely_wide_rows_stay_honest() {
     let out = ctx
         .execute_script(&lines.join("\n"))
         .expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("sat"));
+}
+
+/// The honest wall that REMAINS: a row whose huge constant is a large
+/// PRIME (no small odd factor to strip into the denominator) is
+/// unrepresentable at every positive scale — the wide-store capture
+/// applies, the convergence check cannot certify it, and the answer is
+/// `unknown`, never a wrapped verdict. (2^100-scale primes exceed the
+/// small-odd-factor relief of the scaler by construction.)
+#[test]
+fn large_prime_constant_rows_stay_honest() {
+    use nixie_solver::Context;
+    let mut lines = vec![
+        "(set-logic QF_LRA)".to_string(),
+        "(declare-const v0 Real)".to_string(),
+        "(declare-const v1 Real)".to_string(),
+    ];
+    // 1267650600228229401496703205653 is prime (first prime above 2^100).
+    lines.push("(assert (= v0 (+ (* 1267650600228229401496703205653 v1) 1)))".to_string());
+    lines.push("(assert (= v0 0))".to_string());
+    lines.push("(assert (> v1 0))".to_string());
+    lines.push("(check-sat)".to_string());
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(&lines.join("\n"))
+        .expect("script executes");
     let last = out.last().map(String::as_str).unwrap_or("");
-    assert_ne!(last, "unsat", "the chain has a rational solution");
-    assert_ne!(
-        last, "sat",
-        "a wide model cannot be represented; sat would be unverified"
-    );
+    // v1 = -1/1267650600228229401496703205653 < 0 contradicts v1 > 0:
+    // truly unsat; the honest answer without exact refutation is unknown.
+    // A `sat` here would be an unverified witness; a `sat` with a VALID
+    // model would be fine — but no rational model exists.
+    assert_ne!(last, "sat", "the goal is unsatisfiable; sat would be wrong");
 }
 
 /// The wide-row side table (2026-09-15, wide-LP slice 2): a formula whose
