@@ -8,6 +8,7 @@
 pub mod arena;
 pub mod bmc;
 pub mod encode;
+pub mod itf;
 pub mod sorts;
 pub mod trace;
 

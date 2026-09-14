@@ -37,6 +37,10 @@ fn main() {
     let list = std::env::var("NIXIE_BMC_LIST").is_ok_and(|v| v == "1");
     // Print every counterexample that could be decoded.
     let trace_out = std::env::var("NIXIE_BMC_TRACE").is_ok_and(|v| v == "1");
+    // Write every counterexample as `<module>.itf.json` into this directory,
+    // which is the form a downstream consumer reads: `itf-rs`, the trace
+    // viewer, `tla-connect`'s model-based testing.
+    let itf_dir = std::env::var("NIXIE_BMC_ITF").ok();
     // A deterministic per-query budget. Some specifications now reach the
     // solver with hundreds of set and datatype terms and do not finish in any
     // useful time — `Consensus_epr.tla` ran for twenty minutes and counting —
@@ -234,6 +238,21 @@ fn main() {
                 }
                 if trace_out && let Some(t) = bmc.counterexample() {
                     println!("--- {file} counterexample\n{t}");
+                }
+                if let Some(dir) = &itf_dir
+                    && let Some(doc) = bmc.counterexample_itf(&file)
+                {
+                    let stem = file.strip_suffix(".tla").unwrap_or(&file);
+                    let out = std::path::Path::new(dir).join(format!("{stem}.itf.json"));
+                    match serde_json::to_string_pretty(&doc) {
+                        Ok(text) => {
+                            let _ = std::fs::create_dir_all(dir);
+                            if let Err(e) = std::fs::write(&out, text) {
+                                eprintln!("could not write {}: {e}", out.display());
+                            }
+                        }
+                        Err(e) => eprintln!("could not render {file} as ITF: {e}"),
+                    }
                 }
                 let mut notes = Vec::new();
                 if d > 0 {
