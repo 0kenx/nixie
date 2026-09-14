@@ -141,10 +141,21 @@ impl Solver {
                     list_lines::<(Lit, ClauseId)>(plen) + list_lines::<(Lit, ClauseId)>(xlen);
             }
             #[cfg(feature = "bcp-regions")]
-            let region_sample = self
-                .region_stats
-                .as_mut()
-                .is_some_and(|s| s.begin(plen + xlen != 0 || !self.watches.get(lit).is_empty()));
+            let region_sample = {
+                // Computed before the stats borrow: the emptiness probe is
+                // CSR-combined under the reader gate (shadow present), the
+                // `Vec` list otherwise — identical content by the drift
+                // invariant.
+                let nonempty = if self.watches.csr_read_active() {
+                    let (p, x) = self.watches.get_combined(lit);
+                    !p.is_empty() || !x.is_empty()
+                } else {
+                    !self.watches.get(lit).is_empty()
+                };
+                self.region_stats
+                    .as_mut()
+                    .is_some_and(|s| s.begin(plen + xlen != 0 || nonempty))
+            };
             if plen + xlen != 0 {
                 if bcp_stats {
                     crate::diag_bcp::BIG_LISTS.fetch_add(1, Relaxed);
@@ -521,7 +532,7 @@ impl Solver {
                     if let Some(pair) = repair {
                         if let Some((a, b)) = pair {
                             let r = watcher.r;
-                            if !self.watches.get(a.negate()).iter().any(|w| w.r == r) {
+                            if !self.watches.iter_combined(a.negate()).any(|w| w.r == r) {
                                 self.watches.add(
                                     a.negate(),
                                     Watcher {
@@ -530,7 +541,7 @@ impl Solver {
                                     },
                                 );
                             }
-                            if !self.watches.get(b.negate()).iter().any(|w| w.r == r) {
+                            if !self.watches.iter_combined(b.negate()).any(|w| w.r == r) {
                                 self.watches.add(
                                     b.negate(),
                                     Watcher {
