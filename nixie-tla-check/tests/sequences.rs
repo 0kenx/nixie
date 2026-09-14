@@ -304,3 +304,59 @@ Inv  == LET a == 100 b == 10 IN (a - b) + 5
         .unwrap_or_default();
     assert!(err.contains("BOOLEAN"), "{err}");
 }
+
+// ---- SubSeq ----
+
+/// `SubSeq(s, m, n)` moves the window and resizes it — element `i` of the
+/// result is element `m + i - 1` of `s`. Nothing is copied, for the same
+/// reason `Tail` copies nothing, and `Tail` is exactly `SubSeq(s, 2, Len(s))`.
+#[test]
+fn subseq_of_a_literal() {
+    holds("x", "x = 0", "SubSeq(<<1, 2, 3, 4>>, 2, 3) = <<2, 3>>");
+    holds("x", "x = 0", "Len(SubSeq(<<1, 2, 3, 4>>, 2, 3)) = 2");
+    holds("x", "x = 0", "SubSeq(<<1, 2, 3>>, 1, 3) = <<1, 2, 3>>");
+    fails("x", "x = 0", "SubSeq(<<1, 2, 3, 4>>, 2, 3) = <<2, 3, 4>>");
+}
+
+/// An empty range is the empty sequence, not an error.
+#[test]
+fn an_empty_subseq() {
+    holds("x", "x = 0", "SubSeq(<<1, 2, 3>>, 3, 2) = <<>>");
+    holds("x", "x = 0", "Len(SubSeq(<<1, 2, 3>>, 3, 2)) = 0");
+}
+
+/// On a sequence-valued variable, where the bounds may be symbolic: they are
+/// arithmetic on the offset and the length, not a count of anything that has
+/// to be enumerated.
+#[test]
+fn subseq_of_a_variable_with_symbolic_bounds() {
+    let src = r#"
+---- MODULE Sub ----
+EXTENDS Integers, Sequences
+VARIABLES h, n
+Init == h = <<>> /\ n = 2
+Next == h' = Append(Append(Append(h, "a"), "b"), "c") /\ UNCHANGED n
+Inv  == Len(h) = 0 \/ Len(SubSeq(h, n, Len(h))) = 2
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(1, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(1)
+    );
+}
+
+/// And `Tail` agrees with the `SubSeq` that means the same thing.
+#[test]
+fn tail_agrees_with_subseq() {
+    holds(
+        "x",
+        "x = 0",
+        "Tail(<<1, 2, 3>>) = SubSeq(<<1, 2, 3>>, 2, 3)",
+    );
+}

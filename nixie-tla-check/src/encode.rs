@@ -727,6 +727,44 @@ impl Encoder {
         }
     }
 
+    /// Two values as sequence terms, when exactly one of them is a structural
+    /// tuple and the other is a sequence.
+    ///
+    /// `None` when the pair is not that mixture, which leaves every other
+    /// comparison exactly as it was.
+    fn seq_pair(
+        &mut self,
+        x: &Rc<Value>,
+        y: &Rc<Value>,
+        tm: &mut TermManager,
+    ) -> Result<Option<(TermId, TermId)>> {
+        let seq_of = |this: &Self, v: &Rc<Value>, tm: &TermManager| match &**v {
+            Value::Scalar(t) => this
+                .sort_of(*t, tm)
+                .ok()
+                .filter(|s| crate::sorts::seq_element(*s, tm).is_some())
+                .map(|s| (*t, s)),
+            _ => None,
+        };
+        let (tuple, seq, sort, flipped) = match (seq_of(self, x, tm), seq_of(self, y, tm)) {
+            (None, Some((t, sort))) if matches!(&**x, Value::Tuple(_)) => (x, t, sort, false),
+            (Some((t, sort)), None) if matches!(&**y, Value::Tuple(_)) => (y, t, sort, true),
+            _ => return Ok(None),
+        };
+        let Value::Tuple(items) = &**tuple else {
+            return Ok(None);
+        };
+        let Some(elem) = crate::sorts::seq_element(sort, tm) else {
+            return Ok(None);
+        };
+        let mut built = self.empty_seq(sort, elem, tm)?;
+        for item in items.clone() {
+            let e = self.reify(&item, tm)?;
+            built = self.seq_append(built, e, sort, tm)?;
+        }
+        Ok(Some(if flipped { (seq, built) } else { (built, seq) }))
+    }
+
     /// The empty sequence at a sequence sort.
     ///
     /// Built over the **shared** base array, which is what makes two sequences
@@ -1034,6 +1072,18 @@ impl Encoder {
                     && let Ok((p, q)) = self.set_pair(a, b, tm)
                     && let (SetRepr::Native(p), SetRepr::Native(q)) = (p, q)
                 {
+                    return scalar(tm.mk_eq(p, q));
+                }
+                // A **sequence** compared with a tuple. `<<>>` is both, and
+                // which one it encoded to depends on the sort inference gave
+                // that literal — so `h = <<>>` can have a sequence on one side
+                // and a structural tuple on the other. Comparing those as
+                // different shapes would report two TLA+-equal values unequal,
+                // which is a counterexample the specification does not have.
+                //
+                // Promoted rather than declined, the same way a mixed pair of
+                // set representations is.
+                if let Some((p, q)) = self.seq_pair(&x, &y, tm)? {
                     return scalar(tm.mk_eq(p, q));
                 }
                 let t = self.shape(eq_values(&x, &y, tm))?;
@@ -1866,7 +1916,12 @@ impl Encoder {
             Kera::Opaque(name, args)
                 if matches!(
                     (name.as_str(), args.len()),
-                    ("Len", 1) | ("Append", 2) | ("Head", 1) | ("Tail", 1) | ("\\o", 2)
+                    ("Len", 1)
+                        | ("Append", 2)
+                        | ("Head", 1)
+                        | ("Tail", 1)
+                        | ("\\o", 2)
+                        | ("SubSeq", 3)
                 ) =>
             {
                 // A sequence has two shapes here, and the operators take
@@ -1898,6 +1953,24 @@ impl Encoder {
                                 ));
                             }
                             Ok(Rc::new(Value::Tuple(items[1..].to_vec())))
+                        }
+                        "SubSeq" => {
+                            let (from, to) = (ground_int(&args[1]), ground_int(&args[2]));
+                            let (Some(from), Some(to)) = (from, to) else {
+                                return Err(EncodeError::Unsupported(
+                                    "`SubSeq` of a literal with a symbolic bound".into(),
+                                ));
+                            };
+                            // TLA+ counts from 1, and an empty range is the
+                            // empty sequence rather than an error.
+                            let lo = usize::try_from(&from).unwrap_or(1).max(1);
+                            let hi = usize::try_from(&to).unwrap_or(0).min(items.len());
+                            let picked = if lo > hi {
+                                Vec::new()
+                            } else {
+                                items[lo - 1..hi].to_vec()
+                            };
+                            Ok(Rc::new(Value::Tuple(picked)))
                         }
                         "\\o" => {
                             let rest = self.seq_items(&args[1], tm)?;
@@ -1954,6 +2027,34 @@ impl Encoder {
                         let minus = tm.mk_int(num_bigint::BigInt::from(-1));
                         let off2 = tm.mk_add([off, one]);
                         let len2 = tm.mk_add([len, minus]);
+                        let name = tm
+                            .sorts
+                            .datatype_name(sort)
+                            .ok_or(EncodeError::ShapeClash)?
+                            .to_string();
+                        scalar(tm.mk_dt_constructor(&name, [off2, len2, fun], sort))
+                    }
+                    // `SubSeq(s, m, n)` moves the window and resizes it:
+                    // element `i` of the result is element `m + i - 1` of `s`,
+                    // so the offset gains `m - 1` and the length becomes
+                    // `n - m + 1`. Nothing is copied, for the same reason
+                    // `Tail` copies nothing — and `Tail` is exactly
+                    // `SubSeq(s, 2, Len(s))`.
+                    //
+                    // The bounds may be symbolic: they are arithmetic on the
+                    // offset and the length, not a count of anything that has
+                    // to be enumerated.
+                    "SubSeq" => {
+                        let from = self.go(&args[1], tm)?;
+                        let to = self.go(&args[2], tm)?;
+                        let off = self.seq_off(target, tm);
+                        let fun = self.seq_fun(target, elem, tm);
+                        let one = tm.mk_int(num_bigint::BigInt::from(1));
+                        let minus = tm.mk_int(num_bigint::BigInt::from(-1));
+                        let shift = tm.mk_add([from, minus]);
+                        let off2 = tm.mk_add([off, shift]);
+                        let span = tm.mk_sub(to, from);
+                        let len2 = tm.mk_add([span, one]);
                         let name = tm
                             .sorts
                             .datatype_name(sort)
