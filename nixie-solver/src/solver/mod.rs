@@ -4801,6 +4801,12 @@ impl Solver {
             // The blocking clauses are retracted by `self.sat.pop()` above;
             // roll the counter back in lockstep (see the field doc).
             self.model_blocking_active = state.model_blocking_active;
+            // The FF tripwire is restored, not invariant: the dispatch
+            // legitimately clears it when it answers a validated `Sat`,
+            // and a `pop` must not inherit that cleared state into the
+            // outer scope where the terms are unowned again (the next
+            // `check` re-runs assert encoding from the trail anyway).
+            self.ff_terms_unconstrained = state.ff_terms_unconstrained;
 
             // Quantifier reasoning state: MBQI and the e-matching engine turn a
             // registered quantifier into hard ground lemmas, so a quantifier
