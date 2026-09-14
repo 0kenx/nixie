@@ -5,6 +5,19 @@
 > `docs/studies/2026-09-14-amplitude-trajectory-answer.md` (item 2),
 > `docs/studies/2026-09-14-metric-decision.md` (item 3).
 
+## Final addendum 2: slice 5's ECONOMICS measured (`ab5bc6ee`)
+
+The batched-by-literal surgery (collect from the index, one filtered
+pass per distinct literal, deferred adds) collapsed the per-ref 3–4×
+loss to a **wash on mass ELS rewrites (0.96–1.37×)** and a **46× win on
+the sparse pre-search round**.  Primary spans verified strictly sorted
+by ref (100 %).  The measured map is complete: correctness proven,
+production shape identified, economics bounded — the payoff path is
+slice 4 (CSR-primary) + wiring the batched surgery into the
+sparse-mutator rebuilds (subsume/BVA/BVE — 8 of si2's 14 rebuilds)
+while keeping the counting-sort rebuild for mass rewrites.  Details in
+the CSR study's fourth increment section.
+
 ## Final addendum: slice 5's CORRECTNESS is proven (`c31cf26c`)
 
 The blocker dissolved under debugging: the 158 k-wrong-count audits

@@ -20,7 +20,7 @@ pub use lia::{HermiteNormalForm, LiaSolver, PseudoBooleanSolver};
 pub use optimize::{
     ConstraintSense, LraOptimizer, Objective, ObjectiveBuilder, OptModel, OptResult,
 };
-pub use simplex::{LinExpr, Simplex, VarId};
+pub use simplex::{LinExpr, Simplex, VarId, scale_exact_row};
 pub use simplex_opt::SimplexOptStatus;
 pub use solver::ArithEqualityStatus;
 pub use solver::ArithSolver;

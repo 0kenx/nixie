@@ -281,3 +281,148 @@ purely economic and structural: the production surgery needs slice 4
 rebuild's watch half outright), and the cost model to beat is the
 touched-mass × span-scan vs the rebuild's arena sweep (the ops counters
 and entry counters landed here are the measurement instruments).
+
+## Slice 5 economics, measured: batched surgery is a wash on mass
+rewrites, a 46× win on sparse rounds (same day, fourth increment)
+
+Instrumentation (`csr_surgery_visits`/`csr_surgery_nanos` in the oracle
+line, against the same round's two-sweep `build=`us — the post-slice-4
+watch-rebuild cost):
+
+- **Per-ref removal (the first shape): 3–4× LOSS** on si2's mid-search
+  ELS rounds (525 ms vs 141 ms at `@4000`; 1.6 B entry visits).  Root
+  cause: ELS re-points every clause to its two *smallest-code* literals
+  — the densest lists in the formula (~1 800 entries) — and a span scan
+  per ref pays O(refs × span).
+- **The cure, measured feasible then built**: primary spans are
+  *strictly sorted by ref byte-offset* (verified 100 % of spans across
+  all rounds — the fill pushes in clause-id order, arena offsets
+  allocate monotonically, compaction preserves order), and better, the
+  removals can be **batched by literal**: collect `(ref, positions)`
+  from the index during the window, then one filtered pass per
+  *distinct* touched literal.  The batch collapsed the visits 1.6 B →
+  0.7 M (2 300×) and the time 525 → 129 ms.  One ordering bug the
+  oracle caught immediately: re-points must **defer their adds** until
+  after the removal flush (a re-point onto a literal the clause already
+  watches would have its fresh entry deleted by the batch) — fixed, all
+  audits green again.
+- **The verdict table** (si2, batched surgery vs two-sweep build):
+
+  | round | surgery | build | ratio |
+  |---|---|---|---|
+  | `@0` (pre-search, sparse) | 2.5 ms | 116 ms | **0.02 (46× win)** |
+  | `@4000`–`@20939` (mass ELS rewrites) | 80–129 ms | 64–112 ms | 0.96–1.37 (wash) |
+
+  On whole-formula rewrites the touched-literal mass *is* the whole
+  watch content, so the surgery's span passes and the rebuild's two
+  arena sweeps are the same work by construction — the wash is
+  structural, not tunable.  The sparse regime (subsume/BVE-class
+  rounds — ~8 of si2's 14 rebuilds) is where surgical re-pointing
+  pays, and it pays 46×.
+
+**Slice 5 closes with a complete measured map**: correctness proven
+(contract oracle green end-to-end), the production shape identified
+(batched-by-literal removal via the position index, deferred adds), and
+the economics bounded (wash on ELS, 46× on sparse mutators).  The
+payoff path runs through slice 4 (CSR-primary): wire the batched
+surgery into the sparse-mutator rebuilds (subsume/BVA/BVE rounds), keep
+the counting-sort rebuild for mass rewrites (ELS), and the ~5 % si2
+watch-rebuild cost splits into its efficient halves.
+
+## Slice 4 implementation plan: the CSR-primary flip, via the
+swapped-dual gate (2026-09-14 close — the next session's entry point)
+
+**Methodology** (the one that carried slices 2/3, the index and the
+surgery): develop inside the shadow with the drift comparison as the
+oracle, gated by a flag; the flip deletes the old side only after the
+gate is green corpus-wide.
+
+**The crux is the BCP scan, and the swap design is now concrete**
+(`NIXIE_CSR_SCAN=1`, requires the shadow): today's dual-write scans the
+taken `Vec` and mirrors into the CSR; the swapped-dual scans the CSR
+and mirrors into the taken `Vec`.  Per propagated literal `L`:
+
+1. Split-borrow the CSR: `span: &mut [Watcher]` (`entries[start..
+   prim_end[code]]` — contiguous, the kernels' existing `&mut
+   [Watcher]` shape), `overflow_dests: &mut Vec<Vec<Watcher>>`, and the
+   bookkeeping fields — disjoint-field borrows, no take needed for the
+   span.
+2. `mem::take(&mut overflow_dests[code])` (the overflow *is* a movable
+   `Vec`); `mem::take(&mut watches[code])` (the Vec-mirror target).
+3. Run `scan_list` **twice** — span pass then overflow pass — with the
+   push funnel (`push_watch`) writing **both** the destination
+   overflows and the destination `Vec` lists, and a `VecScanMirror`
+   receiving keep/remove notifications to rebuild the taken list (kept
+   entries in order + unvisited tail — order-isomorphic to the old
+   in-place compaction by the drift invariant; the mirror over-writes
+   where the old scan skipped self-writes, an accepted gated-mode
+   cost).  The kernels' notification sites gain a mode: the existing
+   `csr` mirror param becomes the *scan target selector* (off / csr-
+   mirror / vec-mirror) — const-generic MODE, three instantiations.
+4. Put-backs: the span's compaction end becomes `prim_end[code]`; the
+   taken overflow returns truncated; the taken `Vec` list returns at
+   the mirror's length; the index maintenance rides the existing
+   `scan_push`/`scan_remove` funnels (they are already the production
+   semantics).
+5. **Oracle**: the drift comparison stays valid — it compares the CSR
+   (now primary-scanned) against the Vec (now mirrored) — and the
+   phantom/ghost tick charging moves verbatim (it reads lengths:
+   `span_len + overflow_len`).
+
+**Reader inventory (measured)**: ~25 sites — propagate.rs ×11 (9 are
+the take/put-back scan + ticks), watched.rs-internal ×10, xor/sweep/
+watch_kernel/equiv ×4 — plus nixie-solver's watched_propagator/
+propagation_opt consumers (verify: their own lists vs ours) and the
+`get_mut` pair (267/632 — the non-session scan, same span-switch
+treatment; 1047 is test code).  The two-span read API
+(`get_combined(lit) -> (&[Watcher], &[Watcher])`) switches them
+mechanically; `len` = `span_len + overflow_len` (phantom parity already
+documented).
+
+**Gate sequence**: (a) swapped-dual green on the corpus (drift zero,
+trajectory identity, all four driver configs), (b) readers switched
+under `NIXIE_CSR_READ=1` (still dual-maintained — reads from CSR),
+(c) **the flip** — one commit: delete the `Vec` lists and the Vec
+mirror, CSR becomes the only representation; the safety net dies at
+this commit, so its gates are full trajectory identity + corpus screen
++ Z3 parity + the E2E model checks.  Post-flip, wire the batched
+surgery into the sparse-mutator rebuilds (the 46× regime) and keep the
+counting-sort rebuild for mass rewrites.
+
+**Cost anchors (all measured this session)**: flag-off dual-write
+residual +0.55–1.46 % instructions; shadow-on dual cost +23–27 %
+(diagnostics ≈ 2/16 %); surgery 46×/wash.  The flip's business case is
+memory (the ~2.6 M `Vec` headers on si2-class) + the sparse-rebuild
+payoff + the surgery design space — not raw instruction counts.
+
+## Slice 4's crux LANDED: the swapped-dual scan (`NIXIE_CSR_SCAN=1`)
+
+The BCP session kernel now scans the CSR's span+overflow as the
+**primary** with the taken `Vec` list as the **mirror** — the roles of
+slice 2 exchanged, exactly per the plan above.  Mechanics: the span is
+copied out per scan (avg ~34 entries — keeps the kernel's CSR accesses
+alias-free), scanned with the unchanged cursor kernel, written home
+with its live end committed; the overflow is taken and scanned second;
+a `VecScanMirror` (write-cursor over the taken list) reproduces the old
+in-place `Vec` compaction from the notifications, consuming both passes
+sequentially (the combined order the drift invariant maintains); pushes
+funnel to both representations (`scan_push` is direction-agnostic).
+
+Three defects the nets caught on the way (each a one-fix
+localization): the conflict path truncated the unvisited overflow
+(every conflict-path scan wiped that literal's CSR); two of the six
+notification sites silently missed their mirror branches (fmt had
+reformatted the anchors — the per-scan cross-check probe caught the
+misalignment in one run); and the two-pass work-counter merge
+overwrote instead of accumulating (`take_watch_scan`).  The
+kernel-equivalence test now compares combined views under the CSR
+diagnostic flags (dead tails beyond `prim_end` are representation
+garbage, not observables — the drift oracle is the invariant).
+
+**Validated**: 6s167/si2/FmlaEquivChain/circuit/af-synthesis —
+conflicts/decisions/propagations/restarts **bit-identical** to default,
+drift comparisons 100 % zero (37/37, 29/29, 101/101, 85/85, 33/33),
+1092 tests green under shadow-only, shadow+scan, and
+shadow+scan+surgery configs.  The flip's remaining surface: the same
+treatment for the non-session take/put-back path, the reader switch
+(~25 sites), then the deletion commit.

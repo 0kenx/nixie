@@ -527,3 +527,60 @@ fn wide_chain_pins_conflict_is_decidable_unsat() {
         .expect("script executes");
     assert_eq!(out.last().map(String::as_str), Some("unsat"));
 }
+
+/// The exact-coefficient parse retry (2026-09-15, wide-LP slice 4): a
+/// comparison whose COEFFICIENTS leave `i64` width is re-parsed with exact
+/// `BigRational` coefficients (wide constants plain, no column
+/// abstraction) and the whole row rescaled into width by a positive
+/// factor — zero bounds are preserved, so the scaled row is the same
+/// constraint. Uniform-magnitude wide rows (`2^63`-scale coefficients)
+/// now decide BOTH directions where the parse used to gate them to
+/// `unknown` (or, before item 32, drop them as free Booleans).
+#[test]
+fn uniform_wide_coefficients_decide_both_directions() {
+    use nixie_solver::Context;
+    let sat = r#"
+        (set-logic QF_LRA)
+        (declare-const a Real) (declare-const b Real)
+        (assert (= a 1)) (assert (= b 0))
+        (assert (= (+ (* 9223372036854775808 a) (* 9223372036854775810 b)) 9223372036854775808))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(sat).expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("sat"));
+
+    // 2^63·a − 2^63·b = 2^63 with a = b = 1 pins the LHS to 0 ≠ 2^63.
+    let unsat = r#"
+        (set-logic QF_LRA)
+        (declare-const a Real) (declare-const b Real)
+        (assert (= a 1)) (assert (= b 1))
+        (assert (= (- (* 9223372036854775808 a) (* 9223372036854775808 b)) 9223372036854775808))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(unsat).expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("unsat"));
+}
+
+/// The MIXED-magnitude wide row (`1` and `2^63` coefficients in one row)
+/// parses and scales into the tableau, but a pivot through it needs the
+/// quotient `1/2^63` — an irreducible denominator beyond `i64` — so the
+/// honest `resource_limit` applies at the pivot site. Pinned here: the
+/// answer must never be a wrapped verdict (and a `sat` for the unsat twin
+/// would be exactly the wrong-verdict class item 32 closed).
+#[test]
+fn mixed_magnitude_wide_rows_stay_honest() {
+    use nixie_solver::Context;
+    let unsat_twin = r#"
+        (set-logic QF_LRA)
+        (declare-const v0 Real) (declare-const v1 Real)
+        (assert (= v0 (+ (* 9223372036854775808 v1) 1)))
+        (assert (= v0 0)) (assert (> v1 0))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(unsat_twin).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(
+        last, "sat",
+        "v1 = -2^-63 contradicts v1 > 0; sat would be wrong"
+    );
+}

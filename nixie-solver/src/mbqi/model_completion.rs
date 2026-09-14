@@ -66,6 +66,14 @@ pub struct CompletedModel {
     /// Frozen ground-universe views (see [`Self::ground_universe`]):
     /// computed once at completion, after the universes are final.
     pub ground_universes: FxHashMap<SortId, Vec<TermId>>,
+    /// The tracked quantifiers' bound-variable names, frozen with the
+    /// ground universes: a `Var` term is a universe *artifact* exactly
+    /// when its name is one of these.  A free constant declared
+    /// `(declare-fun a () S)` is represented as a `Var` node too — it is
+    /// a legitimate domain element and must survive the filter (the
+    /// original Var-ness test starved every universe whose elements were
+    /// free constants).
+    bound_var_names: FxHashSet<Spur>,
     /// The defining quantifier behind each solved macro's *winning*
     /// definition (quantifier term -> functions it defines).  Certifying
     /// that quantifier against the completed model also certifies its
@@ -88,6 +96,7 @@ impl CompletedModel {
             defaults: FxHashMap::default(),
             macros: FxHashMap::default(),
             ground_universes: FxHashMap::default(),
+            bound_var_names: FxHashSet::default(),
             macro_sources: FxHashMap::default(),
             generation: 0,
         }
@@ -127,6 +136,7 @@ impl CompletedModel {
         if let Some(frozen) = self.ground_universes.get(&sort) {
             return Some(frozen.clone());
         }
+        let names = &self.bound_var_names;
         self.universe(sort).map(|universe| {
             universe
                 .iter()
@@ -137,9 +147,10 @@ impl CompletedModel {
                     )
                     .iter()
                     .any(|&v| {
-                        manager
-                            .get(v)
-                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
+                        manager.get(v).is_some_and(|n| match n.kind {
+                            TermKind::Var(name) => names.contains(&name),
+                            _ => false,
+                        })
                     })
                 })
                 .collect()
@@ -157,7 +168,26 @@ impl CompletedModel {
     /// the defining pins) reach it per function, per quantifier, per round —
     /// far too hot to recompute per call.  Call once, after the last
     /// mutation of `universes` (the completion's step 9 does).
-    pub fn freeze_ground_universes(&mut self, manager: &TermManager) {
+    pub fn freeze_ground_universes(
+        &mut self,
+        quantifiers: &[QuantifiedFormula],
+        manager: &TermManager,
+    ) {
+        self.bound_var_names = quantifiers
+            .iter()
+            .flat_map(|q| q.bound_vars.iter().map(|(n, _)| *n))
+            .collect();
+        let names = self.bound_var_names.clone();
+        let is_artifact = |element: TermId| {
+            nixie_core::ast::traversal::collect_free_vars_including_patterns(element, manager)
+                .iter()
+                .any(|&v| {
+                    manager.get(v).is_some_and(|n| match n.kind {
+                        TermKind::Var(name) => names.contains(&name),
+                        _ => false,
+                    })
+                })
+        };
         let sorts: Vec<SortId> = self.universes.keys().copied().collect();
         for sort in sorts {
             let Some(universe) = self.universes.get(&sort) else {
@@ -166,17 +196,7 @@ impl CompletedModel {
             let ground: Vec<TermId> = universe
                 .iter()
                 .copied()
-                .filter(|&element| {
-                    !nixie_core::ast::traversal::collect_free_vars_including_patterns(
-                        element, manager,
-                    )
-                    .iter()
-                    .any(|&v| {
-                        manager
-                            .get(v)
-                            .is_some_and(|n| matches!(n.kind, TermKind::Var(_)))
-                    })
-                })
+                .filter(|&element| !is_artifact(element))
                 .collect();
             self.ground_universes.insert(sort, ground);
         }
@@ -601,8 +621,10 @@ impl ModelCompleter {
 
         // Step 9: freeze the ground-universe views (the universes are
         // immutable from here on; the model only ever crosses rounds by
-        // value).
-        completed.freeze_ground_universes(manager);
+        // value).  The artifact filter is by bound-variable NAME: a free
+        // constant is a legitimate element, a quantifier's stray encoding
+        // constant is not.
+        completed.freeze_ground_universes(quantifiers, manager);
 
         Ok(completed)
     }

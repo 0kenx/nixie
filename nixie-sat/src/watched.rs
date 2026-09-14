@@ -106,6 +106,11 @@ pub struct WatchLists {
     /// `None` on default paths: every mirror below is a single None-check,
     /// and nothing on a default path constructs one.
     csr: Option<CsrWatchLists>,
+    /// Surgery-economics instrumentation (slice 5, diagnostics only):
+    /// entry visits (span+overflow scans) and wall nanos of the surgical
+    /// ops — compared against the rebuild's two-sweep `build=`us per round.
+    pub(crate) csr_surgery_visits: u64,
+    pub(crate) csr_surgery_nanos: u64,
 }
 
 /// Packed snapshot of a [`WatchLists`] (see [`WatchLists::packed_snapshot`]):
@@ -618,6 +623,90 @@ impl CsrWatchLists {
         }
     }
 
+    /// Remove every entry whose arena byte-offset is in `refs`, from both
+    /// segments, order-preserving (the batched surgery's per-literal pass).
+    pub(crate) fn remove_clause_batch(
+        &mut self,
+        lit: Lit,
+        refs: &std::collections::HashSet<usize>,
+    ) {
+        let i = lit.index();
+        let start = self.span_start.get(i).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(i).copied().unwrap_or(0) as usize;
+        let mut write = start;
+        for read in start..end {
+            let w = self.entries[read];
+            if refs.contains(&w.r.byte_offset()) {
+                if let Some(slot) = self.positions.get_mut(&w.r.byte_offset()) {
+                    slot.retain(|c| *c != i as u32);
+                    if slot.is_empty() {
+                        self.positions.remove(&w.r.byte_offset());
+                    }
+                }
+                continue;
+            }
+            self.entries[write] = w;
+            write += 1;
+        }
+        if let Some(slot) = self.prim_end.get_mut(i) {
+            *slot = write as u32;
+        }
+        if let Some(ov) = self.overflow.get_mut(i) {
+            let mut write = 0usize;
+            for read in 0..ov.len() {
+                let w = ov[read];
+                if refs.contains(&w.r.byte_offset()) {
+                    if let Some(slot) = self.positions.get_mut(&w.r.byte_offset()) {
+                        slot.retain(|c| *c != i as u32);
+                        if slot.is_empty() {
+                            self.positions.remove(&w.r.byte_offset());
+                        }
+                    }
+                    continue;
+                }
+                ov[write] = w;
+                write += 1;
+            }
+            ov.truncate(write);
+        }
+    }
+
+    /// Sortedness datum (slice-5 economics): count spans whose primary
+    /// entries are strictly increasing in arena byte offset (the fill
+    /// pushes in clause-id order; ids and arena offsets allocate together,
+    /// so spans are expected near-sorted — binary-search removal would
+    /// then cut the O(span) surgery scan to O(log span)).
+    pub(crate) fn span_sortedness(&self) -> (usize, usize) {
+        let mut sorted = 0usize;
+        let mut total = 0usize;
+        for code in 0..self.span_start.len() {
+            let start = self.span_start[code] as usize;
+            let end = self.prim_end[code] as usize;
+            if end > start + 1 {
+                total += 1;
+                let w = &self.entries[start..end];
+                if w.windows(2)
+                    .all(|p| p[0].r.byte_offset() < p[1].r.byte_offset())
+                {
+                    sorted += 1;
+                }
+            }
+        }
+        (sorted, total)
+    }
+
+    /// Live length of `code`'s primary span (diagnostics).
+    pub(crate) fn span_len(&self, code: usize) -> usize {
+        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        end.saturating_sub(start)
+    }
+
+    /// Live length of `code`'s overflow (diagnostics).
+    pub(crate) fn overflow_len(&self, code: usize) -> usize {
+        self.overflow.get(code).map_or(0, Vec::len)
+    }
+
     /// Diagnostics: total live entries / index size.
     pub(crate) fn debug_total_entries(&self) -> usize {
         let n = self.span_start.len().max(self.overflow.len());
@@ -666,6 +755,73 @@ impl CsrWatchLists {
         (self.positions.len(), missing, stale)
     }
 
+    /// Split-borrow access for the swapped-dual scan (`NIXIE_CSR_SCAN`):
+    /// the contiguous primary span (the kernels' `&mut [Watcher]` shape)
+    /// and the overflow list of the scanned code, all disjoint from
+    /// `entries`' span borrow.  The caller takes the overflow `Vec` out,
+    /// scans span-then-overflow, and commits via [`Self::commit_span_end`].
+    pub(crate) fn scan_parts(&mut self, code: usize) -> (usize, &[Watcher], &mut Vec<Watcher>) {
+        if code >= self.overflow.len() {
+            self.overflow.resize(code + 1, Vec::new());
+        }
+        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        let CsrWatchLists {
+            entries, overflow, ..
+        } = self;
+        let ovf = &mut overflow[code];
+        let span = entries.get(start..end).unwrap_or(&[]);
+        (start, span, ovf)
+    }
+
+    /// Copy the compacted span home (the swapped scan ran on a copy to
+    /// keep the kernel's CSR accesses alias-free).
+    pub(crate) fn write_back_span(&mut self, code: usize, start: usize, kept: &[Watcher]) {
+        if kept.is_empty() {
+            return;
+        }
+        if let Some(dst) = self.entries.get_mut(start..start + kept.len()) {
+            dst.copy_from_slice(kept);
+        }
+        let _ = code;
+    }
+
+    /// Return the scanned overflow (truncated to its pass's write end; the
+    /// unvisited tail included when the pass exited on conflict).
+    pub(crate) fn put_back_overflow(&mut self, code: usize, mut ovf: Vec<Watcher>, write: usize) {
+        if ovf.len() > write {
+            ovf.truncate(write);
+        }
+        if code < self.overflow.len() {
+            self.overflow[code] = ovf;
+        } else {
+            self.overflow.resize(code + 1, Vec::new());
+            self.overflow[code] = ovf;
+        }
+    }
+
+    /// Commit the span pass's compaction end (the swapped scan's primary
+    /// maintenance — the kernel compacted the span in place).
+    pub(crate) fn commit_span_end(&mut self, code: usize, kept: usize) {
+        let start = self.span_start.get(code).copied().unwrap_or(0);
+        if let Some(end) = self.prim_end.get_mut(code) {
+            *end = start + kept as u32;
+        }
+    }
+
+    /// Index upkeep for a swapped-scan removal: the entry with ref `r`
+    /// left literal `code`'s list (the kernel compacts in place; the
+    /// index entry must go now).
+    pub(crate) fn index_remove(&mut self, code: usize, r: ClauseRef) {
+        let code32 = code as u32;
+        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+            slot.retain(|c| *c != code32);
+            if slot.is_empty() {
+                self.positions.remove(&r.byte_offset());
+            }
+        }
+    }
+
     /// Mirror `WatchLists::clear`: every list empties (the layout arrays
     /// reset; the next rebuild re-adopts a fresh layout).
     pub(crate) fn clear_all(&mut self) {
@@ -688,6 +844,63 @@ pub(crate) type PropagationParts<'a> = (
     &'a mut [u32],
     &'a mut Option<CsrWatchLists>,
 );
+
+/// The swapped-dual scan's `Vec` mirror (`NIXIE_CSR_SCAN`): the CSR's
+/// span+overflow passes drive, and this cursor reproduces the old
+/// in-place `Vec` compaction from the notifications — kept entries in
+/// order (possibly blocker-rewritten), removals skipped, the unvisited
+/// tail preserved at `finish`.  Consumed sequentially across the two
+/// passes (span entries first, overflow after — the combined order the
+/// drift invariant maintains).
+pub(crate) struct VecScanMirror<'a> {
+    list: &'a mut Vec<Watcher>,
+    write: usize,
+    read: usize,
+}
+
+impl<'a> VecScanMirror<'a> {
+    pub(crate) fn new(list: &'a mut Vec<Watcher>) -> Self {
+        Self {
+            list,
+            write: 0,
+            read: 0,
+        }
+    }
+
+    /// Mirror a kept entry (optionally with a rewritten blocker).
+    pub(crate) fn keep(&mut self, watcher: Watcher, blocker: Option<Lit>) {
+        if self.read >= self.list.len() {
+            return;
+        }
+        let mut w = watcher;
+        if let Some(b) = blocker {
+            w.blocker = b;
+        }
+        self.list[self.write] = w;
+        self.write += 1;
+        self.read += 1;
+    }
+
+    /// Mirror a removed entry.
+    pub(crate) fn remove(&mut self) {
+        if self.read < self.list.len() {
+            self.read += 1;
+        }
+    }
+
+    /// Publish the kept prefix plus the unvisited tail (conflict-exit
+    /// shape included).
+    pub(crate) fn finish(self) {
+        let remaining = self.list.len().saturating_sub(self.read);
+        if remaining > 0 && self.read != self.write {
+            self.list.copy_within(self.read.., self.write);
+        }
+        let kept = self.write + remaining;
+        if self.list.len() > kept {
+            self.list.truncate(kept);
+        }
+    }
+}
 
 /// Clause state for the surgery contract audit ([`WatchLists::
 /// csr_surgery_contract_audit`]).
@@ -718,6 +931,8 @@ impl WatchLists {
             bin_phantom: vec![0; num_vars * 2],
             ghost_debt: vec![0; num_vars * 2],
             csr: None,
+            csr_surgery_visits: 0,
+            csr_surgery_nanos: 0,
         }
     }
 
@@ -745,23 +960,45 @@ impl WatchLists {
         self.csr.is_some()
     }
 
-    /// CSR-only surgical removal by ACTUAL position (the ELS-rewatching
-    /// experiment, `NIXIE_ELS_CSR_SURGERY=1`): the position index says
-    /// which literals' lists hold `r`'s watchers — the BCP moves watches
-    /// without normalizing stored clause order, so `(lits[0], lits[1])`
-    /// is NOT where they live (the watch-position-drift finding).  One
-    /// call removes the clause's watchers wherever they are.  Touches
-    /// ONLY the shadow; the `Vec` side is rebuilt wholesale as ground
-    /// truth.
-    pub(crate) fn csr_surgery_remove_clause(&mut self, r: ClauseRef) {
+    /// Read a ref's current watched-literal codes from the index (the
+    /// pending-collection form of the batched surgery).
+    pub(crate) fn csr_positions_of(&self, r: ClauseRef) -> Option<smallvec::SmallVec<[u32; 2]>> {
+        self.csr.as_ref()?.positions.get(&r.byte_offset()).cloned()
+    }
+
+    /// Batched surgical removal (the production surgery shape): apply all
+    /// pending `(ref, positions)` removals with ONE filtered pass per
+    /// distinct literal, instead of a full span scan per ref — the ELS
+    /// re-points concentrate on the formula's densest literals (two
+    /// smallest-code literals per clause), so per-ref scans pay
+    /// O(refs × span) where the batch pays O(sum of distinct spans).
+    /// Index entries are dropped for every removed entry.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn csr_surgery_flush(
+        &mut self,
+        pending: &[(ClauseRef, smallvec::SmallVec<[u32; 2]>)],
+    ) {
         let Some(csr) = &mut self.csr else {
             return;
         };
-        let Some(lits) = csr.positions.get(&r.byte_offset()).cloned() else {
-            return;
-        };
-        for code in lits {
-            csr.remove_clause(Lit::from_code(code), r);
+        #[cfg(feature = "std")]
+        let t0 = std::time::Instant::now();
+        let mut by_lit: std::collections::BTreeMap<u32, std::collections::HashSet<usize>> =
+            std::collections::BTreeMap::new();
+        for (r, lits) in pending {
+            for &code in lits {
+                by_lit.entry(code).or_default().insert(r.byte_offset());
+            }
+        }
+        for (code, refs) in by_lit {
+            let lit = Lit::from_code(code);
+            let i = code as usize;
+            self.csr_surgery_visits += (csr.span_len(i) + csr.overflow_len(i)) as u64;
+            csr.remove_clause_batch(lit, &refs);
+        }
+        #[cfg(feature = "std")]
+        {
+            self.csr_surgery_nanos += t0.elapsed().as_nanos() as u64;
         }
     }
 
@@ -769,7 +1006,13 @@ impl WatchLists {
     /// arrival-order overflow push, shadow-only.
     pub(crate) fn csr_surgery_add(&mut self, lit: Lit, w: Watcher) {
         if let Some(csr) = &mut self.csr {
+            #[cfg(feature = "std")]
+            let t0 = std::time::Instant::now();
             csr.push_overflow(lit, w);
+            #[cfg(feature = "std")]
+            {
+                self.csr_surgery_nanos += t0.elapsed().as_nanos() as u64;
+            }
         }
     }
 
@@ -1386,6 +1629,28 @@ mod tests {
         ))]
         assert_eq!(wl.get(lit)[0].clause, clause);
         assert_eq!(wl.get(lit)[0].blocker, blocker);
+    }
+}
+
+/// `NIXIE_CSR_SCAN=1` (slice 4's swapped-dual gate; requires the shadow):
+/// the propagation session scans the CSR's span+overflow as the PRIMARY
+/// and mirrors the outcomes into the taken `Vec` list — the roles of the
+/// slice-2 dual-write swapped.  The drift comparison stays the oracle:
+/// it compares the (now primary-scanned) CSR against the (now mirrored)
+/// `Vec`.  Default off; the flag-off path is byte-identical.
+pub fn csr_scan_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_SCAN")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
     }
 }
 
