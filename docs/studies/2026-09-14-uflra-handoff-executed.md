@@ -342,3 +342,14 @@ divergence, this commitment blocking) were both in *my own* additions,
 both found by differential screens, and both resolved by removal rather
 than repair — when an adaptation of a reference mechanism cannot carry
 the reference's context guarantees, the adaptation is the bug.
+
+
+## Screening the concurrent landings (2026-09-14, fifth pass)
+
+`main` absorbed two large concurrent landings after the unit (the CSR
+primary-watch FLIP `c77ddf76`, and the set-equality wrong-`sat` fix
+`200b3eab`) with no quantifier-surface screen.  Re-ran the screens on
+`ed401429` (current `main` at the time): quant_fuzz seeds {41,42,43} x
+300 — **0 disagreements**; mixed_fuzz 400 cases — **no verdict
+disagreements, no refuted models**; parity — **176/1/0**.  Binary
+cached at `precompile/ed401429/`.
