@@ -1273,7 +1273,6 @@ impl WatchLists {
             watcher.r.byte_offset(),
             watcher.blocker.code()
         );
-        self.push_only(lit, watcher);
         if let Some(csr) = &mut self.csr {
             csr.push_overflow(lit, watcher);
         }

@@ -275,3 +275,51 @@ the measurement.
 2. Or instrument every read of `destinations[...]` in the swapped
    driver+kernel with a use-site log and diff the two worlds' read
    sets directly.
+
+## Fifth continuation: the mid-interval drift hypothesis killed; the CSR's internal order diverges
+
+The decisive null: instrumenting clean-A's swapped mode to print **both**
+the Vec's and the CSR's length at every one of 4 049 044 scans —
+**`vec≠csr` at exactly zero scans.**  The "charge reads the drifted Vec"
+hypothesis is dead: the two representations are length-identical at every
+charge point in the clean world.
+
+The flip-bisection, redone carefully (one-pass edits, `git status`-verified
+before each measurement):
+
+- **B′2c** (add→CSR-only + charge on CSR + dedup on CSR): 32 548.  The
+  charge-trace artifact (the print still showed `watches.len()`, the Vec)
+  initially faked a divergence at scan 17 161; the real charge divergence is
+  at scan 1 984 341.
+- **B′3** (+ the sweep reader → combined-only): **still 32 548.**  All four
+  identified Vec readers (charge, dedup, sweep, mirror-putback) are now on
+  the CSR or inert — and the trajectory still moves.
+
+**The mechanism, caught mid-act**: with `add` CSR-only, the Vec misses the
+added entries; the next scan of that literal takes the short Vec while the
+CSR (complete) drives the scan; the `VecScanMirror` receives more
+notifications than the taken Vec has slots and **silently drops the keeps
+beyond its length** (`if self.read >= self.list.len() { return; }`) — the
+Vec's rebuilt content is now the CSR's first-N prefix, not the true list.
+The corrupted Vec persists across putbacks.
+
+**The residual divergence (the handoff's question)**: with every named
+reader on the CSR, the two worlds' CSRs still diverge — not in content
+multiset but in **combined-view order** (event #1 141 on literal 4583: A's
+scan drops `ref=1423816` first, B's drops `ref=882104` first — both then
+process the other).  The order of `[span] ++ [overflow]` differs, which
+means the span/overflow *split* or the overflow *arrival order* diverged —
+through a path from the corrupted Vec back into the CSR that is none of
+the four flipped readers.  Remaining candidates: a second sweep-adjacent
+reader (`iter_combined` call sites beyond the collapsed one), the legacy
+`take_combined_vec` path (believed dead on the default config), or an
+interaction between `push_watch`'s Vec-push ordering and a subsequent
+CSR-side dedup/push sequence.
+
+**The corrected interpretation of the whole bisection**: every flipped arm
+diverged (33 153 / 32 548) *without reaching B's 33 154* — the arms are
+NOT steps toward B; they create their own corrupted-Vec worlds.  The
+bisection method itself (flip one Vec-role at a time) is unsound when the
+Vec's corruption feeds back through unflipped readers.  The sound protocol
+is the reverse: start from B (33 154, no Vec) and *add back* one Vec-role
+at a time until 33 028 appears.

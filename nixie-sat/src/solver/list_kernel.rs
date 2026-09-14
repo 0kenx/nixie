@@ -111,6 +111,15 @@ fn push_watch_unique<const MIRROR: bool>(
     key: Lit,
     watcher: Watcher,
 ) {
+    let csr_hit = csr
+        .as_ref()
+        .is_some_and(|c| {
+            let (p, x) = c.spans(key);
+            p.iter().chain(x.iter()).any(|w| w.r == watcher.r)
+        });
+    if csr_hit {
+        return;
+    }
     let list = &mut destinations[key.index()];
     if list.iter().any(|w| w.r == watcher.r) {
         crate::mut_trace!(
