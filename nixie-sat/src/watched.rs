@@ -577,6 +577,16 @@ impl CsrWatchLists {
             }
         }
         f.active = false;
+        // Reset the frame's transient counters: the frame is dead between
+        // scans, and carrying the last scan's state makes Debug comparisons
+        // (the kernel tests) differ across scan paths.
+        f.read = 0;
+        f.o_len = 0;
+        f.p_len = 0;
+        f.pw = 0;
+        f.ow = 0;
+        f.code = 0;
+        f.ps = 0;
     }
 
     // ---- Cold-path mirrors (slice 3) ----------------------------------
@@ -1872,6 +1882,7 @@ mod tests {
 /// slice-2 dual-write swapped.  The drift comparison stays the oracle:
 /// it compares the (now primary-scanned) CSR against the (now mirrored)
 /// `Vec`.  Default off; the flag-off path is byte-identical.
+#[allow(dead_code)] // retained as a bisection knob (SHADOW alone now arms the swapped scan)
 pub fn csr_scan_enabled() -> bool {
     #[cfg(feature = "std")]
     {

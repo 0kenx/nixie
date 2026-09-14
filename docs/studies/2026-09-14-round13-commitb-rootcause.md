@@ -229,3 +229,49 @@ costs enough to timeout reduce tests); `NIXIE_BT_TRACE`;
 snapshots); `NIXIE_LUCKY_TRACE`; the `[decide]`/`[vsids-pick]`/
 `[skip]` decision traces; the digest now hashes the searched caches,
 the substitution/BVE/probe tables, and prints the tick totals.
+
+## Fourth continuation: the flip-bisection protocol; `add`'s Vec write is load-bearing
+
+The reverse-dedup probe (`REVERSE-ASYMMETRY`: the Vec-side suppresses
+while a CSR-side reader would push) fires **zero** times in swapped
+mode, and removing B's dedup entirely (`NIXIE_DEDUP_OFF`) leaves B at
+33 154 — **the dedup is exonerated in both directions.**  The
+charge-stream horizon re-verified on clean trees: swapped-A vs B first
+differs at scan 2 965 082 (the literal-188 window).
+
+A **flip-bisection** from the clean 33 028 baseline (main +
+unconditional swapped, `NIXIE_CSR_SHADOW=1`):
+
+- **B′0** (baseline): 33 028.
+- **B′1** (sweep reader → combined view only): 33 028 — the reader
+  gate is inert.
+- **B′2** (`add` drops its Vec write, CSR-only): **33 153** — the
+  first flip that diverges.  Adding the two consistent-reader fixes
+  (dedup on the CSR, charge on the CSR's combined length) lands at
+  32 548 — a third trajectory, NOT 33 028: with every identified
+  reader moved to the CSR, the absence of the Vec write still changes
+  the run.  **`add`'s Vec-side write is load-bearing through a reader
+  that is none of {dedup, charge, sweep-env, mirror-putback}** —
+  the remaining candidates are the VecScanMirror's in-scan state
+  itself (its list is the `mem::take` target the swapped driver
+  carries) and the `merged.write = watches.len()` plumbing.
+
+Retracted this session (measurement hygiene, recorded as a trap): two
+intermediate charge/mut comparisons ran against a worktree still
+carrying earlier bisection edits — their horizons (17 161) were
+artifacts of a hybrid world, not evidence.  Every number above is from
+a tree verified by `git status` + a fresh 33 028/33 154 check before
+the measurement.
+
+**Next entry (one of two experiments settles it):**
+1. From clean B′0, flip the mirror out: keep the Vec destinations but
+   replace the VecScanMirror + `mem::take`/putback with a post-scan
+   refresh of `destinations[code]` from the CSR's combined view — if
+   33 028 survives, the in-scan mirror state is not the reader, and
+   the load-bearing path must be `merged.write`/`watches.len()`-family
+   plumbing; if it moves, the mirror's taken-list visibility during
+   the scan (the keeps-so-far the dedup/charge could theoretically
+   see) is the carrier despite the zero-asymmetry probes.
+2. Or instrument every read of `destinations[...]` in the swapped
+   driver+kernel with a use-site log and diff the two worlds' read
+   sets directly.
