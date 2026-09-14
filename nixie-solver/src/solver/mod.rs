@@ -266,6 +266,28 @@ pub struct Solver {
     /// equalities are level-0 true and whose trichotomy `lt`/`gt` atoms would
     /// be unconstrained decision fodder).
     pub(super) suppress_numeric_eq_trichotomy: bool,
+    /// Numeric equality atoms minted *during solving* whose trichotomy clause
+    /// is not yet emitted; drained by [`Solver::encode`].
+    ///
+    /// The assertion spine is covered by
+    /// [`Solver::ensure_numeric_equality_splits`], which walks it at the top of
+    /// every `check`.  That walk structurally cannot see an atom a *lemma*
+    /// creates — a read-over-write index guard, a store-congruence premise, an
+    /// MBQI instantiation — because no assertion contains it.  Such an atom
+    /// then reached the SAT core with no trichotomy clause, and
+    /// `process_constraint`'s negative-`Eq` branch tells EUF and BV but not
+    /// arithmetic, so a `false` assignment never became a strict bound: the
+    /// tableau stayed free to give the two sides equal values.  That is the
+    /// wrong `sat` in
+    /// `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`.
+    pub(super) pending_numeric_eq_splits: Vec<(TermId, TermId)>,
+    /// Re-entrancy guard for the pending-split drain: `add_arith_trichotomy_clause`
+    /// itself calls `encode`, and the outer `while` loop owns the queue.
+    pub(super) draining_numeric_eq_splits: bool,
+    /// Set while `check_core` is running, so the encoder can tell a
+    /// lemma-minted atom (queued for its trichotomy) from an assertion-time
+    /// one (already covered by the spine walk).
+    pub(super) solving: bool,
     /// Term to SAT variable mapping
     pub(super) term_to_var: FxHashMap<TermId, Var>,
     /// SAT variable to term mapping
@@ -530,14 +552,28 @@ pub struct Solver {
     /// Accumulates across `assert`s; a stale entry only makes eval try a proxy
     /// that is no longer asserted (harmless – eval falls back to the original).
     pub(super) numarg_proxies: FxHashMap<TermId, TermId>,
-    /// Constant numeric arguments of *quantified* (un-purified) functions,
-    /// with their literal values: the per-function gate in
-    /// `purify_numeric_uf_args` leaves those functions un-rewritten, and these
-    /// constants must be pinned into arithmetic as interface terms by
-    /// `nelson_oppen_combine` (every round: theory resets/rebuilds wipe
-    /// encode-time state) so the model-equal probe can pair them with
-    /// equal-valued shared terms and congruence closes `f(y) = f(3)`.
-    pub(super) quant_uf_const_pins: FxHashMap<TermId, Rational64>,
+    /// Numeric **constants that must be visible to theory combination**, with
+    /// their literal values.
+    ///
+    /// `nelson_oppen_combine`'s arithmetic-to-EUF probe only pairs terms that
+    /// are both EUF application arguments *and* arithmetic interface terms. A
+    /// constant in an argument position is an application argument but not, on
+    /// its own, an interface term — so a pair like `(n, 1)` is never proposed,
+    /// the entailed `n = 1` is never derived, and the congruence that rests on
+    /// it never fires. Pinning the constant (a tautological `c = c` row,
+    /// asserted every round because theory resets wipe encode-time state)
+    /// makes it visible and closes that gap.
+    ///
+    /// Two populations reach here, both from `purify_numeric_uf_args`:
+    ///
+    /// * constant arguments of a function the per-function gate leaves
+    ///   **un-purified** because it appears inside a quantifier — congruence
+    ///   then closes `f(y) = f(3)` (the `pr30#3` class);
+    /// * constant **array indices** of `select`/`store`, which are pinned
+    ///   rather than purified because the array theory matches indices by
+    ///   `TermId` — congruence then closes `select(A, n) = select(A, 1)`
+    ///   (see `docs/studies/2026-09-14-array-index-entailed-equal-to-a-constant.md`).
+    pub(super) interface_const_pins: FxHashMap<TermId, Rational64>,
     /// Care-graph split pairs for trailed dedup.
     pub(super) care_split_pairs: FxHashSet<(TermId, TermId)>,
     /// Numeric-equality trichotomy pairs already emitted by
@@ -1094,6 +1130,9 @@ impl Solver {
             distinct_guard_clauses: FxHashSet::default(),
             colocated_rounds: 0,
             suppress_numeric_eq_trichotomy: false,
+            pending_numeric_eq_splits: Vec::new(),
+            draining_numeric_eq_splits: false,
+            solving: false,
             term_to_var: FxHashMap::default(),
             var_to_term: Vec::new(),
             var_to_constraint: FxHashMap::default(),
@@ -1156,7 +1195,7 @@ impl Solver {
             fp_fold_verify: false,
             quantifier_uf_funcs: FxHashSet::default(),
             numarg_proxies: FxHashMap::default(),
-            quant_uf_const_pins: FxHashMap::default(),
+            interface_const_pins: FxHashMap::default(),
             care_split_pairs: FxHashSet::default(),
             numeric_eq_split_pairs: FxHashSet::default(),
             arith_purify: purify_arith::PurifyState::new(),
@@ -2275,6 +2314,18 @@ impl Solver {
     }
 
     fn check_core(&mut self, manager: &mut TermManager) -> SolverResult {
+        // `check_core` has many early returns, so the flag is set here and
+        // cleared by the thin wrapper below rather than at each exit.
+        self.solving = true;
+        let verdict = self.check_core_solving(manager);
+        self.solving = false;
+        // Nothing may be left queued across the boundary: every `encode`
+        // drains, and the encoder only queues while `solving` is set.
+        debug_assert!(self.pending_numeric_eq_splits.is_empty());
+        verdict
+    }
+
+    fn check_core_solving(&mut self, manager: &mut TermManager) -> SolverResult {
         // Per-check: the flag describes THIS check's verdict only.
         self.nl_dispatch_answered = false;
         self.array_axioms_saturated = false;
@@ -2962,7 +3013,7 @@ impl Solver {
             &self.term_to_var,
             &self.var_to_term,
             &self.numarg_proxies,
-            &self.quant_uf_const_pins,
+            &self.interface_const_pins,
             zero_term,
             &self.ite_result_terms,
             &mut self.derived_reasons,
@@ -3160,7 +3211,7 @@ impl Solver {
                                         &self.term_to_var,
                                         &self.var_to_term,
                                         &self.numarg_proxies,
-                                        &self.quant_uf_const_pins,
+                                        &self.interface_const_pins,
                                         zero_term,
                                         &self.ite_result_terms,
                                         &mut self.derived_reasons,
@@ -3289,7 +3340,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
-                                &self.quant_uf_const_pins,
+                                &self.interface_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -3340,7 +3391,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
-                                &self.quant_uf_const_pins,
+                                &self.interface_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -3387,7 +3438,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
-                                &self.quant_uf_const_pins,
+                                &self.interface_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -3524,7 +3575,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
-                                &self.quant_uf_const_pins,
+                                &self.interface_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -3601,7 +3652,7 @@ impl Solver {
                                     &self.term_to_var,
                                     &self.var_to_term,
                                     &self.numarg_proxies,
-                                    &self.quant_uf_const_pins,
+                                    &self.interface_const_pins,
                                     zero_term,
                                     &self.ite_result_terms,
                                     &mut self.derived_reasons,
@@ -3660,7 +3711,7 @@ impl Solver {
                                 &self.term_to_var,
                                 &self.var_to_term,
                                 &self.numarg_proxies,
-                                &self.quant_uf_const_pins,
+                                &self.interface_const_pins,
                                 zero_term,
                                 &self.ite_result_terms,
                                 &mut self.derived_reasons,
@@ -3716,7 +3767,7 @@ impl Solver {
                                         &self.term_to_var,
                                         &self.var_to_term,
                                         &self.numarg_proxies,
-                                        &self.quant_uf_const_pins,
+                                        &self.interface_const_pins,
                                         zero_term,
                                         &self.ite_result_terms,
                                         &mut self.derived_reasons,
@@ -4269,7 +4320,7 @@ impl Solver {
                         &self.term_to_var,
                         &self.var_to_term,
                         &self.numarg_proxies,
-                        &self.quant_uf_const_pins,
+                        &self.interface_const_pins,
                         zero_term,
                         &self.ite_result_terms,
                         &mut self.derived_reasons,

@@ -3138,6 +3138,27 @@ impl Solver {
     /// Theory-aware decision hint: bump the activity of these variables so
     /// the branching heuristic prefers deciding them early.  Mirrors the
     /// per-conflict bump in conflict.rs so it works under every strategy.
+    #[cfg(feature = "std")]
+    fn debug_dump_watches_conflict(&self, path: String) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for code in 0..self.num_vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let entries: Vec<String> = self
+                .watches
+                .get(lit)
+                .iter()
+                .map(|w| format!("{}:{}", w.r.byte_offset(), w.blocker.code()))
+                .collect();
+            if entries.is_empty() {
+                continue;
+            }
+            let _ = writeln!(out, "{code}: {}", entries.join(" "));
+        }
+        let _ = std::fs::write(path, out);
+    }
+
+    /// Batch-bump a set of variables in every active branching structure.
     pub fn bump_decision_hint(&mut self, vars: &[Var]) {
         if vars.is_empty() {
             return;

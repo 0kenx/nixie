@@ -545,6 +545,17 @@ impl<'a> Parser<'a> {
                                 )?;
                                 Ok(self.manager.sorts.array(domain, range))
                             }
+                            // `(Set X)` — the SMT-LIB finite-sets theory's
+                            // sort constructor (CVC5 `mkSetSort`).
+                            "Set" => {
+                                let element = self.parse_sort()?;
+                                self.expect_rparen()?;
+                                self.reject_unsupported_rounding_mode_position(
+                                    element,
+                                    "a set element sort",
+                                )?;
+                                Ok(self.manager.sorts.set(element))
+                            }
                             _ => Err(NixieError::ParseError {
                                 position: self.lexer.position(),
                                 message: format!("unknown parametric sort: {sort_name}"),

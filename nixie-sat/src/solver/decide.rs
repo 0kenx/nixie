@@ -119,15 +119,34 @@ impl Solver {
                         || bve.get(v.index()).is_some_and(|d| !d.is_empty()))
                         && !rementioned.contains(&v)
                 };
-                if let Some(var) = self
-                    .vmtf
-                    .next_decision(|v| trail.is_assigned(v) || unbranchable(v))
-                {
+                #[cfg(feature = "std")]
+                let skip_log = std::env::var("NIXIE_PICK_TRACE").is_ok();
+                if let Some(var) = self.vmtf.next_decision(|v| {
+                    let assigned = trail.is_assigned(v);
+                    #[cfg(feature = "std")]
+                    if skip_log && !assigned && unbranchable(v) {
+                        eprintln!(
+                            "[skip] var={} subst={} bve={}",
+                            v.index(),
+                            subst.get(v.index()).is_some(),
+                            bve.get(v.index()).is_some_and(|d| !d.is_empty())
+                        );
+                    }
+                    assigned || unbranchable(v)
+                }) {
                     self.last_branch_source = BranchSource::Vmtf;
                     return Some(var);
                 }
             }
             while let Some(var) = self.vsids.pop_max() {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+                    eprintln!(
+                        "[vsids-pick] var={} act={:x}",
+                        var.index(),
+                        self.vsids.activity(var).to_bits()
+                    );
+                }
                 if !self.trail.is_assigned(var) && self.branchable(var) {
                     self.last_branch_source = BranchSource::Vsids;
                     return Some(var);

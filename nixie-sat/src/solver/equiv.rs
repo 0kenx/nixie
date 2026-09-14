@@ -608,6 +608,29 @@ impl Solver {
         // included.  This is the empirical order-isomorphism proof the
         // dual-write scan exists to produce.
         #[cfg(feature = "std")]
+        if let Ok(prefix) = std::env::var("NIXIE_DUMP_BIG") {
+            use std::fmt::Write as _;
+            let mut out = String::new();
+            let mut total = 0usize;
+            for code in 0..self.num_vars * 2 {
+                let (start, plen) = self.binary_graph.span_of(code);
+                let primary = &self.binary_graph.edges[start..start + plen];
+                let extra = &self.binary_graph.extra[code];
+                if primary.is_empty() && extra.is_empty() {
+                    continue;
+                }
+                total += primary.len() + extra.len();
+                let _ = write!(out, "{code}:");
+                for &(implied, _) in primary.iter().chain(extra.iter()) {
+                    let _ = write!(out, " {}", implied.code());
+                }
+                let _ = writeln!(out);
+            }
+            let path = format!("{prefix}-{}.txt", self.stats.conflicts);
+            let _ = std::fs::write(&path, out);
+            eprintln!("[big-dump] {path}: {total} edges");
+        }
+        #[cfg(feature = "std")]
         if let Ok(prefix) = std::env::var("NIXIE_DUMP_WATCHES") {
             let path = format!("{prefix}-{}.txt", self.stats.conflicts);
             self.watches.dump_watches(num_vars, &path);
@@ -839,6 +862,33 @@ impl Solver {
             let mut adopted = crate::watched::CsrWatchLists::default();
             adopted.adopt_layout(csr);
             self.watches.csr_set(adopted);
+        }
+        #[cfg(feature = "std")]
+        if let Ok(prefix) = std::env::var("NIXIE_DUMP_WATCHES_POST") {
+            let path = format!("{prefix}-{}.txt", self.stats.conflicts);
+            self.watches.dump_watches_post(num_vars, &path);
+            if let Ok(bp) = std::env::var("NIXIE_DUMP_BIG_POST") {
+                use std::fmt::Write as _;
+                let mut out = String::new();
+                let mut total = 0usize;
+                for code in 0..self.num_vars * 2 {
+                    let (start, plen) = self.binary_graph.span_of(code);
+                    let primary = &self.binary_graph.edges[start..start + plen];
+                    let extra = &self.binary_graph.extra[code];
+                    if primary.is_empty() && extra.is_empty() {
+                        continue;
+                    }
+                    total += primary.len() + extra.len();
+                    let _ = write!(out, "{code}:");
+                    for &(implied, _) in primary.iter().chain(extra.iter()) {
+                        let _ = write!(out, " {}", implied.code());
+                    }
+                    let _ = writeln!(out);
+                }
+                let bpath = format!("{bp}-{}.txt", self.stats.conflicts);
+                let _ = std::fs::write(&bpath, out);
+                eprintln!("[big-dump-post] {bpath}: {total} edges");
+            }
         }
     }
 }

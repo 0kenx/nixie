@@ -574,10 +574,11 @@ pub(crate) struct TheoryManager<'a> {
     /// [`Self::terms_to_conflict_clause`] tell "correctly contributes nothing
     /// to the clause" apart from "justification silently lost".
     tautological_reasons: FxHashSet<TermId>,
-    /// Constant numeric args of quantified (un-purified) functions to pin
-    /// into arithmetic each combine round; see the Solver field of the same
-    /// name for why these exist and why the pin is re-asserted here.
-    quant_uf_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
+    /// Numeric constants to pin into arithmetic as interface terms each
+    /// combine round — un-purified functions' arguments and `select`/`store`
+    /// indices alike; see the Solver field of the same name for why these
+    /// exist and why the pin is re-asserted here.
+    interface_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
     /// Explanations for reason terms that stand for a *derived* equality
     /// propagated between theories.
     ///
@@ -624,7 +625,7 @@ impl<'a> TheoryManager<'a> {
         term_to_var: &'a FxHashMap<TermId, Var>,
         var_to_term: &'a Vec<TermId>,
         numarg_proxies: &'a FxHashMap<TermId, TermId>,
-        quant_uf_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
+        interface_const_pins: &'a FxHashMap<TermId, num_rational::Rational64>,
         zero_term: TermId,
         ite_result_terms: &'a FxHashSet<TermId>,
         derived_reasons: &'a mut DerivedReasons,
@@ -712,7 +713,7 @@ impl<'a> TheoryManager<'a> {
             trail_index: Vec::new(),
             assigned_level: Vec::new(),
             tautological_reasons: FxHashSet::default(),
-            quant_uf_const_pins,
+            interface_const_pins,
             euf_eq_atoms: var_to_constraint
                 .iter()
                 .filter_map(|(&v, c)| match c {
@@ -1794,7 +1795,7 @@ impl<'a> TheoryManager<'a> {
     /// stale between the re-pin and the next solve), everything else the
     /// arithmetic solver's current value.
     fn arith_value_with_pins(&self, t: TermId) -> Option<num_rational::Rational64> {
-        self.quant_uf_const_pins
+        self.interface_const_pins
             .get(&t)
             .copied()
             .or_else(|| self.arith.value(t))
@@ -1804,8 +1805,9 @@ impl<'a> TheoryManager<'a> {
         use nixie_theories::Theory;
         use nixie_theories::TheoryCheckResult as TheoryCheckResultEnum;
 
-        // Re-pin the constant numeric arguments of quantified (un-purified)
-        // functions into arithmetic.  UNCONDITIONALLY: `term_to_var` survives
+        // Re-pin every recorded numeric constant into arithmetic as an
+        // interface term (un-purified functions' arguments and `select` /
+        // `store` indices alike).  UNCONDITIONALLY: `term_to_var` survives
         // `pop` while the bounds do not, so `is_interned` cannot distinguish a
         // live pin from a popped one — and the rows are cached per linear
         // form, so re-asserting is a bound re-set on an existing row.  Each
@@ -1815,7 +1817,7 @@ impl<'a> TheoryManager<'a> {
         // pin, no interface-equality mechanism can pair `3` with an
         // equal-valued shared `y`, congruence `f(y) = f(3)` never fires, and
         // a refutable input answers `sat` (pr30#3 class).
-        for (&t, &v) in self.quant_uf_const_pins.iter() {
+        for (&t, &v) in self.interface_const_pins.iter() {
             self.arith
                 .assert_eq(&[(t, num_rational::Rational64::from_integer(1))], v, t);
             self.derived_reasons.record(t, Vec::new());
@@ -3493,6 +3495,19 @@ impl<'a> TheoryManager<'a> {
                 } else {
                     // Negative assignment: a != b, tell EUF about disequality.
                     // Use the constraint term as the reason (it has a SAT variable).
+                    //
+                    // ARITHMETIC IS DELIBERATELY NOT INFORMED HERE, and cannot
+                    // be: the simplex has no `!=`.  A numeric disequality
+                    // reaches the tableau only through the atom's trichotomy
+                    // clause `(a = b) | (a < b) | (a > b)`, which unit-
+                    // propagates to a strict bound once this atom is false.
+                    // Every numeric equality atom is therefore *required* to
+                    // carry one — see `Solver::pending_numeric_eq_splits` and
+                    // the `every_numeric_equality_atom_carries_its_trichotomy`
+                    // regression.  An atom that reaches here without one is a
+                    // wrong `sat` waiting to happen: the Boolean level
+                    // believes the sides differ while the tableau is free to
+                    // give them the same value.
                     let constraint_term = self.term_for_var(var);
                     let lhs_node = self.intern_term_for_congruence(lhs, manager);
                     let rhs_node = self.intern_term_for_congruence(rhs, manager);

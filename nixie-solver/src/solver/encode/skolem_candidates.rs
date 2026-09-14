@@ -233,7 +233,11 @@ impl Solver {
                     stack.push(*b);
                     stack.push(*a);
                 }
-                TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
+                TermKind::SetSingleton(a)
+                | TermKind::SetCard(a)
+                | TermKind::SetComplement(a)
+                | TermKind::SetChoose(a) => stack.push(*a),
+                TermKind::SetUniv(_) => {}
 
                 // Finite fields: ordinary traversal, no candidates of their
                 // own (FF has no function symbols).

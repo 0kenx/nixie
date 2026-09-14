@@ -726,12 +726,22 @@ impl ModelChecker {
                         subst.insert(manager.mk_var(&name_str, sort), value);
                     }
                     let substituted = manager.substitute(body_completed, &subst);
-                    let empty_bound: FxHashSet<Spur> = FxHashSet::default();
+                    // The mining evaluation's symbolic set is the
+                    // tracked bound-variable NAMES, not the empty set:
+                    // the substitution has replaced every legitimate
+                    // bound variable, so nothing legitimate turns
+                    // symbolic — but an *artifact* variable (an encoder
+                    // binder constant that leaked through a completion
+                    // entry chain) does, which declines the
+                    // universe-distinctness fold for it instead of
+                    // fabricating `(= artifact c_i) -> false` (the
+                    // 2026-09-14 false-`sat` mechanism).
+                    let artifact_names = &model.bound_var_names;
                     let (evaluated, commitments, free_choice, _consulted) =
                         CompletionEval::run_recorded(
                             substituted,
                             model,
-                            &empty_bound,
+                            artifact_names,
                             &else_table,
                             manager,
                         );
@@ -1263,7 +1273,10 @@ fn push_children(kind: &TermKind, out: &mut ChildList) {
         TermKind::Not(a) => out.push(*a),
         // Finite sets: ordinary children. Whether MBQI can *rebuild* them is
         // decided separately, in `rebuild`.
-        TermKind::SetSingleton(a) | TermKind::SetCard(a) => out.push(*a),
+        TermKind::SetSingleton(a)
+        | TermKind::SetCard(a)
+        | TermKind::SetComplement(a)
+        | TermKind::SetChoose(a) => out.push(*a),
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
@@ -1272,7 +1285,7 @@ fn push_children(kind: &TermKind, out: &mut ChildList) {
             out.push(*a);
             out.push(*b);
         }
-        TermKind::SetEmpty(_) => {}
+        TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
         TermKind::FfConst { .. } => {}
         TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
             out.extend(args.iter().copied());
@@ -1641,7 +1654,18 @@ impl<'a> CompletionEval<'a> {
                     // artifacts like `(f3 f4 (+ f6 ?v0)) = 0`); honoring
                     // those would fix the variable's value and fabricate a
                     // satisfaction verdict (the round-1 false-`sat` shape).
-                    if !self.is_symbolic(term, manager) {
+                    //
+                    // A *binder* node is never a ground-model fact either:
+                    // its assignment-table row is the SAT core's wrapper
+                    // Boolean for the quantified subformula — a commitment
+                    // the search chose to dodge the subformula's
+                    // consequences, not the subformula's truth value.
+                    // Reading it fabricated `(forall z. true) -> false`
+                    // and certified `(=> (forall z. true) (P x y))`
+                    // vacuously (the strengthened quant_fuzz false-`sat`).
+                    let is_binder =
+                        matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. });
+                    if !is_binder && !self.is_symbolic(term, manager) {
                         if let Some(&value) = self.model.assignments.get(&term) {
                             self.record_commitment(term, value, manager);
                             self.cache.insert(term, value);
@@ -2333,6 +2357,7 @@ fn rebuild_with(
         // the ones whose *truth* needs a theory, and there is none yet, so the
         // model checker declines rather than evaluating them to a guess.
         TermKind::SetEmpty(sort) => manager.mk_set_empty_at(*sort),
+        TermKind::SetUniv(sort) => manager.mk_set_univ_at(*sort),
         TermKind::SetSingleton(_) => manager.mk_set_singleton(one(0)?),
         TermKind::SetUnion(..) => {
             let (a, b) = two_at(0)?;
@@ -2348,6 +2373,10 @@ fn rebuild_with(
         }
         TermKind::SetMember(..) | TermKind::SetSubset(..) | TermKind::SetCard(_) => {
             return Err("set predicate has no theory to evaluate it");
+        }
+        TermKind::SetComplement(_) => manager.mk_set_complement(one(0)?),
+        TermKind::SetChoose(..) => {
+            return Err("set.choose has no theory to evaluate it");
         }
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;

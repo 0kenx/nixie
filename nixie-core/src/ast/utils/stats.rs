@@ -240,6 +240,7 @@ fn combine_complexity(
             | TermKind::FfConst { .. }
             | TermKind::StringLit(_)
             | TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::Var(_),
         ) => 1,
 
@@ -253,6 +254,8 @@ fn combine_complexity(
             | TermKind::StrToCode(a)
             | TermKind::SetSingleton(a)
             | TermKind::SetCard(a)
+            | TermKind::SetComplement(a)
+            | TermKind::SetChoose(a)
             | TermKind::StrFromCode(a)
             | TermKind::FfNeg(a),
         ) => 2 + get(*a),

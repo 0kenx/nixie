@@ -71,6 +71,14 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                             return false;
                         }
                     }
+                    TermKind::SetUniv(a) => {
+                        let TermKind::SetUniv(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::IntConst(a) => {
                         let TermKind::IntConst(b) = &rt.kind else {
                             return false;
@@ -149,6 +157,8 @@ pub fn structurally_equal(lhs: TermId, rhs: TermId, manager: &TermManager) -> bo
                     | TermKind::StrToCode(a)
                     | TermKind::SetSingleton(a)
                     | TermKind::SetCard(a)
+                    | TermKind::SetComplement(a)
+                    | TermKind::SetChoose(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)

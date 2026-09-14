@@ -964,7 +964,30 @@ impl ClauseArena {
 
     /// Rewrite a live clause with a shorter or equal literal array in place.
     /// References remain valid. Growth, invalid or deleted slots are refused.
+    /// Diagnostic: the saved watch-position cache at `r`.
+    pub fn searched_of(&self, r: ClauseRef) -> Option<u8> {
+        self.read_header(r).map(|h| h.searched)
+    }
+
+    /// Rewrite a live clause with a shorter or equal literal array.
     pub fn shrink(&mut self, r: ClauseRef, new_lits: &[Lit]) -> bool {
+        #[cfg(feature = "std")]
+        if let Ok(want) = std::env::var("NIXIE_CWRITE")
+            && let Ok(want) = want.parse::<u32>()
+            && self.live_identity(r).index() == want as usize
+        {
+            use std::fmt::Write as _;
+            let mut ls = String::new();
+            for &l in new_lits {
+                let _ = write!(ls, "{} ", l.code());
+            }
+            eprintln!(
+                "[cwrite op={}] shrink id={} lits={}",
+                crate::mut_trace::next_op(),
+                want,
+                ls
+            );
+        }
         let Some(h) = self.read_header(r) else {
             return false;
         };
@@ -1008,6 +1031,19 @@ impl ClauseArena {
 
     /// Swap literals `i` and `j` of the clause at `r`.
     pub fn swap_lits(&mut self, r: ClauseRef, i: usize, j: usize) {
+        #[cfg(feature = "std")]
+        if let Ok(want) = std::env::var("NIXIE_CWRITE")
+            && let Ok(want) = want.parse::<u32>()
+            && self.live_identity(r).index() == want as usize
+        {
+            eprintln!(
+                "[cwrite op={}] swap_lits id={} i={} j={}",
+                crate::mut_trace::next_op(),
+                want,
+                i,
+                j
+            );
+        }
         let Some(v) = self.get(r) else { return };
         if i >= v.lits.len() || j >= v.lits.len() || i == j {
             return;

@@ -128,6 +128,100 @@ impl Solver {
             // row surfaces exactly like a CNF conflict.
             if let Some(conflict) = self.propagate().or_else(|| self.xor_search_step()) {
                 self.stats.conflicts += 1;
+                #[cfg(feature = "std")]
+                if let Ok(step) = std::env::var("NIXIE_DB_DIGEST")
+                    && let Ok(step) = step.parse::<u64>()
+                    && self.stats.conflicts.is_multiple_of(step)
+                {
+                    let mut h = 1469598103934665603u64;
+                    let mut live = 0u64;
+                    for cid in self.clauses.iter_ids() {
+                        if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) {
+                            live += 1;
+                            for (i, &l) in c.lits.iter().enumerate() {
+                                h ^= (l.code() as u64).wrapping_mul(31 + (i as u64) * 100);
+                                h = h.rotate_left(3);
+                            }
+                            if let Ok(want) = std::env::var("NIXIE_CLAUSE_AT")
+                                && want.parse::<u64>() == Ok(cid.index() as u64)
+                                && let Some(r) = self.clauses.ref_of(cid)
+                            {
+                                use std::fmt::Write as _;
+                                let mut ls = String::new();
+                                for &l in c.lits.iter() {
+                                    let _ = write!(ls, "{} ", l.code());
+                                }
+                                eprintln!(
+                                    "[clauseat] {} r={} lits={}",
+                                    self.stats.conflicts,
+                                    r.byte_offset(),
+                                    ls
+                                );
+                            }
+                            h = h.rotate_left(7);
+                            h ^= (self.clauses.searched_of(cid) as u64).wrapping_mul(7717);
+                            h = h.rotate_left(5);
+                        }
+                    }
+                    let mut th = 1469598103934665603u64;
+                    for (i, &l) in self.equiv_substitution.iter().enumerate() {
+                        th ^= (l.code() as u64).wrapping_mul(31 + i as u64);
+                        th = th.rotate_left(3);
+                    }
+                    for (i, d) in self.bve_def.iter().enumerate() {
+                        th ^= (i as u64).wrapping_mul(97);
+                        for part in d {
+                            for &l in part {
+                                th ^= (l.code() as u64).wrapping_mul(131);
+                            }
+                        }
+                        th = th.rotate_left(5);
+                    }
+                    for (i, &pf) in self.probe_propfixed.iter().enumerate() {
+                        th ^= (pf as u64).wrapping_mul(31 + (i as u64 % 997));
+                        th = th.rotate_left(3);
+                    }
+                    eprintln!(
+                        "[dbd] {} live={} h={:016x} t={:016x} ts={} tf={}",
+                        self.stats.conflicts, live, h, th, self.ticks_stable, self.ticks_focused
+                    );
+                    if let Ok(rng) = std::env::var("NIXIE_WDUMP_RANGE")
+                        && let Some((lo, hi)) = rng.split_once('-')
+                        && let (Ok(lo), Ok(hi)) = (lo.parse::<u64>(), hi.parse::<u64>())
+                        && self.stats.conflicts >= lo
+                        && self.stats.conflicts <= hi
+                        && self.stats.conflicts.is_multiple_of(2)
+                    {
+                        self.debug_dump_watches_conflict(format!(
+                            "/tmp/wdc-{}.{}.txt",
+                            self.stats.conflicts,
+                            std::process::id()
+                        ));
+                    }
+                    if let Ok(want) = std::env::var("NIXIE_DB_DUMP_AT")
+                        && want.parse::<u64>() == Ok(self.stats.conflicts)
+                    {
+                        use std::fmt::Write as _;
+                        let mut out = String::new();
+                        for cid in self.clauses.iter_ids() {
+                            if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
+                                && c.lits.len() >= 2
+                                && let Some(r) = self.clauses.ref_of(cid)
+                            {
+                                let _ = writeln!(
+                                    out,
+                                    "{} {} {} {}",
+                                    r.byte_offset(),
+                                    c.lits[0].code(),
+                                    c.lits[1].code(),
+                                    c.lits.len()
+                                );
+                            }
+                        }
+                        let _ =
+                            std::fs::write(format!("{want}.dbdump.{}", std::process::id()), out);
+                    }
+                }
 
                 if self.trail.decision_level() == 0 {
                     // Conflict under only level-0 facts: UNSAT, and the proof
@@ -418,6 +512,15 @@ impl Solver {
                 );
             }
             if let Some(var) = self.pick_branch_var() {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+                    eprintln!(
+                        "[decide] var={} src={:?} polar_conf={:x}",
+                        var.index(),
+                        self.last_branch_source,
+                        0u32
+                    );
+                }
                 self.stats.decisions += 1;
                 self.trail.new_decision_level();
                 let new_level = self.trail.decision_level();

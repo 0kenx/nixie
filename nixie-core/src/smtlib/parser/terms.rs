@@ -225,9 +225,32 @@ enum Opened {
 /// would let the solver answer confidently and wrongly (e.g. `(not (str.< "abc"
 /// "abd"))` reported `sat`). Declarations are always consulted first, so a
 /// script that genuinely declares such a name keeps working.
+/// The Z3-classic bare spellings of finite-set operators, mapped onto their
+/// namespaced canonical forms. Consulted only for symbols the script has not
+/// declared, so user definitions of these common words are unaffected.
+fn bare_set_alias(name: &str) -> Option<&'static str> {
+    match name {
+        "union" => Some("set.union"),
+        "intersection" => Some("set.inter"),
+        "setminus" => Some("set.minus"),
+        "difference" => Some("set.minus"),
+        "complement" => Some("set.complement"),
+        "member" => Some("set.member"),
+        "subset" => Some("set.subset"),
+        "singleton" => Some("set.singleton"),
+        "insert" => Some("set.insert"),
+        "card" => Some("set.card"),
+        "choose" => Some("set.choose"),
+        "is_singleton" => Some("set.is_singleton"),
+        "is_empty" => Some("set.is_empty"),
+        _ => None,
+    }
+}
+
 fn is_reserved_theory_symbol(name: &str) -> bool {
-    const RESERVED_PREFIXES: [&str; 8] =
-        ["str.", "re.", "seq.", "char.", "fp.", "int.", "bv", "ff."];
+    const RESERVED_PREFIXES: [&str; 11] = [
+        "str.", "re.", "seq.", "char.", "fp.", "int.", "bv", "ff.", "set.", "bag.", "rel.",
+    ];
     RESERVED_PREFIXES
         .iter()
         .any(|prefix| name.starts_with(prefix))
@@ -782,6 +805,28 @@ impl Parser<'_> {
                         }
                     });
                 }
+                // `(as set.empty (Set X))` and `(as set.universe (Set X))`:
+                // the nullary finite-set constants, whose sort can only be
+                // written as a qualification. Z3 also accepts the bare
+                // spellings `emptyset`/`univset`.
+                if args.is_empty()
+                    && matches!(name.as_str(), "set.empty" | "emptyset")
+                    && matches!(
+                        self.manager.sorts.get(sort).map(|s| &s.kind),
+                        Some(crate::sort::SortKind::Set(_))
+                    )
+                {
+                    return Ok(self.manager.mk_set_empty_at(sort));
+                }
+                if args.is_empty()
+                    && matches!(name.as_str(), "set.universe" | "univset" | "set.univ")
+                    && matches!(
+                        self.manager.sorts.get(sort).map(|s| &s.kind),
+                        Some(crate::sort::SortKind::Set(_))
+                    )
+                {
+                    return Ok(self.manager.mk_set_univ_at(sort));
+                }
                 // For known forms like `(as const (Array D R))` we represent the
                 // qualified application as an `Apply` node whose function name
                 // records the qualifier and whose sort is the annotated one.
@@ -1318,6 +1363,18 @@ impl Parser<'_> {
             return Ok(Opened::Frame(Frame::op(
                 Head::GenericApply(op),
                 Plan::Variadic,
+            )));
+        }
+        // Z3-classic bare spellings of the finite-set operators (`union`,
+        // `member`, `card`, …), accepted only when *not* declared by the
+        // script, so a user function named `union` still wins. They map onto
+        // the same builtins the namespaced spellings use.
+        if let Some(canonical) = bare_set_alias(&op)
+            && let Some(plan) = operand_plan(canonical)
+        {
+            return Ok(Opened::Frame(Frame::op(
+                Head::Builtin(canonical.to_string()),
+                plan,
             )));
         }
         // Undeclared head symbol. See `reject_unknown_symbol` for the rule;

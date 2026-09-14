@@ -417,3 +417,38 @@ fn tautological_axiom_over_disequal_constants_is_never_unsat() {
          with c0 != c1 (z3: sat); got {status}"
     );
 }
+
+/// The strengthened `quant_fuzz` false-`sat` (2026-09-14, seed 42): two
+/// definitional axioms that contradict (`P = not (phi => phi)` makes `P`
+/// pointwise false; the tautological-antecedent axiom forces `P`
+/// everywhere) — z3 refutes; the solver certified `sat` once the
+/// ground-universe filter admitted free constants (`2700e3d7`, since
+/// reverted).  Root-cause trail (see the study's sixth pass): an
+/// artifact variable outside the check's bound set leaked into the
+/// completion's entry chains, survived the falsifier substitution, and
+/// the mining eval's *empty* bound set made the groundness fold vacuous
+/// — the fabrication class the filter admission exposed.  The verdict
+/// must never be `sat`.
+#[test]
+fn contradictory_definitional_twins_are_never_sat() {
+    let output = run(r#"
+        (set-logic UFLRA)
+        (declare-sort S 0)
+        (declare-fun c0 () S)
+        (declare-fun c1 () S)
+        (declare-fun c2 () S)
+        (declare-fun P (S S) Bool)
+        (declare-fun F (S S) S)
+        (declare-fun M (Real S) Bool)
+        (assert (forall ((x S) (y S)) (= (P x y) (not (=> (= x y) (= x y))))))
+        (assert (forall ((x S) (y S)) (= (P x y) (not (=> (M 1.0 y) false)))))
+        (assert (forall ((x S) (y S)) (=> (forall ((z S)) (=> false false)) (P x y))))
+        (assert (not (= c2 c0)))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "unsat" || status == "unknown",
+        "the twins contradict (z3: unsat); got {status}"
+    );
+}

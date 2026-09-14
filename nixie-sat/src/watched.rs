@@ -464,6 +464,13 @@ impl CsrWatchLists {
             ow: 0,
             active,
         };
+        crate::mut_trace!(
+            code,
+            "side=csr act=begin_scan p_len={} o_len={} active={} path=begin_scan",
+            p_len,
+            o_len,
+            active
+        );
     }
 
     /// Mirror a kept entry (optionally with a rewritten blocker — the
@@ -499,6 +506,11 @@ impl CsrWatchLists {
     /// `r` under the scanned literal (the watch leaves this list).
     pub(crate) fn scan_remove(&mut self, r: ClauseRef) {
         if self.scan.active {
+            crate::mut_trace!(
+                self.scan.code,
+                "side=csr act=drop ref={} path=scan_remove",
+                r.byte_offset()
+            );
             let code = self.scan.code as u32;
             if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
                 slot.retain(|c| *c != code);
@@ -514,6 +526,12 @@ impl CsrWatchLists {
     /// to the destination literal's overflow in arrival order — exactly
     /// where the `Vec` path's `push_watch`/`add` lands it.
     pub(crate) fn scan_push(&mut self, dest: Lit, w: Watcher) {
+        crate::mut_trace!(
+            dest.index(),
+            "side=csr act=push ref={} blk={} path=scan_push",
+            w.r.byte_offset(),
+            w.blocker.code()
+        );
         self.push_overflow(dest, w);
     }
 
@@ -527,6 +545,15 @@ impl CsrWatchLists {
             f.active = false;
             return;
         }
+        crate::mut_trace!(
+            f.code,
+            "side=csr act=end_scan read={} pw={} ow={} p_len={} o_len={} path=end_scan",
+            f.read,
+            f.pw,
+            f.ow,
+            f.p_len,
+            f.o_len
+        );
         let vis_p = f.read.min(f.p_len);
         let unvis_p = f.p_len - vis_p;
         if unvis_p > 0 {
@@ -550,6 +577,16 @@ impl CsrWatchLists {
             }
         }
         f.active = false;
+        // Reset the frame's transient counters: the frame is dead between
+        // scans, and carrying the last scan's state makes Debug comparisons
+        // (the kernel tests) differ across scan paths.
+        f.read = 0;
+        f.o_len = 0;
+        f.p_len = 0;
+        f.pw = 0;
+        f.ow = 0;
+        f.code = 0;
+        f.ps = 0;
     }
 
     // ---- Cold-path mirrors (slice 3) ----------------------------------
@@ -594,9 +631,23 @@ impl CsrWatchLists {
                         continue;
                     }
                     if arena.is_deleted(w.r) {
+                        crate::mut_trace!(
+                            code,
+                            "side=csr act=drop ref={} path=relocate_dead",
+                            w.r.byte_offset()
+                        );
                         continue;
                     }
-                    w.r = relocated[arena.live_identity(w.r).index()];
+                    let new_r = relocated[arena.live_identity(w.r).index()];
+                    if new_r != w.r {
+                        crate::mut_trace!(
+                            code,
+                            "side=csr act=rewrite ref={} new={} path=relocate",
+                            w.r.byte_offset(),
+                            new_r.byte_offset()
+                        );
+                    }
+                    w.r = new_r;
                     self.entries[write] = w;
                     write += 1;
                 }
@@ -612,9 +663,23 @@ impl CsrWatchLists {
                         continue;
                     }
                     if arena.is_deleted(w.r) {
+                        crate::mut_trace!(
+                            code,
+                            "side=csr act=drop ref={} path=relocate_dead_ovf",
+                            w.r.byte_offset()
+                        );
                         continue;
                     }
-                    w.r = relocated[arena.live_identity(w.r).index()];
+                    let new_r = relocated[arena.live_identity(w.r).index()];
+                    if new_r != w.r {
+                        crate::mut_trace!(
+                            code,
+                            "side=csr act=rewrite ref={} new={} path=relocate_ovf",
+                            w.r.byte_offset(),
+                            new_r.byte_offset()
+                        );
+                    }
+                    w.r = new_r;
                     ov[write] = w;
                     write += 1;
                 }
@@ -1202,7 +1267,12 @@ impl WatchLists {
     // always is load-bearing for the flag-off screen bar.
     #[inline(always)]
     pub fn add(&mut self, lit: Lit, watcher: Watcher) {
-        self.push_only(lit, watcher);
+        crate::mut_trace!(
+            lit.index(),
+            "side=vec act=push ref={} blk={} path=add",
+            watcher.r.byte_offset(),
+            watcher.blocker.code()
+        );
         if let Some(csr) = &mut self.csr {
             csr.push_overflow(lit, watcher);
         }
@@ -1266,6 +1336,28 @@ impl WatchLists {
     /// Test scaffolding: overwrite the last entry's blocker in BOTH
     /// representations (tests position blockers directly; post-flip the
     /// CSR is authoritative and a `get_mut`-only write would desync it).
+    /// Post-rebuild dump (the Vec lists after the fill).
+    #[cfg(feature = "std")]
+    pub(crate) fn dump_watches_post(&self, num_vars: usize, path: &str) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut total = 0usize;
+        for code in 0..num_vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let list = self.get(lit);
+            if list.is_empty() {
+                continue;
+            }
+            total += list.len();
+            let _ = write!(out, "{code}:");
+            for w in list {
+                let _ = write!(out, " {}:{}", w.r.byte_offset(), w.blocker.code());
+            }
+            let _ = writeln!(out);
+        }
+        let _ = std::fs::write(path, out);
+        eprintln!("[watch-dump-post] {path}: {total} entries");
+    }
     #[cfg(test)]
     pub(crate) fn set_last_blocker(&mut self, lit: Lit, blocker: Lit) {
         if let Some(w) = self
@@ -1422,6 +1514,11 @@ impl WatchLists {
         let idx = lit.index();
         if idx < self.watches.len() {
             self.watches[idx].retain(|w| w.r != r);
+            crate::mut_trace!(
+                idx,
+                "side=vec act=drop ref={} path=remove_clause",
+                r.byte_offset()
+            );
         }
         if let Some(csr) = &mut self.csr {
             csr.remove_clause(lit, r);
@@ -1563,9 +1660,23 @@ impl WatchLists {
                 }
                 if arena.is_deleted(w.r) {
                     dropped = dropped.saturating_add(1);
+                    crate::mut_trace!(
+                        idx,
+                        "side=vec act=drop ref={} path=relocate_dead",
+                        w.r.byte_offset()
+                    );
                     continue;
                 }
-                w.r = plan.relocated()[arena.live_identity(w.r).index()];
+                let new_r = plan.relocated()[arena.live_identity(w.r).index()];
+                if new_r != w.r {
+                    crate::mut_trace!(
+                        idx,
+                        "side=vec act=rewrite ref={} new={} path=relocate",
+                        w.r.byte_offset(),
+                        new_r.byte_offset()
+                    );
+                }
+                w.r = new_r;
                 list[write] = w;
                 write += 1;
             }
@@ -1770,6 +1881,7 @@ mod tests {
 /// slice-2 dual-write swapped.  The drift comparison stays the oracle:
 /// it compares the (now primary-scanned) CSR against the (now mirrored)
 /// `Vec`.  Default off; the flag-off path is byte-identical.
+#[allow(dead_code)] // retained as a bisection knob (SHADOW alone now arms the swapped scan)
 pub fn csr_scan_enabled() -> bool {
     #[cfg(feature = "std")]
     {

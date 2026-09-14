@@ -2680,6 +2680,19 @@ impl Solver {
         self.encode_depth(term, manager, 0)
     }
 
+    /// Emit the trichotomy clause for every numeric equality atom encoded
+    /// since the last drain.
+    pub(super) fn drain_numeric_eq_splits(&mut self, manager: &mut TermManager) {
+        if self.draining_numeric_eq_splits {
+            return;
+        }
+        self.draining_numeric_eq_splits = true;
+        while let Some((a, b)) = self.pending_numeric_eq_splits.pop() {
+            self.emit_collision_trichotomy(a, b, manager);
+        }
+        self.draining_numeric_eq_splits = false;
+    }
+
     /// Depth-tracked recursive Tseitin encoder: memo check, depth guard, then
     /// the arm dispatch in [`Solver::encode_depth_uncached`].
     ///
@@ -2980,6 +2993,31 @@ impl Solver {
             if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
                 return term;
             }
+            // ARRAY INDICES: `select`/`store` index arguments are shared
+            // between the array theory (which reads them through congruence)
+            // and arithmetic (which is the only thing that can *entail* two
+            // of them equal).  A CONSTANT index is the blind spot: it never
+            // becomes an arithmetic interface term, so `nelson_oppen_combine`'s
+            // model-equal probe cannot pair it with an equal-valued variable
+            // index, the congruence `select(A, n) = select(A, 1)` is never
+            // derived from the entailed `n = 1`, and a refutable input answers
+            // `sat`.  This is the `pr30#3` class, one theory over.
+            //
+            // The index is PINNED, not purified: the array theory matches
+            // store and select indices by `TermId` (`direct_store_map`,
+            // `row_same_guard`), so substituting a proxy would silently
+            // change which writes a read is judged to alias.  The pin is a
+            // tautological row (`c = c`) that constrains nothing and only
+            // makes the constant visible as an interface term.
+            if let TermKind::Select(_, index) | TermKind::Store(_, index, _) = &t.kind {
+                let idx = *index;
+                if let Some(it) = manager.get(idx)
+                    && (it.sort == int_sort || it.sort == real_sort)
+                    && matches!(it.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
+                {
+                    self.pin_interface_const(idx, manager);
+                }
+            }
             if let TermKind::Apply { func, args } = &t.kind {
                 // Per-function gate: never purify the numeric arguments of a
                 // function that appears in a quantifier – its ground pins must
@@ -3005,7 +3043,7 @@ impl Solver {
                     // numeral proxied elsewhere covers this function too via
                     // the global substitution.
                     for &arg in args {
-                        self.pin_quantified_uf_const_arg(arg, manager);
+                        self.pin_interface_const(arg, manager);
                     }
                     continue;
                 }
@@ -3066,10 +3104,16 @@ impl Solver {
         manager.mk_and(parts)
     }
 
-    /// Pin a constant numeric argument of a quantified (un-purified) function
-    /// into arithmetic as an interface term fixed to its literal value.
-    /// Companion to the per-function gate in [`Self::purify_numeric_uf_args`]
-    /// – see the comment there for the false-`sat` class this closes.
+    /// Pin a numeric constant into arithmetic as an interface term fixed to
+    /// its literal value, so theory combination can pair it with an
+    /// equal-valued shared term.
+    ///
+    /// Called from [`Self::purify_numeric_uf_args`] for the two kinds of
+    /// constant that need it — arguments of an un-purified (quantified)
+    /// function, and `select`/`store` indices. See
+    /// [`Solver::interface_const_pins`] for why each one would otherwise be
+    /// invisible, and the comments at those call sites for the false-`sat`
+    /// each closes.
     ///
     /// SOUND: the asserted row is a tautology (`c = c`), so its bound can
     /// never be violated and the pin constrains nothing.  The reason tag
@@ -3082,8 +3126,8 @@ impl Solver {
     /// lockstep with the scope it was asserted at (re-encode re-pins).
     /// Constants that do not fit `Rational64` are skipped: the pre-fix gap
     /// remains for them (missed pairing only, never a wrong answer).
-    fn pin_quantified_uf_const_arg(&mut self, arg: TermId, manager: &TermManager) {
-        if self.quant_uf_const_pins.contains_key(&arg) {
+    fn pin_interface_const(&mut self, arg: TermId, manager: &TermManager) {
+        if self.interface_const_pins.contains_key(&arg) {
             return;
         }
         // CLOSED-FORM evaluation, three layers:
@@ -3212,7 +3256,7 @@ impl Solver {
                 constant
             }
         };
-        self.quant_uf_const_pins.insert(arg, value);
+        self.interface_const_pins.insert(arg, value);
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately
@@ -3221,6 +3265,26 @@ impl Solver {
     /// Nothing is memoised on this path – the term was *not* encoded, and a
     /// later shallower occurrence must still get a real encoding.
     pub(super) fn encode_depth(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+        depth: u32,
+    ) -> Lit {
+        let lit = self.encode_depth_memoized(term, manager, depth);
+        // Depth 0 is every *top-level* entry into the encoder — `encode`, and
+        // the lemma emitters that call `encode_depth(.., 0)` directly.  The
+        // trichotomy clauses owed by the atoms this encode just minted are
+        // emitted here, before the caller adds the clause that will use them,
+        // so no lemma can reach the SAT core with a numeric equality atom the
+        // arithmetic solver cannot hear about.  See
+        // [`Solver::pending_numeric_eq_splits`].
+        if depth == 0 {
+            self.drain_numeric_eq_splits(manager);
+        }
+        lit
+    }
+
+    fn encode_depth_memoized(
         &mut self,
         term: TermId,
         manager: &mut TermManager,
@@ -3624,6 +3688,13 @@ impl Solver {
                         ) {
                             self.var_to_parsed_arith.insert(var, parsed);
                         }
+                        // Lemma-minted atoms only: the assertion spine is
+                        // covered by `ensure_numeric_equality_splits` at the
+                        // top of `check`, and queueing spine atoms here as
+                        // well would only move the identical clauses earlier.
+                        if self.solving && !self.suppress_numeric_eq_trichotomy {
+                            self.pending_numeric_eq_splits.push((*lhs, *rhs));
+                        }
                     }
 
                     // Non-Bool `ite` in either operand: `(= a (ite c t e))` is
@@ -3939,11 +4010,14 @@ impl Solver {
             // honesty gate degrades any resulting `Sat` to `Unknown` — see
             // `Solver::set_terms_unconstrained`.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
             | TermKind::SetMinus(_, _)
-            | TermKind::SetCard(_) => {
+            | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
@@ -4828,7 +4902,17 @@ impl Solver {
                     // pattern that appears in injectivity / congruence axioms
                     // where f(a)=f(b) needs to be split into f(a)<f(b) or
                     // f(a)>f(b) when the equality is false.
-                    // Avoid Select terms -- the array theory handles those.
+                    //
+                    // The narrowness is no longer load-bearing: since the
+                    // encoder queues every numeric equality atom it mints
+                    // while solving (`pending_numeric_eq_splits`), the atoms
+                    // this arm declines are covered anyway.  It is kept as
+                    // written so MBQI's clause order does not move.  (The
+                    // former reading of the `Select` exclusion — "the array
+                    // theory handles those" — was false and is what the
+                    // read-over-write index equality's wrong `sat` rested on:
+                    // the array theory mints the index equality, it does not
+                    // give it arithmetic meaning.)
                     let lhs_is_apply = manager
                         .get(*lhs)
                         .is_some_and(|lt| matches!(lt.kind, TermKind::Apply { .. }));

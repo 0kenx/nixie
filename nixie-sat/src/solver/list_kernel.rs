@@ -88,6 +88,12 @@ fn push_watch<const MIRROR: bool>(
     key: Lit,
     watcher: Watcher,
 ) {
+    crate::mut_trace!(
+        key.index(),
+        "side=vec act=push ref={} blk={} path=push_watch",
+        watcher.r.byte_offset(),
+        watcher.blocker.code()
+    );
     destinations[key.index()].push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
@@ -105,10 +111,30 @@ fn push_watch_unique<const MIRROR: bool>(
     key: Lit,
     watcher: Watcher,
 ) {
-    let list = &mut destinations[key.index()];
-    if list.iter().any(|w| w.r == watcher.r) {
+    let csr_hit = csr
+        .as_ref()
+        .is_some_and(|c| {
+            let (p, x) = c.spans(key);
+            p.iter().chain(x.iter()).any(|w| w.r == watcher.r)
+        });
+    if csr_hit {
         return;
     }
+    let list = &mut destinations[key.index()];
+    if list.iter().any(|w| w.r == watcher.r) {
+        crate::mut_trace!(
+            key.index(),
+            "side=vec act=suppress ref={} path=push_watch_unique",
+            watcher.r.byte_offset()
+        );
+        return;
+    }
+    crate::mut_trace!(
+        key.index(),
+        "side=vec act=push ref={} blk={} path=push_watch_unique",
+        watcher.r.byte_offset(),
+        watcher.blocker.code()
+    );
     list.push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
@@ -131,6 +157,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
     swapped_code: Option<usize>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd {
+    let scanned_code = (!false_lit).index();
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
@@ -157,6 +184,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 work.deleted += 1;
             }
             entry.remove();
+            crate::mut_trace!(
+                scanned_code,
+                "side=scan act=drop ref={} path=scan_dead_clause",
+                watcher.r.byte_offset()
+            );
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
@@ -183,11 +215,35 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             );
         };
         let searched = live.searched();
+        #[cfg(feature = "std")]
+        let cid_visit = crate::mut_trace::cwrite_target().map(|_| live.reason());
+        #[cfg(feature = "std")]
+        if let Some(want) = crate::mut_trace::cwrite_target()
+            && cid_visit.is_some_and(|c| c.index() == want)
+        {
+            use std::fmt::Write as _;
+            let mut tv = String::new();
+            for &tl in live.lits().iter().skip(2) {
+                let _ = write!(tv, "{}:{},", tl.code(), propagation_value(values, tl));
+            }
+            eprintln!(
+                "[cvisit op={}] id={} searched={} blk={} tail={}",
+                crate::mut_trace::next_op(),
+                want,
+                searched,
+                watcher.blocker.code(),
+                tv
+            );
+        }
         let mut found = None;
         let mut new_searched = searched;
         let mut repair = None;
         let first;
         {
+            #[cfg(feature = "std")]
+            let cid_watch = crate::mut_trace::cwrite_target().map(|_| live.reason());
+            #[cfg(not(feature = "std"))]
+            let cid_watch: Option<ClauseId> = None;
             let lits = live.lits();
             if lits.len() < 2 {
                 repair = Some(None);
@@ -229,6 +285,19 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                                 }
                                 found = Some(Some(literal));
                             } else {
+                                #[cfg(feature = "std")]
+                                if let Some(want) = crate::mut_trace::cwrite_target()
+                                    && cid_watch.is_some_and(|c| c.index() == want)
+                                {
+                                    eprintln!(
+                                        "[cwrite op={}] kernel-swap id={} i={} moved={} old1={}",
+                                        crate::mut_trace::next_op(),
+                                        want,
+                                        i,
+                                        tail[i].code(),
+                                        pair[1].code()
+                                    );
+                                }
                                 core::mem::swap(&mut pair[1], &mut tail[i]);
                                 #[cfg(feature = "bcp-work")]
                                 {
@@ -270,6 +339,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 );
             }
             entry.remove();
+            crate::mut_trace!(
+                scanned_code,
+                "side=scan act=drop ref={} path=scan_repair",
+                watcher.r.byte_offset()
+            );
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
@@ -308,6 +382,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 }
             } else {
                 entry.remove();
+                crate::mut_trace!(
+                    scanned_code,
+                    "side=scan act=drop ref={} path=scan_watch_move",
+                    watcher.r.byte_offset()
+                );
                 if MIRROR && let Some(c) = csr.as_mut() {
                     c.scan_remove(watcher.r);
                 } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
