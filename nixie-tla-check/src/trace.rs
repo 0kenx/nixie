@@ -418,6 +418,50 @@ fn encode_index(v: &Value, sort: SortId, tm: &mut TermManager) -> Result<TermId,
     }
 }
 
+/// Rebuild a decoded value as an SMT term at `sort` — the inverse of
+/// [`decode`].
+///
+/// Used to **block** a counterexample: asserting that the states are not these
+/// states is how a second, different counterexample is found. Blocking only
+/// ever *adds* constraints, so it can remove behaviours and never invent one —
+/// which is why a partial answer here is safe, and why the shapes it cannot
+/// rebuild are simply left out of the clause rather than guessed at.
+///
+/// `None` for a shape with no term form: a set or a function, whose value
+/// lives in the query's membership and `select` terms rather than in anything
+/// this can reconstruct, and any value whose sort disagrees with it.
+#[must_use]
+pub fn encode_value(v: &Value, sort: SortId, tm: &mut TermManager) -> Option<TermId> {
+    let kind = tm.sorts.get(sort).map(|s| s.kind.clone())?;
+    match (v, &kind) {
+        (Value::Bool(b), SortKind::Bool) => Some(tm.mk_bool(*b)),
+        (Value::Int(i), SortKind::Int) => Some(tm.mk_int(num_bigint::BigInt::from(*i))),
+        (Value::Str(t), SortKind::String) => Some(tm.mk_string_lit(t)),
+        // A value of uninterpreted sort *is* its name — that is what an
+        // uninterpreted sort means — and the name came out of the model, so
+        // rebuilding the variable finds the very term the model named.
+        (Value::Str(name), SortKind::Uninterpreted(_)) => Some(tm.mk_var(name, sort)),
+        (Value::Tuple(_) | Value::Record(_), SortKind::Datatype(_)) => {
+            let fields = struct_fields(sort, tm)?;
+            let name = tm.sorts.datatype_name(sort)?.to_string();
+            let mut args = Vec::with_capacity(fields.len());
+            for (field, fs) in &fields {
+                let part = match v {
+                    Value::Tuple(xs) => {
+                        let i: usize = field.strip_prefix("@t")?.parse().ok()?;
+                        xs.get(i.checked_sub(1)?)?
+                    }
+                    Value::Record(fs2) => fs2.get(field.strip_prefix("@f")?)?,
+                    _ => return None,
+                };
+                args.push(encode_value(part, *fs, tm)?);
+            }
+            Some(tm.mk_dt_constructor(&name, args, sort))
+        }
+        _ => None,
+    }
+}
+
 /// A canonical value at `sort`, for a point the query left open.
 ///
 /// Only the sorts whose values are enumerable from the sort alone. An

@@ -31,7 +31,7 @@
 //! discard behaviours and could turn a real counterexample into a false
 //! "no violation".
 
-use nixie_core::TermManager;
+use nixie_core::{TermId, TermManager};
 use nixie_solver::{Solver, SolverResult};
 use nixie_tla::types::Inference;
 use nixie_tla::{Kera, KeraRef, Lowerer};
@@ -178,6 +178,12 @@ pub struct Bmc {
     counterexample: Option<Trace>,
     /// Whether that counterexample was confirmed independently.
     verification: Option<Verification>,
+    /// Clauses ruling out counterexamples already reported.
+    ///
+    /// Asserted on every subsequent query, which is how a *second*
+    /// counterexample is found. They only ever narrow the search, so they can
+    /// hide a behaviour and never invent one.
+    blocked: Vec<TermId>,
 }
 
 /// What became of the attempt to confirm a counterexample independently.
@@ -501,6 +507,7 @@ impl Bmc {
             conflict_limit: None,
             counterexample: None,
             verification: None,
+            blocked: Vec::new(),
         })
     }
 
@@ -604,6 +611,9 @@ impl Bmc {
                     solver.assert(t, tm);
                 }
             }
+            for c in &self.blocked {
+                solver.assert(*c, tm);
+            }
             solver.assert(violated, tm);
             match solver.check(tm) {
                 SolverResult::Sat => {
@@ -656,6 +666,59 @@ impl Bmc {
     #[must_use]
     pub fn counterexample(&self) -> Option<&Trace> {
         self.counterexample.as_ref()
+    }
+
+    /// Rule out the last counterexample, so the next check finds a different
+    /// one.
+    ///
+    /// This is what `--max-error=N` needs: a bounded query has one shortest
+    /// counterexample, and asking again without saying "not that one" returns
+    /// it again forever.
+    ///
+    /// Returns `false` when the trace could not be expressed as a constraint
+    /// at all, which is a signal to **stop** rather than loop: asking again
+    /// would hand back the same states.
+    ///
+    /// # What a partial block means
+    ///
+    /// A state may contain values with no term form — a set or a function,
+    /// whose value lives in the query's membership and `select` terms rather
+    /// than in anything [`crate::trace::encode_value`] can rebuild. Those
+    /// conjuncts are left out, which makes the clause *stronger* and rules out
+    /// more than the one trace. That is a loss of completeness and not of
+    /// soundness: every counterexample still reported is still a real model of
+    /// the encoded formula, and is still replayed before it is reported. The
+    /// alternative — dropping the block and asking again — returns the same
+    /// trace and never terminates.
+    pub fn block_counterexample(&mut self, tm: &mut TermManager) -> bool {
+        let Some(trace) = self.counterexample.as_ref() else {
+            return false;
+        };
+        let mut conj: Vec<TermId> = Vec::new();
+        for (step, state) in trace.states.iter().enumerate() {
+            let Ok(step) = u32::try_from(step) else {
+                return false;
+            };
+            for (name, value) in state {
+                let Some(t) = self.encoder.var_at(name, step) else {
+                    continue;
+                };
+                let Some(sort) = tm.get(t).map(|d| d.sort) else {
+                    continue;
+                };
+                if let Some(v) = crate::trace::encode_value(value, sort, tm) {
+                    let eq = tm.mk_eq(t, v);
+                    conj.push(eq);
+                }
+            }
+        }
+        if conj.is_empty() {
+            return false;
+        }
+        let same = tm.mk_and(conj);
+        let clause = tm.mk_not(same);
+        self.blocked.push(clause);
+        true
     }
 
     /// The last counterexample as an **ITF** trace object (Apalache's

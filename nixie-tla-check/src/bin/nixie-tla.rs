@@ -284,71 +284,108 @@ fn run(args: &Args) -> u8 {
         }
     };
 
-    let outcome = match bmc.check(args.length, &mut tm) {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("{e}");
-            return exit_for(&e);
-        }
-    };
-
-    match outcome {
-        Outcome::NoViolationWithin(k) => {
-            println!("no counterexample of {k} step(s) or fewer");
-            EXIT_OK
-        }
-        Outcome::Unknown(why) => {
-            eprintln!("undecided: {why}");
-            EXIT_SYSTEM
-        }
-        Outcome::Violation { step } => {
-            println!("counterexample found after {step} step(s)");
-            if let Some(v) = bmc.verification() {
-                println!("  independently replayed: {}", describe(v));
+    // Up to `--max-error` counterexamples. A bounded query has one *shortest*
+    // counterexample, so asking again without ruling that one out returns it
+    // forever; each trace found is blocked before the next query. Blocking
+    // only narrows the search, so a later trace is still a real model of the
+    // encoded formula — and is still replayed before it is written.
+    let mut found = 0usize;
+    let mut undecided: Option<String> = None;
+    while found < args.max_errors {
+        let outcome = match bmc.check(args.length, &mut tm) {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!("{e}");
+                return exit_for(&e);
             }
-            if args.max_errors > 1 {
-                // Said rather than silently under-delivering: a caller asking
-                // for ten traces and getting one should know it got one, and
-                // why. Producing more needs the found trace *blocked* and the
-                // query re-run, which this does not do yet.
-                eprintln!(
-                    "note: --max-error/--max-run={} requested; this checker reports the \
-                     shortest counterexample only",
-                    args.max_errors
-                );
-            }
-            let Some(dir) = &args.out_dir else {
-                return EXIT_COUNTEREXAMPLE;
-            };
-            let name = args
-                .spec
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("spec");
-            let Some(doc) = bmc.counterexample_itf(name) else {
-                eprintln!("the counterexample could not be read back, so no ITF was written");
-                return EXIT_COUNTEREXAMPLE;
-            };
-            let text = match serde_json::to_string_pretty(&doc) {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("could not render the counterexample as ITF: {e}");
-                    return EXIT_SYSTEM;
+        };
+        match outcome {
+            Outcome::NoViolationWithin(k) => {
+                if found == 0 {
+                    println!("no counterexample of {k} step(s) or fewer");
                 }
-            };
-            if let Err(e) = std::fs::create_dir_all(dir) {
-                eprintln!("could not create {}: {e}", dir.display());
-                return EXIT_SYSTEM;
+                break;
             }
-            let out = dir.join("violation1.itf.json");
-            if let Err(e) = std::fs::write(&out, text) {
-                eprintln!("could not write {}: {e}", out.display());
-                return EXIT_SYSTEM;
+            Outcome::Unknown(why) => {
+                undecided = Some(why);
+                break;
             }
-            println!("wrote {}", out.display());
-            EXIT_COUNTEREXAMPLE
+            Outcome::Violation { step } => {
+                found += 1;
+                println!("counterexample {found}: {step} step(s)");
+                if let Some(v) = bmc.verification() {
+                    println!("  independently replayed: {}", describe(v));
+                }
+                if let Some(dir) = &args.out_dir {
+                    let name = args
+                        .spec
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("spec");
+                    match write_itf(&bmc, dir, name, found) {
+                        Ok(path) => println!("  wrote {path}"),
+                        Err(code) => return code,
+                    }
+                }
+                if found >= args.max_errors {
+                    break;
+                }
+                // Nothing to say "not that one" with means asking again would
+                // hand back the same states. Stop, and say why.
+                if !bmc.block_counterexample(&mut tm) {
+                    eprintln!(
+                        "note: that counterexample could not be ruled out, so no further \
+                         traces were searched for"
+                    );
+                    break;
+                }
+            }
         }
     }
+
+    if found == 0 {
+        if let Some(why) = undecided {
+            eprintln!("undecided: {why}");
+            return EXIT_SYSTEM;
+        }
+    } else {
+        if let Some(why) = undecided {
+            eprintln!("note: the search stopped early: {why}");
+        }
+        if found < args.max_errors {
+            eprintln!(
+                "note: {found} counterexample(s) found; --max-error/--max-run={} asked for more",
+                args.max_errors
+            );
+        }
+        return EXIT_COUNTEREXAMPLE;
+    }
+    EXIT_OK
+}
+
+/// Write one counterexample as `violation<n>.itf.json`.
+fn write_itf(bmc: &Bmc, dir: &Path, spec: &str, n: usize) -> Result<String, u8> {
+    let Some(doc) = bmc.counterexample_itf(spec) else {
+        eprintln!("the counterexample could not be read back, so no ITF was written");
+        return Err(EXIT_COUNTEREXAMPLE);
+    };
+    let text = match serde_json::to_string_pretty(&doc) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("could not render the counterexample as ITF: {e}");
+            return Err(EXIT_SYSTEM);
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("could not create {}: {e}", dir.display());
+        return Err(EXIT_SYSTEM);
+    }
+    let out = dir.join(format!("violation{n}.itf.json"));
+    if let Err(e) = std::fs::write(&out, text) {
+        eprintln!("could not write {}: {e}", out.display());
+        return Err(EXIT_SYSTEM);
+    }
+    Ok(out.display().to_string())
 }
 
 /// Which of Apalache's exit codes a setup failure is.

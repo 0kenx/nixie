@@ -170,8 +170,7 @@ fn an_unknown_option_is_refused() {
 }
 
 /// What this checker cannot do is said out loud rather than silently ignored:
-/// `simulate` is a bounded exhaustive check here, `--view` is not used, and
-/// `--max-error` above one delivers one.
+/// `simulate` is a bounded exhaustive check here and `--view` is not used.
 #[test]
 fn the_differences_from_apalache_are_reported() {
     let dir = scratch("notes");
@@ -187,7 +186,83 @@ fn the_differences_from_apalache_are_reported() {
     assert_eq!(r.code, 12, "stderr: {}", r.err);
     assert!(r.err.contains("not random simulation"), "{}", r.err);
     assert!(r.err.contains("--view=V` is not used"), "{}", r.err);
-    assert!(r.err.contains("shortest counterexample only"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- --max-error ----
+
+const CHOICE: &str = r"
+---- MODULE Choice ----
+EXTENDS Integers
+VARIABLE x
+Init == x \in 0 .. 5
+Next == UNCHANGED x
+Inv  == x < 3
+====
+";
+
+/// `--max-error=N` means N *different* counterexamples. A bounded query has
+/// one shortest counterexample, so each is ruled out before the next is asked
+/// for; without that the same trace comes back forever.
+#[test]
+fn max_error_yields_distinct_counterexamples() {
+    let dir = scratch("many");
+    let spec = write_spec(&dir, "Choice", CHOICE);
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=1",
+        "--max-error=5",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    // Exactly the three states of `0..5` that break `x < 3`, each in its own
+    // file, and every one of them independently replayed.
+    let mut seen: Vec<String> = Vec::new();
+    for n in 1..=3 {
+        let text = std::fs::read_to_string(out.join(format!("violation{n}.itf.json")))
+            .unwrap_or_else(|e| panic!("violation{n}.itf.json: {e}"));
+        let doc: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        seen.push(
+            doc["states"][0]["x"]["#bigint"]
+                .as_str()
+                .expect("an x")
+                .to_string(),
+        );
+    }
+    assert!(
+        !out.join("violation4.itf.json").exists(),
+        "there are only three"
+    );
+    seen.sort();
+    assert_eq!(seen, ["3", "4", "5"]);
+    assert_eq!(r.out.matches("independently replayed: yes").count(), 3);
+    // The search is exhaustive, so three is all there are — and it says so
+    // rather than quietly delivering fewer than asked.
+    assert!(r.err.contains("asked for more"), "{}", r.err);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A deterministic specification has one behaviour, so one counterexample is
+/// the whole answer however many are asked for.
+#[test]
+fn a_deterministic_spec_has_one_counterexample() {
+    let dir = scratch("det");
+    let spec = write_spec(&dir, "Counter", COUNTER);
+    let out = dir.join("out");
+    let r = run(&[
+        "check",
+        "--inv=Inv",
+        "--length=8",
+        "--max-error=5",
+        &format!("--out-dir={}", out.display()),
+        spec.to_str().expect("a path"),
+    ]);
+    assert_eq!(r.code, 12, "stderr: {}", r.err);
+    assert!(out.join("violation1.itf.json").exists());
+    assert!(!out.join("violation2.itf.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
