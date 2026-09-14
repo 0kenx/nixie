@@ -353,3 +353,38 @@ primary-watch FLIP `c77ddf76`, and the set-equality wrong-`sat` fix
 300 — **0 disagreements**; mixed_fuzz 400 cases — **no verdict
 disagreements, no refuted models**; parity — **176/1/0**.  Binary
 cached at `precompile/ed401429/`.
+
+
+## Sixth pass (2026-09-14): the filter admission reverted — a false-`sat` it exposed
+
+The strengthened generator (contradictory-definitional twins + a spoil
+step) found a **false `sat`** on seed 42 (`contradictory_definitional_
+twins_are_never_sat` pins it): `P = not (phi => phi)` forces `P` false
+everywhere, a tautological-antecedent axiom forces `P` everywhere — z3
+refutes; the solver certified `sat`.  Bisected to `2700e3d7` (the
+ground-universe filter admitting free constants); **reverted** — its
+standalone value was the (also reverted) entry-table experiment, and the
+starvation it fixed is completeness-only.
+
+**Root-cause trail for the next session** (the exposure, not yet the
+defect): with nonempty universes the falsifier miner's *substituted
+completed body* can mention an artifact variable outside the check's
+bound set (it arrives through the completion's entry chains — an entry
+keyed on an encoder binder constant normalizes into a chain condition).
+The substitution does not cover it, and the mining eval runs with an
+*empty* bound set, so (a) `is_symbolic` is vacuous — the
+universe-distinctness fold treats the residual Var as a ground element
+and fabricates `(= y c_i) -> false`; (b) a `body'` was observed folding
+to literal `true` against an all-false 101-entry table — the same leak
+class reaching the certification path.  The *class* predates the filter
+change (latent with empty universes): fixing it properly means (1)
+threading the check's bound names into the mining eval as the artifact
+set, (2) filtering bound-named keys out of the harvested entry tables
+(the same name rule the universes use), and (3) re-deriving why a
+macro-completed application evaluated to `true`.  Instrumentation
+shapes that worked: `NIXIE_DEBUG_ENTRIES` (entry dumps),
+`NIXIE_DEBUG_FOLD` (fold/wildcard/macro-fire traces).
+
+Post-revert verification: quant_fuzz seeds {41,42,43} x 150 with the
+strengthened generator — CLEAN (101+96+93 unsat and 15+16+15 sat, all
+matching z3); pins 9/9; parity 176/1/0; 58 quantifier regressions.
