@@ -160,5 +160,17 @@ Not from the corpus. From a function read at a state variable's value, which
 is as ordinary as TLA+ gets. It was caught by the **trace replay** in
 `nixie-tla-check`: the harness decodes a reported counterexample and re-checks
 it with `nixie-tla`'s evaluator, and reported this one as *decoded but did not
-replay* rather than counting it as a violation. Two specifications in the
-905-module corpus hit it, `Rec3.tla` among them.
+replay* rather than counting it as a violation.
+
+**A correction.** This study first said two corpus specifications hit this
+defect, "`Rec3.tla` among them". The corpus re-run after the fix landed showed
+`Rec3.tla` still failing — it exercises a *different* wrong `sat`, written up
+in
+[`2026-09-14-array-index-entailed-equal-to-a-constant.md`](2026-09-14-array-index-entailed-equal-to-a-constant.md).
+The two are genuinely distinct: this one needs a **store**, so that the
+read-over-write lemma mints the index-equality atom whose trichotomy was
+missing; that one has no store at all, so nothing mints an atom and the gap is
+one step earlier, in which pairs the theory-combination probe may consider.
+The minimal reproducer used here — a *non-recursive* `f[k] == IF k <= 0 THEN 0
+ELSE 1` read at a variable index — does rest on the trichotomy gap, and is
+fixed. What this study cannot claim is a corpus count.

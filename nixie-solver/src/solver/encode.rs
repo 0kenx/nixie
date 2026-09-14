@@ -3000,6 +3000,32 @@ impl Solver {
             if matches!(t.kind, TermKind::Forall { .. } | TermKind::Exists { .. }) {
                 return term;
             }
+            // ARRAY INDICES: `select`/`store` index arguments are shared
+            // between the array theory (which reads them through congruence)
+            // and arithmetic (which is the only thing that can *entail* two
+            // of them equal).  A CONSTANT index is the blind spot: it never
+            // becomes an arithmetic interface term, so `nelson_oppen_combine`'s
+            // model-equal probe cannot pair it with an equal-valued variable
+            // index, the congruence `select(A, n) = select(A, 1)` is never
+            // derived from the entailed `n = 1`, and a refutable input answers
+            // `sat`.  This is the `pr30#3` class, one theory over.
+            //
+            // The index is PINNED, not purified: the array theory matches
+            // store and select indices by `TermId` (`direct_store_map`,
+            // `row_same_guard`), so substituting a proxy would silently
+            // change which writes a read is judged to alias.  The pin is a
+            // tautological row (`c = c`) that constrains nothing and only
+            // makes the constant visible as an interface term.
+            if let TermKind::Select(_, index) | TermKind::Store(_, index, _) = &t.kind {
+                let idx = *index;
+                if let Some(it) = manager.get(idx)
+                    && (it.sort == int_sort || it.sort == real_sort)
+                    && matches!(it.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
+                {
+                    self.pin_quantified_uf_const_arg(idx, manager);
+                }
+                continue;
+            }
             if let TermKind::Apply { func, args } = &t.kind {
                 // Per-function gate: never purify the numeric arguments of a
                 // function that appears in a quantifier – its ground pins must
