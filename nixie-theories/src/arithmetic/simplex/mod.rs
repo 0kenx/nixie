@@ -3038,7 +3038,7 @@ impl Simplex {
         let coef_b = big_r64(&coef);
         let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
         terms.push((basic_var, coef_b.recip()));
-        let mut constant = -big_r64(&expr.constant) / &coef_b;
+        let constant = -big_r64(&expr.constant) / &coef_b;
         for (var, c) in &expr.terms {
             if *var != nonbasic_var {
                 let val = -big_r64(c) / &coef_b;
@@ -3255,7 +3255,7 @@ impl Simplex {
         let mut min = End(BR::zero(), BR::zero());
         let mut max = End(BR::zero(), BR::zero());
         let mut reasons: Vec<u32> = Vec::new();
-        let mut collect = |e: Option<&Bound>, reasons: &mut Vec<u32>| {
+        let collect = |e: Option<&Bound>, reasons: &mut Vec<u32>| {
             if let Some(b) = e {
                 for r in b.all_reasons() {
                     if !reasons.contains(&r) {
@@ -3264,7 +3264,7 @@ impl Simplex {
                 }
             }
         };
-        let mut acc = |cur: &mut End, other: &End, sign: i8| {
+        let acc = |cur: &mut End, other: &End, sign: i8| {
             if sign > 0 {
                 cur.0 += &other.0;
                 cur.1 += &other.1;

@@ -141,6 +141,18 @@ pub struct MBQIIntegration {
     start_time: Option<Instant>,
     /// Statistics
     stats: MBQIStats,
+    /// Quantifiers whose defining role a constructor/hint table currently
+    /// owns (the last completion's `constructor_sources`).  The solver
+    /// suspends these in the E-matching engine: a trigger match at a
+    /// compound term mints the next compound level (the chase the tables
+    /// exist to kill), while the table plus its semantic-domain pins
+    /// already cover every relevant tuple.  Refreshed every round;
+    /// `clear()` empties it with the rest of the per-solve state.
+    active_table_quantifiers: FxHashSet<TermId>,
+    /// Whether the previous round ended barren (no fresh instantiation
+    /// anywhere) — the static-model signal that arms the convergence
+    /// dividend (see `ModelChecker::refund_on_barren_round`).
+    last_round_barren: bool,
 }
 
 impl MBQIIntegration {
@@ -162,6 +174,8 @@ impl MBQIIntegration {
             current_round: 0,
             budget: MBQIBudget::new(1024),
             conflict_scores: ConflictScores::new(0.95),
+            active_table_quantifiers: FxHashSet::default(),
+            last_round_barren: false,
             max_rounds: 100,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
@@ -401,7 +415,9 @@ impl MBQIIntegration {
         /// Cap on the tuple product walked per macro.
         const MAX_TUPLE_PRODUCT: usize = 1024;
 
-        if !model.macro_sources.contains_key(&quantifier.term) {
+        if !model.macro_sources.contains_key(&quantifier.term)
+            && !model.constructor_sources.contains_key(&quantifier.term)
+        {
             return;
         }
 
@@ -410,14 +426,24 @@ impl MBQIIntegration {
         // domain (finite-model semantics); an interpreted sort's universe
         // entry is a sample of an infinite domain, and pinning at samples
         // buys nothing (the macro is defined there by evaluation anyway).
+        // A constructor argument axis of a defining axiom takes its
+        // *semantic* domain (see `constructor_tables`): the universe with
+        // compounds collapsed through the computed tables — the pin at
+        // `(x, b, b)` subsumes `(x, b, union(b,b))`, and minting the
+        // compound twice would itself restart the chase.
         let mut sets: Vec<Vec<TermId>> = Vec::with_capacity(quantifier.bound_vars.len());
-        for &(_name, sort) in &quantifier.bound_vars {
-            let universe = manager
-                .sorts
-                .get(sort)
-                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
-                .then(|| model.ground_universe(sort, manager))
-                .flatten()
+        for (i, &(_name, sort)) in quantifier.bound_vars.iter().enumerate() {
+            let universe =
+                if let Some(domain) = model.semantic_domains.get(&(quantifier.term, i)) {
+                    Some(domain.clone())
+                } else {
+                    manager
+                        .sorts
+                        .get(sort)
+                        .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+                        .then(|| model.table_domain(sort, manager))
+                        .flatten()
+                }
                 .filter(|u| !u.is_empty());
             let Some(universe) = universe else {
                 // A bound variable over a sampled (or empty) domain: the
@@ -503,6 +529,12 @@ impl MBQIIntegration {
         }
     }
 
+    /// Quantifiers whose defining role a constructor/hint table owned in
+    /// the last completed round (see [`Self::active_table_quantifiers`]).
+    pub fn active_table_quantifiers(&self) -> &FxHashSet<TermId> {
+        &self.active_table_quantifiers
+    }
+
     /// The tracked quantifier at `idx`, if in range.
     pub fn quantifier_at(&self, idx: usize) -> Option<&QuantifiedFormula> {
         self.quantifiers.get(idx)
@@ -562,6 +594,15 @@ impl MBQIIntegration {
         if self.current_round > 1 {
             self.conflict_scores.decay_on_restart();
         }
+        // Convergence dividend: the previous round found nothing fresh —
+        // the model is static — so the per-quantifier check budgets are
+        // refunded for exactly one certification wave.  The global budgets
+        // are not, so this cannot loop.
+        self.model_checker
+            .set_table_mode(!self.active_table_quantifiers.is_empty());
+        if core::mem::take(&mut self.last_round_barren) {
+            self.model_checker.refund_on_barren_round();
+        }
         let quantifier_ids: Vec<QuantifierId> = self.quantifiers.iter().map(|q| q.term).collect();
         self.budget
             .carve_per_quantifier(&quantifier_ids, Some(&self.conflict_scores));
@@ -591,6 +632,13 @@ impl MBQIIntegration {
         {
             self.stats.completion_time_us += round_start.elapsed().as_micros() as u64;
         }
+
+        // Refresh the table-ownership set (see `active_table_quantifiers`).
+        self.active_table_quantifiers = completed_model
+            .constructor_sources
+            .keys()
+            .copied()
+            .collect();
 
         // Step 2: Check each quantifier against the completed model
         //         and generate counterexample-based instantiations
@@ -979,6 +1027,7 @@ impl MBQIIntegration {
             }
 
             // Conservatively return Unknown instead of the incorrect Satisfied.
+            self.last_round_barren = true;
             let result = MBQIResult::Unknown;
             callback.on_round_end(self.current_round, &result);
             self.update_final_stats();
@@ -998,6 +1047,7 @@ impl MBQIIntegration {
         // Return the new instantiations to the solver.
         // The solver will add them as lemmas and re-check SAT.
         // On the next call to MBQI, we'll re-complete the model.
+        self.last_round_barren = false;
         let result = MBQIResult::NewInstantiations(all_instantiations);
         callback.on_round_end(self.current_round, &result);
         self.update_final_stats();
@@ -1287,6 +1337,7 @@ impl MBQIIntegration {
         self.generated_instantiations.clear();
         self.extra_candidates.clear();
         self.blind_attempted = false;
+        self.active_table_quantifiers.clear();
         self.current_round = 0;
         self.budget = MBQIBudget::new(self.budget.global_budget);
         self.conflict_scores = ConflictScores::new(self.conflict_scores.decay_factor);

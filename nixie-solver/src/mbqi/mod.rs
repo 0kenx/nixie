@@ -54,6 +54,7 @@ use nixie_core::sort::SortId;
 use smallvec::SmallVec;
 
 pub mod conflict_driven;
+pub mod constructor_tables;
 pub mod counterexample;
 pub mod finite_model;
 pub mod heuristics;

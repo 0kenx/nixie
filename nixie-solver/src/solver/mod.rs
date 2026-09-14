@@ -3862,6 +3862,15 @@ impl Solver {
                     }
 
                     let mbqi_result = self.mbqi.check_with_model(&model_assignments, manager);
+                    // Constructor/hint tables own these quantifiers'
+                    // defining role this round: suspend their E-matching
+                    // (a trigger match at a compound term mints the next
+                    // compound level — the chase the tables exist to
+                    // kill — while the table plus its semantic-domain
+                    // pins already cover every relevant tuple).
+                    for &q in self.mbqi.active_table_quantifiers() {
+                        self.ematch_engine.suspend_quantifier(q);
+                    }
                     // Model-repair blocking clauses (Z3's
                     // `add_blocking_clause` analogue): each clause excludes
                     // one value arrangement that demonstrably fails a

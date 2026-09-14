@@ -166,6 +166,17 @@ impl EmatchingEngine {
         self.engine.num_quantifiers()
     }
 
+    /// Suspend E-matching for one quantifier (see
+    /// [`EmatchEngine::suspend_quantifier`]).
+    pub fn suspend_quantifier(&mut self, quant_id: TermId) {
+        self.engine.suspend_quantifier(quant_id);
+    }
+
+    /// Lift a suspension (see [`EmatchEngine::unsuspend_quantifier`]).
+    pub fn unsuspend_quantifier(&mut self, quant_id: TermId) {
+        self.engine.unsuspend_quantifier(quant_id);
+    }
+
     /// Drop every quantifier registered after the `len`-th one (see
     /// [`EmatchEngine::truncate_quantifiers`]).  Used by an incremental solver
     /// to undo the registrations made inside a popped assertion scope.

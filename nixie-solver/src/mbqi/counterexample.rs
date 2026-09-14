@@ -358,7 +358,35 @@ impl CounterExampleGenerator {
         self.stats.num_searches += 1;
 
         // Build candidate lists for each bound variable
-        let candidates = self.build_candidate_lists(&quantifier.bound_vars, model, manager);
+        let mut candidates = self.build_candidate_lists(&quantifier.bound_vars, model, manager);
+        // Semantic normalization for constructor argument axes (see
+        // `constructor_tables`): a defining axiom's tuple variables take
+        // the *semantic* domain — the universe with compounds collapsed
+        // through the computed tables — so the sampler stops proposing
+        // `(x, b, union(b,b))` next to `(x, b, b)`: the instantiation at
+        // the compound is what mints `union(b, union(b,b))` and chases the
+        // compound closure without bound.  Collapsing is value-determining
+        // for exactly these axioms (the `axes_value_determined` gate):
+        // the body reads its tuple variables only through the observer
+        // (row-determined) and tabled constructors (row-closed), so an
+        // evaluation at a representative answers for every element it
+        // represents — including for the finite-exhaustion gate that
+        // trusts this coverage.
+        for (i, list) in candidates.iter_mut().enumerate() {
+            if let Some(domain) = model.semantic_domains.get(&(quantifier.term, i)) {
+                *list = domain.clone();
+            } else if model.constructor_sources.contains_key(&quantifier.term)
+                && let Some(&(_, sort)) = quantifier.bound_vars.get(i)
+                && let Some(domain) = model.table_domain(sort, manager)
+            {
+                // A table-owned axiom's other axes (the row-point `x`)
+                // range over the frozen table domain too: the raw universe
+                // grows with every witness the ground solver mints, and
+                // enumerating the fresh points re-moves the model every
+                // round -- the loop that never converges.
+                *list = domain;
+            }
+        }
 
         // Enumerate combinations of candidates
         let combinations = self.enumerate_combinations(

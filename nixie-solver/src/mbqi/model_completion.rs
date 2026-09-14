@@ -81,6 +81,30 @@ pub struct CompletedModel {
     /// function at compound elements the enumerative seeder's exhausted
     /// budget can no longer reach.
     pub macro_sources: FxHashMap<TermId, Vec<Spur>>,
+    /// Computed constructor entries (see `constructor_tables`): the
+    /// entry-table search's output — interpretation choices at *unpinned*
+    /// tuples, consulted after the ground entries and before the `else`.
+    /// A separate table (not merged into `function_interps`) keeps the
+    /// "ground pins never overridden" invariant structural and lets the
+    /// diagnostics distinguish a harvested pin from a completion choice.
+    pub computed_entries: FxHashMap<Spur, Vec<FunctionEntry>>,
+    /// Defining quantifier -> constructors it defines (the quasi-macro
+    /// sources; the constructor twin of `macro_sources` — driving the
+    /// `SatisfiedWithPins` defining instances for `union`-shaped axioms).
+    pub constructor_sources: FxHashMap<TermId, Vec<Spur>>,
+    /// The frozen table domains installed by this completion (sort ->
+    /// domain) — the structure's own domain for the tabled sorts; the
+    /// nested check's Skolem restriction reads it (see
+    /// `ModelChecker::aux_refute`).
+    pub table_domains: FxHashMap<SortId, Vec<TermId>>,
+    /// (defining quantifier, bound-var index) -> the semantic domain: the
+    /// raw ground universe of that bound variable's sort with constructor
+    /// compounds collapsed through the computed tables (one representative
+    /// per semantic point — `semantic_value_of`).  Only constructor
+    /// argument axes of defining axioms get one: raw non-compound elements
+    /// are never merged anywhere (the merge-forcing instances must keep
+    /// seeing every ground pair).
+    pub semantic_domains: FxHashMap<(TermId, usize), Vec<TermId>>,
     /// Generation number
     pub generation: u32,
 }
@@ -97,6 +121,10 @@ impl CompletedModel {
             ground_universes: FxHashMap::default(),
             bound_var_names: FxHashSet::default(),
             macro_sources: FxHashMap::default(),
+            computed_entries: FxHashMap::default(),
+            constructor_sources: FxHashMap::default(),
+            table_domains: FxHashMap::default(),
+            semantic_domains: FxHashMap::default(),
             generation: 0,
         }
     }
@@ -154,6 +182,143 @@ impl CompletedModel {
                 })
                 .collect()
         })
+    }
+
+    /// The completed structure's domain for a tabled sort: the frozen
+    /// table domain when one exists (see `ModelCompleter::frozen_table_domains`),
+    /// else the plain ground universe.
+    pub fn table_domain(&self, sort: SortId, manager: &TermManager) -> Option<Vec<TermId>> {
+        if let Some(frozen) = self.table_domains.get(&sort) {
+            return Some(frozen.clone());
+        }
+        self.ground_universe(sort, manager)
+    }
+
+    /// Normalize a domain element through the computed constructor tables
+    /// (semantic value normalization): a constructor application
+    /// `f(t1..tn)` with a computed entry at the (recursively normalized)
+    /// arguments reads the entry's result — the row-canonical element —
+    /// so `union(b, union(b,b))` collapses to `b`'s representative and the
+    /// enumerative engines stop enumerating compounds next to the points
+    /// they already denote.  Non-constructor terms are returned
+    /// unchanged: two raw elements are never merged here (the
+    /// merge-forcing `seteq` instances must keep seeing every ground
+    /// pair).
+    ///
+    /// Explicit-stack walk over the constructor spine (AGENTS.md rule):
+    /// nesting depth is bounded by the term's argument depth, not the
+    /// native call stack.  Entry results are *not* re-entered — the
+    /// nesting lives in the arguments, which the stack walks — so the
+    /// machine terminates on any DAG.
+    pub fn semantic_value_of(&self, term: TermId, manager: &mut TermManager) -> TermId {
+        if self.computed_entries.is_empty() {
+            return term;
+        }
+        enum Frame {
+            Enter(TermId),
+            Args {
+                origin: TermId,
+                func: Spur,
+                sort: SortId,
+                args: Vec<TermId>,
+                next: usize,
+                done: Vec<TermId>,
+            },
+        }
+        let mut memo: FxHashMap<TermId, TermId> = FxHashMap::default();
+        let mut stack: Vec<Frame> = vec![Frame::Enter(term)];
+        let mut last = term;
+        while let Some(frame) = stack.pop() {
+            match frame {
+                Frame::Enter(t) => {
+                    if let Some(&known) = memo.get(&t) {
+                        last = known;
+                        continue;
+                    }
+                    let Some(node) = manager.get(t) else {
+                        last = t;
+                        continue;
+                    };
+                    if let TermKind::Apply { func, args } = &node.kind
+                        && self.computed_entries.contains_key(func)
+                    {
+                        let args: Vec<TermId> = args.iter().copied().collect();
+                        if args.is_empty() {
+                            // 0-ary constructor: lookup immediately.
+                            last = self
+                                .computed_entries
+                                .get(func)
+                                .and_then(|es| es.first())
+                                .map_or(t, |e| e.result);
+                            memo.insert(t, last);
+                            continue;
+                        }
+                        let first = args[0];
+                        stack.push(Frame::Args {
+                            origin: t,
+                            func: *func,
+                            sort: node.sort,
+                            next: 1,
+                            done: Vec::new(),
+                            args,
+                        });
+                        stack.push(Frame::Enter(first));
+                        continue;
+                    }
+                    memo.insert(t, t);
+                    last = t;
+                }
+                Frame::Args {
+                    origin,
+                    func,
+                    sort,
+                    args,
+                    next,
+                    mut done,
+                } => {
+                    done.push(last);
+                    if next < args.len() {
+                        let upcoming = args[next];
+                        stack.push(Frame::Args {
+                            origin,
+                            func,
+                            sort,
+                            args,
+                            next: next + 1,
+                            done,
+                        });
+                        stack.push(Frame::Enter(upcoming));
+                    } else {
+                        let value = self
+                            .computed_entries
+                            .get(&func)
+                            .and_then(|es| {
+                                es.iter().find(|e| {
+                                    e.args.len() == done.len()
+                                        && e.args.iter().zip(done.iter()).all(|(a, b)| a == b)
+                                })
+                            })
+                            .map_or_else(
+                                || {
+                                    let children: SmallVec<[TermId; 4]> =
+                                        done.iter().copied().collect();
+                                    manager.intern_term(
+                                        TermKind::Apply {
+                                            func,
+                                            args: children,
+                                        },
+                                        sort,
+                                    )
+                                },
+                                |e| e.result,
+                            );
+                        memo.insert(origin, value);
+                        last = value;
+                    }
+                }
+            }
+        }
+        last
     }
 
     /// Add a value to a sort's universe
@@ -253,6 +418,23 @@ impl CompletedModel {
             if let Some(result) = interp.lookup(evaluated_args) {
                 return Some(result);
             }
+        }
+        // Computed constructor entries: consulted after the ground pins
+        // and before the `else` (see `constructor_tables`).
+        if let Some(computed) = self.computed_entries.get(&func) {
+            for entry in computed {
+                if entry.args.len() == evaluated_args.len()
+                    && entry
+                        .args
+                        .iter()
+                        .zip(evaluated_args.iter())
+                        .all(|(a, b)| a == b)
+                {
+                    return Some(entry.result);
+                }
+            }
+        }
+        if let Some(interp) = self.function_interps.get(&func) {
             // Try else_value
             if let Some(else_val) = interp.else_value {
                 return Some(else_val);
@@ -527,6 +709,18 @@ pub struct ModelCompleter {
     uninterp_handler: UninterpretedSortHandler,
     /// Cache of completed models
     cache: FxHashMap<u64, CompletedModel>,
+    /// Frozen table domains (see `constructor_tables`): sort -> the
+    /// semantic universe the round that first computed tables for it saw.
+    /// Z3's model finder fixes its universes' *cardinality* while
+    /// searching; nixie's harvest grows with every term the ground solver
+    /// mints (each axiom-2 witness Skolem, every compound), so without a
+    /// freeze the completed structure never stabilizes long enough to
+    /// certify.  The frozen domain is the completed structure's own
+    /// domain — a legitimate interpretation choice under finite-model
+    /// semantics, verified by the nested checks exactly like any other;
+    /// later rounds recompute the *tables* over the frozen domain, so the
+    /// structure only moves when the ground pins inside it move.
+    frozen_table_domains: FxHashMap<SortId, Vec<TermId>>,
     /// Statistics
     stats: CompletionStats,
 }
@@ -539,6 +733,7 @@ impl ModelCompleter {
             model_fixer: ModelFixer::new(),
             uninterp_handler: UninterpretedSortHandler::new(),
             cache: FxHashMap::default(),
+            frozen_table_domains: FxHashMap::default(),
             stats: CompletionStats::default(),
         }
     }
@@ -656,6 +851,19 @@ impl ModelCompleter {
         // encoder's binder-constant application rows poison the
         // completion (see `drop_artifact_entries`).
         completed.drop_artifact_entries(manager);
+
+        // Step 10: compute the constructor tables (Z3 `smt_model_finder`'s
+        // entry-table search).  Runs after the universes are frozen and
+        // the entry tables final, and installs its output on the model —
+        // one globally-consistent interpretation every later consumer
+        // (the nested checker, the mining odometer, the enumerative
+        // seeder, the defining pins) reads unchanged.
+        super::constructor_tables::compute_constructor_tables(
+            &mut completed,
+            quantifiers,
+            &mut self.frozen_table_domains,
+            manager,
+        );
 
         Ok(completed)
     }

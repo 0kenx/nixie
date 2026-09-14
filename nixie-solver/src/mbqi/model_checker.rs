@@ -86,7 +86,7 @@ use crate::prelude::*;
 use crate::resource_limits::ResourceLimits;
 use crate::{Solver, SolverResult};
 
-type ChildList = SmallVec<[TermId; 4]>;
+pub(crate) type ChildList = SmallVec<[TermId; 4]>;
 
 /// Per-check conflict budget for the nested solve.
 ///
@@ -169,6 +169,11 @@ impl Drop for NestingGuard {
 
 use core::sync::atomic::Ordering;
 
+/// The current model-checker nesting depth (0 = the outer solver's MBQI).
+pub(crate) fn nested_depth() -> u32 {
+    NESTED_DEPTH.load(Ordering::Acquire)
+}
+
 /// One falsifier mined from a completed model, with the evidence its
 /// evaluation rested on (see [`ModelChecker::check`]).
 #[derive(Debug)]
@@ -241,6 +246,9 @@ pub(crate) struct ModelChecker {
     /// Total nested solves per quantifier (never reset — see
     /// [`MAX_TOTAL_CHECKS_PER_QUANTIFIER`]).
     total_checks_of: FxHashMap<TermId, u32>,
+    /// Whether constructor/hint tables are active (see
+    /// [`Self::set_table_mode`]).
+    table_mode: bool,
     /// Model signatures at which the nested refutation *certified* the
     /// quantifier (the aux-`unsat` verdict, possibly via the closed-world
     /// else retry).  The dual of [`ModelChecker::falsified_at`]: a
@@ -278,6 +286,7 @@ impl ModelChecker {
             last_model_signature: FxHashMap::default(),
             checks_of: FxHashMap::default(),
             total_checks_of: FxHashMap::default(),
+            table_mode: false,
             certified_at: FxHashMap::default(),
             falsified_at: FxHashMap::default(),
             veto_checks: 0,
@@ -405,6 +414,35 @@ impl ModelChecker {
             .is_some_and(|sigs| sigs.contains(&signature))
     }
 
+    /// The convergence dividend: a round that produced *no* fresh
+    /// instantiation anywhere is the static-model signal — the per-
+    /// quantifier caps exist to bound waste on a *moving* model (the
+    /// chase), and by now their remaining budget is exactly what silences
+    /// the certification wave that would close the search.  Refund both
+    /// maps (streak and total) once per barren round; the *global* caps
+    /// (`checks_performed`, `conflicts_spent`) are not refunded, so a
+    /// pathological loop still terminates.
+    pub(crate) fn refund_on_barren_round(&mut self) {
+        if !self.table_mode || (self.checks_of.is_empty() && self.total_checks_of.is_empty()) {
+            return;
+        }
+        if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+            eprintln!("[mc] barren round: refunding per-quantifier check budgets");
+        }
+        self.checks_of.clear();
+        self.total_checks_of.clear();
+    }
+
+    /// Whether constructor/hint tables are active this round (set by the
+    /// integration from `active_table_quantifiers`).  The budget-refund
+    /// mechanics below exist to let a *table-driven* convergence run its
+    /// certification waves; on goals with no tables the old cap behaviour
+    /// stands (the refunds there only stretched re-checked goals — the
+    /// scope-rebase convergence pins).
+    pub(crate) fn set_table_mode(&mut self, active: bool) {
+        self.table_mode = active;
+    }
+
     pub(crate) fn mark_productive(&mut self, quantifier: TermId) {
         self.last_model_signature.remove(&quantifier);
         // Productive-check refund of the wasted-solve streak: a check that
@@ -415,6 +453,20 @@ impl ModelChecker {
         // budgets still bound the total, so the refund cannot unbound a
         // single solve.
         self.checks_of.insert(quantifier, 0);
+        // ...and of the per-quantifier *total* (table mode only): the
+        // total exists to bound waste, not work — a check whose falsifiers
+        // became fresh lemmas (or whose certification landed, below) moved
+        // the search forward, and charging it would silence exactly the
+        // converging quantifiers (the set family: every round's pin wave
+        // moves the model, every re-check is productive, and a hard total
+        // of four stops the loop mid-convergence).  The global budgets
+        // remain the real bound.  Without tables the old cap behaviour
+        // stands — the refund there only stretched re-checked goals.
+        if self.table_mode
+            && let Some(count) = self.total_checks_of.get_mut(&quantifier)
+        {
+            *count = count.saturating_sub(1);
+        }
     }
 
     /// Check the universal quantifier `q` against the completed `model`.
@@ -509,15 +561,20 @@ impl ModelChecker {
         // thousands of default-valued pins must not bury the structural
         // ones.
         let else_preview = choose_else_table(model, manager);
-        for interp in model.function_interps.values() {
-            let Some(&else_val) = else_preview.get(&interp.name) else {
+        for (&func, interp) in model.function_interps.iter() {
+            let Some(&else_val) = else_preview.get(&func) else {
                 continue;
             };
+            // The computed constructor entries join the relevance count:
+            // they extend the ite chains the budgeted nested check must
+            // solve through.
+            let computed_count = model.computed_entries.get(&func).map_or(0, |v| v.len());
             let relevant = interp
                 .entries
                 .iter()
                 .filter(|e| value_equal(e.result, else_val, manager) != Some(true))
-                .count();
+                .count()
+                + computed_count;
             if relevant > MAX_ENTRIES_PER_FUNC {
                 if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
                     eprintln!(
@@ -562,6 +619,38 @@ impl ModelChecker {
             }
         }
 
+        // Evaluation-only certification: the completed body folded to the
+        // literal `true` — the ite chains and value literals already cover
+        // every point of every bound variable's domain, so the completed
+        // interpretation satisfies the quantifier outright.  No nested
+        // solve is needed, and none is paid for: this branch consumes no
+        // check budget (it is evaluation, not search), so a constructor
+        // whose table closed the body certifies on every round of a moving
+        // model without ever exhausting the per-quantifier caps that bound
+        // the *search* (the set-family convergence blocker: the caps
+        // silenced certification exactly while the pins kept the model
+        // moving).
+        if manager
+            .get(body_completed)
+            .is_some_and(|t| matches!(t.kind, TermKind::True))
+        {
+            if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                eprintln!("[mc] certified by evaluation (body' = true)");
+            }
+            // Refund the per-quantifier total (table mode only — see
+            // `mark_productive`): no nested solve ran, and the caps exist
+            // to bound *search*, not evaluation.
+            if self.table_mode
+                && let Some(count) = self.total_checks_of.get_mut(&q.term)
+            {
+                *count = count.saturating_sub(1);
+            }
+            self.certified_at.entry(q.term).or_default().push(signature);
+            self.checks_of.insert(q.term, 0);
+            self.last_decline = None;
+            return ModelCheckOutcome::Satisfied;
+        }
+
         // Skolemize the bound variables.
         let mut skolem_terms: Vec<(Spur, SortId, TermId)> = Vec::new();
         for &(name, sort) in &q.bound_vars {
@@ -595,6 +684,13 @@ impl ModelChecker {
                         eprintln!("[mc] aux verdict (closed-world else): satisfied");
                     }
                     self.certified_at.entry(q.term).or_default().push(signature);
+                    // A certification is productive: refund the total (see
+                    // `mark_productive`; table mode only).
+                    if self.table_mode
+                        && let Some(count) = self.total_checks_of.get_mut(&q.term)
+                    {
+                        *count = count.saturating_sub(1);
+                    }
                     self.checks_of.insert(q.term, 0);
                     self.last_decline = None;
                     return ModelCheckOutcome::Satisfied;
@@ -625,8 +721,14 @@ impl ModelChecker {
             Ok(SolverResult::Unsat) => {
                 // A certification for this exact model: remembered so later
                 // rounds against the same completed model reuse it, and a
-                // productive outcome (resets the wasted-solve streak).
+                // productive outcome (resets the wasted-solve streak — and
+                // refunds the per-quantifier total; see `mark_productive`).
                 self.certified_at.entry(q.term).or_default().push(signature);
+                if self.table_mode
+                    && let Some(count) = self.total_checks_of.get_mut(&q.term)
+                {
+                    *count = count.saturating_sub(1);
+                }
                 self.checks_of.insert(q.term, 0);
                 self.last_decline = None;
                 ModelCheckOutcome::Satisfied
@@ -667,10 +769,29 @@ impl ModelChecker {
                 // every universe element whose reflexive pin is missing,
                 // however `z` was constructed).  Interpreted sorts keep the
                 // instantiation set (their "universe" is an infinite-domain
-                // sample, not a domain).
+                // sample, not a domain).  A constructor argument axis of a
+                // defining axiom takes its *semantic* domain instead: the
+                // universe with compounds collapsed through the computed
+                // tables (`union(b,b)` and `b` are one point), so the
+                // odometer stops re-mining falsifiers the table already
+                // closed.
                 let sets: Vec<Vec<TermId>> = skolem_terms
                     .iter()
-                    .map(|&(_, sort, _)| {
+                    .enumerate()
+                    .map(|(i, &(_, sort, _))| {
+                        if let Some(domain) = model.semantic_domains.get(&(q.term, i)) {
+                            return domain.clone();
+                        }
+                        // A table-owned axiom's other axes range over the
+                        // frozen table domain: the raw universe grows with
+                        // every witness the ground solver mints (nested
+                        // Skolem applications among them), and mining the
+                        // fresh points re-moves the model every round.
+                        if model.constructor_sources.contains_key(&q.term)
+                            && let Some(domain) = model.table_domain(sort, manager)
+                        {
+                            return domain;
+                        }
                         let finite_universe = manager
                             .sorts
                             .get(sort)
@@ -850,11 +971,14 @@ impl ModelChecker {
         // allowed to take (the false-`Satisfied` on `2v+1 = y` with the
         // falsifier outside the sample).
         for &(_name, sort, sk) in skolem_terms {
+            // A tabled sort's completed structure has its own (frozen,
+            // semantic) domain — the restriction confines the Skolems to
+            // exactly that, the points the interpretation is defined over.
             let finite_universe = manager
                 .sorts
                 .get(sort)
                 .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
-                .then(|| model.ground_universe(sort, manager))
+                .then(|| model.table_domain(sort, manager))
                 .flatten();
             if let Some(universe) = finite_universe
                 && !universe.is_empty()
@@ -1029,7 +1153,10 @@ fn skolem_var_map(
 /// legitimate total extension of the entry table, and the nested check
 /// verifies against exactly these); the preference order only affects how
 /// quickly the outer loop converges.
-fn choose_else_table(model: &CompletedModel, manager: &mut TermManager) -> FxHashMap<Spur, TermId> {
+pub(crate) fn choose_else_table(
+    model: &CompletedModel,
+    manager: &mut TermManager,
+) -> FxHashMap<Spur, TermId> {
     let mut table: FxHashMap<Spur, TermId> = FxHashMap::default();
     for (&func, interp) in &model.function_interps {
         if let Some(else_val) = choose_else(interp, model, manager) {
@@ -1037,6 +1164,20 @@ fn choose_else_table(model: &CompletedModel, manager: &mut TermManager) -> FxHas
         }
     }
     table
+}
+
+/// Evaluate a *ground* term under the completed model (entries, computed
+/// constructor entries, macros, else) with no symbolic names: the
+/// constructor-table search's row/target evaluator.  Declines (like
+/// [`CompletionEval::run`]) when the term does not fold.
+pub(crate) fn eval_completed_ground(
+    term: TermId,
+    model: &CompletedModel,
+    else_table: &FxHashMap<Spur, TermId>,
+    manager: &mut TermManager,
+) -> Result<TermId, &'static str> {
+    let bound: FxHashSet<Spur> = FxHashSet::default();
+    CompletionEval::run(term, model, &bound, else_table, manager)
 }
 
 /// Whether the completed body still applies some *Bool-valued* function at
@@ -1126,6 +1267,26 @@ fn completed_model_signature(model: &CompletedModel) -> u64 {
                 a.0.hash(&mut hasher);
             }
             entry.result.0.hash(&mut hasher);
+        }
+    }
+    // The computed constructor tables and the semantic domains are part
+    // of the interpretation: a certification remembered for a signature
+    // must not survive a table change.
+    model.computed_entries.len().hash(&mut hasher);
+    for entries in model.computed_entries.values() {
+        entries.len().hash(&mut hasher);
+        for entry in entries {
+            for &a in &entry.args {
+                a.0.hash(&mut hasher);
+            }
+            entry.result.0.hash(&mut hasher);
+        }
+    }
+    model.semantic_domains.len().hash(&mut hasher);
+    for domain in model.semantic_domains.values() {
+        domain.len().hash(&mut hasher);
+        for &e in domain {
+            e.0.hash(&mut hasher);
         }
     }
     core::hash::Hasher::finish(&hasher)
@@ -1266,7 +1427,7 @@ fn collect_nested_binder_names(
 ///
 /// Binders push only what this engine evaluates (a quantifier's body);
 /// `Let`/`Match` are declined by the callers and push nothing.
-fn push_children(kind: &TermKind, out: &mut ChildList) {
+pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
     match kind {
         TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => out.push(*body),
         TermKind::Let { .. } | TermKind::Match { .. } => {}
@@ -2059,6 +2220,20 @@ impl<'a> CompletionEval<'a> {
                     }
                 }
             }
+            // Computed constructor entries (see `constructor_tables`):
+            // consulted after the ground pins — the table's whole design
+            // is "never override a pin" — and before the `else`.  A hit is
+            // an interpretation *choice*, not a ground fact.
+            if let Some(computed) = self.model.computed_entries.get(&func) {
+                for entry in computed {
+                    if args_match(entry, evaluated_args, self.model, manager) {
+                        if self.recording {
+                            self.free_choice = true;
+                        }
+                        return Ok(entry.result);
+                    }
+                }
+            }
             if let Some(&else_val) = self.else_table.get(&func) {
                 // An `else` fallthrough is a completion choice, not a
                 // ground-model pin.
@@ -2095,11 +2270,19 @@ impl<'a> CompletionEval<'a> {
                 sort_default(sort, self.model, manager).ok_or("no else for symbolic application")?
             }
         };
-        let Some(interp) = interp else {
-            return Ok(else_leaf);
-        };
+        // The chain covers the computed constructor entries too (see
+        // `constructor_tables`): ground entries shadow computed ones — the
+        // chained iteration processes the computed entries first so the
+        // ground pins nest outermost and win, mirroring the concrete
+        // path's priority.
+        let computed: &[FunctionEntry] = self
+            .model
+            .computed_entries
+            .get(&func)
+            .map_or(&[], |v| v.as_slice());
+        let ground: &[FunctionEntry] = interp.map_or(&[], |i| i.entries.as_slice());
         let mut acc = else_leaf;
-        for entry in interp.entries.iter().rev() {
+        for entry in ground.iter().chain(computed.iter()).rev() {
             // Encoding artifacts: an entry indexed by a bound-variable
             // mentioning argument is not a fact about the completed
             // interpretation (the bound variable is not a domain element
@@ -2606,7 +2789,7 @@ fn order_satisfies(kind: &TermKind, order: NumOrder) -> bool {
 
 /// Whether an entry's (normalized) arguments match fully concrete evaluated
 /// arguments.
-fn args_match(
+pub(crate) fn args_match(
     entry: &FunctionEntry,
     evaluated_args: &[TermId],
     model: &CompletedModel,

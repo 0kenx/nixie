@@ -821,7 +821,13 @@ impl EnumerativeInstantiator {
         let mut instantiations = Vec::new();
 
         // Build small domains for each variable
-        let domains = self.build_small_domains(&quantifier.bound_vars, model, manager, max_per_var);
+        let domains = self.build_small_domains(
+            quantifier.term,
+            &quantifier.bound_vars,
+            model,
+            manager,
+            max_per_var,
+        );
 
         // Enumerate all combinations
         let combinations = self.enumerate_combinations(&domains);
@@ -852,6 +858,7 @@ impl EnumerativeInstantiator {
 
     fn build_small_domains(
         &self,
+        quantifier_term: TermId,
         bound_vars: &[(Spur, SortId)],
         model: &CompletedModel,
         manager: &mut TermManager,
@@ -859,7 +866,7 @@ impl EnumerativeInstantiator {
     ) -> Vec<Vec<TermId>> {
         let mut domains = Vec::new();
 
-        for &(_name, sort) in bound_vars {
+        for (i, &(_name, sort)) in bound_vars.iter().enumerate() {
             let mut domain = Vec::new();
             // Use the universe if available — as the model's *distinguished
             // values*, not its raw terms: two universe elements the model
@@ -876,7 +883,21 @@ impl EnumerativeInstantiator {
             // harvested universe contains bound-variable artifact terms,
             // and instantiating at one emits a lemma about a stray global
             // constant.
-            if let Some(universe) = model.ground_universe(sort, manager) {
+            //
+            // A constructor argument axis of a defining axiom takes its
+            // *semantic* domain instead (see `constructor_tables`): the
+            // universe with compounds collapsed through the computed
+            // tables, so the seeder stops instantiating `union`-shaped
+            // axioms at compounds next to the points they already denote
+            // (`(x, b, union(b,b))` is the `(x, b, b)` tuple) — that
+            // enumeration is what minted the ever-deeper compounds of the
+            // chase.  Non-defining axioms (the merge-forcing `seteq`
+            // pairs) keep the raw universe: their instances at *distinct*
+            // ground pairs are exactly what forces the merges that shrink
+            // the universe back down.
+            if let Some(semantic) = model.semantic_domains.get(&(quantifier_term, i)) {
+                domain.extend(semantic.iter().copied());
+            } else if let Some(universe) = model.table_domain(sort, manager) {
                 let mut seen_values: FxHashSet<TermId> = FxHashSet::default();
                 for element in universe {
                     let value = model.assignments.get(&element).copied().unwrap_or(element);

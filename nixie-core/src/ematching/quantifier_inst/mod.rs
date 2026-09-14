@@ -70,6 +70,8 @@ pub struct EmatchEngine {
     quantifiers: Vec<QuantifierInfo>,
     cache: InstantiationCache,
     stats: EmatchStats,
+    /// Quantifiers suspended from matching (see [`Self::suspend_quantifier`]).
+    suspended: FxHashSet<TermId>,
 }
 
 /// Information about a quantifier
@@ -125,6 +127,7 @@ impl EmatchEngine {
             quantifiers: Vec::new(),
             cache: InstantiationCache::default(),
             stats: EmatchStats::default(),
+            suspended: FxHashSet::default(),
         }
     }
 
@@ -165,6 +168,21 @@ impl EmatchEngine {
         self.cache.clear();
     }
 
+    /// Suspend E-matching for one quantifier: its triggers stop firing
+    /// until lifted.  Used by the MBQI integration when a constructor
+    /// table owns the quantifier's defining role: matches at compound
+    /// terms would mint ever-deeper compounds (the chase this module
+    /// exists to kill), while the table plus its semantic-domain pins
+    /// already cover every relevant tuple.
+    pub fn suspend_quantifier(&mut self, quant_id: TermId) {
+        self.suspended.insert(quant_id);
+    }
+
+    /// Lift a suspension (see [`Self::suspend_quantifier`]).
+    pub fn unsuspend_quantifier(&mut self, quant_id: TermId) {
+        self.suspended.remove(&quant_id);
+    }
+
     /// Perform one round of E-matching and return instantiated terms.
     ///
     /// For each registered quantifier, iterates over its trigger patterns and
@@ -187,6 +205,10 @@ impl EmatchEngine {
         for quant_info in &quantifiers {
             if results.len() >= max_this_round || self.stats.total_instantiations >= max_total {
                 break;
+            }
+            // Suspended quantifiers (see [`EmatchEngine::suspend_quantifier`]).
+            if self.suspended.contains(&quant_info.quant_id) {
+                continue;
             }
 
             // Extract quantifier body and bound variables
