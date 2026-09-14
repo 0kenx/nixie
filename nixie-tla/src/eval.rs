@@ -275,6 +275,32 @@ impl Evaluator {
             }
 
             Kera::Eq(a, b) => Ok(Value::Bool(self.go(a, env)? == self.go(b, env)?)),
+            // `x \in Nat` is decidable even though `Nat` is not a value this
+            // evaluator can build. The standard infinite sets have no finite
+            // extension, so they are answered by the *kind* of the value
+            // rather than by membership in a set — which is the only thing
+            // they are ever used for in a state predicate, and the whole
+            // reason a specification may say `x \in Nat` at all.
+            //
+            // They stay unavailable everywhere else: `Nat` as a value, or as
+            // the range of a quantifier, is still refused rather than
+            // approximated by some finite prefix.
+            Kera::In(a, b) if standard_infinite_set(b).is_some() => {
+                let x = self.go(a, env)?;
+                let Some(which) = standard_infinite_set(b) else {
+                    return Err(EvalErrorKind::Unsupported("a standard set".into()));
+                };
+                Ok(Value::Bool(match (which, &x) {
+                    ("Nat", Value::Int(i)) => *i >= 0,
+                    ("Int", Value::Int(_)) => true,
+                    // TLA+'s `Real` contains every integer. A genuine real is
+                    // not a value this evaluator has, so the answer is exact
+                    // for everything it can be asked about.
+                    ("Real", Value::Int(_)) => true,
+                    ("STRING", Value::Str(_)) => true,
+                    _ => false,
+                }))
+            }
             Kera::In(a, b) => {
                 let x = self.go(a, env)?;
                 let s = self.set_of(b, env)?;
@@ -895,5 +921,26 @@ fn update(base: Value, at: Value, to: Value) -> Result<Value> {
             expected: "a function".into(),
             found: other.kind().into(),
         }),
+    }
+}
+
+/// The standard *infinite* set a term names, if it is one.
+///
+/// `BOOLEAN` is not here: lowering expands it to `{FALSE, TRUE}`, which is a
+/// finite set and needs no special case.
+fn standard_infinite_set(term: &KeraRef) -> Option<&'static str> {
+    let name = match term.as_ref() {
+        Kera::Var(n) => n.as_str(),
+        Kera::Opaque(n, args) if args.is_empty() => n.as_str(),
+        _ => return None,
+    };
+    match name {
+        "Nat" | "Int" | "Real" | "STRING" => Some(match name {
+            "Nat" => "Nat",
+            "Int" => "Int",
+            "Real" => "Real",
+            _ => "STRING",
+        }),
+        _ => None,
     }
 }
