@@ -388,3 +388,44 @@ shapes that worked: `NIXIE_DEBUG_ENTRIES` (entry dumps),
 Post-revert verification: quant_fuzz seeds {41,42,43} x 150 with the
 strengthened generator — CLEAN (101+96+93 unsat and 15+16+15 sat, all
 matching z3); pins 9/9; parity 176/1/0; 58 quantifier regressions.
+
+
+## Seventh pass (2026-09-14): the root cause — binder nodes read from the SAT core's wrapper commitments
+
+The sixth pass's containment (the filter revert) is superseded by the
+root-cause fix, found by instrumenting the exact fold that never fired:
+
+**`CompletionEval`'s assignment-table shortcut applied to binder
+nodes.**  The encoder internalizes a quantified subformula with a
+Tseitin wrapper Boolean, and the ground model's assignment table carries
+that wrapper's *commitment* — a value the SAT core chose freely (the
+wrapper dodge), not the subformula's truth.  The evaluator's `Enter`
+arm looked the term up whenever it was "not symbolic" — and
+`(forall z. true)`'s traversal sees no free variable, so the shortcut
+fired: the *valid* subformula read as `false`, and
+`(=> (forall z. true) (P x y))` certified vacuously.  That is the whole
+false-`sat`; the entry-chain and mining-bound leaks were secondary
+exposures of the same admission.
+
+**The fix bundle** (one unit, re-landing the reverted admission with
+the class closed):
+1. `Enter` never consults the assignment table for `Forall`/`Exists`
+   nodes (a binder is never a ground-model fact).
+2. The ground-universe filter re-admitted, keyed on tracked
+   bound-variable *names* (free constants are elements; encoder binder
+   constants are not), with the name set frozen on the model.
+3. Entry tables drop artifact-keyed entries at harvest (the wildcard
+   `[x, y] -> v` rows the encoder's internalization leaves behind).
+4. The falsifier-mining evaluation runs with the tracked names as its
+   symbolic set — a surviving artifact variable stays symbolic instead
+   of being fabricated into `(= artifact c) -> false` by the
+   universe-distinctness fold.
+
+Verification: the twins reproducer answers `unsat` (z3 agrees);
+quant_fuzz (strengthened) seeds {41..46} x 150 — **900 cases, CLEAN**;
+mixed_fuzz 250 arithmetic cases — no disagreements, no refuted models;
+58 quantifier regressions (both new pins in); pins 9/9 (173s); parity
+176/1/0; fmt/clippy clean on the touched files.  set16 re-checked on the
+fixed binary: still `unknown` (13.5s — the finder-project blocker is
+unchanged, as diagnosed: the enum churn over the growing Real-domain
+sample, not the wrapper path).

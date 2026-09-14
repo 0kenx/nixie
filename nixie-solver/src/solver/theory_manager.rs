@@ -3493,6 +3493,19 @@ impl<'a> TheoryManager<'a> {
                 } else {
                     // Negative assignment: a != b, tell EUF about disequality.
                     // Use the constraint term as the reason (it has a SAT variable).
+                    //
+                    // ARITHMETIC IS DELIBERATELY NOT INFORMED HERE, and cannot
+                    // be: the simplex has no `!=`.  A numeric disequality
+                    // reaches the tableau only through the atom's trichotomy
+                    // clause `(a = b) | (a < b) | (a > b)`, which unit-
+                    // propagates to a strict bound once this atom is false.
+                    // Every numeric equality atom is therefore *required* to
+                    // carry one — see `Solver::pending_numeric_eq_splits` and
+                    // the `every_numeric_equality_atom_carries_its_trichotomy`
+                    // regression.  An atom that reaches here without one is a
+                    // wrong `sat` waiting to happen: the Boolean level
+                    // believes the sides differ while the tableau is free to
+                    // give them the same value.
                     let constraint_term = self.term_for_var(var);
                     let lhs_node = self.intern_term_for_congruence(lhs, manager);
                     let rhs_node = self.intern_term_for_congruence(rhs, manager);

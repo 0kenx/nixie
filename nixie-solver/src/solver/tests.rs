@@ -2249,3 +2249,69 @@ fn set_config_propagates_search_fields_into_live_sat_engine() {
     assert!(solver.sat.config().enable_inprocessing);
     assert_eq!(solver.sat.config().inprocessing_interval, 1234);
 }
+
+/// The trichotomy invariant: after a `check`, **every** numeric equality atom
+/// that holds a SAT variable also carries its `(a = b) ∨ (a < b) ∨ (a > b)`
+/// clause.
+///
+/// This is the structural form of the wrong `sat` in
+/// `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`.
+/// `process_constraint`'s negative-`Eq` branch informs EUF and the bit-vector
+/// solver, never arithmetic — the simplex has no `≠` — so the trichotomy
+/// clause is the *only* channel by which a `false` equality atom becomes a
+/// strict bound on the tableau.  An atom without one is a hole through which
+/// the tableau may give the two sides equal values while the Boolean level
+/// believes they differ.
+///
+/// `ensure_numeric_equality_splits` establishes the invariant for the
+/// assertion spine; the encoder establishes it for every atom a *lemma* mints
+/// while solving.  This test pins the union, so a new lemma source that mints
+/// a numeric equality cannot reopen the hole silently.
+#[test]
+fn every_numeric_equality_atom_carries_its_trichotomy() {
+    let mut manager = TermManager::new();
+    let int = manager.sorts.int_sort;
+    let arr = manager.sorts.array(int, int);
+    let base = manager.mk_var("base", arr);
+    let n0 = manager.mk_var("n0", int);
+    let n1 = manager.mk_var("n1", int);
+    let zero = manager.mk_int(BigInt::from(0));
+    let one = manager.mk_int(BigInt::from(1));
+    let seven = manager.mk_int(BigInt::from(7));
+    let two = manager.mk_int(BigInt::from(2));
+    let stored = manager.mk_store(base, one, seven);
+    let at = manager.mk_select(stored, n1);
+
+    let mut solver = Solver::new();
+    let c0 = manager.mk_eq(n0, zero);
+    let sum = manager.mk_add([n0, one]);
+    let c1 = manager.mk_eq(n1, sum);
+    let c2 = manager.mk_eq(at, two);
+    solver.assert(c0, &mut manager);
+    solver.assert(c1, &mut manager);
+    solver.assert(c2, &mut manager);
+    let _ = solver.check(&mut manager);
+
+    let numeric = |t: TermId, m: &TermManager| -> bool {
+        m.get(t)
+            .is_some_and(|d| d.sort == m.sorts.int_sort || d.sort == m.sorts.real_sort)
+    };
+    let mut missing: Vec<(TermId, TermId)> = Vec::new();
+    for constraint in solver.var_to_constraint.values() {
+        let Constraint::Eq(l, r) = *constraint else {
+            continue;
+        };
+        if !numeric(l, &manager) || !numeric(r, &manager) {
+            continue;
+        }
+        let pair = if l < r { (l, r) } else { (r, l) };
+        if !solver.numeric_eq_split_pairs.contains(&pair) {
+            missing.push(pair);
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "numeric equality atoms without a trichotomy clause: {missing:?} \
+         (each is a `false` assignment the arithmetic solver can never hear about)"
+    );
+}

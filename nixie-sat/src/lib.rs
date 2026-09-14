@@ -166,6 +166,7 @@ mod maxsat;
 mod memory;
 mod memory_opt;
 mod ml_branching;
+mod mut_trace;
 mod occurrence;
 pub mod preprocessing;
 mod preprocessing_core;

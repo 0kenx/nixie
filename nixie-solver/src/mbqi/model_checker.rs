@@ -726,12 +726,22 @@ impl ModelChecker {
                         subst.insert(manager.mk_var(&name_str, sort), value);
                     }
                     let substituted = manager.substitute(body_completed, &subst);
-                    let empty_bound: FxHashSet<Spur> = FxHashSet::default();
+                    // The mining evaluation's symbolic set is the
+                    // tracked bound-variable NAMES, not the empty set:
+                    // the substitution has replaced every legitimate
+                    // bound variable, so nothing legitimate turns
+                    // symbolic — but an *artifact* variable (an encoder
+                    // binder constant that leaked through a completion
+                    // entry chain) does, which declines the
+                    // universe-distinctness fold for it instead of
+                    // fabricating `(= artifact c_i) -> false` (the
+                    // 2026-09-14 false-`sat` mechanism).
+                    let artifact_names = &model.bound_var_names;
                     let (evaluated, commitments, free_choice, _consulted) =
                         CompletionEval::run_recorded(
                             substituted,
                             model,
-                            &empty_bound,
+                            artifact_names,
                             &else_table,
                             manager,
                         );
@@ -1641,7 +1651,18 @@ impl<'a> CompletionEval<'a> {
                     // artifacts like `(f3 f4 (+ f6 ?v0)) = 0`); honoring
                     // those would fix the variable's value and fabricate a
                     // satisfaction verdict (the round-1 false-`sat` shape).
-                    if !self.is_symbolic(term, manager) {
+                    //
+                    // A *binder* node is never a ground-model fact either:
+                    // its assignment-table row is the SAT core's wrapper
+                    // Boolean for the quantified subformula — a commitment
+                    // the search chose to dodge the subformula's
+                    // consequences, not the subformula's truth value.
+                    // Reading it fabricated `(forall z. true) -> false`
+                    // and certified `(=> (forall z. true) (P x y))`
+                    // vacuously (the strengthened quant_fuzz false-`sat`).
+                    let is_binder =
+                        matches!(node.kind, TermKind::Forall { .. } | TermKind::Exists { .. });
+                    if !is_binder && !self.is_symbolic(term, manager) {
                         if let Some(&value) = self.model.assignments.get(&term) {
                             self.record_commitment(term, value, manager);
                             self.cache.insert(term, value);

@@ -128,6 +128,61 @@ impl Solver {
             // row surfaces exactly like a CNF conflict.
             if let Some(conflict) = self.propagate().or_else(|| self.xor_search_step()) {
                 self.stats.conflicts += 1;
+                #[cfg(feature = "std")]
+                if let Ok(step) = std::env::var("NIXIE_DB_DIGEST")
+                    && let Ok(step) = step.parse::<u64>()
+                    && self.stats.conflicts.is_multiple_of(step)
+                {
+                    let mut h = 1469598103934665603u64;
+                    let mut live = 0u64;
+                    for cid in self.clauses.iter_ids() {
+                        if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted) {
+                            live += 1;
+                            for (i, &l) in c.lits.iter().enumerate() {
+                                h ^= (l.code() as u64).wrapping_mul(31 + (i as u64) * 100);
+                                h = h.rotate_left(3);
+                            }
+                            h = h.rotate_left(7);
+                        }
+                    }
+                    eprintln!("[dbd] {} live={} h={:016x}", self.stats.conflicts, live, h);
+                    if let Ok(rng) = std::env::var("NIXIE_WDUMP_RANGE")
+                        && let Some((lo, hi)) = rng.split_once('-')
+                        && let (Ok(lo), Ok(hi)) = (lo.parse::<u64>(), hi.parse::<u64>())
+                        && self.stats.conflicts >= lo
+                        && self.stats.conflicts <= hi
+                        && self.stats.conflicts.is_multiple_of(2)
+                    {
+                        self.debug_dump_watches_conflict(format!(
+                            "/tmp/wdc-{}.{}.txt",
+                            self.stats.conflicts,
+                            std::process::id()
+                        ));
+                    }
+                    if let Ok(want) = std::env::var("NIXIE_DB_DUMP_AT")
+                        && want.parse::<u64>() == Ok(self.stats.conflicts)
+                    {
+                        use std::fmt::Write as _;
+                        let mut out = String::new();
+                        for cid in self.clauses.iter_ids() {
+                            if let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
+                                && c.lits.len() >= 2
+                                && let Some(r) = self.clauses.ref_of(cid)
+                            {
+                                let _ = writeln!(
+                                    out,
+                                    "{} {} {} {}",
+                                    r.byte_offset(),
+                                    c.lits[0].code(),
+                                    c.lits[1].code(),
+                                    c.lits.len()
+                                );
+                            }
+                        }
+                        let _ =
+                            std::fs::write(format!("{want}.dbdump.{}", std::process::id()), out);
+                    }
+                }
 
                 if self.trail.decision_level() == 0 {
                     // Conflict under only level-0 facts: UNSAT, and the proof
