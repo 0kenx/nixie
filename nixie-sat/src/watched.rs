@@ -1780,6 +1780,21 @@ pub fn csr_read_enabled() -> bool {
     }
 }
 
+/// `NIXIE_CSR_CHARGE_TRACE=1`: log every session tick charge (the
+/// commit-B divergence probe — see the CSR study's commit-B sections).
+pub fn csr_charge_trace_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| std::env::var("NIXIE_CSR_CHARGE_TRACE").is_ok())
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
+    }
+}
+
 /// `NIXIE_CSR_SHADOW=1`: run the CSR shadow validation at every watch
 /// rebuild (slice 1 of the CSR-watches migration — see
 /// `docs/studies/2026-09-13-csr-watches-kickoff.md`).  Diagnostic only:

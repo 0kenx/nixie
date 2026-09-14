@@ -562,3 +562,39 @@ Next session's entry: diff the tick counters (`ticks_focused`/
 instrument the first reused-trails decision's inputs.  The attempt's
 edits remain ~1 h to re-apply from this section + the previous one;
 the tree is restored to flip-A (green: 1092×2 configs, 33 028).
+
+## Commit B, third attempt: the divergence is a tick-accounting
+artifact inside the elim phase — 280 stable ticks (parked with the tool)
+
+The roundtrip re-applied a third time with a **charge-level trace**
+(`NIXIE_CSR_CHARGE_TRACE=1`, now landed on the flip-A tree — every
+session tick charge logged with `(charge, stable, len, bins, ghosts,
+code)`).  Measured facts:
+
+- **The +280 ticks are all in the session driver's stable charges**
+  (the trace's stable sum exactly equals the reported stable ticks —
+  1 592 521 at MAXC 4 010).
+- Focused ticks identical; the phase's propagations ~3.3 k FEWER in
+  the roundtrip world yet charging MORE — the lists scanned were
+  longer at charge time.
+- **The drift oracle is useless in commit B**: the dead Vec is empty
+  (never written — `add` is CSR-only), so the compare reports
+  thousands of spurious mismatches.  There is no in-process baseline.
+
+**The next tool, designed but not built**: a `NIXIE_DUMP_WATCHES` env
+that dumps the CSR's combined view per literal at each rebuild — run
+under flip-A (whose CSR is mirror-maintained and equal to its scanned
+Vec) and under commit B, diff at the phase boundary → the first
+diverging literal and the exact list-content delta.  That converts the
+tick symptom into a state symptom in one run each.
+
+The suspect refined once more: the roundtrip's `put_back_combined`
+eagerly re-splits kept entries into span-up-to-capacity + overflow,
+while the mirror kept each survivor in its source segment — combined
+ORDER is identical, so the charge-length difference implies the
+CONTENT differed (entries the old world had dropped before charging,
+or entries the new world retained).  The watch-dump diff settles it.
+
+Tree restored to flip-A + the charge-trace tool (green: 1092 tests,
+33 028).  The attempt remains ~1 h to re-apply from this study's three
+commit-B sections.

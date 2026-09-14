@@ -28,6 +28,7 @@ impl Solver {
         let mut queue = session.queue;
         let mut arena = self.clauses.propagation();
         let (destinations, phantom, ghost_debt, csr) = self.watches.propagation_parts();
+        let stable_mode = self.stable;
         let graph = &self.binary_graph;
         let ticks = if self.stable {
             &mut self.ticks_stable
@@ -145,6 +146,18 @@ impl Solver {
                 ghost_debt[code] = 0;
             }
             *ticks = ticks.saturating_add(charge);
+            #[cfg(feature = "std")]
+            if crate::watched::csr_charge_trace_enabled() {
+                eprintln!(
+                    "[charge] c={} stable={} len={} bins={} ghosts={} code={}",
+                    charge,
+                    stable_mode,
+                    watches.len(),
+                    bins,
+                    ghosts,
+                    code
+                );
+            }
             // Swapped-state preparation (fallible, unwrap-free): copy the
             // span out and take the overflow so the kernel's CSR access
             // never aliases the scanned segments.
