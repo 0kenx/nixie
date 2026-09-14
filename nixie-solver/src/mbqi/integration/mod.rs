@@ -22,7 +22,7 @@ use super::finite_model::FiniteModelFinder;
 use super::heuristics::MBQIBudget;
 use super::instantiation::InstantiationEngine;
 use super::lazy_instantiation::LazyInstantiator;
-use super::model_checker::{ModelCheckOutcome, ModelChecker};
+use super::model_checker::{MinedFalsifier, ModelCheckOutcome, ModelChecker};
 use super::model_completion::CompletedModel;
 use super::model_completion::ModelCompleter;
 use super::sat_certify;
@@ -106,6 +106,14 @@ pub struct MBQIIntegration {
     cex_generator: CounterExampleGenerator,
     /// Z3-style nested-solver model checker (see `model_checker`)
     model_checker: ModelChecker,
+    /// Model-repair blocking clauses collected during the current round
+    /// (Z3's `add_blocking_clause` analogue, adapted to nixie's
+    /// architecture): one commitment set per duplicate falsifier whose
+    /// evaluation consumed only ground-model facts.  Drained by the
+    /// solver after the round; each becomes the clause
+    /// `or_i (atom_i != value_i)`, excluding the arrangement the
+    /// falsification rested on from the next candidate model.
+    model_repair_clauses: Vec<Vec<(TermId, TermId)>>,
     /// Logic hint for the nested solver ("UFLRA", ...), set by
     /// [`MBQIIntegration::set_logic_hint`].
     logic_hint: Option<String>,
@@ -145,6 +153,7 @@ impl MBQIIntegration {
             finite_model_finder: FiniteModelFinder::new(),
             cex_generator: CounterExampleGenerator::new(),
             model_checker: ModelChecker::new(),
+            model_repair_clauses: Vec::new(),
             logic_hint: None,
             quantifiers: Vec::new(),
             generated_instantiations: FxHashMap::default(),
@@ -229,6 +238,270 @@ impl MBQIIntegration {
     /// theories the same way the outer solver does.
     pub fn set_logic_hint(&mut self, logic: &str) {
         self.logic_hint = Some(logic.to_string());
+    }
+
+    /// The escalation proper (see the call sites in [`Self::run`]): decide
+    /// `quantifier` against a total completed interpretation with the
+    /// nested model checker.  `Satisfied` records the certification (and,
+    /// for a macro's defining axiom, emits the defining pins); a
+    /// counterexample yields sound instantiation lemmas and — for duplicate
+    /// falsifiers whose evaluation consumed only ground commitments — a
+    /// model-repair blocking clause.  A decline changes nothing.  Returns
+    /// whether the check *vetoes* the legacy finite-exhaustion `Satisfied`
+    /// verdict for this quantifier (any counterexample whose mined lemmas
+    /// were all duplicates — or none were minable at all).
+    fn escalate_to_model_checker(
+        &mut self,
+        quantifier: &QuantifiedFormula,
+        completed_model: &CompletedModel,
+        manager: &mut TermManager,
+        satisfied_by_checker: &mut FxHashSet<TermId>,
+        all_instantiations: &mut Vec<Instantiation>,
+        callback: &mut dyn SolverCallback,
+    ) -> bool {
+        // A falsified or undetermined check vetoes the legacy
+        // finite-exhaustion `Satisfied` (the caller reads this through
+        // `satisfied_by_checker`).
+        let mut veto = false;
+        let logic = self.logic_hint.clone();
+        match self
+            .model_checker
+            .check(quantifier, completed_model, logic.as_deref(), manager)
+        {
+            ModelCheckOutcome::Satisfied => {
+                satisfied_by_checker.insert(quantifier.term);
+                // SatisfiedWithPins: certifying a macro's defining axiom
+                // also emits its defining instances at universe tuples.
+                // Every instance of an asserted universal is a sound
+                // consequence, so this only adds lemmas — but *forcing*
+                // ones: they pin the function at the universe's compound
+                // elements (`union(b,a)`, ...) whose diagonal the
+                // enumerative seeder can no longer reach once its
+                // per-quantifier budget is spent.  Without the pins, later
+                // rounds re-mine the same duplicate falsifiers against an
+                // interpretation whose entries never materialize in the
+                // ground model.  Guarded (lemma-registered) quantifiers are
+                // excluded: their instances hold only under the guard
+                // literal.
+                if quantifier.guard.is_none() {
+                    self.emit_macro_defining_pins(
+                        quantifier,
+                        completed_model,
+                        manager,
+                        all_instantiations,
+                        callback,
+                    );
+                }
+            }
+            ModelCheckOutcome::Counterexample { falsifiers } => {
+                // The nested refutation found a falsifier *inside the Skolem
+                // restriction* — the finite universe — so the completed model
+                // demonstrably fails this quantifier on a domain point.
+                // When even the mined lemmas are all duplicates, the
+                // sampling engines' "true on every candidate tuple" verdict
+                // that powers the legacy finite-exhaustion `Satisfied` is
+                // demonstrably untrustworthy for this quantifier (the Rodin
+                // false-`sat`: a stale-entry lookup evaluated the goal
+                // bodies `true` at tuples the completed model refutes).
+                veto = true;
+                for falsifier in &falsifiers {
+                    let MinedFalsifier {
+                        substitution,
+                        commitments,
+                        fully_pinned,
+                    } = falsifier;
+                    if let Some(ground_body) =
+                        self.apply_substitution(quantifier, substitution, manager)
+                    {
+                        let inst = Instantiation::with_reason(
+                            quantifier.term,
+                            substitution.clone(),
+                            ground_body,
+                            completed_model.generation,
+                            InstantiationReason::ModelBased,
+                        );
+                        if !self.is_duplicate(&inst) {
+                            self.record_instantiation(&inst);
+                            callback.on_instantiation(&inst);
+                            all_instantiations.push(inst);
+                            // A fresh lemma came out of this check: forget
+                            // the model signature so a later round may ask
+                            // again even if the model happens not to move,
+                            // and refund the per-quantifier lifetime cap
+                            // (the check paid for itself).
+                            self.model_checker.mark_productive(quantifier.term);
+                            veto = false;
+                        } else if *fully_pinned && !commitments.is_empty() {
+                            // Z3's `add_blocking_clause`, adapted: the
+                            // falsifier's evaluation consumed only the
+                            // recorded ground commitments, so this exact
+                            // value arrangement demonstrably fails the
+                            // quantifier — exclude it from the next
+                            // candidate model.  The next model must differ
+                            // in at least one commitment: either produce
+                            // the witness a committed-false dodge claims,
+                            // or flip the commitment.  (Falsifiers that
+                            // leaned on a free completion choice — `else`,
+                            // macro, universe — carry no clause: their
+                            // repair is a completion revision, and blocking
+                            // the ground-visible part could exclude a
+                            // genuine solution.)
+                            self.model_repair_clauses.push(commitments.clone());
+                            if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                                eprintln!(
+                                    "[mc] model repair: blocked {} commitments on duplicate falsifier of q={:?}",
+                                    commitments.len(),
+                                    quantifier.term
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            ModelCheckOutcome::Declined => {}
+        }
+        veto
+    }
+
+    /// Drain the model-repair blocking clauses collected during the last
+    /// round.  Each entry
+    /// is one falsifier's supporting commitment set: `(atom, value)` pairs
+    /// with `atom` a Bool-sorted ground term and `value` its completed
+    /// truth value.  The caller emits `or_i (atom_i != value_i)`.
+    pub fn take_model_repair_clauses(&mut self) -> Vec<Vec<(TermId, TermId)>> {
+        core::mem::take(&mut self.model_repair_clauses)
+    }
+
+    /// The nested model checker's last decline reason (debug channel).
+    pub fn model_checker_last_decline(&self) -> Option<&'static str> {
+        self.model_checker.last_decline
+    }
+
+    /// `SatisfiedWithPins`: the nested checker just certified `quantifier`
+    /// against a total completed interpretation, and `quantifier` is the
+    /// winning defining axiom of one or more macros.  Emit the axiom's
+    /// instances at universe tuples — diagonals first, then the rest — so
+    /// the ground solver pins the defined function at every element of the
+    /// universe, compound constructor terms included.  Each pin is an
+    /// instance of an *asserted* universal, hence a sound consequence; the
+    /// effect is forcing: later rounds' completed models then read the
+    /// pinned entries instead of falling through to an `else` at exactly
+    /// the tuples whose duplicate falsifiers were spinning the rounds.
+    /// The per-quantifier instantiation budget is not consumed (these are
+    /// certification artifacts, independently capped).
+    fn emit_macro_defining_pins(
+        &mut self,
+        quantifier: &QuantifiedFormula,
+        model: &CompletedModel,
+        manager: &mut TermManager,
+        out: &mut Vec<Instantiation>,
+        callback: &mut dyn SolverCallback,
+    ) {
+        /// Cap on defining instances emitted per satisfied quantifier.
+        const MAX_PINS: usize = 64;
+        /// Cap on the tuple product walked per macro.
+        const MAX_TUPLE_PRODUCT: usize = 1024;
+
+        if !model.macro_sources.contains_key(&quantifier.term) {
+            return;
+        }
+
+        // The tuple axes: the quantifier's bound-var sorts' universes.
+        // Only uninterpreted sorts qualify — their universe *is* the
+        // domain (finite-model semantics); an interpreted sort's universe
+        // entry is a sample of an infinite domain, and pinning at samples
+        // buys nothing (the macro is defined there by evaluation anyway).
+        let mut sets: Vec<Vec<TermId>> = Vec::with_capacity(quantifier.bound_vars.len());
+        for &(_name, sort) in &quantifier.bound_vars {
+            let universe = manager
+                .sorts
+                .get(sort)
+                .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+                .then(|| model.ground_universe(sort, manager))
+                .flatten()
+                .filter(|u| !u.is_empty());
+            let Some(universe) = universe else {
+                // A bound variable over a sampled (or empty) domain: the
+                // defining tuples cannot be enumerated soundly-usefully.
+                return;
+            };
+            sets.push(universe);
+        }
+
+        // Diagonals first (`(z,z)` pins are the forcing ones), then the
+        // remaining tuples in odometer order, under the product cap.
+        let mut tuples: Vec<SmallVec<[TermId; 4]>> = Vec::new();
+        let n = sets.len();
+        let first = &sets[0];
+        for &z in first.iter() {
+            tuples.push(std::iter::repeat_n(z, n).collect());
+        }
+        let mut odometer = vec![0usize; n];
+        'outer: loop {
+            let mut is_diagonal = true;
+            for i in 1..n {
+                if odometer[i] != odometer[0] {
+                    is_diagonal = false;
+                    break;
+                }
+            }
+            if !is_diagonal {
+                tuples.push(
+                    sets.iter()
+                        .zip(odometer.iter())
+                        .map(|(s, &i)| s[i])
+                        .collect(),
+                );
+            }
+            for i in 0..n {
+                odometer[i] += 1;
+                if odometer[i] < sets[i].len() {
+                    break;
+                }
+                odometer[i] = 0;
+                if i + 1 == n {
+                    break 'outer;
+                }
+            }
+            if tuples.len() >= MAX_TUPLE_PRODUCT {
+                break;
+            }
+        }
+
+        let mut emitted = 0usize;
+        for tuple in tuples {
+            if emitted >= MAX_PINS {
+                break;
+            }
+            let mut subst: FxHashMap<Spur, TermId> = FxHashMap::default();
+            for (&(name, _), &value) in quantifier.bound_vars.iter().zip(tuple.iter()) {
+                subst.insert(name, value);
+            }
+            let Some(ground_body) = self.apply_substitution(quantifier, &subst, manager) else {
+                continue;
+            };
+            let simplified = self.deep_simplify(ground_body, manager);
+            // A tautological pin constrains nothing; skip emitting it.
+            if manager
+                .get(simplified)
+                .is_some_and(|t| matches!(t.kind, TermKind::True))
+            {
+                continue;
+            }
+            let inst = Instantiation::with_reason(
+                quantifier.term,
+                subst,
+                simplified,
+                model.generation,
+                InstantiationReason::ModelBased,
+            );
+            if !self.is_duplicate(&inst) {
+                self.record_instantiation(&inst);
+                callback.on_instantiation(&inst);
+                out.push(inst);
+                emitted += 1;
+            }
+        }
     }
 
     /// The tracked quantifier at `idx`, if in range.
@@ -451,9 +724,33 @@ impl MBQIIntegration {
                 // then saw only the survivors, and a fabricated finite model
                 // was printed.  A vacuously-satisfied guard is genuinely
                 // done; anything else must veto `Satisfied` unless the
-                // nested checker certifies it below.  (Existentials with an
-                // exhausted budget equally lack a witness — same veto.)
-                if !quantifier.guard_inactive {
+                // nested checker certifies it (below).  (Existentials with
+                // an exhausted budget equally lack a witness — same veto,
+                // and no refutation-based certification exists for them.)
+                //
+                // The nested model checker still runs for a non-vacuous
+                // universal: its certification is a *proof* of satisfaction
+                // against a total interpretation, bounded by its own
+                // budgets (signature gate, per-quantifier lifetime cap,
+                // global conflict budget) — not by the instantiation budget
+                // that bounds the *search*.  This is also the only road to
+                // convergence for definitional axioms whose forcing
+                // instances at fresh universe elements (compound
+                // constructor terms entering late) the exhausted budget
+                // can no longer emit: the checker certifies the axiom and
+                // `emit_macro_defining_pins` lands the pins the seeder
+                // cannot.
+                if quantifier.is_universal && !quantifier.guard_inactive {
+                    self.escalate_to_model_checker(
+                        quantifier,
+                        &completed_model,
+                        manager,
+                        &mut satisfied_by_checker,
+                        &mut all_instantiations,
+                        callback,
+                    );
+                }
+                if !quantifier.guard_inactive && !satisfied_by_checker.contains(&quantifier.term) {
                     all_evaluations_fully_ground = false;
                 }
                 continue;
@@ -490,6 +787,16 @@ impl MBQIIntegration {
 
             self.stats.num_counterexamples += cex_result.counterexamples.len();
 
+            // Whether this quantifier's sampled falsifiers produced any
+            // *fresh* instantiation this round.  A round that samples only
+            // duplicates is unproductive for the quantifier: the ground
+            // model will not move on its account, and the rounds spin on
+            // the same falsifiers until the streak bail — the set-family
+            // stall.  Such rounds now escalate to the nested model checker
+            // too (see the escalation below), which is what makes the
+            // duplicate-falsifier point reachable at all.
+            let mut fresh_sampled = false;
+
             for cex in &cex_result.counterexamples {
                 if !self.budget.consume(quantifier.term, 1) {
                     break;
@@ -510,6 +817,7 @@ impl MBQIIntegration {
                     self.record_instantiation(&inst);
                     callback.on_instantiation(&inst);
                     all_instantiations.push(inst);
+                    fresh_sampled = true;
                 }
             }
 
@@ -543,68 +851,30 @@ impl MBQIIntegration {
             }
 
             // Escalation: the sampling search found *no counterexample at
-            // all* for this universal.  Decide it against a *total*
-            // completed interpretation with a nested full solve (Z3's
-            // `smt_model_checker`): `Satisfied` certifies over the whole
-            // (possibly infinite) domain — something no finite sample can
-            // do — and a counterexample yields sound instantiation lemmas
-            // mined from the instantiation set.  A decline changes nothing.
-            // (Notably: a round that *sampled* counterexamples, even ones
-            // that turned out to be duplicates, does not escalate — the
-            // nested solve is the most expensive tool in the box and a
-            // re-checked goal must not re-pay it every forced rerun.)
+            // all* for this universal — or every falsifier it found was a
+            // duplicate (a spin round: the instance set is saturated for
+            // this quantifier and the ground model will not move).  Decide
+            // it against a *total* completed interpretation with a nested
+            // full solve (Z3's `smt_model_checker`): `Satisfied` certifies
+            // over the whole (possibly infinite) domain — something no
+            // finite sample can do — and a counterexample yields sound
+            // instantiation lemmas mined from the instantiation set.  A
+            // decline changes nothing.
             // Only universals: an existential needs a witness, not a
             // refutation.
-            if quantifier.is_universal && cex_result.counterexamples.is_empty() {
-                let logic = self.logic_hint.clone();
-                match self.model_checker.check(
+            let sampled_only_duplicates = !fresh_sampled && !cex_result.counterexamples.is_empty();
+            if quantifier.is_universal
+                && (cex_result.counterexamples.is_empty() || sampled_only_duplicates)
+                && self.escalate_to_model_checker(
                     quantifier,
                     &completed_model,
-                    logic.as_deref(),
                     manager,
-                ) {
-                    ModelCheckOutcome::Satisfied => {
-                        satisfied_by_checker.insert(quantifier.term);
-                    }
-                    ModelCheckOutcome::Counterexample { substitutions } => {
-                        // The nested refutation found a falsifier *inside the
-                        // Skolem restriction* — the finite universe — so the
-                        // completed model demonstrably fails this quantifier
-                        // on a domain point.  When even the mined lemmas are
-                        // all duplicates, the sampling engines' "true on
-                        // every candidate tuple" verdict that powers the
-                        // legacy finite-exhaustion `Satisfied` is
-                        // demonstrably untrustworthy for this quantifier
-                        // (the Rodin false-`sat`: a stale-entry lookup
-                        // evaluated the goal bodies `true` at tuples the
-                        // completed model refutes).  Veto the verdict.
-                        all_evaluations_fully_ground = false;
-                        for substitution in substitutions {
-                            if let Some(ground_body) =
-                                self.apply_substitution(quantifier, &substitution, manager)
-                            {
-                                let inst = Instantiation::with_reason(
-                                    quantifier.term,
-                                    substitution,
-                                    ground_body,
-                                    completed_model.generation,
-                                    InstantiationReason::ModelBased,
-                                );
-                                if !self.is_duplicate(&inst) {
-                                    self.record_instantiation(&inst);
-                                    callback.on_instantiation(&inst);
-                                    all_instantiations.push(inst);
-                                    // A fresh lemma came out of this check:
-                                    // forget the model signature so a later
-                                    // round may ask again even if the model
-                                    // happens not to move.
-                                    self.model_checker.mark_productive(quantifier.term);
-                                }
-                            }
-                        }
-                    }
-                    ModelCheckOutcome::Declined => {}
-                }
+                    &mut satisfied_by_checker,
+                    &mut all_instantiations,
+                    callback,
+                )
+            {
+                all_evaluations_fully_ground = false;
             }
         }
 
@@ -1565,6 +1835,27 @@ impl MBQIIntegration {
                 /// Simplified arguments collected so far.
                 simplified: SmallVec<[TermId; 4]>,
             },
+            /// `Forall`/`Exists`: simplify the body under the binder, then
+            /// fold.  Quantifiers were previously opaque to this
+            /// simplifier, so a tautological-antecedent instantiation
+            /// `(forall x. P(x) => P(x)) => subset(z,z)` kept its wrapper
+            /// and the SAT core dodged the consequence by committing the
+            /// wrapper's free Boolean FALSE — the committed-existential
+            /// dodge.  Descending lets the existing `p -> p` collapse fire
+            /// under the binder, and a constant body collapses the binder
+            /// itself.
+            QuantBody {
+                /// The quantifier term (cache key).
+                term: TermId,
+                /// The bound variables.
+                vars: SmallVec<[(Spur, SortId); 2]>,
+                /// The instantiation patterns (carried through unchanged).
+                patterns: SmallVec<[SmallVec<[TermId; 2]>; 2]>,
+                /// Universal (`true`) or existential (`false`).
+                is_forall: bool,
+                /// The quantifier's sort (for rebuilding).
+                sort: SortId,
+            },
         }
 
         let mut stack: Vec<SimplifyFrame> = vec![SimplifyFrame::Enter(root)];
@@ -1713,6 +2004,34 @@ impl MBQIIntegration {
                                 cache.insert(term, r);
                                 value = r;
                             }
+                        }
+                        TermKind::Forall {
+                            vars,
+                            body,
+                            patterns,
+                        } => {
+                            stack.push(SimplifyFrame::QuantBody {
+                                term,
+                                vars,
+                                patterns,
+                                is_forall: true,
+                                sort: term_sort,
+                            });
+                            stack.push(SimplifyFrame::Enter(body));
+                        }
+                        TermKind::Exists {
+                            vars,
+                            body,
+                            patterns,
+                        } => {
+                            stack.push(SimplifyFrame::QuantBody {
+                                term,
+                                vars,
+                                patterns,
+                                is_forall: false,
+                                sort: term_sort,
+                            });
+                            stack.push(SimplifyFrame::Enter(body));
                         }
                         _ => {
                             cache.insert(term, term);
@@ -1880,6 +2199,47 @@ impl MBQIIntegration {
                         cache.insert(term, result);
                         value = result;
                     }
+                }
+                SimplifyFrame::QuantBody {
+                    term,
+                    vars,
+                    patterns,
+                    is_forall,
+                    sort,
+                } => {
+                    let sb = value;
+                    let result = match manager.get(sb).map(|t2| &t2.kind) {
+                        // A constant body makes the binder that constant:
+                        // `forall x. true -> true`, `forall x. false ->
+                        // false`, and dually for `exists`.  Sound because
+                        // every SMT-LIB sort is non-empty (the empty-domain
+                        // counterexamples — `forall` vacuously true,
+                        // `exists` vacuously false — cannot arise).  This
+                        // is what turns
+                        // `(forall x. P(x) => P(x)) => subset(z,z)` into
+                        // the forcing unit `subset(z,z)` at emission: the
+                        // `p -> p` collapse under the binder yields
+                        // `forall x. true`, which now folds away.
+                        Some(TermKind::True) | Some(TermKind::False) => sb,
+                        _ => {
+                            let kind = if is_forall {
+                                TermKind::Forall {
+                                    vars,
+                                    body: sb,
+                                    patterns,
+                                }
+                            } else {
+                                TermKind::Exists {
+                                    vars,
+                                    body: sb,
+                                    patterns,
+                                }
+                            };
+                            manager.intern_term(kind, sort)
+                        }
+                    };
+                    cache.insert(term, result);
+                    value = result;
                 }
             }
         }

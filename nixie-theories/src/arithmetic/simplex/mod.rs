@@ -2666,7 +2666,7 @@ impl Simplex {
         nonbasic_var: VarId,
     ) -> Option<LinExpr> {
         let sc_b = big_r64(&sc);
-        let mut constant = big_r64(&row.constant) + &sc_b * big_r64(&new_expr.constant);
+        let constant = big_r64(&row.constant) + &sc_b * big_r64(&new_expr.constant);
         // Linear per-variable accumulation (rows are short; no map needed).
         let mut terms: Vec<(VarId, num_rational::BigRational)> =
             Vec::with_capacity(row.terms.len() + new_expr.terms.len());
@@ -2703,9 +2703,9 @@ impl Simplex {
     fn intern_substitute_exact(&self, expr: &LinExpr) -> Option<LinExpr> {
         let mut constant = big_r64(&expr.constant);
         let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
-        let mut add = |var: VarId,
-                       coef: num_rational::BigRational,
-                       terms: &mut Vec<(VarId, num_rational::BigRational)>| {
+        let add = |var: VarId,
+                   coef: num_rational::BigRational,
+                   terms: &mut Vec<(VarId, num_rational::BigRational)>| {
             if coef.is_zero() {
                 return;
             }
