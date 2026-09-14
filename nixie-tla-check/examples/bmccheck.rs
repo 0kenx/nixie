@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 
 use nixie_core::TermManager;
-use nixie_tla_check::bmc::{Bmc, Outcome, SetupError};
+use nixie_tla_check::bmc::{Bmc, Outcome, SetupError, Verification};
 
 /// Names specifications conventionally use, most specific first.
 const INITS: &[&str] = &["Init", "Initial", "InitialState"];
@@ -35,6 +35,8 @@ fn main() {
     // instead of the summary, so two runs can be diffed spec by spec. A
     // summary that moves by one is not a finding until you can name the one.
     let list = std::env::var("NIXIE_BMC_LIST").is_ok_and(|v| v == "1");
+    // Print every counterexample that could be decoded.
+    let trace_out = std::env::var("NIXIE_BMC_TRACE").is_ok_and(|v| v == "1");
     // A deterministic per-query budget. Some specifications now reach the
     // solver with hundreds of set and datatype terms and do not finish in any
     // useful time — `Consensus_epr.tla` ran for twenty minutes and counting —
@@ -53,6 +55,12 @@ fn main() {
     let mut unknown = 0usize;
     let mut weakened = 0usize;
     let mut cfg_unaware = 0usize;
+    // The end-to-end check on a reported counterexample: decoded out of the
+    // model, then replayed through `nixie-tla`'s evaluator.
+    let mut replayed = 0usize;
+    let mut not_decoded = 0usize;
+    let mut not_replayed = 0usize;
+    let mut replay_why: BTreeMap<String, usize> = BTreeMap::new();
     let mut blocked: BTreeMap<String, usize> = BTreeMap::new();
     let mut blocked_eg: BTreeMap<String, String> = BTreeMap::new();
 
@@ -206,6 +214,27 @@ fn main() {
                 if !unapplied.is_empty() || (no_cfg && cfg_path.exists()) {
                     cfg_unaware += 1;
                 }
+                // Whether the counterexample was confirmed independently:
+                // the states decoded out of the model and replayed through
+                // `nixie-tla`'s evaluator, which is the check that closes the
+                // one loop the rest of the pipeline already has.
+                match bmc.verification() {
+                    Some(Verification::Replayed) => replayed += 1,
+                    Some(Verification::NotDecoded(why)) => {
+                        not_decoded += 1;
+                        *replay_why.entry(format!("not decoded: {why}")).or_default() += 1;
+                    }
+                    Some(Verification::NotReplayed(why)) => {
+                        not_replayed += 1;
+                        *replay_why
+                            .entry(format!("did not replay: {why}"))
+                            .or_default() += 1;
+                    }
+                    None => {}
+                }
+                if trace_out && let Some(t) = bmc.counterexample() {
+                    println!("--- {file} counterexample\n{t}");
+                }
                 let mut notes = Vec::new();
                 if d > 0 {
                     notes.push(format!("{d} assumption(s) dropped"));
@@ -263,10 +292,25 @@ fn main() {
     println!("    no violation within the bound : {no_violation}");
     println!("    violations found              : {}", violations.len());
     println!("      of which under dropped ASSUMEs : {weakened}");
+    // The end-to-end check: was the counterexample decoded out of the model
+    // and replayed through `nixie-tla`'s evaluator? A violation that replays
+    // has been confirmed without the solver's help.
+    println!("      of which replayed end to end    : {replayed}");
+    println!("      of which not decodable          : {not_decoded}");
+    println!("      of which decoded but not replayed: {not_replayed}");
     println!("      of which with unapplied .cfg   : {cfg_unaware}");
     println!("    solver undecided              : {unknown}");
     for v in violations.iter().take(64) {
         println!("      {v}");
+    }
+    if !replay_why.is_empty() {
+        println!("  counterexamples not confirmed, by reason:");
+        let mut rows: Vec<(&String, &usize)> = replay_why.iter().collect();
+        rows.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        for (why, n) in rows {
+            let short: String = why.chars().take(110).collect();
+            println!("    {n:5}  {short}");
+        }
     }
     println!("  blocked, by cause:");
     let mut b: Vec<_> = blocked.into_iter().collect();

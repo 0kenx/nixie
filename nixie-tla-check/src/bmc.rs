@@ -39,6 +39,7 @@ use nixie_tla_syntax::{ConfigValue, LoadedSpec, Module, TlcConfig, UnitKind};
 
 use crate::encode::{EncodeError, Encoder, SetEncoding};
 use crate::sorts::sort_of;
+use crate::trace::{State, Trace};
 
 /// What a bounded check found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,6 +171,38 @@ pub struct Bmc {
     unapplied_config: Vec<String>,
     /// A deterministic per-query budget, in conflicts.
     conflict_limit: Option<u64>,
+    /// The counterexample behind the last reported [`Outcome::Violation`].
+    ///
+    /// Kept beside the verdict rather than inside it: a verdict is compared
+    /// and tallied, a trace is read.
+    counterexample: Option<Trace>,
+    /// Whether that counterexample was confirmed independently.
+    verification: Option<Verification>,
+}
+
+/// What became of the attempt to confirm a counterexample independently.
+///
+/// The solver says the encoded formula is satisfiable. This says whether the
+/// states behind that answer could be read back and shown, by
+/// `nixie-tla`'s evaluator, to be a behaviour that really breaks the
+/// invariant — a completely separate implementation of TLA+, the one
+/// `bench/tla_eval` checks against TLC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verification {
+    /// The trace was read back and replays: `Init` holds in the first state,
+    /// `Next` between each pair, the configuration's constraints throughout,
+    /// and the invariant is `FALSE` at the end.
+    Replayed,
+    /// The model could not be read back as TLA+ values, naming the shape.
+    ///
+    /// Not evidence against the verdict: it says the *reader* fell short.
+    NotDecoded(String),
+    /// The trace was read back and does not replay, naming what disagreed.
+    ///
+    /// This is the interesting one. It means the evaluator and the encoding
+    /// disagree about the states the solver produced, and every such report is
+    /// worth chasing to the bottom before it is explained away.
+    NotReplayed(String),
 }
 
 impl Bmc {
@@ -466,6 +499,8 @@ impl Bmc {
             action_constraints,
             unapplied_config: unapplied,
             conflict_limit: None,
+            counterexample: None,
+            verification: None,
         })
     }
 
@@ -571,7 +606,38 @@ impl Bmc {
             }
             solver.assert(violated, tm);
             match solver.check(tm) {
-                SolverResult::Sat => return Ok(Outcome::Violation { step: j }),
+                SolverResult::Sat => {
+                    // A `Sat` answer is a counterexample. Read it back and
+                    // replay it: every hop from the specification to here —
+                    // lowering, typing, encoding — is cross-checked against
+                    // `nixie-tla`'s evaluator already, and this is the hop
+                    // that was not.
+                    //
+                    // The result is *surfaced*, not enforced. Making the
+                    // verdict conditional on replaying is the goal and is
+                    // deliberately not done yet: the two things that stop a
+                    // trace replaying today are gaps in reading a model, not
+                    // evidence against the verdict, and turning them into
+                    // `Unknown` would trade a measured weakness for an
+                    // unmeasured one. `Bmc::verification` says which happened,
+                    // so the number is visible rather than assumed.
+                    let (trace, verdict) = match solver.model() {
+                        None => (
+                            None,
+                            Verification::NotDecoded("the solver produced no model".to_string()),
+                        ),
+                        Some(model) => match self.extract(model, j, tm) {
+                            Err(why) => (None, Verification::NotDecoded(why)),
+                            Ok(t) => match self.replay(&t) {
+                                Err(why) => (Some(t), Verification::NotReplayed(why)),
+                                Ok(()) => (Some(t), Verification::Replayed),
+                            },
+                        },
+                    };
+                    self.counterexample = trace;
+                    self.verification = Some(verdict);
+                    return Ok(Outcome::Violation { step: j });
+                }
                 SolverResult::Unsat => {}
                 SolverResult::Unknown => {
                     return Ok(Outcome::Unknown(format!(
@@ -581,6 +647,125 @@ impl Bmc {
             }
         }
         Ok(Outcome::NoViolationWithin(depth))
+    }
+
+    /// The counterexample behind the last [`Outcome::Violation`].
+    ///
+    /// Present when the model could be read back, whether or not it replayed;
+    /// [`Bmc::verification`] says which.
+    #[must_use]
+    pub fn counterexample(&self) -> Option<&Trace> {
+        self.counterexample.as_ref()
+    }
+
+    /// Whether the last counterexample was confirmed independently.
+    #[must_use]
+    pub fn verification(&self) -> Option<&Verification> {
+        self.verification.as_ref()
+    }
+
+    /// Read the model back as a trace.
+    fn extract(
+        &mut self,
+        model: &nixie_solver::Model,
+        steps: u32,
+        tm: &mut TermManager,
+    ) -> core::result::Result<Trace, String> {
+        let names: Vec<String> = self
+            .encoder
+            .declared_names()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let mut states = Vec::with_capacity(steps as usize + 1);
+        for step in 0..=steps {
+            let mut st = State::new();
+            for n in &names {
+                // A name the encoding never needed has no term and no value.
+                // That is not a hole in the trace: nothing in `Init`, `Next`
+                // or the invariant mentioned it, so the replay cannot ask for
+                // it either — and if it does, the replay fails loudly rather
+                // than reading a value that was never constrained.
+                let Some(t) = self.encoder.var_at(n, step) else {
+                    continue;
+                };
+                let d = self.encoder.domain_at(n, step);
+                let v = crate::trace::decode(t, d, model, tm)
+                    .map_err(|e| format!("`{n}` in state {step}: {e}"))?;
+                st.insert(n.clone(), v);
+            }
+            states.push(st);
+        }
+        Ok(Trace { states })
+    }
+
+    /// Check a trace really is a counterexample, with the evaluator.
+    ///
+    /// This is the independent half. The solver said the encoded formula is
+    /// satisfiable; this asks `nixie-tla`'s evaluator — a completely separate
+    /// implementation of TLA+, the one `bench/tla_eval` checks against TLC —
+    /// whether the states it produced actually form a behaviour that breaks
+    /// the invariant. Everything the verdict depends on is re-examined:
+    /// lowering, because the evaluator walks the same kernel term; the
+    /// encoding, because a mis-encoding yields states the evaluator rejects;
+    /// and the solver, because a wrong `sat` yields states that do not satisfy
+    /// `Init` or `Next`.
+    ///
+    /// The configuration's constraints are checked too, not only the three
+    /// formulas. A `CONSTRAINT` narrows the model the author asked about, and
+    /// a trace that leaves it is a counterexample to a different question.
+    fn replay(&self, trace: &Trace) -> core::result::Result<(), String> {
+        let mut ev = nixie_tla::Evaluator::new();
+        let Some(first) = trace.states.first() else {
+            return Err("the trace has no states".into());
+        };
+        let Some(last) = trace.states.last() else {
+            return Err("the trace has no states".into());
+        };
+        let holds = |what: &str, r: nixie_tla::eval::Result<nixie_tla::Value>| match r {
+            Ok(nixie_tla::Value::Bool(true)) => Ok(()),
+            Ok(nixie_tla::Value::Bool(false)) => Err(format!("{what} is FALSE")),
+            Ok(v) => Err(format!("{what} evaluated to {v}, which is not a Boolean")),
+            Err(e) => Err(format!("{what} could not be evaluated: {e}")),
+        };
+        // The assumptions constrain the `CONSTANT`s, and they are checked in
+        // the first state because that is where the constants are. One that
+        // was *dropped* was never asserted, so it is not checked here either —
+        // `dropped_assumptions` is what says the search was weakened.
+        for (i, a) in self.assumptions.iter().enumerate() {
+            holds(&format!("`ASSUME` #{i}"), ev.eval_state(a, first))?;
+        }
+        holds("`Init`", ev.eval_state(&self.init, first))?;
+        for (k, pair) in trace.states.windows(2).enumerate() {
+            holds(
+                &format!("`Next` from state {k}"),
+                ev.eval_action(&self.next, &pair[0], &pair[1]),
+            )?;
+        }
+        for (i, c) in self.state_constraints.iter().enumerate() {
+            for (k, st) in trace.states.iter().enumerate() {
+                holds(
+                    &format!("`CONSTRAINT` #{i} in state {k}"),
+                    ev.eval_state(c, st),
+                )?;
+            }
+        }
+        for (i, c) in self.action_constraints.iter().enumerate() {
+            for (k, pair) in trace.states.windows(2).enumerate() {
+                holds(
+                    &format!("`ACTION_CONSTRAINT` #{i} from state {k}"),
+                    ev.eval_action(c, &pair[0], &pair[1]),
+                )?;
+            }
+        }
+        // And the point of the whole thing: the invariant must actually fail.
+        match ev.eval_state(&self.inv, last) {
+            Ok(nixie_tla::Value::Bool(false)) => Ok(()),
+            Ok(nixie_tla::Value::Bool(true)) => Err("the invariant holds in the last state".into()),
+            Ok(v) => Err(format!(
+                "the invariant evaluated to {v} in the last state, which is not a Boolean"
+            )),
+            Err(e) => Err(format!("the invariant could not be evaluated: {e}")),
+        }
     }
 
     /// How many `ASSUME`s were dropped because they could not be lowered,
