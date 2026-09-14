@@ -240,3 +240,62 @@ answers** (213 agree / 11 inconclusive).
   override (`.config/nextest.toml`), following the `pete_cxs_bp`
   precedent: debug single-threaded 2m42s, but the full suite's parallel
   load inflates wall time past the 3x60s default.
+
+
+## The entry-table attempt (2026-09-14, third pass): tables fire, convergence needs the full finder
+
+A bounded attempt at the entry-table search landed in a worktree and was
+**reverted** — the table machinery works, but the family's convergence
+needs the whole `smt_model_finder` loop, not the tables alone.  What was
+built and measured:
+
+1. **Quasi-macro extraction** (`extract_quasi_macros`): axioms
+   `g(v..., f(w...)) = psi` with `f` an uninterpreted-range constructor
+   over distinct bound vars, observed through the Bool-valued `g` — the
+   `member(x, union(s1,s2)) = (member(x,s1) or member(x,s2))` shape.
+   Extracts union/intersection/difference reliably (3/3 on set16).
+2. **Semantic table computation** (`compute_constructor_tables`,
+   completion step 10): at each unpinned tuple of `f`'s argument
+   universes, the target row is `psi`'s truth over the observer's
+   distinguished row-points; `f(t) := z` for the universe element whose
+   row matches.  Verified firing: 4 computed entries per constructor over
+   the two-element universe.  Computed entries marked
+   (`computed_functions`) so blocking-clause commitments treat them as
+   free choices; ground pins never overridden.
+3. **Semantic value normalization** (`semantic_value`, explicit-stack):
+   domain/mining normalization through the tables, so `union(b,b)` and
+   `b` collapse to one domain point.
+
+**Why it still answers `unknown`**: the rounds churn on the *other*
+engine — the enumerative insts over the growing Real-domain sample
+(each round's witness Skolems join it) keep the model moving, and the
+checker's per-quantifier caps (the ones that bound the measured 5.2x
+streak cost) silence certification while the model moves.  Closing that
+needs the full search-verify-revise loop over the *whole* interpretation
+per round (Z3's `smt_model_finder` project proper), not the entry tables
+in isolation.  The essential design requirements are now proven by
+experiment: one globally-consistent interpretation per round (the tables
+are computed at completion — every consumer sees them), semantic (not
+syntactic) value normalization, and ground pins never overridden.
+
+**Bugs found and FIXED on the way (landed)**:
+
+- **The ground-universe artifact filter rejected free constants.**  A
+  `(declare-fun a () S)` constant is represented as a `Var` node, and
+  the landed filter rejected *any* `Var` — so a universe whose elements
+  were free constants froze EMPTY (starving the mining sets, the
+  enumerative domains and the Skolem restrictions built on it).  The
+  filter is now by bound-variable NAME (a `Var` is an artifact exactly
+  when its name is a tracked quantifier's bound variable), with the
+  names frozen alongside the universes.  The convergence pins got
+  *faster* with the fix (151s vs 194s group time).
+- A constructor the ground model never applied has no interpretation
+  entry; the table computation must create one over the axiom's domain
+  (recorded in the reverted design; relevant again if the finder project
+  picks the tables up).
+
+**The reverted diff's shapes** are recoverable from this session record;
+re-derive rather than resurrect — the `semantic_value` first cut
+overflowed the native stack (native recursion over argument depth — the
+AGENTS.md explicit-stack rule exists for exactly this) and the frame
+machine rewrite is the version to keep.
