@@ -716,3 +716,38 @@ theories+solver suites green except standing `[corpus-missing]`; wide
 differential 1,100 instances across 4 seeds (z3-error-aware): 0 verdict
 disagreements, 0 refuted models; mixed fuzz, debug-panic sweep, Z3 parity
 176/177 correct / 0 disagreements (z3 4.16.0).
+
+## Continuation 12 (2026-09-15): the wide-LP wall, slice 5 — the dual-width entering row
+
+35. **Wide entering rows** (`build_pivot_expr_big` + generalized exact
+    substitutions): when even the exact build cannot narrow the entering
+    row (the mixed-magnitude quotient `1/2^63`), the pivot no longer
+    declines — the entering variable's defining row lives EXACTLY in the
+    wide store, every substitution through it runs exactly (the
+    substitution helpers now take the entering row as `BigLinExpr`,
+    narrow or wide alike), the entering value is derived exactly
+    (`eval_big_expr`), and the assignment defers when unrepresentable.
+    The satisfiable mixed-magnitude twin (`v0 = 1` forces `v1 = 0` — a
+    representable value) now decides `sat`.
+36. **Interval refutation at convergence**
+    (`wide_row_refuted_by_bounds`): a violated wide row whose achievable
+    value range (exact, delta-aware interval arithmetic over the
+    variables' bounds — the lexicographic `(real, delta)` order keeps
+    endpoint arithmetic valid) is DISJOINT from its basic's bounds is a
+    genuine Farkas conflict, explained through the determining bounds'
+    reasons. A merely-singleton test was too shallow (the observed
+    violation reasoned through a one-sided slack); the interval test
+    subsumes it. The unsat twin above needs CHAINED bound reasoning
+    (wide-row propagation to fixpoint) — recorded as the remaining work,
+    honestly `unknown` meanwhile.
+37. **One more unchecked site closed**: the pivot's snap delta
+    (`v - old` on bare `DeltaRational`) — a debug panic / release wrap on
+    the wider trajectories the dual-width pivot newly reaches; now
+    checked, deferring to the full re-derivation on overflow.
+
+Verification: 22/22 wide-literal + division regressions (new: the
+mixed-magnitude sat-twin decision; the honesty pin re-scoped to the
+chained-reasoning gap); theories+solver suites green except standing
+`[corpus-missing]`; wide differential 1,100 instances across 4 seeds
+(z3-error-aware): 0 disagreements, 0 refuted models; mixed fuzz, panic
+sweep, Z3 parity 176/177 correct / 0 disagreements (z3 4.16.0).

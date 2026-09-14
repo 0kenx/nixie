@@ -562,11 +562,29 @@ fn uniform_wide_coefficients_decide_both_directions() {
 }
 
 /// The MIXED-magnitude wide row (`1` and `2^63` coefficients in one row)
-/// parses and scales into the tableau, but a pivot through it needs the
-/// quotient `1/2^63` — an irreducible denominator beyond `i64` — so the
-/// honest `resource_limit` applies at the pivot site. Pinned here: the
-/// answer must never be a wrapped verdict (and a `sat` for the unsat twin
-/// would be exactly the wrong-verdict class item 32 closed).
+/// parses and scales into the tableau, and the dual-width pivot (slice 5)
+/// carries its entering row exactly in the wide store — so the
+/// satisfiable twin now DECIDES (`v0 = 1` forces `v1 = 0`, a
+/// representable value).
+#[test]
+fn mixed_magnitude_wide_row_sat_twin_decides() {
+    use nixie_solver::Context;
+    let sat_twin = r#"
+        (set-logic QF_LRA)
+        (declare-const v0 Real) (declare-const v1 Real)
+        (assert (= v0 (+ (* 9223372036854775808 v1) 1)))
+        (assert (= v0 1))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(sat_twin).expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("sat"));
+}
+
+/// The unsat twin (`v0 = 0` forces `v1 = -2^-63`, contradicting
+/// `v1 > 0`): the refutation needs chained bound reasoning through the
+/// wide row (wide-row propagation — future work), so the honest
+/// `unknown` applies. Pinned: never a `sat` (that is exactly the
+/// wrong-verdict class item 32 closed).
 #[test]
 fn mixed_magnitude_wide_rows_stay_honest() {
     use nixie_solver::Context;
