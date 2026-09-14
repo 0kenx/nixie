@@ -13,8 +13,16 @@ The fix states congruence **as axioms**, and that has two costs it cannot shed:
 
 * **Incomplete.** It can only speak about equalities the formula spells out
   (closed over chains), never about one the solver derives.
-* **Expensive.** The corpus went from roughly four minutes to 8:33. Earlier,
-  cruder versions of the same axioms reached 19:55.
+* **Expensive.** Earlier, cruder versions of the same axioms took the corpus
+  to 19:55. The landed version costs **+20%** — 6:00 to 7:14, measured against
+  a matched null (the same binary with the congruence block switched off),
+  which is the only comparison worth making here.
+
+  An earlier note in this file, and the commit message of `200b3eab`, said
+  "roughly four minutes to 8:33" and called it a 2x slowdown. That was wrong:
+  the four minutes came from a session note predating sequences, folds and
+  everything else added since, on a machine other agents build on constantly.
+  It was never a matched comparison and should not be quoted.
 
 Both are inherent: a ground reduction has to *say* what a theory solver
 *decides*.

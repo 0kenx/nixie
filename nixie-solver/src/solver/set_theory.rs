@@ -491,83 +491,95 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // a structured set the property follows from its definition, but only
     // because the *base* atoms it is defined from are congruent, and those
     // bottom out in opaque sets.
-    // Which terms congruence is worth stating for: those **connected by
-    // equalities to something the formula actually tests for membership**.
-    //
-    // Not every equality, and not only the ones whose sides are already
-    // elements. Not every equality, because the axiom's own `set.member` makes
-    // its term an element, the definition loop above instantiates every set
-    // against every element, and `reduce` runs once per `assert` — stating it
-    // for `pc' = pc + 1` and its like turned a four-minute corpus into a
-    // quarter of an hour by that route. Not only the already-elements,
-    // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
-    // appears in no membership atom of its own and would break the chain.
-    //
-    // So: seed with the elements, then close over the equalities.
-    let mut connected: FxHashMap<nixie_core::SortId, FxHashSet<TermId>> = elements
+    // Congruence is only ever stated at an **opaque** set (see below), so a
+    // formula with none needs none of this — not the adjacency map, not the
+    // closure, not the axioms. That is most of them: a TLA+ specification's
+    // sets are overwhelmingly literals, ranges and unions of those, whose
+    // membership is *defined* above. Checking first is what keeps the cost on
+    // the specifications that actually have an opaque set in them.
+    let any_opaque = s
+        .sets
         .iter()
-        .map(|(k, v)| (*k, v.iter().copied().collect()))
-        .collect();
-    {
-        // A single walk out from the seeds, over an adjacency map built once.
+        .any(|&set| shape_of(set, manager) == Shape::Opaque);
+    if any_opaque {
+        // Which terms congruence is worth stating for: those **connected by
+        // equalities to something the formula actually tests for membership**.
         //
-        // The obvious way to close this is to sweep the equalities until
-        // nothing changes, and that is **quadratic** in their number — which
-        // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
-        // every step, thousands of them, re-swept once per `assert`. That, and
-        // not the axioms it produces, is what made the corpus take twenty
-        // minutes.
-        let mut adjacent: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
-        for &(x, y) in &s.element_equalities {
-            adjacent.entry(x).or_default().push(y);
-            adjacent.entry(y).or_default().push(x);
-        }
-        for (es, group) in &mut connected {
-            let mut frontier: Vec<TermId> = group.iter().copied().collect();
-            while let Some(t) = frontier.pop() {
-                let Some(nexts) = adjacent.get(&t) else {
-                    continue;
-                };
-                for &n in nexts {
-                    if manager.get(n).map(|d| d.sort) != Some(*es) {
+        // Not every equality, and not only the ones whose sides are already
+        // elements. Not every equality, because the axiom's own `set.member` makes
+        // its term an element, the definition loop above instantiates every set
+        // against every element, and `reduce` runs once per `assert` — stating it
+        // for `pc' = pc + 1` and its like turned a four-minute corpus into a
+        // quarter of an hour by that route. Not only the already-elements,
+        // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
+        // appears in no membership atom of its own and would break the chain.
+        //
+        // So: seed with the elements, then close over the equalities.
+        let mut connected: FxHashMap<nixie_core::SortId, FxHashSet<TermId>> = elements
+            .iter()
+            .map(|(k, v)| (*k, v.iter().copied().collect()))
+            .collect();
+        {
+            // A single walk out from the seeds, over an adjacency map built once.
+            //
+            // The obvious way to close this is to sweep the equalities until
+            // nothing changes, and that is **quadratic** in their number — which
+            // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
+            // every step, thousands of them, re-swept once per `assert`. That, and
+            // not the axioms it produces, is what made the corpus take twenty
+            // minutes.
+            let mut adjacent: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
+            for &(x, y) in &s.element_equalities {
+                adjacent.entry(x).or_default().push(y);
+                adjacent.entry(y).or_default().push(x);
+            }
+            for (es, group) in &mut connected {
+                let mut frontier: Vec<TermId> = group.iter().copied().collect();
+                while let Some(t) = frontier.pop() {
+                    let Some(nexts) = adjacent.get(&t) else {
                         continue;
-                    }
-                    if group.insert(n) {
-                        frontier.push(n);
+                    };
+                    for &n in nexts {
+                        if manager.get(n).map(|d| d.sort) != Some(*es) {
+                            continue;
+                        }
+                        if group.insert(n) {
+                            frontier.push(n);
+                        }
                     }
                 }
             }
         }
-    }
-    for &(x, y) in &s.element_equalities {
-        let Some(es) = manager.get(x).map(|d| d.sort) else {
-            continue;
-        };
-        let Some(group) = connected.get(&es) else {
-            continue;
-        };
-        if !group.contains(&x) || !group.contains(&y) {
-            continue;
-        }
-        for &set in &s.sets {
-            if element_sort(set, manager) != Some(es) {
+        for &(x, y) in &s.element_equalities {
+            let Some(es) = manager.get(x).map(|d| d.sort) else {
+                continue;
+            };
+            let Some(group) = connected.get(&es) else {
+                continue;
+            };
+            if !group.contains(&x) || !group.contains(&y) {
                 continue;
             }
-            // **Opaque sets only.** A structured set's membership is *defined*
-            // from its bases by the loop above — `e \in (a \cup b)` is
-            // `e \in a \/ e \in b` — so congruence at the bases gives it at
-            // the union, and every chain of definitions bottoms out in opaque
-            // sets. Stating it at every set as well is redundant, and it is
-            // not cheap redundancy: it took the corpus from four minutes to
-            // twenty.
-            if shape_of(set, manager) != Shape::Opaque {
-                continue;
+            for &set in &s.sets {
+                if element_sort(set, manager) != Some(es) {
+                    continue;
+                }
+                // **Opaque sets only.** A structured set's membership is *defined*
+                // from its bases by the loop above — `e \in (a \cup b)` is
+                // `e \in a \/ e \in b` — so congruence at the bases gives it at
+                // the union, and every chain of definitions bottoms out in opaque
+                // sets. Stating it at every set as well is redundant, and it is
+                // not cheap redundancy: it took the corpus from four minutes to
+                // twenty.
+                if shape_of(set, manager) != Shape::Opaque {
+                    continue;
+                }
+                let same = manager.mk_eq(x, y);
+                let mx = manager.mk_set_member(x, set);
+                let my = manager.mk_set_member(y, set);
+                let agree = manager.mk_eq(mx, my);
+                axioms.push(manager.mk_implies(same, agree));
             }
-            let same = manager.mk_eq(x, y);
-            let mx = manager.mk_set_member(x, set);
-            let my = manager.mk_set_member(y, set);
-            let agree = manager.mk_eq(mx, my);
-            axioms.push(manager.mk_implies(same, agree));
         }
     }
 
