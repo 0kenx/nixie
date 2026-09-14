@@ -84,6 +84,10 @@ impl Solver {
                         {
                             self.stats.propagation_work.binary_conflicts += 1;
                         }
+                        #[cfg(feature = "std")]
+                        if std::env::var("NIXIE_CONFLICT_TRACE").is_ok() {
+                            eprintln!("[bconf] code={} cid={}", code, reason.index());
+                        }
                         queue.requeue();
                         return Some(reason);
                     }
@@ -122,6 +126,11 @@ impl Solver {
             #[cfg(not(feature = "std"))]
             let swapped = false;
             let mut watches = core::mem::take(&mut destinations[code]);
+            crate::mut_trace!(
+                code,
+                "side=vec act=begin_scan len={} path=session_take",
+                watches.len()
+            );
             // Dual-write BCP scan (CSR slice 2): snapshot the primary/
             // overflow split before the list is scanned; the per-entry
             // notifications below mirror keep/remove/move into the CSR.
@@ -253,6 +262,11 @@ impl Solver {
                 .propagation_work
                 .take_watch_scan(&mut result.work);
             watches.truncate(result.write);
+            crate::mut_trace!(
+                code,
+                "side=vec act=end_scan kept={} path=session_putback",
+                watches.len()
+            );
             destinations[code] = watches;
             if MIRROR
                 && !swapped
@@ -261,6 +275,10 @@ impl Solver {
                 c.end_scan();
             }
             if !result.conflict.is_null() {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_CONFLICT_TRACE").is_ok() {
+                    eprintln!("[conf] code={} cid={}", code, result.conflict.index());
+                }
                 queue.requeue();
                 return Some(result.conflict);
             }

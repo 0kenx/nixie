@@ -111,6 +111,10 @@ impl PropagationQueue<'_> {
         // SAFETY: only initialized entries are read; the exclusive queue
         // borrow prevents reallocation or aliased element references.
         let lit = unsafe { self.queue.add(self.head).read() };
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_HEAD_TRACE").is_ok() {
+            eprintln!("[deq] head={} lit={}", self.head, lit.code());
+        }
         self.head += 1;
         Some(lit)
     }

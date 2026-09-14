@@ -124,6 +124,10 @@ impl VMTF {
         }
         self.bumped = self.bumped.saturating_add(1);
         self.btab[v as usize] = self.bumped;
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_BUMP_TRACE").is_ok() {
+            eprintln!("[bump] n={} var={}", self.bumped, v);
+        }
         if !is_assigned(var) {
             self.search = v;
         }
@@ -151,9 +155,27 @@ impl VMTF {
         let diag = false;
         let mut steps: u64 = 1;
         let mut res = self.search;
+        #[cfg(feature = "std")]
+        let mut walked: Vec<u32> = vec![res];
         while res != NULL && is_assigned(Var::new(res)) {
             res = self.prev[res as usize];
+            #[cfg(feature = "std")]
+            walked.push(res);
             steps += 1;
+        }
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+            eprintln!(
+                "[pick] search={} walked={:?} res={} btab[res]={}",
+                self.search,
+                walked,
+                res,
+                if res == NULL {
+                    0
+                } else {
+                    self.btab[res as usize]
+                }
+            );
         }
         if res == NULL {
             // Search pointer exhausted toward the head (lagged behind a

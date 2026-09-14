@@ -88,6 +88,12 @@ fn push_watch<const MIRROR: bool>(
     key: Lit,
     watcher: Watcher,
 ) {
+    crate::mut_trace!(
+        key.index(),
+        "side=vec act=push ref={} blk={} path=push_watch",
+        watcher.r.byte_offset(),
+        watcher.blocker.code()
+    );
     destinations[key.index()].push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
@@ -107,8 +113,19 @@ fn push_watch_unique<const MIRROR: bool>(
 ) {
     let list = &mut destinations[key.index()];
     if list.iter().any(|w| w.r == watcher.r) {
+        crate::mut_trace!(
+            key.index(),
+            "side=vec act=suppress ref={} path=push_watch_unique",
+            watcher.r.byte_offset()
+        );
         return;
     }
+    crate::mut_trace!(
+        key.index(),
+        "side=vec act=push ref={} blk={} path=push_watch_unique",
+        watcher.r.byte_offset(),
+        watcher.blocker.code()
+    );
     list.push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
@@ -131,6 +148,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
     swapped_code: Option<usize>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd {
+    let scanned_code = (!false_lit).index();
     let mut watches = watches.into_local();
     while let Some(entry) = watches.next() {
         let watcher = entry.watcher();
@@ -157,6 +175,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 work.deleted += 1;
             }
             entry.remove();
+            crate::mut_trace!(
+                scanned_code,
+                "side=scan act=drop ref={} path=scan_dead_clause",
+                watcher.r.byte_offset()
+            );
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
@@ -270,6 +293,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 );
             }
             entry.remove();
+            crate::mut_trace!(
+                scanned_code,
+                "side=scan act=drop ref={} path=scan_repair",
+                watcher.r.byte_offset()
+            );
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
             } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
@@ -308,6 +336,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 }
             } else {
                 entry.remove();
+                crate::mut_trace!(
+                    scanned_code,
+                    "side=scan act=drop ref={} path=scan_watch_move",
+                    watcher.r.byte_offset()
+                );
                 if MIRROR && let Some(c) = csr.as_mut() {
                     c.scan_remove(watcher.r);
                 } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {

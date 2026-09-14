@@ -243,6 +243,23 @@ impl Trail {
         let var = lit.var();
         let idx = var.index();
         let code = lit.code() as usize;
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_ENQ_TRACE").is_ok() {
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static ENQ: AtomicU64 = AtomicU64::new(0);
+            let _ = ENQ.fetch_add(1, Ordering::Relaxed);
+            let rdesc = match &reason {
+                Reason::Propagation(c) => format!("p{}", c.index()),
+                Reason::Decision => "d".to_string(),
+                Reason::Theory => "t".to_string(),
+            };
+            eprintln!(
+                "[enq] code={} lvl={} r={}",
+                code,
+                self.decision_level(),
+                rdesc
+            );
+        }
 
         // Resize if needed. `new_var` normally sizes us up front, so this is
         // only hit by the small standalone tests that assign without `new_var`.
