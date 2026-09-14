@@ -923,13 +923,15 @@ impl LinearFormCollector {
                 }
                 TermKind::Ite(_, _, _) => {
                     lf.saw_ite = true;
-                    *lf.vars.entry(t).or_insert(0) += mult;
+                    *lf.vars.entry(t).or_insert(0) =
+                        lf.vars.entry(t).or_insert(0).saturating_add(mult);
                 }
                 // Every other kind (Var, Apply, Select, Store, DtConstructor,
                 // string/FP ops, constants already handled above, …) is an atomic
                 // variable for difference-logic purposes.
                 _ => {
-                    *lf.vars.entry(t).or_insert(0) += mult;
+                    *lf.vars.entry(t).or_insert(0) =
+                        lf.vars.entry(t).or_insert(0).saturating_add(mult);
                 }
             }
         }

@@ -630,3 +630,117 @@ fn stale_assignment_never_drives_false_unsat() {
         "the goal is satisfiable (z3 agrees); unsat is the stale-assignment false verdict"
     );
 }
+
+/// The wide-store value-fabrication false `sat` (2026-09-15, found by the
+/// wide differential's fresh seeds): an `Int` variable whose defining row
+/// lives in the wide store (the dual-width pivot) and whose exact value
+/// `−9 − 41/2⁶³` does not narrow was read through the raw `assignment`
+/// entry — a fabricated integral `0` — so branch-and-bound accepted the
+/// LP point as a model and printed `v1 = 0` against a row forcing
+/// `v1 = −9 − 41/2⁶³`: an invalid witness for an unsatisfiable goal.
+/// The fix is layered: wide-aware exact value reads at every decision
+/// site (`delta_value_exact`), branch bounds derived from the exact
+/// UN-NARROWED value (`wide_floor_ceil_big` — floor/ceil of a 2⁶³-scale
+/// rational are small integers, so the search stays decidable), an
+/// underivable value declines to `Unknown`, and `Sat` is gated on every
+/// term-backed variable having a derivable value. The exact branching
+/// makes the goal DECIDABLY `unsat` (both branch directions are refuted
+/// by the wide-row interval argument), matching z3.
+#[test]
+fn wide_basic_int_var_fabricated_value_never_drives_false_sat() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v1 Int)
+        (declare-const v2 Int)
+        (assert (= (+ (* 27670116100584327436 v2) (* 9223372036854775808 v1)) -5))
+        (assert (= v2 3))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(last, "sat", "no integer v1 satisfies the row (z3: unsat)");
+    assert_eq!(last, "unsat", "exact wide floor/ceil branching decides it");
+}
+
+/// The fuzz-original shape of the same defect (four variables, two wide
+/// same-variable terms, pins on the decoys): pins the never-`sat` verdict.
+#[test]
+fn wide_coefficient_eq_row_with_pins_is_decidably_unsat() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v0 Int)
+        (declare-const v1 Int)
+        (declare-const v2 Int)
+        (declare-const v3 Int)
+        (assert (= (+ (* 18446744073709551629 v2) (* 9223372036854775808 v1) (* 9223372036854775807 v2)) -5))
+        (assert (= v2 3))
+        (assert (= v3 -3))
+        (assert (= v0 -2))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(last, "unsat", "lhs ≡ 0 (mod 4) but rhs = −5 (z3: unsat)");
+}
+
+/// The wide-store narrow-back staleness false `unsat` (2026-09-15, the
+/// delta-propagation canary's live find): a row captured into the wide
+/// store (its exact value unrepresentable) keeps a FROZEN `assignment`
+/// entry — the wide pass only re-derives narrowing values. When a later
+/// pivot's substitution NARROWS the row back into the tableau, the commit
+/// used to insert the row without recomputing the entry, and the snap
+/// deltas then propagated from a stale base: a phony violation that (in
+/// release) drove an invalid conflict — `unsat` on a satisfiable goal.
+/// The fix: wide-origin rows are excluded from the delta loop and their
+/// entry recomputed exactly at commit; a non-narrowing recomputation
+/// defers through the staleness flag. This goal is `sat` (z3 agrees) with
+/// the pins satisfying the wide row exactly.
+#[test]
+fn wide_row_narrow_back_recomputes_its_assignment_entry() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v0 Int)
+        (declare-const v1 Int)
+        (declare-const v2 Int)
+        (assert (<= (+ (* 9223372036854775808 v0) (* 576460752303423477 v2) (* 9223372036854775807 v2)) 9223372036854775810))
+        (assert (= v2 -1))
+        (assert (= v0 2))
+        (assert (= v1 -2))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(
+        last, "unsat",
+        "the pins satisfy the row (2·2⁶³ − 9799832789158199284 ≤ 9223372036854775810); z3: sat"
+    );
+}
+
+/// The `static_features` collector's unchecked `i64` accumulation: two
+/// same-variable `Mul` terms with huge constants (i64::MAX-scale against
+/// a 2⁵⁹-scale) overflowed the `vars` coefficient map — a debug PANIC and
+/// a release WRAP feeding garbage shape data to the routing layer. The
+/// fix saturates (matching the file's existing `const_term`/`const_prod`
+/// discipline): routing turns conservative, never wrong. This shape
+/// previously aborted the debug binary before the solver even ran.
+#[test]
+fn static_features_wide_mul_accumulation_does_not_panic() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v0 Int)
+        (declare-const v1 Int)
+        (declare-const v2 Int)
+        (assert (<= (+ (* 9223372036854775808 v0) (* 576460752303423477 v2) (* 9223372036854775807 v2)) 9223372036854775810))
+        (assert (= v2 -1))
+        (assert (= v0 2))
+        (assert (= v1 -2))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(last, "", "a verdict must be produced, not an abort");
+}

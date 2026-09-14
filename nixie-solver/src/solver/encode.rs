@@ -326,13 +326,9 @@ impl Solver {
                 // gating — the wide-coefficient classes (`2^63·v` and
                 // friends) become decidable rows instead of free Booleans
                 // gated to `Unknown`.
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -354,13 +350,9 @@ impl Solver {
         );
         if rhs_ok.is_none() {
             if overflow {
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -952,6 +944,7 @@ impl Solver {
     ///  * the caller rescales the whole result into width
     ///    (`scale_exact_row`), which is sound because a POSITIVE multiple
     ///    of the row preserves its zero bound.
+    ///
     /// Faithfully mirrors the narrow walk's structure (iterative, same
     /// frame discipline) so the two cannot drift semantically.
     fn extract_linear_terms_exact(
