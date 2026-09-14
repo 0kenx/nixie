@@ -751,3 +751,51 @@ chained-reasoning gap); theories+solver suites green except standing
 `[corpus-missing]`; wide differential 1,100 instances across 4 seeds
 (z3-error-aware): 0 disagreements, 0 refuted models; mixed fuzz, panic
 sweep, Z3 parity 176/177 correct / 0 disagreements (z3 4.16.0).
+
+
+## Continuation 13 (2026-09-15, UNRESOLVED — read first): slice 3 introduced a false `unsat`; reproducer and analysis
+
+**A live wrong verdict is on `main` since `625957a9` (slice 3, positive row
+rescaling).** The wide differential found it; every landed slice since
+inherits it. Reproducer (QF_LIA, div/mod + wide constants — exact bytes
+preserved in `docs/studies/assets/2026-09-15/false-unsat-f1.smt2` if
+written, else inline below):
+
+```smt2
+(set-logic QF_LIA)
+(declare-const xi Int)
+(declare-const yi Int)
+(assert (and (not (and (= (+ (* 3 xi) (+ (+ (* 10 xi) (* -2 yi) (* 5 xi)) 90 (+ (* 2 yi) (* 3 yi) (* -1 xi)))) (mod (* -2 yi) 1)) (and (> 1099511627776 0) (> (* 3 xi) 37) (= (* -1 yi) 5)) (> (+ (mod (div -3 7) 4) (mod -5 5)) 2))) (<= (* 10 xi) -1) (> (+ (+ (* -2 xi) 4611686018427387905 (div (* -1 xi) 4)) (div (* 1 yi) 1)) 5)))
+(check-sat)
+```
+
+* z3: `sat`. df13616e (slices 1–2): honest `unknown`. **625957a9 (slice 3)
+  through HEAD: `unsat` — wrong.** Debug builds fire the delta-vs-reeval
+  canary in `pivot` (the item-15 canary, now with a 2-variable reproducer).
+* Analysis so far (the staleness chain): the mismatch fires at a pivot with
+  leaving=10, entering=0 on row 9's rewritten content `var9 = var10` —
+  `assignment[9] = 58` while the row's pre-snap value is 75: the assignment
+  entry is stale w.r.t. its OWN row by 17 BEFORE this pivot. The
+  substitution itself is value-preserving (small integers, no overflow —
+  this is a *structural* staleness, not width). The staleness event is a
+  silent value change of a term variable of row 9's earlier content
+  (`17·v0 + v19 + 3·v20 + 75`) — candidates: a nonbasic value change that
+  skipped `note_bound_change`, a column-index gap skipping row 9 in an
+  entering substitution, or a wide-store transition losing an update.
+  Instrumentation pattern that got this far: trace `note_bound_change` +
+  row-9 commits + the delta-loop mismatch dump together
+  (`NIXIE_DBG_H`/`NIXIE_DBG_D` markers, since removed).
+* Two unchecked release-wrap sites were found on these trajectories and are
+  fixed ONLY in the abandoned slice-6 worktree (snap delta
+  `v - old`; `on_nonbasic_bound_change`'s `delta * c`): they are real
+  hazards independent of this bug but were not verified far enough to land.
+* The slice-6 wide-row bound propagation (exact both-direction derivations,
+  exact crossing tests, weakened integer storage) is sound on every oracle
+  (fuzz/parity/suites) but was NOT landed: landing on top of an unexplained
+  false `unsat` in the same subsystem compounds risk. It lives in this
+  session's worktree record; rebuild from this description.
+
+**Priority for the next session: root-cause the f1 false `unsat` before any
+further wide-LP work.** Bisect inside slice 3's diff (the scaler, the intern
+wiring, the item-32 encode gate) with the reproducer; the debug canary
+localizes the divergence; the release wrongness confirms it escapes.
