@@ -1917,17 +1917,6 @@ impl Solver {
         if self.clauses.get(cid).is_none_or(|c| c.deleted) {
             return;
         }
-        // CSR-surgery coverage (NIXIE_ELS_CSR_SURGERY=1): retirements must
-        // drop the shadow's watchers for the pre-retire watched pair, or
-        // the rebuild's multiset oracle reports them as stale entries.
-        if self.csr_surgery_on()
-            && lits.len() >= 3
-            && let Some(r) = self.clauses.ref_of(cid)
-        {
-            self.watches.csr_surgery_remove_clause(r);
-            self.csr_surgery_fired = true;
-            self.csr_surgery_ops += 1;
-        }
         // Deletion lines need no justification in LRAT (they only shrink
         // the active set the checker propagates over), so retired
         // originals are emitted unconditionally when a proof is attached.

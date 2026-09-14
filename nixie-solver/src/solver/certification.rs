@@ -366,6 +366,22 @@ impl Solver {
     /// Check an LRAT-backed canonical refutation of the original assertions.
     #[cfg(feature = "std")]
     fn certify_unsat(&self, manager: &mut TermManager) -> Result<(), String> {
+        // The finite-field ideal-membership / pigeonhole certificate
+        // (FF design §8, the "easy half"): re-encode the named literals
+        // and re-multiply the cofactors in exact arithmetic — one pass,
+        // independent of the Gröbner machinery that produced them. The
+        // literals must each be conjuncts of the active assertions
+        // (entailment); refuting them refutes the goal.
+        if let Some((certificate, literals)) = &self.ff_certificate {
+            if literals
+                .iter()
+                .all(|l| assertion_spine_contains(manager, &self.certificate_assertions, *l))
+                && certificate.verify(manager, literals)
+            {
+                return Ok(());
+            }
+            return Err("finite-field UNSAT certificate failed verification".to_string());
+        }
         let mut checker = BooleanLratChecker::new();
         checker.assert_all(&self.certificate_assertions, manager)?;
         // Independently verified EUF theory lemmas recorded during the
@@ -393,6 +409,25 @@ impl Solver {
     }
 }
 
+/// Whether `needle` appears on the asserted conjunct spine of the
+/// assertion list (top-level assertions and their `and` conjuncts — the
+/// positions whose truth the assertions guarantee).
+fn assertion_spine_contains(manager: &TermManager, assertions: &[TermId], needle: TermId) -> bool {
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    while let Some(t) = stack.pop() {
+        let Some(term) = manager.get(t) else {
+            continue;
+        };
+        if t == needle {
+            return true;
+        }
+        if let TermKind::And(children) = &term.kind {
+            stack.extend(children.iter().copied());
+        }
+    }
+    false
+}
+
 /// Convert the solver's term-valued model into the exact, deliberately small
 /// model format consumed by `nixie-core`'s independent AST validator.
 ///
@@ -414,6 +449,9 @@ fn certificate_model(model: &Model, manager: &TermManager) -> CertificateModel {
             }
             ModelValue::Uninterpreted { sort, id } => {
                 certificate.assign_uninterpreted(term, sort, id);
+            }
+            ModelValue::FiniteField { value, field } => {
+                certificate.assign_ff(term, value.clone(), field);
             }
         }
     }
@@ -439,6 +477,11 @@ fn concrete_value(
             TermKind::BitVecConst { value, width } if *width != 0 => {
                 Some(ModelValue::from_bitvec_int(value, *width))
             }
+            // A field element value term: already normalized into [0, p).
+            TermKind::FfConst { value, field } => Some(ModelValue::FiniteField {
+                value: value.clone(),
+                field: *field,
+            }),
             TermKind::Var(_) => {
                 value_term = model.get(value_term)?;
                 continue;

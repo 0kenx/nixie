@@ -326,17 +326,20 @@ impl super::Solver {
             // across `assert`s; a stale entry only re-emits *valid* (redundant)
             // result splits / comparison links, so it is sound to leave it
             // (cleared only by `reset`).
-            dt_var_constructors: _,     // TRAIL: DtVarConstructorAdded
-            arith_parse_cache: _,       // INVARIANT: keyed by term structure
+            dt_var_constructors: _,    // TRAIL: DtVarConstructorAdded
+            arith_parse_cache: _,      // INVARIANT: keyed by term structure
             arith_parse_overflow: _, // INVARIANT: keyed by term structure (same contract as arith_parse_cache)
             tracked_compound_terms: _, // TRAIL: TrackedCompoundAdded
             encoded_terms: _, // TRAIL: EncodedTermAdded (carries the displaced entry, so a polarity widened inside the scope is restored rather than dropped)
             fp_constraint_cache: _, // INVARIANT: keyed by assertion term
             encode_depth_exceeded: _, // SNAPSHOT
+            ff_certificate: _, // RESULT: cleared with the cached verdict by
+            // `invalidate_results` — the certificate belongs to the check
+            // that produced it, exactly as the model does.
             set_terms_unconstrained: _, // SNAPSHOT
-            ff_terms_unconstrained: _, // SNAPSHOT
-            has_array_ops: _, // SNAPSHOT
-            array_theory: _,  // SCOPED: snapshot/`pop` via `array_theory_scope`
+            ff_terms_unconstrained: _,  // SNAPSHOT
+            has_array_ops: _,           // SNAPSHOT
+            array_theory: _,            // SCOPED: snapshot/`pop` via `array_theory_scope`
             // in `ContextState` (entries are encoded at `assert` time, not as
             // individual `TrailOp`s).
             array_select_terms: _, // Stage-1 bookkeeping: accumulates across

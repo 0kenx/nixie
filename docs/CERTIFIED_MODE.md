@@ -25,7 +25,16 @@ operations themselves.
 The evaluator never completes an absent value or guesses an unsupported
 operator. An assertion that cannot be evaluated completely makes the result
 `unknown`. Current concrete coverage includes ground Boolean formulas, integer
-and rational arithmetic, and the core fixed-size bit-vector operations.
+and rational arithmetic, the core fixed-size bit-vector operations, and prime
+finite-field arithmetic (`QF_FF`: `ff.add`/`ff.mul`/`ff.neg`/`ff.bitsum` in
+exact `BigInt` modular arithmetic over the field the terms' sort names).
+
+Finite-field UNSATs additionally accept a first-class theory certificate:
+`FfCertificate` carries either ideal-membership cofactors (`Σ cᵢ fᵢ = 1`,
+re-encoded and re-multiplied by the gate — see `nixie-theories`'
+`ff_theory`) or a pigeonhole count (`distinct` over more terms than the
+field's order). Field refutations without a certificate (exhaustive
+enumeration, branch exhaustion) fail closed to `unknown`.
 
 ## UNSAT certificates
 

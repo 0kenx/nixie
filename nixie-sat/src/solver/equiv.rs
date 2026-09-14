@@ -44,12 +44,6 @@ pub(super) fn els_surgery_enabled() -> bool {
 }
 
 impl Solver {
-    /// Whether CSR-surgery hooks are active (experiment gate: the flag AND
-    /// a live shadow).
-    pub(super) fn csr_surgery_on(&self) -> bool {
-        els_surgery_enabled() && self.watches.csr_active()
-    }
-
     fn els_csr_surgery_shrink(
         &mut self,
         cid: ClauseId,

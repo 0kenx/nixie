@@ -5,6 +5,26 @@
 > `docs/studies/2026-09-14-amplitude-trajectory-answer.md` (item 2),
 > `docs/studies/2026-09-14-metric-decision.md` (item 3).
 
+## Final addendum: slice 5's CORRECTNESS is proven (`c31cf26c`)
+
+The blocker dissolved under debugging: the 158 k-wrong-count audits
+were two **un-windowed hook leaks** (the central `retire_clause` and
+BVE's retire hook gated on the env flag, firing during BVE/subsume/
+vivify/probing and the pre-search sweep — desyncing the mirror, whose
+`begin_scan` precondition then silently suspended it; the one-shot
+symbolized-backtrace probe at the site localized the first violation to
+the pre-search `sweep_round` propagate).  With both window-gated, the
+**contract oracle is green end-to-end**: `live-with-wrong-count = 0` at
+every audit across whole si2 and 6s167 solves, through index-driven
+surgical re-pointing plus real drift; trajectories bit-identical with
+surgery on; the landed ref→positions index audits exact (0 missing /
+0 stale of 351 k).  **What remains for slice 5 is economics only**
+(touched-mass × span-scan vs the rebuild's arena sweep — the ops/entry
+counters are the instruments) plus slice 4 (the CSR-primary flip that
+lets the surgery replace the rebuild).  The prior "watch-position
+drift" framing below is preserved as the finding that motivated the
+index — the index is the cure and it works.
+
 ## Late addition (same day): slice 5 STARTED and hit its measured blocker
 
 `3e9b2b51` + `bd06ae67`: the ELS CSR-surgery experiment landed

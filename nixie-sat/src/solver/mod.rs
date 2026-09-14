@@ -4699,7 +4699,7 @@ impl Solver {
         // the multiset oracle reports them stale).  Covers every retire
         // site: subsume backward-subsumption, probing, sweep, vivify, ELS.
         // Runs before `clauses.remove` frees the arena slot.
-        if self.csr_surgery_on()
+        if self.els_surgery_window
             && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
             && c.lits.len() >= 3
             && let Some(r) = self.clauses.ref_of(cid)

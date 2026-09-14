@@ -302,6 +302,15 @@ pub struct Solver {
     pub(super) model: Option<Model>,
     /// Unsat core (if unsat)
     pub(super) unsat_core: Option<UnsatCore>,
+    /// The finite-field UNSAT certificate of the last `Unsat` (§8 of the
+    /// FF design): the checkable object — ideal-membership cofactors or a
+    /// pigeonhole count — that certified mode re-verifies before letting
+    /// an FF `unsat` through. Travels with the verdict exactly as `model`
+    /// does; cleared by `invalidate_results`.
+    pub(super) ff_certificate: Option<(
+        nixie_theories::ff_theory::FfCertificate,
+        Vec<nixie_core::ast::TermId>,
+    )>,
     /// Why certified mode declined the most recent candidate verdict.
     pub(super) certification_failure: Option<String>,
     /// Context stack for push/pop
@@ -1097,6 +1106,7 @@ impl Solver {
             assumption_vars: FxHashMap::default(),
             model: None,
             unsat_core: None,
+            ff_certificate: None,
             certification_failure: None,
             context_stack: Vec::new(),
             trail: Vec::new(),

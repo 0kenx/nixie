@@ -481,3 +481,74 @@ fn parsed_smtlib_goals_solve() {
         other => panic!("expected sat, got {other:?}"),
     }
 }
+
+#[test]
+fn corrupted_certificates_are_rejected() {
+    use nixie_core::sort::SortKind;
+    // Build an UNSAT goal with a linear certificate, then corrupt the
+    // recorded cofactors/generators in every way the verifier watches
+    // for; each must fail verification (fail-closed is the property —
+    // a broken certificate may never certify).
+    let mut manager = TermManager::new();
+    let sort = manager
+        .sorts
+        .finite_field(BigUint::from(97u32))
+        .expect("prime");
+    let field = match manager.sorts.get(sort).map(|s| s.kind.clone()) {
+        Some(SortKind::FiniteField(id)) => id,
+        _ => panic!("expected FF sort"),
+    };
+    let x = manager.mk_var("x", sort);
+    let c5 = manager.mk_ff_const(field, 5i64.into()).expect("c");
+    let c6 = manager.mk_ff_const(field, 6i64.into()).expect("c");
+    let assertions = vec![manager.mk_eq(x, c5), manager.mk_eq(x, c6)];
+
+    use nixie_theories::ff_theory::{FfCertificate, FfOutcome, check_conjunction};
+    let outcome = check_conjunction(&manager, field, &assertions, 1 << 24);
+    let FfOutcome::Unsat(core) = outcome else {
+        panic!("expected unsat");
+    };
+    let Some(nixie_theories::ff_theory::FfCertificate::IdealMembership {
+        field: cfield,
+        generators,
+        cofactors,
+    }) = core.certificate.clone()
+    else {
+        panic!("expected an ideal-membership certificate");
+    };
+
+    // 1. The pristine certificate verifies.
+    let good = FfCertificate::IdealMembership {
+        field: cfield,
+        generators: generators.clone(),
+        cofactors: cofactors.clone(),
+    };
+    assert!(good.verify(&manager, &assertions));
+
+    // 2. Dropping a generator breaks alignment (length mismatch).
+    let mut gens2 = generators.clone();
+    gens2.pop();
+    let bad2 = FfCertificate::IdealMembership {
+        field: cfield,
+        generators: gens2,
+        cofactors: cofactors.clone(),
+    };
+    assert!(!bad2.verify(&manager, &assertions));
+
+    // 3. Zeroing every cofactor makes the sum 0, not a nonzero constant.
+    let bad3 = FfCertificate::IdealMembership {
+        field: cfield,
+        generators: generators.clone(),
+        cofactors: cofactors
+            .iter()
+            .map(|_| nixie_math::ff::poly::MPoly::zero())
+            .collect(),
+    };
+    assert!(!bad3.verify(&manager, &assertions));
+
+    // 4. A certificate against DIFFERENT assertions (satisfiable ones)
+    //    must not verify: the replayed generators disagree.
+    let c1 = manager.mk_ff_const(field, 1i64.into()).expect("c");
+    let other = vec![manager.mk_eq(x, c1), manager.mk_eq(x, c1)];
+    assert!(!good.verify(&manager, &other));
+}

@@ -176,6 +176,9 @@ impl Solver {
         self.certification_failure = None;
         self.model = None;
         self.unsat_core = None;
+        // The FF UNSAT certificate is a property of the refuted stack,
+        // not of the current one (§8): it travels with the verdict.
+        self.ff_certificate = None;
         self.last_check = None;
         // The algebraic side-channel belongs to the check that populated it
         // (upstream v0.3.3): it travels with the model, not the stack.

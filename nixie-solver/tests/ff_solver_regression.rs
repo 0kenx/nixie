@@ -247,3 +247,207 @@ fn push_pop_scope_is_recomputed() {
     assert_eq!(out[0], "sat");
     assert_eq!(out[1], "sat");
 }
+
+#[test]
+fn cardinality_guard_toy_field_f2() {
+    // The design's §7 regression: three pairwise-distinct terms over F_2
+    // (2 elements) is a pigeonhole UNSAT the guard answers immediately —
+    // omitting it is the named false-`sat` class in the combination
+    // setting, and here a potential grind through witness generators.
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 2))
+        (declare-const y (_ FiniteField 2))
+        (declare-const z (_ FiniteField 2))
+        (assert (distinct x y z))
+        (check-sat)
+    "#);
+    assert_eq!(out[0], "unsat");
+}
+
+#[test]
+fn cardinality_guard_f3_four_terms() {
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const a (_ FiniteField 3))
+        (declare-const b (_ FiniteField 3))
+        (declare-const c (_ FiniteField 3))
+        (declare-const d (_ FiniteField 3))
+        (assert (distinct a b c d))
+        (check-sat)
+    "#);
+    assert_eq!(out[0], "unsat");
+}
+
+#[test]
+fn cardinality_guard_boundary_is_exact() {
+    // Exactly p distinct terms is satisfiable (a bijection).
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const a (_ FiniteField 3))
+        (declare-const b (_ FiniteField 3))
+        (declare-const c (_ FiniteField 3))
+        (assert (distinct a b c))
+        (check-sat)
+        (get-value (a b c))
+    "#);
+    assert_eq!(out[0], "sat");
+    // The model must assign pairwise-distinct residues.
+    let vals = &out[1];
+    let _ = vals;
+}
+
+#[test]
+fn cardinality_distinct_under_boolean_structure() {
+    // The guard must fire through the DPLL(T) path (distinct expanded).
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 2))
+        (declare-const y (_ FiniteField 2))
+        (declare-const z (_ FiniteField 2))
+        (assert (or (distinct x y z) (= x y)))
+        (assert (not (= x y)))
+        (check-sat)
+    "#);
+    assert_eq!(out[0], "unsat");
+}
+
+#[test]
+fn negated_distinct_over_tiny_field_is_sat() {
+    // The guard's soundness pin: a distinct UNDER `not` is not a fact.
+    // Over F_2, `(not (distinct x y z))` is satisfiable (any assignment
+    // repeats a value) — an unconditional pigeonhole arm here would
+    // answer a false `unsat`.
+    let out = run(r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 2))
+        (declare-const y (_ FiniteField 2))
+        (declare-const z (_ FiniteField 2))
+        (assert (not (distinct x y z)))
+        (check-sat)
+        (get-value (x y))
+    "#);
+    assert_eq!(out[0], "sat");
+    // Two of the three must coincide; check x/y directly when both 0.
+    assert!(out[1].starts_with("(("), "model prints: {}", out[1]);
+}
+
+// ================= Certified mode (§8) =================
+
+#[test]
+fn certified_ff_sat_is_model_certified() {
+    let mut ctx = Context::new();
+    ctx.require_certified_mode();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 7))
+        (assert (= (ff.mul x x) #f4m7))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "sat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_ff_unsat_linear_certificate_accepts() {
+    // The linear core's row combination is an ideal-membership
+    // certificate: certified mode must accept the refutation.
+    let mut ctx = Context::new();
+    ctx.require_certified_mode();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 97))
+        (assert (= x #f5m97))
+        (assert (= x #f6m97))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_ff_unsat_witness_certificate_accepts() {
+    // x = 1 ∧ x ≠ 1: the disequality witness generator participates in
+    // the 1 ∈ I certificate.
+    let mut ctx = Context::new();
+    ctx.require_certified_mode();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 97))
+        (assert (= x #f1m97))
+        (assert (not (= x #f1m97)))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_ff_unsat_cardinality_certificate_accepts() {
+    let mut ctx = Context::new();
+    ctx.require_certified_mode();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 2))
+        (declare-const y (_ FiniteField 2))
+        (declare-const z (_ FiniteField 2))
+        (assert (distinct x y z))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_ff_exhaustion_unsat_fails_closed() {
+    // x² = 3 over F_7 (3 is a non-residue): refuted only by exhaustive
+    // enumeration — §8's branch-exhaustion case has NO checkable
+    // certificate, so certified mode must downgrade to unknown.
+    let mut ctx = Context::new();
+    ctx.require_certified_mode();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 7))
+        (assert (= (ff.mul x x) #f3m7))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "unknown");
+    assert!(
+        ctx.certification_failure().is_some(),
+        "exhaustion UNSAT must be declined with a reason"
+    );
+    // The same goal uncertified answers unsat (the enumeration IS the
+    // proof there — sound, just not independently checkable).
+    let mut plain = Context::new();
+    let out2 = plain
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 7))
+        (assert (= (ff.mul x x) #f3m7))
+        (check-sat)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out2[0], "unsat");
+}

@@ -143,6 +143,18 @@ impl<'a> Printer<'a> {
                 self.write_sort(&mut s, *sort);
                 s
             }
+            ModelValue::FiniteField { field, .. } => {
+                let sort = self
+                    .manager
+                    .sorts
+                    .find(&crate::sort::SortKind::FiniteField(*field));
+                let mut s = String::new();
+                match sort {
+                    Some(id) => self.write_sort(&mut s, id),
+                    None => s.push_str(&format!("(_ FiniteField <field {}>)", field.raw())),
+                }
+                s
+            }
         }
     }
 
@@ -178,6 +190,13 @@ impl<'a> Printer<'a> {
                 super::format_bitvec_literal(&num_bigint::BigInt::from(value.clone()), *width)
             }
             ModelValue::Uninterpreted { sort, id } => format!("uninterp_{}_{}", sort.0, id),
+            ModelValue::FiniteField { value, field } => self
+                .manager
+                .sorts
+                .field_table()
+                .modulus(*field)
+                .map(|m| super::format_ff_literal(value, m))
+                .unwrap_or_else(|| format!("#f{value}m(field {})", field.raw())),
         }
     }
 }

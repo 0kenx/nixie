@@ -81,24 +81,31 @@ impl Solver {
         let mut has_structure = false;
         for &a in &self.assertions {
             let term = manager.get(a)?;
-            match &term.kind {
-                TermKind::True | TermKind::False | TermKind::Eq(_, _) | TermKind::Not(_) => {}
-                TermKind::And(_)
-                | TermKind::Or(_)
-                | TermKind::Ite(_, _, _)
-                | TermKind::Xor(_, _)
-                | TermKind::Implies(_, _)
-                | TermKind::Distinct(_) => {
-                    has_structure = true;
-                    // Structure is allowed only over FF atoms; verify the
-                    // whole sub-DAG before committing (a mixed leaf under
-                    // the structure would otherwise be abstracted into a
-                    // free Boolean — exactly the false-`sat` shape).
-                    if !dag_is_ff_boolean(a, manager) {
-                        return None;
-                    }
+            // A literal is exactly {true, false, `=`, `not =`} — anything
+            // else (including `not (distinct ...)`, which is a
+            // *disjunction* of equalities) is Boolean structure for the
+            // DPLL(T) path.
+            let is_literal = matches!(
+                &term.kind,
+                TermKind::True | TermKind::False | TermKind::Eq(_, _)
+            ) || matches!(
+                &term.kind,
+                TermKind::Not(inner)
+                    if matches!(
+                        manager.get(*inner).map(|t| &t.kind),
+                        Some(TermKind::Eq(_, _))
+                    )
+            );
+            let _ = &term;
+            if !is_literal {
+                has_structure = true;
+                // Structure is allowed only over FF atoms; verify the
+                // whole sub-DAG before committing (a mixed leaf under
+                // the structure would otherwise be abstracted into a
+                // free Boolean — exactly the false-`sat` shape).
+                if !dag_is_ff_boolean(a, manager) {
+                    return None;
                 }
-                _ => return None, // foreign theory or unowned shape
             }
         }
         if has_structure {
@@ -168,7 +175,10 @@ impl Solver {
                     }
                 }
                 FfOutcome::Unsat(ff_core) => {
-                    // Map the slice indices back to the global literal list.
+                    // Map the slice indices back to the global literal list
+                    // — the certificate's literal indices remap the same
+                    // way, so the stored object stays verifiable against
+                    // the literals it names.
                     for &i in &ff_core.fact_indices {
                         if let Some(&lit) = slice.get(i) {
                             if let Some(global) = literals.iter().position(|&l| l == lit) {
@@ -176,21 +186,65 @@ impl Solver {
                             }
                         }
                     }
+                    let certificate = ff_core.certificate.map(|cert| {
+                        let remapped = match &cert {
+                            nixie_theories::ff_theory::FfCertificate::IdealMembership {
+                                field,
+                                generators,
+                                cofactors,
+                            } => {
+                                let gens = generators
+                                    .iter()
+                                    .map(|(lit, poly)| {
+                                        let global = lit.and_then(|i| {
+                                            slice.get(i).and_then(|&l| {
+                                                literals.iter().position(|&x| x == l)
+                                            })
+                                        });
+                                        (global, poly.clone())
+                                    })
+                                    .collect();
+                                nixie_theories::ff_theory::FfCertificate::IdealMembership {
+                                    field: *field,
+                                    generators: gens,
+                                    cofactors: cofactors.clone(),
+                                }
+                            }
+                            nixie_theories::ff_theory::FfCertificate::Cardinality {
+                                field,
+                                literal,
+                                k,
+                            } => {
+                                let global = slice
+                                    .get(*literal)
+                                    .and_then(|&l| literals.iter().position(|&x| x == l))
+                                    .unwrap_or(*literal);
+                                nixie_theories::ff_theory::FfCertificate::Cardinality {
+                                    field: *field,
+                                    literal: global,
+                                    k: *k,
+                                }
+                            }
+                        };
+                        (remapped, literals.clone())
+                    });
                     // An empty core cannot happen (check_conjunction
                     // guarantees one), but an unwarranted whole-goal Unsat
                     // is worse than a missed dispatch: only answer Unsat
                     // with a nonempty core.
                     if !core.is_empty() {
                         self.install_ff_core(&literals, &core);
+                        self.ff_certificate = certificate;
                         return Some(SolverResult::Unsat);
                     }
                     return None;
                 }
                 FfOutcome::Exhausted => {
                     // The branching closed the search space: genuine UNSAT
-                    // (no certificate available — see §8's branch-exhaustion
-                    // case).
+                    // with NO certificate (§8's branch-exhaustion case) —
+                    // certified mode must decline it, so nothing is stored.
                     self.install_ff_core(&literals, &[]);
+                    self.ff_certificate = None;
                     return Some(SolverResult::Unsat);
                 }
                 FfOutcome::OutOfBudget { where_ } => {
@@ -366,6 +420,32 @@ impl Solver {
     /// The lazy DPLL(T) loop. Returns `None` (→ `Unknown`) on budget or
     /// on a shape it does not own; the honesty gate covers the `None`.
     fn dpll_ff(&mut self, manager: &mut TermManager) -> Option<SolverResult> {
+        // Cardinality guard (§7) BEFORE the distinct terms are expanded
+        // into pairwise disequalities (after expansion the count is
+        // invisible): k pairwise-distinct terms of 𝔽_p need k ≤ p.
+        // SOUND ONLY on the asserted conjunct spine — a `distinct` under
+        // `or`/`not` is a SAT decision, not a fact, and refuting it would
+        // refute goals like `(not (distinct x y z))` over 𝔽₂ (satisfiable
+        // by any repeated assignment). Off-spine distincts are handled by
+        // the theory loop, which enumeration decides soundly at the tiny
+        // fields where k can exceed p at all.
+        if let Some((distinct_term, field, k)) =
+            asserted_spine_distinct_exceeds_field(manager, &self.assertions)
+        {
+            // Pigeonhole UNSAT with its checkable certificate: the
+            // literal index names the distinct inside `self.assertions`.
+            let literal = self
+                .assertions
+                .iter()
+                .position(|&a| a == distinct_term)
+                .unwrap_or(0);
+            self.ff_certificate = Some((
+                nixie_theories::ff_theory::FfCertificate::Cardinality { field, literal, k },
+                self.assertions.clone(),
+            ));
+            return Some(SolverResult::Unsat);
+        }
+
         // 1. Collect the FF atoms (equalities between pure-FF terms) and
         //    mint a SAT variable per atom.
         let mut atoms: Vec<TermId> = Vec::new();
@@ -391,7 +471,12 @@ impl Solver {
                 atom_var: &mut atom_var,
             };
             for &assertion in &self.assertions {
-                unit_lits.push(encoder.encode(assertion, manager)?);
+                match encoder.encode(assertion, manager) {
+                    Some(l) => unit_lits.push(l),
+                    None => {
+                        return None;
+                    }
+                }
             }
         }
         // Atoms may have grown (distinct expansions register fresh
@@ -508,6 +593,51 @@ impl Solver {
             }
         }
     }
+}
+
+/// The cardinality guard's DPLL-side arm: a `distinct` over more terms
+/// than its field's order, reachable only through the asserted conjunct
+/// spine (top-level assertions and their `and` conjuncts — never under
+/// `or`/`not`/`ite`, where the distinct's truth is undecided).
+fn asserted_spine_distinct_exceeds_field(
+    manager: &TermManager,
+    assertions: &[TermId],
+) -> Option<(TermId, FieldId, usize)> {
+    let mut stack: Vec<TermId> = assertions.to_vec();
+    while let Some(t) = stack.pop() {
+        let Some(term) = manager.get(t) else {
+            continue;
+        };
+        match &term.kind {
+            TermKind::True => {}
+            TermKind::And(children) => stack.extend(children.iter().copied()),
+            TermKind::Distinct(args) => {
+                let field: Option<FieldId> = args.iter().find_map(|&a| {
+                    let arg = manager.get(a)?;
+                    match manager.sorts.get(arg.sort).map(|s| s.kind.clone()) {
+                        Some(SortKind::FiniteField(id)) => Some(id),
+                        _ => None,
+                    }
+                });
+                if let Some(field) = field {
+                    let all_here = args.iter().all(|&a| {
+                        manager
+                            .get(a)
+                            .and_then(|t| manager.sorts.get(t.sort).map(|s| s.kind.clone()))
+                            .is_some_and(|k| matches!(k, SortKind::FiniteField(id) if id == field))
+                    });
+                    if all_here
+                        && let Some(modulus) = manager.sorts.field_table().modulus(field)
+                        && num_bigint::BigUint::from(args.len()) > *modulus
+                    {
+                        return Some((t, field, args.len()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Collect every FF equality atom (`=` between pure-FF terms) in a DAG.
