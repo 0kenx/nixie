@@ -377,11 +377,11 @@ fn encode_generators<'f>(
             }
         }
     }
-    for poly in std::mem::take(&mut enc.bitsum_generators) {
+    for (origin, poly) in std::mem::take(&mut enc.bitsum_generators) {
         generators.push(FrontGen {
             literal: None,
             poly,
-            origin: std::collections::BTreeSet::new(),
+            origin,
         });
     }
 
@@ -717,8 +717,13 @@ struct Encoder<'a> {
     field: FieldId,
     var_index: FxHashMap<TermId, Var>,
     next_var: Var,
-    /// Bitsum definition generators accumulated during encoding.
-    bitsum_generators: Vec<MPoly>,
+    /// Bitsum definition generators accumulated during encoding, each
+    /// with the literal whose encoding minted it — provenance for cores
+    /// (a definition is not a fact, but the fact that REQUIRED it
+    /// belongs in any core the definition participates in).
+    bitsum_generators: Vec<(std::collections::BTreeSet<usize>, MPoly)>,
+    /// The literal whose terms are currently being encoded.
+    current_literal: Option<usize>,
     /// Fresh witness variables minted for disequalities (pair key → ring
     /// var), excluded from models.
     witnesses: FxHashMap<(TermId, TermId), Var>,
@@ -732,6 +737,7 @@ impl<'a> Encoder<'a> {
             var_index: FxHashMap::default(),
             next_var: 0,
             bitsum_generators: Vec::new(),
+            current_literal: None,
             witnesses: FxHashMap::default(),
         }
     }
@@ -938,7 +944,12 @@ impl<'a> Encoder<'a> {
                                     .f
                                     .mul(&power, &self.f.from_biguint(&BigUint::from(2u8)));
                             }
-                            self.bitsum_generators.push(definition);
+                            self.bitsum_generators.push((
+                                self.current_literal
+                                    .into_iter()
+                                    .collect::<std::collections::BTreeSet<usize>>(),
+                                definition,
+                            ));
                             let mut out = MPoly::zero();
                             out.add_term(self.f, Monomial::from_var(s), &self.f.one());
                             results.push(out);
