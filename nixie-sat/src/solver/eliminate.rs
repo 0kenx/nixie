@@ -1831,7 +1831,7 @@ impl Solver {
                     self.mark_subsume_lits(r.iter());
                     let rid = self.clauses.add_original(r.iter().copied());
                     self.proof_set_clause_id(rid, pfid);
-                    self.csr_surgery_arm_resolvent(rid, &r);
+                    self.csr_surgery_arm_resolvent(rid, r);
                     for &lit in r {
                         if ctx.lit_val(lit) == 0 {
                             let code = lit.code() as usize;
@@ -1845,7 +1845,7 @@ impl Solver {
                 }
             } else {
                 let rid = self.clauses.add_original(r.iter().copied());
-                self.csr_surgery_arm_resolvent(rid, &r);
+                self.csr_surgery_arm_resolvent(rid, r);
                 for &lit in r {
                     if ctx.lit_val(lit) == 0 {
                         let code = lit.code() as usize;
@@ -2044,19 +2044,18 @@ impl Solver {
             && lits.len() >= 3
             && let Some(r) = self.clauses.ref_of(cid)
             && let Some(c) = self.clauses.get(cid).filter(|c| !c.deleted)
+            && (c.lits[0], c.lits[1]) != (lits[0], lits[1])
         {
-            if (c.lits[0], c.lits[1]) != (lits[0], lits[1]) {
-                self.watches.csr_surgery_remove(lits[0].negate(), r);
-                self.watches.csr_surgery_remove(lits[1].negate(), r);
+            self.watches.csr_surgery_remove(lits[0].negate(), r);
+            self.watches.csr_surgery_remove(lits[1].negate(), r);
+            self.csr_surgery_ops += 2;
+            self.csr_surgery_fired = true;
+            if c.lits.len() >= 3 {
+                self.watches
+                    .csr_surgery_add(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
+                self.watches
+                    .csr_surgery_add(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
                 self.csr_surgery_ops += 2;
-                self.csr_surgery_fired = true;
-                if c.lits.len() >= 3 {
-                    self.watches
-                        .csr_surgery_add(c.lits[0].negate(), Watcher::new(cid, r, c.lits[1]));
-                    self.watches
-                        .csr_surgery_add(c.lits[1].negate(), Watcher::new(cid, r, c.lits[0]));
-                    self.csr_surgery_ops += 2;
-                }
             }
         }
         // Recompute the stored LBD over the shrunken literal set (learned

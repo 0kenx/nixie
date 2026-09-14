@@ -695,54 +695,6 @@ impl WatchLists {
     /// (multiset of (ref, blocker) per literal) — see [`Self::csr_multiset_compare_with`].
     /// (detached) CSR — the surgery experiment's oracle form: the rebuild
     /// detaches the surgically-updated shadow at entry and compares it
-    /// against the just-rebuilt lists before adopting the fresh layout.
-    pub(crate) fn csr_multiset_compare_with(
-        &self,
-        csr: &CsrWatchLists,
-        num_vars: usize,
-    ) -> (usize, usize, usize) {
-        let mut lits = 0usize;
-        let mut entries = 0usize;
-        let mut bad = 0usize;
-        for code in 0..num_vars * 2 {
-            let lit = Lit::from_code(code as u32);
-            let list = self.get(lit);
-            let (prim, extra) = csr.spans(lit);
-            lits += 1;
-            entries += list.len();
-            // Ref-only identity: blockers are drift state (the BCP rewrites
-            // them in place; the rebuild resets them), not membership.  One
-            // watcher per (clause, literal) makes the ref multiset exact.
-            let key = |w: &Watcher| w.r.byte_offset();
-            let mut csr_side: Vec<usize> = prim.iter().chain(extra.iter()).map(key).collect();
-            let mut vec_side: Vec<usize> = list.iter().map(key).collect();
-            csr_side.sort_unstable();
-            vec_side.sort_unstable();
-            if csr_side != vec_side {
-                bad += 1;
-                if bad <= 4 {
-                    let only_csr: Vec<_> = csr_side
-                        .iter()
-                        .filter(|e| !vec_side.contains(e))
-                        .take(3)
-                        .collect();
-                    let only_vec: Vec<_> = vec_side
-                        .iter()
-                        .filter(|e| !csr_side.contains(e))
-                        .take(3)
-                        .collect();
-                    let _ = &only_csr;
-                    eprintln!(
-                        "[csr-surgery] literal {lit:?}: csr {} vs list {} (cs-only {only_csr:?}, list-only {only_vec:?})",
-                        csr_side.len(),
-                        vec_side.len(),
-                    );
-                }
-            }
-        }
-        (lits, entries, bad)
-    }
-
     /// Compare the **drifted** shadow against the drifted `Vec` lists,
     /// entry-for-entry, order included (the dual-write validation; called
     /// at every watch rebuild before either representation resets).
