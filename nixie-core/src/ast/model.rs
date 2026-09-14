@@ -51,6 +51,16 @@ pub enum ModelValue {
         /// Unique identifier for this uninterpreted value
         id: u64,
     },
+    /// A prime-field element: its residue in `[0, p)` and its field. Exact
+    /// (`BigInt`) — the ZK moduli are 254 bits wide, and this value feeds
+    /// the certified-mode evaluator, where a fixed-width payload would
+    /// truncate the very values being certified.
+    FiniteField {
+        /// The element's residue in `[0, p)`.
+        value: BigInt,
+        /// The field.
+        field: crate::sort::field::FieldId,
+    },
 }
 
 /// The all-ones mask of a `width`-bit vector, i.e. `2^width - 1`
@@ -105,7 +115,8 @@ impl ModelValue {
             ModelValue::Bool(_)
             | ModelValue::Int(_)
             | ModelValue::Real(_)
-            | ModelValue::Uninterpreted { .. } => None,
+            | ModelValue::Uninterpreted { .. }
+            | ModelValue::FiniteField { .. } => None,
         }
     }
 }
@@ -162,6 +173,12 @@ impl Model {
     pub fn assign_bitvec_big(&mut self, var: TermId, value: BigUint, width: u32) {
         self.assignments
             .insert(var, ModelValue::from_bitvec_bits(value, width));
+    }
+
+    /// Assign a finite-field value (residue in `[0, p)` + field).
+    pub fn assign_ff(&mut self, var: TermId, value: BigInt, field: crate::sort::field::FieldId) {
+        self.assignments
+            .insert(var, ModelValue::FiniteField { value, field });
     }
 
     /// Assign an uninterpreted value to a variable
@@ -309,6 +326,12 @@ impl core::fmt::Display for ModelValue {
                 write!(f, "#b{:0width$b}", value, width = *width as usize)
             }
             ModelValue::Uninterpreted { sort, id } => write!(f, "uninterp!{:?}!{}", sort, id),
+            // The modulus lives in the sort manager's FieldTable, not on
+            // the value; the exact SMT-LIB literal is rendered by the
+            // printers where the table is in reach.
+            ModelValue::FiniteField { value, field } => {
+                write!(f, "#f{value}m(field {})", field.raw())
+            }
         }
     }
 }

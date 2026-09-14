@@ -101,6 +101,110 @@ pub struct FfCore {
     /// cofactor in the certificate. Definitional generators (bitsums,
     /// witnesses) are excluded by construction.
     pub fact_indices: Vec<usize>,
+    /// The checkable object that justifies the UNSAT (§8). `None` on the
+    /// paths with no certificate (branch exhaustion, enumeration) — those
+    /// must degrade to `Unknown` in certified mode, never pose as proved.
+    pub certificate: Option<FfCertificate>,
+}
+
+/// An independently checkable UNSAT certificate for a finite-field
+/// conjunction.
+#[derive(Debug, Clone)]
+pub enum FfCertificate {
+    /// Weak Nullstellensatz: `Σ cᵢ · fᵢ = 1` over the listed asserted
+    /// literals' encoded generators. Verification re-encodes the literals
+    /// and re-multiplies — one pass of polynomial arithmetic, independent
+    /// of the Gröbner machinery that produced the cofactors.
+    IdealMembership {
+        /// The field the certificate lives in.
+        field: FieldId,
+        /// The full generator list: (asserted-literal index for fact
+        /// generators, `None` for witness/bitsum definitions), with the
+        /// polynomial. Index-aligned with `cofactors`.
+        generators: Vec<(Option<usize>, MPoly)>,
+        /// The cofactors: `Σ cofactors[i] · generators[i].1 = 1`.
+        cofactors: Vec<MPoly>,
+    },
+    /// Pigeonhole: a `distinct` over `k` terms of a field with order `p`
+    /// and `k > p`. Verification re-reads the literal and the field's
+    /// order from the sort table.
+    Cardinality {
+        /// The field.
+        field: FieldId,
+        /// The literal index of the `distinct`.
+        literal: usize,
+        /// The term count.
+        k: usize,
+    },
+}
+
+impl FfCertificate {
+    /// Re-verify the certificate against the original assertions:
+    /// re-encode the named literals and re-multiply (IdealMembership), or
+    /// re-read the distinct count and the field order (Cardinality).
+    /// `false` on any mismatch — the caller fails closed.
+    #[must_use]
+    pub fn verify(&self, manager: &TermManager, assertions: &[TermId]) -> bool {
+        match self {
+            FfCertificate::IdealMembership {
+                field,
+                generators,
+                cofactors,
+            } => {
+                if generators.len() != cofactors.len() || generators.is_empty() {
+                    return false;
+                }
+                let Some(modulus) = manager.sorts.field_table().modulus(*field).cloned() else {
+                    return false;
+                };
+                let Ok(f) = FieldCtx::new(modulus) else {
+                    return false;
+                };
+                // Replay the deterministic encoding over the same
+                // assertions: same variable registration order, same
+                // witness minting, bitsum definitions last — the
+                // generator list must reproduce exactly.
+                let Ok((_enc, replay)) =
+                    encode_generators(manager, *field, &f, assertions, 1 << 24)
+                else {
+                    return false;
+                };
+                if replay.len() != generators.len() {
+                    return false;
+                }
+                let mut acc = MPoly::zero();
+                for (((recorded_literal, recorded_poly), replayed), cofactor) in
+                    generators.iter().zip(&replay).zip(cofactors)
+                {
+                    if recorded_literal != &replayed.literal || recorded_poly != &replayed.poly {
+                        return false;
+                    }
+                    acc = acc.add(&f, &cofactor.mul(&f, recorded_poly));
+                }
+                // Σ cᵢ fᵢ must equal a NONZERO constant (rescaleable to
+                // 1; any nonzero constant is a valid refutation).
+                acc.is_nonzero_constant()
+            }
+            FfCertificate::Cardinality { field, literal, k } => {
+                let Some(&assertion) = assertions.get(*literal) else {
+                    return false;
+                };
+                let Some(term) = manager.get(assertion) else {
+                    return false;
+                };
+                let TermKind::Distinct(args) = &term.kind else {
+                    return false;
+                };
+                if args.len() != *k {
+                    return false;
+                }
+                let Some(modulus) = manager.sorts.field_table().modulus(*field) else {
+                    return false;
+                };
+                BigUint::from(*k) > *modulus
+            }
+        }
+    }
 }
 
 /// The eager whole-problem FF dispatcher: decides a conjunctive `QF_FF`
@@ -127,6 +231,28 @@ pub fn check_conjunction(
         let index = assertions.iter().position(|&a| a == false_lit).unwrap_or(0);
         return FfOutcome::Unsat(FfCore {
             fact_indices: vec![index],
+            // `false` needs no field certificate: the Boolean skeleton
+            // refutes it, which certified mode's LRAT kernel proves.
+            certificate: None,
+        });
+    }
+
+    // ---- The cardinality guard (§7) ----
+    // A `distinct` over k terms of 𝔽_p (or any set of terms forced
+    // pairwise-distinct) requires k ≤ p: the field HAS p elements. For
+    // ZK primes this is vacuous; for 𝔽₂/𝔽₃ omitting the check hands the
+    // GB a pigeonhole refutation it must find through k·(k−1)/2 witness
+    // generators of exponentially growing certificate degree — and the
+    // design names the omission as a false-`sat` class in the
+    // combination setting. Checked here, up front, for every field size.
+    if let Some((index, k)) = distinct_set_exceeding_field(manager, field, assertions, &modulus) {
+        return FfOutcome::Unsat(FfCore {
+            fact_indices: vec![index],
+            certificate: Some(FfCertificate::Cardinality {
+                field,
+                literal: index,
+                k,
+            }),
         });
     }
 
@@ -141,6 +267,27 @@ pub fn check_conjunction(
             // 254-bit case to the GB path.
             let bits = modulus.bits() * vars.len().max(1) as u64;
             if bits <= 22 {
+                // The linear core runs even on enumeration-eligible goals:
+                // an inconsistent linear system is refuted in one pass
+                // WITH a checkable certificate, where the exhaustive
+                // search has none — certified mode would otherwise
+                // decline every tiny-field UNSAT (the F_3..F_13 goals).
+                // 𝔽₂ has no Montgomery form (even modulus) and skips
+                // straight to the exhaustive path.
+                if let Ok(f) = FieldCtx::new(modulus.clone()) {
+                    match encode_generators(manager, field, &f, assertions, budget_steps) {
+                        Ok((_enc, generators)) => match linear_core(&f, field, generators) {
+                            FrontResult::Inconsistent(core, certificate) => {
+                                return FfOutcome::Unsat(FfCore {
+                                    fact_indices: core.into_iter().collect(),
+                                    certificate,
+                                });
+                            }
+                            FrontResult::Rewritten(_) => {}
+                        },
+                        Err(outcome) => return outcome,
+                    }
+                }
                 enumerate(manager, field, &modulus, &vars, assertions, budget_steps)
             } else {
                 let Ok(f) = FieldCtx::new(modulus) else {
@@ -154,27 +301,38 @@ pub fn check_conjunction(
     }
 }
 
-/// The GB + FindZero path (odd primes).
-fn grobner_path(
+/// Step 1, shared by the decision procedure and certificate
+/// verification: encode the assertions into generators. Deterministic
+/// (fixed variable registration, fixed witness minting, bitsum
+/// definitions appended last), so a replay from the same assertions
+/// reproduces the same generator list — the property the UNSAT
+/// certificate's verifier relies on.
+fn encode_generators<'f>(
     manager: &TermManager,
     field: FieldId,
-    f: &FieldCtx,
+    f: &'f FieldCtx,
     assertions: &[TermId],
     budget_steps: u64,
-) -> FfOutcome {
-    // ---- Step 1: encode (two passes) ----
+) -> Result<(Encoder<'f>, Vec<FrontGen>), FfOutcome> {
+    #[allow(clippy::let_and_return)]
     let mut enc = Encoder::new(f, field);
     let mut generators: Vec<FrontGen> = Vec::new();
     for (index, &assertion) in assertions.iter().enumerate() {
         let Some(term) = manager.get(assertion) else {
-            return FfOutcome::InvalidModel(format!("dangling term {assertion:?}"));
+            return Err(FfOutcome::InvalidModel(format!(
+                "dangling term {assertion:?}"
+            )));
         };
         match &term.kind {
             TermKind::True => {}
             TermKind::False => {
-                return FfOutcome::Unsat(FfCore {
+                return Err(FfOutcome::Unsat(FfCore {
                     fact_indices: vec![index],
-                });
+                    // `false` needs no field certificate: the Boolean
+                    // skeleton refutes it, which the certified gate's
+                    // LRAT kernel proves on its own.
+                    certificate: None,
+                }));
             }
             TermKind::Eq(a, b) => match enc.encode_pair(manager, *a, *b, budget_steps) {
                 Some((pa, pb)) => generators.push(FrontGen {
@@ -182,7 +340,7 @@ fn grobner_path(
                     poly: pa.sub(f, &pb),
                     origin: std::iter::once(index).collect(),
                 }),
-                None => return FfOutcome::OutOfBudget { where_: "encoding" },
+                None => return Err(FfOutcome::OutOfBudget { where_: "encoding" }),
             },
             TermKind::Not(inner) => {
                 let inner_term = manager.get(*inner);
@@ -201,21 +359,21 @@ fn grobner_path(
                                 });
                             }
                             None => {
-                                return FfOutcome::OutOfBudget { where_: "encoding" };
+                                return Err(FfOutcome::OutOfBudget { where_: "encoding" });
                             }
                         }
                     }
                     _ => {
-                        return FfOutcome::InvalidModel(
+                        return Err(FfOutcome::InvalidModel(
                             "unsupported literal shape under not".to_string(),
-                        );
+                        ));
                     }
                 }
             }
             _ => {
-                return FfOutcome::InvalidModel(
+                return Err(FfOutcome::InvalidModel(
                     "non-literal assertion reached the FF check".to_string(),
-                );
+                ));
             }
         }
     }
@@ -227,6 +385,22 @@ fn grobner_path(
         });
     }
 
+    Ok((enc, generators))
+}
+
+/// The GB + FindZero path (odd primes).
+fn grobner_path(
+    manager: &TermManager,
+    field: FieldId,
+    f: &FieldCtx,
+    assertions: &[TermId],
+    budget_steps: u64,
+) -> FfOutcome {
+    // ---- Step 1: encode (two passes) ----
+    let (enc, generators) = match encode_generators(manager, field, f, assertions, budget_steps) {
+        Ok(x) => x,
+        Err(outcome) => return outcome,
+    };
     if generators.is_empty() {
         let mut model = FfModel {
             values: FxHashMap::default(),
@@ -247,10 +421,11 @@ fn grobner_path(
     // is the LRA tableau discipline with every hard part removed (no
     // bounds, no ordering, no anti-cycling rule) — the design's "do not
     // make Gröbner the front line".
-    let generators = match linear_core(f, generators) {
-        FrontResult::Inconsistent(core) => {
+    let generators = match linear_core(f, field, generators) {
+        FrontResult::Inconsistent(core, certificate) => {
             return FfOutcome::Unsat(FfCore {
                 fact_indices: core.into_iter().collect(),
+                certificate,
             });
         }
         FrontResult::Rewritten(gens) => gens,
@@ -265,7 +440,7 @@ fn grobner_path(
         },
         Ok(basis) => {
             if basis.contains_nonzero_constant() {
-                return traced_unsat(&generators, &basis);
+                return traced_unsat(f, field, &generators, &basis);
             }
             // ---- Step 3: FindZero ----
             find_zero(f, &basis, &enc, budget_steps)
@@ -291,6 +466,8 @@ struct FrontGen {
 /// whose generators carry nonzero cofactor in the certificate (origin
 /// sets composed through the front end).
 fn traced_unsat(
+    f: &FieldCtx,
+    field: FieldId,
     generators: &[FrontGen],
     basis: &nixie_math::ff::grobner::GrobnerBasis,
 ) -> FfOutcome {
@@ -299,6 +476,22 @@ fn traced_unsat(
             where_: "Gröbner basis",
         };
     };
+    // §8's "easy half", checked EVERY time, not only in certified mode:
+    // re-multiply Σ cᵢ·fᵢ and compare with the constant — one pass of
+    // polynomial arithmetic, orders of magnitude cheaper than the basis
+    // that produced it, and the difference between "the GB says so" and
+    // "here is a checkable object". A tracer or arithmetic defect that
+    // breaks the identity surfaces as Unknown, never as an unjustified
+    // Unsat. (The basis's `inputs` are the front-end-rewritten
+    // generators, index-aligned with `witness.cofactors`; `f` is the
+    // field the whole check ran over.)
+    if !witness.verify(f, &basis.inputs) {
+        return FfOutcome::InvalidModel(
+            "UNSAT certificate failed verification (cofactor identity \
+             broken) — declining to an honest Unknown"
+                .to_string(),
+        );
+    }
     let mut core: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for (gen_idx, generator) in generators.iter().enumerate() {
         if witness.cofactors.get(gen_idx).is_some_and(|c| !c.is_zero()) {
@@ -314,8 +507,32 @@ fn traced_unsat(
             .flat_map(|g| g.origin.iter().copied())
             .collect();
     }
+    // The certificate: the FULL generator list (facts, witnesses, bitsum
+    // definitions — index-aligned with the cofactors) plus the cofactors.
+    // Verification replays `encode_generators` over the same assertions,
+    // which deterministically reproduces the list, and re-multiplies —
+    // so the certificate is exactly the cofactors, and everything else
+    // is re-derived by the checker.
+    let mut cert_generators: Vec<(Option<usize>, MPoly)> = Vec::new();
+    let mut cert_cofactors: Vec<MPoly> = Vec::new();
+    for (gen_idx, generator) in generators.iter().enumerate() {
+        cert_generators.push((generator.literal, generator.poly.clone()));
+        cert_cofactors.push(
+            witness
+                .cofactors
+                .get(gen_idx)
+                .cloned()
+                .unwrap_or_else(MPoly::zero),
+        );
+    }
+    let certificate = Some(FfCertificate::IdealMembership {
+        field,
+        generators: cert_generators,
+        cofactors: cert_cofactors,
+    });
     FfOutcome::Unsat(FfCore {
         fact_indices: core.into_iter().collect(),
+        certificate,
     })
 }
 
@@ -751,6 +968,35 @@ fn find_zero(
 
 // ================= Enumeration path (tiny fields) =================
 
+/// The first `distinct` literal whose term count exceeds the field's
+/// order: (literal index, term count). Pigeonhole makes it unsatisfiable
+/// on its own, so it is its own core.
+fn distinct_set_exceeding_field(
+    manager: &TermManager,
+    field: FieldId,
+    assertions: &[TermId],
+    modulus: &BigUint,
+) -> Option<(usize, usize)> {
+    for (index, &assertion) in assertions.iter().enumerate() {
+        let term = manager.get(assertion)?;
+        let TermKind::Distinct(args) = &term.kind else {
+            continue;
+        };
+        // All arguments must live in THIS field (a mixed-field distinct
+        // is a type error the parser rejects; guard anyway).
+        let all_here = args.iter().all(|&a| {
+            manager
+                .get(a)
+                .and_then(|t| manager.sorts.get(t.sort).map(|s| s.kind.clone()))
+                .is_some_and(|k| matches!(k, SortKind::FiniteField(id) if id == field))
+        });
+        if all_here && BigUint::from(args.len()) > *modulus {
+            return Some((index, args.len()));
+        }
+    }
+    None
+}
+
 /// Collect the FF-sorted variables of the assertions; error on any
 /// non-literal or foreign-theory shape.
 fn collect_field_variables(
@@ -1051,9 +1297,10 @@ enum FrontResult {
     /// reduced form, origins merged. Every asserted constraint survives
     /// (a `0 = 0` row is the only thing dropped).
     Rewritten(Vec<FrontGen>),
-    /// An inconsistent linear row; the payload is the literal indices of
-    /// its origin.
-    Inconsistent(std::collections::BTreeSet<usize>),
+    /// An inconsistent linear row; the payloads are the literal indices
+    /// of its origin and (when tracked) the ideal-membership certificate
+    /// — the row's own combination IS one: `Σ combo_i · gᵢ = c ≠ 0`.
+    Inconsistent(std::collections::BTreeSet<usize>, Option<FfCertificate>),
 }
 
 /// Constant propagation + sparse Gaussian elimination over the linear
@@ -1063,9 +1310,13 @@ enum FrontResult {
 /// (swap, scale, combine, substitute) over 𝔽_p rows that carry their
 /// literal provenance, so an inconsistent row is a certified `1 ∈
 /// ⟨support⟩` traceable to asserted facts.
-fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
+fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult {
     use nixie_math::polynomial::Var;
     use std::collections::BTreeMap;
+    // Snapshot for certificate construction: (literal, poly) per
+    // generator, in the encoder's order (the combo vectors index this).
+    let snapshot: Vec<(Option<usize>, MPoly)> =
+        gens.iter().map(|g| (g.literal, g.poly.clone())).collect();
 
     // Partition into linear rows and nonlinear generators.
     struct Row {
@@ -1073,29 +1324,52 @@ fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
         constant: Limbs,
         origin: std::collections::BTreeSet<usize>,
         literal: Option<usize>,
+        /// The row's combination over the ORIGINAL linear generators
+        /// (dense over the linear prefix, in partition order): the row
+        /// polynomial = Σ combo[i] · linear_gens[i]. Maintained through
+        /// every row operation, this is the linear-core half of the UNSAT
+        /// certificate.
+        combo: Vec<Limbs>,
     }
     let mut rows: Vec<Row> = Vec::new();
     let mut nonlinear: Vec<FrontGen> = Vec::new();
+    // The linear generators, in partition order (the certificate's
+    // combination indexes these).
+    let mut linear_gens: Vec<FrontGen> = Vec::new();
+    let n_combo = gens.len();
     for g in gens {
         let linear = g.poly.terms_iter().all(|(m, _)| m.total_degree() <= 1);
         if !linear {
             nonlinear.push(g);
             continue;
         }
+        let FrontGen {
+            literal,
+            poly,
+            origin,
+        } = g;
         let mut coeffs: BTreeMap<Var, Limbs> = BTreeMap::new();
         let mut constant = f.zero();
-        for (m, c) in g.poly.terms_iter() {
+        for (m, c) in poly.terms_iter() {
             if m.is_unit() {
                 constant = c.clone();
             } else {
                 coeffs.insert(m.vars()[0].var, c.clone());
             }
         }
+        let mut combo = vec![f.zero(); n_combo];
+        combo[linear_gens.len()] = f.one();
+        linear_gens.push(FrontGen {
+            literal,
+            poly,
+            origin: origin.clone(),
+        });
         rows.push(Row {
             coeffs,
             constant,
-            origin: g.origin,
-            literal: g.literal,
+            origin,
+            literal,
+            combo,
         });
     }
 
@@ -1132,6 +1406,9 @@ fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
                 *c = f.mul(c, &inv);
             }
             row.constant = f.mul(&row.constant, &inv);
+            for c in row.combo.iter_mut() {
+                *c = f.mul(c, &inv);
+            }
         }
         // Eliminate from every other row, merging provenance.
         for rj in 0..rows.len() {
@@ -1141,9 +1418,14 @@ fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
             let Some(factor) = rows[rj].coeffs.get(&pivot_var).cloned() else {
                 continue;
             };
-            let (pc, pk, po) = {
+            let (pc, pk, po, pcombo) = {
                 let r = &rows[ri];
-                (r.coeffs.clone(), r.constant.clone(), r.origin.clone())
+                (
+                    r.coeffs.clone(),
+                    r.constant.clone(),
+                    r.origin.clone(),
+                    r.combo.clone(),
+                )
             };
             let row = &mut rows[rj];
             for (v, c) in &pc {
@@ -1155,15 +1437,33 @@ fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
                 }
             }
             row.constant = f.sub(&row.constant, &f.mul(&pk, &factor));
+            for (i, c) in pcombo.iter().enumerate() {
+                let sub = f.mul(c, &factor);
+                row.combo[i] = f.sub(&row.combo[i], &sub);
+            }
             row.origin.extend(po.iter().copied());
         }
         pivots.push((pivot_var, ri));
     }
 
-    // Inconsistent row: no variables, nonzero constant → immediate UNSAT.
+    // Inconsistent row: no variables, nonzero constant → immediate
+    // UNSAT, certified by the row's own combination (rescaled to monic —
+    // the identity Σ comboᵢ·gᵢ = 1 holds exactly for the normalized row,
+    // since normalization divided the whole row, combination included,
+    // by the leading coefficient... which for a variable-less row IS the
+    // constant; verify() re-multiplies and only demands a nonzero
+    // constant, so no rescale bookkeeping is needed here).
     for row in &rows {
         if row.coeffs.is_empty() && !f.is_zero(&row.constant) {
-            return FrontResult::Inconsistent(row.origin.clone());
+            // Convert the combination's field elements into constant
+            // polynomials (the certificate's cofactor format).
+            let cofactors: Vec<MPoly> = row.combo.iter().map(|c| MPoly::constant(f, c)).collect();
+            let certificate = Some(FfCertificate::IdealMembership {
+                field,
+                generators: snapshot,
+                cofactors,
+            });
+            return FrontResult::Inconsistent(row.origin.clone(), certificate);
         }
     }
 

@@ -85,6 +85,19 @@ fn eval_cached(
                         let denom = BigInt::from(*r.denom());
                         cache.insert(id, Some(ModelValue::Real(BigRational::new(numer, denom))));
                     }
+                    // A field numeral is already normalized into [0, p)
+                    // at construction; carried exactly (`BigInt` — the ZK
+                    // moduli are 254 bits, and this value feeds certified
+                    // mode, where truncation would certify wrong models).
+                    TermKind::FfConst { value, field } => {
+                        cache.insert(
+                            id,
+                            Some(ModelValue::FiniteField {
+                                value: value.clone(),
+                                field: *field,
+                            }),
+                        );
+                    }
                     TermKind::BitVecConst { value, width } => {
                         // `ModelValue::BitVec` carries a `BigUint`, so every
                         // width is representable exactly. An earlier form took
@@ -192,6 +205,18 @@ fn eval_cached(
                         stack.push(EvalFrame::Combine(id));
                         stack.push(EvalFrame::Enter(*lhs));
                         stack.push(EvalFrame::Enter(*rhs));
+                    }
+                    // Finite-field operators: every operand evaluates,
+                    // the modular arithmetic happens in `Combine`.
+                    TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
+                        stack.push(EvalFrame::Combine(id));
+                        for &arg in args.iter() {
+                            stack.push(EvalFrame::Enter(arg));
+                        }
+                    }
+                    TermKind::FfNeg(arg) => {
+                        stack.push(EvalFrame::Combine(id));
+                        stack.push(EvalFrame::Enter(*arg));
                     }
                     TermKind::Add(args) | TermKind::Mul(args) => {
                         stack.push(EvalFrame::Combine(id));
@@ -346,6 +371,25 @@ fn eval_cached(
                         (Some(a), Some(b)) => compare_le(&b, &a).map(ModelValue::Bool),
                         _ => None,
                     },
+                    TermKind::FfAdd(args) => {
+                        // The neutral element depends on the field, so the
+                        // fold starts at the first operand (an empty sum
+                        // cannot occur: the builders keep ≥ 2).
+                        fold_operands_from_first(
+                            args,
+                            |a, b| ff_pair(a, b, manager, ff_add_mod),
+                            cache,
+                        )
+                    }
+                    TermKind::FfMul(args) => fold_operands_from_first(
+                        args,
+                        |a, b| ff_pair(a, b, manager, ff_mul_mod),
+                        cache,
+                    ),
+                    TermKind::FfBitsum(args) => ff_bitsum_value(args, manager, cache),
+                    TermKind::FfNeg(arg) => {
+                        operand(arg, cache).and_then(|v| ff_neg_value(v, manager))
+                    }
                     TermKind::Add(args) => {
                         fold_operands(args, ModelValue::Int(BigInt::zero()), add_values, cache)
                     }
@@ -689,6 +733,125 @@ fn bv_extract(value: Option<ModelValue>, high: u32, low: u32) -> Option<ModelVal
 ///
 /// An empty operand list yields the neutral element, exactly as the
 /// recursive evaluator did.
+/// Modular addition over one `BigInt` pair.
+fn ff_add_mod(a: &BigInt, b: &BigInt, p: &BigInt) -> BigInt {
+    use num_integer::Integer;
+    (a + b).mod_floor(p)
+}
+
+/// Modular multiplication over one `BigInt` pair.
+fn ff_mul_mod(a: &BigInt, b: &BigInt, p: &BigInt) -> BigInt {
+    use num_integer::Integer;
+    (a * b).mod_floor(p)
+}
+
+/// One modular field operation over a same-field pair; mixed fields are a
+/// type error (the parser rejects them) and evaluate to `None`, so the
+/// certified verdict fails closed.
+fn ff_pair(
+    lhs: &ModelValue,
+    rhs: &ModelValue,
+    manager: &TermManager,
+    op: fn(&BigInt, &BigInt, &BigInt) -> BigInt,
+) -> Option<ModelValue> {
+    match (lhs, rhs) {
+        (
+            ModelValue::FiniteField {
+                value: a,
+                field: fa,
+            },
+            ModelValue::FiniteField {
+                value: b,
+                field: fb,
+            },
+        ) if fa == fb => {
+            let modulus = ff_modulus(fa, manager)?;
+            Some(ModelValue::FiniteField {
+                value: op(a, b, &modulus),
+                field: *fa,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Field negation: `p − v` (exact for `v ∈ [0, p)`; `0` maps to `0`).
+fn ff_neg_value(v: ModelValue, manager: &TermManager) -> Option<ModelValue> {
+    match v {
+        ModelValue::FiniteField { value, field } => {
+            let modulus = ff_modulus(&field, manager)?;
+            let negated = if value.is_zero() {
+                value
+            } else {
+                modulus - value
+            };
+            Some(ModelValue::FiniteField {
+                value: negated,
+                field,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The little-endian bit-sum `Σ 2ⁱ·bᵢ`, exact mod `p`.
+fn ff_bitsum_value(
+    args: &[TermId],
+    manager: &TermManager,
+    cache: &FxHashMap<TermId, Option<ModelValue>>,
+) -> Option<ModelValue> {
+    let mut acc = BigInt::zero();
+    let mut power = BigInt::one();
+    let mut field: Option<crate::sort::field::FieldId> = None;
+    for arg in args {
+        match cache.get(arg).cloned().flatten()? {
+            ModelValue::FiniteField { value, field: f } => {
+                match field {
+                    None => field = Some(f),
+                    Some(seen) if seen == f => {}
+                    Some(_) => return None, // mixed fields: type error
+                }
+                acc += &power * &value;
+            }
+            _ => return None,
+        }
+        power *= 2;
+    }
+    let field = field?;
+    let modulus = ff_modulus(&field, manager)?;
+    use num_integer::Integer;
+    Some(ModelValue::FiniteField {
+        value: acc.mod_floor(&modulus),
+        field,
+    })
+}
+
+/// The exact modulus of a prime field, as a signed integer, resolved
+/// through the manager's field table.
+fn ff_modulus(field: &crate::sort::field::FieldId, manager: &TermManager) -> Option<BigInt> {
+    let modulus = manager.sorts.field_table().modulus(*field)?;
+    Some(BigInt::from_bytes_le(
+        num_bigint::Sign::Plus,
+        &modulus.to_bytes_le(),
+    ))
+}
+
+/// Fold from the FIRST operand (no externally supplied neutral element —
+/// the field's own zero/one depend on the field the operands name).
+fn fold_operands_from_first(
+    args: &[TermId],
+    combine: impl Fn(&ModelValue, &ModelValue) -> Option<ModelValue>,
+    cache: &FxHashMap<TermId, Option<ModelValue>>,
+) -> Option<ModelValue> {
+    let (first, rest) = args.split_first()?;
+    let mut result = cache.get(first).cloned().flatten()?;
+    for arg in rest {
+        let value = cache.get(arg).cloned().flatten()?;
+        result = combine(&result, &value)?;
+    }
+    Some(result)
+}
+
 fn fold_operands(
     args: &[TermId],
     neutral: ModelValue,
