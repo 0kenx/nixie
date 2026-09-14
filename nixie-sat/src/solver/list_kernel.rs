@@ -5,7 +5,7 @@ use super::{ClauseId, Lit, Watcher};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::trail::{PropagationQueue, assign_undefined, prefetch_watch_payload, propagation_value};
-use crate::watched::CsrWatchLists;
+use crate::watched::{CsrWatchLists, VecScanMirror};
 
 #[path = "watch_cursor.rs"]
 mod watch_cursor;
@@ -39,6 +39,8 @@ pub(super) fn scan_list<const MIRROR: bool>(
     clauses: crate::memory::PropagationArena<'_>,
     destinations: &mut [Vec<Watcher>],
     csr: &mut Option<CsrWatchLists>,
+    vec_mirror: Option<&mut VecScanMirror<'_>>,
+    swapped_code: Option<usize>,
 ) -> ScanResult {
     let begin = watches.as_mut_ptr();
     // MIRROR comes from the driver's specialization: the flag-off
@@ -51,6 +53,8 @@ pub(super) fn scan_list<const MIRROR: bool>(
         clauses,
         destinations,
         csr,
+        vec_mirror,
+        swapped_code,
         #[cfg(feature = "bcp-work")]
         super::super::PropagationWork::default(),
     );
@@ -76,8 +80,10 @@ struct ScanEnd {
 /// Only the prefix can call the suffix, once at its first removal. The suffix
 /// never recurses; no input can increase native call depth beyond these two.
 /// A phase returns its final state; no caller-owned cursor stays live in it.
+#[allow(clippy::too_many_arguments)]
 fn push_watch<const MIRROR: bool>(
     csr: &mut Option<CsrWatchLists>,
+    vec_present: bool,
     destinations: &mut [Vec<Watcher>],
     key: Lit,
     watcher: Watcher,
@@ -85,11 +91,16 @@ fn push_watch<const MIRROR: bool>(
     destinations[key.index()].push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
+    } else if vec_present && let Some(c) = csr.as_mut() {
+        // Swapped-dual: the CSR overflow is the primary's mirror here.
+        c.scan_push(key, watcher);
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_watch_unique<const MIRROR: bool>(
     csr: &mut Option<CsrWatchLists>,
+    vec_present: bool,
     destinations: &mut [Vec<Watcher>],
     key: Lit,
     watcher: Watcher,
@@ -100,6 +111,8 @@ fn push_watch_unique<const MIRROR: bool>(
     }
     list.push(watcher);
     if MIRROR && let Some(c) = csr.as_mut() {
+        c.scan_push(key, watcher);
+    } else if vec_present && let Some(c) = csr.as_mut() {
         c.scan_push(key, watcher);
     }
 }
@@ -114,6 +127,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
     mut clauses: crate::memory::PropagationArena<'_>,
     destinations: &mut [Vec<Watcher>],
     csr: &mut Option<CsrWatchLists>,
+    mut vec_mirror: Option<&mut VecScanMirror<'_>>,
+    swapped_code: Option<usize>,
     #[cfg(feature = "bcp-work")] mut work: super::super::PropagationWork,
 ) -> ScanEnd {
     let mut watches = watches.into_local();
@@ -127,6 +142,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             entry.keep(None);
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_keep(watcher, None);
+            } else if let Some(vm) = vec_mirror.as_deref_mut() {
+                vm.keep(watcher, None);
             }
             continue;
         }
@@ -142,6 +159,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             entry.remove();
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
+            } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
+                vm.remove();
+                if let Some(c) = csr.as_mut() {
+                    c.index_remove(code, watcher.r);
+                }
             }
             if COMPACT {
                 continue;
@@ -154,6 +176,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 clauses,
                 destinations,
                 csr,
+                vec_mirror.as_deref_mut(),
+                swapped_code,
                 #[cfg(feature = "bcp-work")]
                 work,
             );
@@ -212,6 +236,7 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                                 }
                                 push_watch::<MIRROR>(
                                     csr,
+                                    vec_mirror.is_some(),
                                     destinations,
                                     pair[1].negate(),
                                     Watcher {
@@ -231,12 +256,14 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 let cid = live.reason();
                 push_watch_unique::<MIRROR>(
                     csr,
+                    vec_mirror.is_some(),
                     destinations,
                     a.negate(),
                     Watcher::new(cid, watcher.r, b),
                 );
                 push_watch_unique::<MIRROR>(
                     csr,
+                    vec_mirror.is_some(),
                     destinations,
                     b.negate(),
                     Watcher::new(cid, watcher.r, a),
@@ -245,6 +272,11 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             entry.remove();
             if MIRROR && let Some(c) = csr.as_mut() {
                 c.scan_remove(watcher.r);
+            } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
+                vm.remove();
+                if let Some(c) = csr.as_mut() {
+                    c.index_remove(code, watcher.r);
+                }
             }
             if COMPACT {
                 continue;
@@ -257,6 +289,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 clauses,
                 destinations,
                 csr,
+                vec_mirror.as_deref_mut(),
+                swapped_code,
                 #[cfg(feature = "bcp-work")]
                 work,
             );
@@ -269,11 +303,18 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 entry.keep(Some(blocker));
                 if MIRROR && let Some(c) = csr.as_mut() {
                     c.scan_keep(watcher, Some(blocker));
+                } else if let Some(vm) = vec_mirror.as_deref_mut() {
+                    vm.keep(watcher, Some(blocker));
                 }
             } else {
                 entry.remove();
                 if MIRROR && let Some(c) = csr.as_mut() {
                     c.scan_remove(watcher.r);
+                } else if let (Some(vm), Some(code)) = (vec_mirror.as_deref_mut(), swapped_code) {
+                    vm.remove();
+                    if let Some(c) = csr.as_mut() {
+                        c.index_remove(code, watcher.r);
+                    }
                 }
                 if !COMPACT {
                     return scan::<true, MIRROR>(
@@ -284,6 +325,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                         clauses,
                         destinations,
                         csr,
+                        vec_mirror.as_deref_mut(),
+                        swapped_code,
                         #[cfg(feature = "bcp-work")]
                         work,
                     );
@@ -294,6 +337,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         entry.keep(Some(first));
         if MIRROR && let Some(c) = csr.as_mut() {
             c.scan_keep(watcher, Some(first));
+        } else if let Some(vm) = vec_mirror.as_deref_mut() {
+            vm.keep(watcher, Some(first));
         }
         if propagation_value(values, first) < 0 {
             #[cfg(feature = "bcp-work")]

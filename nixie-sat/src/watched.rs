@@ -755,6 +755,73 @@ impl CsrWatchLists {
         (self.positions.len(), missing, stale)
     }
 
+    /// Split-borrow access for the swapped-dual scan (`NIXIE_CSR_SCAN`):
+    /// the contiguous primary span (the kernels' `&mut [Watcher]` shape)
+    /// and the overflow list of the scanned code, all disjoint from
+    /// `entries`' span borrow.  The caller takes the overflow `Vec` out,
+    /// scans span-then-overflow, and commits via [`Self::commit_span_end`].
+    pub(crate) fn scan_parts(&mut self, code: usize) -> (usize, &[Watcher], &mut Vec<Watcher>) {
+        if code >= self.overflow.len() {
+            self.overflow.resize(code + 1, Vec::new());
+        }
+        let start = self.span_start.get(code).copied().unwrap_or(0) as usize;
+        let end = self.prim_end.get(code).copied().unwrap_or(0) as usize;
+        let CsrWatchLists {
+            entries, overflow, ..
+        } = self;
+        let ovf = &mut overflow[code];
+        let span = entries.get(start..end).unwrap_or(&[]);
+        (start, span, ovf)
+    }
+
+    /// Copy the compacted span home (the swapped scan ran on a copy to
+    /// keep the kernel's CSR accesses alias-free).
+    pub(crate) fn write_back_span(&mut self, code: usize, start: usize, kept: &[Watcher]) {
+        if kept.is_empty() {
+            return;
+        }
+        if let Some(dst) = self.entries.get_mut(start..start + kept.len()) {
+            dst.copy_from_slice(kept);
+        }
+        let _ = code;
+    }
+
+    /// Return the scanned overflow (truncated to its pass's write end; the
+    /// unvisited tail included when the pass exited on conflict).
+    pub(crate) fn put_back_overflow(&mut self, code: usize, mut ovf: Vec<Watcher>, write: usize) {
+        if ovf.len() > write {
+            ovf.truncate(write);
+        }
+        if code < self.overflow.len() {
+            self.overflow[code] = ovf;
+        } else {
+            self.overflow.resize(code + 1, Vec::new());
+            self.overflow[code] = ovf;
+        }
+    }
+
+    /// Commit the span pass's compaction end (the swapped scan's primary
+    /// maintenance — the kernel compacted the span in place).
+    pub(crate) fn commit_span_end(&mut self, code: usize, kept: usize) {
+        let start = self.span_start.get(code).copied().unwrap_or(0);
+        if let Some(end) = self.prim_end.get_mut(code) {
+            *end = start + kept as u32;
+        }
+    }
+
+    /// Index upkeep for a swapped-scan removal: the entry with ref `r`
+    /// left literal `code`'s list (the kernel compacts in place; the
+    /// index entry must go now).
+    pub(crate) fn index_remove(&mut self, code: usize, r: ClauseRef) {
+        let code32 = code as u32;
+        if let Some(slot) = self.positions.get_mut(&r.byte_offset()) {
+            slot.retain(|c| *c != code32);
+            if slot.is_empty() {
+                self.positions.remove(&r.byte_offset());
+            }
+        }
+    }
+
     /// Mirror `WatchLists::clear`: every list empties (the layout arrays
     /// reset; the next rebuild re-adopts a fresh layout).
     pub(crate) fn clear_all(&mut self) {
@@ -777,6 +844,63 @@ pub(crate) type PropagationParts<'a> = (
     &'a mut [u32],
     &'a mut Option<CsrWatchLists>,
 );
+
+/// The swapped-dual scan's `Vec` mirror (`NIXIE_CSR_SCAN`): the CSR's
+/// span+overflow passes drive, and this cursor reproduces the old
+/// in-place `Vec` compaction from the notifications — kept entries in
+/// order (possibly blocker-rewritten), removals skipped, the unvisited
+/// tail preserved at `finish`.  Consumed sequentially across the two
+/// passes (span entries first, overflow after — the combined order the
+/// drift invariant maintains).
+pub(crate) struct VecScanMirror<'a> {
+    list: &'a mut Vec<Watcher>,
+    write: usize,
+    read: usize,
+}
+
+impl<'a> VecScanMirror<'a> {
+    pub(crate) fn new(list: &'a mut Vec<Watcher>) -> Self {
+        Self {
+            list,
+            write: 0,
+            read: 0,
+        }
+    }
+
+    /// Mirror a kept entry (optionally with a rewritten blocker).
+    pub(crate) fn keep(&mut self, watcher: Watcher, blocker: Option<Lit>) {
+        if self.read >= self.list.len() {
+            return;
+        }
+        let mut w = watcher;
+        if let Some(b) = blocker {
+            w.blocker = b;
+        }
+        self.list[self.write] = w;
+        self.write += 1;
+        self.read += 1;
+    }
+
+    /// Mirror a removed entry.
+    pub(crate) fn remove(&mut self) {
+        if self.read < self.list.len() {
+            self.read += 1;
+        }
+    }
+
+    /// Publish the kept prefix plus the unvisited tail (conflict-exit
+    /// shape included).
+    pub(crate) fn finish(self) {
+        let remaining = self.list.len().saturating_sub(self.read);
+        if remaining > 0 && self.read != self.write {
+            self.list.copy_within(self.read.., self.write);
+        }
+        let kept = self.write + remaining;
+        if self.list.len() > kept {
+            self.list.truncate(kept);
+        }
+    }
+}
 
 /// Clause state for the surgery contract audit ([`WatchLists::
 /// csr_surgery_contract_audit`]).
@@ -1505,6 +1629,28 @@ mod tests {
         ))]
         assert_eq!(wl.get(lit)[0].clause, clause);
         assert_eq!(wl.get(lit)[0].blocker, blocker);
+    }
+}
+
+/// `NIXIE_CSR_SCAN=1` (slice 4's swapped-dual gate; requires the shadow):
+/// the propagation session scans the CSR's span+overflow as the PRIMARY
+/// and mirrors the outcomes into the taken `Vec` list — the roles of the
+/// slice-2 dual-write swapped.  The drift comparison stays the oracle:
+/// it compares the (now primary-scanned) CSR against the (now mirrored)
+/// `Vec`.  Default off; the flag-off path is byte-identical.
+pub fn csr_scan_enabled() -> bool {
+    #[cfg(feature = "std")]
+    {
+        use std::sync::OnceLock;
+        static FLAG: OnceLock<bool> = OnceLock::new();
+        *FLAG.get_or_init(|| {
+            std::env::var("NIXIE_CSR_SCAN")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        false
     }
 }
 

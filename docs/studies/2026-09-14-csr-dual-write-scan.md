@@ -394,3 +394,35 @@ residual +0.55–1.46 % instructions; shadow-on dual cost +23–27 %
 (diagnostics ≈ 2/16 %); surgery 46×/wash.  The flip's business case is
 memory (the ~2.6 M `Vec` headers on si2-class) + the sparse-rebuild
 payoff + the surgery design space — not raw instruction counts.
+
+## Slice 4's crux LANDED: the swapped-dual scan (`NIXIE_CSR_SCAN=1`)
+
+The BCP session kernel now scans the CSR's span+overflow as the
+**primary** with the taken `Vec` list as the **mirror** — the roles of
+slice 2 exchanged, exactly per the plan above.  Mechanics: the span is
+copied out per scan (avg ~34 entries — keeps the kernel's CSR accesses
+alias-free), scanned with the unchanged cursor kernel, written home
+with its live end committed; the overflow is taken and scanned second;
+a `VecScanMirror` (write-cursor over the taken list) reproduces the old
+in-place `Vec` compaction from the notifications, consuming both passes
+sequentially (the combined order the drift invariant maintains); pushes
+funnel to both representations (`scan_push` is direction-agnostic).
+
+Three defects the nets caught on the way (each a one-fix
+localization): the conflict path truncated the unvisited overflow
+(every conflict-path scan wiped that literal's CSR); two of the six
+notification sites silently missed their mirror branches (fmt had
+reformatted the anchors — the per-scan cross-check probe caught the
+misalignment in one run); and the two-pass work-counter merge
+overwrote instead of accumulating (`take_watch_scan`).  The
+kernel-equivalence test now compares combined views under the CSR
+diagnostic flags (dead tails beyond `prim_end` are representation
+garbage, not observables — the drift oracle is the invariant).
+
+**Validated**: 6s167/si2/FmlaEquivChain/circuit/af-synthesis —
+conflicts/decisions/propagations/restarts **bit-identical** to default,
+drift comparisons 100 % zero (37/37, 29/29, 101/101, 85/85, 33/33),
+1092 tests green under shadow-only, shadow+scan, and
+shadow+scan+surgery configs.  The flip's remaining surface: the same
+treatment for the non-session take/put-back path, the reader switch
+(~25 sites), then the deletion commit.
