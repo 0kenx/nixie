@@ -1,13 +1,20 @@
 # Finite Fields (`QF_FF`) — theory design
 
-**Status:** Phases 0–5 implemented (2026-09-14); 6–7 open. See
-`nixie-core/src/sort/field.rs`, `nixie-math/src/ff/`,
-`nixie-theories/src/ff_theory.rs` (the [OKTB23] procedure + Phase-5
-front end), `nixie-solver/src/solver/check_ff.rs` (eager dispatch +
-Phase-4 lazy DPLL(T)), the oracles in `nixie-theories/tests/ff_oracle.rs`
-(exhaustive at tiny primes) and `ff_planted_fuzz.rs` (planted witnesses
-at Goldilocks/BN254/BLS12-381), and `bench/ff/`. Remaining: §6.5 split
-GB, §8 certificates/proof rules + `QF_UFFF` cardinality guard, §7-style
+**Status:** Phases 0–6 (certifiable half) implemented (2026-09-14); 7 and
+the QF_UFFF combination open. See `nixie-core/src/sort/field.rs`,
+`nixie-math/src/ff/`, `nixie-theories/src/ff_theory.rs` (the [OKTB23]
+procedure + Phase-5 front end + `FfCertificate` with its replay
+verifier), `nixie-solver/src/solver/check_ff.rs` (eager dispatch +
+Phase-4 lazy DPLL(T) + the §7 cardinality guard on the asserted spine),
+the oracles in `nixie-theories/tests/ff_oracle.rs` (exhaustive at tiny
+primes; certificate-corruption rejections) and `ff_planted_fuzz.rs`
+(planted witnesses at Goldilocks/BN254/BLS12-381), and `bench/ff/`.
+Certified mode: FF `sat` is model-certified (exact modular evaluation in
+the independent AST evaluator); FF `unsat` is accepted only with a
+verified `FfCertificate` (ideal-membership or pigeonhole) —
+branch-exhaustion UNSATs degrade to `unknown` by design. Remaining:
+§6.5 split GB, §8's branch-exhaustion case-tree proofs, `QF_UFFF` (the
+arrangement machinery; the pure-FF cardinality guard exists), §7-style
 incremental trail, F4/NTT.
 **Date:** 2026-09-13 (design), 2026-09-14 (implementation status).
 **Reference implementation consulted:** cvc5 `src/theory/ff/` (read-only, at
