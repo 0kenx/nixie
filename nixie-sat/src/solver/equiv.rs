@@ -608,12 +608,13 @@ impl Solver {
         // included.  This is the empirical order-isomorphism proof the
         // dual-write scan exists to produce.
         #[cfg(feature = "std")]
+        if let Ok(prefix) = std::env::var("NIXIE_DUMP_WATCHES") {
+            let path = format!("{prefix}-{}.txt", self.stats.conflicts);
+            self.watches.dump_watches(num_vars, &path);
+        }
+        #[cfg(feature = "std")]
         if crate::watched::csr_shadow_enabled()
             && self.watches.csr_active()
-            // The ELS surgery experiment desynced the shadow's ORDER (the
-            // entry sets are compared by the multiset oracle below); the
-            // order-sensitive drift comparison resumes next rebuild, after
-            // the layout is re-adopted.
             && !self.csr_surgery_fired
         {
             let (lits, entries, bad) = self.watches.csr_drifted_compare(num_vars);

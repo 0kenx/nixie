@@ -1237,6 +1237,32 @@ impl WatchLists {
         self.csr.as_ref().map_or((&[], &[]), |c| c.spans(lit))
     }
 
+    /// Dump the CSR's combined view per literal (the commit-B divergence
+    /// tool: run under flip-A — whose CSR provably equals its scanned Vec —
+    /// and under the roundtrip build, diff at the phase boundary).  One
+    /// line per nonempty literal: `code: ref:blocker ref:blocker ...`.
+    #[cfg(feature = "std")]
+    pub(crate) fn dump_watches(&self, num_vars: usize, path: &str) {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        let mut total = 0usize;
+        for code in 0..num_vars * 2 {
+            let lit = Lit::from_code(code as u32);
+            let (p, x) = self.get_combined(lit);
+            if p.is_empty() && x.is_empty() {
+                continue;
+            }
+            total += p.len() + x.len();
+            let _ = write!(out, "{code}:");
+            for w in p.iter().chain(x.iter()) {
+                let _ = write!(out, " {}:{}", w.r.byte_offset(), w.blocker.code());
+            }
+            let _ = writeln!(out);
+        }
+        let _ = std::fs::write(path, out);
+        eprintln!("[watch-dump] {path}: {total} entries");
+    }
+
     /// Test scaffolding: overwrite the last entry's blocker in BOTH
     /// representations (tests position blockers directly; post-flip the
     /// CSR is authoritative and a `get_mut`-only write would desync it).

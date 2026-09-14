@@ -598,3 +598,43 @@ or entries the new world retained).  The watch-dump diff settles it.
 Tree restored to flip-A + the charge-trace tool (green: 1092 tests,
 33 028).  The attempt remains ~1 h to re-apply from this study's three
 commit-B sections.
+
+## Commit B, fourth attempt: the divergence caught at the DEDUP — A
+pushes a flapping repair pair that B's dedup suppresses (parked, sharp)
+
+The designed `NIXIE_DUMP_WATCHES` tool was built and run on both
+binaries.  **The watch states are IDENTICAL at every rebuild**
+(0 differing lines at conflicts 0/2000/4000, counts and content) —
+the divergence is purely intra-phase transient.  A second tool,
+`NIXIE_CSR_MUT_TRACE=<code>` (mutation log per literal), caught the
+first divergence precisely:
+
+- **Literal 8440**: both worlds charge `len=4` identically, then A's
+  next scan sees `len=5` while B's sees `len=3`.
+- The mutation diff: **A pushed refs 1 077 664 and 1 040 872 (the
+  latter FOUR times) into 8440's CSR; B never pushed either** — B's
+  `push_watch_unique` dedup FOUND them (reading the CSR's combined
+  view), A's did not (reading the Vec list).
+- A ref pushed four times is a **flapping repair pair**: the clause's
+  watched pair keeps going stale and re-registering in A's world,
+  while B's world retains the entry and suppresses the re-push.
+
+**The leading hypothesis** (unproven, the next instrument is designed):
+the entry's LIFETIME across the scan-end boundary differs — in A
+(mirror mode) a self-targeted push lands in the empty taken Vec slot
+(lost at put-back) while the CSR-side mirror push is truncated by
+`end_scan`; in B (roundtrip) the push lands in the live overflow and
+`put_back_combined`'s replace drops it — *but the dedup reads happen
+at different instants relative to those windows*, so a push dropped
+by A's world is still visible to B's dedup.  The next probe: log the
+dedup decisions (found/skip vs push) and the `put_back_combined`
+kepts for a target literal in both binaries.
+
+Also fixed in passing (principled, independent of the cure):
+commit B's **ghost-debt recording moved into the CSR's relocation
+pass** (the dead Vec pass walked empty lists, silently zeroing the
+compaction tick debt — `relocate` now takes the debt array).
+
+Tree restored to flip-A (green: 1092 tests, 33 028).  The full re-apply
+recipe + all five investigation sections make the next session's
+entry mechanical.
