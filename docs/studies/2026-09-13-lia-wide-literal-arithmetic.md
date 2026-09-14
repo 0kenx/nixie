@@ -681,3 +681,38 @@ generating `2^63`, `2^64+13` and `2^100`-prime COEFFICIENTS, the class
 that found item 32 — 1,150 instances across 4 seeds: 0 verdict
 disagreements, 0 refuted models; mixed fuzz, debug-panic sweep, and Z3
 parity 176/177 correct / 0 disagreements (z3 4.16.0).
+
+## Continuation 11 (2026-09-15): the wide-LP wall, slice 4 — the exact-coefficient parse retry
+
+33. **Uniform-magnitude wide coefficients decide** (`extract_linear_terms_
+    exact` + `parse_arith_comparison_exact`): when the narrow walk fails
+    on coefficient width, the whole comparison is re-parsed with exact
+    `BigRational` coefficients — wide constants are PLAIN constants there
+    (no big-const column abstraction, so `const·var` stays linear: in the
+    narrow walk the abstraction turns it into `var·var`, which is exactly
+    the failure being retried) — and the row is rescaled into width by
+    the shared positive scaler (`scale_exact_row`, now public in
+    `nixie-theories::arithmetic`; zero bounds are preserved). Rows whose
+    coefficients are all of comparable magnitude (`2^63`-scale sums, the
+    item-32 shapes) decide BOTH directions; the parse-cache stores the
+    retried result so rounds do not redo it.
+34. **The mixed-magnitude wall, precisely located**: a row carrying both
+    `1`-ish and `2^63`-ish coefficients parses and scales into the
+    tableau, but a pivot THROUGH it needs the quotient `1/2^63` — an
+    irreducible denominator beyond `i64` — so `build_pivot_expr_exact`
+    declines and the honest `resource_limit` applies at the pivot site
+    (`mixed_magnitude_wide_rows_stay_honest` pins never-wrong-verdict).
+    That is the same wall the rejected pivot-site linking row targeted;
+    the systemic answer remains dual-width pivots. A comparator trap
+    recorded for the differential: z3's `QF_LRA` front end ERRORS on
+    `(- 0 9223372036854775808)`-shaped literals ("logic does not support
+    nonlinear arithmetic") — its no-logic mode decides the same formula
+    correctly, so the differential now treats z3 error output as
+    non-evidence rather than reading a garbage verdict.
+
+Verification: 21/21 wide-literal + division regressions (new: the
+uniform both-directions pair and the mixed-magnitude honesty pin);
+theories+solver suites green except standing `[corpus-missing]`; wide
+differential 1,100 instances across 4 seeds (z3-error-aware): 0 verdict
+disagreements, 0 refuted models; mixed fuzz, debug-panic sweep, Z3 parity
+176/177 correct / 0 disagreements (z3 4.16.0).

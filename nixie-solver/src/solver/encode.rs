@@ -27,6 +27,11 @@ use super::types::{
 /// wide column instead, whose `to_i64()` is `None` and which the big-const
 /// machinery already owns).
 #[must_use]
+/// Widen a `Rational64` real constant exactly (the exact walker's leaf).
+fn exact_real(r: &Rational64) -> BigRational {
+    BigRational::new(BigInt::from(*r.numer()), BigInt::from(*r.denom()))
+}
+
 fn narrow_rational64(r: &BigRational) -> Option<Rational64> {
     let (n, d) = (r.numer().to_i64()?, r.denom().to_i64()?);
     if n == i64::MIN {
@@ -316,6 +321,21 @@ impl Solver {
         );
         if lhs_ok.is_none() {
             if overflow {
+                // Coefficient width: retry the WHOLE comparison with exact
+                // coefficients and a positive rescale into width before
+                // gating — the wide-coefficient classes (`2^63·v` and
+                // friends) become decidable rows instead of free Booleans
+                // gated to `Unknown`.
+                if let Some(parsed) = self.parse_arith_comparison_exact(
+                    lhs,
+                    rhs,
+                    constraint_type.clone(),
+                    reason,
+                    manager,
+                ) {
+                    self.arith_parse_cache.insert(reason, Some(parsed.clone()));
+                    return Some(parsed);
+                }
                 self.arith_parse_overflow.insert(reason);
             }
             self.arith_parse_cache.insert(reason, None);
@@ -334,6 +354,16 @@ impl Solver {
         );
         if rhs_ok.is_none() {
             if overflow {
+                if let Some(parsed) = self.parse_arith_comparison_exact(
+                    lhs,
+                    rhs,
+                    constraint_type.clone(),
+                    reason,
+                    manager,
+                ) {
+                    self.arith_parse_cache.insert(reason, Some(parsed.clone()));
+                    return Some(parsed);
+                }
                 self.arith_parse_overflow.insert(reason);
             }
             self.arith_parse_cache.insert(reason, None);
@@ -907,6 +937,221 @@ impl Solver {
         }
         *constant += &cur.constant;
         Some(())
+    }
+
+    /// The EXACT (`BigRational`-coefficient) variant of
+    /// [`Self::extract_linear_terms`], used only as the cold-path retry when
+    /// the narrow walk failed on coefficient width. Differences from the
+    /// narrow walk, all consequences of unlimited coefficients:
+    ///  * a wide integer constant is a plain CONSTANT here — no
+    ///    big-const column abstraction, so `const·var` stays linear and
+    ///    exact (in the narrow walk the abstraction turns it into
+    ///    `var·var`, which is exactly the failure being retried);
+    ///  * the `Mul` finalize applies the exact product directly — nothing
+    ///    narrows, nothing can overflow;
+    ///  * the caller rescales the whole result into width
+    ///    (`scale_exact_row`), which is sound because a POSITIVE multiple
+    ///    of the row preserves its zero bound.
+    /// Faithfully mirrors the narrow walk's structure (iterative, same
+    /// frame discipline) so the two cannot drift semantically.
+    fn extract_linear_terms_exact(
+        &self,
+        term_id: TermId,
+        scale: BigRational,
+        terms: &mut Vec<(TermId, BigRational)>,
+        constant: &mut BigRational,
+        manager: &TermManager,
+    ) -> Option<()> {
+        struct Level {
+            terms: Vec<(TermId, BigRational)>,
+            constant: BigRational,
+        }
+        impl Level {
+            fn new() -> Self {
+                Level {
+                    terms: Vec::new(),
+                    constant: BigRational::zero(),
+                }
+            }
+        }
+        struct MulFrame {
+            args: SmallVec<[TermId; 4]>,
+            next: usize,
+            const_product: BigRational,
+            non_const_factor: Option<Level>,
+            scale: BigRational,
+            parent: Level,
+        }
+        enum Work {
+            Visit(TermId, BigRational),
+            Mul(Box<MulFrame>),
+        }
+
+        let mut cur = Level::new();
+        let mut work: Vec<Work> = vec![Work::Visit(term_id, scale)];
+
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Visit(id, sc) => {
+                    let term = manager.get(id)?;
+                    match &term.kind {
+                        TermKind::IntConst(n) => {
+                            cur.constant += &sc * BigRational::from(n.clone());
+                        }
+                        TermKind::RealConst(r) => {
+                            cur.constant += &sc * exact_real(r);
+                        }
+                        TermKind::BitVecConst { value, .. } => {
+                            cur.constant += &sc * BigRational::from(value.clone());
+                        }
+                        TermKind::Var(_) => {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Apply { .. }
+                        | TermKind::Select(_, _)
+                        | TermKind::DtSelector { .. } => {
+                            let sort = term.sort;
+                            let is_numeric =
+                                sort == manager.sorts.int_sort || sort == manager.sorts.real_sort;
+                            if !is_numeric {
+                                return None;
+                            }
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Mod(_, _) if term.sort == manager.sorts.int_sort => {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Div(_, _) if term.sort == manager.sorts.int_sort => {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Ite(_, _, _)
+                            if term.sort == manager.sorts.int_sort
+                                || term.sort == manager.sorts.real_sort =>
+                        {
+                            cur.terms.push((id, sc));
+                        }
+                        TermKind::Add(args) => {
+                            for &arg in args.iter().rev() {
+                                work.push(Work::Visit(arg, sc.clone()));
+                            }
+                        }
+                        TermKind::Sub(lhs, rhs) => {
+                            let neg_sc = -&sc;
+                            work.push(Work::Visit(*rhs, neg_sc));
+                            work.push(Work::Visit(*lhs, sc));
+                        }
+                        TermKind::Neg(inner) => {
+                            let neg_sc = -&sc;
+                            work.push(Work::Visit(*inner, neg_sc));
+                        }
+                        TermKind::Mul(args) => {
+                            work.push(Work::Mul(Box::new(MulFrame {
+                                args: args.iter().copied().collect(),
+                                next: 0,
+                                const_product: BigRational::one(),
+                                non_const_factor: None,
+                                scale: sc,
+                                parent: core::mem::replace(&mut cur, Level::new()),
+                            })));
+                        }
+                        _ => return None,
+                    }
+                }
+                Work::Mul(mut frame) => {
+                    if frame.next > 0 {
+                        if cur.terms.is_empty() {
+                            frame.const_product *= &cur.constant;
+                        } else {
+                            if frame.non_const_factor.is_some() {
+                                // Genuinely nonlinear (two non-constant
+                                // factors by shape — the exact walk has no
+                                // abstraction that could fake this).
+                                return None;
+                            }
+                            frame.non_const_factor =
+                                Some(core::mem::replace(&mut cur, Level::new()));
+                        }
+                    }
+                    if frame.next < frame.args.len() {
+                        let arg = frame.args[frame.next];
+                        frame.next += 1;
+                        cur = Level::new();
+                        work.push(Work::Mul(frame));
+                        work.push(Work::Visit(arg, BigRational::one()));
+                    } else {
+                        let c_exact = &frame.scale * &frame.const_product;
+                        cur = frame.parent;
+                        match frame.non_const_factor {
+                            None => {
+                                cur.constant += c_exact;
+                            }
+                            Some(level) => {
+                                for (v, coef) in level.terms {
+                                    cur.terms.push((v, &c_exact * &coef));
+                                }
+                                cur.constant += c_exact * &level.constant;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for pair in cur.terms {
+            terms.push(pair);
+        }
+        *constant += &cur.constant;
+        Some(())
+    }
+
+    /// Exact-coefficient retry for [`Self::parse_arith_comparison`]: both
+    /// sides walked with `BigRational` coefficients (wide constants exact,
+    /// no abstraction), like terms combined exactly, and the whole row
+    /// rescaled into `Rational64` width by a POSITIVE factor
+    /// (`scale_exact_row`) — sound because the atom's bound is zero, which
+    /// a positive multiple preserves. `None` when the row is genuinely
+    /// nonlinear or no representable scale exists (the caller gates).
+    fn parse_arith_comparison_exact(
+        &self,
+        lhs: TermId,
+        rhs: TermId,
+        constraint_type: ArithConstraintType,
+        reason: TermId,
+        manager: &TermManager,
+    ) -> Option<ParsedArithConstraint> {
+        let mut terms: Vec<(TermId, BigRational)> = Vec::new();
+        let mut constant = BigRational::zero();
+        self.extract_linear_terms_exact(
+            lhs,
+            BigRational::one(),
+            &mut terms,
+            &mut constant,
+            manager,
+        )?;
+        self.extract_linear_terms_exact(
+            rhs,
+            -BigRational::one(),
+            &mut terms,
+            &mut constant,
+            manager,
+        )?;
+        // Combine like terms exactly.
+        let mut combined: Vec<(TermId, BigRational)> = Vec::new();
+        for (term, coef) in terms {
+            match combined.iter_mut().find(|(t, _)| *t == term) {
+                Some(slot) => slot.1 += coef,
+                None => combined.push((term, coef)),
+            }
+        }
+        combined.retain(|(_, c)| !c.is_zero());
+        // Move the constant to the RHS and scale into width.
+        let moved = -constant;
+        let (scaled, constant_r) = nixie_theories::arithmetic::scale_exact_row(&combined, &moved)?;
+        Some(ParsedArithConstraint {
+            terms: scaled.into_iter().collect(),
+            constant: constant_r,
+            constraint_type,
+            reason_term: reason,
+        })
     }
 
     /// Assert a term
