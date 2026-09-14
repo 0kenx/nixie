@@ -164,7 +164,7 @@ fn grobner_path(
 ) -> FfOutcome {
     // ---- Step 1: encode (two passes) ----
     let mut enc = Encoder::new(f, field);
-    let mut generators: Vec<Generator> = Vec::new();
+    let mut generators: Vec<FrontGen> = Vec::new();
     for (index, &assertion) in assertions.iter().enumerate() {
         let Some(term) = manager.get(assertion) else {
             return FfOutcome::InvalidModel(format!("dangling term {assertion:?}"));
@@ -177,32 +177,34 @@ fn grobner_path(
                 });
             }
             TermKind::Eq(a, b) => match enc.encode_pair(manager, *a, *b, budget_steps) {
-                Some((pa, pb)) => generators.push(Generator::Fact {
-                    index,
+                Some((pa, pb)) => generators.push(FrontGen {
+                    literal: Some(index),
                     poly: pa.sub(f, &pb),
+                    origin: std::iter::once(index).collect(),
                 }),
                 None => return FfOutcome::OutOfBudget { where_: "encoding" },
             },
             TermKind::Not(inner) => {
-                let Some(inner_term) = manager.get(*inner) else {
-                    return FfOutcome::InvalidModel(format!("dangling term {inner:?}"));
-                };
-                match &inner_term.kind {
-                    TermKind::Eq(a, b) => match enc.encode_pair(manager, *a, *b, budget_steps) {
-                        Some((pa, pb)) => {
-                            let w = enc.fresh_witness(*a, *b);
-                            let mut w_poly = MPoly::zero();
-                            w_poly.add_term(f, Monomial::from_var(w), &f.one());
-                            let one = MPoly::constant(f, &f.one());
-                            generators.push(Generator::Witness {
-                                index,
-                                poly: pa.sub(f, &pb).mul(f, &w_poly).sub(f, &one),
-                            });
+                let inner_term = manager.get(*inner);
+                match inner_term.map(|t| &t.kind) {
+                    Some(TermKind::Eq(a, b)) => {
+                        match enc.encode_pair(manager, *a, *b, budget_steps) {
+                            Some((pa, pb)) => {
+                                let w = enc.fresh_witness(*a, *b);
+                                let mut w_poly = MPoly::zero();
+                                w_poly.add_term(f, Monomial::from_var(w), &f.one());
+                                let one = MPoly::constant(f, &f.one());
+                                generators.push(FrontGen {
+                                    literal: Some(index),
+                                    poly: pa.sub(f, &pb).mul(f, &w_poly).sub(f, &one),
+                                    origin: std::iter::once(index).collect(),
+                                });
+                            }
+                            None => {
+                                return FfOutcome::OutOfBudget { where_: "encoding" };
+                            }
                         }
-                        None => {
-                            return FfOutcome::OutOfBudget { where_: "encoding" };
-                        }
-                    },
+                    }
                     _ => {
                         return FfOutcome::InvalidModel(
                             "unsupported literal shape under not".to_string(),
@@ -218,19 +220,14 @@ fn grobner_path(
         }
     }
     for poly in std::mem::take(&mut enc.bitsum_generators) {
-        generators.push(Generator::Bitsum { poly });
+        generators.push(FrontGen {
+            literal: None,
+            poly,
+            origin: std::collections::BTreeSet::new(),
+        });
     }
 
-    let input_polys: Vec<MPoly> = generators
-        .iter()
-        .map(|g| match g {
-            Generator::Fact { poly, .. }
-            | Generator::Witness { poly, .. }
-            | Generator::Bitsum { poly } => poly.clone(),
-        })
-        .collect();
-
-    if input_polys.is_empty() {
+    if generators.is_empty() {
         let mut model = FfModel {
             values: FxHashMap::default(),
         };
@@ -239,6 +236,26 @@ fn grobner_path(
         }
         return FfOutcome::Model(model);
     }
+
+    // ---- Phase 5 front end, before any Gröbner work ----
+    // The linear core: sparse Gaussian elimination over 𝔽_p on the
+    // linear generators; pivots substitute into the nonlinear part; an
+    // inconsistent row is an immediate UNSAT whose core is that row's
+    // origin (the asserted literals it was combined from). Constant
+    // propagation falls out: a pivot row with no other variables IS
+    // `x − c`, and the substitution applies it everywhere at once. This
+    // is the LRA tableau discipline with every hard part removed (no
+    // bounds, no ordering, no anti-cycling rule) — the design's "do not
+    // make Gröbner the front line".
+    let generators = match linear_core(f, generators) {
+        FrontResult::Inconsistent(core) => {
+            return FfOutcome::Unsat(FfCore {
+                fact_indices: core.into_iter().collect(),
+            });
+        }
+        FrontResult::Rewritten(gens) => gens,
+    };
+    let input_polys: Vec<MPoly> = generators.iter().map(|g| g.poly.clone()).collect();
 
     // ---- Step 2: Gröbner, degrevlex ----
     let mut gbudget = GrobnerBudget::new(budget_steps);
@@ -256,9 +273,25 @@ fn grobner_path(
     }
 }
 
-/// Extract the traced core from a `1 ∈ I` basis.
+/// One generator with its provenance: the asserted literal it came from
+/// (if any) and, after the front end, the union of literals any
+/// combination touched. The origin set is what UNSAT cores are cut from.
+#[derive(Debug, Clone)]
+struct FrontGen {
+    /// The asserted literal this generator encodes (`None` for bitsum
+    /// definitions — a definition is not a fact and cores exclude it).
+    literal: Option<usize>,
+    /// The polynomial.
+    poly: MPoly,
+    /// The literal indices this generator derives from.
+    origin: std::collections::BTreeSet<usize>,
+}
+
+/// Extract the traced core from a `1 ∈ I` basis: the asserted literals
+/// whose generators carry nonzero cofactor in the certificate (origin
+/// sets composed through the front end).
 fn traced_unsat(
-    generators: &[Generator],
+    generators: &[FrontGen],
     basis: &nixie_math::ff::grobner::GrobnerBasis,
 ) -> FfOutcome {
     let Some(witness) = basis.constant_witness() else {
@@ -266,58 +299,24 @@ fn traced_unsat(
             where_: "Gröbner basis",
         };
     };
-    let mut fact_indices: Vec<usize> = Vec::new();
+    let mut core: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for (gen_idx, generator) in generators.iter().enumerate() {
-        let carries = witness.cofactors.get(gen_idx).is_some_and(|c| !c.is_zero());
-        if carries {
-            match generator {
-                Generator::Fact { index, .. } | Generator::Witness { index, .. } => {
-                    // A witness generator is *definitionally* tied to its
-                    // disequality: the core must name the disequality too
-                    // (its generator alone cannot produce 1 without the
-                    // fact side).
-                    fact_indices.push(*index);
-                }
-                Generator::Bitsum { .. } => {}
-            }
+        if witness.cofactors.get(gen_idx).is_some_and(|c| !c.is_zero()) {
+            core.extend(generator.origin.iter().copied());
         }
     }
-    if fact_indices.is_empty() {
+    if core.is_empty() {
         // The certificate rests only on definitions — not reachable with
         // a sound encoder, but an empty core must never be returned as
         // "UNSAT by nothing": fall back to naming every fact.
-        fact_indices = generators
+        core = generators
             .iter()
-            .filter_map(|g| match g {
-                Generator::Fact { index, .. } | Generator::Witness { index, .. } => Some(*index),
-                Generator::Bitsum { .. } => None,
-            })
+            .flat_map(|g| g.origin.iter().copied())
             .collect();
     }
-    FfOutcome::Unsat(FfCore { fact_indices })
-}
-
-/// One encoded generator, with its provenance for core extraction.
-enum Generator {
-    /// An asserted equality's polynomial.
-    Fact {
-        /// Index of the asserted literal.
-        index: usize,
-        /// The polynomial.
-        poly: MPoly,
-    },
-    /// A disequality witness generator `(a−b)·w − 1`.
-    Witness {
-        /// Index of the asserted disequality literal.
-        index: usize,
-        /// The polynomial.
-        poly: MPoly,
-    },
-    /// A bitsum definition `s − Σ 2ⁱ bᵢ` (excluded from cores).
-    Bitsum {
-        /// The polynomial.
-        poly: MPoly,
-    },
+    FfOutcome::Unsat(FfCore {
+        fact_indices: core.into_iter().collect(),
+    })
 }
 
 // ================= Step 1: the encoder =================
@@ -425,9 +424,13 @@ impl<'a> Encoder<'a> {
         })
     }
 
-    /// Pass 2: the polynomial of a term. Explicit stack with combine
-    /// frames and an operand stack of completed polynomials — the same
-    /// discipline every other term walk in this codebase follows.
+    /// Pass 2: the polynomial of a term. ONE frame stack: `Expand` frames
+    /// push `Combine` frames *under* their children, so a combine pops
+    /// exactly when its own children have all produced values — a
+    /// separate combine list would let sibling operands bleed across
+    /// windows (the first version's Add consumed the neighbour's operands
+    /// and fabricated `x₀x₁x₂` monomials out of linear sums; the planted
+    /// fuzzer caught it as a false UNSAT).
     fn encode(&mut self, manager: &TermManager, root: TermId, budget: u64) -> Option<MPoly> {
         enum Combine {
             Add(usize),
@@ -435,119 +438,126 @@ impl<'a> Encoder<'a> {
             Neg,
             /// The bitsum's definition generator is emitted and the fresh
             /// sum variable is the value.
-            Bitsum(TermId, usize),
+            Bitsum(usize),
+        }
+        enum Frame {
+            Expand(TermId),
+            Combine(Combine),
         }
         let mut results: Vec<MPoly> = Vec::new();
-        let mut stack: Vec<nixie_core::ast::TermId> = vec![root];
-        let mut combines: Vec<Combine> = Vec::new();
+        let mut stack: Vec<Frame> = vec![Frame::Expand(root)];
         let mut steps = 0u64;
 
-        while let Some(t) = stack.pop() {
+        while let Some(frame) = stack.pop() {
             steps += 1;
             if steps > budget {
                 return None;
             }
-            let term = manager.get(t)?;
-            match &term.kind {
-                TermKind::FfConst { value, field } => {
-                    if *field != self.field {
-                        return None; // mixed fields: refused upstream, guard anyway
+            match frame {
+                Frame::Expand(t) => {
+                    let term = manager.get(t)?;
+                    match &term.kind {
+                        TermKind::FfConst { value, field } => {
+                            if *field != self.field {
+                                return None; // mixed fields: refused upstream, guard anyway
+                            }
+                            let mut p = MPoly::zero();
+                            p.add_term(
+                                self.f,
+                                Monomial::unit(),
+                                &self.f.from_bigint(&value.clone()),
+                            );
+                            results.push(p);
+                        }
+                        TermKind::Var(_) => {
+                            // FF-sorted variables were registered in pass 1;
+                            // anything else here is a shape violation.
+                            let var = self.var_index.get(&t).copied()?;
+                            let mut p = MPoly::zero();
+                            p.add_term(self.f, Monomial::from_var(var), &self.f.one());
+                            results.push(p);
+                        }
+                        TermKind::FfAdd(children) => {
+                            stack.push(Frame::Combine(Combine::Add(children.len())));
+                            for &c in children.iter().rev() {
+                                stack.push(Frame::Expand(c));
+                            }
+                        }
+                        TermKind::FfMul(children) => {
+                            stack.push(Frame::Combine(Combine::Mul(children.len())));
+                            for &c in children.iter().rev() {
+                                stack.push(Frame::Expand(c));
+                            }
+                        }
+                        TermKind::FfNeg(child) => {
+                            stack.push(Frame::Combine(Combine::Neg));
+                            stack.push(Frame::Expand(*child));
+                        }
+                        TermKind::FfBitsum(children) => {
+                            stack.push(Frame::Combine(Combine::Bitsum(children.len())));
+                            for &c in children.iter().rev() {
+                                stack.push(Frame::Expand(c));
+                            }
+                        }
+                        _ => return None, // unsupported shape — refused
                     }
-                    let mut p = MPoly::zero();
-                    p.add_term(
-                        self.f,
-                        Monomial::unit(),
-                        &self.f.from_bigint(&value.clone()),
-                    );
-                    results.push(p);
                 }
-                TermKind::Var(_) => {
-                    // FF-sorted variables were registered in pass 1;
-                    // anything else here is a shape violation.
-                    let var = self.var_index.get(&t).copied()?;
-                    let mut p = MPoly::zero();
-                    p.add_term(self.f, Monomial::from_var(var), &self.f.one());
-                    results.push(p);
-                }
-                TermKind::FfAdd(children) => {
-                    combines.push(Combine::Add(children.len()));
-                    for &c in children.iter().rev() {
-                        stack.push(c);
+                Frame::Combine(kind) => {
+                    match kind {
+                        Combine::Add(n) => {
+                            if results.len() < n {
+                                return None;
+                            }
+                            let mut sum = MPoly::zero();
+                            for _ in 0..n {
+                                sum = sum.add(self.f, &results.pop()?);
+                            }
+                            results.push(sum);
+                        }
+                        Combine::Mul(n) => {
+                            if results.len() < n {
+                                return None;
+                            }
+                            let mut prod = MPoly::constant(self.f, &self.f.one());
+                            for _ in 0..n {
+                                let p = results.pop()?;
+                                prod = prod.mul(self.f, &p);
+                            }
+                            results.push(prod);
+                        }
+                        Combine::Neg => {
+                            let p = results.pop()?;
+                            results.push(p.neg(self.f));
+                        }
+                        Combine::Bitsum(n) => {
+                            if results.len() < n {
+                                return None;
+                            }
+                            // The children were pushed in reverse, so the
+                            // last n results are b₀ … bₙ₋₁ in order.
+                            let drained: Vec<MPoly> = results.split_off(results.len() - n);
+                            let s = {
+                                let v = self.next_var;
+                                self.next_var += 1;
+                                v
+                            };
+                            // Definition: s − Σ 2ⁱ bᵢ, into the separate
+                            // generator set (a definition, not a fact).
+                            let mut definition = MPoly::zero();
+                            definition.add_term(self.f, Monomial::from_var(s), &self.f.one());
+                            let mut power = self.f.one();
+                            for p in drained {
+                                definition = definition.sub(self.f, &p.scale(self.f, &power));
+                                power = self
+                                    .f
+                                    .mul(&power, &self.f.from_biguint(&BigUint::from(2u8)));
+                            }
+                            self.bitsum_generators.push(definition);
+                            let mut out = MPoly::zero();
+                            out.add_term(self.f, Monomial::from_var(s), &self.f.one());
+                            results.push(out);
+                        }
                     }
-                }
-                TermKind::FfMul(children) => {
-                    combines.push(Combine::Mul(children.len()));
-                    for &c in children.iter().rev() {
-                        stack.push(c);
-                    }
-                }
-                TermKind::FfNeg(child) => {
-                    combines.push(Combine::Neg);
-                    stack.push(*child);
-                }
-                TermKind::FfBitsum(children) => {
-                    combines.push(Combine::Bitsum(t, children.len()));
-                    for &c in children.iter().rev() {
-                        stack.push(c);
-                    }
-                }
-                _ => return None, // unsupported shape — refused
-            }
-        }
-
-        while let Some(combine) = combines.pop() {
-            match combine {
-                Combine::Add(n) => {
-                    if results.len() < n {
-                        return None;
-                    }
-                    let mut sum = MPoly::zero();
-                    for _ in 0..n {
-                        sum = sum.add(self.f, &results.pop()?);
-                    }
-                    results.push(sum);
-                }
-                Combine::Mul(n) => {
-                    if results.len() < n {
-                        return None;
-                    }
-                    let mut prod = MPoly::constant(self.f, &self.f.one());
-                    for _ in 0..n {
-                        let p = results.pop()?;
-                        prod = prod.mul(self.f, &p);
-                    }
-                    results.push(prod);
-                }
-                Combine::Neg => {
-                    let p = results.pop()?;
-                    results.push(p.neg(self.f));
-                }
-                Combine::Bitsum(_t, n) => {
-                    if results.len() < n {
-                        return None;
-                    }
-                    // Σ 2ⁱ bᵢ in order: the children were pushed in
-                    // reverse, so the last n results are b₀ … bₙ₋₁ in
-                    // order.
-                    let drained: Vec<MPoly> = results.split_off(results.len() - n);
-                    let s = {
-                        let v = self.next_var;
-                        self.next_var += 1;
-                        v
-                    };
-                    let mut definition = MPoly::zero();
-                    definition.add_term(self.f, Monomial::from_var(s), &self.f.one());
-                    let mut power = self.f.one();
-                    for p in drained {
-                        definition = definition.sub(self.f, &p.scale(self.f, &power));
-                        power = self
-                            .f
-                            .mul(&power, &self.f.from_biguint(&BigUint::from(2u8)));
-                    }
-                    self.bitsum_generators.push(definition);
-                    let mut out = MPoly::zero();
-                    out.add_term(self.f, Monomial::from_var(s), &self.f.one());
-                    results.push(out);
                 }
             }
         }
@@ -578,6 +588,12 @@ fn find_zero(
         inputs: basis.inputs.clone(),
     }];
     let mut steps = 0u64;
+    // ONE budget across the whole search: a fresh per-node budget made
+    // the total work unbounded (a deep tree of cheap nodes never hit the
+    // cap and ground instead of answering). Shared, a blowup becomes an
+    // honest OutOfBudget.
+    let mut gbudget = GrobnerBudget::new(budget_steps);
+    let mut rbudget = RootBudget::new(budget_steps);
     let variables: Vec<Var> = {
         let mut vs: Vec<Var> = (0..enc.next_var).collect();
         vs.sort_unstable();
@@ -667,10 +683,8 @@ fn find_zero(
                 return FfOutcome::InvalidModel("no variables to branch on".to_string());
             };
             if node.basis.is_zero_dimensional(&variables) {
-                let mut mbudget = GrobnerBudget::new(budget_steps);
-                match minimal_polynomial(f, &node.basis, free_var, &variables, &mut mbudget) {
+                match minimal_polynomial(f, &node.basis, free_var, &variables, &mut gbudget) {
                     Some(minpoly) => {
-                        let mut rbudget = RootBudget::new(budget_steps);
                         match uni_roots(f, &minpoly, &mut rbudget) {
                             Err(RootError::Budget) | Ok(None) => {
                                 return FfOutcome::OutOfBudget {
@@ -716,7 +730,6 @@ fn find_zero(
             let new_gen = poly.sub(f, &const_poly);
             let mut inputs = node.inputs.clone();
             inputs.push(new_gen);
-            let mut gbudget = GrobnerBudget::new(budget_steps);
             match grobner_basis(f, &inputs, &mut gbudget) {
                 Err(GrobnerError::Budget) => {
                     return FfOutcome::OutOfBudget {
@@ -869,8 +882,11 @@ fn eval_literal(
     }
 }
 
-/// Exact FF-term evaluation in `BigUint` arithmetic mod `p` (explicit
-/// stack; used by the enumeration path and reusable for debugging).
+/// Exact FF-term evaluation in `BigUint` arithmetic mod `p`. ONE frame
+/// stack (Expand/Combine interleaved) — a separate combine list lets
+/// sibling operands bleed across windows, which mis-evaluated nested
+/// `(ff.mul (ff.add …) (ff.add …))` shapes and made the validator reject
+/// correct witnesses (caught by the planted-solution fuzzer).
 fn eval_term(
     manager: &TermManager,
     field: FieldId,
@@ -884,76 +900,90 @@ fn eval_term(
         Neg,
         Bitsum(usize),
     }
-    let mut results: Vec<BigUint> = Vec::new();
-    let mut stack: Vec<TermId> = vec![root];
-    let mut combines: Vec<Combine> = Vec::new();
-    while let Some(t) = stack.pop() {
-        let term = manager.get(t)?;
-        match &term.kind {
-            TermKind::FfConst { value, field: id } => {
-                if *id != field {
-                    return None;
-                }
-                results.push(num_bigint::BigInt::to_biguint(value)? % modulus);
-            }
-            TermKind::Var(_) => {
-                results.push(assignment.get(&t).cloned()?);
-            }
-            TermKind::FfAdd(children) => {
-                combines.push(Combine::Add(children.len()));
-                for &c in children.iter().rev() {
-                    stack.push(c);
-                }
-            }
-            TermKind::FfMul(children) => {
-                combines.push(Combine::Mul(children.len()));
-                for &c in children.iter().rev() {
-                    stack.push(c);
-                }
-            }
-            TermKind::FfNeg(child) => {
-                combines.push(Combine::Neg);
-                stack.push(*child);
-            }
-            TermKind::FfBitsum(children) => {
-                combines.push(Combine::Bitsum(children.len()));
-                for &c in children.iter().rev() {
-                    stack.push(c);
-                }
-            }
-            _ => return None,
-        }
+    enum Frame {
+        Expand(TermId),
+        Combine(Combine),
     }
-    while let Some(combine) = combines.pop() {
-        match combine {
-            Combine::Add(n) => {
-                let mut sum = BigUint::zero();
-                for _ in 0..n {
-                    sum = (sum + results.pop()?) % modulus;
+    let mut results: Vec<BigUint> = Vec::new();
+    let mut stack: Vec<Frame> = vec![Frame::Expand(root)];
+    while let Some(frame) = stack.pop() {
+        match frame {
+            Frame::Expand(t) => {
+                let term = manager.get(t)?;
+                match &term.kind {
+                    TermKind::FfConst { value, field: id } => {
+                        if *id != field {
+                            return None;
+                        }
+                        results.push(num_bigint::BigInt::to_biguint(value)? % modulus);
+                    }
+                    TermKind::Var(_) => {
+                        results.push(assignment.get(&t).cloned()?);
+                    }
+                    TermKind::FfAdd(children) => {
+                        stack.push(Frame::Combine(Combine::Add(children.len())));
+                        for &c in children.iter().rev() {
+                            stack.push(Frame::Expand(c));
+                        }
+                    }
+                    TermKind::FfMul(children) => {
+                        stack.push(Frame::Combine(Combine::Mul(children.len())));
+                        for &c in children.iter().rev() {
+                            stack.push(Frame::Expand(c));
+                        }
+                    }
+                    TermKind::FfNeg(child) => {
+                        stack.push(Frame::Combine(Combine::Neg));
+                        stack.push(Frame::Expand(*child));
+                    }
+                    TermKind::FfBitsum(children) => {
+                        stack.push(Frame::Combine(Combine::Bitsum(children.len())));
+                        for &c in children.iter().rev() {
+                            stack.push(Frame::Expand(c));
+                        }
+                    }
+                    _ => return None,
                 }
-                results.push(sum);
             }
-            Combine::Mul(n) => {
-                let mut prod = BigUint::one();
-                for _ in 0..n {
-                    prod = (prod * results.pop()?) % modulus;
+            Frame::Combine(kind) => match kind {
+                Combine::Add(n) => {
+                    if results.len() < n {
+                        return None;
+                    }
+                    let mut sum = BigUint::zero();
+                    for _ in 0..n {
+                        sum = (sum + results.pop()?) % modulus;
+                    }
+                    results.push(sum);
                 }
-                results.push(prod);
-            }
-            Combine::Neg => {
-                let v = results.pop()?;
-                results.push((modulus - v) % modulus);
-            }
-            Combine::Bitsum(n) => {
-                let drained = results.split_off(results.len() - n);
-                let mut acc = BigUint::zero();
-                let mut power = BigUint::one();
-                for v in drained {
-                    acc = (acc + &power * v) % modulus;
-                    power = (&power << 1) % modulus;
+                Combine::Mul(n) => {
+                    if results.len() < n {
+                        return None;
+                    }
+                    let mut prod = BigUint::one();
+                    for _ in 0..n {
+                        prod = (prod * results.pop()?) % modulus;
+                    }
+                    results.push(prod);
                 }
-                results.push(acc);
-            }
+                Combine::Neg => {
+                    let v = results.pop()?;
+                    results.push((modulus - v) % modulus);
+                }
+                Combine::Bitsum(n) => {
+                    if results.len() < n {
+                        return None;
+                    }
+                    let drained = results.split_off(results.len() - n);
+                    let mut acc = BigUint::zero();
+                    let mut power = BigUint::one();
+                    for v in drained {
+                        acc = (acc + &power * v) % modulus;
+                        power = (&power << 1) % modulus;
+                    }
+                    results.push(acc);
+                }
+            },
         }
     }
     if results.len() != 1 {
@@ -1011,4 +1041,222 @@ pub fn validate_model(
         }
     }
     Ok(())
+}
+
+// ================= Phase 5: the field-aware front end =================
+
+/// The linear core's verdict.
+enum FrontResult {
+    /// The generator list, rewritten: pivots eliminated, linear rows in
+    /// reduced form, origins merged. Every asserted constraint survives
+    /// (a `0 = 0` row is the only thing dropped).
+    Rewritten(Vec<FrontGen>),
+    /// An inconsistent linear row; the payload is the literal indices of
+    /// its origin.
+    Inconsistent(std::collections::BTreeSet<usize>),
+}
+
+/// Constant propagation + sparse Gaussian elimination over the linear
+/// generators, substitution into the nonlinear remainder.
+///
+/// Sound by construction: every step is an ideal-preserving operation
+/// (swap, scale, combine, substitute) over 𝔽_p rows that carry their
+/// literal provenance, so an inconsistent row is a certified `1 ∈
+/// ⟨support⟩` traceable to asserted facts.
+fn linear_core(f: &FieldCtx, gens: Vec<FrontGen>) -> FrontResult {
+    use nixie_math::polynomial::Var;
+    use std::collections::BTreeMap;
+
+    // Partition into linear rows and nonlinear generators.
+    struct Row {
+        coeffs: BTreeMap<Var, Limbs>,
+        constant: Limbs,
+        origin: std::collections::BTreeSet<usize>,
+        literal: Option<usize>,
+    }
+    let mut rows: Vec<Row> = Vec::new();
+    let mut nonlinear: Vec<FrontGen> = Vec::new();
+    for g in gens {
+        let linear = g.poly.terms_iter().all(|(m, _)| m.total_degree() <= 1);
+        if !linear {
+            nonlinear.push(g);
+            continue;
+        }
+        let mut coeffs: BTreeMap<Var, Limbs> = BTreeMap::new();
+        let mut constant = f.zero();
+        for (m, c) in g.poly.terms_iter() {
+            if m.is_unit() {
+                constant = c.clone();
+            } else {
+                coeffs.insert(m.vars()[0].var, c.clone());
+            }
+        }
+        rows.push(Row {
+            coeffs,
+            constant,
+            origin: g.origin,
+            literal: g.literal,
+        });
+    }
+
+    // Reduced row-echelon: repeatedly pick the row whose smallest
+    // uneliminated variable is smallest (deterministic), normalize it,
+    // eliminate that variable from every other row. Terminates in ≤
+    // n_vars rounds (each round removes a variable from all rows).
+    let mut pivots: Vec<(Var, usize)> = Vec::new(); // (var, row index)
+    loop {
+        let mut chosen: Option<(usize, Var)> = None;
+        for (ri, row) in rows.iter().enumerate() {
+            let Some(&smallest) = row.coeffs.keys().next() else {
+                continue;
+            };
+            if pivots.iter().any(|(v, _)| *v == smallest) {
+                continue;
+            }
+            match chosen {
+                Some((_, v)) if v <= smallest => {}
+                _ => chosen = Some((ri, smallest)),
+            }
+        }
+        let Some((ri, pivot_var)) = chosen else {
+            break;
+        };
+        // Normalize the pivot row (leading coefficient 1).
+        let lc = rows[ri].coeffs[&pivot_var].clone();
+        let Some(inv) = f.inv(&lc) else {
+            break; // unreachable: keys hold nonzero coefficients
+        };
+        {
+            let row = &mut rows[ri];
+            for c in row.coeffs.values_mut() {
+                *c = f.mul(c, &inv);
+            }
+            row.constant = f.mul(&row.constant, &inv);
+        }
+        // Eliminate from every other row, merging provenance.
+        for rj in 0..rows.len() {
+            if rj == ri {
+                continue;
+            }
+            let Some(factor) = rows[rj].coeffs.get(&pivot_var).cloned() else {
+                continue;
+            };
+            let (pc, pk, po) = {
+                let r = &rows[ri];
+                (r.coeffs.clone(), r.constant.clone(), r.origin.clone())
+            };
+            let row = &mut rows[rj];
+            for (v, c) in &pc {
+                let sub = f.mul(c, &factor);
+                let entry = row.coeffs.entry(*v).or_insert_with(|| f.zero());
+                *entry = f.sub(entry, &sub);
+                if f.is_zero(entry) {
+                    row.coeffs.remove(v);
+                }
+            }
+            row.constant = f.sub(&row.constant, &f.mul(&pk, &factor));
+            row.origin.extend(po.iter().copied());
+        }
+        pivots.push((pivot_var, ri));
+    }
+
+    // Inconsistent row: no variables, nonzero constant → immediate UNSAT.
+    for row in &rows {
+        if row.coeffs.is_empty() && !f.is_zero(&row.constant) {
+            return FrontResult::Inconsistent(row.origin.clone());
+        }
+    }
+
+    // Substitute each pivot into the nonlinear generators. The pivot row
+    // reads `x + Σ c_v·v + c₀ = 0`, i.e. `x = −c₀ − Σ c_v·v`.
+    let mut result: Vec<FrontGen> = Vec::new();
+    for (pivot_var, ri) in &pivots {
+        let row = &rows[*ri];
+        let mut repl = MPoly::constant(f, &f.neg(&row.constant));
+        for (v, c) in &row.coeffs {
+            if v == pivot_var {
+                continue;
+            }
+            let mut term = MPoly::zero();
+            term.add_term(f, Monomial::from_var(*v), c);
+            repl = repl.sub(f, &term);
+        }
+        let mut next: Vec<FrontGen> = Vec::with_capacity(nonlinear.len());
+        for g in nonlinear {
+            let poly = substitute_var(f, &g.poly, *pivot_var, &repl);
+            next.push(FrontGen {
+                literal: g.literal,
+                poly,
+                origin: {
+                    let mut o = g.origin.clone();
+                    o.extend(row.origin.iter().copied());
+                    o
+                },
+            });
+        }
+        nonlinear = next;
+    }
+    result.extend(nonlinear);
+    // The pivot rows themselves survive as generators (they carry the
+    // linear constraints; FindZero's linear-univariate detection reads
+    // them). Dependent rows reduced to 0 = 0 are dropped — no
+    // information lost.
+    for (pivot_var, ri) in &pivots {
+        let row = &rows[*ri];
+        let mut poly = MPoly::zero();
+        poly.add_term(f, Monomial::from_var(*pivot_var), &f.one());
+        for (v, c) in &row.coeffs {
+            if v == pivot_var {
+                continue;
+            }
+            poly.add_term(f, Monomial::from_var(*v), c);
+        }
+        poly.add_term(f, Monomial::unit(), &row.constant);
+        result.push(FrontGen {
+            literal: row.literal,
+            poly,
+            origin: row.origin.clone(),
+        });
+    }
+    FrontResult::Rewritten(result)
+}
+
+/// Substitute `var := repl` in a polynomial (ideal-preserving when the
+/// substitution comes from an ideal member defining var).
+fn substitute_var(
+    f: &FieldCtx,
+    p: &MPoly,
+    var: nixie_math::polynomial::Var,
+    repl: &MPoly,
+) -> MPoly {
+    let mut out = MPoly::zero();
+    for (m, c) in p.terms_iter() {
+        let deg = m.degree(var);
+        if deg == 0 {
+            out.add_term(f, m.clone(), c);
+        } else {
+            let mut rest = Monomial::unit();
+            for vp in m.vars() {
+                if vp.var != var {
+                    rest = rest.mul(&Monomial::from_var_power(vp.var, vp.power));
+                }
+            }
+            let mut factor = repl.clone();
+            for _ in 1..deg {
+                factor = factor.mul(f, repl);
+            }
+            let term = mul_by_monomial_pub(f, &factor.scale(f, c), &rest);
+            out = out.add(f, &term);
+        }
+    }
+    out
+}
+
+/// Monomial multiply helper (mirrors the private one in grobner.rs).
+fn mul_by_monomial_pub(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
+    let mut out = MPoly::zero();
+    for (mm, c) in p.terms_iter() {
+        out.add_term(f, mm.mul(m), c);
+    }
+    out
 }

@@ -664,9 +664,17 @@ pub fn normal_form(
     Some(current)
 }
 
-/// The minimal polynomial of `x` modulo a zero-dimensional ideal: find the
-/// first linear dependency among `1, x, x², …` in the quotient ring (as
-/// vectors over the standard monomials) by Gaussian elimination.
+/// The minimal polynomial of `x` modulo a zero-dimensional ideal: find
+/// the first linear dependency among `1, x, x², …` in the quotient ring
+/// (as vectors over the standard monomials) by Gaussian elimination.
+///
+/// Each Krylov vector carries its *defining polynomial* alongside the
+/// quotient vector, and every row operation updates both — the
+/// dependency's polynomial is then the minimal polynomial by
+/// construction. (Carrying only each row's top degree — the first
+/// version — is wrong whenever back-substitution is needed: it returned
+/// non-annihilating polynomials at degree ≥ 2, which the planted
+/// fuzzer surfaced as false UNSATs at BN254.)
 ///
 /// Returns `None` when the ideal is not zero-dimensional over `x`, when
 /// the standard-monomial enumeration exceeds its cap, or when the budget
@@ -695,73 +703,103 @@ pub fn minimal_polynomial(
         .collect();
     let n = std_monomials.len();
 
-    // Multiply a quotient element by x and renormalize. Takes the budget
-    // per call (a capturing closure would hold the `&mut` across the
-    // loop's own charges).
+    // A Krylov element: the quotient vector of p(x), plus p's dense
+    // coefficient vector (little-endian). The pair moves together through
+    // every row operation, so `vector = p(x) in the quotient` is an
+    // invariant and a zero vector certifies that p annihilates x.
+    #[derive(Clone)]
+    struct Krylov {
+        vector: Vec<Limbs>,
+        poly: Vec<Limbs>,
+    }
+
+    // One Krylov step: k ↦ x·k. The vector is the normal form of
+    // x·p(x); the polynomial is p SHIFTED one degree up (p_d · x — a
+    // shift, not an append: the first version copied p into the low
+    // slots and set the new top slot, producing `1 + x` from `1`).
     fn mul_by_x(
         f: &FieldCtx,
         basis: &GrobnerBasis,
         std_monomials: &[Monomial],
+        index_of: &rustc_hash::FxHashMap<Monomial, usize>,
         x: Var,
-        vec: &[Limbs],
+        k: &Krylov,
         budget: &mut GrobnerBudget,
-    ) -> Option<Vec<Limbs>> {
+    ) -> Option<Krylov> {
         let mut poly = MPoly::zero();
-        for (m, c) in std_monomials.iter().zip(vec.iter()) {
-            poly.add_term(f, m.mul(&Monomial::from_var(x)), c);
+        for (i, c) in k.poly.iter().enumerate() {
+            if f.is_zero(c) {
+                continue;
+            }
+            poly.add_term(f, Monomial::from_var_power(x, (i + 1) as u32), c);
         }
         let reduced = normal_form(f, &poly, basis, budget)?;
-        let mut out = vec![f.zero(); std_monomials.len()];
+        let mut vector = vec![f.zero(); std_monomials.len()];
         for (m, c) in reduced.terms_iter() {
-            let pos = std_monomials.iter().position(|s| s == m)?;
-            out[pos] = c.clone();
+            let pos = index_of.get(m)?;
+            vector[*pos] = c.clone();
         }
-        Some(out)
+        let mut next_poly = vec![f.zero(); k.poly.len() + 1];
+        for (i, c) in k.poly.iter().enumerate() {
+            next_poly[i + 1] = c.clone();
+        }
+        Some(Krylov {
+            vector,
+            poly: next_poly,
+        })
     }
 
     let unit_pos = index_of.get(&Monomial::unit()).copied()?;
-    let mut current = {
-        let mut v = vec![f.zero(); n];
-        v[unit_pos] = f.one();
-        v
+    let start = {
+        let mut vector = vec![f.zero(); n];
+        vector[unit_pos] = f.one();
+        Krylov {
+            vector,
+            poly: vec![f.one()],
+        }
     };
-    // Row-echelon accumulation of 1, x, x², ...; a dependency among d+1
-    // vectors of an n-dimensional space appears by d = n.
-    // Each row records (pivot position, reduced row, power of x it came
-    // from) — the power is what turns a linear dependency into the
-    // minimal polynomial's coefficients.
-    let mut rows: Vec<(usize, Vec<Limbs>, usize)> = Vec::new();
+
+    let mut rows: Vec<Krylov> = Vec::new();
+    let mut current = start;
     for d in 0..=n {
         budget.charge(1).ok()?;
+        // Reduce `current` against the echelon rows, updating both halves.
         let mut acc = current.clone();
-        let mut deps: Vec<(usize, Limbs)> = Vec::new();
-        for (row_idx, (pivot, row, _)) in rows.iter().enumerate() {
-            if f.is_zero(&acc[*pivot]) {
+        for row in &rows {
+            let pivot = row.vector.iter().position(|c| !f.is_zero(c))?;
+            if f.is_zero(&acc.vector[pivot]) {
                 continue;
             }
-            let Some(row_inv) = f.inv(&row[*pivot]) else {
+            let Some(row_inv) = f.inv(&row.vector[pivot]) else {
                 continue;
             };
-            let ratio = f.mul(&acc[*pivot], &row_inv);
-            for (i, c) in row.iter().enumerate() {
-                let sub = f.mul(c, &ratio);
-                acc[i] = f.sub(&acc[i], &sub);
+            let ratio = f.mul(&acc.vector[pivot], &row_inv);
+            for i in 0..n {
+                let sub = f.mul(&row.vector[i], &ratio);
+                acc.vector[i] = f.sub(&acc.vector[i], &sub);
             }
-            deps.push((row_idx, ratio));
-        }
-        if acc.iter().all(|c| f.is_zero(c)) {
-            // x^d − Σ (ratio · x^{row power}) = 0 in the quotient.
-            let mut coeffs: Vec<Limbs> = vec![f.zero(); d + 1];
-            coeffs[d] = f.one();
-            for (row_idx, ratio) in deps {
-                let deg = rows[row_idx].2;
-                coeffs[deg] = f.sub(&coeffs[deg], &ratio);
+            // poly -= ratio * row.poly (row.poly has degree ≤ d)
+            for i in 0..acc.poly.len().min(row.poly.len()) {
+                let sub = f.mul(&row.poly[i], &ratio);
+                acc.poly[i] = f.sub(&acc.poly[i], &sub);
             }
-            return Some(UniPoly::from_coeffs(coeffs));
         }
-        let pivot = acc.iter().position(|c| !f.is_zero(c))?;
-        rows.push((pivot, acc, d));
-        current = mul_by_x(f, basis, &std_monomials, x, &current, budget)?;
+        if std::env::var("FFDBG_MP").is_ok() {
+            let ps: Vec<String> = acc
+                .poly
+                .iter()
+                .map(|c| f.to_biguint(c).to_string())
+                .collect();
+            eprintln!("[mp] d={d} poly {ps:?}");
+        }
+        if acc.vector.iter().all(|c| f.is_zero(c)) {
+            // acc.poly annihilates x in the quotient and is monic of
+            // degree d: the minimal polynomial.
+            return Some(UniPoly::from_coeffs(acc.poly));
+        }
+        rows.push(acc);
+        current = mul_by_x(f, basis, &std_monomials, &index_of, x, &current, budget)?;
+        let _ = d;
     }
     None
 }

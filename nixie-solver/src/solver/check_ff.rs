@@ -21,7 +21,7 @@ use super::types::{Model, SolverResult};
 /// The FF dispatch's per-field step budget. A tick counter (encoding
 /// steps, S-pairs, reductions, search nodes, root-finding work); never
 /// wall-clock.
-const FF_BUDGET_STEPS: u64 = 1 << 26;
+const FF_BUDGET_STEPS: u64 = 1 << 24;
 
 impl Solver {
     /// Whether any assertion mentions finite-field structure.
