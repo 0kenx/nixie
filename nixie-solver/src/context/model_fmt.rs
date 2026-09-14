@@ -788,7 +788,10 @@ impl Context {
                 | TermKind::FpNaN { .. }
                 | TermKind::Store(..)
                 | TermKind::StringLit(_)
-                | TermKind::DtConstructor { .. },
+                | TermKind::DtConstructor { .. }
+                // A field element: the printer renders the exact
+                // `#f<v>m<p>` literal.
+                | TermKind::FfConst { .. },
             ) => {
                 let printer = nixie_core::smtlib::Printer::new(&self.terms);
                 printer.print_term(term)

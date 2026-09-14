@@ -209,6 +209,28 @@ fn composite_modulus_errors_at_parse() {
 }
 
 #[test]
+fn get_model_prints_field_literals() {
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            r#"
+        (set-logic QF_FF)
+        (declare-const x (_ FiniteField 7))
+        (assert (= (ff.mul x x) #f4m7))
+        (check-sat)
+        (get-model)
+    "#,
+        )
+        .expect("parses");
+    assert_eq!(out[0], "sat");
+    assert!(
+        out[1].contains("#f2m7") || out[1].contains("#f5m7"),
+        "get-model must print the field literal, got {}",
+        out[1]
+    );
+}
+
+#[test]
 fn push_pop_scope_is_recomputed() {
     // The dispatcher recomputes from the current assertion set (the
     // design's recompute-don't-rollback discipline).

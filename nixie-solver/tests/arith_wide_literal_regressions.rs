@@ -460,5 +460,8 @@ fn genuinely_wide_rows_stay_honest() {
         .expect("script executes");
     let last = out.last().map(String::as_str).unwrap_or("");
     assert_ne!(last, "unsat", "the chain has a rational solution");
-    assert_ne!(last, "sat", "a wide model cannot be represented; sat would be unverified");
+    assert_ne!(
+        last, "sat",
+        "a wide model cannot be represented; sat would be unverified"
+    );
 }

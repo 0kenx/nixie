@@ -2378,10 +2378,8 @@ impl Simplex {
                 // substituted row fits — cancellation across terms — so the
                 // `BigRational` retry recovers the row and only a genuinely
                 // wide row declines the pivot.
-                let Some(new_row) =
-                    Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var).or_else(|| {
-                        Self::substitute_row_exact(&row, sc, &new_expr, nonbasic_var)
-                    })
+                let Some(new_row) = Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var)
+                    .or_else(|| Self::substitute_row_exact(&row, sc, &new_expr, nonbasic_var))
                 else {
                     self.resource_limit = true;
                     return false;
@@ -2617,7 +2615,9 @@ impl Simplex {
         }
         let coef_b = big_r64(&coef);
         let mut new_expr = LinExpr::new();
-        new_expr.terms.push((basic_var, narrow_big_r64(&coef_b.recip())?));
+        new_expr
+            .terms
+            .push((basic_var, narrow_big_r64(&coef_b.recip())?));
         new_expr.constant = narrow_big_r64(&(-big_r64(&expr.constant) / &coef_b))?;
         for (var, c) in &expr.terms {
             if *var != nonbasic_var {

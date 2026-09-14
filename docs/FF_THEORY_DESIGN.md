@@ -1,7 +1,15 @@
 # Finite Fields (`QF_FF`) — theory design
 
-**Status:** design only. Nothing in this document is implemented.
-**Date:** 2026-09-13.
+**Status:** Phases 0–5 implemented (2026-09-14); 6–7 open. See
+`nixie-core/src/sort/field.rs`, `nixie-math/src/ff/`,
+`nixie-theories/src/ff_theory.rs` (the [OKTB23] procedure + Phase-5
+front end), `nixie-solver/src/solver/check_ff.rs` (eager dispatch +
+Phase-4 lazy DPLL(T)), the oracles in `nixie-theories/tests/ff_oracle.rs`
+(exhaustive at tiny primes) and `ff_planted_fuzz.rs` (planted witnesses
+at Goldilocks/BN254/BLS12-381), and `bench/ff/`. Remaining: §6.5 split
+GB, §8 certificates/proof rules + `QF_UFFF` cardinality guard, §7-style
+incremental trail, F4/NTT.
+**Date:** 2026-09-13 (design), 2026-09-14 (implementation status).
 **Reference implementation consulted:** cvc5 `src/theory/ff/` (read-only, at
 `../temp/cvc5`), which implements [OKTB23] "Satisfiability Modulo Finite Fields"
 (CAV 2023) "essentially un-modified" (its own `Readme.md`), plus the split-Gröbner
