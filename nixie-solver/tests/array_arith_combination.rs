@@ -1,10 +1,13 @@
-//! A **wrong `sat`**: an index equality that only *arithmetic* entails never
-//! reaches the array theory.
+//! A **wrong `sat`** (fixed): an index equality that only *arithmetic* entails
+//! never reached the arithmetic solver.
 //!
-//! See `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`. The
-//! guard below is `#[ignore]`d because it currently fails: it is checked in so
-//! the reproducer is not lost and so the fix has something to turn green, not
-//! to pass today.
+//! The read-over-write lemma minted the atom `(= n1 1)` with no trichotomy
+//! clause, and `process_constraint`'s negative-`Eq` branch informs EUF and the
+//! bit-vector solver but not the simplex — so a `false` assignment never
+//! became a strict bound and the tableau was free to set `n1 = 1` anyway. See
+//! `docs/studies/2026-09-14-array-index-equality-from-arithmetic.md`; the
+//! structural guard is
+//! `solver::tests::every_numeric_equality_atom_carries_its_trichotomy`.
 //!
 //! Found from the most ordinary TLA+ there is — a function read at a state
 //! variable's value —
@@ -21,7 +24,7 @@ use nixie_core::TermManager;
 use nixie_solver::{Solver, SolverResult};
 
 /// `n1 = n0 + 1`, `n0 = 0`, so `n1` is `1` and `store(base, 1, 7)[n1]` is `7`.
-/// Asserting it is `2` is unsatisfiable. The solver answers `Sat`.
+/// Asserting it is `2` is unsatisfiable. The solver answered `Sat`.
 #[test]
 fn select_at_an_arithmetically_equal_index() {
     let mut tm = TermManager::new();
