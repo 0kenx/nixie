@@ -328,3 +328,69 @@ payoff path runs through slice 4 (CSR-primary): wire the batched
 surgery into the sparse-mutator rebuilds (subsume/BVA/BVE rounds), keep
 the counting-sort rebuild for mass rewrites (ELS), and the ~5 % si2
 watch-rebuild cost splits into its efficient halves.
+
+## Slice 4 implementation plan: the CSR-primary flip, via the
+swapped-dual gate (2026-09-14 close — the next session's entry point)
+
+**Methodology** (the one that carried slices 2/3, the index and the
+surgery): develop inside the shadow with the drift comparison as the
+oracle, gated by a flag; the flip deletes the old side only after the
+gate is green corpus-wide.
+
+**The crux is the BCP scan, and the swap design is now concrete**
+(`NIXIE_CSR_SCAN=1`, requires the shadow): today's dual-write scans the
+taken `Vec` and mirrors into the CSR; the swapped-dual scans the CSR
+and mirrors into the taken `Vec`.  Per propagated literal `L`:
+
+1. Split-borrow the CSR: `span: &mut [Watcher]` (`entries[start..
+   prim_end[code]]` — contiguous, the kernels' existing `&mut
+   [Watcher]` shape), `overflow_dests: &mut Vec<Vec<Watcher>>`, and the
+   bookkeeping fields — disjoint-field borrows, no take needed for the
+   span.
+2. `mem::take(&mut overflow_dests[code])` (the overflow *is* a movable
+   `Vec`); `mem::take(&mut watches[code])` (the Vec-mirror target).
+3. Run `scan_list` **twice** — span pass then overflow pass — with the
+   push funnel (`push_watch`) writing **both** the destination
+   overflows and the destination `Vec` lists, and a `VecScanMirror`
+   receiving keep/remove notifications to rebuild the taken list (kept
+   entries in order + unvisited tail — order-isomorphic to the old
+   in-place compaction by the drift invariant; the mirror over-writes
+   where the old scan skipped self-writes, an accepted gated-mode
+   cost).  The kernels' notification sites gain a mode: the existing
+   `csr` mirror param becomes the *scan target selector* (off / csr-
+   mirror / vec-mirror) — const-generic MODE, three instantiations.
+4. Put-backs: the span's compaction end becomes `prim_end[code]`; the
+   taken overflow returns truncated; the taken `Vec` list returns at
+   the mirror's length; the index maintenance rides the existing
+   `scan_push`/`scan_remove` funnels (they are already the production
+   semantics).
+5. **Oracle**: the drift comparison stays valid — it compares the CSR
+   (now primary-scanned) against the Vec (now mirrored) — and the
+   phantom/ghost tick charging moves verbatim (it reads lengths:
+   `span_len + overflow_len`).
+
+**Reader inventory (measured)**: ~25 sites — propagate.rs ×11 (9 are
+the take/put-back scan + ticks), watched.rs-internal ×10, xor/sweep/
+watch_kernel/equiv ×4 — plus nixie-solver's watched_propagator/
+propagation_opt consumers (verify: their own lists vs ours) and the
+`get_mut` pair (267/632 — the non-session scan, same span-switch
+treatment; 1047 is test code).  The two-span read API
+(`get_combined(lit) -> (&[Watcher], &[Watcher])`) switches them
+mechanically; `len` = `span_len + overflow_len` (phantom parity already
+documented).
+
+**Gate sequence**: (a) swapped-dual green on the corpus (drift zero,
+trajectory identity, all four driver configs), (b) readers switched
+under `NIXIE_CSR_READ=1` (still dual-maintained — reads from CSR),
+(c) **the flip** — one commit: delete the `Vec` lists and the Vec
+mirror, CSR becomes the only representation; the safety net dies at
+this commit, so its gates are full trajectory identity + corpus screen
++ Z3 parity + the E2E model checks.  Post-flip, wire the batched
+surgery into the sparse-mutator rebuilds (the 46× regime) and keep the
+counting-sort rebuild for mass rewrites.
+
+**Cost anchors (all measured this session)**: flag-off dual-write
+residual +0.55–1.46 % instructions; shadow-on dual cost +23–27 %
+(diagnostics ≈ 2/16 %); surgery 46×/wash.  The flip's business case is
+memory (the ~2.6 M `Vec` headers on si2-class) + the sparse-rebuild
+payoff + the surgery design space — not raw instruction counts.
