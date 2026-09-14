@@ -181,6 +181,9 @@ struct Survey {
     seen_elements: FxHashSet<TermId>,
     /// `(= a b)` atoms between set-sorted terms.
     set_equalities: Vec<(TermId, TermId, TermId)>,
+    /// `(= a b)` atoms between terms that are *not* sets, which are the
+    /// element equalities membership has to be congruent over.
+    element_equalities: Vec<(TermId, TermId)>,
     /// `(set.subset a b)` atoms.
     subsets: Vec<(TermId, TermId, TermId)>,
     /// `set.card(s)` terms seen, paired with their argument.
@@ -255,6 +258,9 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
             TermKind::SetCard(a) => out.cardinalities.push((t, *a)),
             TermKind::Eq(a, b) if is_set_sorted(*a, manager) => {
                 out.set_equalities.push((t, *a, *b));
+            }
+            TermKind::Eq(a, b) => {
+                out.element_equalities.push((*a, *b));
             }
             _ => {}
         }
@@ -451,10 +457,117 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     let picked = manager.mk_ite(c, ia, ib);
                     axioms.push(manager.mk_eq(atom, picked));
                 }
-                // An opaque set's members are free; only the relations the
-                // problem states constrain them.
+                // An opaque set's members are free *of a definition*. They
+                // are not free of each other; see the congruence axioms
+                // below.
                 Shape::Opaque => {}
             }
+        }
+    }
+
+    // **Membership is a function of the element**, so two elements the solver
+    // makes equal are in exactly the same sets.
+    //
+    // A theory solver gets this from congruence closure and never states it. A
+    // ground reduction has to, and not stating it is a wrong `sat`: with
+    // `Nodes` an opaque set, `x \in Nodes`, `y = x` and `~(y \in Nodes)` were
+    // three independent Booleans and all three could be satisfied at once. The
+    // shape that found it is the most ordinary one there is —
+    //
+    //     Init == x \in Nodes     Next == UNCHANGED x     Inv == x \in Nodes
+    //
+    // — which has no counterexample at all and was reported as violated at
+    // step 1, because `x@1 = x@0` said nothing about their membership.
+    //
+    // Stated over the equalities the formula **contains**, not over every pair
+    // of elements. Every pair is what congruence means, and it is also what
+    // made a two-line satisfiable problem take fifty seconds and come back
+    // `Unknown`: a candidate list is mostly literals, and the axiom for two
+    // distinct literals has a false antecedent and no content. Chains still
+    // close, because `x = y` and `y = z` each get their axiom and the two
+    // compose.
+    //
+    // Stated for every set of the matching sort, not only the opaque ones: for
+    // a structured set the property follows from its definition, but only
+    // because the *base* atoms it is defined from are congruent, and those
+    // bottom out in opaque sets.
+    // Which terms congruence is worth stating for: those **connected by
+    // equalities to something the formula actually tests for membership**.
+    //
+    // Not every equality, and not only the ones whose sides are already
+    // elements. Not every equality, because the axiom's own `set.member` makes
+    // its term an element, the definition loop above instantiates every set
+    // against every element, and `reduce` runs once per `assert` — stating it
+    // for `pc' = pc + 1` and its like turned a four-minute corpus into a
+    // quarter of an hour by that route. Not only the already-elements,
+    // because an unrolling connects `x@0` to `x@2` *through* `x@1`, which
+    // appears in no membership atom of its own and would break the chain.
+    //
+    // So: seed with the elements, then close over the equalities.
+    let mut connected: FxHashMap<nixie_core::SortId, FxHashSet<TermId>> = elements
+        .iter()
+        .map(|(k, v)| (*k, v.iter().copied().collect()))
+        .collect();
+    {
+        // A single walk out from the seeds, over an adjacency map built once.
+        //
+        // The obvious way to close this is to sweep the equalities until
+        // nothing changes, and that is **quadratic** in their number — which
+        // in a bounded unrolling is every `x' = e` and every `s = "foo"` in
+        // every step, thousands of them, re-swept once per `assert`. That, and
+        // not the axioms it produces, is what made the corpus take twenty
+        // minutes.
+        let mut adjacent: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
+        for &(x, y) in &s.element_equalities {
+            adjacent.entry(x).or_default().push(y);
+            adjacent.entry(y).or_default().push(x);
+        }
+        for (es, group) in &mut connected {
+            let mut frontier: Vec<TermId> = group.iter().copied().collect();
+            while let Some(t) = frontier.pop() {
+                let Some(nexts) = adjacent.get(&t) else {
+                    continue;
+                };
+                for &n in nexts {
+                    if manager.get(n).map(|d| d.sort) != Some(*es) {
+                        continue;
+                    }
+                    if group.insert(n) {
+                        frontier.push(n);
+                    }
+                }
+            }
+        }
+    }
+    for &(x, y) in &s.element_equalities {
+        let Some(es) = manager.get(x).map(|d| d.sort) else {
+            continue;
+        };
+        let Some(group) = connected.get(&es) else {
+            continue;
+        };
+        if !group.contains(&x) || !group.contains(&y) {
+            continue;
+        }
+        for &set in &s.sets {
+            if element_sort(set, manager) != Some(es) {
+                continue;
+            }
+            // **Opaque sets only.** A structured set's membership is *defined*
+            // from its bases by the loop above — `e \in (a \cup b)` is
+            // `e \in a \/ e \in b` — so congruence at the bases gives it at
+            // the union, and every chain of definitions bottoms out in opaque
+            // sets. Stating it at every set as well is redundant, and it is
+            // not cheap redundancy: it took the corpus from four minutes to
+            // twenty.
+            if shape_of(set, manager) != Shape::Opaque {
+                continue;
+            }
+            let same = manager.mk_eq(x, y);
+            let mx = manager.mk_set_member(x, set);
+            let my = manager.mk_set_member(y, set);
+            let agree = manager.mk_eq(mx, my);
+            axioms.push(manager.mk_implies(same, agree));
         }
     }
 

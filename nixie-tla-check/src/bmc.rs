@@ -331,6 +331,34 @@ impl Bmc {
                 None => unapplied.push(format!("{name} = … (uninterpreted)")),
             }
         }
+        // A `ConstInit` pins the constants too, and it is a **substitution**
+        // for exactly the same reason a `.cfg` assignment is. Apalache's
+        // convention is `--cinit=CInit` with
+        //
+        //     CInit == replicas = {"n1", "n2", "n3"}
+        //
+        // and asserting that leaves `[replicas -> S]` as unencodable as it was
+        // — the encoder needs the members before the solver runs, not after.
+        // Every top-level conjunct of the shape `name = expr`, where `name` is
+        // a `CONSTANT` the module declares, is bound instead. The definition
+        // is still asserted afterwards, where it becomes trivially true and
+        // costs nothing.
+        //
+        // Lowered in a **throwaway** `Lowerer`, so that nothing this reads
+        // lands in the real one's definition cache before the binding exists:
+        // a body cached with the constant still free would be reused with it
+        // still free.
+        let declared: std::collections::HashSet<&str> = constant_names(module);
+        for name in constraints {
+            let mut probe = Lowerer::new();
+            probe.add_spec(spec);
+            let Ok(body) = probe.lower_named(module, name) else {
+                continue;
+            };
+            for (c, value) in ground_bindings(&body, &declared) {
+                low.bind_constant(&c, value);
+            }
+        }
         for (name, module_name, to) in config.module_qualified_assignments() {
             unapplied.push(format!("{name} = [{module_name}]{to} (uninterpreted)"));
         }
@@ -1060,3 +1088,45 @@ fn config_value_to_kera(v: &ConfigValue) -> Option<KeraRef> {
 /// Matches Apalache's `ConfigModelValue.STR_PREFIX`, so a specification read
 /// by both tools sees the same distinctions.
 pub const MODEL_VALUE_PREFIX: &str = "ModelValue_";
+
+/// The `CONSTANT`-declared names of a module.
+fn constant_names(module: &Module) -> std::collections::HashSet<&str> {
+    module
+        .constants()
+        .into_iter()
+        .map(|d| d.name.name.as_str())
+        .collect()
+}
+
+/// The `name = expr` conjuncts of a lowered `ConstInit`, for the constants
+/// `declared` names.
+///
+/// Only the *top level* of the conjunction, and only a bare name on one side.
+/// A constant pinned by something less direct — `Cardinality(S) = 3` — is left
+/// to the solver, which is where it belongs: this is substitution, and there
+/// is nothing to substitute.
+fn ground_bindings(
+    body: &KeraRef,
+    declared: &std::collections::HashSet<&str>,
+) -> Vec<(String, KeraRef)> {
+    let mut out = Vec::new();
+    let mut stack = vec![body.clone()];
+    while let Some(t) = stack.pop() {
+        match t.as_ref() {
+            Kera::And(xs) => stack.extend(xs.iter().cloned()),
+            Kera::Eq(a, b) => {
+                let named = |x: &KeraRef| match x.as_ref() {
+                    Kera::Var(n) if declared.contains(n.as_str()) => Some(n.0.clone()),
+                    _ => None,
+                };
+                if let Some(n) = named(a) {
+                    out.push((n, b.clone()));
+                } else if let Some(n) = named(b) {
+                    out.push((n, a.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
