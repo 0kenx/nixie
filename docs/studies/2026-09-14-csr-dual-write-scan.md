@@ -487,3 +487,39 @@ VecScanMirror, the materialize round-trip, the frame mirror and the
 drift oracle — the CSR alone remains.  Gates: trajectory identity +
 corpus screen + parity + E2E model checks.  Then wire the batched
 surgery into the sparse-mutator rebuilds (the 46× regime).
+
+## Commit B parked: the roundtrip works mechanically, one semantic
+divergence remains unroot-caused (2026-09-14, investigation state)
+
+Commit B (the deletion) was attempted via the **roundtrip design** —
+materialize the CSR combined view into an owned scratch, scan it with
+the unchanged kernels, dematerialize (re-split span/overflow + index
+diff).  The design dissolved the aliasing puzzle entirely (the kernel
+pushes through a `&mut CsrWatchLists` destinations funnel; `add` became
+CSR-only; the frame mirror, the VecScanMirror and every notification
+branch simply die) — and mechanically it worked: all three driver
+configs (session, watch_kernel, legacy) ran the roundtrip and agreed
+with each other.
+
+**But the trajectory diverged**: 6s167 solved at 32 408 conflicts
+instead of 33 028.  Bisected precisely: the trajectories are
+decision-identical through 4 000 conflicts, split in the window
+**(elim phase @4000's end, elim phase @6003's entry)** — six extra
+original clauses exist in the roundtrip run at phase-2 entry
+(orig 21 156 vs 21 162), and phase 2's own rounds then diverge
+(subsumed 69 vs 120, added 26 vs 22).  The scan kernels see identical
+combined-view content by construction, so the suspect class is
+**mid-search clause-population paths**: hyper-binary resolution's
+mid-scan additions, vivify/probe retiments, or an occurrence-list
+consumer keyed on the (now-dead) `Vec` lists.  The test failures
+observed during the attempt were all the dead-Vec-read class
+(`get()` on never-written lists) — those are mechanical fixes.
+
+**The investigation tools that worked**: MAXC-ladder decision bisection
+against the flip-A binary (`precompile/c77ddf76`), NIXIE_LOG_ELIM
+phase-line diffing.  Next session's entry: instrument the
+[4000, 6003] window (which pass adds the six originals), fix the
+dead-Vec reads (`get` becomes a combined-view iteration in tests), and
+resume the deletion.  The backups of the attempt are NOT preserved
+(the tree is restored to flip-A, fully green: 1092 tests, 33 028); the
+roundtrip design is documented here and takes ~1 h to re-apply.
