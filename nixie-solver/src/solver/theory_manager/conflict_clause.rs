@@ -289,7 +289,7 @@ mod tests {
         term_to_var: FxHashMap<TermId, Var>,
         var_to_term: Vec<TermId>,
         numarg_proxies: FxHashMap<TermId, TermId>,
-        quant_uf_const_pins: FxHashMap<TermId, num_rational::Rational64>,
+        interface_const_pins: FxHashMap<TermId, num_rational::Rational64>,
         derived_reasons: DerivedReasons,
         statistics: Statistics,
     }
@@ -310,7 +310,7 @@ mod tests {
                 term_to_var: FxHashMap::default(),
                 var_to_term: Vec::new(),
                 numarg_proxies: FxHashMap::default(),
-                quant_uf_const_pins: FxHashMap::default(),
+                interface_const_pins: FxHashMap::default(),
                 derived_reasons: DerivedReasons::default(),
                 statistics: Statistics::new(),
             }
@@ -331,7 +331,7 @@ mod tests {
                 &self.term_to_var,
                 &self.var_to_term,
                 &self.numarg_proxies,
-                &self.quant_uf_const_pins,
+                &self.interface_const_pins,
                 zero_term,
                 &self.ite_result_terms,
                 &mut self.derived_reasons,

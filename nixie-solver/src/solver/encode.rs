@@ -3022,9 +3022,8 @@ impl Solver {
                     && (it.sort == int_sort || it.sort == real_sort)
                     && matches!(it.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
                 {
-                    self.pin_quantified_uf_const_arg(idx, manager);
+                    self.pin_interface_const(idx, manager);
                 }
-                continue;
             }
             if let TermKind::Apply { func, args } = &t.kind {
                 // Per-function gate: never purify the numeric arguments of a
@@ -3051,7 +3050,7 @@ impl Solver {
                     // numeral proxied elsewhere covers this function too via
                     // the global substitution.
                     for &arg in args {
-                        self.pin_quantified_uf_const_arg(arg, manager);
+                        self.pin_interface_const(arg, manager);
                     }
                     continue;
                 }
@@ -3112,10 +3111,16 @@ impl Solver {
         manager.mk_and(parts)
     }
 
-    /// Pin a constant numeric argument of a quantified (un-purified) function
-    /// into arithmetic as an interface term fixed to its literal value.
-    /// Companion to the per-function gate in [`Self::purify_numeric_uf_args`]
-    /// – see the comment there for the false-`sat` class this closes.
+    /// Pin a numeric constant into arithmetic as an interface term fixed to
+    /// its literal value, so theory combination can pair it with an
+    /// equal-valued shared term.
+    ///
+    /// Called from [`Self::purify_numeric_uf_args`] for the two kinds of
+    /// constant that need it — arguments of an un-purified (quantified)
+    /// function, and `select`/`store` indices. See
+    /// [`Solver::interface_const_pins`] for why each one would otherwise be
+    /// invisible, and the comments at those call sites for the false-`sat`
+    /// each closes.
     ///
     /// SOUND: the asserted row is a tautology (`c = c`), so its bound can
     /// never be violated and the pin constrains nothing.  The reason tag
@@ -3128,8 +3133,8 @@ impl Solver {
     /// lockstep with the scope it was asserted at (re-encode re-pins).
     /// Constants that do not fit `Rational64` are skipped: the pre-fix gap
     /// remains for them (missed pairing only, never a wrong answer).
-    fn pin_quantified_uf_const_arg(&mut self, arg: TermId, manager: &TermManager) {
-        if self.quant_uf_const_pins.contains_key(&arg) {
+    fn pin_interface_const(&mut self, arg: TermId, manager: &TermManager) {
+        if self.interface_const_pins.contains_key(&arg) {
             return;
         }
         // CLOSED-FORM evaluation, three layers:
@@ -3258,7 +3263,7 @@ impl Solver {
                 constant
             }
         };
-        self.quant_uf_const_pins.insert(arg, value);
+        self.interface_const_pins.insert(arg, value);
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately
