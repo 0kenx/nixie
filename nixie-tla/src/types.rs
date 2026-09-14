@@ -1199,6 +1199,26 @@ impl Inference {
                 self.unify(tbody, ta)?;
                 Ok(ta)
             }
+            // `f[x \in S] == … f[…] …`. The name and the whole definition are
+            // the *same* function, which is what the recursion means; the body
+            // is the range. Typing it needs no fixpoint, only that the two are
+            // one type.
+            Kera::RecFun {
+                name,
+                var,
+                set,
+                body,
+            } => {
+                let elem = self.name_ty(var)?;
+                let ts = self.child(set)?;
+                let want = self.set_of(elem)?;
+                self.unify(ts, want)?;
+                let range = self.child(body)?;
+                let f = self.mk(Ty::Fun(elem, range))?;
+                let named = self.name_ty(name)?;
+                self.unify(named, f)?;
+                Ok(f)
+            }
             Kera::SetBin(_, a, b) => {
                 let ta = self.child(a)?;
                 let tb = self.child(b)?;

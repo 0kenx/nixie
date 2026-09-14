@@ -387,6 +387,51 @@ impl Evaluator {
                 }
                 Ok(a)
             }
+            // `f[x \in S] == … f[…] …`, evaluated by **repeated refinement**
+            // rather than by recursion: start with the function undefined
+            // everywhere and keep re-evaluating every point until nothing
+            // changes. A point whose body needs a value not worked out yet
+            // simply fails that round and is retried in the next one, so the
+            // order the definition depends on does not have to be guessed.
+            //
+            // It terminates because each round either defines a new point or
+            // stops, and there are finitely many points. A definition that is
+            // not well founded — `f[x] == f[x] + 1` — defines nothing, and is
+            // reported rather than looped on.
+            Kera::RecFun {
+                name,
+                var,
+                set,
+                body,
+            } => {
+                let domain: Vec<Value> = self.set_of(set, env)?.into_iter().collect();
+                let mut known: BTreeMap<Value, Value> = BTreeMap::new();
+                loop {
+                    let mut progress = false;
+                    for k in &domain {
+                        if known.contains_key(k) {
+                            continue;
+                        }
+                        let partial = Value::Fun(known.clone());
+                        let got = self.with_bound(name, partial, env, |e, en| {
+                            e.with_bound(var, k.clone(), en, |e2, en2| e2.go(body, en2))
+                        });
+                        if let Ok(v) = got {
+                            known.insert(k.clone(), v);
+                            progress = true;
+                        }
+                    }
+                    if known.len() == domain.len() {
+                        break;
+                    }
+                    if !progress {
+                        return Err(EvalErrorKind::Unsupported(
+                            "a recursive function that is not well founded".into(),
+                        ));
+                    }
+                }
+                Ok(Value::fun(known))
+            }
             Kera::SetBin(op, a, b) => {
                 let x = self.set_of(a, env)?;
                 let y = self.set_of(b, env)?;

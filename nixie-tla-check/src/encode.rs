@@ -168,6 +168,16 @@ pub struct Encoder {
     max_candidates: usize,
     max_depth: usize,
     depth: usize,
+    /// Constraints the caller must assert alongside whatever it encoded.
+    ///
+    /// A recursive function is *defined* by equations rather than built as a
+    /// value — `f[k] = body(k)` at every point of its domain — so encoding one
+    /// produces a term (the array) and a set of facts about it. The facts have
+    /// to reach the solver, and the encoder has no way to assert them itself.
+    side: Vec<TermId>,
+    /// Recursive functions already defined, so a second use reuses the array
+    /// rather than defining a second one.
+    recfuns: HashMap<(*const Kera, u32), (TermId, TermId)>,
 }
 
 impl Encoder {
@@ -185,6 +195,8 @@ impl Encoder {
             node_sorts: HashMap::new(),
             bound: HashMap::new(),
             fresh: 0,
+            side: Vec::new(),
+            recfuns: HashMap::new(),
             max_candidates: DEFAULT_MAX_CANDIDATES,
             max_depth: DEFAULT_MAX_DEPTH,
             depth: 0,
@@ -196,6 +208,20 @@ impl Encoder {
     pub fn with_set_encoding(mut self, encoding: SetEncoding) -> Self {
         self.set_encoding = encoding;
         self
+    }
+
+    /// The constraints that the terms encoded so far depend on.
+    ///
+    /// Must be asserted alongside them, and **every time**: these are facts
+    /// about terms, not a queue. Draining them was the first attempt, and it
+    /// is wrong for a reason worth recording — the bounded check builds one
+    /// solver per depth, so the equations produced while encoding `Init`
+    /// reached the depth-0 query and then no other, leaving the recursive
+    /// function an unconstrained array from depth 1 onwards. `Rec3.tla` then
+    /// reported `Fib[1] = 2`, and the trace replay caught it.
+    #[must_use]
+    pub fn side_constraints(&self) -> &[TermId] {
+        &self.side
     }
 
     /// Tell the encoder the sort of one kernel node.
@@ -1568,6 +1594,82 @@ impl Encoder {
             // it TLA+ leaves `f[x]` undefined while the array returns some
             // value, which admits behaviours the specification does not have:
             // that can manufacture a counterexample, never hide one.
+            // `f[x \in S] == … f[…] …`.
+            //
+            // Over a **finite** domain a recursive function needs no fixpoint
+            // and no quantifier: it is an array, plus one equation per point
+            // of the domain saying what the function is there. The body is
+            // encoded once per point with the function itself in scope, so
+            // `f[k-1]` inside it is a `select` on the very array being
+            // defined — the knot ties itself.
+            //
+            // The equations cannot be part of the value, because a value is a
+            // term and these are facts; they go out through
+            // [`Encoder::take_side_constraints`], and a caller that does not
+            // assert them is checking a specification whose recursive
+            // functions are arbitrary.
+            //
+            // Defined **once** per (node, step). A second use of the same
+            // function must be the same array, or `f[1] = f[1]` could be
+            // false.
+            Kera::RecFun {
+                name,
+                var,
+                set,
+                body,
+            } => {
+                let key = (Rc::as_ptr(term), self.step);
+                if let Some((domain, array)) = self.recfuns.get(&key).copied() {
+                    return Ok(Rc::new(Value::Fun { domain, array }));
+                }
+                // The sort has to be known before the body is encoded, and the
+                // body is the only thing that would reveal it — so it comes
+                // from the caller's type inference, exactly as an empty set's
+                // does.
+                let Some(sort) = self.node_sorts.get(&Rc::as_ptr(term)).copied() else {
+                    return Err(EncodeError::Unsupported(
+                        "a recursive function whose sort was not supplied".into(),
+                    ));
+                };
+                let Some(nixie_core::SortKind::Array { domain: dom, .. }) =
+                    tm.sorts.get(sort).map(|s| s.kind.clone())
+                else {
+                    return Err(EncodeError::Unsupported(
+                        "a recursive function whose declared sort is not an array".into(),
+                    ));
+                };
+                let cell = self.set(set, tm)?;
+                let members = cell.members.clone();
+                let domain = self.native_set_of(&members, dom, tm)?;
+                let array = tm.mk_var(&format!("@recfun_{}_{}", name, self.step), sort);
+                self.recfuns.insert(key, (domain, array));
+                let me = Rc::new(Value::Fun { domain, array });
+                for m in &members {
+                    let Value::Scalar(k) = &*m.value else {
+                        return Err(EncodeError::Unsupported(
+                            "a recursive function over a domain whose members have no sort".into(),
+                        ));
+                    };
+                    let k = *k;
+                    let at = self.with_two_bound(
+                        name,
+                        Rc::clone(&me),
+                        var,
+                        Rc::clone(&m.value),
+                        body,
+                        tm,
+                    )?;
+                    let value = self.reify(&at, tm)?;
+                    let here = tm.mk_select(array, k);
+                    let eq = tm.mk_eq(here, value);
+                    // A candidate that is not in the domain says nothing about
+                    // the function, so the equation is guarded by its
+                    // presence: an arena candidate list over-approximates.
+                    let guarded = tm.mk_implies(m.present, eq);
+                    self.side.push(guarded);
+                }
+                Ok(me)
+            }
             Kera::FunApp(f, i) => {
                 let target = self.value(f, tm)?;
                 // A **sequence** is indexed through its window: `s[i]` is

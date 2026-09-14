@@ -667,6 +667,15 @@ impl Bmc {
                     solver.assert(t, tm);
                 }
             }
+            // Everything the encoded terms *depend on*: a recursive function
+            // is an array plus one equation per point of its domain, and the
+            // equations are facts rather than part of any value. Asserted with
+            // the formulas that produced them; without this the function would
+            // be an arbitrary array and the check would be about a different
+            // specification.
+            for c in self.encoder.side_constraints().to_vec() {
+                solver.assert(c, tm);
+            }
             for c in &self.blocked {
                 solver.assert(*c, tm);
             }
@@ -1001,8 +1010,15 @@ fn collect_unsortable(root: &KeraRef, out: &mut Vec<KeraRef>) {
         // to take a sort from. `<<…>>` is here for a different reason: a tuple
         // literal *is* a sequence in TLA+, and which of the two it encodes to
         // is a question only the inferred type can answer.
+        // `{}` is the motivating case — an empty set literal has no element
+        // to take a sort from. `<<…>>` is here for a different reason: a tuple
+        // literal *is* a sequence in TLA+, and which of the two it encodes to
+        // is a question only the inferred type can answer. A recursive
+        // function is here for a third: its sort has to be known *before* its
+        // body is encoded, and the body is the only thing that would otherwise
+        // reveal it.
         if matches!(t.as_ref(), Kera::SetEnum(xs) | Kera::Tuple(xs) if xs.is_empty())
-            || matches!(t.as_ref(), Kera::Tuple(_))
+            || matches!(t.as_ref(), Kera::Tuple(_) | Kera::RecFun { .. })
         {
             out.push(t.clone());
         }

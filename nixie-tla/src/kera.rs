@@ -263,6 +263,28 @@ pub enum Kera {
         /// The body.
         body: KeraRef,
     },
+    /// `f[x \in S] == … f[…] …` — a function defined in terms of itself.
+    ///
+    /// TLA+ allows this directly, with no `RECURSIVE` keyword, and it is how
+    /// Fibonacci, factorial and every "sum of a sequence" is written. It is
+    /// *not* an ordinary [`Kera::FunDef`]: inlining the body at the use site
+    /// reproduces the body inside itself, and the only thing that stops is the
+    /// lowering budget.
+    ///
+    /// The recursion is kept instead. `name` is free in `body`, standing for
+    /// the function being defined, and whoever consumes this ties the knot —
+    /// over a *finite* domain that is one equation per point and needs no
+    /// quantifier, which is what makes it encodable at all.
+    RecFun {
+        /// The name the body refers to itself by.
+        name: Name,
+        /// The bound variable.
+        var: Name,
+        /// The domain.
+        set: KeraRef,
+        /// The body, with `name` and `var` free.
+        body: KeraRef,
+    },
     /// `f[arg]`.
     FunApp(KeraRef, KeraRef),
     /// `DOMAIN f`.
@@ -386,6 +408,7 @@ impl Kera {
             | Self::Exists { set, body, .. }
             | Self::Choose { set, body, .. }
             | Self::FunDef { set, body, .. } => vec![set, body],
+            Self::RecFun { set, body, .. } => vec![set, body],
             Self::Filter { set, pred, .. } => vec![set, pred],
             Self::Map { set, expr, .. } => vec![set, expr],
             Self::Eq(a, b)
@@ -425,6 +448,11 @@ impl Kera {
             | Self::Filter { var, .. }
             | Self::Map { var, .. }
             | Self::FunDef { var, .. } => vec![var],
+            // `name` is *not* a binder in the substitution sense: it stands
+            // for the whole function and is tied by the consumer, not
+            // instantiated per element. It is listed so that typing gives it a
+            // variable before the body is walked.
+            Self::RecFun { name, var, .. } => vec![name, var],
             Self::Fold { acc, elem, .. } => vec![acc, elem],
             _ => Vec::new(),
         }

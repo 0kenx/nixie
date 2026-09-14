@@ -839,3 +839,61 @@ fn non_membership_in_nat() {
     assert_eq!(eval("A == -1 \\notin Nat"), "TRUE");
     assert_eq!(eval("A == 2 \\notin Nat"), "FALSE");
 }
+
+// ---- recursive function definitions ----
+//
+// `Fib[k \in 0..15] == … Fib[k-1] …` is ordinary TLA+ and needs no `RECURSIVE`
+// keyword. Inlining it reproduces the body inside itself, and the only thing
+// that stops is the lowering budget — so the recursion is kept instead, and
+// the evaluator ties the knot by repeated refinement over the finite domain.
+
+#[test]
+fn a_recursive_function_is_computed() {
+    assert_eq!(
+        eval("f[k \\in 0..5] == IF k <= 1 THEN k ELSE f[k-1] + f[k-2]\nA == f[5]"),
+        "5",
+        "Fibonacci: 0 1 1 2 3 5"
+    );
+}
+
+#[test]
+fn a_recursive_function_is_a_function() {
+    // On `1..n` a function *is* a tuple in TLA+, and `Value::fun` normalises
+    // it — so factorial over `1..4` prints as a sequence.
+    assert_eq!(
+        eval("f[k \\in 1..4] == IF k = 1 THEN 1 ELSE k * f[k-1]\nA == f"),
+        "<<1, 2, 6, 24>>"
+    );
+    // Over `0..3` it is not, and stays a function on its own domain.
+    assert_eq!(
+        eval("f[k \\in 0..3] == IF k = 0 THEN 1 ELSE k * f[k-1]\nA == f"),
+        "(0 :> 1 @@ 1 :> 1 @@ 2 :> 2 @@ 3 :> 6)"
+    );
+}
+
+/// The order the definition depends on is not guessed: a point whose body
+/// needs a value not worked out yet is simply retried.
+#[test]
+fn a_recursive_function_need_not_be_defined_in_order() {
+    assert_eq!(
+        eval("f[k \\in 0..3] == IF k = 3 THEN 0 ELSE f[k+1] + 1\nA == f[0]"),
+        "3"
+    );
+}
+
+/// A definition that is not well founded defines nothing, and says so rather
+/// than looping.
+#[test]
+fn a_definition_that_is_not_well_founded_is_reported() {
+    let e = eval_err("f[k \\in 0..2] == f[k] + 1\nA == f[0]");
+    assert!(
+        matches!(&e, EvalErrorKind::Unsupported(m) if m.contains("well founded")),
+        "got {e}"
+    );
+}
+
+/// A non-recursive function definition is unchanged.
+#[test]
+fn a_plain_function_definition_still_works() {
+    assert_eq!(eval("f[k \\in 1..3] == k * 10\nA == f[2]"), "20");
+}

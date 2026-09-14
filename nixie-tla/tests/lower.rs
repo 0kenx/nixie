@@ -86,6 +86,12 @@ fn show(k: &Kera) -> String {
                 show(collection)
             )
         }
+        Kera::RecFun {
+            name,
+            var,
+            set,
+            body,
+        } => format!("{name}[{var} \\in {}] == {}", show(set), show(body)),
         Kera::FunApp(f, a) => format!("{}[{}]", show(f), show(a)),
         Kera::Domain(a) => format!("DOMAIN {}", show(a)),
         Kera::Except { fun, index, value } => format!(

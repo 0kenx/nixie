@@ -157,6 +157,13 @@ pub struct Lowerer<'a> {
     /// Function definitions `f[x \in S] == e`, which denote a *value* rather
     /// than an operator and so are expanded as `[x \in S |-> e]` at use sites.
     funs: HashMap<String, (&'a [Bound], &'a Expr)>,
+    /// Function definitions currently being lowered, so a reference to one
+    /// from inside its own body is *kept* rather than expanded again.
+    ///
+    /// `Fib[k \in 0..15] == … Fib[k-1] …` is ordinary TLA+ and needs no
+    /// `RECURSIVE` keyword. Expanding it reproduces the body inside itself and
+    /// the only thing that stops is the lowering budget.
+    recursing: std::collections::HashSet<String>,
     scopes: Vec<HashMap<String, Binding<'a>>>,
     /// Binder names chosen during `expand`, keyed by the surface node's start
     /// offset so that `build` can recover them. The walk visits each node's
@@ -215,7 +222,12 @@ enum Frame<'a> {
     /// Leave an inlined body: drop its scope and the depth it consumed.
     PopInline,
     /// Expand a function definition's `bounds`/`body` as `[x \in S |-> e]`.
-    ExpandFun(&'a [Bound], &'a Expr),
+    ///
+    /// The name is carried so a reference to the function from inside its own
+    /// body can be recognised and kept.
+    ExpandFun(String, &'a [Bound], &'a Expr),
+    /// Stop treating this name as being lowered.
+    PopRecursion(String),
     /// Build a fold from `3` values (base, collection, operator body).
     BuildFold {
         /// Whether the collection is a set or a sequence.
@@ -233,6 +245,8 @@ enum Frame<'a> {
         var: Name,
         /// How many domains are on the value stack.
         domains: usize,
+        /// The name the body refers to itself by, when it does.
+        recursive: Option<Name>,
     },
     /// Restore operator definitions shadowed by a `LET`.
     PopLetDefs(Vec<(String, Option<Def<'a>>)>),
@@ -272,6 +286,7 @@ impl<'a> Lowerer<'a> {
             open_instances: Vec::new(),
             ctx: Vec::new(),
             funs: HashMap::new(),
+            recursing: std::collections::HashSet::new(),
             scopes: Vec::new(),
             binder_names: HashMap::new(),
             cache: HashMap::new(),
@@ -816,7 +831,18 @@ impl<'a> Lowerer<'a> {
                 // only in where they are written, and lowering them
                 // differently was the whole defect. Nesting binders instead
                 // would be a different function: one that returns a function.
-                Frame::ExpandFun(bounds, body) => {
+                Frame::PopRecursion(name) => {
+                    self.recursing.remove(&name);
+                }
+                Frame::ExpandFun(name, bounds, body) => {
+                    // Self-referential? Then the body must be lowered with the
+                    // name *free*, and the result is a `RecFun` rather than an
+                    // ordinary function constructor.
+                    let recursive = mentions_name(body, &name);
+                    if recursive {
+                        self.recursing.insert(name.clone());
+                        stack.push(Frame::PopRecursion(name.clone()));
+                    }
                     let total: usize = bounds.iter().map(|b| b.patterns.len()).sum();
                     let mut scope = HashMap::new();
                     let var = if total == 1 {
@@ -842,6 +868,7 @@ impl<'a> Lowerer<'a> {
                     stack.push(Frame::BuildFun {
                         var,
                         domains: total,
+                        recursive: recursive.then(|| Name(name.clone())),
                     });
                     stack.push(Frame::PopScope);
                     stack.push(Frame::Expand(body));
@@ -852,7 +879,11 @@ impl<'a> Lowerer<'a> {
                         }
                     }
                 }
-                Frame::BuildFun { var, domains } => {
+                Frame::BuildFun {
+                    var,
+                    domains,
+                    recursive,
+                } => {
                     let Some(body) = values.pop() else {
                         return Err(LowerError::unsupported(
                             "a function definition",
@@ -877,7 +908,16 @@ impl<'a> Lowerer<'a> {
                     } else {
                         Kera::Times(doms).rc()
                     };
-                    values.push(Kera::FunDef { var, set, body }.rc());
+                    values.push(match recursive {
+                        Some(name) => Kera::RecFun {
+                            name,
+                            var,
+                            set,
+                            body,
+                        }
+                        .rc(),
+                        None => Kera::FunDef { var, set, body }.rc(),
+                    });
                 }
                 Frame::BuildFold { over, acc, elem } => {
                     let (Some(body), Some(collection), Some(base)) =
@@ -1504,7 +1544,15 @@ impl<'a> Lowerer<'a> {
                             values.push(Kera::Opaque(Name(id.name.clone()), Vec::new()).rc())
                         }
                         None => match self.funs.get(&id.name).cloned() {
-                            Some((bounds, body)) => stack.push(Frame::ExpandFun(bounds, body)),
+                            // A reference from *inside* the definition is the
+                            // recursion itself: kept as a free name, which
+                            // `Kera::RecFun` binds.
+                            Some(_) if self.recursing.contains(&id.name) => {
+                                values.push(Kera::Var(Name(id.name.clone())).rc());
+                            }
+                            Some((bounds, body)) => {
+                                stack.push(Frame::ExpandFun(id.name.clone(), bounds, body));
+                            }
                             None if builtin_constant(&id.name).is_some() => {
                                 if let Some(v) = builtin_constant(&id.name) {
                                     values.push(v);
@@ -2338,4 +2386,31 @@ fn fold_kind(name: &str, argc: usize) -> Option<FoldOver> {
         ("ApaFoldSeqLeft", 3) => Some(FoldOver::SeqLeft),
         _ => None,
     }
+}
+
+/// Whether `e` mentions `name` anywhere.
+///
+/// A definition that refers to itself is recursive, and must not be inlined
+/// into itself. Walked with an explicit stack: the expression is user input.
+fn mentions_name(e: &Expr, name: &str) -> bool {
+    let mut stack = vec![e];
+    let mut budget = 1_000_000usize;
+    while let Some(t) = stack.pop() {
+        match budget.checked_sub(1) {
+            Some(b) => budget = b,
+            // Past the budget, assume it does: keeping a recursion that is not
+            // there costs a declined specification, inlining one that is costs
+            // the lowering budget and a far worse diagnostic.
+            None => return true,
+        }
+        match &t.kind {
+            ExprKind::Name(q) if q.base().is_some_and(|i| i.name == name) => return true,
+            ExprKind::Apply { head, .. } if head.base().is_some_and(|i| i.name == name) => {
+                return true;
+            }
+            _ => {}
+        }
+        stack.extend(surface_children(t));
+    }
+    false
 }
