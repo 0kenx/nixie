@@ -9,6 +9,7 @@ pub mod arena;
 pub mod bmc;
 pub mod encode;
 pub mod sorts;
+pub mod trace;
 
 pub use arena::{Member, SetCell, Value};
 pub use bmc::{Bmc, Outcome, SetupError};

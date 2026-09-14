@@ -252,6 +252,28 @@ impl Encoder {
         self.state.iter().map(String::as_str)
     }
 
+    /// Every free name the caller gave a sort: the `VARIABLE`s and the
+    /// `CONSTANT`s together.
+    ///
+    /// Both are needed to rebuild a state for replay. A constant does not
+    /// change from step to step, but the evaluator still has to be told what
+    /// it is, or the specification's own definitions cannot be evaluated at
+    /// all.
+    pub fn declared_names(&self) -> impl Iterator<Item = &str> {
+        self.sorts.keys().map(String::as_str)
+    }
+
+    /// The companion **domain** term of a function-sorted name at `step`.
+    ///
+    /// An SMT array is only a graph. Reading a function back out of a model
+    /// without this would give a total function over the whole index sort,
+    /// which is a different value from the one the specification has.
+    #[must_use]
+    pub fn domain_at(&self, name: &str, step: u32) -> Option<TermId> {
+        let key = if self.state.contains(name) { step } else { 0 };
+        self.var_domains.get(&(name.to_string(), key)).copied()
+    }
+
     /// Whether anything encoded so far depended on a function domain that the
     /// array encoding does not carry.
     ///
