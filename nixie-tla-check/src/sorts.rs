@@ -141,9 +141,17 @@ pub fn sort_of(ty: &Type, tm: &mut TermManager) -> Result<SortId, NoSort> {
     }
 }
 
+/// The selector holding a sequence's offset into its graph.
+///
+/// A sequence is a **window**: `s[i]` is `fun[off + i]`. Without the offset,
+/// `Tail` would have to shift every element down one, which an array cannot
+/// express without a quantifier. With it, `Tail` moves the window and touches
+/// nothing else. Apalache carries a start and an end on its proto-sequence for
+/// exactly this reason.
+pub(crate) const SEQ_OFF: &str = "@so";
 /// The selector holding a sequence's length.
 pub(crate) const SEQ_LEN: &str = "@sl";
-/// The selector holding a sequence's elements, as an array from `1..`.
+/// The selector holding a sequence's elements, as an array.
 pub(crate) const SEQ_FUN: &str = "@sf";
 
 /// The datatype sort of `Seq(elem)`.
@@ -154,7 +162,11 @@ pub(crate) fn seq_sort(elem: SortId, tm: &mut TermManager) -> SortId {
     let int = tm.sorts.int_sort;
     let arr = tm.sorts.array(int, elem);
     declare_struct(
-        &[(SEQ_LEN.to_string(), int), (SEQ_FUN.to_string(), arr)],
+        &[
+            (SEQ_OFF.to_string(), int),
+            (SEQ_LEN.to_string(), int),
+            (SEQ_FUN.to_string(), arr),
+        ],
         tm,
     )
 }
@@ -167,10 +179,10 @@ pub(crate) fn seq_sort(elem: SortId, tm: &mut TermManager) -> SortId {
 #[must_use]
 pub(crate) fn seq_element(sort: SortId, tm: &TermManager) -> Option<SortId> {
     let fields = struct_fields(sort, tm)?;
-    let [(a, _), (b, arr)] = fields.as_slice() else {
+    let [(a, _), (b, _), (c, arr)] = fields.as_slice() else {
         return None;
     };
-    if a != SEQ_LEN || b != SEQ_FUN {
+    if a != SEQ_OFF || b != SEQ_LEN || c != SEQ_FUN {
         return None;
     }
     match tm.sorts.get(*arr).map(|s| &s.kind) {

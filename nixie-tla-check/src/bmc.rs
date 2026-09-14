@@ -409,6 +409,34 @@ impl Bmc {
         {
             inf.infer(t).map_err(|e| SetupError::Types(e.to_string()))?;
         }
+        // `Init`, `Next` and the invariant must be **Boolean**. TLA+'s level
+        // rules above do not catch this: `Inv == (100 - 10) + 5` is a
+        // perfectly good constant-level expression and a perfectly useless
+        // invariant. Negating a non-Boolean and finding the result satisfiable
+        // would report a `Violation` for a specification that never stated a
+        // property at all — answering a question nobody asked, which is the
+        // same failure `SetupError::Level` exists to prevent.
+        //
+        // `intent`'s compiler emits exactly this shape when a `.intent` file
+        // gives an invariant an arithmetic body, which is how the check came
+        // to be written: the trace replay caught the invariant evaluating to
+        // `95`, and refusing it up front is where that belongs.
+        for (name, term) in [(init, &init_k), (next, &next_k), (inv, &inv_k)] {
+            let Some(id) = inf.node_ty(term) else {
+                continue;
+            };
+            let Ok(ty) = inf.to_type(id) else {
+                continue;
+            };
+            if ty != nixie_tla::Type::Bool {
+                return Err(SetupError::Level {
+                    name: name.to_string(),
+                    role: "a formula",
+                    found: format!("{ty}"),
+                    wanted: "BOOLEAN".to_string(),
+                });
+            }
+        }
         // Names reachable from the specification proper. These *must* get a
         // sort: a checker that quietly skipped one would be checking a
         // different specification. Names that only an assumption mentions are

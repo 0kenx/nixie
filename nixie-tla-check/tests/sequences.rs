@@ -162,3 +162,145 @@ Inv  == Len(h) = 0
         Outcome::NoViolationWithin(2)
     );
 }
+
+// ---- Tail and concatenation ----
+
+/// `Tail` moves the sequence's **window** forward instead of copying: `s[i]`
+/// is `fun[off + i]`, so shortening from the front costs nothing and needs no
+/// quantifier. Apalache carries a start and an end on its proto-sequence for
+/// the same reason.
+#[test]
+fn tail_of_a_literal() {
+    holds("x", "x = 0", "Tail(<<1, 2, 3>>) = <<2, 3>>");
+    holds("x", "x = 0", "Len(Tail(<<1, 2, 3>>)) = 2");
+    holds("x", "x = 0", "Head(Tail(<<1, 2, 3>>)) = 2");
+}
+
+#[test]
+fn concatenation_of_literals() {
+    holds("x", "x = 0", "<<1, 2>> \\o <<3>> = <<1, 2, 3>>");
+    holds("x", "x = 0", "Len(<<1>> \\o <<2, 3>>) = 3");
+    fails("x", "x = 0", "<<1, 2>> \\o <<3>> = <<1, 2>>");
+}
+
+/// A queue drained by `Tail` and filled by `\o`, which is the pattern every
+/// generated specification with a channel uses.
+#[test]
+fn a_queue_is_drained_and_filled() {
+    let src = r#"
+---- MODULE Queue ----
+EXTENDS Integers, Sequences
+VARIABLES q, n
+Init == q = <<>> /\ n = 0
+Next == \/ (Len(q) = 0 /\ q' = q \o <<"a", "b">> /\ n' = n + 2)
+        \/ (Len(q) > 0 /\ q' = Tail(q) /\ n' = n - 1)
+Inv  == Len(q) >= 0
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(4, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(4)
+    );
+}
+
+/// A queue of **records**, which is what a generated channel actually holds.
+/// The elements arrive structural — field by field — and are reified into
+/// their datatype on the way in.
+#[test]
+fn a_queue_of_records() {
+    let src = r#"
+---- MODULE RecQueue ----
+EXTENDS Integers, Sequences
+VARIABLE q
+Init == q = <<>>
+Next == q' = q \o <<[type |-> "Log", arg0 |-> "first"]>>
+Inv  == Len(q) < 2
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(4, &mut tm).expect("checks"),
+        Outcome::Violation { step: 2 }
+    );
+    let t = bmc.counterexample().expect("a decoded trace");
+    assert_eq!(t.states.len(), 3, "{t}");
+}
+
+/// A sequence is indexed through the window too, and the index need not be a
+/// literal — `events[Len(events)]` is how a specification reads the last thing
+/// that happened.
+#[test]
+fn a_sequence_is_indexed_by_a_computed_position() {
+    holds("x", "x = 0", "<<10, 20, 30>>[Len(<<1, 2>>)] = 20");
+}
+
+/// Sharing one `Seq` between an operator's argument and its result reads as
+/// "these have the same type" — true, until a tuple is involved. `<<a, b, c>>`
+/// is a tuple *and* a sequence, and unifying keeps the tuple because it is the
+/// more precise shape of a literal; that precision then propagates backwards
+/// and makes the queue a 3-tuple, which has no sequence operations at all.
+#[test]
+fn concatenating_a_literal_does_not_fix_the_queue_length() {
+    let src = r#"
+---- MODULE Growing ----
+EXTENDS Integers, Sequences
+VARIABLE q
+Init == q = <<>>
+Next == q' = q \o <<"x", "y", "z">>
+Inv  == Len(q) < 7
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    // 0, 3, 6, 9 — the ninth breaks it, which needs the queue to have grown
+    // three times rather than been pinned to three elements.
+    assert_eq!(
+        bmc.check(4, &mut tm).expect("checks"),
+        Outcome::Violation { step: 3 }
+    );
+}
+
+// ---- an invariant must be a predicate ----
+
+/// `Inv == (100 - 10) + 5` is a perfectly good constant-level expression and a
+/// perfectly useless invariant. TLA+'s level rules do not catch it, and
+/// negating a non-Boolean and finding the result satisfiable would report a
+/// violation for a specification that never stated a property. `intent`'s
+/// compiler emits exactly this when a `.intent` file gives an invariant an
+/// arithmetic body.
+#[test]
+fn a_non_boolean_invariant_is_refused() {
+    let src = r"
+---- MODULE NotAPredicate ----
+EXTENDS Integers
+VARIABLE x
+Init == x = 0
+Next == UNCHANGED x
+Inv  == LET a == 100 b == 10 IN (a - b) + 5
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let loaded = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = loaded.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let err = Bmc::prepare(&loaded, module, "Init", "Next", "Inv", &[], &mut tm)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("BOOLEAN"), "{err}");
+}

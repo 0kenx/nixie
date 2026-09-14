@@ -1475,34 +1475,47 @@ impl Inference {
                 self.unify(args[0], seq)?;
                 e
             }
+            // The operators that change a sequence's **length** give their
+            // result a Seq of its own, sharing only the element type. Reusing
+            // one `Seq` for an argument and the result reads as "these have
+            // the same type", which is true — until a tuple is involved.
+            //
+            // `<<a, b, c>>` is a tuple *and* a sequence, and unifying the two
+            // keeps the tuple, because a 3-tuple is the more precise shape of
+            // a literal. Share one `Seq` across `q \o <<x, y, z>>` and that
+            // precision propagates backwards: `q` becomes a 3-tuple, which is
+            // not what a queue is, and it then has no sequence operations at
+            // all. `MentalModelDemo_OrderDoesntMatter` is the specification
+            // that showed this.
             ("Tail", 1) => {
                 let e = a(self)?;
-                let seq = self.mk(Ty::Seq(e))?;
-                self.unify(args[0], seq)?;
-                seq
+                let arg = self.mk(Ty::Seq(e))?;
+                self.unify(args[0], arg)?;
+                self.mk(Ty::Seq(e))?
             }
             ("Append", 2) => {
                 let e = a(self)?;
-                let seq = self.mk(Ty::Seq(e))?;
-                self.unify(args[0], seq)?;
+                let arg = self.mk(Ty::Seq(e))?;
+                self.unify(args[0], arg)?;
                 self.unify(args[1], e)?;
-                seq
+                self.mk(Ty::Seq(e))?
             }
             ("\\o", 2) => {
                 let e = a(self)?;
-                let seq = self.mk(Ty::Seq(e))?;
-                self.unify(args[0], seq)?;
-                self.unify(args[1], seq)?;
-                seq
+                let lhs = self.mk(Ty::Seq(e))?;
+                let rhs = self.mk(Ty::Seq(e))?;
+                self.unify(args[0], lhs)?;
+                self.unify(args[1], rhs)?;
+                self.mk(Ty::Seq(e))?
             }
             ("SubSeq", 3) => {
                 let e = a(self)?;
-                let seq = self.mk(Ty::Seq(e))?;
+                let arg = self.mk(Ty::Seq(e))?;
                 let int = self.int_ty()?;
-                self.unify(args[0], seq)?;
+                self.unify(args[0], arg)?;
                 self.unify(args[1], int)?;
                 self.unify(args[2], int)?;
-                seq
+                self.mk(Ty::Seq(e))?
             }
             ("SelectSeq", 2) => {
                 let e = a(self)?;
