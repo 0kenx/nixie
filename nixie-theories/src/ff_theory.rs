@@ -430,22 +430,191 @@ fn grobner_path(
         }
         FrontResult::Rewritten(gens) => gens,
     };
-    let input_polys: Vec<MPoly> = generators.iter().map(|g| g.poly.clone()).collect();
-
-    // ---- Step 2: Gröbner, degrevlex ----
-    let mut gbudget = GrobnerBudget::new(budget_steps);
-    match grobner_basis(f, &input_polys, &mut gbudget) {
-        Err(GrobnerError::Budget) => FfOutcome::OutOfBudget {
-            where_: "Gröbner basis",
-        },
-        Ok(basis) => {
-            if basis.contains_nonzero_constant() {
-                return traced_unsat(f, field, &generators, &basis);
+    // ---- Step 2/3: connected components (§6.4), then per-component
+    // Gröbner + FindZero ----
+    // The variable-sharing graph's connected components are independent
+    // subproblems: no polynomial mentions variables of two components,
+    // so the ideal is a direct sum and a point of the whole is exactly a
+    // point per component. The design calls this "the single most
+    // reliable way to keep basis sizes sane" — a 20-constraint circuit
+    // decomposing into 5 four-variable systems turns an intractable
+    // Macaulay blowup into five trivial ones. Each component gets its
+    // own budget (component counts are small; a shared cap would starve
+    // late components).
+    let components = connected_components(&generators);
+    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        eprintln!(
+            "[ff-stats] field p>{}: {} generators after front end, {} components (sizes {:?}), budget 2^{}",
+            f.modulus().bits(),
+            generators.len(),
+            components.len(),
+            components.iter().map(|c| c.len()).collect::<Vec<_>>(),
+            budget_steps.ilog2()
+        );
+    }
+    if components.len() <= 1 {
+        // The common case: one component (or none) — the monolithic path.
+        let input_polys: Vec<MPoly> = generators.iter().map(|g| g.poly.clone()).collect();
+        let mut gbudget = GrobnerBudget::new(budget_steps);
+        return match grobner_basis(f, &input_polys, &mut gbudget) {
+            Err(GrobnerError::Budget) => FfOutcome::OutOfBudget {
+                where_: "Gröbner basis",
+            },
+            Ok(basis) => {
+                if basis.contains_nonzero_constant() {
+                    return traced_unsat(f, field, &generators, &basis);
+                }
+                let vars: Vec<Var> = (0..enc.next_var).collect();
+                find_zero(f, &basis, &enc, &vars, budget_steps)
             }
-            // ---- Step 3: FindZero ----
-            find_zero(f, &basis, &enc, budget_steps)
+        };
+    }
+
+    // Multi-component: solve each; UNSAT of any refutes the whole (core
+    // = that component's origins); SAT needs a point of every component.
+    let mut combined = FfModel {
+        values: FxHashMap::default(),
+    };
+    for component in &components {
+        let input_polys: Vec<MPoly> = component.iter().map(|g| g.poly.clone()).collect();
+        let mut gbudget = GrobnerBudget::new(budget_steps);
+        match grobner_basis(f, &input_polys, &mut gbudget) {
+            Err(GrobnerError::Budget) => {
+                return FfOutcome::OutOfBudget {
+                    where_: "Gröbner basis (component)",
+                };
+            }
+            Ok(basis) => {
+                if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                    eprintln!(
+                        "[ff-stats] component: {} generators -> basis of {}, GB steps left 2^{}",
+                        component.len(),
+                        basis.basis.len(),
+                        gbudget_remaining(&gbudget).map_or(0, |r| r.ilog2())
+                    );
+                }
+                if basis.contains_nonzero_constant() {
+                    let owned: Vec<FrontGen> = component.iter().map(|g| (*g).clone()).collect();
+                    return traced_unsat(f, field, &owned, &basis);
+                }
+                let vars = component_variables(component);
+                match find_zero(f, &basis, &enc, &vars, budget_steps) {
+                    FfOutcome::Model(model) => {
+                        for (var, value) in model.assignments() {
+                            combined.insert(*var, value.clone());
+                        }
+                    }
+                    FfOutcome::Exhausted => {
+                        // This component has no point: the whole goal is
+                        // UNSAT, with this component's origins as the
+                        // core (no certificate — exhaustion).
+                        let core: Vec<usize> = component
+                            .iter()
+                            .flat_map(|g| g.origin.iter().copied())
+                            .collect();
+                        return FfOutcome::Unsat(FfCore {
+                            fact_indices: core,
+                            certificate: None,
+                        });
+                    }
+                    other => return other,
+                }
+            }
         }
     }
+    FfOutcome::Model(combined)
+}
+
+/// The remaining budget of a GrobnerBudget (for step-count reporting).
+fn gbudget_remaining(b: &GrobnerBudget) -> Option<u64> {
+    b.remaining()
+}
+
+/// Partition generators into the connected components of the
+/// variable-sharing graph (union-find over variables; each generator
+/// unions the variables its polynomial mentions). Deterministic:
+/// components are emitted in the order of their smallest generator
+/// index, generators within a component in index order.
+fn connected_components(generators: &[FrontGen]) -> Vec<Vec<&FrontGen>> {
+    // Union-find over Var.
+    let mut parent: FxHashMap<Var, Var> = FxHashMap::default();
+    let find = |mut v: Var, parent: &mut FxHashMap<Var, Var>| -> Var {
+        loop {
+            let next = *parent.entry(v).or_insert(v);
+            if next == v {
+                return v;
+            }
+            v = next;
+        }
+    };
+    let union = |a: Var, b: Var, parent: &mut FxHashMap<Var, Var>| {
+        let (ra, rb) = (find(a, parent), find(b, parent));
+        if ra != rb {
+            parent.insert(ra, rb);
+        }
+    };
+    for g in generators {
+        let vars: Vec<Var> = g
+            .poly
+            .terms_iter()
+            .flat_map(|(m, _)| m.vars().iter().map(|vp| vp.var))
+            .collect();
+        if let Some(&first) = vars.first() {
+            for &v in &vars[1..] {
+                union(first, v, &mut parent);
+            }
+        }
+    }
+    // Group generators by their component root (any of the generator's
+    // variables; a variable-less generator is its own singleton).
+    let mut groups: Vec<(Var, Vec<usize>)> = Vec::new();
+    let mut root_index: FxHashMap<Var, usize> = FxHashMap::default();
+    for (i, g) in generators.iter().enumerate() {
+        let root = g
+            .poly
+            .terms_iter()
+            .find_map(|(m, _)| m.vars().first().map(|vp| find(vp.var, &mut parent)));
+        let root = match root {
+            Some(r) => r,
+            None => {
+                // Constant polynomial: its own singleton component (only
+                // reachable for nonzero constants the front end kept).
+                Var::from(u32::MAX - (i as u32))
+            }
+        };
+        let next = root_index.len();
+        let slot = *root_index.entry(root).or_insert(next);
+        if slot == groups.len() {
+            groups.push((root, Vec::new()));
+        }
+        groups[slot].1.push(i);
+    }
+    // Deterministic order: by smallest generator index in the component.
+    let mut ordered: Vec<(Var, Vec<usize>)> = groups.into_iter().collect();
+    for (_, idxs) in ordered.iter_mut() {
+        idxs.sort_unstable();
+    }
+    ordered.sort_by_key(|(_, idxs)| idxs[0]);
+    ordered
+        .into_iter()
+        .map(|(_, idxs)| idxs.iter().map(|&i| &generators[i]).collect())
+        .collect()
+}
+
+/// The variables a component's generators mention, sorted.
+fn component_variables(component: &[&FrontGen]) -> Vec<Var> {
+    let mut vars: Vec<Var> = Vec::new();
+    for g in component {
+        for (m, _) in g.poly.terms_iter() {
+            for vp in m.vars() {
+                if !vars.contains(&vp.var) {
+                    vars.push(vp.var);
+                }
+            }
+        }
+    }
+    vars.sort_unstable();
+    vars
 }
 
 /// One generator with its provenance: the asserted literal it came from
@@ -793,6 +962,7 @@ fn find_zero(
     f: &FieldCtx,
     basis: &nixie_math::ff::grobner::GrobnerBasis,
     enc: &Encoder<'_>,
+    variables: &[Var],
     budget_steps: u64,
 ) -> FfOutcome {
     struct Node {
@@ -811,11 +981,7 @@ fn find_zero(
     // honest OutOfBudget.
     let mut gbudget = GrobnerBudget::new(budget_steps);
     let mut rbudget = RootBudget::new(budget_steps);
-    let variables: Vec<Var> = {
-        let mut vs: Vec<Var> = (0..enc.next_var).collect();
-        vs.sort_unstable();
-        vs
-    };
+    let variables: Vec<Var> = variables.to_vec();
 
     while let Some(node) = stack.pop() {
         steps += 1;
@@ -823,6 +989,14 @@ fn find_zero(
             return FfOutcome::OutOfBudget {
                 where_: "FindZero search",
             };
+        }
+        if std::env::var_os("NIXIE_FF_STATS").is_some() && steps % 10 == 1 {
+            eprintln!(
+                "[fz] node {steps}: stack {} basis {} gbudget 2^{}",
+                stack.len(),
+                node.basis.basis.len(),
+                gbudget_remaining(&gbudget).map_or(0, |r| r.ilog2())
+            );
         }
         // 1 ∈ I → dead branch.
         if node.basis.contains_nonzero_constant() {
@@ -848,7 +1022,14 @@ fn find_zero(
         }
 
         // Brancher 1: a super-linear univariate element of the GB.
-        let mut brancher: Option<(Var, Vec<Limbs>)> = None;
+        // SELECTION: among all candidates, take the one of SMALLEST
+        // degree — the branching factor is the root count, so the
+        // min-degree choice is the smallest tree. First-found order once
+        // produced a degree-8 brancher where a degree-2 sat beside it,
+        // and a 16-constraint sparse goal ground for minutes on the
+        // 8-way tree (a 64-constraint goal with no such element solved
+        // in seconds — the chaos is the selection, not the size).
+        let mut candidates: Vec<(usize, Var, UniPoly)> = Vec::new();
         for g in &node.basis.basis {
             let Some(lm) = g.poly.lm(nixie_math::ff::grobner::DEGREVLEX) else {
                 continue;
@@ -870,20 +1051,26 @@ fn find_zero(
                 let d = if m.is_unit() { 0 } else { m.vars()[0].power };
                 coeffs[d as usize] = c.clone();
             }
-            let uni = UniPoly::from_coeffs(coeffs);
-            let mut rbudget = RootBudget::new(budget_steps);
-            match uni_roots(f, &uni, &mut rbudget) {
+            candidates.push((deg, x, UniPoly::from_coeffs(coeffs)));
+        }
+        // Deterministic order: degree, then variable index.
+        candidates.sort_by_key(|(deg, x, _)| (*deg, *x));
+
+        // The min-degree candidate decides: root finding either yields
+        // its roots or exhausts the budget (there is no "no roots"
+        // outcome for a squarefree product the basis admits), so the
+        // first candidate is also the last one consulted.
+        let brancher = match candidates.first() {
+            Some(&(_, x, ref uni)) => match uni_roots(f, uni, &mut rbudget) {
                 Err(RootError::Budget) | Ok(None) => {
                     return FfOutcome::OutOfBudget {
                         where_: "root finding",
                     };
                 }
-                Ok(Some(roots)) => {
-                    brancher = Some((x, roots));
-                    break;
-                }
-            }
-        }
+                Ok(Some(roots)) => Some((x, roots)),
+            },
+            None => None,
+        };
 
         let (var, values) = if let Some(b) = brancher {
             b

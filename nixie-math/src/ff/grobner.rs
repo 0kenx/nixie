@@ -61,12 +61,27 @@ impl GrobnerBudget {
         Self { remaining: n }
     }
 
+    /// Charge `units` of work. The unit is ONE MONOMIAL OPERATION (a
+    /// single coefficient multiply/add), not a step: a reduction between
+    /// s-term polynomials costs ~s units. Step-counting made a 2^24
+    /// budget worth hours on big-polynomial cascades — the budget never
+    /// noticed the polynomials growing — so a goal refused in principle
+    /// but ground in practice. Monomial-operation charging keeps the
+    /// budget a faithful work bound (deterministic: sizes are functions
+    /// of the computation, never of the clock).
     fn charge(&mut self, units: u64) -> Result<(), GrobnerError> {
         if units > self.remaining {
             return Err(GrobnerError::Budget);
         }
         self.remaining -= units;
         Ok(())
+    }
+
+    /// The unconsumed step count (instrumentation for the Phase-5
+    /// step-count reporting; not a policy input).
+    #[must_use]
+    pub fn remaining(&self) -> Option<u64> {
+        Some(self.remaining)
     }
 }
 
@@ -260,7 +275,9 @@ pub fn grobner_basis(
         let (i, j) = pairs[next_pair];
         next_pair += 1;
 
-        budget.charge(1)?;
+        let cost = u64::try_from(basis[i].poly.n_terms() + basis[j].poly.n_terms())
+            .unwrap_or(u64::MAX / 2);
+        budget.charge(cost.saturating_add(1))?;
         let spoly = s_polynomial(f, &basis[i], &basis[j]);
         let (reduced, _) = reduce_traced(f, &spoly, &basis, budget)?;
         if reduced.poly.is_zero() {
@@ -406,8 +423,10 @@ fn reduce_traced(
             };
             let factor = f.mul(&lc_cur, &inv_g);
             let sub = g.mul_monomial(f, &q).scale(f, &factor);
+            let cost =
+                u64::try_from(sub.poly.n_terms() + current.poly.n_terms()).unwrap_or(u64::MAX / 2);
             current = current.sub(f, &sub);
-            budget.charge(1)?;
+            budget.charge(cost.saturating_add(1))?;
             cancelled = true;
             changed = true;
             break;
@@ -497,8 +516,10 @@ fn tail_reduce_traced(
                 };
                 let factor = f.mul(&c_m, &inv_g);
                 let sub = g.mul_monomial(f, &q).scale(f, &factor);
+                let cost = u64::try_from(sub.poly.n_terms() + current.poly.n_terms())
+                    .unwrap_or(u64::MAX / 2);
                 current = current.sub(f, &sub);
-                budget.charge(1)?;
+                budget.charge(cost.saturating_add(1))?;
                 progress = true;
                 break 'outer;
             }
@@ -652,8 +673,9 @@ pub fn normal_form(
             let inv_g = f.inv(&lc_g)?;
             let factor = f.mul(&lc_cur, &inv_g);
             let sub = mul_by_monomial(f, &g.poly, &q).scale(f, &factor);
+            let cost = u64::try_from(sub.n_terms() + current.n_terms()).unwrap_or(u64::MAX / 2);
             current = current.sub(f, &sub);
-            budget.charge(1).ok()?;
+            budget.charge(cost.saturating_add(1)).ok()?;
             cancelled = true;
             break;
         }
@@ -762,7 +784,9 @@ pub fn minimal_polynomial(
     let mut rows: Vec<Krylov> = Vec::new();
     let mut current = start;
     for d in 0..=n {
-        budget.charge(1).ok()?;
+        budget
+            .charge(u64::try_from(n).unwrap_or(u64::MAX / 2))
+            .ok()?;
         // Reduce `current` against the echelon rows, updating both halves.
         let mut acc = current.clone();
         for row in &rows {
