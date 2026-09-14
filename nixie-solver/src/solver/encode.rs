@@ -4017,11 +4017,14 @@ impl Solver {
             // honesty gate degrades any resulting `Sat` to `Unknown` — see
             // `Solver::set_terms_unconstrained`.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
             | TermKind::SetMinus(_, _)
-            | TermKind::SetCard(_) => {
+            | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

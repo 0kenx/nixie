@@ -290,6 +290,7 @@ impl CombinedRewriter {
             // No set rewriter yet: `None` means "left alone", which is always
             // sound — a missing simplification costs time, never soundness.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
@@ -297,6 +298,8 @@ impl CombinedRewriter {
             | TermKind::SetMember(_, _)
             | TermKind::SetSubset(_, _)
             | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_)
             // Finite-field terms are already in normal form at construction
             // (`mk_ff_*` folds), so no rewriter pass applies. Sound for the
             // same reason as the sets arm: a missing simplification costs

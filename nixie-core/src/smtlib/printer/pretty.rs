@@ -301,6 +301,21 @@ impl<'a> PrettyPrinter<'a> {
                 self.write_term(w, *set, indent, depth + 1);
                 let _ = write!(w, ")");
             }
+            TermKind::SetComplement(set) => {
+                let _ = write!(w, "(set.complement ");
+                self.write_term(w, *set, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetUniv(sort) => {
+                let _ = write!(w, "(as set.universe ");
+                self.write_sort(w, *sort);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetChoose(set) => {
+                let _ = write!(w, "(set.choose ");
+                self.write_term(w, *set, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::SetUnion(a, b) => {
                 self.write_binary_term(w, "set.union", *a, *b, indent, depth, break_here);
             }

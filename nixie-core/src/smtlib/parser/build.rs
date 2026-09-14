@@ -40,7 +40,9 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "fp.isPositive" | "fp.abs" | "fp.neg" | "fp.to_real" | "str.len" | "str.is_digit"
             | "str.to_code" | "str.from_code" | "str.to_int" | "str.to.int" | "int.to_str"
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
-            | "re.opt" | "re.comp" | "ff.neg" => Plan::Fixed(1),
+            | "re.opt" | "re.comp" | "ff.neg"
+            | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
+            | "set.is_singleton" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -53,7 +55,8 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "fp.rem"
             | "fp.eq" | "fp.lt" | "fp.gt" | "fp.leq" | "fp.geq" | "fp.min" | "fp.max"
             | "str.at" | "str.contains" | "str.prefixof" | "str.suffixof" | "str.in_re"
-            | "str.in.re" | "re.diff" | "re.range" => Plan::Fixed(2),
+            | "str.in.re" | "re.diff" | "re.range"
+            | "set.minus" | "set.member" | "set.subset" => Plan::Fixed(2),
 
             // ======== three operands ========
             "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
@@ -89,7 +92,13 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // (cvc5 `kinds.toml` declares them `children = "2:"`).
             | "ff.add"
             | "ff.mul"
-            | "ff.bitsum" => Plan::Variadic,
+            | "ff.bitsum"
+            // Finite sets: `set.union`/`set.inter` fold n-ary (Z3's
+            // `OP_SET_UNION` is variadic); `set.insert` takes elements plus
+            // the base set, as in the SMT-LIB draft.
+            | "set.union"
+            | "set.inter"
+            | "set.insert" => Plan::Variadic,
 
             _ => return None,
         };
@@ -171,6 +180,71 @@ impl Parser<'_> {
                     ),
                 });
             }
+        }
+        Ok(())
+    }
+
+    /// The element sort of a term if it is set-sorted, else `None`.
+    fn set_element_sort(&self, t: TermId) -> Option<crate::sort::SortId> {
+        let node = self.manager.get(t)?;
+        match self.manager.sorts.get(node.sort).map(|s| &s.kind) {
+            Some(SortKind::Set(elem)) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// SMT-LIB sort check: a unary set operator's operand must be a set.
+    fn check_set_operand(&self, op: &str, x: TermId) -> Result<()> {
+        if self.set_element_sort(x).is_none() {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("operand of {op} must have a (Set X) sort"),
+            });
+        }
+        Ok(())
+    }
+
+    /// SMT-LIB sort check: a binary set operator's operands must be sets of
+    /// the *same* element sort.
+    fn check_set_binary(&self, op: &str, x: TermId, y: TermId) -> Result<()> {
+        let Some(ex) = self.set_element_sort(x) else {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("first operand of {op} must have a (Set X) sort"),
+            });
+        };
+        let Some(ey) = self.set_element_sort(y) else {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("second operand of {op} must have a (Set X) sort"),
+            });
+        };
+        if ex != ey {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("operands of {op} must have the same (Set X) sort"),
+            });
+        }
+        Ok(())
+    }
+
+    /// SMT-LIB sort check: `(set.member x s)` requires `s` set-sorted with
+    /// element sort exactly the sort of `x`.
+    fn check_set_member(&self, op: &str, x: TermId, s: TermId) -> Result<()> {
+        let Some(es) = self.set_element_sort(s) else {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!("second operand of {op} must have a (Set X) sort"),
+            });
+        };
+        let xs = self.manager.get(x).map(|n| n.sort);
+        if xs.is_some_and(|sx| sx != es) {
+            return Err(NixieError::ParseError {
+                position: self.lexer.position(),
+                message: format!(
+                    "element operand of {op} must have the set's element sort"
+                ),
+            });
         }
         Ok(())
     }
@@ -478,6 +552,38 @@ impl Parser<'_> {
             "fp.neg" => self.manager.mk_fp_neg(x),
             "fp.to_real" => self.manager.mk_fp_to_real(x),
             "str.len" => self.manager.mk_str_len(x),
+            // ======== Finite sets ========
+            // Every operator here type-checks its operand: a non-set operand
+            // is a sort error the standard mandates reporting, and accepting
+            // it would intern a term with a meaningless fallback sort.
+            "set.card" => {
+                self.check_set_operand(op, x)?;
+                self.manager.mk_set_card(x)
+            }
+            "set.complement" => {
+                self.check_set_operand(op, x)?;
+                self.manager.mk_set_complement(x)
+            }
+            "set.choose" => {
+                self.check_set_operand(op, x)?;
+                self.manager.mk_set_choose(x)
+            }
+            // `(set.is_empty s)` and `(set.is_singleton s)` are exactly
+            // cardinality tests, so they lower to the corresponding integer
+            // equations and keep cardinality in one place: the reduction's
+            // cardinality module.
+            "set.is_empty" => {
+                self.check_set_operand(op, x)?;
+                let card = self.manager.mk_set_card(x);
+                let zero = self.manager.mk_int(0);
+                self.manager.mk_eq(card, zero)
+            }
+            "set.is_singleton" => {
+                self.check_set_operand(op, x)?;
+                let card = self.manager.mk_set_card(x);
+                let one = self.manager.mk_int(1);
+                self.manager.mk_eq(card, one)
+            }
             // `(str.is_digit s)` holds iff `s` is a single-character string
             // whose character is a decimal digit. That is exactly the language
             // of `(re.range "0" "9")`, so it lowers to a membership constraint
@@ -531,6 +637,19 @@ impl Parser<'_> {
         let term = match op {
             "mod" => self.manager.mk_mod(x, y),
             "select" => self.manager.mk_select(x, y),
+            // ======== Finite sets ========
+            "set.minus" => {
+                self.check_set_binary(op, x, y)?;
+                self.manager.mk_set_minus(x, y)
+            }
+            "set.member" => {
+                self.check_set_member(op, x, y)?;
+                self.manager.mk_set_member(x, y)
+            }
+            "set.subset" => {
+                self.check_set_binary(op, x, y)?;
+                self.manager.mk_set_subset(x, y)
+            }
             "bvand" => self.manager.mk_bv_and(x, y),
             "bvor" => self.manager.mk_bv_or(x, y),
             "bvadd" => self.manager.mk_bv_add(x, y),
@@ -749,6 +868,50 @@ impl Parser<'_> {
             }
             "and" => self.manager.mk_and(args.iter().copied()),
             "or" => self.manager.mk_or(args.iter().copied()),
+            // ======== Finite sets ========
+            // `(set.union)` / `(set.inter)` fold pairwise over their operands
+            // (Z3's `OP_SET_UNION` is n-ary); a one-argument application is
+            // the identity, and the empty application is a sort error since
+            // the result sort is not inferable.
+            "set.union" | "set.inter" => {
+                let Some((&first, rest)) = args.split_first() else {
+                    return Err(self.min_arity_err(op, 1, 0));
+                };
+                self.check_set_operand(op, first)?;
+                if rest.is_empty() {
+                    return Ok(first);
+                }
+                self.charge_fold_depth(chain_depth(args.len(), 1))?;
+                let mut result = first;
+                for &next in rest {
+                    self.check_set_binary(op, result, next)?;
+                    result = if op == "set.union" {
+                        self.manager.mk_set_union(result, next)
+                    } else {
+                        self.manager.mk_set_inter(result, next)
+                    };
+                }
+                result
+            }
+            // `(set.insert e1 … en s)`: the last operand is the base set, the
+            // leading operands are the elements added to it, per the SMT-LIB
+            // draft.
+            "set.insert" => {
+                let Some((&last, _)) = args.split_last() else {
+                    return Err(self.min_arity_err("set.insert", 2, 0));
+                };
+                if args.len() < 2 {
+                    return Err(self.min_arity_err("set.insert", 2, args.len()));
+                }
+                self.check_set_operand("set.insert", last)?;
+                self.charge_fold_depth(chain_depth(args.len(), 1))?;
+                let mut result = last;
+                for &element in &args[..args.len() - 1] {
+                    let singleton = self.manager.mk_set_singleton(element);
+                    result = self.manager.mk_set_union(singleton, result);
+                }
+                result
+            }
             "distinct" => {
                 self.check_chainable_sorts(op, args)?;
                 self.manager.mk_distinct(args.iter().copied())
