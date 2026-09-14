@@ -13,6 +13,7 @@ pub(super) mod check_dt;
 pub(super) mod check_ff;
 pub(super) mod check_fp;
 pub(super) mod check_fp_model;
+#[cfg(feature = "nlsat")]
 pub(super) mod check_nlsat;
 pub(super) mod check_string;
 pub(super) mod config;
@@ -2406,6 +2407,7 @@ impl Solver {
         // whole-problem here, model validated exactly before `Sat`; a
         // declined goal falls through to CDCL(T), whose honesty gate
         // answers `unknown` rather than guessing.
+        #[cfg(feature = "nlsat")]
         if let Some(ff_result) = self.dispatch_ff_solver(manager) {
             match ff_result {
                 SolverResult::Sat => {
