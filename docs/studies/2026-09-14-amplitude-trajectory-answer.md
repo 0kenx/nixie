@@ -123,7 +123,7 @@ lose; the 60 s / 300 s losses concentrate where they do.
   `NIXIE_DUMP_ELIM_ENTRY` behavior).
 - `NIXIE_ELIM_RESET_PHASES=<min-retired>` — reset the phase tables at
   the elimination boundary (the ghost-attractor probe).
-- Runner: `outputs/amp_traj_multiseed.py` (the four-cell × multi-seed
+- Runner: `docs/studies/assets/amp-traj-2026-09-14/amp_traj_multiseed.py` (the four-cell × multi-seed
   harness behind the tables above).
 
 All measurements: binary built at `0e005231` + these diagnostics,
