@@ -422,6 +422,10 @@ the class closed):
    universe-distinctness fold.
 
 Verification: the twins reproducer answers `unsat` (z3 agrees);
-quant_fuzz (strengthened) seeds {41,42,43,44} x 150 — **CLEAN**; 58
-quantifier regressions (both new pins in); pins 9/9 (173s); parity
-176/1/0; fmt/clippy clean on the touched files.
+quant_fuzz (strengthened) seeds {41..46} x 150 — **900 cases, CLEAN**;
+mixed_fuzz 250 arithmetic cases — no disagreements, no refuted models;
+58 quantifier regressions (both new pins in); pins 9/9 (173s); parity
+176/1/0; fmt/clippy clean on the touched files.  set16 re-checked on the
+fixed binary: still `unknown` (13.5s — the finder-project blocker is
+unchanged, as diagnosed: the enum churn over the growing Real-domain
+sample, not the wrapper path).

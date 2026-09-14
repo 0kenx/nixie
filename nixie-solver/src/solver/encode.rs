@@ -2687,6 +2687,19 @@ impl Solver {
         self.encode_depth(term, manager, 0)
     }
 
+    /// Emit the trichotomy clause for every numeric equality atom encoded
+    /// since the last drain.
+    pub(super) fn drain_numeric_eq_splits(&mut self, manager: &mut TermManager) {
+        if self.draining_numeric_eq_splits {
+            return;
+        }
+        self.draining_numeric_eq_splits = true;
+        while let Some((a, b)) = self.pending_numeric_eq_splits.pop() {
+            self.emit_collision_trichotomy(a, b, manager);
+        }
+        self.draining_numeric_eq_splits = false;
+    }
+
     /// Depth-tracked recursive Tseitin encoder: memo check, depth guard, then
     /// the arm dispatch in [`Solver::encode_depth_uncached`].
     ///
@@ -3233,6 +3246,26 @@ impl Solver {
         manager: &mut TermManager,
         depth: u32,
     ) -> Lit {
+        let lit = self.encode_depth_memoized(term, manager, depth);
+        // Depth 0 is every *top-level* entry into the encoder — `encode`, and
+        // the lemma emitters that call `encode_depth(.., 0)` directly.  The
+        // trichotomy clauses owed by the atoms this encode just minted are
+        // emitted here, before the caller adds the clause that will use them,
+        // so no lemma can reach the SAT core with a numeric equality atom the
+        // arithmetic solver cannot hear about.  See
+        // [`Solver::pending_numeric_eq_splits`].
+        if depth == 0 {
+            self.drain_numeric_eq_splits(manager);
+        }
+        lit
+    }
+
+    fn encode_depth_memoized(
+        &mut self,
+        term: TermId,
+        manager: &mut TermManager,
+        depth: u32,
+    ) -> Lit {
         // The polarity the And/Or arms would emit clauses under right now.
         // This must be the same lookup those arms perform; the map is not
         // mutated while an encode is in flight, so the two reads agree.
@@ -3630,6 +3663,13 @@ impl Solver {
                             manager,
                         ) {
                             self.var_to_parsed_arith.insert(var, parsed);
+                        }
+                        // Lemma-minted atoms only: the assertion spine is
+                        // covered by `ensure_numeric_equality_splits` at the
+                        // top of `check`, and queueing spine atoms here as
+                        // well would only move the identical clauses earlier.
+                        if self.solving && !self.suppress_numeric_eq_trichotomy {
+                            self.pending_numeric_eq_splits.push((*lhs, *rhs));
                         }
                     }
 
@@ -4835,7 +4875,17 @@ impl Solver {
                     // pattern that appears in injectivity / congruence axioms
                     // where f(a)=f(b) needs to be split into f(a)<f(b) or
                     // f(a)>f(b) when the equality is false.
-                    // Avoid Select terms -- the array theory handles those.
+                    //
+                    // The narrowness is no longer load-bearing: since the
+                    // encoder queues every numeric equality atom it mints
+                    // while solving (`pending_numeric_eq_splits`), the atoms
+                    // this arm declines are covered anyway.  It is kept as
+                    // written so MBQI's clause order does not move.  (The
+                    // former reading of the `Select` exclusion — "the array
+                    // theory handles those" — was false and is what the
+                    // read-over-write index equality's wrong `sat` rested on:
+                    // the array theory mints the index equality, it does not
+                    // give it arithmetic meaning.)
                     let lhs_is_apply = manager
                         .get(*lhs)
                         .is_some_and(|lt| matches!(lt.kind, TermKind::Apply { .. }));

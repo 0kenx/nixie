@@ -382,6 +382,14 @@ impl super::Solver {
             suppress_numeric_eq_trichotomy: _, // TRANSIENT: save/restored around a single
             // `encode_depth` call in `encode_distinct_injective`; never observed
             // set across an assertion boundary.
+            pending_numeric_eq_splits: _, // TRANSIENT: drained to empty by every
+            // `encode` before control returns to any caller, so no entry can
+            // outlive the encode that queued it, let alone a scope.
+            draining_numeric_eq_splits: _, // TRANSIENT: re-entrancy guard held
+            // only inside `drain_numeric_eq_splits`; false at every scope
+            // boundary.
+            solving: _, // TRANSIENT: set only for the extent of one
+            // `check_core` call, and `push`/`pop` cannot run inside one.
             has_injective_distinct: _, // INVARIANT: monotone latch – set once an
             // injective-map encoding exists; a popped scope's clauses vanish but
             // keeping the latch on only *over*-enables the (sound, deduplicated)
