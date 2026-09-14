@@ -173,3 +173,59 @@ Operational note: the per-visit clause-identity capture in the kernel is
 env-armed (`mut_trace::cwrite_target`, a `OnceLock`) — an unconditional
 `live.reason()` there cost enough on the hot path to timeout two
 reduce-arm tests; keep it lazy.
+
+## Third continuation: the destination-layer bisection and the exhausted-hypothesis boundary
+
+**The decisive bisection**: A run in swapped-dual mode
+(`NIXIE_CSR_SHADOW=1 NIXIE_CSR_SCAN=1` — the CSR scanned via the same
+span-copy + overflow-take roundtrip, pushes to `Vec` destinations +
+mirror) solves at **exactly 33 028**, while B (CSR destinations) is
+33 154.  **The divergence lives in the kernel's destination layer —
+not in the scanning.**  The two structural deltas there: (1)
+`push_watch_unique`'s dedup reads the CSR's combined view (the Vec
+world reads the destination list), and (2) plain pushes land directly
+in the CSR's overflow (the Vec world: Vec push + mirror `scan_push`).
+
+Fixes applied in the B tree for (1)'s sharpest form: `scan_parts` now
+takes BOTH segments (the span's live end drops to its start for the
+scan's duration — matching `mem::take` for the span too, so mid-scan
+self-dedups read an empty combined view).  Trajectory-neutral on
+6s167 (the suppression case never fires here — consistent with the
+zero `B_WOULD_SUPPRESS` measurement).
+
+**The chronology, corrected and closed at checkpoint granularity**:
+with tick totals, the substitution/BVE/`probe_propfixed` tables, and
+the searched-inclusive DB hash all folded into the per-conflict
+digest, the FIRST divergence of ANY hashed or streamed state is the
+**DB hash in the checkpoint window (16 400, 16 500]** — everything
+else (ticks, tables, assignments, backtracks, walks, bumps, picks,
+probe queues) is identical there and before.  The earliest behavioral
+difference (the `r=d` probe-literal sequence 188-then-191 vs
+191-skipping-188) sits inside that same window; the probe queue
+generation, the memo, the budget inputs, the hyper-binary derivation
+inputs (reasons, dominator folds — order-insensitive), and the lucky
+phase (never runs on this instance) are all verified identical.
+
+**Exhausted this session**: the phase-bump attribution (the bump-set
+difference at ~#1.41 M belongs to a round whose walks are identical —
+it is downstream of the DB divergence, not inside the 16 483
+inprocessing round), the searched caches, the minimizer block walks
+(`[bstep]` logging — aligned past the divergence), the VSIDS/VMTF pick
+streams, the `unbranchable` tables, `backtrack_to_size` (test-only),
+`reset_propagation_head` (queue rewind — read-side only), and the
+lucky-phase tick restore (never armed).
+
+**The handoff target, sharpened to one mechanical step**: construct
+B' = swapped-A minus the `Vec` list itself (push to a scratch
+destination + flush into the CSR exactly where swapped-A's mirror
+lands them).  B' at 33 028 ⟹ the delta is the dedup reader's view of
+the destination; B' at 33 154 ⟹ the delta is the push/flush semantics.
+Instruments landed with this round: `NIXIE_AWALK_TRACE` now also logs
+`[bstep]` (every minimizer/block-walk reason fetch) and `[learnt]`;
+`NIXIE_CWRITE`/`NIXIE_CVISIT` per-clause write/visit traces (env-armed
+identity capture — an unconditional `live.reason()` on the hot path
+costs enough to timeout reduce tests); `NIXIE_BT_TRACE`;
+`NIXIE_PROBE_QUEUE_TRACE` (queue + per-probe memo/size + tick
+snapshots); `NIXIE_LUCKY_TRACE`; the `[decide]`/`[vsids-pick]`/
+`[skip]` decision traces; the digest now hashes the searched caches,
+the substitution/BVE/probe tables, and prints the tick totals.

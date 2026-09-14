@@ -163,7 +163,28 @@ impl Solver {
                             h = h.rotate_left(5);
                         }
                     }
-                    eprintln!("[dbd] {} live={} h={:016x}", self.stats.conflicts, live, h);
+                    let mut th = 1469598103934665603u64;
+                    for (i, &l) in self.equiv_substitution.iter().enumerate() {
+                        th ^= (l.code() as u64).wrapping_mul(31 + i as u64);
+                        th = th.rotate_left(3);
+                    }
+                    for (i, d) in self.bve_def.iter().enumerate() {
+                        th ^= (i as u64).wrapping_mul(97);
+                        for part in d {
+                            for &l in part {
+                                th ^= (l.code() as u64).wrapping_mul(131);
+                            }
+                        }
+                        th = th.rotate_left(5);
+                    }
+                    for (i, &pf) in self.probe_propfixed.iter().enumerate() {
+                        th ^= (pf as u64).wrapping_mul(31 + (i as u64 % 997));
+                        th = th.rotate_left(3);
+                    }
+                    eprintln!(
+                        "[dbd] {} live={} h={:016x} t={:016x} ts={} tf={}",
+                        self.stats.conflicts, live, h, th, self.ticks_stable, self.ticks_focused
+                    );
                     if let Ok(rng) = std::env::var("NIXIE_WDUMP_RANGE")
                         && let Some((lo, hi)) = rng.split_once('-')
                         && let (Ok(lo), Ok(hi)) = (lo.parse::<u64>(), hi.parse::<u64>())
@@ -491,6 +512,15 @@ impl Solver {
                 );
             }
             if let Some(var) = self.pick_branch_var() {
+                #[cfg(feature = "std")]
+                if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+                    eprintln!(
+                        "[decide] var={} src={:?} polar_conf={:x}",
+                        var.index(),
+                        self.last_branch_source,
+                        0u32
+                    );
+                }
                 self.stats.decisions += 1;
                 self.trail.new_decision_level();
                 let new_level = self.trail.decision_level();
