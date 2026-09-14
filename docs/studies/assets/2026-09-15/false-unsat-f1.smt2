@@ -1,0 +1,5 @@
+(set-logic QF_LIA)
+(declare-const xi Int)
+(declare-const yi Int)
+(assert (and (not (and (= (+ (* 3 xi) (+ (+ (* 10 xi) (* -2 yi) (* 5 xi)) 90 (+ (* 2 yi) (* 3 yi) (* -1 xi)))) (mod (* -2 yi) 1)) (and (> 1099511627776 0) (> (* 3 xi) 37) (= (* -1 yi) 5)) (> (+ (mod (div -3 7) 4) (mod -5 5)) 2))) (<= (* 10 xi) -1) (> (+ (+ (* -2 xi) 4611686018427387905 (div (* -1 xi) 4)) (div (* 1 yi) 1)) 5)))
+(check-sat)

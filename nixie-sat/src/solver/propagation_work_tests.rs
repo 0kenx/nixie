@@ -36,7 +36,7 @@ fn ledger_counts_live_and_deleted_misses_without_visiting_conflict_suffix() {
                     }
                     let id = s.clauses.add_original(lits);
                     s.attach_watchers(id, lits[0], lits[1]);
-                    s.watches.get_mut(t).last_mut().expect("attached").blocker = blocker;
+                    s.watches.set_last_blocker(t, blocker);
                     if deleted {
                         s.clauses.mark_deleted_raw(id);
                     }

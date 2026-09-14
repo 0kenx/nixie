@@ -17,6 +17,17 @@ and time are embedded, so a normal run does **not** invoke z3; only the nixie
 binary under test is run. Checked in so every run is reproducible and directly
 comparable.
 
+## Generators (no corpus needed)
+
+`mixed_fuzz.py` – generates random mixed Int/Real arithmetic (div/mod,
+strict ineqs, boundary constants) and diffs every decisive verdict
+against z3. `quant_fuzz.py` – generates random *quantified* goals over
+uninterpreted sorts (definitional equalities, witness axioms,
+tautological antecedents) targeting the MBQI surface; found the
+blocking-clause false-`unsat` within 120 cases of its first run
+(docs/studies/2026-09-14-uflra-handoff-executed.md). Both take
+`[path-to-nixie] [N] [SEED]` and need only z3 on PATH.
+
 ## Run
 
 ```bash

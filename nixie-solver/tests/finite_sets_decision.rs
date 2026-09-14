@@ -768,3 +768,81 @@ fn two_disequalities_need_two_witnesses() {
     }
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
+
+/// Membership is a **function of the element**: two elements the solver makes
+/// equal are in exactly the same sets.
+///
+/// A theory solver gets this from congruence closure and never states it. The
+/// ground reduction has to, and it did not: an opaque set's membership atoms
+/// were independent Booleans, so
+///
+/// ```smt
+/// (set.member x S)  (= y x)  (not (set.member y S))
+/// ```
+///
+/// were three unrelated variables and this answered `sat`. It is `unsat` —
+/// `y` *is* `x`, and `x` is in `S`.
+///
+/// It was found from the most ordinary specification there is:
+/// `Init == x \in Nodes`, `Next == UNCHANGED x`, `Inv == x \in Nodes`, which
+/// has no counterexample and was reported as violated at step 1.
+#[test]
+fn equal_elements_are_in_the_same_sets() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let s = tm.mk_var("S", set_int);
+    let x = tm.mk_var("x", int);
+    let y = tm.mk_var("y", int);
+    let mx = tm.mk_set_member(x, s);
+    let same = tm.mk_eq(y, x);
+    let my = tm.mk_set_member(y, s);
+    let not_my = tm.mk_not(my);
+    let mut solver = Solver::new();
+    solver.assert(mx, &mut tm);
+    solver.assert(same, &mut tm);
+    solver.assert(not_my, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+}
+
+/// And it does not over-constrain: two elements that are *not* asserted equal
+/// may still differ in their membership.
+#[test]
+fn unequal_elements_may_differ_in_membership() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let s = tm.mk_var("S", set_int);
+    let x = tm.mk_var("x", int);
+    let y = tm.mk_var("y", int);
+    let mx = tm.mk_set_member(x, s);
+    let my = tm.mk_set_member(y, s);
+    let not_my = tm.mk_not(my);
+    let mut solver = Solver::new();
+    solver.assert(mx, &mut tm);
+    solver.assert(not_my, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}
+
+/// The congruence has to reach through a *structured* set too, since its
+/// membership is defined from atoms that bottom out in opaque ones.
+#[test]
+fn equal_elements_agree_through_a_union() {
+    let mut tm = TermManager::new();
+    let int = tm.sorts.int_sort;
+    let set_int = tm.sorts.set(int);
+    let a = tm.mk_var("A", set_int);
+    let b = tm.mk_var("B", set_int);
+    let u = tm.mk_set_union(a, b);
+    let x = tm.mk_var("x", int);
+    let y = tm.mk_var("y", int);
+    let mx = tm.mk_set_member(x, u);
+    let same = tm.mk_eq(y, x);
+    let my = tm.mk_set_member(y, u);
+    let not_my = tm.mk_not(my);
+    let mut solver = Solver::new();
+    solver.assert(mx, &mut tm);
+    solver.assert(same, &mut tm);
+    solver.assert(not_my, &mut tm);
+    assert_eq!(solver.check(&mut tm), SolverResult::Unsat);
+}

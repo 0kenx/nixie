@@ -299,3 +299,57 @@ re-derive rather than resurrect — the `semantic_value` first cut
 overflowed the native stack (native recursion over argument depth — the
 AGENTS.md explicit-stack rule exists for exactly this) and the frame
 machine rewrite is the version to keep.
+
+
+## The quant_fuzz catch (2026-09-14, fourth pass): the blocking clause was unsound — removed
+
+A new differential fuzzer over the *quantifier surface*
+(`bench/differential/quant_fuzz.py`, modeled on `mixed_fuzz`: random
+uninterpreted sorts + Bool-valued observers + definitional/witness/
+tautological-antecedent axioms, every decisive verdict diffed against
+z3) found a **false `unsat` within 120 generated cases** — and the
+bisect pinned it on the blocking-clause path, exposed once the
+artifact-filter fix made the universes non-empty:
+
+The mining pass evaluates the *substituted completed body*, whose
+ite-chains already bake in completion choices (else leaves, entry
+conditions).  Those choices are not flagged in that pass — only live
+`fold_apply` calls are — while chain-condition atoms that are
+**asserted constraints** (`(not (= c1 c0))`) get recorded as
+"commitments".  Blocking that arrangement emits a clause asserting
+`= c1 c0` against the assertion: an instant refutation of a goal whose
+every model keeps the constants distinct (z3: `sat`).  Pinned by
+`tautological_axiom_over_disequal_constants_is_never_unsat`.
+
+**The emission is removed** (the commitment recording stays as
+diagnostics): Z3's `add_blocking_clause` blocks on the AUX context's
+*Skolem values* — a context where blocking only diversifies the
+falsifier search — never on main-solver commitments.  Any future port
+must live in the aux context; the handoff's item (1) is thereby
+*honestly closed as removed*, not adapted.  Verification: the 300-case
+quant_fuzz screen runs **CLEAN** (133 sat + 114 unsat decisive, 0
+disagreements), parity 176/1/0, pins 9/9, 52 quantifier regressions
+pass.
+
+Post-fix multi-seed evidence: seeds {41..46} x 300 cases against the
+landed `precompile/ae6cea17` release binary — **1800 generated goals,
+0 disagreements** (~1300 decisive verdicts matched; ~23% honest
+`unknown`).  The generator skews sat-heavy (z3: ~195 sat / ~103 unsat
+per 300) — a future unsat-forcing shape family would balance it.
+
+Lesson recorded: the two soundness shapes this arc (the else-revision
+divergence, this commitment blocking) were both in *my own* additions,
+both found by differential screens, and both resolved by removal rather
+than repair — when an adaptation of a reference mechanism cannot carry
+the reference's context guarantees, the adaptation is the bug.
+
+
+## Screening the concurrent landings (2026-09-14, fifth pass)
+
+`main` absorbed two large concurrent landings after the unit (the CSR
+primary-watch FLIP `c77ddf76`, and the set-equality wrong-`sat` fix
+`200b3eab`) with no quantifier-surface screen.  Re-ran the screens on
+`ed401429` (current `main` at the time): quant_fuzz seeds {41,42,43} x
+300 — **0 disagreements**; mixed_fuzz 400 cases — **no verdict
+disagreements, no refuted models**; parity — **176/1/0**.  Binary
+cached at `precompile/ed401429/`.

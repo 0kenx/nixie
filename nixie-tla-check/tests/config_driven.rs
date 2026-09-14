@@ -354,3 +354,162 @@ Perm == {}
     .expect("prepares");
     assert_eq!(bmc.unapplied_config(), ["SYMMETRY"]);
 }
+
+// ---- ConstInit ----
+//
+// Apalache's `--cinit=CInit` convention pins the constants from inside the
+// module rather than from a `.cfg`. It is a **substitution** for exactly the
+// reason a `.cfg` assignment is: asserting `replicas = {"n1", "n2"}` reaches
+// the solver, but the encoder needs the members before the solver runs —
+// `[replicas -> S]` has no candidate list until `replicas` is literally a set
+// of two things.
+
+const CINIT: &str = r#"
+---- MODULE Cinit ----
+EXTENDS Integers
+CONSTANT Nodes
+VARIABLE x
+CInit == Nodes = {"n1", "n2"}
+Init == x \in Nodes
+Next == UNCHANGED x
+Inv  == x \in Nodes
+====
+"#;
+
+#[test]
+fn a_const_init_substitutes_rather_than_assumes() {
+    let parsed = nixie_tla_syntax::parse_file(CINIT).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc = Bmc::prepare(&spec, module, "Init", "Next", "Inv", &["CInit"], &mut tm)
+        .expect("prepares with the constants substituted");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(2)
+    );
+}
+
+/// And a claim that is false about the substituted value is found, so the one
+/// above is not passing because nothing is constrained.
+#[test]
+fn a_const_init_value_is_the_one_that_is_checked() {
+    let src = r#"
+---- MODULE CinitBad ----
+EXTENDS Integers
+CONSTANT Nodes
+VARIABLE x
+CInit == Nodes = {"n1", "n2"}
+Init == x \in Nodes
+Next == UNCHANGED x
+Inv  == x = "n1"
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &["CInit"], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::Violation { step: 0 },
+        "`x` may be `n2`"
+    );
+}
+
+/// Without the `ConstInit` the constant is arbitrary, which is a strictly
+/// harder question. Where the answer does not depend on *which* set it is, the
+/// harder question still has an answer — `x \in Nodes` holds for every
+/// `Nodes` — so the test uses a construct that genuinely needs the members: a
+/// quantifier is instantiated per candidate, and an opaque set has no
+/// candidates to instantiate over.
+#[test]
+fn without_a_const_init_the_members_are_not_known() {
+    let src = r#"
+---- MODULE NeedsMembers ----
+EXTENDS Integers
+CONSTANT Nodes
+VARIABLE x
+CInit == Nodes = {"n1", "n2"}
+Init == x \in Nodes
+Next == UNCHANGED x
+Inv  == \A n \in Nodes : n # "z"
+====
+"#;
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+
+    let mut tm = TermManager::new();
+    let with = Bmc::prepare(&spec, module, "Init", "Next", "Inv", &["CInit"], &mut tm)
+        .expect("prepares")
+        .check(2, &mut tm)
+        .expect("checks");
+    assert_eq!(with, Outcome::NoViolationWithin(2));
+
+    let mut tm = TermManager::new();
+    let outcome = Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm)
+        .map(|mut b| b.check(2, &mut tm));
+    assert!(
+        matches!(&outcome, Err(_) | Ok(Err(_))),
+        "an arbitrary `Nodes` has no members to quantify over, got {outcome:?}"
+    );
+}
+
+/// And the shape that found the congruence bug: `x \in Nodes` is preserved by
+/// a step that changes nothing, for *every* `Nodes`. This needs no
+/// `ConstInit` at all, and it used to be reported as violated at step 1 —
+/// membership was a free Boolean per element, so `x@1 = x@0` said nothing
+/// about it. See `nixie-solver`'s `equal_elements_are_in_the_same_sets`.
+#[test]
+fn membership_survives_a_step_that_changes_nothing() {
+    let src = r"
+---- MODULE Preserved ----
+EXTENDS Integers
+CONSTANT Nodes
+VARIABLE x
+Init == x \in Nodes
+Next == UNCHANGED x
+Inv  == x \in Nodes
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &[], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(3, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(3)
+    );
+}
+
+/// A constant pinned by something less direct than `name = expr` is left to
+/// the solver, which is where it belongs: there is nothing to substitute.
+/// It must not be mistaken for a binding.
+#[test]
+fn an_indirect_constraint_is_not_a_substitution() {
+    let src = r"
+---- MODULE Indirect ----
+EXTENDS Integers, FiniteSets
+CONSTANT N
+VARIABLE x
+CInit == N > 3
+Init == x = 0
+Next == UNCHANGED x
+Inv  == x = 0
+====
+";
+    let parsed = nixie_tla_syntax::parse_file(src).expect("parses");
+    let spec = nixie_tla_syntax::LoadedSpec::single(parsed);
+    let module = spec.root_module().expect("has a root module");
+    let mut tm = TermManager::new();
+    let mut bmc =
+        Bmc::prepare(&spec, module, "Init", "Next", "Inv", &["CInit"], &mut tm).expect("prepares");
+    assert_eq!(
+        bmc.check(2, &mut tm).expect("checks"),
+        Outcome::NoViolationWithin(2)
+    );
+}

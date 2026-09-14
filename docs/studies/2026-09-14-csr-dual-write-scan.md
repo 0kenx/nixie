@@ -455,3 +455,224 @@ mirror machinery + the VecScanMirror + the drift oracle itself; gates =
 full trajectory identity + corpus screen + Z3 parity + E2E model
 checks.  Post-flip: wire the batched surgery into the sparse-mutator
 rebuilds (the 46× regime).
+
+## FLIP COMMIT A LANDED: the CSR is the primary representation on the
+default path (no flags)
+
+The decomposition held: commit A makes the CSR authoritative
+**unconditionally** — `WatchLists::new` constructs it (empty layout,
+everything overflow until the first rebuild adopts), the session kernel
+scans swapped-mode by default, the non-session path materializes the
+combined view into the taken list per scan (scratch-buffer form: the
+frame mirror maintains the CSR through the scan exactly as before), and
+production readers use the combined view always.  The `Vec` lists
+survive **one commit longer as the pure verification shadow** — the
+drift oracle stays up through the flip itself.
+
+Two post-flip defects the nets caught immediately (both the same
+class: code that wrote the `Vec` directly, masked pre-flip because the
+CSR did not exist before the first rebuild): the work-ledger test and
+the kernel test mutated blockers via `get_mut` — now dual-writing
+scaffolding helpers (`set_last_blocker` / `set_all_blockers`).
+
+**Validation**: 6s167 / si2 / x9-08075 / FmlaEquivChain — default
+(no env) conflicts **bit-identical** (33 028 / 23 527 / 641 631 /
+450 623) with the drift oracle 38/38, 30/30, 98/98, 102/102 zero
+through the flipped roles; 1092 tests green (default, shadow,
+shadow+surgery); clippy clean; **Z3 parity 4.16.0: 176 correct +
+1 inconclusive, identical to the tracked record**.
+
+**Commit B (the deletion)**: remove `watches: Vec<Vec<Watcher>>`, the
+VecScanMirror, the materialize round-trip, the frame mirror and the
+drift oracle — the CSR alone remains.  Gates: trajectory identity +
+corpus screen + parity + E2E model checks.  Then wire the batched
+surgery into the sparse-mutator rebuilds (the 46× regime).
+
+## Commit B parked: the roundtrip works mechanically, one semantic
+divergence remains unroot-caused (2026-09-14, investigation state)
+
+Commit B (the deletion) was attempted via the **roundtrip design** —
+materialize the CSR combined view into an owned scratch, scan it with
+the unchanged kernels, dematerialize (re-split span/overflow + index
+diff).  The design dissolved the aliasing puzzle entirely (the kernel
+pushes through a `&mut CsrWatchLists` destinations funnel; `add` became
+CSR-only; the frame mirror, the VecScanMirror and every notification
+branch simply die) — and mechanically it worked: all three driver
+configs (session, watch_kernel, legacy) ran the roundtrip and agreed
+with each other.
+
+**But the trajectory diverged**: 6s167 solved at 32 408 conflicts
+instead of 33 028.  Bisected precisely: the trajectories are
+decision-identical through 4 000 conflicts, split in the window
+**(elim phase @4000's end, elim phase @6003's entry)** — six extra
+original clauses exist in the roundtrip run at phase-2 entry
+(orig 21 156 vs 21 162), and phase 2's own rounds then diverge
+(subsumed 69 vs 120, added 26 vs 22).  The scan kernels see identical
+combined-view content by construction, so the suspect class is
+**mid-search clause-population paths**: hyper-binary resolution's
+mid-scan additions, vivify/probe retiments, or an occurrence-list
+consumer keyed on the (now-dead) `Vec` lists.  The test failures
+observed during the attempt were all the dead-Vec-read class
+(`get()` on never-written lists) — those are mechanical fixes.
+
+**The investigation tools that worked**: MAXC-ladder decision bisection
+against the flip-A binary (`precompile/c77ddf76`), NIXIE_LOG_ELIM
+phase-line diffing.  Next session's entry: instrument the
+[4000, 6003] window (which pass adds the six originals), fix the
+dead-Vec reads (`get` becomes a combined-view iteration in tests), and
+resume the deletion.  The backups of the attempt are NOT preserved
+(the tree is restored to flip-A, fully green: 1092 tests, 33 028); the
+roundtrip design is documented here and takes ~1 h to re-apply.
+
+## Commit B, second attempt: the divergence bisected to a single
+restart decision after the elim phase @4000 (parked again, precisely)
+
+The roundtrip was re-applied and the divergence chased with the
+propagation-ladder and elim-log diffs.  New facts, each narrowing:
+
+- The **extra originals are sweep witnesses** (a binary and a ternary
+  matching the sweep's equivalence-witness shapes) — but
+  `NIXIE_SWEEP=0` converges only up to ~5 k conflicts and diverges
+  later (73 400 vs 69 156), so the sweep amplifies but is not the
+  root.
+- The sweep's environment reader at `sweep.rs:1261` was still on the
+  dead `Vec` — fixed to `iter_combined` (this fix is correct for
+  flip-A too and landed separately).
+- The **propagation ladder** splits the trajectories inside the elim
+  phase at conflicts 4 000: identical through 3 950, ~3.3 k fewer
+  propagations inside the phase's own subsume/BVE rounds, **while every
+  logged round line matches** (same eliminations, same resolutions).
+- The first *post*-phase divergence is one extra `reused_trails`
+  (25 vs 26) — a single restart/trail-reuse decision fired
+  differently immediately after the phase.
+
+**The refined suspect class**: tick accounting or lazily-dead entry
+mass crossing the phase boundary — the phase's logged yields are
+identical, so the difference lives in *unlogged* state the restart
+schedule reads (tick totals, list-length charges).  Note the mirror
+world and the roundtrip world differ in exactly one observable here:
+the roundtrip's dematerialize compacts eagerly at scan end (kept
+prefix), while the mirror's Vec kept its pre-compaction length between
+the take and the put-back — any consumer of the length in that window
+(the tick charge is computed pre-scan, so that is *not* it; but the
+phase's inter-round consumers may read lengths between scans).
+
+Next session's entry: diff the tick counters (`ticks_focused`/
+`ticks_stable`) old-vs-new at conflicts 3 960/4 000/4 050, then
+instrument the first reused-trails decision's inputs.  The attempt's
+edits remain ~1 h to re-apply from this section + the previous one;
+the tree is restored to flip-A (green: 1092×2 configs, 33 028).
+
+## Commit B, third attempt: the divergence is a tick-accounting
+artifact inside the elim phase — 280 stable ticks (parked with the tool)
+
+The roundtrip re-applied a third time with a **charge-level trace**
+(`NIXIE_CSR_CHARGE_TRACE=1`, now landed on the flip-A tree — every
+session tick charge logged with `(charge, stable, len, bins, ghosts,
+code)`).  Measured facts:
+
+- **The +280 ticks are all in the session driver's stable charges**
+  (the trace's stable sum exactly equals the reported stable ticks —
+  1 592 521 at MAXC 4 010).
+- Focused ticks identical; the phase's propagations ~3.3 k FEWER in
+  the roundtrip world yet charging MORE — the lists scanned were
+  longer at charge time.
+- **The drift oracle is useless in commit B**: the dead Vec is empty
+  (never written — `add` is CSR-only), so the compare reports
+  thousands of spurious mismatches.  There is no in-process baseline.
+
+**The next tool, designed but not built**: a `NIXIE_DUMP_WATCHES` env
+that dumps the CSR's combined view per literal at each rebuild — run
+under flip-A (whose CSR is mirror-maintained and equal to its scanned
+Vec) and under commit B, diff at the phase boundary → the first
+diverging literal and the exact list-content delta.  That converts the
+tick symptom into a state symptom in one run each.
+
+The suspect refined once more: the roundtrip's `put_back_combined`
+eagerly re-splits kept entries into span-up-to-capacity + overflow,
+while the mirror kept each survivor in its source segment — combined
+ORDER is identical, so the charge-length difference implies the
+CONTENT differed (entries the old world had dropped before charging,
+or entries the new world retained).  The watch-dump diff settles it.
+
+Tree restored to flip-A + the charge-trace tool (green: 1092 tests,
+33 028).  The attempt remains ~1 h to re-apply from this study's three
+commit-B sections.
+
+## Commit B, fourth attempt: the divergence caught at the DEDUP — A
+pushes a flapping repair pair that B's dedup suppresses (parked, sharp)
+
+The designed `NIXIE_DUMP_WATCHES` tool was built and run on both
+binaries.  **The watch states are IDENTICAL at every rebuild**
+(0 differing lines at conflicts 0/2000/4000, counts and content) —
+the divergence is purely intra-phase transient.  A second tool,
+`NIXIE_CSR_MUT_TRACE=<code>` (mutation log per literal), caught the
+first divergence precisely:
+
+- **Literal 8440**: both worlds charge `len=4` identically, then A's
+  next scan sees `len=5` while B's sees `len=3`.
+- The mutation diff: **A pushed refs 1 077 664 and 1 040 872 (the
+  latter FOUR times) into 8440's CSR; B never pushed either** — B's
+  `push_watch_unique` dedup FOUND them (reading the CSR's combined
+  view), A's did not (reading the Vec list).
+- A ref pushed four times is a **flapping repair pair**: the clause's
+  watched pair keeps going stale and re-registering in A's world,
+  while B's world retains the entry and suppresses the re-push.
+
+**The leading hypothesis** (unproven, the next instrument is designed):
+the entry's LIFETIME across the scan-end boundary differs — in A
+(mirror mode) a self-targeted push lands in the empty taken Vec slot
+(lost at put-back) while the CSR-side mirror push is truncated by
+`end_scan`; in B (roundtrip) the push lands in the live overflow and
+`put_back_combined`'s replace drops it — *but the dedup reads happen
+at different instants relative to those windows*, so a push dropped
+by A's world is still visible to B's dedup.  The next probe: log the
+dedup decisions (found/skip vs push) and the `put_back_combined`
+kepts for a target literal in both binaries.
+
+Also fixed in passing (principled, independent of the cure):
+commit B's **ghost-debt recording moved into the CSR's relocation
+pass** (the dead Vec pass walked empty lists, silently zeroing the
+compaction tick debt — `relocate` now takes the debt array).
+
+Tree restored to flip-A (green: 1092 tests, 33 028).  The full re-apply
+recipe + all five investigation sections make the next session's
+entry mechanical.
+
+## Commit B, fifth attempt: the divergence's exact content identified
+(the dedup-suppressed repair pair) — parked at the cleaning asymmetry
+
+The content trace (`NIXIE_CSR_CONTENT_TRACE=<code>`, landed alongside
+the charge trace) captures the scanned scratch's entries at every scan.
+The first divergent scan of literal 8440:
+
+```
+A: ["788528:8428", "873856:9093", "873904:9092", "1077664:4490", "1040872:162"]
+B: ["788528:8428", "873856:9093", "873904:9092"]
+```
+
+**A's two extra entries are exactly the flapping repair pair.**  Their
+pushes were issued during other literals' scans (repairs re-registering
+the clause's watched pair under 8440); B's `push_watch_unique` dedup
+suppressed both because **B's CSR still contained same-ref entries
+under 8440 that A's Vec had already dropped**.  The stale entries were
+cleaned from B later (B's next-next list shows them gone), but by then
+the re-registration window had passed — the clause ran unwatched under
+8440 until the next rebuild (consistent with the watch dumps matching
+at every rebuild).
+
+Also landed in passing (principled): **the take-semantics fix** — the
+roundtrip's materialize now EMPTIES the live segments (`take_combined`)
+matching the old `mem::take` exactly, so mid-scan self-dedups read an
+empty list; plus the ghost-debt recording moved into the CSR relocation
+pass.  Both survive in the re-apply recipe regardless of the cure.
+
+**The root-cause boundary (the next session's single question)**: which
+cleaning path dropped the same-ref entries from A's `Vec` but left them
+in B's CSR between two 8440-scans?  Candidates: the Vec's lazy
+dead-entry removal at *other* literals' scans interacting with the
+mirror's segment bookkeeping; the relocate's ref rewrites desyncing a
+`remove_clause(lit, r_old)` from the entry's current `r`; or the span
+tail's visibility.  The instrument to answer it: a per-ref mutation log
+(when did ref 1077664's entry under 8440 leave A's Vec vs B's CSR) —
+one env, two runs, diff.

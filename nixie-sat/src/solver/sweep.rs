@@ -1273,8 +1273,7 @@ impl Solver {
                 // environments with a kissat-scale budget.
                 let watchers: Vec<Option<ClauseId>> = self
                     .watches
-                    .get(key)
-                    .iter()
+                    .iter_combined(key)
                     .map(|w| {
                         self.clauses
                             .get_by_ref(w.r)

@@ -274,8 +274,13 @@ impl Solver {
             // dual-write mirror (slice 2) brackets exactly this window:
             // begin before the take, per-entry notifications inside the
             // scan, end after the put-back.
+            // Flip commit A: the non-session scan materializes the CSR's
+            // combined view into the taken list (scratch-buffer form); the
+            // frame mirror below maintains the CSR through the scan, and
+            // the put-back keeps the `Vec` shadow equal for the drift
+            // oracle.
+            let mut watches = self.watches.take_combined_vec(lit);
             self.watches.shadow_begin_scan(lit);
-            let mut watches = core::mem::take(self.watches.get_mut(lit));
             #[cfg(feature = "bcp-work")]
             {
                 let work = &mut self.stats.propagation_work;
@@ -1055,9 +1060,7 @@ mod normalization_tests {
                     // A blocker can be any clause literal. Force a miss even
                     // when the other watch is true, as happens with an older
                     // cached blocker, so that exit's stored order is tested.
-                    for watcher in solver.watches.get_mut(trigger) {
-                        watcher.blocker = false_lit;
-                    }
+                    solver.watches.set_all_blockers(trigger, false_lit);
                     let values = match exit {
                         Exit::SatisfiedFirst => [1, 0, 0],
                         Exit::SatisfiedReplacement => [0, -1, 1],

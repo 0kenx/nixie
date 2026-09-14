@@ -1809,7 +1809,15 @@ impl Simplex {
         // exactly-classified VIOLATION now is final (no pivot can repair a
         // wide row) — the honest `resource_limit`. A within-bounds row is
         // satisfied regardless of whether its value could be stored.
-        if verdict.is_ok() && self.wide_pending {
+        // Convergence point for wide rows: the narrow search is done, so a
+        // wide row's exact classification is final. A violation is a
+        // REFUTATION when the row's value is FORCED — every variable it
+        // references sits at a singleton bound (lo == hi), so the basic's
+        // value is determined and out of bounds under the current
+        // assertions; the conflict explains through those bounds' reasons.
+        // Otherwise (some variable free to move) no pivot can repair a
+        // wide row — the honest `resource_limit` decline.
+        if verdict.is_ok() && (self.wide_pending || !self.wide_rows.is_empty()) {
             for (var, wexpr) in &self.wide_rows {
                 let idx = *var as usize;
                 let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
@@ -1819,8 +1827,18 @@ impl Simplex {
                 }
                 match self.wide_row_violated(wexpr, idx) {
                     Some(true) => {
-                        // Exactly-classified violation at convergence: no
-                        // pivot can repair a wide row — honest decline.
+                        // Interval refutation: the row's achievable value
+                        // range under the variables' bounds, computed
+                        // exactly (delta-aware), versus the basic's bounds
+                        // — disjoint means no assignment of the bounded
+                        // variables can satisfy the row: a genuine Farkas
+                        // conflict explained through the determining
+                        // bounds' reasons. A violation with a overlapping
+                        // range is repairable in principle but no pivot
+                        // can reach it — the honest `resource_limit`.
+                        if let Some(conflict) = self.wide_row_refuted_by_bounds(wexpr, idx) {
+                            return Err(conflict);
+                        }
                         self.resource_limit = true;
                         break;
                     }
@@ -2549,14 +2567,38 @@ impl Simplex {
         // The entering variable's defining row: checked fixed-width first
         // (the fast path), exact `BigRational` retry on any intermediate
         // overflow (intermediates of `-c/coef` legitimately overflow while
-        // the finals fit — magnitudes and denominators cancel), and only a
-        // genuinely unrepresentable final declines through `resource_limit`.
-        let Some(new_expr) = Self::build_pivot_expr(expr, coef, basic_var, nonbasic_var)
-            .or_else(|| Self::build_pivot_expr_exact(expr, coef, basic_var, nonbasic_var))
-        else {
-            self.resource_limit = true;
-            return false;
-        };
+        // the finals fit — magnitudes and denominators cancel), and — the
+        // dual-width entering side — an UNNARROWED exact row as the last
+        // resort: a mixed-magnitude row (coefficients `1` and `2^63`)
+        // makes the solved form's quotients irreducibly past `i64`, and
+        // the entering variable's row then lives in the wide store with
+        // every substitution through it exact. Only a division by zero
+        // declines through `resource_limit`.
+        let (new_expr, entering_wide) =
+            match Self::build_pivot_expr(expr, coef, basic_var, nonbasic_var)
+                .or_else(|| Self::build_pivot_expr_exact(expr, coef, basic_var, nonbasic_var))
+            {
+                Some(e) => (Some(e), None),
+                None => match Self::build_pivot_expr_big(expr, coef, basic_var, nonbasic_var) {
+                    Some(w) => (None, Some(w)),
+                    None => {
+                        self.resource_limit = true;
+                        return false;
+                    }
+                },
+            };
+        // The exact entering row in wide form (whatever path built it):
+        // the exact substitutions below run against this, so a wide
+        // entering row needs no separate code path per site.
+        let entering_big = entering_wide.clone().unwrap_or_else(|| {
+            new_expr
+                .as_ref()
+                .map(|e| BigLinExpr {
+                    terms: e.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
+                    constant: big_r64(&e.constant),
+                })
+                .expect("one of the two entering forms exists")
+        });
         // Collect the rows that reference the entering column – in O(column)
         // via the column index rather than a full-tableau scan – and compute
         // their substituted content into `row_updates` WITHOUT mutating the
@@ -2584,7 +2626,8 @@ impl Simplex {
                         .find(|(v, _)| *v == nonbasic_var)
                         .map(|(v, c)| (*v, c.clone()))
                 {
-                    let updated = Self::substitute_big_row(&wrow, &sc_b, &new_expr, nonbasic_var);
+                    let updated =
+                        Self::substitute_big_row(&wrow, &sc_b, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&updated) {
                         Some(narrow) => row_updates.push((var, narrow)),
                         None => wide_updates.push((var, updated)),
@@ -2612,10 +2655,14 @@ impl Simplex {
                 // Only the ENTERING row must be narrow (the pivot machinery
                 // is `LinExpr`-shaped); a wide entering row is what
                 // `resource_limit` remains for.
-                if let Some(fast) = Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var) {
+                let fast = match (&new_expr, entering_wide.is_some()) {
+                    (Some(e), false) => Self::substitute_row_fast(&row, sc, e, nonbasic_var),
+                    _ => None, // wide entering row: no narrow fast path
+                };
+                if let Some(fast) = fast {
                     row_updates.push((var, fast));
                 } else {
-                    let exact = Self::substitute_row_big(&row, sc, &new_expr, nonbasic_var);
+                    let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
                         Some(new_row) => row_updates.push((var, new_row)),
                         None => {
@@ -2654,16 +2701,30 @@ impl Simplex {
             if let Some(v) = snapped {
                 let old = self.assignment[leaving];
                 if v != old {
-                    snap_delta = Some(v - old);
+                    // Checked: the snap delta feeds the delta propagation,
+                    // and the subtraction itself can leave `i64` width on
+                    // wide searches — refuse to wrap (a wrapped delta would
+                    // corrupt every dependent assignment) and defer to the
+                    // full re-derivation instead.
+                    match checked_sub_delta(v, old) {
+                        Some(d) => snap_delta = Some(d),
+                        None => self.assignment_current = false,
+                    }
                 }
                 self.assignment[leaving] = v;
             }
         }
         let entering = nonbasic_var as usize;
-        if entering < self.assignment.len()
-            && let Some(v) = self.eval_expr(&new_expr)
-        {
-            self.assignment[entering] = v;
+        if entering < self.assignment.len() {
+            let entering_val = match (&new_expr, entering_wide.as_ref()) {
+                (Some(e), _) => self.eval_expr(e),
+                (None, Some(w)) => self.eval_big_expr(w),
+                (None, None) => None,
+            };
+            match entering_val {
+                Some(v) => self.assignment[entering] = v,
+                None => self.assignment_current = false,
+            }
         }
         // Update the edited rows' basic variables by DELTA propagation
         // instead of re-evaluating each row.  A substituted row is the same
@@ -2723,14 +2784,32 @@ impl Simplex {
             }
         }
         self.tableau.remove(&basic_var);
-        let entering_terms: SmallVec<[VarId; 4]> = new_expr.terms.iter().map(|(v, _)| *v).collect();
-        self.tableau.insert(nonbasic_var, Arc::new(new_expr));
-        for v in entering_terms {
-            // The entering variable had no row before, so no column listed it
-            // as a row owner; push without the membership scan.  (Terms it
-            // references may already list OTHER rows – that is a different
-            // key, untouched here.)
-            self.column_push_known(v, nonbasic_var);
+        match (new_expr, entering_wide) {
+            (Some(new_expr), _) => {
+                let entering_terms: SmallVec<[VarId; 4]> =
+                    new_expr.terms.iter().map(|(v, _)| *v).collect();
+                self.tableau.insert(nonbasic_var, Arc::new(new_expr));
+                for v in entering_terms {
+                    // The entering variable had no row before, so no column
+                    // listed it as a row owner; push without the membership
+                    // scan.  (Terms it references may already list OTHER
+                    // rows – that is a different key, untouched here.)
+                    self.column_push_known(v, nonbasic_var);
+                }
+            }
+            (None, Some(wide)) => {
+                // The dual-width entering side: the entering variable's
+                // row lives exactly in the wide store (pivoting and
+                // propagation skip it; its value is re-derived exactly).
+                let entering_terms: SmallVec<[VarId; 4]> =
+                    wide.terms.iter().map(|(v, _)| *v).collect();
+                self.wide_rows.insert(nonbasic_var, wide);
+                for v in entering_terms {
+                    self.column_push_known(v, nonbasic_var);
+                }
+                self.assignment_current = false;
+            }
+            (None, None) => {}
         }
         // Commit the substituted rows and maintain their column entries.
         // Substitution merges `new_expr` into the old row term-by-term, and a
@@ -2931,6 +3010,42 @@ impl Simplex {
         Some(new_expr)
     }
 
+    /// Exact entering row, UNNARROWED (`BigLinExpr`): the dual-width
+    /// pivot's entering side. Used when even the exact build cannot narrow
+    /// (a mixed-magnitude row: coefficients `1` and `2^63` make the solved
+    /// form's quotients — `1/2^63` — irreducibly past `i64`); the entering
+    /// variable's row then lives in the wide store, and every substitution
+    /// through it runs exactly. Division by zero still declines.
+    fn build_pivot_expr_big(
+        expr: &LinExpr,
+        coef: Rational64,
+        basic_var: VarId,
+        nonbasic_var: VarId,
+    ) -> Option<BigLinExpr> {
+        if coef.is_zero() {
+            return None;
+        }
+        let coef_b = big_r64(&coef);
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
+        terms.push((basic_var, coef_b.recip()));
+        let mut constant = -big_r64(&expr.constant) / &coef_b;
+        for (var, c) in &expr.terms {
+            if *var != nonbasic_var {
+                let val = -big_r64(c) / &coef_b;
+                match terms.iter_mut().find(|(tv, _)| tv == var) {
+                    Some(slot) => slot.1 += val,
+                    None => {
+                        if !val.is_zero() {
+                            terms.push((*var, val));
+                        }
+                    }
+                }
+            }
+        }
+        terms.retain(|(_, c)| !c.is_zero());
+        Some(BigLinExpr { terms, constant })
+    }
+
     /// Fast (checked `i64`) pivot substitution of one row: drop the entering
     /// variable's term and add `sc · new_expr` (the entering variable's
     /// defining row). `None` on any intermediate overflow — retry with
@@ -2962,14 +3077,14 @@ impl Simplex {
     fn substitute_row_big(
         row: &LinExpr,
         sc: Rational64,
-        new_expr: &LinExpr,
+        entering: &BigLinExpr,
         nonbasic_var: VarId,
     ) -> BigLinExpr {
         let sc_b = big_r64(&sc);
-        let constant = big_r64(&row.constant) + &sc_b * big_r64(&new_expr.constant);
+        let constant = big_r64(&row.constant) + &sc_b * &entering.constant;
         // Linear per-variable accumulation (rows are short; no map needed).
         let mut terms: Vec<(VarId, num_rational::BigRational)> =
-            Vec::with_capacity(row.terms.len() + new_expr.terms.len());
+            Vec::with_capacity(row.terms.len() + entering.terms.len());
         for (v, c) in &row.terms {
             if *v == nonbasic_var || c.is_zero() {
                 continue;
@@ -2979,8 +3094,8 @@ impl Simplex {
                 None => terms.push((*v, big_r64(c))),
             }
         }
-        for (v, c) in &new_expr.terms {
-            let add = &sc_b * big_r64(c);
+        for (v, c) in &entering.terms {
+            let add = &sc_b * c;
             match terms.iter_mut().find(|(tv, _)| tv == v) {
                 Some(slot) => slot.1 += add,
                 None => terms.push((*v, add)),
@@ -3100,6 +3215,125 @@ impl Simplex {
     /// exactly: `Some(true)` = VIOLATED (the model-snapshot and
     /// convergence gates decline), `Some(false)` = within bounds,
     /// `None` = undecidable now (stale reference).
+    /// Interval refutation of a violated wide row: `basic = Σ cᵢxᵢ + k`
+    /// with every `xᵢ` ranging over its (possibly one-sided) bounds. The
+    /// achievable value range of the right-hand side is computed EXACTLY
+    /// (per delta component; the lexicographic `(real, delta)` order makes
+    /// interval endpoint arithmetic valid) and compared against the
+    /// basic's bounds. A DISJOINT range means no assignment of the
+    /// bounded variables can satisfy the row — a genuine conflict, its
+    /// reasons every finite bound that determined the range plus the
+    /// basic's own bounds. `None` when the ranges overlap (repairable in
+    /// principle — the honest decline applies instead).
+    fn wide_row_refuted_by_bounds(&self, expr: &BigLinExpr, idx: usize) -> Option<Vec<u32>> {
+        use num_rational::BigRational as BR;
+        // (real, delta) range endpoints; `None` = unbounded on that side.
+        #[derive(Clone)]
+        struct End(BR, BR);
+        let lo_of = |vi: usize| -> Option<End> {
+            self.lower
+                .get(vi)
+                .and_then(|b| b.as_ref())
+                .map(|b| End(big_r64(&b.value.real), big_r64(&b.value.delta)))
+        };
+        let hi_of = |vi: usize| -> Option<End> {
+            self.upper
+                .get(vi)
+                .and_then(|b| b.as_ref())
+                .map(|b| End(big_r64(&b.value.real), big_r64(&b.value.delta)))
+        };
+        let mut min = End(BR::zero(), BR::zero());
+        let mut max = End(BR::zero(), BR::zero());
+        let mut reasons: Vec<u32> = Vec::new();
+        let mut collect = |e: Option<&Bound>, reasons: &mut Vec<u32>| {
+            if let Some(b) = e {
+                for r in b.all_reasons() {
+                    if !reasons.contains(&r) {
+                        reasons.push(r);
+                    }
+                }
+            }
+        };
+        let mut acc = |cur: &mut End, other: &End, sign: i8| {
+            if sign > 0 {
+                cur.0 += &other.0;
+                cur.1 += &other.1;
+            } else {
+                cur.0 -= &other.0;
+                cur.1 -= &other.1;
+            }
+        };
+        let constant = End(expr.constant.clone(), BR::zero());
+        acc(&mut min, &constant, 1);
+        acc(&mut max, &constant, 1);
+        for (v, c) in &expr.terms {
+            let vi = *v as usize;
+            collect(self.lower.get(vi).and_then(|b| b.as_ref()), &mut reasons);
+            collect(self.upper.get(vi).and_then(|b| b.as_ref()), &mut reasons);
+            let cb = End(c.clone(), BR::zero());
+            // c > 0: min at lo, max at hi;  c < 0: min at hi, max at lo.
+            let (min_src, max_src) = if *c > BR::zero() {
+                (lo_of(vi), hi_of(vi))
+            } else {
+                (hi_of(vi), lo_of(vi))
+            };
+            match min_src {
+                Some(e) => {
+                    // min += c·e  (c and e signs already folded by choice
+                    // of endpoint: c·lo for c>0, c·hi for c<0 — both are
+                    // the smaller product; subtract when c < 0).
+                    if *c > BR::zero() {
+                        acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
+                    } else {
+                        acc(&mut min, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
+                    }
+                }
+                None => return None, // unbounded below: range reaches -∞
+            }
+            match max_src {
+                Some(e) => {
+                    if *c > BR::zero() {
+                        acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), 1);
+                    } else {
+                        acc(&mut max, &End(&cb.0 * &e.0, &cb.0 * &e.1), -1);
+                    }
+                }
+                None => return None, // unbounded above
+            }
+        }
+        // The basic's bounds; the violated direction decides disjointness.
+        let blo = self.lower.get(idx).and_then(|b| b.as_ref());
+        let bhi = self.upper.get(idx).and_then(|b| b.as_ref());
+        collect(blo, &mut reasons);
+        collect(bhi, &mut reasons);
+        // Lexicographic (real, delta) comparison helper.
+        let cmp_end = |a: &End, b: &End| -> core::cmp::Ordering {
+            match a.0.cmp(&b.0) {
+                core::cmp::Ordering::Equal => a.1.cmp(&b.1),
+                ord => ord,
+            }
+        };
+        if let Some(hi) = bhi
+            && cmp_end(
+                &min,
+                &End(big_r64(&hi.value.real), big_r64(&hi.value.delta)),
+            ) == core::cmp::Ordering::Greater
+        {
+            // The row cannot go below its minimum, which already exceeds
+            // the basic's upper bound.
+            return Some(reasons);
+        }
+        if let Some(lo) = blo
+            && cmp_end(
+                &max,
+                &End(big_r64(&lo.value.real), big_r64(&lo.value.delta)),
+            ) == core::cmp::Ordering::Less
+        {
+            return Some(reasons);
+        }
+        None // ranges overlap: not refuted by bounds alone
+    }
+
     fn wide_row_violated(&self, expr: &BigLinExpr, idx: usize) -> Option<bool> {
         let (real, delta) = self.eval_big_raw(expr)?;
         let cmp_bound = |b: &DeltaRational| -> core::cmp::Ordering {
@@ -3142,10 +3376,10 @@ impl Simplex {
     fn substitute_big_row(
         row: &BigLinExpr,
         sc: &num_rational::BigRational,
-        new_expr: &LinExpr,
+        entering: &BigLinExpr,
         nonbasic_var: VarId,
     ) -> BigLinExpr {
-        let constant = row.constant.clone() + sc * big_r64(&new_expr.constant);
+        let constant = row.constant.clone() + sc * &entering.constant;
         let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
         let add = |var: VarId,
                    coef: num_rational::BigRational,
@@ -3163,8 +3397,8 @@ impl Simplex {
                 add(*v, c.clone(), &mut terms);
             }
         }
-        for (v, c) in &new_expr.terms {
-            add(*v, sc * big_r64(c), &mut terms);
+        for (v, c) in &entering.terms {
+            add(*v, sc * c, &mut terms);
         }
         terms.retain(|(_, c)| !c.is_zero());
         BigLinExpr { terms, constant }
