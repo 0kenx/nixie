@@ -465,3 +465,36 @@ fn genuinely_wide_rows_stay_honest() {
         "a wide model cannot be represented; sat would be unverified"
     );
 }
+
+/// The wide-row side table (2026-09-15, wide-LP slice 2): a formula whose
+/// chain rows combine past any `Rational64` (`≈ 2^102`) no longer declines
+/// globally when a row goes wide — the row is captured exactly (pivoting
+/// and propagation excluded from it, its value re-derived exactly), so the
+/// formula's *other*, narrow constraints stay decidable. Here the two pins
+/// on `v0` conflict through narrow rows alone: decided `unsat`, matching
+/// z3, where the whole goal used to be an honest `unknown` because the
+/// wide chain rows aborted the check.
+#[test]
+fn wide_chain_pins_conflict_is_decidable_unsat() {
+    use nixie_solver::Context;
+    let mut lines = vec![
+        "(set-logic QF_LRA)".to_string(),
+        "(declare-const v0 Real)".to_string(),
+    ];
+    let n = 40usize;
+    lines.extend((1..n).map(|i| format!("(declare-const v{i} Real)")));
+    lines.push("(assert (= v0 1))".to_string());
+    lines.push("(assert (= v0 2))".to_string());
+    for i in 0..n - 1 {
+        lines.push(format!(
+            "(assert (= v{i} (+ (* 2 v{}) 9223372036854775807)))",
+            i + 1
+        ));
+    }
+    lines.push("(check-sat)".to_string());
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(&lines.join("\n"))
+        .expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("unsat"));
+}

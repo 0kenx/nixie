@@ -445,6 +445,18 @@ fn split_reasons(reasons: SmallVec<[u32; 4]>) -> Option<(u32, SmallVec<[u32; 4]>
     }
     Some((primary, aux))
 }
+/// An exact (`BigRational`) linear expression — the wide-row storage of
+/// [`Simplex::wide_rows`]. Same shape as [`LinExpr`]; never narrowed
+/// (that is the point: at least one coefficient or the constant does not
+/// fit `Rational64`).
+#[derive(Debug, Clone, Default)]
+pub struct BigLinExpr {
+    /// Terms: (variable, exact coefficient)
+    pub terms: Vec<(VarId, num_rational::BigRational)>,
+    /// Constant term
+    pub constant: num_rational::BigRational,
+}
+
 /// A linear expression: sum of (coefficient, variable) pairs + constant
 #[derive(Debug, Clone, Default)]
 pub struct LinExpr {
@@ -813,6 +825,27 @@ pub struct Simplex {
     upper: Vec<Option<Bound>>,
     /// Tableau rows: basic variable -> linear combination of non-basic
     tableau: FxHashMap<VarId, Arc<LinExpr>>,
+    /// Rows whose exact substituted content does not fit `Rational64` —
+    /// a coefficient or the constant leaves `i64` width and stays there.
+    /// They keep their EXACT meaning (the slack equals the exact linear
+    /// form) but are excluded from the narrow machinery: the tableau never
+    /// pivots through them, propagation skips them (a missing
+    /// `tableau.get` already reads as "absent" everywhere), and their
+    /// values are re-derived exactly on every assignment update.  A bound
+    /// violation on a wide row is only detectable when the violated VALUE
+    /// itself fits (`Rational64` bounds against an exactly-evaluated
+    /// value); otherwise the honest `resource_limit` applies.  This is the
+    /// wide-LP wall's remaining territory made sound and partial: no
+    /// wrapped verdicts, decided wherever representability allows.
+    wide_rows: FxHashMap<VarId, BigLinExpr>,
+    /// A bounded wide row's value was unrepresentable (or stale-ref'd) at
+    /// the last assignment pass: mid-search this is TRANSIENT (the search
+    /// may move to a point where it narrows — often the value is exactly 0
+    /// once the constraint holds), so it must not break the check; the
+    /// convergence points (`check` after `make_feasible`, and
+    /// `state_feasible`'s model-snapshot gate) re-classify the row exactly
+    /// and only then decline.
+    wide_pending: bool,
     /// Column index: non-basic variable -> basic variables whose rows
     /// reference it.  Lets a bound change on one variable update exactly the
     /// rows that depend on it (O(column)) instead of re-deriving the whole
@@ -904,6 +937,8 @@ impl Simplex {
             lower: Vec::new(),
             upper: Vec::new(),
             tableau: FxHashMap::default(),
+            wide_rows: FxHashMap::default(),
+            wide_pending: false,
             columns: FxHashMap::default(),
             row_ids: FxHashMap::default(),
             row_scope_trail: Vec::new(),
@@ -1403,6 +1438,18 @@ impl Simplex {
         let mut substituted_expr = LinExpr::constant(expr.constant);
         let mut overflowed = false;
         'subst: for (var, coef) in &expr.terms {
+            // A WIDE basic variable must be substituted exactly like a
+            // narrow one — treating it as nonbasic (the tableau lookup
+            // misses it) would leak its term into the new row and break the
+            // "rows reference only nonbasics" invariant every pivot trusts
+            // (the debug column check caught exactly that: a stale columns
+            // entry and an entering choice of a basic variable). Route to
+            // the exact path, whose `intern_substitute_big` substitutes
+            // through wide rows.
+            if self.wide_rows.contains_key(var) {
+                overflowed = true;
+                break 'subst;
+            }
             if let Some(basic_expr) = self.tableau.get(var).cloned() {
                 let Some(dc) = checked_mul_r64(*coef, basic_expr.constant) else {
                     overflowed = true;
@@ -1431,17 +1478,15 @@ impl Simplex {
         }
         if overflowed {
             // Exact retry: accumulate per-variable in `BigRational`, narrow
-            // each final. `None` = a final genuinely exceeds `Rational64`:
-            // decline the row (no tableau entry) and mark the limit — every
-            // consumer of the flag reports `Unknown`, so the dropped
-            // constraint is never trusted as satisfied-or-refuted. The
-            // returned slack floats free (no row: constrains nothing).
+            // each final. A final that still does not fit does NOT drop the
+            // row — the row keeps its exact meaning in `wide_rows` (the
+            // wide-LP side table): no wrapping, no global decline, pivoting
+            // and propagation simply never go through it. This is what
+            // keeps a wide formula's *other* constraints decidable (the
+            // pins-crossing conflict, for instance, needs no rows at all).
             match self.intern_substitute_exact(&expr) {
                 Some(exact) => substituted_expr = exact,
-                None => {
-                    self.resource_limit = true;
-                    return self.new_slack();
-                }
+                None => return self.intern_wide_row(expr),
             }
         }
         // Register every variable the (substituted) expression references
@@ -1479,19 +1524,53 @@ impl Simplex {
         // assignment from its row in O(row) instead of forcing `check()` to
         // re-derive the whole tableau via `crash_basis`.
         if self.assignment_current {
-            let val = {
-                let row = self.tableau.get(&slack).expect("slack row just inserted");
-                let mut v = DeltaRational::from_rational(row.constant);
-                for (vr, c) in &row.terms {
-                    let vi = *vr as usize;
-                    if vi < self.assignment.len() {
-                        v += self.assignment[vi] * *c;
-                    }
-                }
-                v
-            };
-            self.assignment[slack as usize] = val;
+            let row = self.tableau.get(&slack).expect("slack row just inserted");
+            // Checked evaluation (with the exact fallback): the old inline
+            // `v += assignment * c` used the UNCHECKED `Ratio` operators —
+            // the same release-wrap class `eval_expr` was fixed for.
+            if let Some(val) = self.eval_expr(row) {
+                self.assignment[slack as usize] = val;
+            } else {
+                self.resource_limit = true;
+                self.assignment_current = false;
+            }
         }
+        slack
+    }
+
+    /// Intern a row whose exact substituted content does not fit
+    /// `Rational64`: allocate the slack, store the EXACT row in
+    /// `wide_rows`, maintain the column index, and derive the slack's
+    /// initial value exactly (narrowing it; a value that does not fit sets
+    /// the honest limit). The slack is basic-but-unpivable: every
+    /// `tableau.get`-shaped consumer reads it as absent, which is exactly
+    /// the skip semantics wide rows want.
+    fn intern_wide_row(&mut self, expr: LinExpr) -> VarId {
+        let big = self.intern_substitute_big(&expr);
+        for (v, _) in &big.terms {
+            self.ensure_var(*v as usize);
+        }
+        let slack = self.new_slack();
+        if slack as usize >= self.basic.len() {
+            self.basic.resize(slack as usize + 1, false);
+        }
+        self.basic[slack as usize] = true;
+        for (v, _) in &big.terms {
+            self.column_push_known(*v, slack);
+        }
+        if self.assignment_current {
+            match self.eval_big_expr(&big) {
+                Some(val) => self.assignment[slack as usize] = val,
+                None => {
+                    // The exact VALUE of the row does not fit: the
+                    // assignment vector cannot hold it, so no feasibility
+                    // verdict may rest on it.
+                    self.resource_limit = true;
+                    self.assignment_current = false;
+                }
+            }
+        }
+        self.wide_rows.insert(slack, big);
         slack
     }
     /// Add a constraint: expr >= 0
@@ -1624,11 +1703,41 @@ impl Simplex {
             // resource-limit signal the theory solver turns into `Unknown`.
             return Ok(());
         }
-        if self.soi_enabled {
+        let verdict = if self.soi_enabled {
             self.make_feasible_soi()
         } else {
             self.make_feasible()
+        };
+        // Convergence point for wide rows: the narrow search is done, so an
+        // exactly-classified VIOLATION now is final (no pivot can repair a
+        // wide row) — the honest `resource_limit`. A within-bounds row is
+        // satisfied regardless of whether its value could be stored.
+        if verdict.is_ok() && self.wide_pending {
+            for (var, wexpr) in &self.wide_rows {
+                let idx = *var as usize;
+                let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
+                    || self.upper.get(idx).is_some_and(|b| b.is_some());
+                if !bounded {
+                    continue;
+                }
+                match self.wide_row_violated(wexpr, idx) {
+                    Some(true) => {
+                        // Exactly-classified violation at convergence: no
+                        // pivot can repair a wide row — honest decline.
+                        self.resource_limit = true;
+                        break;
+                    }
+                    Some(false) => {}
+                    None => {
+                        // Undecidable (stale reference): nothing here can
+                        // certify the row, so no verdict may rest on it.
+                        self.resource_limit = true;
+                        break;
+                    }
+                }
+            }
         }
+        verdict
     }
     /// Crash basis initialization for faster convergence
     ///
@@ -2359,9 +2468,30 @@ impl Simplex {
         // mutation (the transactional validate-then-commit contract callers
         // and the overflow regression test rely on).
         let mut row_updates: Vec<(VarId, LinExpr)> = Vec::new();
+        let mut wide_updates: Vec<(VarId, BigLinExpr)> = Vec::new();
         if let Some(col) = self.columns.get(&nonbasic_var).cloned() {
             for &var in col.iter() {
                 if var == basic_var {
+                    continue;
+                }
+                // WIDE rows are rewritten too — skipping them would leave a
+                // stale exact row, which is unsound (the row's meaning must
+                // track the substitution). Their coefficient of the entering
+                // variable is exact, so the substitution runs exactly and
+                // the result lands wherever representability allows.
+                if !self.tableau.contains_key(&var)
+                    && let Some(wrow) = self.wide_rows.get(&var).cloned()
+                    && let Some((_, sc_b)) = wrow
+                        .terms
+                        .iter()
+                        .find(|(v, _)| *v == nonbasic_var)
+                        .map(|(v, c)| (*v, c.clone()))
+                {
+                    let updated = Self::substitute_big_row(&wrow, &sc_b, &new_expr, nonbasic_var);
+                    match Self::narrow_big_lin(&updated) {
+                        Some(narrow) => row_updates.push((var, narrow)),
+                        None => wide_updates.push((var, updated)),
+                    }
                     continue;
                 }
                 let Some((sc, row)) = self.tableau.get(&var).and_then(|row| {
@@ -2378,13 +2508,22 @@ impl Simplex {
                 // substituted row fits — cancellation across terms — so the
                 // `BigRational` retry recovers the row and only a genuinely
                 // wide row declines the pivot.
-                let Some(new_row) = Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var)
-                    .or_else(|| Self::substitute_row_exact(&row, sc, &new_expr, nonbasic_var))
-                else {
-                    self.resource_limit = true;
-                    return false;
-                };
-                row_updates.push((var, new_row));
+                // Fast-then-exact, and a genuinely wide result no longer
+                // declines the pivot: the exact row lands in the wide store
+                // (`wide_updates`) with its meaning intact — pivoting and
+                // propagation skip it, its value is re-derived exactly.
+                // Only the ENTERING row must be narrow (the pivot machinery
+                // is `LinExpr`-shaped); a wide entering row is what
+                // `resource_limit` remains for.
+                if let Some(fast) = Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var) {
+                    row_updates.push((var, fast));
+                } else {
+                    let exact = Self::substitute_row_big(&row, sc, &new_expr, nonbasic_var);
+                    match Self::narrow_big_lin(&exact) {
+                        Some(new_row) => row_updates.push((var, new_row)),
+                        None => wide_updates.push((var, exact)),
+                    }
+                }
             }
         }
         // Targeted assignment update.  After a pivot the *only* variable
@@ -2506,26 +2645,34 @@ impl Simplex {
             // term present in both rows needs no touch, a dropped term needs
             // removal, and an added term is guaranteed absent from the column
             // (direct push – `column_add`'s membership scan over dense
-            // columns was a top profiler entry here).
-            let (dropped, added): (SmallVec<[VarId; 4]>, SmallVec<[VarId; 4]>) =
-                match self.tableau.get(&var) {
-                    Some(old_row) => {
-                        let mut dropped = SmallVec::new();
-                        for (v, _) in old_row.terms.iter() {
-                            if !new_row.terms.iter().any(|(nv, _)| nv == v) {
-                                dropped.push(*v);
-                            }
+            // columns was a top profiler entry here). The row's PREVIOUS
+            // content lives in the tableau or — for a row that just narrowed
+            // back — in the wide store; diff against whichever holds it.
+            let old_terms: Option<SmallVec<[VarId; 4]>> = match self.tableau.get(&var) {
+                Some(old_row) => Some(old_row.terms.iter().map(|(v, _)| *v).collect()),
+                None => self
+                    .wide_rows
+                    .get(&var)
+                    .map(|w| w.terms.iter().map(|(v, _)| *v).collect()),
+            };
+            let (dropped, added): (SmallVec<[VarId; 4]>, SmallVec<[VarId; 4]>) = match old_terms {
+                Some(old_terms) => {
+                    let mut dropped = SmallVec::new();
+                    for v in old_terms.iter() {
+                        if !new_row.terms.iter().any(|(nv, _)| nv == v) {
+                            dropped.push(*v);
                         }
-                        let mut added = SmallVec::new();
-                        for (v, _) in new_row.terms.iter() {
-                            if !old_row.terms.iter().any(|(nv, _)| nv == v) {
-                                added.push(*v);
-                            }
-                        }
-                        (dropped, added)
                     }
-                    None => (SmallVec::new(), SmallVec::new()),
-                };
+                    let mut added = SmallVec::new();
+                    for (v, _) in new_row.terms.iter() {
+                        if !old_terms.contains(v) {
+                            added.push(*v);
+                        }
+                    }
+                    (dropped, added)
+                }
+                None => (SmallVec::new(), SmallVec::new()),
+            };
             for v in dropped {
                 self.column_drop_known(v, var);
             }
@@ -2535,6 +2682,47 @@ impl Simplex {
                 self.column_push_known(v, var);
             }
             self.tableau.insert(var, Arc::new(new_row));
+            // A row that narrowed back from the wide store leaves it (the
+            // tableau entry is now authoritative).
+            self.wide_rows.remove(&var);
+        }
+        // Commit wide updates: same diff-based column maintenance against
+        // the previous content (either store), and the assignment goes
+        // stale — a wide row's basic value may depend on the snapped
+        // leaving variable, and its exact update is the wide pass of the
+        // next full re-derivation (`update_assignment`).
+        if !wide_updates.is_empty() {
+            self.assignment_current = false;
+        }
+        for (var, new_wide) in wide_updates {
+            let old_terms: SmallVec<[VarId; 4]> = match self.tableau.get(&var) {
+                Some(old_row) => old_row.terms.iter().map(|(v, _)| *v).collect(),
+                None => self
+                    .wide_rows
+                    .get(&var)
+                    .map(|w| w.terms.iter().map(|(v, _)| *v).collect())
+                    .unwrap_or_default(),
+            };
+            let mut dropped: SmallVec<[VarId; 4]> = SmallVec::new();
+            for v in old_terms.iter() {
+                if !new_wide.terms.iter().any(|(nv, _)| nv == v) {
+                    dropped.push(*v);
+                }
+            }
+            let mut added: SmallVec<[VarId; 4]> = SmallVec::new();
+            for (v, _) in &new_wide.terms {
+                if !old_terms.contains(v) {
+                    added.push(*v);
+                }
+            }
+            for v in dropped {
+                self.column_drop_known(v, var);
+            }
+            for v in added {
+                self.column_push_known(v, var);
+            }
+            self.tableau.remove(&var);
+            self.wide_rows.insert(var, new_wide);
         }
         self.basic[basic_var as usize] = false;
         self.basic[nonbasic_var as usize] = true;
@@ -2557,11 +2745,25 @@ impl Simplex {
         }
         for (t, col) in &self.columns {
             for r in col.iter() {
-                debug_assert!(
-                    self.tableau
+                let references = self
+                    .tableau
+                    .get(r)
+                    .is_some_and(|row| row.terms.iter().any(|(v, _)| v == t))
+                    || self
+                        .wide_rows
                         .get(r)
-                        .is_some_and(|row| row.terms.iter().any(|(v, _)| v == t)),
+                        .is_some_and(|w| w.terms.iter().any(|(v, _)| v == t));
+                debug_assert!(
+                    references,
                     "columns[{t}] lists row {r} which does not reference it"
+                );
+            }
+        }
+        for (var, w) in &self.wide_rows {
+            for (t, _) in &w.terms {
+                debug_assert!(
+                    self.columns.get(t).is_some_and(|c| c.contains(var)),
+                    "columns[{t}] missing wide row {var} that references it"
                 );
             }
         }
@@ -2652,19 +2854,18 @@ impl Simplex {
         Some(new_row)
     }
 
-    /// Exact (`BigRational`) pivot substitution of one row (see
-    /// [`Self::substitute_row_fast`]): per-variable coefficients and the
-    /// constant are accumulated exactly and each FINAL is narrowed —
-    /// `None` only when a final genuinely does not fit `Rational64`.
-    /// Cancellation across terms is exactly the case this recovers: wide
-    /// positive and negative contributions can each exceed `i64` while
-    /// their sum fits (the item-14 pattern, applied to the row layer).
-    fn substitute_row_exact(
+    /// Exact (`BigRational`) pivot substitution of one NARROW row (see
+    /// [`Self::substitute_row_fast`]), producing the exact row without
+    /// narrowing: per-variable accumulation, cancellation exact. Used by
+    /// the narrowing retry ([`Self::substitute_row_exact`]) and by the
+    /// pivot's wide capture (a substituted row whose finals do not fit
+    /// `Rational64` lands in `wide_rows` instead of declining the pivot).
+    fn substitute_row_big(
         row: &LinExpr,
         sc: Rational64,
         new_expr: &LinExpr,
         nonbasic_var: VarId,
-    ) -> Option<LinExpr> {
+    ) -> BigLinExpr {
         let sc_b = big_r64(&sc);
         let constant = big_r64(&row.constant) + &sc_b * big_r64(&new_expr.constant);
         // Linear per-variable accumulation (rows are short; no map needed).
@@ -2686,21 +2887,22 @@ impl Simplex {
                 None => terms.push((*v, add)),
             }
         }
-        let mut new_row = LinExpr::new();
-        new_row.constant = narrow_big_r64(&constant)?;
-        for (v, c) in &terms {
-            if !c.is_zero() {
-                new_row.terms.push((*v, narrow_big_r64(c)?));
-            }
-        }
-        Some(new_row)
+        terms.retain(|(_, c)| !c.is_zero());
+        BigLinExpr { terms, constant }
     }
 
-    /// Exact (`BigRational`) version of `intern_row`'s basic-variable
-    /// substitution (see that method for the overflow contract): per-variable
-    /// accumulation with every basic row substituted in exact arithmetic,
-    /// each final narrowed; `None` when a final does not fit `Rational64`.
+    /// Exact (`BigRational`) basic-variable substitution for `intern_row`'s
+    /// exact retry: per-variable accumulation with basic rows substituted
+    /// exactly, each final narrowed; `None` when a final does not fit
+    /// `Rational64`.
     fn intern_substitute_exact(&self, expr: &LinExpr) -> Option<LinExpr> {
+        Self::narrow_big_lin(&self.intern_substitute_big(expr))
+    }
+
+    /// Exact (`BigRational`) basic-variable substitution for `intern_row`'s
+    /// wide capture (see [`Self::intern_wide_row`]): identical accumulation
+    /// to [`Self::intern_substitute_exact`] without the narrowing step.
+    fn intern_substitute_big(&self, expr: &LinExpr) -> BigLinExpr {
         let mut constant = big_r64(&expr.constant);
         let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
         let add = |var: VarId,
@@ -2721,18 +2923,125 @@ impl Simplex {
                 for (inner_var, inner_coef) in &basic_expr.terms {
                     add(*inner_var, &coef_b * big_r64(inner_coef), &mut terms);
                 }
+            } else if let Some(wide) = self.wide_rows.get(var) {
+                // Substitute through another WIDE row exactly — width
+                // propagates, which is fine: the result stays exact.
+                constant += &coef_b * wide.constant.clone();
+                for (inner_var, inner_coef) in &wide.terms {
+                    add(*inner_var, &coef_b * inner_coef, &mut terms);
+                }
             } else {
                 add(*var, coef_b, &mut terms);
             }
         }
+        terms.retain(|(_, c)| !c.is_zero());
+        BigLinExpr { terms, constant }
+    }
+
+    /// Evaluate a wide row exactly under the current assignment, keeping
+    /// the exact components: `None` only on a stale variable reference.
+    fn eval_big_raw(
+        &self,
+        expr: &BigLinExpr,
+    ) -> Option<(num_rational::BigRational, num_rational::BigRational)> {
+        let num_vars = self.assignment.len();
+        let mut real = expr.constant.clone();
+        let mut delta = num_rational::BigRational::zero();
+        for (v, c) in &expr.terms {
+            let vi = *v as usize;
+            if vi >= num_vars {
+                return None;
+            }
+            let a = &self.assignment[vi];
+            real += big_r64(&a.real) * c;
+            delta += big_r64(&a.delta) * c;
+        }
+        Some((real, delta))
+    }
+
+    /// Evaluate a wide row exactly and narrow; `None` when the exact value
+    /// does not fit `Rational64` (the assignment vector is
+    /// `Rational64`-width) or on a stale reference.
+    fn eval_big_expr(&self, expr: &BigLinExpr) -> Option<DeltaRational> {
+        let (real, delta) = self.eval_big_raw(expr)?;
+        Some(DeltaRational {
+            real: narrow_big_r64(&real)?,
+            delta: narrow_big_r64(&delta)?,
+        })
+    }
+
+    /// Classify a bounded wide row's bounds at the current assignment,
+    /// exactly: `Some(true)` = VIOLATED (the model-snapshot and
+    /// convergence gates decline), `Some(false)` = within bounds,
+    /// `None` = undecidable now (stale reference).
+    fn wide_row_violated(&self, expr: &BigLinExpr, idx: usize) -> Option<bool> {
+        let (real, delta) = self.eval_big_raw(expr)?;
+        let cmp_bound = |b: &DeltaRational| -> core::cmp::Ordering {
+            // (real + delta·δ) vs bound — δ ordering only breaks real ties.
+            match real.cmp(&big_r64(&b.real)) {
+                core::cmp::Ordering::Equal => delta.cmp(&big_r64(&b.delta)),
+                ord => ord,
+            }
+        };
+        if let Some(lo) = self.lower.get(idx).and_then(|o| o.as_ref())
+            && cmp_bound(&lo.value) == core::cmp::Ordering::Less
+        {
+            return Some(true);
+        }
+        if let Some(hi) = self.upper.get(idx).and_then(|o| o.as_ref())
+            && cmp_bound(&hi.value) == core::cmp::Ordering::Greater
+        {
+            return Some(true);
+        }
+        Some(false)
+    }
+
+    /// Narrow an exact row back into `LinExpr` form; `None` as soon as any
+    /// final coefficient or the constant does not fit `Rational64`.
+    fn narrow_big_lin(expr: &BigLinExpr) -> Option<LinExpr> {
         let mut out = LinExpr::new();
-        out.constant = narrow_big_r64(&constant)?;
-        for (v, c) in &terms {
+        out.constant = narrow_big_r64(&expr.constant)?;
+        for (v, c) in &expr.terms {
             if !c.is_zero() {
                 out.terms.push((*v, narrow_big_r64(c)?));
             }
         }
         Some(out)
+    }
+
+    /// Exact substitution of a WIDE row by the (narrow) entering row of the
+    /// current pivot: drop the entering variable's term, add `sc · new_expr`
+    /// with `sc` exact. The result stays wide unless everything cancels back
+    /// into width ([`Self::narrow_big_lin`] decides where it lands).
+    fn substitute_big_row(
+        row: &BigLinExpr,
+        sc: &num_rational::BigRational,
+        new_expr: &LinExpr,
+        nonbasic_var: VarId,
+    ) -> BigLinExpr {
+        let constant = row.constant.clone() + sc * big_r64(&new_expr.constant);
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
+        let add = |var: VarId,
+                   coef: num_rational::BigRational,
+                   terms: &mut Vec<(VarId, num_rational::BigRational)>| {
+            if coef.is_zero() {
+                return;
+            }
+            match terms.iter_mut().find(|(tv, _)| *tv == var) {
+                Some(slot) => slot.1 += coef,
+                None => terms.push((var, coef)),
+            }
+        };
+        for (v, c) in &row.terms {
+            if *v != nonbasic_var {
+                add(*v, c.clone(), &mut terms);
+            }
+        }
+        for (v, c) in &new_expr.terms {
+            add(*v, sc * big_r64(c), &mut terms);
+        }
+        terms.retain(|(_, c)| !c.is_zero());
+        BigLinExpr { terms, constant }
     }
 
     /// Evaluate a linear expression under the current assignment.
@@ -2846,6 +3155,32 @@ impl Simplex {
             }
             if !has_stale_ref {
                 self.assignment[var_idx] = DeltaRational { real, delta };
+            }
+        }
+        // Wide rows: re-derived EXACTLY every pass (their values can
+        // overflow intermediate-wise while the final fits, so the checked
+        // fast path is not even attempted — exact is the only path). An
+        // unrepresentable value is TRANSIENT mid-search — the search may
+        // well move to a point where it narrows (a satisfied constraint's
+        // slack is often exactly 0) — so it never breaks this pass: an
+        // UNBOUNDED wide slack's value is irrelevant (nothing reads it),
+        // and a bounded one flags `wide_pending` for the convergence
+        // points to classify exactly.
+        self.wide_pending = false;
+        for (var, wexpr) in &self.wide_rows {
+            let var_idx = *var as usize;
+            if var_idx >= num_vars {
+                continue;
+            }
+            match self.eval_big_expr(wexpr) {
+                Some(val) => self.assignment[var_idx] = val,
+                None => {
+                    let bounded = self.lower.get(var_idx).is_some_and(|b| b.is_some())
+                        || self.upper.get(var_idx).is_some_and(|b| b.is_some());
+                    if bounded {
+                        self.wide_pending = true;
+                    }
+                }
             }
         }
         if overflow {
@@ -3215,6 +3550,8 @@ impl Simplex {
         self.lower.clear();
         self.upper.clear();
         self.tableau.clear();
+        self.wide_rows.clear();
+        self.wide_pending = false;
         self.columns.clear();
         self.row_ids.clear();
         self.row_scope_trail.clear();
@@ -3382,7 +3719,23 @@ impl Simplex {
                 return false;
             }
         }
-        self.find_violating().is_none()
+        if self.find_violating().is_some() {
+            return false;
+        }
+        // A model snapshot must also satisfy every bounded wide row: the
+        // exact classification is the only witness for a row whose value
+        // could not be stored.
+        if self.wide_pending
+            && self.wide_rows.iter().any(|(var, wexpr)| {
+                let idx = *var as usize;
+                let bounded = self.lower.get(idx).is_some_and(|b| b.is_some())
+                    || self.upper.get(idx).is_some_and(|b| b.is_some());
+                bounded && self.wide_row_violated(wexpr, idx).is_some_and(|v| v)
+            })
+        {
+            return false;
+        }
+        true
     }
 
     /// Copy the current bounds (with their full reason sets) from `from` to

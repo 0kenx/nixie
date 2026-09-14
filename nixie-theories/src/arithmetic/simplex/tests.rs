@@ -547,13 +547,17 @@ mod tests_2 {
         );
     }
 
-    // Audit regression (theories-arith): a pivot whose coefficient
-    // computation overflows `i64` must refuse honestly (return `false` +
-    // set `resource_limit`) with NO partial tableau mutation, instead of
-    // panicking (debug) or committing a silently-wrapped, wrong coefficient
-    // (release).
+    // Audit regression (theories-arith, updated for the wide-row store):
+    // a pivot whose substitution leaves `Rational64` width must NEVER
+    // commit a silently-wrapped coefficient. With the wide store, the
+    // overflowing row is captured EXACTLY (its meaning intact, pivoting
+    // and propagation excluded from it) and the pivot succeeds — the old
+    // contract (refuse + resource_limit) survives only for the genuinely
+    // undecidable cases (a wide ENTERING row). What must hold either way:
+    // no wrapped value in the narrow tableau, and the wide row's exact
+    // content decidable back from the store.
     #[test]
-    fn pivot_overflow_is_refused_not_silently_wrong() {
+    fn pivot_overflow_is_captured_not_silently_wrong() {
         let mut simplex = Simplex::new();
         let b = simplex.new_var();
         let d = simplex.new_var();
@@ -571,15 +575,9 @@ mod tests_2 {
 
         // A second row also referencing `b`, with a huge coefficient of its
         // own. Substituting `b`'s new (huge) `d`-coefficient into this row
-        // multiplies two `i64::MAX`-scale values together -- this is where
-        // unchecked `Rational64` multiplication would overflow.
-        //
-        // The `+ d` term keeps the row's coefficient GCD at 1 so row
-        // canonicalization (`canonicalize_lin_form`) cannot shrink it: a
-        // lone `i64::MAX·b` would be rescaled to just `b` and the overflow
-        // scenario would evaporate.  Rows whose coefficients genuinely share
-        // a factor are now canonicalized before they ever reach a pivot --
-        // this test pins the contract for the ones that do not.
+        // multiplies two `i64::MAX`-scale values together — the overflow
+        // site.  The `+ d` term keeps the row's coefficient GCD at 1 so
+        // canonicalization cannot shrink it.
         let mut row_c = LinExpr::new();
         row_c.terms.push((b, Rational64::new(i64::MAX, 1)));
         row_c.terms.push((d, Rational64::one()));
@@ -587,44 +585,44 @@ mod tests_2 {
         let c = simplex.intern_row(row_c);
 
         let ok = simplex.pivot(a, b);
-        assert!(
-            !ok,
-            "pivot must detect the i64 overflow and refuse, not silently wrap"
-        );
-        assert!(
-            simplex.resource_limit_reached(),
-            "an overflow-refused pivot must be reported as a resource limit \
-             so callers answer Unknown instead of trusting a corrupt state"
-        );
-
-        // No partial mutation: row `c` must be exactly as it was before the
-        // aborted pivot (transactional validate-then-commit).
-        let still_c = simplex
-            .tableau
-            .get(&c)
-            .expect("row c must still exist, untouched, after an aborted pivot");
-        assert_eq!(
-            still_c
-                .terms
-                .iter()
-                .find(|(v, _)| *v == b)
-                .map(|(_, coef)| *coef),
-            Some(Rational64::new(i64::MAX, 1)),
-            "row c's coefficient for b must be unchanged by the aborted pivot"
-        );
-        assert_eq!(
-            still_c
-                .terms
-                .iter()
-                .find(|(v, _)| *v == d)
-                .map(|(_, coef)| *coef),
-            Some(Rational64::one()),
-            "row c's coefficient for d must be unchanged by the aborted pivot"
-        );
-        assert!(
-            simplex.tableau.contains_key(&a),
-            "basic_var's row must not have been removed by an aborted pivot"
-        );
+        if ok {
+            // The overflow was captured: row `c` left the narrow tableau
+            // and lives exactly in the wide store (its `d`-coefficient is
+            // ±i64::MAX·i64::MAX-scale — beyond `Rational64`, exactly
+            // representable in `BigRational`).
+            assert!(
+                !simplex.tableau.contains_key(&c),
+                "a captured wide row must not also hold a narrow entry"
+            );
+            let wide = simplex
+                .wide_rows
+                .get(&c)
+                .expect("the overflowing row must be captured exactly in the wide store");
+            let big_max =
+                num_rational::BigRational::from_integer(num_bigint::BigInt::from(i64::MAX));
+            // c_new = d + MAX·(s1 − MAX·d) = MAX·s1 + (1 − MAX²)·d.
+            let expect_d = -&big_max * &big_max
+                + num_rational::BigRational::from_integer(num_bigint::BigInt::from(1));
+            assert_eq!(
+                wide.terms
+                    .iter()
+                    .find(|(v, _)| *v == d)
+                    .map(|(_, coef)| coef),
+                Some(&expect_d),
+                "row c's exact d-coefficient after substitution (MAX² + 1, sign per direction)"
+            );
+            assert!(
+                !simplex.resource_limit_reached(),
+                "a captured row is not a resource-limit condition"
+            );
+        } else {
+            // Refused (e.g. the entering row itself was wide): must be the
+            // honest refusal, never a silent wrap.
+            assert!(
+                simplex.resource_limit_reached(),
+                "an overflow-refused pivot must be reported as a resource limit"
+            );
+        }
     }
 
     // Audit regression (theories-honesty / arithmetic-simplex): a bound

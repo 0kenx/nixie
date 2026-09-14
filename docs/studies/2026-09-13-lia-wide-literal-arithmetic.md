@@ -589,3 +589,46 @@ Regressions in `nixie-solver/tests/arith_wide_literal_regressions.rs`:
 `/tmp/wide_fuzz.py`'s shape (wide-literal cancellation differential —
 recreate from this description when needed; it is the tool that owns this
 surface now that the corpora are gone).
+
+## Continuation 9 (2026-09-15): the wide-LP wall, slice 2 — the wide-row side table
+
+Slice 1 recovered rows whose *intermediates* overflow while finals fit;
+this slice handles rows whose **finals** genuinely exceed `Rational64` (the
+`c7`/`c8` chain class, constants combining to `≈ 2^102`). The design:
+rows that cannot be narrowed are **captured exactly** in a side table
+(`Simplex::wide_rows`, `BigLinExpr`) instead of declining the check —
+their meaning survives, only the *pivoting and propagation through them*
+is lost:
+
+28. **Capture sites**: `intern_row`'s exact-retry failure now interns the
+    exact row into the wide store (`intern_wide_row`: slack allocated,
+    column index maintained, value derived exactly); `pivot`'s substitution
+    commits a non-narrowing result to `wide_updates` instead of returning
+    `false`. `intern_row`'s fast path also routes WIDE-basic terms through
+    the exact substitution — treating a wide basic variable as nonbasic
+    leaked its term into new rows, breaking the "rows reference only
+    nonbasics" invariant (the debug column check caught a stale `columns`
+    entry and a pivot choosing a basic variable as entering: the
+    `a_product_of_two_negatives_is_sat` canary).
+29. **Transient failures, convergence classification**: an unrepresentable
+    wide value is mid-search TRANSIENT (a satisfied constraint's slack is
+    often exactly 0) — it flags `wide_pending` instead of setting
+    `resource_limit`; `check` (after `make_feasible`) and
+    `state_feasible` (the model-snapshot gate) classify pending rows
+    EXACTLY (`wide_row_violated`: BigRational comparison against the
+    bounds, δ only breaking real ties) — a final violation or an
+    undecidable row declines; a within-bounds row certifies regardless of
+    whether its value could be stored. Unbounded wide slacks' values are
+    irrelevant (nothing reads them) and are skipped.
+30. **Measured**: the contradictory-pins chain (`c8`) decides `unsat`
+    matching z3 (the pin conflict runs through narrow rows while the wide
+    chain sits captured — the old global decline killed it before the
+    conflict could fire); the satisfiable twin (`c7`) stays honestly
+    `unknown` — the narrow search converges on points that violate the
+    wide equalities and nothing guides it (wide-row *propagation/pivoting*
+    is the named remaining work). Verification: 18/18 wide-literal
+    regressions (the `pivot_overflow` unit test updated to the
+    capture-not-refuse contract), full theories+solver suites green except
+    the standing `[corpus-missing]` set, wide differential 1,100 instances
+    across 4 seeds + mixed fuzz 1,200 + debug-panic sweep + Z3 parity
+    176/177 correct / 0 disagreements (z3 4.16.0).
