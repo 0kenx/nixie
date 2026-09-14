@@ -212,6 +212,24 @@ fn gcd_i64(a: i64, b: i64) -> i64 {
 /// the least common multiple.  Semantically identical to
 /// `checked_add_r64(x, checked_mul_r64(f, y)?)?` – the fusion only removes
 /// intermediate reductions.
+/// Widen a `Rational64` to an exact `BigRational` (the exact-retry paths).
+fn big_r64(r: &Rational64) -> num_rational::BigRational {
+    num_rational::BigRational::new(
+        num_bigint::BigInt::from(*r.numer()),
+        num_bigint::BigInt::from(*r.denom()),
+    )
+}
+
+/// Narrow an exact `BigRational` back to `Rational64`; `None` when the
+/// final genuinely does not fit (the honest give-up — intermediates may
+/// overflow while finals fit, so only the *final* is refused).
+fn narrow_big_r64(r: &num_rational::BigRational) -> Option<Rational64> {
+    Some(Rational64::new(
+        num_traits::ToPrimitive::to_i64(r.numer())?,
+        num_traits::ToPrimitive::to_i64(r.denom())?,
+    ))
+}
+
 /// Checked `DeltaRational · Rational64` (both components), used by the
 /// pivot's delta-propagation.  `None` on overflow – callers must re-derive
 /// rather than store a wrapped (wrong) assignment.
@@ -1373,15 +1391,57 @@ impl Simplex {
         // passes through (content-addressed callers pre-normalize for the
         // key; direct callers land here) – see `canonicalize_lin_form`.
         canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
+        // Substitute basic variables out of the row. The old body used the
+        // UNCHECKED `Ratio` operators: a `coef · basic-constant` product
+        // past `i64` panicked in debug and WRAPPED in release — a silently
+        // wrong row that every later decision trusted (observed on the
+        // wide-literal differential: `2^62 · 2` intermediates with a final
+        // that fits). Checked fixed-width first; exact `BigRational`
+        // accumulation on overflow, narrowing each final; only a genuinely
+        // unrepresentable row declines through `resource_limit` (the
+        // intern is idempotent, so a declined row simply never lands).
         let mut substituted_expr = LinExpr::constant(expr.constant);
-        for (var, coef) in &expr.terms {
+        let mut overflowed = false;
+        'subst: for (var, coef) in &expr.terms {
             if let Some(basic_expr) = self.tableau.get(var).cloned() {
-                substituted_expr.add_constant(coef * basic_expr.constant);
+                let Some(dc) = checked_mul_r64(*coef, basic_expr.constant) else {
+                    overflowed = true;
+                    break 'subst;
+                };
+                let Some(sum) = checked_add_r64(substituted_expr.constant, dc) else {
+                    overflowed = true;
+                    break 'subst;
+                };
+                substituted_expr.constant = sum;
                 for (inner_var, inner_coef) in &basic_expr.terms {
-                    substituted_expr.add_term(*inner_var, coef * inner_coef);
+                    let Some(p) = checked_mul_r64(*coef, *inner_coef) else {
+                        overflowed = true;
+                        break 'subst;
+                    };
+                    // `add_term` is unchecked; route through `try_add_term`.
+                    if !substituted_expr.try_add_term(*inner_var, p) {
+                        overflowed = true;
+                        break 'subst;
+                    }
                 }
-            } else {
-                substituted_expr.add_term(*var, *coef);
+            } else if !substituted_expr.try_add_term(*var, *coef) {
+                overflowed = true;
+                break 'subst;
+            }
+        }
+        if overflowed {
+            // Exact retry: accumulate per-variable in `BigRational`, narrow
+            // each final. `None` = a final genuinely exceeds `Rational64`:
+            // decline the row (no tableau entry) and mark the limit — every
+            // consumer of the flag reports `Unknown`, so the dropped
+            // constraint is never trusted as satisfied-or-refuted. The
+            // returned slack floats free (no row: constrains nothing).
+            match self.intern_substitute_exact(&expr) {
+                Some(exact) => substituted_expr = exact,
+                None => {
+                    self.resource_limit = true;
+                    return self.new_slack();
+                }
             }
         }
         // Register every variable the (substituted) expression references
@@ -2280,35 +2340,17 @@ impl Simplex {
             self.resource_limit = true;
             return false;
         };
-        let Some(inv_coef) = checked_recip_r64(coef) else {
-            self.resource_limit = true;
-            return false;
-        };
-        let Some(new_constant) =
-            checked_neg_r64(expr.constant).and_then(|n| checked_div_r64(n, coef))
+        // The entering variable's defining row: checked fixed-width first
+        // (the fast path), exact `BigRational` retry on any intermediate
+        // overflow (intermediates of `-c/coef` legitimately overflow while
+        // the finals fit — magnitudes and denominators cancel), and only a
+        // genuinely unrepresentable final declines through `resource_limit`.
+        let Some(new_expr) = Self::build_pivot_expr(expr, coef, basic_var, nonbasic_var)
+            .or_else(|| Self::build_pivot_expr_exact(expr, coef, basic_var, nonbasic_var))
         else {
             self.resource_limit = true;
             return false;
         };
-        let mut new_expr = LinExpr::new();
-        new_expr.terms.push((basic_var, inv_coef));
-        new_expr.constant = new_constant;
-        for (var, c) in &expr.terms {
-            if *var != nonbasic_var {
-                let Some(neg_c) = checked_neg_r64(*c) else {
-                    self.resource_limit = true;
-                    return false;
-                };
-                let Some(val) = checked_div_r64(neg_c, coef) else {
-                    self.resource_limit = true;
-                    return false;
-                };
-                if !new_expr.try_add_term(*var, val) {
-                    self.resource_limit = true;
-                    return false;
-                }
-            }
-        }
         // Collect the rows that reference the entering column – in O(column)
         // via the column index rather than a full-tableau scan – and compute
         // their substituted content into `row_updates` WITHOUT mutating the
@@ -2330,23 +2372,20 @@ impl Simplex {
                 }) else {
                     continue;
                 };
-                let mut new_row = (*row).clone();
-                new_row.terms.retain(|(v, _)| *v != nonbasic_var);
-                let Some(delta_c) = checked_mul_r64(sc, new_expr.constant) else {
+                // Same fast-then-exact discipline as the entering row: the
+                // substitution's intermediates (`sc·const`, merged
+                // coefficients) can exceed `i64` while every final of the
+                // substituted row fits — cancellation across terms — so the
+                // `BigRational` retry recovers the row and only a genuinely
+                // wide row declines the pivot.
+                let Some(new_row) =
+                    Self::substitute_row_fast(&row, sc, &new_expr, nonbasic_var).or_else(|| {
+                        Self::substitute_row_exact(&row, sc, &new_expr, nonbasic_var)
+                    })
+                else {
                     self.resource_limit = true;
                     return false;
                 };
-                let Some(sum) = checked_add_r64(new_row.constant, delta_c) else {
-                    self.resource_limit = true;
-                    return false;
-                };
-                new_row.constant = sum;
-                for (v, c) in &new_expr.terms {
-                    if !new_row.try_add_term_mul(*v, sc, *c) {
-                        self.resource_limit = true;
-                        return false;
-                    }
-                }
                 row_updates.push((var, new_row));
             }
         }
@@ -2535,6 +2574,177 @@ impl Simplex {
     /// in which case the caller leaves that basic variable's assignment
     /// untouched – matching [`Simplex::update_assignment`]'s `has_stale_ref`
     /// skip, so targeted updates stay consistent with the full recompute.
+    /// Fast (checked `i64`) build of the entering variable's defining row
+    /// for the pivot `basic_var ← nonbasic_var`: the row of `basic_var`
+    /// solved for `nonbasic_var`. `None` on any intermediate overflow —
+    /// the caller retries exactly ([`Self::build_pivot_expr_exact`]).
+    fn build_pivot_expr(
+        expr: &LinExpr,
+        coef: Rational64,
+        basic_var: VarId,
+        nonbasic_var: VarId,
+    ) -> Option<LinExpr> {
+        let inv_coef = checked_recip_r64(coef)?;
+        let new_constant = checked_div_r64(checked_neg_r64(expr.constant)?, coef)?;
+        let mut new_expr = LinExpr::new();
+        new_expr.terms.push((basic_var, inv_coef));
+        new_expr.constant = new_constant;
+        for (var, c) in &expr.terms {
+            if *var != nonbasic_var {
+                let val = checked_div_r64(checked_neg_r64(*c)?, coef)?;
+                if !new_expr.try_add_term(*var, val) {
+                    return None;
+                }
+            }
+        }
+        Some(new_expr)
+    }
+
+    /// Exact (`BigRational`) build of the entering variable's defining row
+    /// (see [`Self::build_pivot_expr`]); `None` only when a FINAL
+    /// coefficient or the constant genuinely does not fit `Rational64`.
+    /// This is what recovers the wide-literal classes: intermediates of
+    /// `−c/coef` legitimately overflow while the finals fit (magnitudes
+    /// and denominators cancel).
+    fn build_pivot_expr_exact(
+        expr: &LinExpr,
+        coef: Rational64,
+        basic_var: VarId,
+        nonbasic_var: VarId,
+    ) -> Option<LinExpr> {
+        if coef.is_zero() {
+            return None; // division by zero: no exact result either
+        }
+        let coef_b = big_r64(&coef);
+        let mut new_expr = LinExpr::new();
+        new_expr.terms.push((basic_var, narrow_big_r64(&coef_b.recip())?));
+        new_expr.constant = narrow_big_r64(&(-big_r64(&expr.constant) / &coef_b))?;
+        for (var, c) in &expr.terms {
+            if *var != nonbasic_var {
+                let val = narrow_big_r64(&(-big_r64(c) / &coef_b))?;
+                if !new_expr.try_add_term(*var, val) {
+                    return None; // unreachable for narrowed inputs; defensive
+                }
+            }
+        }
+        Some(new_expr)
+    }
+
+    /// Fast (checked `i64`) pivot substitution of one row: drop the entering
+    /// variable's term and add `sc · new_expr` (the entering variable's
+    /// defining row). `None` on any intermediate overflow — retry with
+    /// [`Self::substitute_row_exact`].
+    fn substitute_row_fast(
+        row: &LinExpr,
+        sc: Rational64,
+        new_expr: &LinExpr,
+        nonbasic_var: VarId,
+    ) -> Option<LinExpr> {
+        let mut new_row = row.clone();
+        new_row.terms.retain(|(v, _)| *v != nonbasic_var);
+        new_row.constant =
+            checked_add_r64(new_row.constant, checked_mul_r64(sc, new_expr.constant)?)?;
+        for (v, c) in &new_expr.terms {
+            if !new_row.try_add_term_mul(*v, sc, *c) {
+                return None;
+            }
+        }
+        Some(new_row)
+    }
+
+    /// Exact (`BigRational`) pivot substitution of one row (see
+    /// [`Self::substitute_row_fast`]): per-variable coefficients and the
+    /// constant are accumulated exactly and each FINAL is narrowed —
+    /// `None` only when a final genuinely does not fit `Rational64`.
+    /// Cancellation across terms is exactly the case this recovers: wide
+    /// positive and negative contributions can each exceed `i64` while
+    /// their sum fits (the item-14 pattern, applied to the row layer).
+    fn substitute_row_exact(
+        row: &LinExpr,
+        sc: Rational64,
+        new_expr: &LinExpr,
+        nonbasic_var: VarId,
+    ) -> Option<LinExpr> {
+        let sc_b = big_r64(&sc);
+        let mut constant = big_r64(&row.constant) + &sc_b * big_r64(&new_expr.constant);
+        // Linear per-variable accumulation (rows are short; no map needed).
+        let mut terms: Vec<(VarId, num_rational::BigRational)> =
+            Vec::with_capacity(row.terms.len() + new_expr.terms.len());
+        for (v, c) in &row.terms {
+            if *v == nonbasic_var || c.is_zero() {
+                continue;
+            }
+            match terms.iter_mut().find(|(tv, _)| tv == v) {
+                Some(slot) => slot.1 += big_r64(c),
+                None => terms.push((*v, big_r64(c))),
+            }
+        }
+        for (v, c) in &new_expr.terms {
+            let add = &sc_b * big_r64(c);
+            match terms.iter_mut().find(|(tv, _)| tv == v) {
+                Some(slot) => slot.1 += add,
+                None => terms.push((*v, add)),
+            }
+        }
+        let mut new_row = LinExpr::new();
+        new_row.constant = narrow_big_r64(&constant)?;
+        for (v, c) in &terms {
+            if !c.is_zero() {
+                new_row.terms.push((*v, narrow_big_r64(c)?));
+            }
+        }
+        Some(new_row)
+    }
+
+    /// Exact (`BigRational`) version of `intern_row`'s basic-variable
+    /// substitution (see that method for the overflow contract): per-variable
+    /// accumulation with every basic row substituted in exact arithmetic,
+    /// each final narrowed; `None` when a final does not fit `Rational64`.
+    fn intern_substitute_exact(&self, expr: &LinExpr) -> Option<LinExpr> {
+        let mut constant = big_r64(&expr.constant);
+        let mut terms: Vec<(VarId, num_rational::BigRational)> = Vec::new();
+        let mut add = |var: VarId,
+                       coef: num_rational::BigRational,
+                       terms: &mut Vec<(VarId, num_rational::BigRational)>| {
+            if coef.is_zero() {
+                return;
+            }
+            match terms.iter_mut().find(|(tv, _)| *tv == var) {
+                Some(slot) => slot.1 += coef,
+                None => terms.push((var, coef)),
+            }
+        };
+        for (var, coef) in &expr.terms {
+            let coef_b = big_r64(coef);
+            if let Some(basic_expr) = self.tableau.get(var) {
+                constant += &coef_b * big_r64(&basic_expr.constant);
+                for (inner_var, inner_coef) in &basic_expr.terms {
+                    add(*inner_var, &coef_b * big_r64(inner_coef), &mut terms);
+                }
+            } else {
+                add(*var, coef_b, &mut terms);
+            }
+        }
+        let mut out = LinExpr::new();
+        out.constant = narrow_big_r64(&constant)?;
+        for (v, c) in &terms {
+            if !c.is_zero() {
+                out.terms.push((*v, narrow_big_r64(c)?));
+            }
+        }
+        Some(out)
+    }
+
+    /// Evaluate a linear expression under the current assignment.
+    ///
+    /// Checked fixed-width accumulation with an exact (`BigRational`)
+    /// retry: the old body used the *unchecked* `Ratio` operators, whose
+    /// release behaviour on an intermediate outside `i64` is a silent wrap
+    /// — a wrong `Some` that every consumer would trust (assignment
+    /// snapshots, the pivot's entering value). Intermediates legitimately
+    /// overflow while the final fits (magnitudes cancel), so the retry
+    /// recovers the exact value and only a genuinely unrepresentable final
+    /// declines to `None`.
     fn eval_expr(&self, expr: &LinExpr) -> Option<DeltaRational> {
         let num_vars = self.assignment.len();
         let mut val = DeltaRational::from_rational(expr.constant);
@@ -2543,7 +2753,12 @@ impl Simplex {
             if idx >= num_vars {
                 return None;
             }
-            val += self.assignment[idx] * *c;
+            match checked_mul_delta(self.assignment[idx], *c)
+                .and_then(|d| checked_add_delta(val, d))
+            {
+                Some(next) => val = next,
+                None => return Self::update_row_exact(&self.assignment, expr, num_vars),
+            }
         }
         Some(val)
     }

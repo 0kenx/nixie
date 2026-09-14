@@ -539,3 +539,53 @@ differential fuzz 2,600 instances across 6 seeds (4 release + 2 debug):
 parity corpus clean. New regressions:
 `nixie-solver/tests/real_division_dispatch.rs` (8 tests) and three
 `nixie-nlsat` witness tests.
+
+## Continuation 8 (2026-09-15): the wide-LP wall, first slice — the row/value layer recovers from intermediate overflow
+
+The corpora are still absent, so the wall (open item 2) was reproduced
+**synthetically** before touching it: cancellation rows whose coefficients
+and constants each fit `i64` while the row-value intermediates do not
+(`2^62·2 = 2^63`) with finals that fit (`v0 = 2^62·1 − 2^62·2 + 1 =
+1 − 2^62`) answered honest `unknown` where z3 says `sat`/`unsat` (both
+directions). A second family — 40-deep chains whose row constants combine
+to `≈ 2^102` — pins the *genuine* wall (no `Rational64` final exists;
+`unknown` forever until exact row storage).
+
+25. **The slice** (`nixie-theories/src/arithmetic/simplex/mod.rs`): the
+    item-14 checked-plus-exact-retry pattern applied to the three sites
+    that stood between the solver and width-limited values —
+    (a) `pivot`'s entering-row build (`build_pivot_expr` +
+    `build_pivot_expr_exact`: `−c/coef` intermediates overflow while finals
+    cancel), (b) `pivot`'s row substitution (`substitute_row_fast` +
+    `substitute_row_exact`: per-variable `BigRational` accumulation,
+    narrowed finals), and (c) `intern_row`'s basic-variable substitution —
+    which was **unchecked** (`coef * basic_expr.constant` on the bare
+    `Ratio` operators): a debug panic and a silent release WRAP, i.e. a
+    wrong row every later decision trusted. The retry is transactional: a
+    genuinely unrepresentable final declines the row (no tableau entry) and
+    sets `resource_limit` — `unknown`, never a wrapped verdict.
+26. **`eval_expr` was unchecked too** — the release-wrap class in the
+    value layer directly (assignment snapshots, the pivot's entering
+    value). Now checked accumulation with the `update_row_exact` fallback
+    (which item 14 built for `update_assignment`; `eval_expr` now shares
+    it).
+27. **Measured**: the cancellation family decides both directions
+    (`sat`/`unsat` matching z3); the genuine-width family stays honest
+    `unknown`; the debug-panic sweep, mixed fuzz (2,000 instances), and a
+    dedicated wide-cancellation differential (1,400 instances across 5
+    seeds — coefficients at 2^58–2^63, cancellation shapes, model
+    validation on nixie-sat-vs-z3-unknown splits) all clean; Z3 parity
+    176/177 correct, 0 disagreements; the full workspace suite green
+    except the standing `[corpus-missing]` set. The remaining wide-LP
+    territory — rows whose *finals* exceed width (exact row storage,
+    `c7`/`c8` class) — stays open, pinned by
+    `genuinely_wide_rows_stay_honest`.
+
+Regressions in `nixie-solver/tests/arith_wide_literal_regressions.rs`:
+`wide_cancellation_value_is_decidable_sat`,
+`wide_cancellation_refutation_is_decidable_unsat`,
+`wide_cancellation_bound_comparison_decides`,
+`genuinely_wide_rows_stay_honest`. The synthetic wall corpus generator is
+`/tmp/wide_fuzz.py`'s shape (wide-literal cancellation differential —
+recreate from this description when needed; it is the tool that owns this
+surface now that the corpora are gone).

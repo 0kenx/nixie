@@ -365,3 +365,100 @@ fn strict_tightening_at_the_i64_boundary_is_exact() {
         assert_eq!(out[0], want, "{script}: {}", out[0]);
     }
 }
+
+/// Wide-literal cancellation at the value layer (2026-09-15, the wide-LP
+/// slice): coefficients and constants that each fit `i64` while their
+/// row-value INTERMEDIATES do not (`2^62 · 2 = 2^63`), with finals that fit
+/// after cancellation. The pivot's substitution, the entering-row build and
+/// `intern_row`'s basic-substitution all used to decline (or, before the
+/// checked era, wrap) on the intermediate; each now retries that derivation
+/// in exact `BigRational` and narrows the final — the item-14 pattern
+/// applied to the row/value layer. `v0 = 2^62·1 − 2^62·2 + 1 = 1 − 2^62`
+/// fits, so the goal is decidable.
+#[test]
+fn wide_cancellation_value_is_decidable_sat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)
+             (declare-const v0 Real) (declare-const w Real) (declare-const u Real)
+             (assert (= w 1)) (assert (= u 2))
+             (assert (= v0 (+ (* 4611686018427387904 w) (* (- 0 4611686018427387904) u) 1)))
+             (check-sat)",
+        )
+        .expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("sat"));
+}
+
+/// The refutation twin: the same wide-cancellation row against a wrong pin
+/// — `v0 = 0` contradicts `v0 = 1 − 2^62`. Both verdict directions of the
+/// slice must work at width.
+#[test]
+fn wide_cancellation_refutation_is_decidable_unsat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)
+             (declare-const v0 Real) (declare-const w Real) (declare-const u Real)
+             (assert (= w 1)) (assert (= u 2))
+             (assert (= v0 (+ (* 4611686018427387904 w) (* (- 0 4611686018427387904) u) 1)))
+             (assert (= v0 0))
+             (check-sat)",
+        )
+        .expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("unsat"));
+}
+
+/// A bound AT the cancelled width: `v0 > −2^62 − 1` holds for
+/// `v0 = 1 − 2^62` — the comparison itself must not decline.
+#[test]
+fn wide_cancellation_bound_comparison_decides() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LRA)
+             (declare-const v0 Real) (declare-const w Real) (declare-const u Real)
+             (assert (= w 1)) (assert (= u 2))
+             (assert (= v0 (+ (* 4611686018427387904 w) (* (- 0 4611686018427387904) u) 1)))
+             (assert (> v0 (- 0 4611686018427387905)))
+             (check-sat)",
+        )
+        .expect("script executes");
+    assert_eq!(out.last().map(String::as_str), Some("sat"));
+}
+
+/// The honest wall stays a wall: row CONSTANTS whose combination genuinely
+/// exceeds any `Rational64` final (`(2^40 − 1)·MAX ≈ 2^102` across a
+/// 40-deep chain) decline through `resource_limit` — `unknown`, never a
+/// wrapped verdict. This is the wide-LP project's remaining territory
+/// (exact row storage), pinned here so a future regression to a *wrong*
+/// verdict is caught.
+#[test]
+fn genuinely_wide_rows_stay_honest() {
+    use nixie_solver::Context;
+    let mut lines = vec![
+        "(set-logic QF_LRA)".to_string(),
+        "(declare-const v0 Real)".to_string(),
+    ];
+    let n = 40usize;
+    lines.extend((1..n).map(|i| format!("(declare-const v{i} Real)")));
+    lines.push("(assert (= v0 1))".to_string());
+    for i in 0..n - 1 {
+        lines.push(format!(
+            "(assert (= v{i} (+ (* 2 v{}) 9223372036854775807)))",
+            i + 1
+        ));
+    }
+    lines.push("(assert (< v39 0))".to_string());
+    lines.push("(check-sat)".to_string());
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(&lines.join("\n"))
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(last, "unsat", "the chain has a rational solution");
+    assert_ne!(last, "sat", "a wide model cannot be represented; sat would be unverified");
+}
