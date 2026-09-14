@@ -107,6 +107,15 @@ def gen_case():
                 f"(forall ((r Real)) (=> (M r x) (M r y)))"
             )
             lines.append(f"(assert (forall ({decls}) (=> {q} {obs_app})))")
+        elif kind < 0.9:
+            # Contradictory definitional twin: the same observer defined
+            # as phi and as (not phi) — unsat once any pair instantiates.
+            lines.append(
+                f"(assert (forall ({decls}) (= {obs_app} {bool_expr(vs)})))"
+            )
+            lines.append(
+                f"(assert (forall ({decls}) (= {obs_app} (not {bool_expr(vs)}))))"
+            )
         else:
             # Ground pin over the constants.
             a, b = random.sample(consts, 2)
@@ -121,6 +130,13 @@ def gen_case():
     a, b = random.sample(consts, 2)
     if obs_arity == 2:
         lines.append(f"(assert (not (= {a} {b})))" if random.random() < 0.6 else f"(assert (P {a} {b}))")
+    # Spoil (~35%): a ground literal that contradicts a forcing axiom if
+    # one exists — turns sat-shaped goals into their unsat twins (the
+    # false-`unsat` class matters most: a wrong refutation claims a proof).
+    if random.random() < 0.35:
+        a, b = random.sample(consts, 2)
+        ground = f"(P {a} {b})" if obs_arity == 2 else f"(P {a})"
+        lines.append(f"(assert (not {ground}))")
     lines.append("(check-sat)")
     return "\n".join(lines) + "\n"
 
