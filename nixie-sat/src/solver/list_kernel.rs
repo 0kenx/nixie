@@ -83,10 +83,8 @@ fn push_watch<const MIRROR: bool>(
     watcher: Watcher,
 ) {
     destinations[key.index()].push(watcher);
-    if MIRROR {
-        if let Some(c) = csr.as_mut() {
-            c.scan_push(key, watcher);
-        }
+    if MIRROR && let Some(c) = csr.as_mut() {
+        c.scan_push(key, watcher);
     }
 }
 
@@ -101,10 +99,8 @@ fn push_watch_unique<const MIRROR: bool>(
         return;
     }
     list.push(watcher);
-    if MIRROR {
-        if let Some(c) = csr.as_mut() {
-            c.scan_push(key, watcher);
-        }
+    if MIRROR && let Some(c) = csr.as_mut() {
+        c.scan_push(key, watcher);
     }
 }
 
@@ -129,10 +125,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         }
         if propagation_value(values, watcher.blocker) > 0 {
             entry.keep(None);
-            if MIRROR {
-                if let Some(c) = csr.as_mut() {
-                    c.scan_keep(watcher, None);
-                }
+            if MIRROR && let Some(c) = csr.as_mut() {
+                c.scan_keep(watcher, None);
             }
             continue;
         }
@@ -146,10 +140,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 work.deleted += 1;
             }
             entry.remove();
-            if MIRROR {
-                if let Some(c) = csr.as_mut() {
-                    c.scan_remove();
-                }
+            if MIRROR && let Some(c) = csr.as_mut() {
+                c.scan_remove();
             }
             if COMPACT {
                 continue;
@@ -251,10 +243,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
                 );
             }
             entry.remove();
-            if MIRROR {
-                if let Some(c) = csr.as_mut() {
-                    c.scan_remove();
-                }
+            if MIRROR && let Some(c) = csr.as_mut() {
+                c.scan_remove();
             }
             if COMPACT {
                 continue;
@@ -277,17 +267,13 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
         if let Some(parked) = found {
             if let Some(blocker) = parked {
                 entry.keep(Some(blocker));
-                if MIRROR {
-                    if let Some(c) = csr.as_mut() {
-                        c.scan_keep(watcher, Some(blocker));
-                    }
+                if MIRROR && let Some(c) = csr.as_mut() {
+                    c.scan_keep(watcher, Some(blocker));
                 }
             } else {
                 entry.remove();
-                if MIRROR {
-                    if let Some(c) = csr.as_mut() {
-                        c.scan_remove();
-                    }
+                if MIRROR && let Some(c) = csr.as_mut() {
+                    c.scan_remove();
                 }
                 if !COMPACT {
                     return scan::<true, MIRROR>(
@@ -306,10 +292,8 @@ fn scan<const COMPACT: bool, const MIRROR: bool>(
             continue;
         }
         entry.keep(Some(first));
-        if MIRROR {
-            if let Some(c) = csr.as_mut() {
-                c.scan_keep(watcher, Some(first));
-            }
+        if MIRROR && let Some(c) = csr.as_mut() {
+            c.scan_keep(watcher, Some(first));
         }
         if propagation_value(values, first) < 0 {
             #[cfg(feature = "bcp-work")]

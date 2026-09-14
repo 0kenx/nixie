@@ -114,10 +114,8 @@ impl Solver {
             // Dual-write BCP scan (CSR slice 2): snapshot the primary/
             // overflow split before the list is scanned; the per-entry
             // notifications below mirror keep/remove/move into the CSR.
-            if MIRROR {
-                if let Some(c) = csr.as_mut() {
-                    c.begin_scan(code, watches.len());
-                }
+            if MIRROR && let Some(c) = csr.as_mut() {
+                c.begin_scan(code, watches.len());
             }
             #[cfg(feature = "bcp-work")]
             {
@@ -154,10 +152,8 @@ impl Solver {
                 .take_watch_scan(&mut result.work);
             watches.truncate(result.write);
             destinations[code] = watches;
-            if MIRROR {
-                if let Some(c) = csr.as_mut() {
-                    c.end_scan();
-                }
+            if MIRROR && let Some(c) = csr.as_mut() {
+                c.end_scan();
             }
             if !result.conflict.is_null() {
                 queue.requeue();
