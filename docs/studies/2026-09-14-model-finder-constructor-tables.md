@@ -261,3 +261,49 @@ load — passes standalone); fmt/clippy clean.
 defining implication's truth (the set family's `subset` as
 row-containment).  The two remaining legs of that arc — the merge pump
 and the frozen-row repair — are unchanged from the study above.
+
+
+## Bounded-quantifier expansion in the completed body (2026-09-15, second follow-up)
+
+With the hint live, the set family's stall moved to the *nested
+quantifiers in the completed body*: the aux check of an axiom whose
+body' carries a nested `forall`/`exists` (axiom-2's witness, axiom-3's
+containment antecedent) spawned the nested solver's *own* full MBQI
+loop per check — thirteen budgeted iterations per round — and timed
+out to `Unknown` exactly on the quantifiers the hint should have
+certified.
+
+**The fix** (`CompletionEval`, the binder arm): a binder whose every
+bound variable ranges over a *finitely restrictable* domain — read
+from `CompletedModel::table_domain`, the same source the nested
+check's Skolem restriction uses — is expanded at completion time into
+its pointwise fold (`forall x. phi` -> `and(phi[d])`, with
+short-circuit), under a 64-point product cap.  This is not an
+approximation: the restricted nested solve decides exactly the
+expanded reading, and doing it deterministically at completion makes
+the completed body quantifier-free, so the nested solve becomes a
+plain ite-chain solve and the aux's own quantifier loop disappears.
+Binders over sampled/infinite sorts (Int, Real, ...) stay symbolic,
+as before.  This is Z3's model evaluator's own behaviour (it evaluates
+ground quantifiers over its finite model universes).
+
+**Measured**: set16 62 s -> 18 s to its (unchanged) `unknown`; the
+round flow now dies within ~13 rounds.  The residual stall is the
+*stale pin* shape isolated above: a dodged ground pin (e.g.
+`subset(w, a) = true` from an era whose rows differed) permanently
+contradicts the current rows; the falsifier at that pair is permanent,
+its instance a duplicate, and nothing moves the pin.  Notably, the
+expansion also kills the dodge *for future instances* — an axiom-3
+instance asserted now has its antecedent pointwise-concrete, so the
+ground solver can no longer satisfy it vacuously.  Old pins from
+pre-expansion rounds remain; the repair for those is the next
+mechanism: blocking the demonstrated-incompatible pin arrangement
+(Z3's `add_blocking_clause` semantics on *ground-model pin*
+commitments only — never on asserted-constraint atoms; the
+false-`unsat` lesson of the removed emission stands, so the
+atom-classification needs its own careful design).
+
+Verification: quant_fuzz {41..46} x 150 CLEAN; parity 176 Correct /
+1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver + nixie-core
+4725/4728 (the 3 timeouts are the convergence pins under full-suite
+parallel load); fmt/clippy clean.
