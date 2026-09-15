@@ -608,7 +608,10 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let Some(es) = element_sort(a, manager) else {
             continue;
         };
-        if witnesses.iter().any(|(wa, wb, _, _)| *wa == a && *wb == b) {
+        if witnesses
+            .iter()
+            .any(|(wa, wb, _, _)| (*wa == a && *wb == b) || (*wa == b && *wb == a))
+        {
             continue;
         }
         let k = pair_witness(manager, es, a, b);
@@ -738,6 +741,36 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             {
                 list.push(term);
             }
+        }
+    }
+
+    // ---- tuple surjectivity ----
+    //
+    // Every tuple-sorted element equals its selector rebuild
+    // (`e = (sel₁ e, …, selₙ e)`): the datatype constructor-surjectivity
+    // axiom, which the internally-declared tuple sorts never receive from
+    // a `declare-datatype`. Without it, a rebuilt spelling of a witness
+    // (built by the model layer, or by anything else that projects and
+    // reconstructs) carried independently decided membership atoms, and
+    // the model could not value both spellings faithfully — the collision
+    // that used to decline relation sorts wholesale.
+    {
+        let mut surjectivity: Vec<(TermId, TermId)> = Vec::new();
+        for (&sort, list) in elements.iter() {
+            let fields = manager.tuple_field_sorts_of(sort);
+            let Some(fields) = fields else {
+                continue;
+            };
+            for &e in list {
+                let parts: Vec<TermId> = (0..fields.len())
+                    .map(|i| manager.mk_tuple_select(i, e))
+                    .collect();
+                let rebuild = manager.mk_tuple(&parts);
+                surjectivity.push((e, rebuild));
+            }
+        }
+        for (e, rebuild) in surjectivity {
+            axioms.push(manager.mk_eq(e, rebuild));
         }
     }
 
@@ -1265,7 +1298,19 @@ fn implicit_pairs(
                     overflowed = true;
                     break 'pairs;
                 }
-                pairs.push((*a, *b));
+                // Canonical order (by term id): the survey's discovery
+                // order changes as assertions accumulate, and an
+                // order-flipped pass minted a *second* witness for the
+                // same disequality (`@set_ext_a_b` beside `@set_ext_b_a`)
+                // with the opposite xor orientation — two skolems the
+                // model then had to value, whose defaulted-equal collision
+                // declined the whole sort. One unordered pair, one
+                // witness, stable across passes.
+                let (lo, hi) = if a.0 < b.0 { (*a, *b) } else { (*b, *a) };
+                if pairs.contains(&(lo, hi)) || pairs.contains(&(hi, lo)) {
+                    continue;
+                }
+                pairs.push((lo, hi));
             }
         }
     }

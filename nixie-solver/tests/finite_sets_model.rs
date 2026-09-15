@@ -32,6 +32,9 @@ fn run_joined(script: &str) -> String {
 /// member/card/union queries fold to constants.
 #[test]
 fn members_are_read_from_the_atoms() {
+    // The cardinalities are pinned so the disequality witness (a free
+    // existential the xor may satisfy on either side) cannot move a set's
+    // size between solver versions.
     let out = run_joined(
         "(set-logic ALL)\n\
          (declare-const S (Set Int))\n\
@@ -39,6 +42,8 @@ fn members_are_read_from_the_atoms() {
          (assert (set.member 1 S))\n\
          (assert (set.member 2 S))\n\
          (assert (set.member 5 T))\n\
+         (assert (= (set.card S) 2))\n\
+         (assert (= (set.card T) 1))\n\
          (check-sat)\n\
          (get-model)\n\
          (get-value (S (set.member 1 S) (set.member 3 S) (set.card S)\n\
@@ -320,6 +325,8 @@ fn compound_operators_fold_structurally() {
          (assert (set.member 2 S))\n\
          (assert (set.member 2 T))\n\
          (assert (set.member 3 T))\n\
+         (assert (= (set.card S) 2))\n\
+         (assert (= (set.card T) 2))\n\
          (check-sat)\n\
          (get-value ((set.card (set.inter S T)) (set.member 1 (set.minus S T))\n\
                        (set.member 2 (set.minus S T)) (set.is_empty (set.minus T S))))\n",
