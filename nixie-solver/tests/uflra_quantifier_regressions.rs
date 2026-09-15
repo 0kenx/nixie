@@ -452,3 +452,34 @@ fn contradictory_definitional_twins_are_never_sat() {
         "the twins contradict (z3: unsat); got {status}"
     );
 }
+
+/// The saturation false-`sat` (2026-09-15, quant_fuzz seed 46 with the
+/// hint completion enabled): the axiom `(=> (forall ((z S)) true) (P x))`
+/// has a *collapsed* nested-quantifier premise that mentions no bound
+/// variable, so the fragment certifier's EU walk admitted the body, the
+/// round-0 instances were asserted with the raw `forall z. true` wrapper
+/// (a free Boolean the SAT core committed FALSE — the dodge), and
+/// `sat_certify` saturation later observed "every relevant instance
+/// emitted + a ground model" over a set the model only satisfied in its
+/// Tseitin encoding.  z3 refutes; the verdict must never be `sat`.
+/// Root fix: a body containing any quantifier is not in the certifiable
+/// fragment (`sat_certify::universal_instances`).
+#[test]
+fn nested_quantifier_premise_never_saturates_a_false_sat() {
+    let output = run(r#"
+        (declare-sort S 0)
+        (declare-fun c1 () S)
+        (declare-fun P (S) Bool)
+        (declare-fun M (Real S) Bool)
+        (assert (forall ((x S)) (=> (forall ((z S)) (=> (or true (P x)) (or true (P x)))) (P x))))
+        (assert (forall ((x S)) (= (P x) (not (=> (P x) (P x))))))
+        (assert (forall ((x S)) (=> (forall ((z S)) (=> false false)) (P x))))
+        (check-sat)
+    "#);
+    let status = last_status(&output);
+    assert!(
+        status == "unsat" || status == "unknown",
+        "P is forced both true (tautological antecedents) and false (its \
+         own definition contradicts); z3: unsat; got {status}"
+    );
+}

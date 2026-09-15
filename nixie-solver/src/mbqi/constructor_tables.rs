@@ -186,32 +186,105 @@ struct HintMacro {
 /// has a macro definition or a constructor table is not hinted — the
 /// macro/table owns its interpretation.
 fn extract_hint_macros(
-    _quantifiers: &[QuantifiedFormula],
-    _ctors: &[QuasiMacro],
-    _macro_funcs: &FxHashSet<Spur>,
-    _manager: &TermManager,
+    quantifiers: &[QuantifiedFormula],
+    ctors: &[QuasiMacro],
+    macro_funcs: &FxHashSet<Spur>,
+    manager: &TermManager,
 ) -> Vec<HintMacro> {
-    // HELD BACK (2026-09-14, quant_fuzz seed 46): the hint completion —
-    // `psi => h(args)` completing `h` as psi's truth — certifies the
-    // hinted axiom by construction and its defining pins change the
-    // recorded-instance set enough to reach `sat_certify` saturation on
-    // the contradictory-definitional-twins shape
-    // (`P(x) = not(P(x) => P(x))` with `(taut) => P(x)`), where z3
-    // refutes and the solver printed `sat`.  The exposure is an
-    // interaction: the hint is one leg (a P-free psi like
-    // `(forall z. false => false) => P x` is a legitimate hint shape, so
-    // the self-reference check alone does not contain it) and the
-    // fragment certifier's saturation is the other (its complete-set
-    // construction must not be reachable to `Satisfied` over a goal whose
-    // every model is refuted — that is its own root-cause project).  The
-    // constructor tables below do not interact: they require an
-    // uninterpreted-*range* constructor observed through a Bool-valued
-    // observer, a shape the twins family does not have.  Re-landing the
-    // hint needs the saturation side understood first; the machinery
-    // (extraction, table computation, bounded-quantifier evaluation) is
-    // kept compiled-out here for that follow-up.
-    #[allow(clippy::needless_return)]
-    return Vec::new();
+    let mut out: Vec<HintMacro> = Vec::new();
+    let mut seen: FxHashSet<Spur> = FxHashSet::default();
+    seen.extend(ctors.iter().map(|qm| qm.func));
+    // An observer is the row-carrier of the whole construction: hinting
+    // it (an axiom like `member(x,s1) ∧ subset(s1,s2) => member(x,s2)`
+    // matches the shape!) would reinterpret the rows themselves and
+    // corrupt every table built on them.
+    seen.extend(ctors.iter().map(|qm| qm.observer));
+    'axioms: for q in quantifiers {
+        if !q.is_universal || q.guard.is_some() || q.guard_inactive {
+            continue;
+        }
+        let mut by_name: FxHashMap<Spur, usize> = FxHashMap::default();
+        for (i, &(name, _)) in q.bound_vars.iter().enumerate() {
+            if by_name.insert(name, i).is_some() {
+                continue 'axioms; // ambiguous bindings
+            }
+        }
+        let Some(TermKind::Implies(psi, happ)) = manager.get(q.body).map(|n| &n.kind) else {
+            continue;
+        };
+        let Some(h_node) = manager.get(*happ) else {
+            continue;
+        };
+        if h_node.sort != manager.sorts.bool_sort {
+            continue;
+        }
+        let TermKind::Apply {
+            func: h,
+            args: h_args,
+        } = &h_node.kind
+        else {
+            continue;
+        };
+        // `h` is a plain uninterpreted predicate: no macro definition
+        // (the macro solver owns that interpretation), no constructor
+        // table.
+        if macro_funcs.contains(h) || seen.contains(h) {
+            continue;
+        }
+        // Arguments: distinct bound variables over uninterpreted sorts.
+        let mut arg_vars: SmallVec<[usize; 4]> = SmallVec::new();
+        let mut used: FxHashSet<usize> = FxHashSet::default();
+        let mut shape_ok = true;
+        for &arg in h_args {
+            let Some(node) = manager.get(arg) else {
+                shape_ok = false;
+                break;
+            };
+            let TermKind::Var(name) = &node.kind else {
+                shape_ok = false;
+                break;
+            };
+            let Some(&vi) = by_name.get(name) else {
+                shape_ok = false;
+                break;
+            };
+            if q.bound_vars[vi].1 != node.sort
+                || !used.insert(vi)
+                || !manager
+                    .sorts
+                    .get(node.sort)
+                    .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)))
+            {
+                shape_ok = false;
+                break;
+            }
+            arg_vars.push(vi);
+        }
+        if !shape_ok || arg_vars.len() != h_args.len() {
+            continue;
+        }
+        // Self-referential hints are not definitions: a psi that mentions
+        // `h` itself completes P from its own circularity.
+        if nixie_core::ast::traversal::collect_subterms(*psi, manager)
+            .iter()
+            .any(|&t| {
+                matches!(
+                    manager.get(t).map(|n| &n.kind),
+                    Some(TermKind::Apply { func, .. }) if func == h
+                )
+            })
+        {
+            continue;
+        }
+        seen.insert(*h);
+        out.push(HintMacro {
+            quantifier: q.term,
+            func: *h,
+            arg_vars,
+            psi: *psi,
+        });
+    }
+    out
 }
 
 /// Extract every quasi-macro from the tracked quantifiers, first defining
