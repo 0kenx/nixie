@@ -37,23 +37,27 @@ fn main() {
     // Optional full-preset base (PRESET=cadical|glucose|...) takes precedence
     // over the RESTART selector; the per-feature env knobs below still apply on
     // top, so e.g. `PRESET=cadical LAZY_HYPER=0` is a clean isolation.
-    let preset_config = std::env::var("PRESET").ok().and_then(|s| {
-        let s = s.trim().to_ascii_lowercase();
-        let p = match s.as_str() {
-            "default" => Some(ConfigPreset::Default),
-            "industrial" => Some(ConfigPreset::Industrial),
-            "random" => Some(ConfigPreset::Random),
-            "cryptographic" => Some(ConfigPreset::Cryptographic),
-            "hardware" => Some(ConfigPreset::Hardware),
-            "aggressive" => Some(ConfigPreset::Aggressive),
-            "conservative" => Some(ConfigPreset::Conservative),
-            "glucose" => Some(ConfigPreset::Glucose),
-            "minisat" => Some(ConfigPreset::MiniSat),
-            "cadical" => Some(ConfigPreset::CaDiCaL),
-            _ => None,
-        };
-        p.map(|preset| preset.config())
-    });
+    // Unknown names abort instead of silently running the default config.
+    let preset_config = match std::env::var("PRESET") {
+        Ok(s) => {
+            let name = s.trim();
+            match ConfigPreset::from_name(name) {
+                Some(p) => Some(p.config()),
+                None => {
+                    eprintln!(
+                        "unknown PRESET `{name}` (valid: {})",
+                        ConfigPreset::all_presets()
+                            .iter()
+                            .map(|p| p.name())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    std::process::exit(2);
+                }
+            }
+        }
+        Err(_) => None,
+    };
 
     // Optional restart-strategy override (RESTART=luby|glucose|geometric|locallbd)
     // and rephase-interval override (REPHASE=N, 0 disables) for A/B comparisons.

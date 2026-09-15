@@ -654,6 +654,15 @@ pub(crate) fn output_results(results: &[SolverResult], args: &Args, stats: &Solv
                     if !result.result.is_empty() {
                         println!("{}", result.result);
                     }
+                    // A per-file error with no verdict text used to be
+                    // completely invisible in this format (only JSON
+                    // serialised it), so a run could exit 1 with nothing on
+                    // stdout/stderr explaining why.  Surface it on stderr.
+                    if result.result.is_empty()
+                        && let Some(ref err) = result.error
+                    {
+                        eprintln!("error {}: {err}", result.file.as_deref().unwrap_or("-"));
+                    }
                 }
             }
         }

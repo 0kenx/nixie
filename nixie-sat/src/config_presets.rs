@@ -85,6 +85,37 @@ impl ConfigPreset {
         }
     }
 
+    /// Canonical kebab-case name of this preset, as accepted on the CLI
+    /// (`nixie --preset <name>`) and by the `PRESET=` env of `cnf_bench`.
+    /// Single source of truth: `from_name` is its inverse.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Industrial => "industrial",
+            Self::Random => "random",
+            Self::Cryptographic => "cryptographic",
+            Self::Hardware => "hardware",
+            Self::Aggressive => "aggressive",
+            Self::Conservative => "conservative",
+            Self::Glucose => "glucose",
+            Self::MiniSat => "minisat",
+            Self::CaDiCaL => "cadical",
+        }
+    }
+
+    /// Parse a preset name (ASCII case-insensitive).
+    /// Returns `None` for unknown names — callers must surface that as an
+    /// error, never silently fall through to a default configuration.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        let lowered = name.to_ascii_lowercase();
+        Self::all_presets()
+            .iter()
+            .copied()
+            .find(|p| p.name() == lowered)
+    }
+
     /// Default balanced configuration
     fn default_config() -> SolverConfig {
         SolverConfig::default()
@@ -764,6 +795,29 @@ mod tests {
     fn test_all_presets_available() {
         let presets = ConfigPreset::all_presets();
         assert_eq!(presets.len(), 10);
+    }
+
+    #[test]
+    fn test_preset_name_roundtrip() {
+        for preset in ConfigPreset::all_presets() {
+            let name = preset.name();
+            assert_eq!(ConfigPreset::from_name(name), Some(*preset));
+            // ASCII case-insensitive
+            let upper = name.to_ascii_uppercase();
+            assert_eq!(ConfigPreset::from_name(&upper), Some(*preset));
+        }
+    }
+
+    #[test]
+    fn test_preset_from_name_rejects_unknown() {
+        assert_eq!(ConfigPreset::from_name("bogus"), None);
+        assert_eq!(ConfigPreset::from_name(""), None);
+        assert_eq!(ConfigPreset::from_name("cadical "), None);
+        // Names from the *other* preset domain (the CLI's SMT presets) must
+        // not resolve here either — no silent cross-domain fallback.
+        for smt_name in ["fast", "balanced", "thorough", "minimal"] {
+            assert_eq!(ConfigPreset::from_name(smt_name), None);
+        }
     }
 
     #[test]

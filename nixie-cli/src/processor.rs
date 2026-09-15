@@ -404,7 +404,21 @@ fn process_files_sequential(
             eprintln!("error: {e}");
             std::process::exit(1);
         }
-        apply_solver_options(&mut file_ctx, args);
+        // A domain-mismatched preset (e.g. `--preset cadical` on an SMT-LIB2
+        // file) is a per-file outcome, not a batch abort: a mixed-format
+        // invocation still solves every file the preset *does* apply to.
+        if let Err(e) = apply_solver_options(&mut file_ctx, args) {
+            results.push(SolverResult {
+                file: Some(file.display().to_string()),
+                result: String::new(),
+                error: Some(e),
+                time_ms: 0,
+            });
+            if let Some(ref pb) = progress {
+                pb.inc(1);
+            }
+            continue;
+        }
 
         let result = process_single_file(file, &mut file_ctx, args, cache);
         accumulate_sat_stats(&mut aggregated_sat_stats, file_ctx.stats());
@@ -466,11 +480,20 @@ fn process_files_parallel(
                 eprintln!("error {}: {e}", file.display());
             }
 
-            // Apply resource limits and options
-            apply_solver_options(&mut ctx, args);
-
-            // Note: Cache not used in parallel mode to avoid synchronization overhead
-            let result = process_single_file(file, &mut ctx, args, &mut None);
+            // Apply resource limits and options.  A domain-mismatched preset
+            // is a per-file outcome (see the sequential path for rationale).
+            let result = match apply_solver_options(&mut ctx, args) {
+                Ok(()) => {
+                    // Note: Cache not used in parallel mode to avoid synchronization overhead
+                    process_single_file(file, &mut ctx, args, &mut None)
+                }
+                Err(e) => SolverResult {
+                    file: Some(file.display().to_string()),
+                    result: String::new(),
+                    error: Some(e),
+                    time_ms: 0,
+                },
+            };
             let file_stats = ctx.stats().clone();
 
             if let Some(ref pb) = progress {
@@ -516,6 +539,30 @@ fn process_single_file(
     let use_tptp = args.input_format == Some(InputFormat::Tptp)
         || file.extension().and_then(|s| s.to_str()) == Some("p")
         || file.extension().and_then(|s| s.to_str()) == Some("tptp");
+
+    // Preset-domain gate: a SAT-core preset (`--preset cadical`, …) only
+    // configures the DIMACS fast path below.  Every other route (SMT-LIB2,
+    // TPTP, QDIMACS, and the CNF-with-model-output SMT route) runs the
+    // SMT solver stack, where such a preset has nothing to configure.
+    // Reject it as this file's outcome instead of silently ignoring it —
+    // the batch keeps solving the files the preset *does* apply to.
+    if !use_dimacs
+        && matches!(
+            args.preset.as_deref().map(crate::parse_preset),
+            Some(Ok(crate::CliPreset::Sat(_)))
+        )
+    {
+        return SolverResult {
+            file: Some(file.display().to_string()),
+            result: String::new(),
+            error: Some(format!(
+                "preset `{}` configures the SAT core and only applies to \
+                 DIMACS/CNF input (`--dimacs`); it has no effect on SMT-LIB2 input",
+                args.preset.as_deref().unwrap_or_default()
+            )),
+            time_ms: start.elapsed().as_millis(),
+        };
+    }
 
     if use_tptp {
         // Parse TPTP format
@@ -664,16 +711,63 @@ fn process_single_file(
             && !args.validate_only
             && !args.dimacs_output; // `v`-line models come from the SMT path
         let result = if fast_path_ok {
-            // NOTE: `enable_bve` stays off.  Bounded variable elimination
-            // has a known false-UNSAT on satisfiable input (reproduces on
-            // `summle_X4044…cnf` on both the current tree and older revisions:
-            // the elimination/unit-cascade pass derives a spurious level-0
-            // conflict) and is disabled in every preset for exactly that
-            // reason.  Do not re-enable it here without fixing the pass.
-            let mut sat = nixie_sat::Solver::with_config(nixie_sat::SolverConfig {
-                enable_inprocessing: true,
-                ..nixie_sat::SolverConfig::default()
-            });
+            // NOTE on `enable_bve`: the fast-path *default* below keeps BVE
+            // off.  BVE's historical false-UNSAT on satisfiable input
+            // (`summle_X4044…cnf`: the elimination/unit-cascade pass derived
+            // a spurious level-0 conflict) was fixed by the 2026-08-17
+            // six-bug sweep; since then the CaDiCaL preset deliberately
+            // ships `enable_bve: true` (landed in `0ed8543`, then
+            // accidentally reverted by an SBVA-commit regex and caught by a
+            // differential canary — see `config_presets.rs`).  Preset
+            // configs selected via `--preset` are applied verbatim, so
+            // `--preset cadical` runs with BVE on, exactly like the
+            // `cnf_bench PRESET=cadical` configuration the SATCOMP standing
+            // table measures.  `tests/cli_integration.rs::
+            // dimacs_preset_cadical_summle_x4044_stays_sat` guards the
+            // reproducer through this very CLI path.
+            // `--preset <sat-name>` selects the SAT-core configuration
+            // (e.g. `--preset cadical`, the configuration the SATCOMP
+            // standing table measures through `cnf_bench`).  The preset's
+            // config is used verbatim — selecting a preset is an explicit
+            // user decision about the search, including its inprocessing
+            // schedule.  Without `--preset`, the fast-path default below
+            // stays exactly as it was.  SMT-layer preset names (fast/
+            // balanced/thorough/minimal) configure `Context` options the
+            // fast path never consults: honoring one here would be a
+            // silent no-op, so reject it as a per-file error instead.
+            let sat_config = match args.preset.as_deref().map(crate::parse_preset) {
+                Some(Ok(crate::CliPreset::Sat(p))) => p.config(),
+                Some(Ok(crate::CliPreset::Smt(_))) => {
+                    let msg = format!(
+                        "preset `{}` configures the SMT solver layer and has no effect on \
+                         DIMACS/CNF input; use a SAT preset (default, industrial, random, \
+                         cryptographic, hardware, aggressive, conservative, glucose, minisat, \
+                         cadical)",
+                        args.preset.as_deref().unwrap_or_default()
+                    );
+                    return SolverResult {
+                        file: Some(file.display().to_string()),
+                        result: String::new(),
+                        error: Some(msg),
+                        time_ms: start.elapsed().as_millis(),
+                    };
+                }
+                Some(Err(e)) => {
+                    // `main` validated the name; reaching this means a
+                    // non-CLI caller reused this path — report, never guess.
+                    return SolverResult {
+                        file: Some(file.display().to_string()),
+                        result: String::new(),
+                        error: Some(e),
+                        time_ms: start.elapsed().as_millis(),
+                    };
+                }
+                None => nixie_sat::SolverConfig {
+                    enable_inprocessing: true,
+                    ..nixie_sat::SolverConfig::default()
+                },
+            };
+            let mut sat = nixie_sat::Solver::with_config(sat_config);
             for _ in 0..cnf.num_vars {
                 sat.new_var();
             }

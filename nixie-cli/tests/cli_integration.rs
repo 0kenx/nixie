@@ -1055,3 +1055,156 @@ fn test_undefined_plain_symbol_error_is_still_well_formed() {
         assert_well_formed_smtlib_error_response(&stdout);
     }
 }
+
+// ---------------------------------------------------------------------------
+// --preset: two domains, no silent fallthrough.
+//
+// The CLI serves SMT-layer presets (fast/balanced/thorough/minimal, applied
+// as Context options on SMT-LIB2 input) and SAT-core presets (the
+// `nixie_sat::ConfigPreset` names, applied to the DIMACS fast path).  Before
+// the fix these tests guard, an unknown `--preset` name was silently ignored
+// and no preset at all reached the CNF fast path — `--preset cadical` was a
+// no-op on `--dimacs` input (found while setting up the SATCOMP 2025 3-way
+// benchmark; see docs/studies/2026-09-15-satcomp2025-3way-perf.md).
+// ---------------------------------------------------------------------------
+
+fn create_temp_cnf(content: &str) -> common::TempPath {
+    common::TempPath::write("cli_integration", "cnf", content)
+}
+
+const TINY_SAT_CNF: &str = "p cnf 3 2\n1 2 0\n-1 3 0\n";
+const TINY_UNSAT_CNF: &str = "p cnf 2 4\n1 0\n2 0\n-1 0\n-2 0\n";
+
+#[test]
+fn preset_unknown_name_is_rejected() {
+    let temp_file = create_temp_smt2("(check-sat)\n");
+    let output = Command::new(nixie_bin())
+        .arg("--preset")
+        .arg("bogus")
+        .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+        .output()
+        .expect("Failed to execute nixie");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "`--preset bogus` must abort, not silently run with a default config"
+    );
+    assert!(
+        stderr.contains("unknown preset `bogus`"),
+        "stderr should name the bad preset: {stderr}"
+    );
+    assert!(
+        stderr.contains("cadical"),
+        "stderr should list the valid SAT preset names: {stderr}"
+    );
+}
+
+#[test]
+fn preset_typo_of_cadical_is_rejected() {
+    // `cadicla` is the exact typo class the old silent-ignore made
+    // dangerous: the run looked configured but solved with defaults.
+    let temp_file = create_temp_smt2("(check-sat)\n");
+    let output = Command::new(nixie_bin())
+        .arg("--preset")
+        .arg("cadicla")
+        .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+        .output()
+        .expect("Failed to execute nixie");
+    assert!(
+        !output.status.success(),
+        "`--preset cadicla` (typo) must abort"
+    );
+}
+
+#[test]
+fn dimacs_preset_cadical_reaches_sat_core() {
+    // The wiring regression: `--preset cadical` used to be a no-op on the
+    // DIMACS fast path.  Now it must select the CaDiCaL SolverConfig and
+    // still produce correct verdicts.
+    for (cnf, want) in [(TINY_SAT_CNF, "sat"), (TINY_UNSAT_CNF, "unsat")] {
+        let temp_file = create_temp_cnf(cnf);
+        let output = Command::new(nixie_bin())
+            .arg("--dimacs")
+            .arg("--preset")
+            .arg("cadical")
+            .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+            .output()
+            .expect("Failed to execute nixie");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "cadical preset run failed");
+        assert!(
+            stdout.contains(want),
+            "expected `{want}` with --preset cadical, got: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn dimacs_smt_layer_preset_is_rejected_per_file() {
+    // fast/balanced/thorough/minimal configure Context options the CNF fast
+    // path never consults: honoring one there would be a silent no-op.
+    let temp_file = create_temp_cnf(TINY_SAT_CNF);
+    let output = Command::new(nixie_bin())
+        .arg("--dimacs")
+        .arg("--preset")
+        .arg("fast")
+        .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+        .output()
+        .expect("Failed to execute nixie");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no effect on DIMACS/CNF input"),
+        "expected a per-file domain error, stderr: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("sat") || stderr.contains("no effect"),
+        "must not silently solve with an inert preset"
+    );
+}
+
+#[test]
+fn smt_sat_core_preset_is_rejected() {
+    let temp_file = create_temp_smt2("(check-sat)\n");
+    let output = Command::new(nixie_bin())
+        .arg("--preset")
+        .arg("cadical")
+        .arg(temp_file.to_str().expect("temp path is valid UTF-8"))
+        .output()
+        .expect("Failed to execute nixie");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "SAT preset on SMT-LIB2 input must not silently no-op"
+    );
+    assert!(
+        stderr.contains("no effect on SMT-LIB2 input"),
+        "stderr should explain the domain mismatch: {stderr}"
+    );
+}
+
+#[test]
+#[ignore = "93k-var BVE false-UNSAT reproducer; ~46 s wall on the 2026-09 release build, run explicitly"]
+fn dimacs_preset_cadical_summle_x4044_stays_sat() {
+    // The historic BVE false-UNSAT reproducer (processor.rs fast-path note):
+    // `summle_X4044.cnf` is SAT; under `--preset cadical` (BVE enabled, the
+    // standing-table configuration) an `unsat` here is a soundness bug.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../nixie-sat/tests/fixtures/summle_x4044.cnf");
+    if !fixture.exists() {
+        panic!("fixture missing: {}", fixture.display());
+    }
+    let output = Command::new(nixie_bin())
+        .arg("--dimacs")
+        .arg("--preset")
+        .arg("cadical")
+        .arg(fixture.to_str().expect("fixture path is valid UTF-8"))
+        .output()
+        .expect("Failed to execute nixie");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("sat") && !stdout.contains("unsat"),
+        "summle_X4044 is SAT; `unsat` under --preset cadical is a false-UNSAT regression: {stdout}"
+    );
+}

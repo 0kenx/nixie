@@ -383,6 +383,18 @@ pub fn solve_portfolio_custom(
     if strategies.is_empty() {
         return Err("No strategies provided".to_string());
     }
+    // The portfolio solves SMT-LIB2 scripts against full `Context`s; a
+    // SAT-core preset (`--preset cadical`, …) has nothing to configure on
+    // this path.  Reject it up front instead of letting every strategy
+    // silently ignore it.
+    if let Some(ref preset) = args.preset
+        && matches!(crate::parse_preset(preset), Ok(crate::CliPreset::Sat(_)))
+    {
+        return Err(format!(
+            "preset `{preset}` configures the SAT core and only applies to \
+             DIMACS/CNF input (`--dimacs`); it has no effect on the SMT portfolio"
+        ));
+    }
 
     let script = Arc::new(script.to_string());
     let (tx, rx): (Sender<PortfolioResult>, Receiver<PortfolioResult>) = channel();
@@ -414,7 +426,14 @@ pub fn solve_portfolio_custom(
 
             let mut modified_args = args_clone.clone();
             modified_args.strategy = None;
-            crate::apply_solver_options(&mut ctx, &modified_args);
+            // Names were validated in `main` and SAT presets rejected at the
+            // top of `solve_portfolio_custom`, so the remaining failure mode
+            // is an unparseable name from a non-CLI caller — surface it
+            // rather than solving under an unintended configuration.
+            if let Err(e) = crate::apply_solver_options(&mut ctx, &modified_args) {
+                eprintln!("error: {e}");
+                return;
+            }
 
             let strategy_start = Instant::now();
             let diversified_script = diversify_script(&script, strategy.ordering);

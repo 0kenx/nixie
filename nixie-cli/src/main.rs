@@ -404,7 +404,11 @@ struct Args {
     #[arg(long, default_value = "2")]
     indent_width: usize,
 
-    /// Use a solver configuration preset (fast, balanced, thorough, minimal)
+    /// Use a solver configuration preset.  Two domains: SMT-layer presets
+    /// for SMT-LIB2 input (fast, balanced, thorough, minimal) and SAT-core
+    /// presets for DIMACS/CNF input (default, industrial, random,
+    /// cryptographic, hardware, aggressive, conservative, glucose, minisat,
+    /// cadical).  Unknown names are rejected.
     #[arg(long)]
     preset: Option<String>,
 
@@ -594,6 +598,16 @@ async fn main() {
     }
 
     let mut args = Args::parse();
+
+    // Validate `--preset` before any work starts: a typo must abort the run,
+    // never silently solve with an unintended default configuration (the
+    // pre-fix behaviour ignored unknown names entirely).
+    if let Some(ref preset) = args.preset
+        && let Err(e) = parse_preset(preset)
+    {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    }
 
     // Handle completion generation
     if let Some(shell) = args.completions {
@@ -815,22 +829,67 @@ async fn main() {
         std::process::exit(1);
     }
 
-    // Apply solver options
-    apply_solver_options(&mut ctx, &args);
+    // Apply solver options.  Unreachable in practice: `--preset` names are
+    // validated above, and this is the only error the function can return.
+    if let Err(e) = apply_solver_options(&mut ctx, &args) {
+        eprintln!("error: {e}");
+        std::process::exit(2);
+    }
+    // Stream modes always consume SMT-LIB2: a SAT-core preset has nothing
+    // to configure there and must not be silently ignored.  (File mode
+    // performs the same check per file in `processor`, so mixed-format
+    // batches still solve every file the preset does apply to.)
+    let sat_preset_on_stream = matches!(
+        args.preset.as_deref().map(parse_preset),
+        Some(Ok(CliPreset::Sat(_)))
+    );
 
     // Handle input
     if args.interactive {
+        if sat_preset_on_stream {
+            eprintln!(
+                "error: preset `{}` configures the SAT core and only applies to \
+                 DIMACS/CNF input (`--dimacs`); it has no effect on SMT-LIB2 input",
+                args.preset.as_deref().unwrap_or_default()
+            );
+            std::process::exit(2);
+        }
         run_interactive(&mut ctx, &args, verbosity);
     } else if args.incremental {
         // Incremental mode streams top-level commands against a single
         // persistent context (carried across files), honoring push/pop and
         // cross-file declarations – see `incremental::run_incremental`.
+        if sat_preset_on_stream {
+            eprintln!(
+                "error: preset `{}` configures the SAT core and only applies to \
+                 DIMACS/CNF input (`--dimacs`); it has no effect on SMT-LIB2 input",
+                args.preset.as_deref().unwrap_or_default()
+            );
+            std::process::exit(2);
+        }
         incremental::run_incremental(&mut ctx, &args, verbosity);
     } else if args.input.is_empty() {
+        if sat_preset_on_stream {
+            eprintln!(
+                "error: preset `{}` configures the SAT core and only applies to \
+                 DIMACS/CNF input (`--dimacs`); it has no effect on SMT-LIB2 input",
+                args.preset.as_deref().unwrap_or_default()
+            );
+            std::process::exit(2);
+        }
         run_stdin(&mut ctx, &args, verbosity);
     } else if args.watch {
+        if sat_preset_on_stream {
+            eprintln!(
+                "error: preset `{}` configures the SAT core and only applies to \
+                 DIMACS/CNF input (`--dimacs`); it has no effect on SMT-LIB2 input",
+                args.preset.as_deref().unwrap_or_default()
+            );
+            std::process::exit(2);
+        }
         run_watch(&mut ctx, &args, verbosity);
     } else {
+        // File mode: per-file preset/domain checks live in `processor`.
         run_files(&mut ctx, &args, verbosity);
     }
 
@@ -848,23 +907,75 @@ async fn main() {
 /// `Option<usize>` to distinguish "left at its default" from "explicitly 4").
 const DEFAULT_THREADS: usize = 4;
 
+/// The SMT-layer presets: Context options applied on SMT-LIB2 input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SmtPreset {
+    Fast,
+    Balanced,
+    Thorough,
+    Minimal,
+}
+
+/// A resolved `--preset` value.  The CLI serves two disjoint preset
+/// domains; keeping them apart is what lets each input path reject (instead
+/// of silently ignoring) a preset it cannot honor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CliPreset {
+    /// SMT-layer preset — applies on SMT-LIB2 input paths.
+    Smt(SmtPreset),
+    /// SAT-core preset (`nixie_sat::ConfigPreset`) — applies to the DIMACS
+    /// fast path and to `cnf_bench`-style CNF solving.
+    Sat(nixie_sat::ConfigPreset),
+}
+
+/// Resolve a `--preset` name against both domains.
+///
+/// Errors on unknown names — never silently fall through (AGENTS.md):
+/// a typo like `--preset cadicla` must stop the run, not solve with an
+/// unintended default configuration.
+pub(crate) fn parse_preset(name: &str) -> Result<CliPreset, String> {
+    let lowered = name.to_ascii_lowercase();
+    let smt = match lowered.as_str() {
+        "fast" => Some(SmtPreset::Fast),
+        "balanced" => Some(SmtPreset::Balanced),
+        "thorough" => Some(SmtPreset::Thorough),
+        "minimal" => Some(SmtPreset::Minimal),
+        _ => None,
+    };
+    if let Some(p) = smt {
+        return Ok(CliPreset::Smt(p));
+    }
+    if let Some(p) = nixie_sat::ConfigPreset::from_name(&lowered) {
+        return Ok(CliPreset::Sat(p));
+    }
+    let sat_names: Vec<&str> = nixie_sat::ConfigPreset::all_presets()
+        .iter()
+        .map(|p| p.name())
+        .collect();
+    Err(format!(
+        "unknown preset `{name}` (SMT presets: fast, balanced, thorough, minimal; \
+         SAT presets for DIMACS input: {})",
+        sat_names.join(", ")
+    ))
+}
+
 /// Apply configuration preset
-fn apply_preset(ctx: &mut Context, preset: &str) {
+fn apply_preset(ctx: &mut Context, preset: SmtPreset) {
     match preset {
-        "fast" => {
+        SmtPreset::Fast => {
             // Fast preset: optimize for speed, minimal checking
             ctx.set_option("simplify", "true");
             ctx.set_option("strategy", "cdcl");
             ctx.set_option("restarts", "frequent");
             ctx.set_option("branching", "vsids");
         }
-        "balanced" => {
+        SmtPreset::Balanced => {
             // Balanced preset: good trade-off between speed and completeness
             ctx.set_option("simplify", "true");
             ctx.set_option("strategy", "portfolio");
             ctx.set_option("restarts", "moderate");
         }
-        "thorough" => {
+        SmtPreset::Thorough => {
             // Thorough preset: maximize completeness, slower
             ctx.set_option("simplify", "true");
             ctx.set_option("strategy", "portfolio");
@@ -872,27 +983,42 @@ fn apply_preset(ctx: &mut Context, preset: &str) {
             ctx.set_option("lookahead", "true");
             ctx.set_option("produce-proofs", "true");
         }
-        "minimal" => {
+        SmtPreset::Minimal => {
             // Minimal preset: minimal processing, fastest
             ctx.set_option("simplify", "false");
             ctx.set_option("strategy", "dpll");
             ctx.set_option("restarts", "never");
         }
-        _ => {
-            // Unknown preset, ignore
-        }
     }
 }
 
-/// Apply solver options from command-line arguments
-pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) {
+/// Apply solver options from command-line arguments.
+///
+/// Returns `Err` when `--preset` selected a SAT-core preset (a
+/// `--dimacs`-domain name) but this `Context` serves the SMT-LIB2 solver
+/// stack, where that preset has nothing to configure.  Everything else is
+/// still applied; the caller decides whether the error is fatal (stream
+/// modes) or per-file (mixed-format batches).
+pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) -> Result<(), String> {
     // Wire binary proof logging path if requested.
     if let Some(ref log_path) = args.proof_log {
         ctx.set_proof_log_path(Some(log_path.clone()));
     }
-    // Apply preset first if specified
+    // Apply preset first if specified.  SAT-core presets deliberately do
+    // nothing here: this Context serves the SMT-LIB2 stack, but whether a
+    // SAT preset is *valid* for a given input depends on the file format,
+    // which only the per-file dispatch in `processor` knows.  The format
+    // paths reject domain mismatches; `main` rejects them for stream modes.
+    let mut preset_err = None;
     if let Some(ref preset) = args.preset {
-        apply_preset(ctx, preset);
+        match parse_preset(preset) {
+            Ok(CliPreset::Smt(p)) => apply_preset(ctx, p),
+            Ok(CliPreset::Sat(_)) => {}
+            // Names were validated in `main` before any work started; a
+            // failure here means a caller bypassed that gate (e.g. a
+            // library consumer) — report it, never guess.
+            Err(e) => preset_err = Some(e),
+        }
     }
     if args.certified_mode {
         // This is an embedding-level policy, not merely an initial SMT-LIB
@@ -1001,6 +1127,15 @@ pub(crate) fn apply_solver_options(ctx: &mut Context, args: &Args) {
              implemented; the requested settings ({}) have no effect",
             args.theory_opt.join(", ")
         );
+    }
+
+    // Deferred so every other option above is applied even when the preset
+    // domain does not match: per-file callers can keep configuring the
+    // Context and attach the error to this file's outcome line instead of
+    // aborting a whole mixed-format batch.
+    match preset_err {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
