@@ -977,6 +977,28 @@ impl ModelChecker {
         let mut aux = Solver::new();
         aux.debug_tag = Some("-aux");
         aux.set_logic(logic.unwrap_or("ALL"));
+        // The aux solver exists to decide one goal: `not body'[sk]` —
+        // with the bounded-quantifier expansion this goal is
+        // quantifier-free, and where a binder survived (a sampled sort,
+        // an over-cap product) the aux's *own* MBQI loop adds nothing
+        // the verdict needs (an unsat under the wrapper-dodge reading is
+        // unsat under the true reading too; a sat verdict yields the
+        // falsifier the mining verifies).  What it did add was budget
+        // churn: the nested rounds' conflicts are charged to THIS
+        // checker's global budget through `aux.stats()`, and a handful
+        // of main-level checks whose aux went digging burned the whole
+        // 50k budget from the inside — every later main-level check then
+        // declined silently on the global gate (the set family's
+        // cap-starvation stall).
+        // Table mode only (see below): on goals *with* tables the aux's
+        // own MBQI added nothing but budget churn; on goals without
+        // them it occasionally contributed the refutation the outer
+        // loop could not reach alone (wisas/xs_8_13 lost its `unsat`
+        // when this was unconditional — the nested search inside an aux
+        // check found it).
+        if !model.constructor_sources.is_empty() {
+            aux.mbqi.set_max_rounds(0);
+        }
         // Restrict finite-domain Skolems to the model's universe (Z3's
         // `restrict_to_universe` under `is_finite`).  ONLY uninterpreted
         // sorts qualify: their completed model *is* the finite universe

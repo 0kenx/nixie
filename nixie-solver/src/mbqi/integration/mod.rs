@@ -629,6 +629,20 @@ impl MBQIIntegration {
             .set_table_mode(!self.active_table_quantifiers.is_empty());
         if core::mem::take(&mut self.last_round_barren) {
             self.model_checker.refund_on_barren_round();
+            // NOTE: the cardinality escalation (`thaw_table_domains`)
+            // fires here in principle — two barren rounds without a
+            // verdict mean the frozen structure cannot carry the model
+            // (a witness axiom falsified for want of an element the
+            // freeze never saw).  Wired up (2026-09-15) it *fires* but
+            // does not close: each thaw re-freezes at the grown
+            // universe, the bigger structure re-pins stale rows, and
+            // the loop re-stalls at a higher cardinality — set16 went
+            // 0 s -> 35 s without a verdict.  The escalation needs its
+            // own design (thaw *only the sorts whose witness axioms
+            // falsify*, not everything; re-derive the rows rather than
+            // re-freezing the stale pins).  The hook is
+            // `ModelCompleter::thaw_table_domains`, bounded by
+            // `MAX_TABLE_THAWS`; see the study.
         }
         let quantifier_ids: Vec<QuantifierId> = self.quantifiers.iter().map(|q| q.term).collect();
         self.budget

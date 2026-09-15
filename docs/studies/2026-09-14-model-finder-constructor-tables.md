@@ -400,3 +400,48 @@ Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
 nixie-core 4736/4740; the heaviest convergence pin passes standalone
 at 271 s (in band; one flaked FAIL under concurrent load, clean on
 rerun); fmt/clippy clean.
+
+
+## The aux solver's own MBQI was the budget fire (2026-09-15, fifth follow-up)
+
+The cap starvation's root: the aux solver's *internal* MBQI loop.  A
+main-level check's `aux_refute` charges the aux's whole solve —
+including the nested quantifier search the aux runs on its own goal —
+to the main checker's global conflict budget.  A handful of checks
+whose aux went digging (43 nested empty-mine rounds in one trace)
+burned the 50 k budget from the inside; every later main-level check
+then declined silently at the global gate.
+
+**Fix (table mode only)**: `aux.mbqi.set_max_rounds(0)` when
+`constructor_sources` is non-empty — the aux exists to decide one
+expanded body', its own MBQI adds nothing there but churn.
+Unconditional it was *not* free: `wisas/xs_8_13` (QF_UFLIA, no tables)
+lost its `unsat` — the nested search inside an aux check contributed
+the refutation the outer loop could not reach alone.  Gated on table
+mode, both worlds keep their behaviour.
+
+**Effect on the family**: the certifications that were always
+semantically there now actually land — q28 (seteq-as-subsets), q10
+(axiom 1), q33/q38 (union/intersection) certify; q57 (the witness
+axiom), q20, q42 remain falsified.  q57's falsifier is the
+*cardinality* gap: the frozen `Elem` domain lacks the distinguishing
+element the axiom demands — z3's model uses 8 `Elem` values, the
+freeze caught ~2-4.
+
+**The cardinality escalation was wired and measured — and held
+back.**  `ModelCompleter::thaw_table_domains` (bounded by
+`MAX_TABLE_THAWS = 4`) thaws after two barren uncertified rounds; the
+completion re-freezes at the grown universe.  It *fires* — and does
+not close: each thaw re-freezes over the stale pins too, the bigger
+structure re-stalls at a higher cardinality, and set16 went 0 s ->
+35 s without a verdict.  The escalation needs its own design (thaw
+only the sorts whose witness axioms falsify; re-derive rows rather
+than re-freezing stale pins).  The hook and the cap are landed for
+that follow-up; the trigger is documented in place.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
+nixie-core 4738/4742 — the two failures (`wisas_xs_8_13_*`) are
+pre-existing on the base (`6eec76dd` verified in a throwaway
+worktree), another agent's in-flight arc; the heaviest convergence pin
+passes standalone in band; fmt/clippy clean.

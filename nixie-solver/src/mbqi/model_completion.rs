@@ -723,7 +723,14 @@ pub struct ModelCompleter {
     frozen_table_domains: FxHashMap<SortId, Vec<TermId>>,
     /// Statistics
     stats: CompletionStats,
+    /// Cardinality escalations used (see `thaw_table_domains`): the
+    /// freeze-then-fail-then-refreeze loop is Z3's model finder's own
+    /// search shape, and the cap bounds it.
+    thaws_used: u32,
 }
+
+/// Bound on cardinality escalations per solve.
+const MAX_TABLE_THAWS: u32 = 4;
 
 impl ModelCompleter {
     /// Create a new model completer
@@ -734,8 +741,29 @@ impl ModelCompleter {
             uninterp_handler: UninterpretedSortHandler::new(),
             cache: FxHashMap::default(),
             frozen_table_domains: FxHashMap::default(),
+            thaws_used: 0,
             stats: CompletionStats::default(),
         }
+    }
+
+    /// Cardinality escalation (Z3's model finder's search shape): a
+    /// frozen domain that demonstrably cannot carry a satisfying
+    /// structure — a witness axiom falsified for want of a distinguishing
+    /// element (`not subset => exists x. member(x,s1) /\ not
+    /// member(x,s2)` with no such `x` in the domain) — is thawed so the
+    /// next completion re-freezes at the *current* (grown) universe.
+    /// Bounded by [`MAX_TABLE_THAWS`].
+    #[allow(dead_code)]
+    pub fn thaw_table_domains(&mut self) -> bool {
+        if self.thaws_used >= MAX_TABLE_THAWS {
+            return false;
+        }
+        self.thaws_used += 1;
+        if self.frozen_table_domains.is_empty() {
+            return false;
+        }
+        self.frozen_table_domains.clear();
+        true
     }
 
     /// Complete a partial model using the Ge & de Moura (2009) approach.
