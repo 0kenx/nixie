@@ -69,7 +69,7 @@ impl GrobnerBudget {
     /// but ground in practice. Monomial-operation charging keeps the
     /// budget a faithful work bound (deterministic: sizes are functions
     /// of the computation, never of the clock).
-    fn charge(&mut self, units: u64) -> Result<(), GrobnerError> {
+    pub fn charge(&mut self, units: u64) -> Result<(), GrobnerError> {
         if units > self.remaining {
             return Err(GrobnerError::Budget);
         }
@@ -684,6 +684,53 @@ pub fn normal_form(
         }
     }
     Some(current)
+}
+
+/// Reduction with cofactor tracking: computes `p − Σᵢ cof[i]·basis[i]`
+/// alongside the normal form, so a reduction to zero yields `p`'s
+/// expression over the basis — the branch-exhaustion certificate's
+/// membership witness (§8's case trees: the branch polynomial and the
+/// leaf refutations must present as combinations of the atoms).
+///
+/// Returns `None` on budget exhaustion (the caller must not use a
+/// partial reduction). Monomial-operation-charged like every reduction
+/// (the budget semantics trap).
+pub fn normal_form_traced(
+    f: &FieldCtx,
+    p: &MPoly,
+    basis: &GrobnerBasis,
+    budget: &mut GrobnerBudget,
+) -> Option<(MPoly, Vec<MPoly>)> {
+    let mut current = p.clone();
+    let mut cofactors: Vec<MPoly> = basis.basis.iter().map(|_| MPoly::zero()).collect();
+    while !current.is_zero() {
+        let lt = current.lm(DEGREVLEX)?;
+        let mut cancelled = false;
+        for (i, g) in basis.basis.iter().enumerate() {
+            let Some(lmg) = g.poly.lm(DEGREVLEX) else {
+                continue;
+            };
+            let Some(q) = monomial_div(&lt, &lmg) else {
+                continue;
+            };
+            let lc_cur = current.lc(DEGREVLEX).cloned()?;
+            let lc_g = g.poly.lc(DEGREVLEX).cloned()?;
+            let inv_g = f.inv(&lc_g)?;
+            let factor = f.mul(&lc_cur, &inv_g);
+            let sub = mul_by_monomial(f, &g.poly, &q).scale(f, &factor);
+            let add = mul_by_monomial(f, &MPoly::constant(f, &factor), &q);
+            cofactors[i] = cofactors[i].add(f, &add);
+            let cost = u64::try_from(sub.n_terms() + current.n_terms()).unwrap_or(u64::MAX / 2);
+            current = current.sub(f, &sub);
+            budget.charge(cost.saturating_add(1)).ok()?;
+            cancelled = true;
+            break;
+        }
+        if !cancelled {
+            return Some((current, cofactors));
+        }
+    }
+    Some((current, cofactors))
 }
 
 /// The minimal polynomial of `x` modulo a zero-dimensional ideal: find

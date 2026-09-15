@@ -150,7 +150,7 @@ fn planted_round_bounded(p: &BigUint, n: usize, k: usize, seed: u64, budget: u64
                 core.fact_indices
             );
         }
-        FfOutcome::Exhausted => {
+        FfOutcome::Exhausted { .. } => {
             eprintln!("PLANTED WITNESS: {witness:?}");
             use nixie_core::smtlib::Printer;
             for (i, a) in assertions.iter().enumerate() {
@@ -200,7 +200,7 @@ fn mutated_round(p: &BigUint, n: usize, k: usize, seed: u64) {
         FfOutcome::Model(model) => {
             assert!(validate_model(&manager, field, &assertions, &model).is_ok());
         }
-        FfOutcome::Unsat(_) | FfOutcome::Exhausted | FfOutcome::OutOfBudget { .. } => {}
+        FfOutcome::Unsat(_) | FfOutcome::Exhausted { .. } | FfOutcome::OutOfBudget { .. } => {}
         FfOutcome::InvalidModel(reason) => panic!("invalid shape (seed {seed}): {reason}"),
     }
 }

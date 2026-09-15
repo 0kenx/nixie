@@ -179,7 +179,7 @@ fn one_round(p: u32, n_vars: usize, n_lits: usize, seed: u64) {
                 "p={p} seed={seed}: the returned core is satisfiable by itself"
             );
         }
-        FfOutcome::Exhausted => {
+        FfOutcome::Exhausted { .. } => {
             assert_eq!(
                 sat_points, 0,
                 "p={p} seed={seed}: solver says exhausted-unsat, oracle finds a point"
@@ -354,7 +354,7 @@ fn disequality_witness_semantics() {
         // reports the verdict as Exhausted (no traced core on that path);
         // both variants are honest UNSATs.
         FfOutcome::Unsat(core) => assert_eq!(core.fact_indices.len(), 2),
-        FfOutcome::Exhausted => {}
+        FfOutcome::Exhausted { .. } => {}
         other => panic!("expected unsat, got {other:?}"),
     }
 }
@@ -551,4 +551,119 @@ fn corrupted_certificates_are_rejected() {
     let c1 = manager.mk_ff_const(field, 1i64.into()).expect("c");
     let other = vec![manager.mk_eq(x, c1), manager.mk_eq(x, c1)];
     assert!(!good.verify(&manager, &other));
+}
+
+#[test]
+fn corrupted_case_trees_are_rejected() {
+    use nixie_core::sort::SortKind;
+    // Mint a genuine two-level case tree (x² = 4 ∧ y² = x + 1 over
+    // p = 2³¹−1 — both children of the x-branch die rootless because 3
+    // and −1 are nonresidues), then corrupt it in every way the
+    // verifier watches for; each must fail (fail-closed is the
+    // property).
+    let mut manager = TermManager::new();
+    let sort = manager
+        .sorts
+        .finite_field(BigUint::from(2147483647u64))
+        .expect("prime");
+    let field = match manager.sorts.get(sort).map(|s| s.kind.clone()) {
+        Some(SortKind::FiniteField(id)) => id,
+        _ => panic!("expected FF sort"),
+    };
+    let x = manager.mk_var("x", sort);
+    let y = manager.mk_var("y", sort);
+    let c4 = manager.mk_ff_const(field, 4i64.into()).expect("c");
+    let c1 = manager.mk_ff_const(field, 1i64.into()).expect("c");
+    let xx = manager.mk_ff_mul([x, x]).expect("mul");
+    let yy = manager.mk_ff_mul([y, y]).expect("mul");
+    let x1 = manager.mk_ff_add([x, c1]).expect("add");
+    let assertions = vec![manager.mk_eq(xx, c4), manager.mk_eq(yy, x1)];
+
+    use nixie_theories::ff_theory::{CaseEntry, FfCertificate, FfOutcome, check_conjunction};
+    let outcome = check_conjunction(&manager, field, &assertions, 1 << 24);
+    let FfOutcome::Unsat(core) = outcome else {
+        panic!("expected unsat");
+    };
+    let Some(nixie_theories::ff_theory::FfCertificate::CaseTree {
+        field: cfield,
+        literals,
+        entries,
+    }) = core.certificate.clone()
+    else {
+        panic!("expected a case-tree certificate");
+    };
+
+    // The pristine tree verifies.
+    let good = FfCertificate::CaseTree {
+        field: cfield,
+        literals: literals.clone(),
+        entries: entries.clone(),
+    };
+    assert!(good.verify(&manager, &assertions));
+
+    // 1. Dropping an entry opens a hole in the tree (a branch's child
+    //    is missing): no coverage.
+    let mut e1 = entries.clone();
+    let dropped = e1.pop();
+    assert!(dropped.is_some(), "the tree has entries to drop");
+    let bad1 = FfCertificate::CaseTree {
+        field: cfield,
+        literals: literals.clone(),
+        entries: e1,
+    };
+    assert!(!bad1.verify(&manager, &assertions));
+
+    // 2. A fabricated root on a branch: the polynomial does not vanish
+    //    there (or the division breaks) — either way the completeness
+    //    check fails.
+    let mut e2 = entries.clone();
+    for (_p, entry) in e2.iter_mut() {
+        if let CaseEntry::Branch { roots, .. } = entry {
+            roots.push(BigUint::from(123456789u64));
+            break;
+        }
+    }
+    let bad2 = FfCertificate::CaseTree {
+        field: cfield,
+        literals: literals.clone(),
+        entries: e2,
+    };
+    assert!(!bad2.verify(&manager, &assertions));
+
+    // 3. Zeroing a branch's cofactors: the membership identity fails.
+    let mut e3 = entries.clone();
+    for (_p, entry) in e3.iter_mut() {
+        if let CaseEntry::Branch { cofactors, .. } = entry {
+            for c in cofactors.iter_mut() {
+                *c = nixie_math::ff::poly::MPoly::zero();
+            }
+            break;
+        }
+    }
+    let bad3 = FfCertificate::CaseTree {
+        field: cfield,
+        literals: literals.clone(),
+        entries: e3,
+    };
+    assert!(!bad3.verify(&manager, &assertions));
+
+    // 4. A branch with a HIDDEN root: claiming fewer roots than the
+    //    polynomial has leaves an unexplored value (here x² − 4 with
+    //    only one of its two roots — the leftover quotient still holds
+    //    the other linear factor, so gcd(q, x^p − x) ≠ 1).
+    let mut e4 = entries.clone();
+    for (_p, entry) in e4.iter_mut() {
+        if let CaseEntry::Branch { roots, .. } = entry
+            && roots.len() > 1
+        {
+            roots.pop();
+            break;
+        }
+    }
+    let bad4 = FfCertificate::CaseTree {
+        field: cfield,
+        literals: literals.clone(),
+        entries: e4,
+    };
+    assert!(!bad4.verify(&manager, &assertions));
 }

@@ -499,3 +499,90 @@ fn all_big_solutions_stay_honest() {
     ));
     assert_ne!(out[0], "unsat", "the system is satisfiable (x=y=±2^100)");
 }
+
+#[test]
+fn certified_branch_exhaustion_no_roots_accepts() {
+    // x² = 3 over p = 2³¹−1 (3 is a nonresidue: p ≡ 7 mod 12): FindZero
+    // branches on x² − 3, finds no roots, and the case tree is a single
+    // rootless branch — the §8 hard half's simplest shape, now
+    // certified (replay + membership + gcd(x^p−x, ·) = 1).
+    let mut ctx = Context::new();
+    ctx.execute_script("(set-logic QF_FF)").expect("parse");
+    ctx.execute_script(
+        "(declare-const x (_ FiniteField 2147483647))
+         (assert (= (ff.mul x x) #f3m2147483647))",
+    )
+    .expect("parse");
+    ctx.require_certified_mode();
+    let out = ctx.execute_script("(check-sat)").expect("parse");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_branch_exhaustion_case_tree_accepts() {
+    // x² = 4 ∧ y² = x + 1 over p = 2³¹−1: the root branch on x² − 4 has
+    // two roots; x = 2 leaves y² = 3 and x = −2 leaves y² = −1 — both
+    // nonresidues (p ≡ 3 mod 4), so both children die rootless. A
+    // two-level case tree: every branch step's root completeness and
+    // every leaf's membership verified by replay.
+    let mut ctx = Context::new();
+    ctx.execute_script("(set-logic QF_FF)").expect("parse");
+    ctx.execute_script(
+        "(declare-const x (_ FiniteField 2147483647))
+         (declare-const y (_ FiniteField 2147483647))
+         (assert (= (ff.mul x x) #f4m2147483647))
+         (assert (= (ff.mul y y) (ff.add x #f1m2147483647)))",
+    )
+    .expect("parse");
+    ctx.require_certified_mode();
+    let out = ctx.execute_script("(check-sat)").expect("parse");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_substituted_linear_core_refutation_accepts() {
+    // x² = 4 ∧ y² = x + 2 ∧ y = 5: the linear core pivots y = 5, then
+    // x = 23, and the substituted x² − 4 collapses to a nonzero
+    // constant. The refutation used to certify over the REWRITTEN
+    // generator list — which the replay cannot reproduce — and every
+    // such UNSAT silently downgraded (the composition bug found by the
+    // case-tree probe, 2026-09-16). The rewriting now carries each
+    // generator's expression over the originals.
+    let mut ctx = Context::new();
+    ctx.execute_script("(set-logic QF_FF)").expect("parse");
+    ctx.execute_script(
+        "(declare-const x (_ FiniteField 2147483647))
+         (declare-const y (_ FiniteField 2147483647))
+         (assert (= (ff.mul x x) #f4m2147483647))
+         (assert (= (ff.mul y y) (ff.add x #f2m2147483647)))
+         (assert (= y #f5m2147483647))",
+    )
+    .expect("parse");
+    ctx.require_certified_mode();
+    let out = ctx.execute_script("(check-sat)").expect("parse");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}
+
+#[test]
+fn certified_linear_core_mixed_order_combo_accepts() {
+    // x² = 2 ∧ x = 5 over p = 2³¹−1 (2 IS a residue there, but x = 5
+    // refutes): the generator list is [nonlinear, linear] — the shape
+    // where the linear core's combination bookkeeping once put the
+    // identity coefficient at the linear-subsequence position instead
+    // of the generator's true index, certifying the wrong generator.
+    let mut ctx = Context::new();
+    ctx.execute_script("(set-logic QF_FF)").expect("parse");
+    ctx.execute_script(
+        "(declare-const x (_ FiniteField 2147483647))
+         (assert (= (ff.mul x x) #f2m2147483647))
+         (assert (= x #f5m2147483647))",
+    )
+    .expect("parse");
+    ctx.require_certified_mode();
+    let out = ctx.execute_script("(check-sat)").expect("parse");
+    assert_eq!(out[0], "unsat");
+    assert_eq!(ctx.certification_failure(), None);
+}

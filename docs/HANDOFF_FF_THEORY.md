@@ -124,6 +124,17 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 - **T7 — git protocol.** Land on `main` via fast-forward from a clean
   worktree; never force-push; stage only your files; delete your
   worktrees; copy release binaries to `precompile/<sha>/`.
+- **T10 — never regex-delete instrumentation over code.** Removing the
+  case-tree debug prints with a line-spanning regex ate whole features
+  between distant braces (and a `cd` failure between tool calls sent
+  builds and edits into the PRIMARY tree for several rounds — always
+  anchor worktree commands with absolute paths or `--manifest-path`,
+  and remove debug scaffolding by exact-match edits only). Also: the
+  certificate machinery's correctness lives in its INDEX ALIGNMENTS
+  (combo→generator, tracer row→inputs, literal atom = base + registry
+  index, little-endian univariate coefficients `[−r, 1]` not `[−1, r]`,
+  `x^p−x` not `x^p+x`); every one of those was a real bug found by the
+  corruption/acceptance probes, and each is now pinned by a test.
 - **T9 — lazy enumeration must carry its truncation flag to the verdict.**
   The lazy round-robin's first version enumerated 256 of p values, let
   the stack empty, and reported `Exhausted` — a false `unsat` on a
@@ -170,11 +181,21 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
    congruence explanations for multi-field core-directed blocking, and
    a case-tree certificate so FF-arithmetic combination UNSATs can
    certify.
-3. **Branch-exhaustion certificates (§8 hard half)**: when UNSAT comes
-   from FindZero closing the tree, the proof is a case tree; each
-   branch step is checkable (`f = ∏(x−rᵢ)·q` with `gcd(q, x^p−x)=1`).
-   Until it exists, certified mode correctly downgrades those to
-   `unknown` — that is by design, not a gap to paper over.
+3. ~~**Branch-exhaustion certificates (§8 hard half)**~~ — **landed
+   2026-09-16**. `FfCertificate::CaseTree`: FindZero records the search
+   as a case tree (branch steps with root-completeness witnesses
+   `f = ∏(x−rᵢ)·q`, `gcd(q, x^p−x)=1`; leaves with membership
+   cofactors composed over the replayable encoding through the tracer
+   rows AND the linear core's rewriting — landing this found and fixed
+   two pre-existing certificate bugs: the linear core certified over
+   the REWRITTEN generator list the replay cannot reproduce, and its
+   combination bookkeeping indexed the linear subsequence instead of
+   the generator list). Certified mode accepts branch-exhaustion
+   UNSATs; the enumeration path and aborted tracking still downgrade
+   honestly (tracking runs on its own budget — a big tree can only
+   lose its certificate, never its verdict). Still open within §8:
+   certificates for the SPLIT root (merged inputs are not replayable)
+   and for the enumeration path.
 4. **Incremental trail (§7)**: recompute-don't-rollback is the current
    discipline and is correct; an incremental basis would need an
    invariant checker before it's worth the risk.
