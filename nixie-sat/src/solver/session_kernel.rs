@@ -148,12 +148,9 @@ impl Solver {
                     super::super::propagation_work::list_lines::<Watcher>(watches.len());
             }
             // Preserve the old scheduling formula, including phantom binaries.
-            let csr_len = csr
-                .as_ref()
-                .map_or(watches.len(), |c| c.len(Lit::from_code(code as u32)));
             let bins = phantom.get(code).map_or(0, |&n| n as usize);
             let ghosts = ghost_debt.get(code).map_or(0, |&n| n as usize);
-            let charge = 1 + (((csr_len + bins + ghosts) as u64) * 8).div_ceil(128);
+            let charge = 1 + (((watches.len() + bins + ghosts) as u64) * 8).div_ceil(128);
             if ghosts != 0 {
                 ghost_debt[code] = 0;
             }
@@ -164,7 +161,7 @@ impl Solver {
                     "[charge] c={} stable={} len={} bins={} ghosts={} code={}",
                     charge,
                     stable_mode,
-                    csr_len,
+                    watches.len(),
                     bins,
                     ghosts,
                     code
