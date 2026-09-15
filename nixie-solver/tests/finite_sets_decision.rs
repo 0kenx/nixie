@@ -469,7 +469,7 @@ fn cardinality_is_exact_through_intersection_and_difference() {
 
 /// A cardinality whose set has no known support is **declined**, not guessed.
 #[test]
-fn cardinality_of_an_opaque_set_is_declined() {
+fn cardinality_of_an_opaque_set_is_decided() {
     let mut tm = TermManager::new();
     let int = tm.sorts.int_sort;
     let si = tm.sorts.set(int);
@@ -478,12 +478,16 @@ fn cardinality_of_an_opaque_set_is_declined() {
     let huge = tm.mk_int(999);
     let claim = tm.mk_eq(card, huge);
 
+    // Since the Venn-region/slack reduction landed, an opaque set's
+    // cardinality is *reduced*: `|v| = 999` is satisfiable (a set of 999
+    // elements exists over `Int`), so the honest answer is `Sat`, not the
+    // old `Unknown` decline.
     let mut s = Solver::new();
     s.assert(claim, &mut tm);
     assert_eq!(
         s.check(&mut tm),
-        SolverResult::Unknown,
-        "an opaque set's cardinality is not determined here"
+        SolverResult::Sat,
+        "an opaque set can have any finite cardinality"
     );
 }
 
@@ -620,10 +624,12 @@ fn popping_lowers_the_set_honesty_gate() {
     let three = tm.mk_int(3);
     let claim = tm.mk_eq(card, three);
     solver.assert(claim, &mut tm);
+    // The cardinality reduction covers this now: `|s| = 3` alone is
+    // satisfiable, and the answer must be `Sat`, not the old `Unknown`.
     assert_eq!(
         solver.check(&mut tm),
-        SolverResult::Unknown,
-        "an unreduced cardinality must not be answered"
+        SolverResult::Sat,
+        "a bare cardinality bound over an infinite element sort is satisfiable"
     );
     solver.pop();
 

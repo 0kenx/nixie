@@ -22,6 +22,7 @@ use super::Context;
 /// string is input-controlled (and, through chained `define-sort`, not
 /// usefully bounded by any single parse), so the walk now carries its own
 /// heap stack of these frames instead of native stack frames.
+#[allow(clippy::enum_variant_names)] // DomainOf/RangeOf/ElemOf name the walk's steps
 enum SortPending {
     /// The domain expression is being resolved; the range expression is
     /// still waiting its turn.

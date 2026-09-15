@@ -43,18 +43,23 @@
 //! same move as `ArrayTheory`'s extensionality witness, and as CVC5's
 //! `checkDisequalities`.
 //!
-//! # What is not covered
+//! # Cardinality
 //!
-//! `set.card`. Cardinality couples set structure to integer arithmetic — it is
-//! why CVC5 gives it a separate Venn-region module — and it is not reduced
-//! here. A problem containing `set.card` keeps
-//! [`Solver::set_terms_unconstrained`](super::Solver), so its `Sat` degrades
-//! to `Unknown` rather than resting on an unconstrained integer.
+//! [`cardinality`](self::cardinality) decides the ground cardinality
+//! fragment: counting equations over the ground elements with one slack per
+//! (set, element-list), inclusion–exclusion over twin terms, the slack
+//! lattice, subset↔size rules, finite-universe bounds, complement over
+//! finite sorts, and `set.choose`. Its caps (cone size, element-list length)
+//! and the constructs it declines raise the honesty gate
+//! ([`Solver::set_terms_unconstrained`](super::super::Solver)) so a `Sat`
+//! resting on an unreduced cardinality degrades to `Unknown`.
 
 #![allow(missing_docs)]
 
 use crate::prelude::*;
 use nixie_core::{SortKind, TermId, TermKind, TermManager};
+
+mod cardinality;
 
 /// How a set term is built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,8 +78,12 @@ enum Shape {
     /// has already happened. Leaving it opaque made `(= (ite c {1} {2}) {})`
     /// answer `Sat` — a wrong `sat`, since neither branch is empty.
     ///
-    /// [`Solver::eliminate_nonbool_ite`]: super::Solver::eliminate_nonbool_ite
+    /// [`Solver::eliminate_nonbool_ite`]: super::super::Solver::eliminate_nonbool_ite
     Ite(TermId, TermId, TermId),
+    /// `(set.complement s)`.
+    Complement(TermId),
+    /// `(as set.universe (Set T))`.
+    Univ,
     /// A set-sorted variable or other opaque term: it has no structure, so its
     /// membership atoms are free and constrained only by the relations the
     /// problem states about it.
@@ -96,6 +105,8 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
         Some(TermKind::SetUnion(a, b)) => Shape::Union(*a, *b),
         Some(TermKind::SetInter(a, b)) => Shape::Inter(*a, *b),
         Some(TermKind::SetMinus(a, b)) => Shape::Minus(*a, *b),
+        Some(TermKind::SetComplement(a)) => Shape::Complement(*a),
+        Some(TermKind::SetUniv(_)) => Shape::Univ,
         Some(TermKind::Ite(c, a, b)) => Shape::Ite(*c, *a, *b),
         _ => Shape::Opaque,
     }
@@ -148,6 +159,13 @@ fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermI
             xs.extend(support(b, manager, depth + 1)?);
             Some(xs)
         }
+        // A complement's members are everything *but* the operand's — not
+        // confined to any finite list.
+        Shape::Complement(_) => None,
+        // The universe set's members are the whole element sort: confined
+        // only when that sort is finite, whose inhabitants are not
+        // term-enumerable here. `cardinality` states |U| directly instead.
+        Shape::Univ => None,
         Shape::Opaque => None,
     }
 }
@@ -188,6 +206,8 @@ struct Survey {
     subsets: Vec<(TermId, TermId, TermId)>,
     /// `set.card(s)` terms seen, paired with their argument.
     cardinalities: Vec<(TermId, TermId)>,
+    /// `set.choose(s)` terms seen, paired with their argument.
+    chooses: Vec<(TermId, TermId)>,
 }
 
 impl Survey {
@@ -252,6 +272,16 @@ fn survey(roots: &[TermId], manager: &TermManager) -> Survey {
             TermKind::SetSingleton(e) => {
                 if let Some(es) = element_sort(t, manager) {
                     out.add_element(*e, es);
+                }
+            }
+            TermKind::SetChoose(s) => {
+                out.chooses.push((t, *s));
+                // `set.choose(s)` participates in element counting as well:
+                // it *is* an element of `s` whenever `s` is nonempty, so its
+                // membership atom has to exist for the cardinality equation
+                // to see it.
+                if let Some(es) = element_sort(*s, manager) {
+                    out.add_element(t, es);
                 }
             }
             TermKind::SetSubset(a, b) => out.subsets.push((t, *a, *b)),
@@ -408,8 +438,17 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         elements.entry(es).or_default().push(k);
     }
 
+    // Cardinality comes *before* the membership definitions below, because
+    // building the counting cone introduces new set terms — the `a ∩ b`
+    // twins of every `a ∪ b` whose size the problem constrains — and those
+    // twins need membership definitions of their own from the loop that
+    // follows. See [`cardinality`].
+    let card = cardinality::reduce(&s, &elements, manager, &mut axioms);
+    let mut definition_sets: Vec<TermId> = s.sets.clone();
+    definition_sets.extend(card.extra_sets.iter().copied());
+
     // Define every membership atom, for every element of the matching sort.
-    for &set in &s.sets {
+    for &set in &definition_sets {
         let Some(es) = element_sort(set, manager) else {
             continue;
         };
@@ -456,6 +495,21 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     let ib = manager.mk_set_member(e, b);
                     let picked = manager.mk_ite(c, ia, ib);
                     axioms.push(manager.mk_eq(atom, picked));
+                }
+                // `e \in ~s` is exactly `e \notin s`: complement is
+                // pointwise, which is what makes its membership fragment
+                // decidable without any universe reasoning.
+                Shape::Complement(inner) => {
+                    let ii = manager.mk_set_member(e, inner);
+                    let not_inner = manager.mk_not(ii);
+                    axioms.push(manager.mk_eq(atom, not_inner));
+                }
+                // Every element of the element sort is in the universe set.
+                // (The builder already folds `x \in U` to `true`; this arm
+                // is the belt to that braces for elements introduced after
+                // the term was built.)
+                Shape::Univ => {
+                    axioms.push(atom);
                 }
                 // An opaque set's members are free *of a definition*. They
                 // are not free of each other; see the congruence axioms
@@ -636,54 +690,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // `set.card`, exact where the members are confined to a known list and
     // *declined* otherwise: an under-constrained cardinality is a free
     // integer, and a model that picks one arbitrarily is not a model.
-    let mut incomplete = pair_budget_exceeded;
-    for &(card_term, set) in &s.cardinalities {
-        match support(set, manager, 0) {
-            Some(sup) => axioms.push(cardinality_axiom(card_term, set, &sup, manager)),
-            None => incomplete = true,
-        }
-    }
+    let incomplete = pair_budget_exceeded || card.incomplete;
 
     Reduction { axioms, incomplete }
-}
-
-/// `(= (set.card s) n)`, where `n` counts the members of `s` once each.
-///
-/// The candidates in `support` are **not distinct**: `{x} \cup {y}` has two and
-/// they denote one value when `x = y`. A plain sum of indicators would report
-/// `2` for every model that equates them. A candidate therefore counts only
-/// when no **earlier** candidate is both present and equal to it, which picks
-/// exactly one representative per equivalence class.
-///
-/// This is the same de-duplicating sum the TLA+ arena builds
-/// (`nixie-tla-check::arena::cardinality`), and it is the shape that exposed
-/// the string-literal false `sat`: the guards are element equalities, so they
-/// have to be decided for the count to mean anything.
-fn cardinality_axiom(
-    card_term: TermId,
-    set: TermId,
-    support: &[TermId],
-    manager: &mut TermManager,
-) -> TermId {
-    let zero = manager.mk_int(0);
-    let one = manager.mk_int(1);
-    let mut terms: Vec<TermId> = Vec::with_capacity(support.len());
-    for (i, &e) in support.iter().enumerate() {
-        let present = manager.mk_set_member(e, set);
-        let mut counts = vec![present];
-        for &earlier in &support[..i] {
-            let earlier_in = manager.mk_set_member(earlier, set);
-            let same = manager.mk_eq(e, earlier);
-            let dup = manager.mk_and([earlier_in, same]);
-            counts.push(manager.mk_not(dup));
-        }
-        let fresh = manager.mk_and(counts);
-        terms.push(manager.mk_ite(fresh, one, zero));
-    }
-    let total = if terms.is_empty() {
-        zero
-    } else {
-        manager.mk_add(terms)
-    };
-    manager.mk_eq(card_term, total)
 }

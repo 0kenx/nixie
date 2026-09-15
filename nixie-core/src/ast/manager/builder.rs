@@ -1002,11 +1002,13 @@ impl TermManager {
     }
 
     fn is_set_empty(&self, t: TermId) -> bool {
-        self.get(t).is_some_and(|d| matches!(d.kind, TermKind::SetEmpty(_)))
+        self.get(t)
+            .is_some_and(|d| matches!(d.kind, TermKind::SetEmpty(_)))
     }
 
     fn is_set_univ(&self, t: TermId) -> bool {
-        self.get(t).is_some_and(|d| matches!(d.kind, TermKind::SetUniv(_)))
+        self.get(t)
+            .is_some_and(|d| matches!(d.kind, TermKind::SetUniv(_)))
     }
 
     /// The universe set at element sort `element`:
