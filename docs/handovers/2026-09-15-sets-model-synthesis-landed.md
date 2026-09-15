@@ -179,6 +179,39 @@ witness-side drift (the xor satisfies on either side freely). Parity
 re-run: 176/1/0, z3 4.16.0, byte-identical. `precompile/6ee0a8d8/`
 cached.
 
+## Update 2026-09-16: the join split was never counted (`4ade3b1e`)
+
+The named "datatype wrong-arity tuple default" hunt found a **false-sat
+class** instead, plus the arity bug that produced those tuples:
+
+- **Dead push**: the join splits (`u`, `v`, the middle `k`) were pushed
+  into the element lists keyed by `element_sort(derived)` — a *set's*
+  element sort, `None` for a tuple — so the push never happened and the
+  counting equations were blind to them. `(a,c) ∈ r ⨝ s` with both
+  operands exactly pinned to a non-connecting pair answered `sat`.
+  Fixed: key on the term's own sort, and derive the splits in a
+  pre-pass *before* cardinality (a final assert's split is counted in
+  the same pass). The feedback loop this opened (element lists
+  ballooning) is closed by deriving splits only for user-reachable
+  elements — a split of a split re-derives what compose already forces —
+  and skipping split-derived operands in the compose rule.
+- **`join_arities` returned decremented lengths** used as full ones: a
+  binary ⨝ binary built `(k)` and `(k, 1, 3)` — the wrong-arity tuples
+  from the debug trail, cross-sort elements no model could value.
+- **Tuple ctor equality now unfolds componentwise in `mk_eq`** (datatype
+  injectivity as a builder rewrite — holds in the counting guards too).
+- `rel_join_sort` + the parser follow CVC5's unary-join rule (only two
+  unary operands rejected).
+- Model side: tuple mints enter components into `used` (every minted
+  tuple was `(0,0)`), selector-of-value folds in the sweep, constructor
+  self-entries with unresolved components re-resolve, and sweep-derived
+  values are fixed under the collision repair.
+
+The join's own `get-value` display still declines honestly — the
+datatype reconstruction's arity handling is *still* the remaining layer
+(the sort-sanity gates contain it). Parity: 176/1/0, z3 4.16.0,
+byte-identical. `precompile/4ade3b1e/` cached.
+
 ## Roadmap (updated, value order)
 
 1. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
