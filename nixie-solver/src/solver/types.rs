@@ -759,6 +759,97 @@ impl Model {
                         });
                         current = arr;
                     }
+                    // The finite-set theory. A set-sorted VALUE position
+                    // folds to the canonical `set.union`-of-`set.singleton`
+                    // term (which is what a synthesized model entry holds,
+                    // and what `(get-value)`/`(get-model)` print); the
+                    // predicates fold to constants. All through the shared
+                    // iterative evaluator (`set_model::SetView`), which
+                    // resolves opaque sets from this model and compounds
+                    // structurally from their operands. An undetermined
+                    // answer breaks with `current` — the same honest echo
+                    // every other unconstrained term gets.
+                    //
+                    // A set-sorted `ite` never reaches an arm here: the
+                    // generic `Ite` frame above evaluates the condition and
+                    // descends into the taken branch, which is itself a set
+                    // term and lands in the constructor arm below.
+                    TermKind::SetMember(element, set) => {
+                        let answer = {
+                            let mut view = super::set_model::SetView::new(self, manager);
+                            view.member(element, set)
+                        };
+                        break match answer {
+                            Some(true) => manager.mk_true(),
+                            Some(false) => manager.mk_false(),
+                            None => current,
+                        };
+                    }
+                    TermKind::SetSubset(a, b) => {
+                        let answer = {
+                            let mut view = super::set_model::SetView::new(self, manager);
+                            view.subset(a, b)
+                        };
+                        break match answer {
+                            Some(true) => manager.mk_true(),
+                            Some(false) => manager.mk_false(),
+                            None => current,
+                        };
+                    }
+                    TermKind::SetCard(set) => {
+                        let answer = {
+                            let mut view = super::set_model::SetView::new(self, manager);
+                            view.card(set)
+                        };
+                        break match answer {
+                            Some(n) => manager.mk_int(num_bigint::BigInt::from(n)),
+                            None => current,
+                        };
+                    }
+                    TermKind::SetChoose(set) => {
+                        // The chosen element: the choose term's own model
+                        // entry (it is an element like any other), else a
+                        // member of the set's value, else the echo.
+                        if let Some(v) = self.get(current) {
+                            break v;
+                        }
+                        let answer = {
+                            let mut view = super::set_model::SetView::new(self, manager);
+                            view.elements(set)
+                        };
+                        break match answer.as_deref() {
+                            Some([first, ..]) => *first,
+                            _ => current,
+                        };
+                    }
+                    TermKind::SetEmpty(_)
+                    | TermKind::SetSingleton(_)
+                    | TermKind::SetUniv(_)
+                    | TermKind::SetUnion(_, _)
+                    | TermKind::SetInter(_, _)
+                    | TermKind::SetMinus(_, _)
+                    | TermKind::SetComplement(_) => {
+                        // The canonical value term: built here, where the
+                        // manager is mutable; the element list comes from
+                        // the read-only view first so the borrows never
+                        // overlap.
+                        let elements = {
+                            let mut view = super::set_model::SetView::new(self, manager);
+                            view.elements(current)
+                        };
+                        break match (elements, manager.get(current).map(|d| d.sort)) {
+                            (Some(mut elements), Some(set_sort)) => {
+                                elements.sort_unstable();
+                                let mut acc = manager.mk_set_empty_at(set_sort);
+                                for &e in &elements {
+                                    let singleton = manager.mk_set_singleton(e);
+                                    acc = manager.mk_set_union(acc, singleton);
+                                }
+                                acc
+                            }
+                            _ => current,
+                        };
+                    }
                     // `(let ((n v) ...) body)`: substitute the bindings into
                     // the body and evaluate that. encode.rs leaves `let`
                     // un-expanded (it encodes the body with the bound vars

@@ -497,6 +497,12 @@ impl Solver {
         // is what put the mode-equality atoms' truth values into scope.
         self.extract_rounding_mode_model(&mut model, manager);
 
+        // Finite sets. Runs last: synthesis reads the element values the
+        // passes above pinned (arithmetic, bit-vector, string, datatype)
+        // and the Boolean atoms the first pass recorded, and it verifies
+        // itself before publishing (see `set_model`).
+        self.extract_set_model(&mut model, manager);
+
         self.model = Some(model);
     }
 

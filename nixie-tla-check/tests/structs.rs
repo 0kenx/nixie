@@ -136,17 +136,47 @@ fn a_set_of_tuples_is_a_state_variable() {
     holds("s", "s = {<<1, 2>>}", "<<1, 3>> \\notin s");
 }
 
-/// `Cardinality` of a set **variable** is `Unknown`, not a number. The
-/// theory's cardinality is exact only where the members are confined to a
-/// statically known list, and a variable's are not — even one an assertion
-/// pins to a literal set, because the support recursion does not follow
-/// equalities. Honest incompleteness, and the honesty gate is what keeps it
-/// from being a guess.
+/// `Cardinality` of a set **variable** an assertion pins to a literal set
+/// is exact: the asserted equality `s = {…}` reaches the operand's
+/// support-exact count through the `a = b → card(a) = card(b)` rule
+/// (landed 2026-09-15, mirroring Z3's `theory_finite_set_size::
+/// add_eq_axioms`). Before that rule the support recursion did not follow
+/// equalities and the claim was honestly `Unknown`; the test pins the
+/// improvement — and its sibling keeps the genuine decline: a variable
+/// with **no** pinning equality still has unknown members.
 #[test]
-fn cardinality_of_a_set_variable_is_not_guessed() {
+fn cardinality_of_a_pinned_set_variable_is_exact() {
     assert!(matches!(
         claim("s", "s = {<<1, 2>>, <<3, 4>>}", "Cardinality(s) = 2"),
-        Outcome::Unknown(_)
+        Outcome::NoViolationWithin(0)
+    ));
+    assert!(matches!(
+        claim("s", "s = {<<1, 2>>, <<3, 4>>}", "Cardinality(s) = 3"),
+        Outcome::Violation { step: 0 }
+    ));
+}
+
+/// An unpinned set variable decides too: the slack encoding gives `|s| = 2`
+/// over any element sort an honest `sat` (the counting equation's slack
+/// absorbs the anonymous members), so nothing here declines anymore.
+#[test]
+fn cardinality_of_an_unpinned_set_variable_decides() {
+    // The invariant does not hold of *every* state, and the violation is
+    // witnessed by a real model (the slack encoding plus synthesis) — not
+    // a guess.
+    assert!(matches!(
+        claim("s", "TRUE", "Cardinality(s) = 2"),
+        Outcome::Violation { step: 0 }
+    ));
+    // A tautologous cardinality bound holds everywhere.
+    assert!(matches!(
+        claim("s", "TRUE", "Cardinality(s) >= 0"),
+        Outcome::NoViolationWithin(0)
+    ));
+    // And a bound no family can meet is refuted, not declined.
+    assert!(matches!(
+        claim("s", "Cardinality(s) >= 0", "Cardinality(s) < 0"),
+        Outcome::Violation { step: 0 }
     ));
 }
 

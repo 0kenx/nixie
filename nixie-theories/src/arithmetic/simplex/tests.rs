@@ -1404,3 +1404,59 @@ fn wide_dependent_bound_change_flags_staleness() {
         "a skipped wide dependent must flag staleness, not pass silently"
     );
 }
+
+// Regression (2026-09-16, the wide-chain false `unsat` root cause):
+// `derive_basic_bound`'s mid-walk exact retry recomputes the WHOLE
+// directional sum, but the walk used to CONTINUE adding the remaining
+// terms on top of the full recomputation — double-counting the
+// post-overflow terms. On the wide-chain shape the retry returned the
+// correct full sum and the walk then re-added the remaining term,
+// planting a bound that violated the model and refuting a satisfiable
+// chain. The fix: after the retry the arithmetic is complete (the
+// walk keeps iterating only to collect REASONS).
+#[test]
+fn basic_bound_exact_retry_does_not_double_count() {
+    let mut simplex = Simplex::new();
+    let x = simplex.new_var();
+    let y = simplex.new_var();
+    let z = simplex.new_var();
+    // x = y = 1, z = 2.
+    for v in [x, y] {
+        simplex.set_lower(v, Rational64::one(), 1);
+        simplex.set_upper(v, Rational64::one(), 1);
+    }
+    simplex.set_lower(z, Rational64::from_integer(2), 1);
+    simplex.set_upper(z, Rational64::from_integer(2), 1);
+    // Row: basic = 2^62·x + 2^62·y − 2^62·z + 1·w + 3 (the unit `w`
+    // term keeps the coefficient GCD at 1, so intern-time
+    // canonicalization cannot rescale the row). Walk: 3 + 2^62
+    // (fits), + 2^62 → 2^63 + 3 OVERFLOWS the checked add; the exact
+    // retry returns the full sum 3. The unfixed walk continued and
+    // re-added the remaining `z` term (−2^63), reporting −2^63 + 3.
+    let w = simplex.new_var();
+    simplex.set_lower(w, Rational64::zero(), 1);
+    let big = Rational64::from_integer(4611686018427387904i64);
+    let mut row = LinExpr::new();
+    row.terms.push((x, big));
+    row.terms.push((y, big));
+    row.terms.push((z, -big));
+    row.terms.push((w, Rational64::one()));
+    row.constant = Rational64::from_integer(3);
+    let slack = simplex.intern_row(row);
+
+    // The slack's bound slots are not allocated until a bound is
+    // stored, and the propagation's apply loop (pre-existing behavior)
+    // skips vars without slots — so the derivation itself is asserted
+    // here, via the propagated bound it produces.
+    simplex.propagate_bounds();
+    let props = simplex.get_propagated();
+    let want = DeltaRational::from_rational(Rational64::from_integer(3));
+    assert!(
+        props
+            .iter()
+            .any(|p| p.var == slack && p.is_lower && p.value == want),
+        "the row's exact value at the pins is 3 (the exact-retry result);              a different propagated lower is the double-count: {props:?}"
+    );
+    // (`derive_basic_bound` returns at most one direction per call —
+    // the lower; the upper derives on the next fixpoint pass.)
+}

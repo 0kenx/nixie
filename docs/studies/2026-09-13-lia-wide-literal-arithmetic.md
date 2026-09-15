@@ -973,3 +973,73 @@ recycling, branch-local bounds, endpoint orientation), and the next
 entry points are recorded in
 [`2026-09-15-wide-row-bound-propagation-negative-result.md`](2026-09-15-wide-row-bound-propagation-negative-result.md).
 Slice 6 remains open, exactly as the handoff left it.
+
+## Continuation 17 (2026-09-16): the slice-6 blocker was a pre-existing propagation bug — found by the auditors, fixed, landed (item 46)
+
+46. **`derive_basic_bound`'s exact-retry double-count** (found by the
+    corner-enumeration auditor built per the negative-result study's
+    corrected entry points): the mid-walk retry recomputes the WHOLE
+    directional sum, but the walk continued adding the post-overflow
+    terms on top of the full result — a corrupted bound with SOUND
+    reasons, i.e. an unjustified refutation wearing a justified one's
+    clothes. This single defect produced BOTH of slice-6's recorded
+    false `unsat`s (the chain-sat twin and, via narrow direction-2's
+    enriched bound graph, the cancellation sat-twin) and had been live
+    on `main` behind an overflow trigger the ordinary corpus never
+    reached. Fix: after the retry the walk is reasons-only
+    (`lower_done`/`upper_done`); regression
+    `basic_bound_exact_retry_does_not_double_count`. The wide-row
+    propagation itself stays unlanded (three NEW false-`unsat` shapes
+    on fresh differential seeds — see the negative-result study's
+    resolution section); its rebuild now stands on a sound narrow base,
+    with the corner auditors and the model audit as the standing
+    instruments.
+
+Verification: theories+solver suites green except the genuine
+`[corpus-missing]` set (the returned corpus lacks QF_BV/sage and three
+other families); wide differential 5×300 (fresh seeds included) clean;
+mixed fuzz 2×400 clean; Z3 parity 176/177, 0 disagreements (z3 4.16.0);
+fmt/clippy/rustdoc clean for the touched crate.
+
+## Continuation 18 (2026-09-16): round three — the strict-atom one-sided endpoint; the wide-row propagation LANDS (items 47–48)
+
+47. **The strict-`>` false-`unsat` root cause** (the round-two residual,
+    minimized to `(> (* 6927366777083328576 v2) -3) ∧ v2 = 3`): deriving
+    a bound's SUPREMUM through a variable with only a LOWER bound used
+    the lone lower as the sup endpoint — fabricating the tightest
+    possible "upper". On the strict shape the `>` atom slack's lone
+    `(0, +1)` lower became a phony `−3−ε` upper on the row's variable,
+    crossed the real bounds, and refuted a satisfiable goal (the
+    corner auditor + the crossing probe localized it in one run). A
+    ONE-SIDED pair now serves its own direction only — a lone lower is
+    an infimum, never a supremum (+∞); both derivation helpers'
+    endpoint selections enforce it. Regressions:
+    `strict_wide_row_one_sided_endpoint_never_drives_false_unsat`,
+    `strict_multi_term_wide_row_never_drives_false_unsat`.
+48. **The wide-row propagation lands** (slice 6, third build, at last
+    sound): exact both-direction `BigRational` derivations through the
+    wide store (basic-ward + variable-ward solving
+    `xᵢ = (basic − k − Σ_{j≠i} cⱼxⱼ)/cᵢ`), lex-comparison endpoint
+    selection (inverted pairs exist mid-search in genuinely
+    contradictory atom states), exact lexicographic `(real, delta)`
+    crossing tests planted through the pending-crossing channel
+    (never on weakened forms), `ceil/floor ± 1, delta = 0` integer
+    storage for non-narrowing bounds, `BRANCH_REASON` filter on all
+    derivations, and the per-final-check cadence with
+    discard-stale-first consumption. The corner-enumeration auditor
+    ships env-gated (`NIXIE_S6_AUDIT=1`, debug builds). NARROW
+    direction-2 stays env-gated OFF (`NIXIE_S6_NDIR2=1`): with it the
+    mixed-magnitude LRA unsat twin decides `unsat` (matching z3 — the
+    named residual closes!), but the chain-sat twin degrades to
+    `unknown` (a completeness trade, not a soundness one — some sound
+    derivation deflects the search into an honest decline); turning it
+    on by default needs that interaction understood. The propagated
+    bound state is sound on every oracle: wide differential 9×300
+    across the round (every prior finder seed included), mixed fuzz,
+    parity 176/177 (z3 4.16.0), the full suites.
+
+The three-round arc, in one line each: round one found the false
+verdicts (and a wrong fingerprint), round two found the pre-existing
+double-count underneath them, round three found the one-sided endpoint
+underneath THAT — and the propagation that exposed all three is now
+sound and landed.

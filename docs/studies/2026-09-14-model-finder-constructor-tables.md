@@ -307,3 +307,96 @@ Verification: quant_fuzz {41..46} x 150 CLEAN; parity 176 Correct /
 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver + nixie-core
 4725/4728 (the 3 timeouts are the convergence pins under full-suite
 parallel load); fmt/clippy clean.
+
+
+## The stale-pin repair: sound at last, via the raw-body walk (2026-09-15, third follow-up)
+
+The blocking-clause repair is re-landed, sound.  Two findings on the way:
+
+1. **The completed-body walk is the documented trap, re-derived the hard
+   way.**  Emitting the clause from falsifiers recorded over the
+   *substituted completed body* produced six false-`unsat`s in one
+   quant_fuzz sweep (seeds 41-46): the completed body's syntax bakes
+   the completion's choices (macro unfoldings, ite-chain shapes, else
+   leaves) in positions the recording walk never visits — a macro that
+   unfolded `seteq(a,b)` to `(= a b)` during the *construction* of
+   body' leaves no macro application for the walk to flag, so
+   "fully pinned" counted the choice as a pin.  The original removal
+   note said exactly this; the transfer argument (every model of the
+   assertions agreeing with all recorded commitments falsifies the
+   asserted quantifier, so the blocking disjunction is valid) is only
+   as good as the recording, and the recording can only see what the
+   *walk* consults.  **The walk now runs on the raw substituted body**
+   (`q.body` under the falsifier's substitution): every completion
+   choice passes through `fold_apply`'s macro/computed/else arms, which
+   flag it; the recording is then complete and the transfer argument
+   closes.  The entry-normalization consults the chain construction
+   bakes in (`entry_arg` read through its model value) are recorded too
+   — the one consult class the old audit missed.
+
+2. **The cost gate is load-bearing.**  Ungated, the clauses churn
+   re-checked searches: the scope-rebase convergence pin regressed past
+   400 s (219-279 s in band).  Emission is gated on the quantifier
+   being table-owned — the repair exists for the table arc's stale-pin
+   stall, and the falsifier that matters (axiom-3's at the unmerged
+   pair, whose walk is pure ground pins: the member rows plus the
+   dodged `subset(w,a)` pin) is table-owned by construction (it is the
+   hint's defining axiom).
+
+**State of the family**: the repair fires (one clause on set16) and the
+whole family got faster (set16 18 s -> 5 s; set9/set19 ~25 s) — but all
+three still answer `unknown`.  The next blocker, precisely: rounds
+6-11 each mint ~6 fresh defining pins against the caps ("per-quantifier
+check budget exhausted") — the pin tuples stay *fresh* because the
+mining domains churn slightly per round.  That churn is the next
+instrumentation target (NIXIE_DEBUG_MC's pin lines plus the domain
+dump).
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN (it killed the
+completed-body variant first); parity 176 Correct / 1 Inconclusive /
+0 wrong (z3 4.16.0); nixie-solver + nixie-core 4724/4728 (timeouts =
+the parallel-load pins; the heaviest passes standalone at 279 s, inside
+its terminate-after budget); fmt/clippy clean.
+
+
+## Table mode owns the whole problem (2026-09-15, fourth follow-up)
+
+The fresh-pin churn was two engines certifying one problem against two
+different semantics:
+
+- `sat_certify` (the Ge & de Moura fragment certifier) runs against the
+  *raw ground model* — and its relevant-set harvest grows with the
+  model's own entries.  Each emitted instance mints the next compound
+  level; the tuples never stop being fresh.  After the table-owned
+  quantifiers were declined, the churn simply moved to the *other*
+  axioms' relevant sets (~6 "fresh" instances per round, minter of the
+  permanent `member` bloat that later priced every nested check past
+  the global budget).
+- The table machinery certifies against the *completed structure*
+  (frozen domains, tables, aux restrictions).
+
+**The fix is a semantics separation**: when `constructor_sources` is
+non-empty (table mode), `sat_certify` declines the whole problem, and
+every engine domain — the enumerative seeder, the counterexample
+generator's candidate lists, the falsifier-mining odometer — reads the
+frozen `table_domain` for *every* axis of *every* quantifier, not only
+the table-owned ones.  One problem, one interpretation, one
+certification path.
+
+**Measured**: set16 62 s (session start) -> **0 s**; set9 22 s -> 0 s;
+set19 timeout -> 8 s — all still `unknown`, but the rounds now run
+barren within ~5 iterations and the whole search is instant.  The
+final blocker, for the next cycle: the main-level checks are
+cap-starved by round 5 ("per-quantifier check budget exhausted") — the
+dividend refunds fire but the caps re-exhaust; the cap accounting in
+table mode (which quantifier burns what) is the remaining
+instrumentation target.  The aux's own bodies fold to literal `false`
+for the residual quantifiers (`q57`, `q20` under the aux's completed
+model), so the certification content is there — the loop just cannot
+pay for it.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
+nixie-core 4736/4740; the heaviest convergence pin passes standalone
+at 271 s (in band; one flaked FAIL under concurrent load, clean on
+rerun); fmt/clippy clean.

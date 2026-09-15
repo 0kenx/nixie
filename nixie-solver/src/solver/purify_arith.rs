@@ -43,6 +43,14 @@ impl PurifyState {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// The purification proxy for `original`, if one was minted
+    /// (`(set.card s)` is a foreign numeric leaf, so every card term the
+    /// set reduction reasons about has one). Crate-internal: the set model
+    /// synthesizer reads the proxy's arithmetic value as the card target.
+    pub(super) fn proxy_of(&self, original: TermId) -> Option<TermId> {
+        self.foreign_to_fresh.get(&original).copied()
+    }
 }
 
 fn is_numeric_sort(manager: &TermManager, sort: SortId) -> bool {

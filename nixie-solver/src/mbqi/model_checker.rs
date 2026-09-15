@@ -782,12 +782,14 @@ impl ModelChecker {
                         if let Some(domain) = model.semantic_domains.get(&(q.term, i)) {
                             return domain.clone();
                         }
-                        // A table-owned axiom's other axes range over the
-                        // frozen table domain: the raw universe grows with
-                        // every witness the ground solver mints (nested
-                        // Skolem applications among them), and mining the
-                        // fresh points re-moves the model every round.
-                        if model.constructor_sources.contains_key(&q.term)
+                        // Table mode: every axis of every quantifier
+                        // ranges over the frozen table domain (see the
+                        // seeder's twin note) — the raw universe grows
+                        // with every witness the ground solver mints
+                        // (nested Skolem applications among them), and
+                        // mining the fresh points re-moves the model
+                        // every round.
+                        if !model.constructor_sources.is_empty()
                             && let Some(domain) = model.table_domain(sort, manager)
                         {
                             return domain;
@@ -846,7 +848,21 @@ impl ModelChecker {
                         let name_str = manager.resolve_str(name).to_string();
                         subst.insert(manager.mk_var(&name_str, sort), value);
                     }
-                    let substituted = manager.substitute(body_completed, &subst);
+                    // The recording walk runs on the *raw* substituted
+                    // body, never the completed translation: the
+                    // completed body's syntax already bakes the
+                    // completion's choices (macro unfoldings, ite-chain
+                    // shapes, else leaves) in places the walk cannot see,
+                    // so a "fully pinned" verdict over it counts choices
+                    // as pins — and a blocking clause built from it
+                    // refutes satisfiable goals (the 2026-09-15
+                    // re-derivation of the original removal's false-
+                    // `unsat`: quant_fuzz seeds 41-46, six disagreements).
+                    // On the raw body every completion choice the walk
+                    // consumes passes through `fold_apply`'s macro/computed/
+                    // else arms, which flag it — the transfer argument's
+                    // recording is then complete.
+                    let substituted = manager.substitute(q.body, &subst);
                     // The mining evaluation's symbolic set is the
                     // tracked bound-variable NAMES, not the empty set:
                     // the substitution has replaced every legitimate
@@ -2395,13 +2411,27 @@ impl<'a> CompletionEval<'a> {
                     if args_match(entry, evaluated_args, self.model, manager) {
                         // An entry hit is a ground-model fact (the table is
                         // harvested from the ground solver's pinned
-                        // applications): commit the atom `f(args) = result`.
+                        // applications): commit the atom `f(args) = result` —
+                        // and, for the blocking clause's transfer argument,
+                        // every assignment normalization the match leaned on
+                        // (`entry_arg` read through its model value): a
+                        // target model that keeps `entry_arg` and its value
+                        // distinct would have matched a different entry, and
+                        // the falsity would not transfer.
                         if self.recording {
                             let args: ChildList = evaluated_args.iter().copied().collect();
                             let app = manager.intern_term(TermKind::Apply { func, args }, sort);
                             let atom = manager.mk_eq(app, entry.result);
                             let truth = manager.mk_true();
                             self.commitments.push((atom, truth));
+                            for &entry_arg in &entry.args {
+                                if let Some(&norm) = self.model.assignments.get(&entry_arg)
+                                    && norm != entry_arg
+                                {
+                                    let eq_atom = manager.mk_eq(entry_arg, norm);
+                                    self.commitments.push((eq_atom, truth));
+                                }
+                            }
                         }
                         return Ok(entry.result);
                     }
@@ -2502,6 +2532,16 @@ impl<'a> CompletionEval<'a> {
                     .get(&entry_arg)
                     .copied()
                     .unwrap_or(entry_arg);
+                // The normalization is a ground-model consult the chain's
+                // syntax bakes in: record it so a blocking clause over this
+                // evaluation's commitments is not stronger than what the
+                // evaluation actually leaned on (see the concrete path's
+                // twin note).
+                if self.recording && entry_norm != entry_arg {
+                    let truth = manager.mk_true();
+                    let eq_atom = manager.mk_eq(entry_arg, entry_norm);
+                    self.commitments.push((eq_atom, truth));
+                }
                 if arg == entry_norm {
                     continue; // trivially equal
                 }

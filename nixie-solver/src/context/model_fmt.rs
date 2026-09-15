@@ -781,17 +781,24 @@ impl Context {
             // agreement about a reconstructed datatype value.
             Some(
                 TermKind::FpLit { .. }
-                | TermKind::FpPlusInfinity { .. }
-                | TermKind::FpMinusInfinity { .. }
-                | TermKind::FpPlusZero { .. }
-                | TermKind::FpMinusZero { .. }
-                | TermKind::FpNaN { .. }
-                | TermKind::Store(..)
-                | TermKind::StringLit(_)
-                | TermKind::DtConstructor { .. }
-                // A field element: the printer renders the exact
-                // `#f<v>m<p>` literal.
-                | TermKind::FfConst { .. },
+                    | TermKind::FpPlusInfinity { .. }
+                    | TermKind::FpMinusInfinity { .. }
+                    | TermKind::FpPlusZero { .. }
+                    | TermKind::FpMinusZero { .. }
+                    | TermKind::FpNaN { .. }
+                    | TermKind::Store(..)
+                    | TermKind::StringLit(_)
+                    | TermKind::DtConstructor { .. }
+                    // A synthesized set value: a canonical
+                    // `set.union`-of-`set.singleton` term (or `set.empty`),
+                    // which the printer renders as itself — so a printed
+                    // model re-reads as the same value.
+                    | TermKind::SetEmpty(_)
+                    | TermKind::SetSingleton(_)
+                    | TermKind::SetUnion(_, _)
+                    // A field element: the printer renders the exact
+                    // `#f<v>m<p>` literal.
+                    | TermKind::FfConst { .. },
             ) => {
                 let printer = nixie_core::smtlib::Printer::new(&self.terms);
                 printer.print_term(term)

@@ -383,7 +383,7 @@ pub(crate) struct Reduction {
 /// in terms of its children, down to `set.empty`, a singleton, or an opaque
 /// set-sorted variable whose members are genuinely free.
 pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
-    let s = survey(roots, manager);
+    let mut s = survey(roots, manager);
     let mut axioms = Vec::new();
 
     if s.sets.is_empty() {
@@ -453,64 +453,25 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // these pairs switched off entirely was no faster on the corpus, so the
     // bound is insurance rather than a measured hot spot.
     const MAX_PAIRS: usize = 48;
-    let mut pair_budget_exceeded = false;
     let mut relations: Vec<(TermId, TermId)> = s
         .set_equalities
         .iter()
         .chain(s.subsets.iter())
         .map(|&(_, a, b)| (a, b))
         .collect();
-    // The equality-shaped subset of `relations`: the pairs whose atom, when
-    // committed true, makes the two sets *one* set. Cardinality needs these
-    // separately from the subsets (an equality forces the card terms equal;
-    // a subset only bounds them) — see [`cardinality::reduce`].
+    // The equality-shaped subset of `relations`: the pairs whose atom,
+    // when committed true, makes the two sets *one* set. Cardinality needs
+    // these separately from the subsets (an equality forces the card
+    // terms equal; a subset only bounds them) — see [`cardinality::reduce`]
+    // — and the model synthesizer needs them for its equality classes.
     let mut eq_pairs: Vec<(TermId, TermId)> =
         s.set_equalities.iter().map(|&(_, a, b)| (a, b)).collect();
-    {
-        let mut by_sort: FxHashMap<nixie_core::SortId, Vec<TermId>> = FxHashMap::default();
-        for &set in &s.sets {
-            if let Some(es) = element_sort(set, manager) {
-                by_sort.entry(es).or_default().push(set);
-            }
-        }
-        // Pair-eligibility: opaque terms pair with opaque terms and with
-        // the *constructors* (`∅`, `{x}`, `U`) — never with compound
-        // `∪`/`∩`/`\`/`ite` terms. Constructors are stable under
-        // hash-consing, so the pair set — and with it the witness element
-        // list — is stable across the per-assert re-runs of `reduce`; the
-        // compound terms the reduction itself creates (twins, chain
-        // unions) would otherwise mint fresh pairs every pass and grow the
-        // element list without bound. A compound term's memberships are
-        // *defined* from its operands, and the operands are already
-        // paired, so the insurance this loop buys for them is negligible —
-        // and the one documented case it exists for (`select`-over-`store`
-        // merged with `(as set.empty …)`) is a constructor pair, kept.
-        let pair_eligible = |t: TermId| {
-            matches!(
-                shape_of(t, manager),
-                Shape::Opaque | Shape::Empty | Shape::Singleton(_) | Shape::Univ
-            )
-        };
-        'pairs: for group in by_sort.values() {
-            for (i, a) in group.iter().enumerate() {
-                let a_opaque = shape_of(*a, manager) == Shape::Opaque;
-                for b in group.iter().skip(i + 1) {
-                    if !a_opaque && shape_of(*b, manager) != Shape::Opaque {
-                        continue;
-                    }
-                    if !pair_eligible(*a) || !pair_eligible(*b) {
-                        continue;
-                    }
-                    if relations.len() >= MAX_PAIRS {
-                        pair_budget_exceeded = true;
-                        break 'pairs;
-                    }
-                    relations.push((*a, *b));
-                    eq_pairs.push((*a, *b));
-                }
-            }
-        }
-    }
+    // The implicit opaque/constructor pairs, shared verbatim with the
+    // model synthesizer ([`survey_for_model`]) so the two never diverge.
+    let (implicit, mut pair_budget_exceeded) =
+        implicit_pairs(&s, relations.len(), MAX_PAIRS, manager);
+    relations.extend(implicit.iter().copied());
+    eq_pairs.extend(implicit);
     for &(a, b) in &relations {
         let Some(es) = element_sort(a, manager) else {
             continue;
@@ -538,7 +499,39 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // twins of every `a ∪ b` whose size the problem constrains — and those
     // twins need membership definitions of their own from the loop that
     // follows. See [`cardinality`].
+    let pre_card_len = axioms.len();
     let card = cardinality::reduce(&s, &elements, &relations, &eq_pairs, manager, &mut axioms);
+    // The counting equations mint de-duplication guards — equality atoms
+    // BETWEEN ELEMENTS (`e = earlier`) — that did not exist when this pass's
+    // survey ran. The congruence block below reads `s.element_equalities`,
+    // so without this extension those guard equalities are unaudited for
+    // exactly one pass: SAT may commit `k = 5` while `k ∈ S` and `5 ∉ S`
+    // coexist, an arrangement no set family realizes (an unfaithful model,
+    // and the membership disagreement it hides is a wrong-`sat` shape).
+    // Re-surveying just the new axioms and extending the equality list
+    // closes the gap in the same pass that opened it.
+    {
+        let mut seen: FxHashSet<(TermId, TermId)> = s
+            .element_equalities
+            .iter()
+            .map(|&(a, b)| if a.0 < b.0 { (a, b) } else { (b, a) })
+            .collect();
+        let mut stack: Vec<TermId> = axioms[pre_card_len..].to_vec();
+        while let Some(t) = stack.pop() {
+            let Some(data) = manager.get(t) else { continue };
+            if let TermKind::Eq(a, b) = &data.kind {
+                let (ea, eb) = (*a, *b);
+                if element_plausible(ea, manager)
+                    && element_plausible(eb, manager)
+                    && manager.get(ea).map(|d| d.sort) == manager.get(eb).map(|d| d.sort)
+                    && seen.insert(if ea.0 < eb.0 { (ea, eb) } else { (eb, ea) })
+                {
+                    s.element_equalities.push((ea, eb));
+                }
+            }
+            stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+        }
+    }
     let mut definition_sets: Vec<TermId> = s.sets.clone();
     definition_sets.extend(card.extra_sets.iter().copied());
 
@@ -848,4 +841,110 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     let incomplete = pair_budget_exceeded || card.incomplete;
 
     Reduction { axioms, incomplete }
+}
+
+/// The implicit opaque/constructor pairs: every pair of same-sorted set
+/// terms with an opaque side that the formula never equates explicitly.
+///
+/// Factored out of [`reduce`] so the model synthesizer
+/// ([`survey_for_model`]) relates *exactly* the same pairs — the equality
+/// classes the synthesizer builds must match the equality atoms the
+/// reduction created axioms for, or the two would disagree about which
+/// sets are one set. `start_len` is the number of relations already
+/// collected (asserted equalities and subsets), so the `budget` accounting
+/// is identical to the inline loop this replaced.
+fn implicit_pairs(
+    s: &Survey,
+    start_len: usize,
+    budget: usize,
+    manager: &TermManager,
+) -> (Vec<(TermId, TermId)>, bool) {
+    let mut pairs: Vec<(TermId, TermId)> = Vec::new();
+    let mut overflowed = false;
+    let mut by_sort: FxHashMap<nixie_core::SortId, Vec<TermId>> = FxHashMap::default();
+    for &set in &s.sets {
+        if let Some(es) = element_sort(set, manager) {
+            by_sort.entry(es).or_default().push(set);
+        }
+    }
+    // Pair-eligibility: opaque terms pair with opaque terms and with the
+    // *constructors* (`∅`, `{x}`, `U`) — never with compound `∪`/`∩`/`\`/
+    // `ite` terms. Constructors are stable under hash-consing, so the pair
+    // set — and with it the witness element list — is stable across the
+    // per-assert re-runs of `reduce`; the compound terms the reduction
+    // itself creates (twins, chain unions) would otherwise mint fresh
+    // pairs every pass and grow the element list without bound. A compound
+    // term's memberships are *defined* from its operands, and the operands
+    // are already paired, so the insurance this loop buys for them is
+    // negligible — and the one documented case it exists for
+    // (`select`-over-`store` merged with `(as set.empty …)`) is a
+    // constructor pair, kept.
+    let pair_eligible = |t: TermId| {
+        matches!(
+            shape_of(t, manager),
+            Shape::Opaque | Shape::Empty | Shape::Singleton(_) | Shape::Univ
+        )
+    };
+    'pairs: for group in by_sort.values() {
+        for (i, a) in group.iter().enumerate() {
+            let a_opaque = shape_of(*a, manager) == Shape::Opaque;
+            for b in group.iter().skip(i + 1) {
+                if !a_opaque && shape_of(*b, manager) != Shape::Opaque {
+                    continue;
+                }
+                if !pair_eligible(*a) || !pair_eligible(*b) {
+                    continue;
+                }
+                if start_len + pairs.len() >= budget {
+                    overflowed = true;
+                    break 'pairs;
+                }
+                pairs.push((*a, *b));
+            }
+        }
+    }
+    (pairs, overflowed)
+}
+
+/// The model-time view of a formula's set constraints, for
+/// [`super::set_model`]. Deterministic from the assertion stack (the same
+/// survey the reduction ran), so the relations here are exactly the ones
+/// the reduction created atoms for.
+pub(crate) struct ModelSurvey {
+    /// Every set-sorted term, in discovery order.
+    pub(crate) sets: Vec<TermId>,
+    /// Element terms grouped by sort.
+    pub(crate) elements: FxHashMap<nixie_core::SortId, Vec<TermId>>,
+    /// Asserted `(set.subset a b)` atoms: `(atom, a, b)`.
+    pub(crate) subsets: Vec<(TermId, TermId, TermId)>,
+    /// Every pair whose equality atom `mk_eq(a, b)` the reduction relates:
+    /// asserted equalities plus the implicit pairs.
+    pub(crate) eq_pairs: Vec<(TermId, TermId)>,
+    /// `set.choose` terms: `(choose, set)`.
+    pub(crate) chooses: Vec<(TermId, TermId)>,
+}
+
+/// Survey the assertion stack for model synthesis. The reduction's axioms
+/// are conjoined onto the user's assertions, so surveying the stack sees
+/// every term the reduction created (twins, witnesses, counting sums) as
+/// well as the user's own.
+pub(crate) fn survey_for_model(roots: &[TermId], manager: &TermManager) -> ModelSurvey {
+    let s = survey(roots, manager);
+    const MAX_PAIRS: usize = 48;
+    let (implicit, _overflowed) = implicit_pairs(
+        &s,
+        s.set_equalities.len() + s.subsets.len(),
+        MAX_PAIRS,
+        manager,
+    );
+    let mut eq_pairs: Vec<(TermId, TermId)> =
+        s.set_equalities.iter().map(|&(_, a, b)| (a, b)).collect();
+    eq_pairs.extend(implicit);
+    ModelSurvey {
+        sets: s.sets.clone(),
+        elements: s.elements.clone(),
+        subsets: s.subsets.clone(),
+        eq_pairs,
+        chooses: s.chooses.clone(),
+    }
 }

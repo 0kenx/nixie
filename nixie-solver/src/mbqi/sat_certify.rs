@@ -141,6 +141,22 @@ pub(crate) fn collect_fragment_instances(
         if !quantifier.is_universal {
             return CertifyResult::NotEligible;
         }
+        // When constructor/hint tables are active, the *whole problem's*
+        // certification runs against the completed structure (the frozen
+        // domains, the tables, the aux checks — one interpretation, the
+        // MBQI semantics), and this module's Ge & de Moura argument runs
+        // against the raw ground model instead — a different semantics.
+        // Mixing the two on one problem also churns: the relevant-set
+        // harvest grows with the ground model's own entries, each emitted
+        // instance mints the next compound level, and the tuples never
+        // stop being fresh (the set family's rounds minted ~6 "fresh"
+        // instances per round from exactly this — through the
+        // *non*-table axioms' relevant sets after the table-owned ones
+        // were declined).  Decline the whole module in table mode; the
+        // table machinery owns the certification.
+        if !model.constructor_sources.is_empty() {
+            return CertifyResult::NotEligible;
+        }
 
         match universal_instances(quantifier, model, &relevant, manager, cap, generation) {
             Some(mut insts) => instances.append(&mut insts),
