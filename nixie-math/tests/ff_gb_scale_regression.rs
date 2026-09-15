@@ -50,17 +50,11 @@ fn gb_scale_on_planted_quadratics() {
                 t.add_term(&f, Monomial::from_var(*v as u32), &c(*cf));
                 lhs = lhs.add(&f, &t);
             }
-            let mut rhs_val = k;
-            for (v, cf) in idx.iter().zip(co.iter()).take(2) {
-                rhs_val += cf * sol[*v];
-            }
             let mut rhs = MPoly::constant(&f, &c(0));
-            let mut acc = 0i64;
             for (v, cf) in idx.iter().zip(co.iter()).skip(2) {
                 let mut t = MPoly::zero();
                 t.add_term(&f, Monomial::from_var(*v as u32), &c(*cf));
                 rhs = rhs.add(&f, &t);
-                acc += cf * sol[*v];
             }
             let g = (next() % 40) as i64;
             let rhs_full = rhs.add(&f, &MPoly::constant(&f, &c(g)));

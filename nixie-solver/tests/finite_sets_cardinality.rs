@@ -489,7 +489,6 @@ fn univset_cardinality_is_the_universe_size() {
 #[test]
 fn ite_cardinality_is_one_of_the_branches() {
     let got = solve(|tm| {
-        let int = tm.sorts.int_sort;
         let c = tm.mk_var("c", tm.sorts.bool_sort);
         let one = tm.mk_int(1);
         let two = tm.mk_int(2);
@@ -679,4 +678,158 @@ fn cardinality_is_scope_consistent() {
     let cs2 = tm.mk_set_card(s);
     solver.assert(tm.mk_eq(cs2, two), &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
+}
+
+// ===== equality ⇒ equal cardinality / congruent choose =====
+//
+// Found 2026-09-15 while starting the model-synthesis roadmap item: the
+// cardinality encoding related the *memberships* of equal sets (the pair
+// machinery) but never their *sizes* or their `choose` applications, so
+// every script below answered `sat` — each is unsat. Z3's reference is
+// `theory_finite_set_size::add_eq_axioms`, which ties the Boolean
+// abstractions of every asserted-equal pair (equalizing their sizes through
+// the sub-solver); `choose` congruence is ordinary equality-engine
+// congruence there, stated explicitly in this reduction.
+
+/// `S = T ∧ |S| = 5 ∧ |T| = 3`: one set cannot have two sizes.
+#[test]
+fn equal_sets_have_equal_cardinality() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (declare-const T (Set Int))\n\
+         (assert (= S T))\n\
+         (assert (= (set.card S) 5))\n\
+         (assert (= (set.card T) 3))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `S = ∅ ∧ |S| ≥ 1`: the empty set is not nonempty. Same rule through a
+/// constructor operand.
+#[test]
+fn equal_to_empty_has_cardinality_zero() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (assert (= S (as set.empty (Set Int))))\n\
+         (assert (>= (set.card S) 1))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `x = y ∧ |f x| = 5 ∧ |f y| = 3`: the equality is *derived* (EUF
+/// congruence), not asserted — the implicit-pair atom is what carries it,
+/// so the equality⇒card rule must fire on implicit pairs too.
+#[test]
+fn derived_equality_equalizes_cardinality() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-fun f (Int) (Set Int))\n\
+         (declare-const x Int)\n\
+         (declare-const y Int)\n\
+         (assert (= x y))\n\
+         (assert (= (set.card (f x)) 5))\n\
+         (assert (= (set.card (f y)) 3))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `S = {1} ∪ {2} ∧ |S| = 5`: an asserted equality to a compound term; the
+/// operand's support-exact count (2) meets the equality⇒card rule.
+#[test]
+fn asserted_equality_to_a_compound_binds_its_size() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (assert (= S (set.union (set.singleton 1) (set.singleton 2))))\n\
+         (assert (= (set.card S) 5))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `S = T ∧ |S| ≥ 1 ∧ choose(S) ≠ choose(T)`: `choose` is a function
+/// symbol; equal arguments give equal results. The member axioms alone let
+/// both chooses sit inside the one set as two distinct elements.
+#[test]
+fn equal_sets_have_congruent_choose() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (declare-const T (Set Int))\n\
+         (assert (= S T))\n\
+         (assert (>= (set.card S) 1))\n\
+         (assert (distinct (set.choose S) (set.choose T)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The choose-congruence rule does not over-constrain: equal sets with
+/// equal chooses stay satisfiable.
+#[test]
+fn congruent_choose_on_equal_sets_is_sat() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (declare-const T (Set Int))\n\
+         (assert (= S T))\n\
+         (assert (>= (set.card S) 1))\n\
+         (assert (= (set.choose S) (set.choose T)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Sat);
+}
+
+/// `c ∧ choose(ite c A B) ≠ choose(A)`: with `c` the ite *is* `A`, but the
+/// equality atom `ite c A B = A` is never asserted by anyone, so the pair
+// rule cannot carry it — the ite yields its element through its own rule.
+#[test]
+fn choose_of_ite_picks_the_taken_branch() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const A (Set Int))\n\
+         (declare-const B (Set Int))\n\
+         (declare-const c Bool)\n\
+         (assert c)\n\
+         (assert (>= (set.card A) 1))\n\
+         (assert (distinct (set.choose (ite c A B)) (set.choose A)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+    // ...and with `c` false the ite is `B`, so the disequality to
+    // `choose(A)` is fine (A nonempty, B free).
+    let sat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const A (Set Int))\n\
+         (declare-const B (Set Int))\n\
+         (declare-const c Bool)\n\
+         (assert (not c))\n\
+         (assert (>= (set.card A) 1))\n\
+         (assert (distinct (set.choose (ite c A B)) (set.choose A)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat, SolverResult::Sat);
+}
+
+/// `|T| = |U| = 1 ∧ S = T ∪ U ∧ |S| = 3`: the equality⇒card rule meets
+/// inclusion–exclusion and non-negativity (`|T ∩ U| = -1`).
+#[test]
+fn equality_card_rule_composes_with_inclusion_exclusion() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const S (Set Int))\n\
+         (declare-const T (Set Int))\n\
+         (declare-const U (Set Int))\n\
+         (assert (= S (set.union T U)))\n\
+         (assert (= (set.card T) 1))\n\
+         (assert (= (set.card U) 1))\n\
+         (assert (= (set.card S) 3))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
 }
