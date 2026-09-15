@@ -625,9 +625,13 @@ fn stale_assignment_never_drives_false_unsat() {
         ))
         .expect("script executes");
     let last = out.last().map(String::as_str).unwrap_or("");
-    assert_ne!(
-        last, "unsat",
-        "the goal is satisfiable (z3 agrees); unsat is the stale-assignment false verdict"
+    // Strengthened 2026-09-16 (the value-overflow migration): a narrow row
+    // whose exact VALUE leaves `Rational64` mid-search now migrates to the
+    // wide store instead of declining the whole derivation — f1's
+    // trajectory passes such a point and now converges to the model.
+    assert_eq!(
+        last, "sat",
+        "the goal is satisfiable (z3 agrees); anything else is wrong or a lost capability"
     );
 }
 

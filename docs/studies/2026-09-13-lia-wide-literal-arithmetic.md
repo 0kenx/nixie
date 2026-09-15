@@ -1043,3 +1043,47 @@ verdicts (and a wrong fingerprint), round two found the pre-existing
 double-count underneath them, round three found the one-sided endpoint
 underneath THAT — and the propagation that exposed all three is now
 sound and landed.
+
+## Continuation 19 (2026-09-16): the value-overflow migration — f1 decides `sat`; the ndir2 trade mapped to its wall (items 49–51)
+
+49. **The value-overflow migration** (the round's landing): when
+    `update_assignment`'s exact retry finds a NARROW row whose final
+    VALUE does not fit `Rational64`, the row now MIGRATES to the wide
+    store (item 28's capture, applied at re-derivation) instead of
+    setting `resource_limit` — the meaning survives exactly, the
+    basic's value is re-derived exactly each pass, and the convergence
+    classification owns the verdict. Measured: **f1 (the original
+    false-`unsat` reproducer) now decides `sat`** (z3-correct; its
+    trajectory passes such a point and previously declined); the
+    chain-sat twin stays `sat` (its trajectory never visits the
+    migration); the f1 regression pin strengthened to `sat`.
+50. **The ndir2/pinned trade, mapped end to end**: narrow direction-2
+    (general OR pinned-basic-only) closes the mixed-magnitude LRA
+    unsat twin (`unsat`, matching z3) — and deflects the chain's pivot
+    trajectory into the width wall: first `update_assignment`'s
+    value-overflow decline (site 3713 — now migrated away by item 49),
+    then the CONVERGENCE wall (site 1950: a violated wide row whose
+    achievable range OVERLAPS its bounds but no pivot can repair it —
+    wide rows are unpivable). Both gates stay env-gated
+    (`NIXIE_S6_NDIR2`, `NIXIE_S6_PINNED`); turning them on by default
+    needs wide-driven repair steps (a pivot-analogue through wide
+    rows — Z3's `lar_solver` has no such wall because it computes
+    exactly everywhere). With item 49's migration the pinned gate
+    yields: twin `unsat` ✓, f1 `sat` ✓, chain `unknown` (the landed
+    chain regression blocks default-on).
+51. **A fresh pre-existing false `unsat` found by the mixed fuzz**
+    (seed 41; NOT this round's regression — the landed 83b985a6
+    binary reproduces it): a three-disjunct nested `not(or(= (mod …)
+    (div …)), (> … (mod …) …), (and (> … (mod …) …) (< … (div …) …)))`
+    with `yi = 2^62` pinned answers `unsat` where z3 says `sat`; any
+    two-disjunct subset stays honest `unknown`. The exact bytes are in
+    `/tmp/mi1.smt2` of the session (reproducible from the fuzz seed).
+    **This is the arithmetic arc's top open item** — a live
+    wrong-verdict class on `main`, shape: mod/div axiom feed + wide
+    pin + three-way disjunction.
+
+Verification for the landing: theories+solver suites green except the
+pre-existing `wisas` pair (fixture-level `Unknown`, verified on earlier
+parents); wide differential 4×300 clean; parity 176/177, 0
+disagreements (z3 4.16.0); fmt/clippy/rustdoc clean; the mixed fuzz's
+single failure is item 51's pre-existing find.

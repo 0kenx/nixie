@@ -3614,7 +3614,7 @@ impl Simplex {
         // instead of trusting a wrapped value.  Unchecked, this PANICKED in
         // debug and silently WRAPPED in release — a corrupted assignment
         // vector the pivots would then reason over.
-        let mut overflow = false;
+        let mut wide_migrations: Vec<VarId> = Vec::new();
         'rows: for (var, expr) in &self.tableau {
             let var_idx = *var as usize;
             if var_idx >= num_vars {
@@ -3658,8 +3658,19 @@ impl Simplex {
                                     continue 'rows;
                                 }
                                 None => {
-                                    overflow = true;
-                                    break 'rows;
+                                    // The row's exact VALUE does not fit —
+                                    // MIGRATE the row to the wide store
+                                    // (item 28's capture, applied at
+                                    // re-derivation): its meaning survives
+                                    // exactly, the basic's value is
+                                    // re-derived exactly each pass, and the
+                                    // convergence classification owns the
+                                    // verdict. Declining here (the old
+                                    // behavior) made any trajectory that
+                                    // visits such a point `unknown` — the
+                                    // chain-under-narrow-dir2 deflection.
+                                    wide_migrations.push(*var);
+                                    continue 'rows;
                                 }
                             }
                         }
@@ -3670,14 +3681,36 @@ impl Simplex {
                             continue 'rows;
                         }
                         None => {
-                            overflow = true;
-                            break 'rows;
+                            wide_migrations.push(*var);
+                            continue 'rows;
                         }
                     },
                 }
             }
             if !has_stale_ref {
                 self.assignment[var_idx] = DeltaRational { real, delta };
+            }
+        }
+        // Migrations: rows whose exact value left `Rational64` move to the
+        // wide store (column index already covers both; the slack keeps
+        // its bounds; the basic becomes unpivable — the wide semantics).
+        for var in wide_migrations {
+            if let Some(expr) = self.tableau.remove(&var) {
+                let big = BigLinExpr {
+                    terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
+                    constant: big_r64(&expr.constant),
+                };
+                self.wide_rows.insert(var, big);
+                let vi = var as usize;
+                if vi < self.basic.len() {
+                    // stays basic (wide semantics); flag pending so the
+                    // convergence classification reads it.
+                    let bounded = self.lower.get(var as usize).is_some_and(|b| b.is_some())
+                        || self.upper.get(var as usize).is_some_and(|b| b.is_some());
+                    if bounded {
+                        self.wide_pending = true;
+                    }
+                }
             }
         }
         // Wide rows: re-derived EXACTLY every pass (their values can
@@ -3705,13 +3738,6 @@ impl Simplex {
                     }
                 }
             }
-        }
-        if overflow {
-            // Leave the vector partially recomputed but flagged: no
-            // structural state changed, and every consumer routes to the
-            // honest give-up.
-            self.resource_limit = true;
-            self.assignment_current = false;
         }
     }
 
@@ -3827,11 +3853,30 @@ impl Simplex {
         // NARROW direction-2 is env-gated while under evaluation: solve a
         // narrow row for one of the variables it references (the
         // atom-bound encoding hides pins behind `s = var` slack rows).
-        let narrow_dir2 = std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1");
+        // NARROW direction-2, two gates: `NIXIE_S6_NDIR2=1` enables the
+        // general form (which deflects some pivot trajectories into the
+        // width wall — see the study); the PINNED-BASIC form runs by
+        // default: a row whose basic is fully pinned (lo == hi) is an
+        // equality over its variables, and solving it for each referenced
+        // variable is exactly the pin-hiding case (`s = var` rows) the
+        // atom-bound encoding needs unhidden. Restricted so the general
+        // deflection does not apply.
+        let ndir2_all = std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1");
+        let pinned_basic = |v: &VarId| -> bool {
+            let i = *v as usize;
+            match (
+                self.lower.get(i).and_then(Option::as_ref),
+                self.upper.get(i).and_then(Option::as_ref),
+            ) {
+                (Some(lo), Some(hi)) => lo.value == hi.value,
+                _ => false,
+            }
+        };
+        let pinned_dir2 = std::env::var("NIXIE_S6_PINNED").as_deref() == Ok("1");
         let narrow_rows: Vec<(VarId, LinExpr)> = self
             .tableau
             .iter()
-            .filter(|(_, e)| narrow_dir2 && e.terms.len() <= 8)
+            .filter(|(v, e)| e.terms.len() <= 8 && (ndir2_all || (pinned_dir2 && pinned_basic(v))))
             .map(|(v, e)| {
                 (
                     *v,
