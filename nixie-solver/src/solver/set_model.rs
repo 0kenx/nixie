@@ -764,8 +764,28 @@ impl Solver {
             |e: TermId| -> bool { survey.chooses.iter().any(|&(choose, _)| choose == e) };
         let mut minted_total: usize = 0;
         for &e in elements {
-            if is_choose(e) || elem_values.get(&e).is_some_and(Option::is_some) || !needs_value(e) {
+            if is_choose(e) || !needs_value(e) {
                 continue;
+            }
+            // One of **our own skolems** — a disequality witness or a join
+            // middle — keeps whatever value a committed-true equality pins
+            // it to; any *default* it picked up (the arithmetic pass zeros
+            // unconstrained integers, the datatype reconstruction repeats
+            // its canonical tuple) is overridden with a fresh, distinct
+            // witness. Two witnesses of the two directions of one
+            // disequality defaulted equal is exactly the collision that
+            // used to decline the whole sort.
+            if elem_values.get(&e).is_some_and(Option::is_some)
+                && !(is_our_set_skolem(e, manager) && self.skolem_pinned_to(e).is_none())
+            {
+                continue;
+            }
+            // The overridden default stops being anyone's value; free it
+            // so the mint takes the natural smallest witness instead of
+            // skipping past it (a stale `0` in `used` pushed the witness
+            // to 3 and changed which memberships folded).
+            if let Some(Some(old)) = elem_values.get(&e).copied() {
+                used.remove(&old);
             }
             match self.mint_element_value(elem_sort, &used, manager) {
                 Some(v) => {
@@ -813,31 +833,65 @@ impl Solver {
                 let mut resolved: Vec<TermId> = Vec::with_capacity(args.len());
                 let mut all = true;
                 for &arg in &args {
-                    let value = match model.get(arg) {
-                        Some(v) if is_value_term(v, manager) => v,
-                        _ if is_value_term(arg, manager) => arg,
-                        // An unvalued component (the join skolem, an
-                        // unconstrained variable *inside* a committed
-                        // member): mint a fresh witness for it, exactly as
-                        // for a member-true element. Both splits of a
-                        // join resolve through the one entry, so the
-                        // middles meet.
-                        _ => match manager
-                            .get(arg)
-                            .map(|d| d.sort)
-                            .and_then(|sort| self.mint_component_value(sort, &used, manager))
-                        {
-                            Some(v) => {
-                                used.insert(v);
-                                model.set(arg, v);
-                                v
+                    // A **join skolem** is our own existential witness: its
+                    // value is ours to choose, and the arithmetic pass has
+                    // already defaulted every unconstrained integer to 0 —
+                    // so several distinct skolems all read 0, their splits
+                    // collide as equal-valued tuples with independently
+                    // decided memberships, and the collision repair (rightly)
+                    // refuses. A committed-true guard equality pins the
+                    // skolem to its partner; anything else gets a fresh,
+                    // distinct witness that overrides the default.
+                    let is_join_skolem = matches!(
+                        manager.get(arg).map(|d| &d.kind),
+                        Some(TermKind::Var(n))
+                            if manager.resolve_str(*n).starts_with("@set_join_")
+                    ) && self.skolem_pinned_to(arg).is_none();
+                    let value =
+                        if is_join_skolem {
+                            if let Some(old) = model.get(arg) {
+                                used.remove(&old);
                             }
-                            None => {
-                                all = false;
-                                break;
+                            match self.mint_component_value(
+                                manager.get(arg).map_or(manager.sorts.int_sort, |d| d.sort),
+                                &used,
+                                manager,
+                            ) {
+                                Some(v) => {
+                                    used.insert(v);
+                                    model.set(arg, v);
+                                    v
+                                }
+                                None => {
+                                    all = false;
+                                    break;
+                                }
                             }
-                        },
-                    };
+                        } else {
+                            match model.get(arg) {
+                                Some(v) if is_value_term(v, manager) => v,
+                                _ if is_value_term(arg, manager) => arg,
+                                // An unvalued component (an unconstrained
+                                // variable *inside* a committed member): mint a
+                                // fresh witness for it, exactly as for a
+                                // member-true element. Both splits of a join
+                                // resolve through the one entry, so the middles
+                                // meet.
+                                _ => match manager.get(arg).map(|d| d.sort).and_then(|sort| {
+                                    self.mint_component_value(sort, &used, manager)
+                                }) {
+                                    Some(v) => {
+                                        used.insert(v);
+                                        model.set(arg, v);
+                                        v
+                                    }
+                                    None => {
+                                        all = false;
+                                        break;
+                                    }
+                                },
+                            }
+                        };
                     resolved.push(value);
                 }
                 if all {
@@ -929,7 +983,9 @@ impl Solver {
                             elem_values.insert(e, Some(fresh));
                             model.set(e, fresh);
                         }
-                        None => return,
+                        None => {
+                            return;
+                        }
                     }
                 }
             }
@@ -1300,6 +1356,19 @@ impl Solver {
                 continue;
             }
             if let Some(Some(elems)) = values.get(&t) {
+                // Sort sanity: every element of a synthesized value must
+                // carry the set's element sort. The datatype
+                // reconstruction defaults tuple-sorted variables with
+                // constructors of the wrong arity (an internally-declared
+                // tuple sort resolved by prefix), and printing such a
+                // value would publish an ill-sorted — wrong — model.
+                // Declining is the honest answer.
+                let well_sorted = elems
+                    .iter()
+                    .all(|&e| manager.get(e).is_some_and(|d| d.sort == elem_sort));
+                if !well_sorted {
+                    continue;
+                }
                 let mut elems = elems.clone();
                 elems.sort_unstable();
                 let set_sort = manager
@@ -1507,6 +1576,14 @@ impl Solver {
                     elems.sort_unstable();
                     elems.dedup();
                     let set_sort = manager.get(t).map(|d| d.sort);
+                    let elem_ok = set_element_sort(t, manager).is_some_and(|es| {
+                        elems
+                            .iter()
+                            .all(|&e| manager.get(e).is_some_and(|d| d.sort == es))
+                    });
+                    if !elem_ok {
+                        continue;
+                    }
                     if let Some(set_sort) = set_sort {
                         let mut acc = manager.mk_set_empty_at(set_sort);
                         for &e in &elems {
@@ -1580,6 +1657,24 @@ impl Solver {
                 model.remove(*t);
             }
         }
+    }
+
+    /// The partner of a **committed-true** equality mentioning `e`, if
+    /// one exists: the term whose value `e`'s value must equal.
+    fn skolem_pinned_to(&self, e: TermId) -> Option<TermId> {
+        for (&var, constraint) in &self.var_to_constraint {
+            if let super::types::Constraint::Eq(l, r) = constraint
+                && self.sat.model_value(var) == nixie_sat::LBool::True
+            {
+                if *l == e {
+                    return Some(*r);
+                }
+                if *r == e {
+                    return Some(*l);
+                }
+            }
+        }
+        None
     }
 
     /// Whether an element's *value* is genuinely pinned by a constraint:
@@ -1990,6 +2085,20 @@ fn join_glue_values(u: TermId, v: TermId, manager: &mut TermManager) -> Option<O
     let mut parts: Vec<TermId> = us[..us.len().saturating_sub(1)].to_vec();
     parts.extend(vs[1..].to_vec());
     Some(Some(manager.mk_tuple(&parts)))
+}
+
+/// Whether a term is one of the reduction's own existential witnesses: a
+/// disequality pair witness (`@set_ext_*`) or a join middle
+/// (`@set_join_*`). Their values are the solver's to choose; any default
+/// they carry can be overridden by a fresh distinct witness.
+fn is_our_set_skolem(t: TermId, manager: &TermManager) -> bool {
+    match manager.get(t).map(|d| &d.kind) {
+        Some(TermKind::Var(n)) => {
+            let name = manager.resolve_str(*n);
+            name.starts_with("@set_ext_") || name.starts_with("@set_join_")
+        }
+        _ => false,
+    }
 }
 
 /// Whether a set term is one of the four relation operators.
