@@ -61,16 +61,22 @@ search over OPAQUE applications (`nixie-theories/src/ff_euf.rs` batch
 congruence closure; see design §7.1), with the interface cardinality
 guard (k ≤ p) and destructive-conflict blocking.
 
-**Split-GB + fast path** (`nixie-theories/src/ff_theory.rs`,
+**Split-GB + fast path + windows** (`nixie-theories/src/ff_theory.rs`,
 `nixie-math/src/ff/grobner.rs`): per component, the monolithic cascade
 first — UNTRACED for ≥40 inputs (empty cofactor rows gate every row op;
 a constant basis triggers one traced re-run for the witness; trajectory
 identity pinned by `nixie-math/tests/ff_gb_traced_untraced_identity.rs`)
 — then cvc5's 2-way split fallback (linear ideal / binomial-admitting
-nonlinear ideal, admit discipline, untraced). lm caching, selection-scan
-and cofactor-row budget charging, bloat circuit breaker. FindZero
-branches over the merged basis with lazy honest round-robin (256-value
-horizon; truncation ⇒ `OutOfBudget`, never `Exhausted`) and
+nonlinear ideal, admit discipline, untraced), then the **§6.5 window
+decomposition** (2026-09-17): support-driven 8-variable windows, one
+Gröbner basis per window, a support-fitting exchange fixpoint (linear
+polys + univariates), and one union cascade that — because the union of
+window ideals IS the component ideal — completes to the component's
+true basis (min-poly brancher valid). lm caching, selection-scan and
+cofactor-row budget charging, bloat circuit breaker. FindZero branches
+over the merged basis with lazy honest round-robin (256-value horizon;
+truncation ⇒ `OutOfBudget`, never `Exhausted`; node steps charge
+CHILDREN PUSHED — a 256-ary round-robin node is 256 steps, not 1) and
 element-bootstrapped children.
 
 **§8 case-tree certificates** (`FfCertificate::CaseTree`): FindZero's
@@ -86,13 +92,15 @@ in closed form). Certified mode accepts branch-exhaustion UNSATs.
 exact modular evaluation; FF `unsat` accepted only with a verified
 certificate; exhaustion fails closed.
 
-**Current capacity** (BN254, bench/ff/, after the untraced fast path,
-2026-09-16 — see `docs/studies/2026-09-16-ff-untraced-fast-path.md`):
+**Current capacity** (BN254, bench/ff/, after the window decomposition,
+2026-09-17 — see `docs/studies/2026-09-17-ff-window-decomposition.md`):
 sparse R1CS solves at every size (8×12…64×96 in ≤0.1 s, 128×192 in
-0.2 s); dense 12×20 `sat` 0.1 s; chain 16×24 `sat` 0.07 s, 32×48
-`sat` 0.13 s, **64×96 `sat` 1.2 s**; chain 128×192/256×384 honest
-`unknown` in ~3 s (the 128-constraint nonlinear cascade budget-outs
-even at 16× budget — measured, see the inapplicability study).
+0.2 s); dense 12×20 `sat` 0.1 s; **the chain family now solves at every
+measured size** — 16×24 `sat` 0.3 s, 32×48 `sat` 0.16 s, 64×96 `sat`
+1.4 s, **128×192 `sat` ~3 s, 256×384 `sat` ~3.7 s** (windows + exchange
+wavefront + union cascade; the 2-way split and the monolithic cascade
+budget out first at these sizes). 512×768 unmeasured (≈86 windows —
+approaching the 64-round exchange cap's comfort zone).
 
 ## 3. Verification bar (run before declaring anything done)
 
@@ -122,6 +130,10 @@ FF, these replace it):
   fast path's trajectory identity (element-for-element identical
   bases); divergence means rows influence the search — soundness-
   relevant, hard failure.
+- `nixie-theories/src/ff_theory.rs` `window_tests` +
+  `nixie-theories/tests/ff_window_split.rs` — the window path's
+  mechanism pins (ideal membership of every merged element; partition
+  coverage; planted-never-unsat; starved-window refusal).
 - `bench/ff/` — three families (sparse = realistic R1CS, dense =
   capacity marker, chain = single-component marker); measure with
   `NIXIE_FF_STATS=1` (deterministic step counts, never wall-clock as
@@ -192,6 +204,20 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
   the editing process: python `str.replace` silently no-ops on a
   non-matching block — the missing gate was an edit that "applied"
   without applying; assert replacement counts when patching this file.
+- **T11 — window routing cannot be forced at unit scale.** The
+  monolithic cascade is the CHEAPEST strategy for small goals, so no
+  small test routes through the windows (a budget that starves the
+  monolithic path starves the windows too). The window path's pins are
+  therefore at the MECHANISM level (`ff_theory::window_tests`: every
+  merged element's normal form ≡ 0 mod the full monolithic basis; the
+  partition covers every generator exactly once) plus the corpus
+  verdicts — never at the routing level. Relatedly: FindZero's node
+  budget charges CHILDREN PUSHED (T5 applied to the search tree) — a
+  bounded-search change must account its fan-out or 256-ary round-robin
+  walks outlast their own budget by 256×; and a skipped window's
+  exclusive variables are unreachable by exchange, so the caller
+  refuses fast at p > 256 instead of walking (the gate lives in
+  `grobner_path`, keyed on `any_skipped`).
 - **T8 — folded equalities are not atoms.** `mk_eq(#f1m2, (ff.add x0 x0))`
   folds to `true` at construction (the cvc5-exact normal form), so no
   Boolean model ever asserts its negation. A guard that treats "the
@@ -205,21 +231,19 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 
 ## 5. Open work, in recommended order
 
-1. **Chain ≥128×192 capacity (the cascade frontier)**: everything
-   through the untraced fast path is landed (split-GB → budget honesty
-   → fast path; four studies under `docs/studies/2026-09-16-ff-*`
-   carry the measurements and the negative variants — read them before
-   designing). Current state: chain ≤64×96 `sat` (64×96 in 1.2 s),
-   ≥128×192 honest `unknown` in ~3 s — the 128-constraint nonlinear
-   cascade budget-outs even at 16× budget, and FindZero's round-robin
-   never runs (branch-variable selection is inapplicable as
-   pre-registered; re-issue only if a round-robin ever binds). THE
-   NEXT LEVER is the design's actual §6.5: the variable-SUBSET split —
-   window decomposition into overlapping variable clusters, each with a
-   small basis, exchanging only support-fitting consequences (the
-   landed 2-way linear/nonlinear split does NOT decompose the chain;
-   one component). Then F4. Both are deterministic front-end items —
-   step counts, no matched null needed; NTT untested.
+1. **Chain ≥512×768 capacity (measure first)**: the window decomposition
+   closed the named frontier (128×192 and 256×384 `sat`, ~3 s each —
+   windows + exchange + union, four studies under
+   `docs/studies/2026-09-16-ff-*` carry the prior arc). 512×768 needs
+   ~86 windows — the 64-round exchange cap's comfort zone ends around
+   there; measure before promising. The remaining named levers: a
+   worklist exchange (collapses the one-window-per-round wavefront to
+   ~2–3 rounds — only matters at the next size doubling), F4 (batched
+   linear-algebra reduction; composes with per-window cascades — and
+   the matrix kernel is where SIMD would first pay: exact modular
+   arithmetic is order-independent, so vectorization is deterministic
+   by construction), NTT (Goldilocks-class primes). All deterministic
+   front-end items — step counts, no matched null needed.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

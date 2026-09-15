@@ -2,12 +2,18 @@
 
 **Status:** Phases 0–6 implemented (2026-09-14); `QF_UFFF` (the
 Phase-6 combination remainder) landed 2026-09-16 — see §7.1 for the
-as-built arrangement architecture; §6.5's split GB landed 2026-09-16 as
+as-built arrangement architecture. §6.5's split GB landed 2026-09-16 as
 the monolithic-first fallback with cvc5's admit discipline (see
 `docs/studies/2026-09-16-ff-split-gb-chain-capacity.md` — the study also
-records why operand flattening under the split is a measured negative).
-Still open: §8's branch-exhaustion case-tree proofs, §7-style
-incremental trail, F4/NTT, chain ≥64×96. See `nixie-core/src/sort/field.rs`,
+records why operand flattening under the split is a measured negative),
+and the **variable-subset window decomposition** — the design's actual
+§6.5, bases over overlapping variable clusters with support-fitting
+exchange — landed 2026-09-17 as the third fallback level (see
+`docs/studies/2026-09-17-ff-window-decomposition.md`: chain 128×192 and
+256×384 now solve; windows do the local elimination, the exchange
+propagates boundary pins along the chain, one union cascade closes the
+cycle). Still open: §7-style incremental trail, F4/NTT, certificates
+for split-root refutations. See `nixie-core/src/sort/field.rs`,
 `nixie-math/src/ff/`, `nixie-theories/src/ff_theory.rs` (the [OKTB23]
 procedure + Phase-5 front end + `FfCertificate` with its replay
 verifier), `nixie-theories/src/ff_euf.rs` (the batch congruence
@@ -430,9 +436,16 @@ propagation with an explicit reason) and all of it runs *before* the GB.
    independent subproblems. Trivial to implement, and the single most reliable way to
    keep basis sizes sane. Do this before anything expensive.
 5. **Split Gröbner bases** ([split-GB], `split_gb.cpp`): maintain several bases over
-   variable subsets and exchange only the consequences each admits. Phase 7 — after
-   1–4 are implemented and measured, because it only pays once the cheap structure is
-   already exploited.
+   variable subsets and exchange only the consequences each admits. **Landed in
+   three levels** (2026-09-16/17): the 2-way linear/nonlinear split under cvc5's
+   `admit` discipline as the monolithic-first fallback; then the **window
+   decomposition** — overlapping variable clusters (8-var cap, support-driven
+   growth), a Gröbner basis per window, an exchange fixpoint admitting
+   support-fitting linear polys and univariates, and one union cascade that
+   completes to the component's true basis (the union of window ideals IS the
+   component ideal). cvc5's `splitGb` is generic over k generator sets (the 2-way
+   split is the k=2 reading); cvc5's conflict-driven `splitFindZero` loop remains
+   unported — our FindZero consumes the union instead.
 
 **Measurement discipline.** Items 1–4 change what the procedure *does*, deterministically
 — report solved counts and step counts, no matched null needed. But any *selection

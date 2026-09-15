@@ -58,7 +58,7 @@ use nixie_math::ff::uni_poly::UniPoly;
 use nixie_math::polynomial::{Monomial, Var};
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// The verdict of a finite-field check. The last variants are the honesty
 /// gate: a search that stopped because its budget ran out is **not** an
@@ -892,6 +892,317 @@ fn split_grobner_basis(
     Ok(SplitBasis { merged })
 }
 
+/// A window decomposition result: the merged union of the window
+/// bases, plus whether the union completed into a true Gröbner basis
+/// of the component ideal (the union of window ideals EQUALS the
+/// component ideal — each window ideal contains its generators and is
+/// contained in the component ideal — so a completing cascade over the
+/// union is the component's basis, and the minimal-polynomial brancher
+/// is valid for it).
+struct WindowBasis {
+    merged: GrobnerBasis,
+    root_is_gb: bool,
+    /// Whether every window completed. A skipped window's EXCLUSIVE
+    /// variables cannot be pinned by any exchange (an exchanged
+    /// polynomial's support must fit its target's fixed variable set),
+    /// so over a prime bigger than the round-robin horizon FindZero on
+    /// the union is a guaranteed-budget-out walk — the caller refuses
+    /// fast instead (capacity, never soundness: the search is sound
+    /// over the subideal, just hopeless).
+    any_skipped: bool,
+}
+
+/// Cluster a component's generators into overlapping variable windows:
+/// greedily grow a window from the lowest-index unassigned generator by
+/// adding the first unassigned generator that shares a variable, until
+/// the variable cap or the generator cap. Deterministic (generator
+/// index order); every generator lands in exactly one window, and
+/// windows overlap exactly through shared variables of their
+/// generators. Generators sharing nothing with any open window start a
+/// new one, so the partition is total.
+fn form_windows(component: &[&FrontGen], var_cap: usize, gen_cap: usize) -> Vec<Vec<usize>> {
+    let mut assigned = vec![false; component.len()];
+    let mut windows: Vec<Vec<usize>> = Vec::new();
+    while let Some(start) = (0..component.len()).find(|&i| !assigned[i]) {
+        let mut win = vec![start];
+        assigned[start] = true;
+        let mut vars: FxHashSet<Var> = component[start].poly.variables().into_iter().collect();
+        'grow: loop {
+            if win.len() >= gen_cap || vars.len() >= var_cap {
+                break 'grow;
+            }
+            // Best-overlap growth: among unassigned generators sharing
+            // a variable with the window, add the one with the SMALLEST
+            // footprint increase (ties by generator index). Index-order
+            // growth is wrong on front-end-processed components: the
+            // linear core appends all pivot rows AFTER the substituted
+            // nonlinear generators, so index order separates the rows
+            // from the quadratics they pin — window 0 of the chain then
+            // collects 42 product generators with no linear content
+            // (underdetermined, budget-out) while the rows trail behind
+            // as their own micro-windows. Overlap-driven growth keeps
+            // each core's rows and quads in one window.
+            let mut best: Option<(usize, usize, Vec<Var>)> = None;
+            for i in (0..component.len()).filter(|&i| !assigned[i]) {
+                let ivs = component[i].poly.variables();
+                let shared = ivs.iter().filter(|v| vars.contains(v)).count();
+                if shared == 0 {
+                    continue;
+                }
+                let new_vars = ivs.len() - shared;
+                if vars.len() + new_vars > var_cap {
+                    continue;
+                }
+                if best.as_ref().is_none_or(|&(bn, _, _)| new_vars < bn) {
+                    best = Some((new_vars, i, ivs));
+                }
+            }
+            match best {
+                Some((_, i, ivs)) => {
+                    win.push(i);
+                    assigned[i] = true;
+                    vars.extend(ivs);
+                }
+                None => break 'grow,
+            }
+        }
+        windows.push(win);
+    }
+    windows
+}
+
+/// Compute the §6.5 variable-subset split of one component: a Gröbner
+/// basis per variable window, exchanged under a support-fitting admit
+/// discipline, then (as a completion attempt) one cascade over the
+/// union. Attacks the coupling-DENSITY failure mode of the monolithic
+/// cascade and the 2-way split: a locality-structured chain of n
+/// coupled constraints becomes ~n/W windows of ≤ W variables each —
+/// inside the regime the monolithic path completes — with only
+/// boundary consequences crossing.
+///
+/// **Admit discipline** (support-fitting, two classes, each with a
+/// termination story):
+/// * every polynomial of degree ≤ 1 whose support fits the target
+///   window's variables — the linear part of a window's ideal lives in
+///   a (|V_w|+1)-dimensional space, so strict growth is bounded and
+///   the fixpoint stabilizes (cvc5's discipline, generalized from two
+///   ideals to windows);
+/// * every univariate (any degree) — principal ideals of 𝔽_p[x] ascend
+///   finitely, and univariates are exactly the brancher fuel FindZero
+///   consumes, so boundary variables pinned by a neighbour's univariate
+///   reach every window that owns the variable.
+///
+/// Dense linear content that does not FIT a window never enters it
+/// (the re-expansion failure the flattening studies root-caused), and
+/// nonlinear multivariate elements never leave their window.
+///
+/// Sound like the 2-way split: every window ideal is generated by a
+/// subset of the component's generators (⊆ the component ideal), every
+/// exchanged polynomial is a member of its source window's ideal
+/// (inductively ⊆ the component ideal), so a constant in any window
+/// basis refutes the component and the merged union consists of
+/// component-ideal members only. Belt-and-braces: round cap, shared
+/// monomial-op budget, the engine's bloat breaker per window GB.
+fn window_grobner_basis(
+    f: &FieldCtx,
+    component: &[&FrontGen],
+    budget_steps: u64,
+) -> Result<WindowBasis, GrobnerError> {
+    const WINDOW_ROUNDS: u32 = 64;
+    // The landed caps. VAR_CAP=8 sits in the measured flat region of the
+    // window-cap sweep on the chain corpus (caps 4–8 all solve both
+    // frontier goals in ~3–5 s with identical verdicts; 12/24 solve
+    // slower, 16/20 leave windows that budget-out at the default
+    // budget): windows of ~8 variables — one to two constraint cores —
+    // have individually trivial cascades, and the union cascade closes
+    // the cycle. The cap governs GROWTH only; a seed generator whose
+    // own support exceeds it still forms its (oversized) window, so
+    // coarse-locality goals degrade to fewer, bigger windows instead
+    // of failing to partition.
+    const WINDOW_VAR_CAP: usize = 8;
+    const WINDOW_GEN_CAP: usize = 64;
+    let windows = form_windows(component, WINDOW_VAR_CAP, WINDOW_GEN_CAP);
+    let n_w = windows.len();
+    // Each window's FIXED variable set (the union of its generators'
+    // supports — admissions never grow it: an admitted polynomial's
+    // support fits by definition).
+    let wvars: Vec<FxHashSet<Var>> = windows
+        .iter()
+        .map(|w| {
+            w.iter()
+                .flat_map(|&gi| component[gi].poly.variables())
+                .collect()
+        })
+        .collect();
+    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        eprintln!(
+            "[ff-stats] windows: {} (gens {:?}, vars {:?})",
+            n_w,
+            windows.iter().map(|w| w.len()).collect::<Vec<_>>(),
+            wvars.iter().map(|v| v.len()).collect::<Vec<_>>()
+        );
+    }
+    let mut bases: Vec<Option<GrobnerBasis>> = vec![None; n_w];
+    // Windows that budget-out are SKIPPED, not fatal: the union of the
+    // survivors' bases generates a SUBIDEAL of the component ideal, and
+    // every consumer downstream is sound under ideal SHRINKAGE — a
+    // constant in any subideal refutes the component ideal, and a
+    // search exhausted over V(J⊇I) refutes V(I) (the component's zeros
+    // are a subset), while a candidate model is validated against the
+    // original asserted literals regardless. A missing window only
+    // weakens the pre-elimination the union cascade starts from.
+    let mut skipped = 0usize;
+    let mut pending: Vec<Vec<MPoly>> = windows
+        .iter()
+        .map(|w| w.iter().map(|&gi| component[gi].poly.clone()).collect())
+        .collect();
+    let mut round = 0u32;
+    loop {
+        round += 1;
+        if round > WINDOW_ROUNDS {
+            // Noetherian in principle; bounded in practice (a long
+            // exchange chain is a capacity limit, not an answer).
+            return Err(GrobnerError::Budget);
+        }
+        for w in 0..n_w {
+            if pending[w].is_empty() {
+                continue;
+            }
+            let mut gens: Vec<MPoly> = bases[w]
+                .as_ref()
+                .map(|b| b.basis.iter().map(|t| t.poly.clone()).collect())
+                .unwrap_or_default();
+            gens.append(&mut pending[w]);
+            // Each window gets its own budget — the components'
+            // discipline ("component counts are small; a shared cap
+            // would starve late components") applies verbatim: window
+            // counts are small, windows are independent subproblems,
+            // and a shared cap lets an early window's burn decide a
+            // later window's verdict.
+            let mut wbudget = GrobnerBudget::new(budget_steps);
+            let r = grobner_basis_untraced(f, &gens, &mut wbudget);
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] window {w}-GB ({} gens) -> {}",
+                    gens.len(),
+                    r.as_ref()
+                        .map(|b| b.basis.len().to_string())
+                        .unwrap_or_else(|_| "budget-out".to_string())
+                );
+            }
+            match r {
+                Ok(b) => bases[w] = Some(b),
+                Err(GrobnerError::Budget) => {
+                    skipped += 1;
+                    pending[w] = Vec::new();
+                }
+            }
+        }
+        // The exchange: offer every basis element of the two admitted
+        // classes to every other window whose variable set its support
+        // fits, skipping ideal membership (cvc5's `!contains`).
+        let mut offers: Vec<Vec<MPoly>> = vec![Vec::new(); n_w];
+        for i in 0..n_w {
+            let Some(bi) = &bases[i] else {
+                continue;
+            };
+            for t in &bi.basis {
+                let p = &t.poly;
+                let pv = p.variables();
+                if pv.is_empty() {
+                    continue; // constants never exchange
+                }
+                let linear = p.lm(DEGREVLEX).is_some_and(|m| m.total_degree() <= 1);
+                let univariate = p
+                    .terms_iter()
+                    .all(|(m, _)| m.vars().iter().all(|vp| vp.var == pv[0]));
+                if !linear && !univariate {
+                    continue;
+                }
+                for j in 0..n_w {
+                    if j == i || bases[j].is_none() {
+                        // Never offer into a skipped window: it would
+                        // resurrect the window from the offers alone
+                        // (sound — ideal members — but pointless).
+                        continue;
+                    }
+                    if !pv.iter().all(|v| wvars[j].contains(v)) {
+                        continue;
+                    }
+                    let member = bases[j].as_ref().map(|bj| {
+                        let mut mb = GrobnerBudget::new(budget_steps);
+                        normal_form(f, p, bj, &mut mb).is_some_and(|nf| nf.is_zero())
+                    });
+                    if member != Some(true) && !offers[j].iter().any(|q| q == p) {
+                        offers[j].push(p.clone());
+                    }
+                }
+            }
+        }
+        if offers.iter().all(|o| o.is_empty()) {
+            break;
+        }
+        if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            eprintln!(
+                "[ff-stats] window exchange round {round}: admitted {:?} ({skipped} window(s) skipped)",
+                offers.iter().map(|o| o.len()).collect::<Vec<_>>()
+            );
+        }
+        pending = offers;
+    }
+    // The completion attempt: one cascade over the union of all window
+    // bases. The union generates the component ideal (each window
+    // ideal ⊆ it, and every component generator sits in some window
+    // ideal), so a completing cascade IS the component's Gröbner basis —
+    // the minimal-polynomial brancher is valid for it. Within-window
+    // pairs reduce to zero quickly (the window bases are already
+    // Gröbner for their ideals); the cross-window pairs are the new
+    // work. A budget-out is not an error: the merged union (ideal
+    // members all) is what FindZero consumes on the split path today.
+    let mut all: Vec<MPoly> = Vec::new();
+    for b in bases.iter().flatten() {
+        all.extend(b.basis.iter().map(|t| t.poly.clone()));
+    }
+    let mut ubudget = GrobnerBudget::new(budget_steps);
+    match grobner_basis_untraced(f, &all, &mut ubudget) {
+        Ok(union) => {
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] window union-GB: {} elements -> basis of {}",
+                    all.len(),
+                    union.basis.len()
+                );
+            }
+            Ok(WindowBasis {
+                merged: union,
+                root_is_gb: true,
+                any_skipped: skipped > 0,
+            })
+        }
+        Err(GrobnerError::Budget) => {
+            let mut merged = GrobnerBasis {
+                basis: Vec::new(),
+                inputs: Vec::new(),
+            };
+            for b in bases.iter().flatten() {
+                merged.basis.extend(b.basis.iter().cloned());
+                merged.inputs.extend(b.inputs.iter().cloned());
+            }
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] window union-GB: {} elements -> budget-out (merged union used)",
+                    all.len()
+                );
+            }
+            Ok(WindowBasis {
+                merged,
+                root_is_gb: false,
+                any_skipped: skipped > 0,
+            })
+        }
+    }
+}
+
 /// The GB + FindZero path (odd primes).
 fn grobner_path(
     manager: &TermManager,
@@ -995,7 +1306,20 @@ fn grobner_path(
             }
         };
         let mut basis_traced_rewind = false;
-        let (basis, root_is_gb, is_split) = match run_traced(&mut gbudget) {
+        struct FallbackBasis {
+            basis: GrobnerBasis,
+            /// Whether the root is a true Gröbner basis (the
+            /// minimal-polynomial brancher is valid for it).
+            root_is_gb: bool,
+            /// Whether the root's inputs are NOT the component generators
+            /// (the 2-way split's merged union, the window union): no
+            /// certificate can be minted from it and a constant refutes
+            /// through the core-only path.
+            is_split: bool,
+            /// Whether a window was skipped (window roots only).
+            any_skipped: bool,
+        }
+        let fallback_basis: FallbackBasis = match run_traced(&mut gbudget) {
             Ok(basis) => {
                 if use_fast_path && basis.contains_nonzero_constant() {
                     // The refutation needs the traced witness: re-run
@@ -1006,7 +1330,12 @@ fn grobner_path(
                     match grobner_basis(f, &input_polys, &mut retrace) {
                         Ok(traced_basis) => {
                             basis_traced_rewind = true;
-                            (traced_basis, true, false)
+                            FallbackBasis {
+                                basis: traced_basis,
+                                root_is_gb: true,
+                                is_split: false,
+                                any_skipped: false,
+                            }
                         }
                         Err(GrobnerError::Budget) => {
                             return FfOutcome::OutOfBudget {
@@ -1015,24 +1344,71 @@ fn grobner_path(
                         }
                     }
                 } else {
-                    (basis, true, false)
+                    FallbackBasis {
+                        basis,
+                        root_is_gb: true,
+                        is_split: false,
+                        any_skipped: false,
+                    }
                 }
             }
             Err(GrobnerError::Budget) => {
-                // The fallback: the split (a fresh budget — the
-                // monolithic attempt's burn is sunk cost, and the
-                // separated ideals' work is disjoint from it).
+                // First fallback: the 2-way linear/nonlinear split (a
+                // fresh budget — the monolithic attempt's burn is
+                // sunk cost, and the separated ideals' work is
+                // disjoint from it). Second fallback: the §6.5 window
+                // decomposition — the 2-way split separates by DEGREE
+                // and never decomposes a single dense component,
+                // which is exactly the chain's shape; the window
+                // split decomposes by variable support into
+                // overlapping small ideals.
                 let mut split_budget = GrobnerBudget::new(budget_steps);
                 match split_grobner_basis(f, component, &mut split_budget) {
-                    Ok(split) => (split.merged, false, true),
+                    Ok(split) => FallbackBasis {
+                        basis: split.merged,
+                        root_is_gb: false,
+                        is_split: true,
+                        any_skipped: false,
+                    },
                     Err(GrobnerError::Budget) => {
-                        return FfOutcome::OutOfBudget {
-                            where_: "Gröbner basis (component)",
-                        };
+                        match window_grobner_basis(f, component, budget_steps) {
+                            Ok(w) => FallbackBasis {
+                                basis: w.merged,
+                                root_is_gb: w.root_is_gb,
+                                is_split: true,
+                                any_skipped: w.any_skipped,
+                            },
+                            Err(GrobnerError::Budget) => {
+                                return FfOutcome::OutOfBudget {
+                                    where_: "Gröbner basis (component)",
+                                };
+                            }
+                        }
                     }
                 }
             }
         };
+        let FallbackBasis {
+            basis,
+            root_is_gb,
+            is_split,
+            any_skipped,
+        } = fallback_basis;
+        // A skipped window leaves exclusive variables no exchange can
+        // reach: over a prime beyond the round-robin horizon FindZero on
+        // the union is a guaranteed-budget-out walk (every such variable
+        // ends in truncated enumeration), and each walked node pays a
+        // union-scale basis recompute. Refuse fast instead — Unknown,
+        // never a verdict. (At small p the search stays complete and
+        // cheap, so it still runs.)
+        if any_skipped {
+            const RR_HORIZON_CHECK: u64 = 256;
+            if *f.modulus() > BigUint::from(RR_HORIZON_CHECK) {
+                return FfOutcome::OutOfBudget {
+                    where_: "window split (skipped window)",
+                };
+            }
+        }
         if std::env::var_os("NIXIE_FF_STATS").is_some() {
             eprintln!(
                 "[ff-stats] component: {} generators -> {} basis of {}{}",
@@ -1087,10 +1463,15 @@ fn grobner_path(
         // The case-tree tracking composes through the rewriting: the
         // root's input expressions are the component generators'
         // expressions over the replayable originals.
-        // Case-tree tracking requires a TRACED root (the per-element
-        // expressions read the tracer rows; an untraced basis's empty
-        // rows would compose to silently-zero memberships).
-        let basis_is_traced = root_is_gb && (!use_fast_path || basis_traced_rewind);
+        // Case-tree tracking requires a TRACED root whose inputs are
+        // the component generators (the per-element expressions read the
+        // tracer rows; an untraced basis's empty rows would compose to
+        // silently-zero memberships). `is_split` covers the 2-way AND
+        // window roots: the window union may be a true Gröbner basis
+        // (`root_is_gb` — the minimal-polynomial brancher is valid), but
+        // it was computed UNTRACED over window elements, so no
+        // certificate can be minted from it.
+        let basis_is_traced = !is_split && root_is_gb && (!use_fast_path || basis_traced_rewind);
         let component_exprs: Option<Vec<Vec<MPoly>>> = if basis_is_traced {
             Some(
                 component
@@ -2080,6 +2461,20 @@ fn find_zero(
 
         // Branch: add x − value, recompute the basis (recompute, never
         // incrementally roll back — the design's scoping discipline).
+        // Node accounting charges CHILDREN PUSHED, not nodes popped: a
+        // round-robin node pushes its whole horizon (256 at a big
+        // prime) and a pop-per-step count let those 256-ary expansions
+        // run to a 2^24-NODE cap — minutes of child GB recomputes after
+        // the verdict was already hopeless (the window-split study's
+        // degraded-union case: an 82 s refusal whose every node was a
+        // dead 40-element recompute). Charging the fan-out is the T5
+        // rule applied to the search tree: charge what runs.
+        steps += u64::try_from(values.len()).unwrap_or(u64::MAX / 2);
+        if steps > budget_steps {
+            return FfOutcome::OutOfBudget {
+                where_: "FindZero search",
+            };
+        }
         // The child's generators are the node's BASIS ELEMENTS plus the
         // branch literal — the same ideal as the raw inputs (a basis
         // generates its ideal; the split root's union generates the
@@ -2939,4 +3334,149 @@ fn mul_by_monomial_pub(f: &FieldCtx, p: &MPoly, m: &Monomial) -> MPoly {
         out.add_term(f, mm.mul(m), c);
     }
     out
+}
+
+#[cfg(test)]
+mod window_tests {
+    //! Direct soundness pins for the §6.5 window decomposition (the
+    //! corruption-probe discipline of the oracle suites): a small
+    //! locality-structured corpus goal runs BOTH paths — the monolithic
+    //! cascade (cheap at this size) and the window decomposition — and
+    //! every merged window element must be a member of the component's
+    //! ideal (normal form ≡ 0 mod the full Gröbner basis). A window
+    //! that leaked a non-member would fabricate refutations downstream.
+    //! Routing cannot be forced at this scale (the monolithic cascade is
+    //! the cheapest strategy for small goals — the window split only
+    //! pays when the monolithic path budget-outs), so these tests pin
+    //! the MECHANISM's soundness, not the routing; the routing and
+    //! capacity pin is `bench/ff`'s chain corpus (see
+    //! docs/studies/2026-09-17-ff-window-decomposition.md).
+    use super::*;
+
+    fn corpus_goal(name: &str) -> (TermManager, FieldId, Vec<TermId>) {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../bench/ff")
+            .join(name);
+        let script = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("corpus file {} missing: {e}", path.display()));
+        let mut manager = TermManager::new();
+        let sort = manager
+            .sorts
+            .finite_field(BigUint::parse_bytes(
+                b"21888242871839275222246405745257275088548364400416034343698204186575808495617",
+                10,
+            )
+            .expect("bn254 modulus"))
+            .expect("prime");
+        let field = match manager.sorts.get(sort).map(|s| s.kind.clone()) {
+            Some(SortKind::FiniteField(id)) => id,
+            other => panic!("expected a field sort, got {other:?}"),
+        };
+        let cmds = nixie_core::smtlib::parse_script(&script, &mut manager)
+            .unwrap_or_else(|e| panic!("corpus script parses: {e}"));
+        let assertions: Vec<TermId> = cmds
+            .into_iter()
+            .filter_map(|c| match c {
+                nixie_core::smtlib::Command::Assert(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert!(!assertions.is_empty());
+        (manager, field, assertions)
+    }
+
+    /// The full front-end pipeline up to per-component generators,
+    /// mirroring `grobner_path`'s steps 1–2.
+    fn front_end(
+        manager: &TermManager,
+        field: FieldId,
+        assertions: &[TermId],
+    ) -> (FieldCtx, Vec<Vec<FrontGen>>) {
+        let modulus = manager
+            .sorts
+            .field_table()
+            .modulus(field)
+            .cloned()
+            .expect("modulus");
+        let f = FieldCtx::new(modulus).expect("field ctx");
+        let (enc, generators) =
+            encode_generators(manager, field, &f, assertions, 1 << 20).expect("encodes");
+        drop(enc);
+        let rewritten = match linear_core(&f, field, generators) {
+            FrontResult::Rewritten(gens, _exprs) => gens,
+            FrontResult::Inconsistent(..) => panic!("planted corpus goal is consistent"),
+        };
+        let components = connected_components(&rewritten);
+        (
+            f,
+            components
+                .into_iter()
+                .map(|c| c.into_iter().cloned().collect())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn window_elements_are_members_of_the_full_ideal() {
+        let (manager, field, assertions) = corpus_goal("bn254_chain_planted_16x24.smt2");
+        let (f, components) = front_end(&manager, field, &assertions);
+        assert_eq!(components.len(), 1, "the chain is one component");
+        let component: Vec<FrontGen> = components.into_iter().next().unwrap();
+        let comp_refs: Vec<&FrontGen> = component.iter().collect();
+        // The full monolithic basis (cheap at this size, traced OFF —
+        // membership is what is being probed, not certificates).
+        let input_polys: Vec<MPoly> = comp_refs.iter().map(|g| g.poly.clone()).collect();
+        let mut full = GrobnerBudget::new(1 << 24);
+        let full_basis = grobner_basis_untraced(&f, &input_polys, &mut full)
+            .expect("small chain completes monolithically");
+        // The window decomposition of the same component.
+        let win = window_grobner_basis(&f, &comp_refs, 1 << 24)
+            .expect("windows complete at the default budget");
+        assert!(!win.merged.basis.is_empty());
+        // SOUNDNESS: every merged element reduces to zero modulo the
+        // full ideal's basis (an element outside the ideal would let a
+        // window fabricate a refutation or a wrong pin).
+        for t in &win.merged.basis {
+            let mut nb = GrobnerBudget::new(1 << 24);
+            let nf = normal_form(&f, &t.poly, &full_basis, &mut nb)
+                .expect("membership probe stays in budget");
+            assert!(
+                nf.is_zero(),
+                "window element with {} terms is not a member of the component ideal",
+                t.poly.n_terms()
+            );
+        }
+    }
+
+    #[test]
+    fn window_partition_covers_every_generator() {
+        let (manager, field, assertions) = corpus_goal("bn254_chain_planted_32x48.smt2");
+        let (f, components) = front_end(&manager, field, &assertions);
+        let component: Vec<FrontGen> = components.into_iter().next().unwrap();
+        let comp_refs: Vec<&FrontGen> = component.iter().collect();
+        let windows = form_windows(&comp_refs, 8, 64);
+        // Total coverage, no double assignment (the partition property
+        // the ideal-containment soundness argument rests on).
+        let mut seen = vec![false; comp_refs.len()];
+        for w in &windows {
+            for &gi in w {
+                assert!(!seen[gi], "generator {gi} assigned twice");
+                seen[gi] = true;
+            }
+        }
+        assert!(
+            seen.iter().copied().all(std::convert::identity),
+            "every generator is windowed"
+        );
+        // The union of window variable sets covers every variable the
+        // component mentions (else a variable would be unreachable by
+        // exchange — the fast-refuse gate's precondition).
+        let all_vars: FxHashSet<Var> = comp_refs.iter().flat_map(|g| g.poly.variables()).collect();
+        let window_vars: FxHashSet<Var> = windows
+            .iter()
+            .flat_map(|w| w.iter().flat_map(|&gi| comp_refs[gi].poly.variables()))
+            .collect();
+        assert_eq!(all_vars, window_vars);
+        let _ = f.modulus();
+    }
 }
