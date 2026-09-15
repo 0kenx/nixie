@@ -55,11 +55,21 @@ After the fix: `s38584` **2.3 s** (HEAD: 17–19 s; 36 h-old baseline:
 
 ## What is NOT fixed here (ownership)
 
-* **Residual 1.43× cycle geomean vs the 36 h baseline** — content-level
-  (the round-13 dual-write/CSR machinery + trajectory divergence on some
-  instances, e.g. `frb35` 59.7→175.8 G cycles). That is the round-13
-  owner's cost/benefit call on their migration, now visible without the
-  env-noise masking it.
+* **Residual 1.43× cycle geomean vs the 36 h baseline** — content-level,
+  and **not uniform**: per-instance fix/old ratios over the 23
+  commonly-solved instances run min 0.97× / median 1.23× / max 5.19×
+  (sum-of-cycles 1.40×; big-instance geomean 1.53×, tiny 1.33×).  The
+  geomean is carried by a fat right tail —
+  `SCPC-500-13` **5.19×** (35.8→185.7 G, 7.1→46.7 s), `x9-07092` 3.37×,
+  `frb35` 2.96× (59.4→175.8 G), `GP_105` 2.20×, `GP_190` 1.92× — while
+  `b22`/`hwmcc`/`oddball`/`b21`/`s38584`/`circuit` sit at 0.97–1.11×.
+  That shape (median ~1.2×, tail-heavy, two slight improvements) reads as
+  **trajectory divergence on a subset**, not a uniform hot-loop tax — the
+  classic CDCL-chaos caveat applies: single-run ratios mix real effect
+  with path luck, so the tail instances (SCPC first) deserve seed
+  replication before a strictly causal reading; the aggregate 1.40× is
+  the safer claim.  Whose cost/benefit it is: the round-13 owner's, now
+  visible without the env-noise masking it.
 * **The `e987b4b6`→`0aa996f2` false-`sat` window**: cached binaries from
   that era answer `sat` in ~0.1 s on the UNSAT `s38584` (watch-list loss,
   since reverted). Never trust a binary from that window.
