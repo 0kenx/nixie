@@ -497,6 +497,17 @@ const REGISTRY: &[(&str, LogicSpec)] = &[
             ..LogicSpec::NONE
         },
     ),
+    // Finite fields + uninterpreted functions (the `QF_UFFF` of the
+    // FF design §7: FF ⊕ EUF by polite combination). The letters
+    // compose exactly as cvc5's logic parser does (UF + FF).
+    (
+        "QF_UFFF",
+        LogicSpec {
+            uf: true,
+            ff: true,
+            ..LogicSpec::NONE
+        },
+    ),
     // --- Strings ---
     (
         "QF_S",
@@ -1149,7 +1160,19 @@ impl Capabilities {
                         Some(SortFamily::Fp) => caps.fp = true,
                         Some(SortFamily::String) => caps.strings = true,
                         Some(SortFamily::Datatype) => caps.datatypes = true,
-                        Some(SortFamily::Ff) => caps.ff = true,
+                        // An application with a finite-field result sort
+                        // is a declared `QF_UFFF` function: the only
+                        // FF-result `Apply` shapes are declared symbols
+                        // (every builtin FF operation is a dedicated
+                        // `TermKind`). Flag BOTH capabilities — `ff` for
+                        // the field vocabulary, `uf` so that a function
+                        // under plain `QF_FF` is a contract violation
+                        // (SMT-LIB: the FF letter does not include UF)
+                        // rather than a silent fall-through.
+                        Some(SortFamily::Ff) => {
+                            caps.ff = true;
+                            caps.uf = true;
+                        }
                         // This AST represents many BUILTINS as generic
                         // Apply (`str.len`, `str.indexof`, …, and declared
                         // functions) — sort shape alone cannot separate
@@ -1539,6 +1562,29 @@ mod tests {
         );
         assert!(ania.is_some_and(|s| s.arrays));
         assert!(nia.is_some_and(|s| !s.arrays));
+    }
+
+    #[test]
+    fn qf_ufff_composes_uf_and_ff() {
+        let spec = lookup("QF_UFFF").ok().flatten().copied().unwrap();
+        assert!(spec.uf && spec.ff);
+        // A pure FF goal fits QF_UFFF (UF is permitted, not required).
+        let pure_ff = Capabilities {
+            ff: true,
+            ..Capabilities::default()
+        };
+        assert!(validate(&spec, &pure_ff).is_none());
+        // An FF-result application flags BOTH capabilities (it is a
+        // declared function): under plain QF_FF that is a violation —
+        // the FF letter does not include UF.
+        let with_uf = Capabilities {
+            uf: true,
+            ff: true,
+            ..Capabilities::default()
+        };
+        let qf_ff = lookup("QF_FF").ok().flatten().copied().unwrap();
+        assert!(validate(&qf_ff, &with_uf).is_some());
+        assert!(validate(&spec, &with_uf).is_none());
     }
 
     #[test]
