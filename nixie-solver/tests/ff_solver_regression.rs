@@ -451,3 +451,51 @@ fn certified_ff_exhaustion_unsat_fails_closed() {
         .expect("parses");
     assert_eq!(out2[0], "unsat");
 }
+
+#[test]
+fn planted_bn254_sparse_8x12_is_never_unsat() {
+    // The split-Gröbner capacity work's false-`unsat` reproducer: this
+    // planted-satisfiable goal (the witness satisfies every constraint
+    // by construction) came back `unsat` when the lazy round-robin
+    // horizon lost its honesty gate — the stack emptied over truncated
+    // branches and posed as exhaustion. The tiny-prime oracle cannot
+    // catch this class (p ≤ 256 never truncates); a planted goal at a
+    // real prime can, and did. Any verdict but `unsat` is acceptable
+    // honesty; `sat` with a validated model is the expected answer.
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../bench/ff/bn254_sparse_planted_8x12.smt2"
+    );
+    let Ok(script) = std::fs::read_to_string(path) else {
+        // The corpus file is in-repo; a missing file is a broken
+        // checkout, not a pass.
+        panic!("missing planted corpus file {path}");
+    };
+    let out = run(&script);
+    assert_ne!(
+        out[0], "unsat",
+        "a planted-satisfiable system can never be unsat"
+    );
+}
+
+#[test]
+fn all_big_solutions_stay_honest() {
+    // x·z = 1, y·z = 1, x·y = (2^100)² over BN254: every solution has
+    // x = y = ±2^100 and z = ±2^−100 — values far beyond the lazy
+    // round-robin's horizon. Whatever route the solver takes (algebraic
+    // roots if the completion succeeds, honest truncation if not), the
+    // answer must never be `unsat`.
+    let p = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+    let k = "1606938044258990275541962092341162602522202993782792835301376"; // 2^200
+    let out = run(&format!(
+        "(set-logic QF_FF)
+        (declare-const x (_ FiniteField {p}))
+        (declare-const y (_ FiniteField {p}))
+        (declare-const z (_ FiniteField {p}))
+        (assert (= (ff.mul x z) #f1m{p}))
+        (assert (= (ff.mul y z) #f1m{p}))
+        (assert (= (ff.mul x y) #f{k}m{p}))
+        (check-sat)"
+    ));
+    assert_ne!(out[0], "unsat", "the system is satisfiable (x=y=±2^100)");
+}

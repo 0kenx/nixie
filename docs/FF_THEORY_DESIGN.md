@@ -2,9 +2,12 @@
 
 **Status:** Phases 0–6 implemented (2026-09-14); `QF_UFFF` (the
 Phase-6 combination remainder) landed 2026-09-16 — see §7.1 for the
-as-built arrangement architecture. Still open: §6.5 split GB, §8's
-branch-exhaustion case-tree proofs, §7-style incremental trail,
-F4/NTT. See `nixie-core/src/sort/field.rs`,
+as-built arrangement architecture; §6.5's split GB landed 2026-09-16 as
+the monolithic-first fallback with cvc5's admit discipline (see
+`docs/studies/2026-09-16-ff-split-gb-chain-capacity.md` — the study also
+records why operand flattening under the split is a measured negative).
+Still open: §8's branch-exhaustion case-tree proofs, §7-style
+incremental trail, F4/NTT, chain ≥64×96. See `nixie-core/src/sort/field.rs`,
 `nixie-math/src/ff/`, `nixie-theories/src/ff_theory.rs` (the [OKTB23]
 procedure + Phase-5 front end + `FfCertificate` with its replay
 verifier), `nixie-theories/src/ff_euf.rs` (the batch congruence
