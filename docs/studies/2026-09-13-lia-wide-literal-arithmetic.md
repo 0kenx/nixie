@@ -1000,3 +1000,46 @@ Verification: theories+solver suites green except the genuine
 other families); wide differential 5×300 (fresh seeds included) clean;
 mixed fuzz 2×400 clean; Z3 parity 176/177, 0 disagreements (z3 4.16.0);
 fmt/clippy/rustdoc clean for the touched crate.
+
+## Continuation 18 (2026-09-16): round three — the strict-atom one-sided endpoint; the wide-row propagation LANDS (items 47–48)
+
+47. **The strict-`>` false-`unsat` root cause** (the round-two residual,
+    minimized to `(> (* 6927366777083328576 v2) -3) ∧ v2 = 3`): deriving
+    a bound's SUPREMUM through a variable with only a LOWER bound used
+    the lone lower as the sup endpoint — fabricating the tightest
+    possible "upper". On the strict shape the `>` atom slack's lone
+    `(0, +1)` lower became a phony `−3−ε` upper on the row's variable,
+    crossed the real bounds, and refuted a satisfiable goal (the
+    corner auditor + the crossing probe localized it in one run). A
+    ONE-SIDED pair now serves its own direction only — a lone lower is
+    an infimum, never a supremum (+∞); both derivation helpers'
+    endpoint selections enforce it. Regressions:
+    `strict_wide_row_one_sided_endpoint_never_drives_false_unsat`,
+    `strict_multi_term_wide_row_never_drives_false_unsat`.
+48. **The wide-row propagation lands** (slice 6, third build, at last
+    sound): exact both-direction `BigRational` derivations through the
+    wide store (basic-ward + variable-ward solving
+    `xᵢ = (basic − k − Σ_{j≠i} cⱼxⱼ)/cᵢ`), lex-comparison endpoint
+    selection (inverted pairs exist mid-search in genuinely
+    contradictory atom states), exact lexicographic `(real, delta)`
+    crossing tests planted through the pending-crossing channel
+    (never on weakened forms), `ceil/floor ± 1, delta = 0` integer
+    storage for non-narrowing bounds, `BRANCH_REASON` filter on all
+    derivations, and the per-final-check cadence with
+    discard-stale-first consumption. The corner-enumeration auditor
+    ships env-gated (`NIXIE_S6_AUDIT=1`, debug builds). NARROW
+    direction-2 stays env-gated OFF (`NIXIE_S6_NDIR2=1`): with it the
+    mixed-magnitude LRA unsat twin decides `unsat` (matching z3 — the
+    named residual closes!), but the chain-sat twin degrades to
+    `unknown` (a completeness trade, not a soundness one — some sound
+    derivation deflects the search into an honest decline); turning it
+    on by default needs that interaction understood. The propagated
+    bound state is sound on every oracle: wide differential 9×300
+    across the round (every prior finder seed included), mixed fuzz,
+    parity 176/177 (z3 4.16.0), the full suites.
+
+The three-round arc, in one line each: round one found the false
+verdicts (and a wrong fingerprint), round two found the pre-existing
+double-count underneath them, round three found the one-sided endpoint
+underneath THAT — and the propagation that exposed all three is now
+sound and landed.

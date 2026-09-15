@@ -217,7 +217,7 @@ type ExplainedBound = Option<(DeltaRational, Vec<TermId>)>;
 /// marker is dropped from the core.  `u32::MAX` can never collide with a real
 /// `add_reason` id (bounded by `reasons.len()`), so every reason-id → term
 /// mapping safely yields `None` for it.
-const BRANCH_REASON: u32 = u32::MAX;
+pub(crate) const BRANCH_REASON: u32 = u32::MAX;
 
 /// Complete verdict of the recorded integer-equality subsystem
 /// ([`ArithSolver::int_equalities`]), decided by the Hermite
@@ -1212,7 +1212,7 @@ impl ArithSolver {
         // iterations to avoid pathological non-termination on cyclic tightenings.
         for _ in 0..16 {
             let before = self.simplex.num_original_vars();
-            self.simplex.propagate_bounds();
+            self.simplex.propagate_bounds_in(&self.int_vars);
             // propagate_bounds does not report whether it changed anything;
             // use the propagated-vector length as a cheap change signal.  It
             // clears+repopulates `propagated` each call, so a non-empty result
@@ -2673,6 +2673,31 @@ impl Theory for ArithSolver {
 
     fn check(&mut self) -> Result<TheoryResult> {
         self.lia_model.clear();
+        // Slice 6 cadence: the tighten runs at every final-check round (the
+        // only place wide rows from earlier rounds exist). A pending
+        // crossing planted by an EARLIER round is discarded first — reason
+        // ids recycle across pops, so a stale id list can map to wrong
+        // terms (an invalid clause, a false `unsat`); only a crossing
+        // planted by THIS check's own tighten is consumed, and no pop
+        // happens between the two.
+        let _ = self.simplex.bound_crossing_conflict();
+        self.tighten_tableau_bounds();
+        if let Some(reasons) = self.simplex.bound_crossing_conflict() {
+            let mut terms: Vec<TermId> = Vec::with_capacity(reasons.len());
+            let mut all_mapped = true;
+            for &r in &reasons {
+                match self.reasons.get(r as usize).copied() {
+                    Some(term) => terms.push(term),
+                    None => {
+                        all_mapped = false;
+                        break;
+                    }
+                }
+            }
+            if all_mapped && !terms.is_empty() {
+                return Ok(TheoryResult::Unsat(terms));
+            }
+        }
 
         // Step 1: solve the LP (real) relaxation.
         match self.simplex.check() {

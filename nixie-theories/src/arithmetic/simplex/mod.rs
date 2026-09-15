@@ -297,6 +297,15 @@ pub fn scale_exact_row<K: Copy>(
 }
 
 /// Widen a `Rational64` to an exact `BigRational` (the exact-retry paths).
+/// Whether a bound's justification set carries the branch case-split
+/// sentinel: such bounds are SEARCH-LOCAL (scoped by push/pop, justified
+/// by no atom), so a derivation through them is only valid inside that
+/// branch (the `gomory_cut` rule).
+fn bound_is_branch_local(b: &Bound) -> bool {
+    b.reason == super::solver::BRANCH_REASON
+        || b.aux_reasons.contains(&super::solver::BRANCH_REASON)
+}
+
 fn big_r64(r: &Rational64) -> num_rational::BigRational {
     num_rational::BigRational::new(
         num_bigint::BigInt::from(*r.numer()),
@@ -3805,10 +3814,137 @@ impl Simplex {
     /// - If all x_j have bounds, we can compute bounds for x_i
     /// - If x_i has a bound, we may derive bounds for x_j
     pub fn propagate_bounds(&mut self) {
+        self.propagate_bounds_in(&FxHashSet::default());
+    }
+
+    /// [`Self::propagate_bounds`] with the caller's INTEGER-variable set —
+    /// slice 6: bounds derived through the WIDE store weaken to `ceil`/
+    /// `floor` for STORAGE on integer basics only; real basics keep
+    /// exact-or-decline. Crossings are tested on the EXACT value and
+    /// planted through `pending_crossing` (never on a weakened form).
+    pub fn propagate_bounds_in(&mut self, int_vars: &FxHashSet<VarId>) {
         self.propagated.clear();
+        // NARROW direction-2 is env-gated while under evaluation: solve a
+        // narrow row for one of the variables it references (the
+        // atom-bound encoding hides pins behind `s = var` slack rows).
+        let narrow_dir2 = std::env::var("NIXIE_S6_NDIR2").as_deref() == Ok("1");
+        let narrow_rows: Vec<(VarId, LinExpr)> = self
+            .tableau
+            .iter()
+            .filter(|(_, e)| narrow_dir2 && e.terms.len() <= 8)
+            .map(|(v, e)| {
+                (
+                    *v,
+                    LinExpr {
+                        terms: e.terms.iter().copied().collect(),
+                        constant: e.constant,
+                    },
+                )
+            })
+            .collect();
+        for (basic_var, expr) in &narrow_rows {
+            let big_expr = BigLinExpr {
+                terms: expr.terms.iter().map(|(v, c)| (*v, big_r64(c))).collect(),
+                constant: big_r64(&expr.constant),
+            };
+            let targets: Vec<VarId> = big_expr.terms.iter().map(|(v, _)| *v).collect();
+            for target in targets {
+                if target as usize >= self.assignment.len() {
+                    continue;
+                }
+                for lower in [true, false] {
+                    let Some((real, delta, reasons)) =
+                        self.derive_var_bound_big_parts(*basic_var, &big_expr, target, lower)
+                    else {
+                        continue;
+                    };
+                    #[cfg(all(debug_assertions, feature = "std"))]
+                    if std::env::var("NIXIE_S6_AUDIT").is_ok() {
+                        self.audit_by_corners(
+                            *basic_var,
+                            &big_expr,
+                            Some(target),
+                            lower,
+                            &real,
+                            &delta,
+                        );
+                    }
+                    self.slice6_consider(
+                        target,
+                        lower,
+                        real,
+                        delta,
+                        reasons,
+                        int_vars.contains(&target),
+                    );
+                }
+            }
+        }
         for (basic_var, expr) in &self.tableau {
             if let Some(bound) = self.derive_basic_bound(*basic_var, expr) {
                 self.propagated.push(bound);
+            }
+        }
+        let wide: Vec<(VarId, BigLinExpr)> = self
+            .wide_rows
+            .iter()
+            .map(|(v, e)| (*v, e.clone()))
+            .collect();
+        for (basic_var, wexpr) in &wide {
+            let idx = *basic_var as usize;
+            if idx >= self.assignment.len() {
+                continue;
+            }
+            for lower in [true, false] {
+                let Some((real, delta, reasons)) =
+                    self.derive_bound_big_parts(&wexpr.constant, &wexpr.terms, lower)
+                else {
+                    continue;
+                };
+                #[cfg(all(debug_assertions, feature = "std"))]
+                if std::env::var("NIXIE_S6_AUDIT").is_ok() {
+                    self.audit_by_corners(*basic_var, wexpr, None, lower, &real, &delta);
+                }
+                self.slice6_consider(
+                    *basic_var,
+                    lower,
+                    real,
+                    delta,
+                    reasons,
+                    int_vars.contains(basic_var),
+                );
+            }
+            let targets: Vec<VarId> = wexpr.terms.iter().map(|(v, _)| *v).collect();
+            for target in targets {
+                if target as usize >= self.assignment.len() {
+                    continue;
+                }
+                for lower in [true, false] {
+                    let Some((real, delta, reasons)) =
+                        self.derive_var_bound_big_parts(*basic_var, wexpr, target, lower)
+                    else {
+                        continue;
+                    };
+                    #[cfg(all(debug_assertions, feature = "std"))]
+                    if std::env::var("NIXIE_S6_AUDIT").is_ok() {
+                        self.audit_by_corners(
+                            *basic_var,
+                            wexpr,
+                            Some(target),
+                            lower,
+                            &real,
+                            &delta,
+                        );
+                    }
+                    self.slice6_consider(
+                        target,
+                        lower,
+                        real,
+                        delta,
+                        reasons,
+                        int_vars.contains(&target),
+                    );
+                }
             }
         }
         let props = self.propagated.clone();
@@ -3837,6 +3973,77 @@ impl Simplex {
                     self.set_upper_delta(prop.var, prop.value, prop.reasons.clone());
                 }
             }
+        }
+    }
+
+    /// Shared store/crossing decision for one derived (exact) bound: test
+    /// the crossing on the EXACT pair, weaken only for storage.
+    fn slice6_consider(
+        &mut self,
+        var: VarId,
+        lower: bool,
+        real: num_rational::BigRational,
+        delta: num_rational::BigRational,
+        reasons: SmallVec<[u32; 4]>,
+        is_int: bool,
+    ) {
+        let idx = var as usize;
+        if idx >= self.assignment.len() || reasons.is_empty() {
+            return;
+        }
+        let narrow = |r: &num_rational::BigRational| -> Option<Rational64> {
+            use num_traits::ToPrimitive as _;
+            Some(Rational64::new(r.numer().to_i64()?, r.denom().to_i64()?))
+        };
+        let exact = narrow(&real)
+            .zip(narrow(&delta))
+            .map(|(real, delta)| DeltaRational { real, delta });
+        let opposite = if lower {
+            self.upper.get(idx).and_then(Option::as_ref)
+        } else {
+            self.lower.get(idx).and_then(Option::as_ref)
+        };
+        if let Some(opp) = opposite
+            && self.cmp_bound_big(&real, &delta, &opp.value)
+                == if lower {
+                    core::cmp::Ordering::Greater
+                } else {
+                    core::cmp::Ordering::Less
+                }
+        {
+            let mut conflict: Vec<u32> = Vec::new();
+            for r in reasons.iter().copied().chain(opp.all_reasons()) {
+                if !conflict.contains(&r) {
+                    conflict.push(r);
+                }
+            }
+            self.pending_crossing = Some(conflict);
+            return;
+        }
+        let stored = match &exact {
+            Some(v) => Some(*v),
+            None if is_int => self.weaken_int_bound(&real, &delta, lower),
+            None => None,
+        };
+        let Some(value) = stored else { return };
+        let is_tighter = if lower {
+            match &self.lower[idx] {
+                None => true,
+                Some(existing) => value > existing.value,
+            }
+        } else {
+            match &self.upper[idx] {
+                None => true,
+                Some(existing) => value < existing.value,
+            }
+        };
+        if is_tighter {
+            self.propagated.push(PropagatedBound {
+                var,
+                is_lower: lower,
+                value,
+                reasons,
+            });
         }
     }
 
@@ -3878,6 +4085,337 @@ impl Simplex {
             real: narrow(&real)?,
             delta: narrow(&delta)?,
         })
+    }
+
+    /// Exact (`BigRational`) interval derivation of one directional bound of
+    /// `basic = Σ cⱼxⱼ + k` from the variables' current bounds — the
+    /// wide-row propagation core. `lower = true` derives the infimum, `false`
+    /// the supremum. Endpoints are chosen by LEX COMPARISON of each pair
+    /// (mid-search states can carry genuinely contradictory atom sets whose
+    /// bounds are INVERTED — a slot-name choice picks the wrong end).
+    /// Branch-local bounds decline the derivation. The result carries every
+    /// contributing bound's antecedents.
+    fn derive_bound_big_parts(
+        &self,
+        constant: &num_rational::BigRational,
+        terms: &[(VarId, num_rational::BigRational)],
+        lower: bool,
+    ) -> Option<(
+        num_rational::BigRational,
+        num_rational::BigRational,
+        SmallVec<[u32; 4]>,
+    )> {
+        let num_vars = self.assignment.len();
+        let mut real = constant.clone();
+        let mut delta = num_rational::BigRational::zero();
+        let mut reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        for (var, c) in terms {
+            let vi = *var as usize;
+            if vi >= num_vars {
+                return None;
+            }
+            let positive = *c > num_rational::BigRational::zero();
+            let want_min = if lower { positive } else { !positive };
+            let lo = self.lower.get(vi).and_then(Option::as_ref);
+            let hi = self.upper.get(vi).and_then(Option::as_ref);
+            // A ONE-SIDED pair only serves its own direction: a lone lower
+            // is the pair's minimum (fine for an infimum) but says nothing
+            // about the supremum (it is +∞) — returning it for a sup
+            // request FABRICATES the tightest possible bound (the strict
+            // `>` false-`unsat` class: the atom slack's lone strict lower
+            // used as a supremum endpoint derived a phony `−3−ε` upper).
+            let bound = match (lo, hi) {
+                (Some(a), Some(b)) => {
+                    let a_first = a.value < b.value;
+                    if want_min == a_first { a } else { b }
+                }
+                (Some(a), None) if want_min => a,
+                (None, Some(b)) if !want_min => b,
+                _ => return None,
+            };
+            if bound_is_branch_local(bound) {
+                return None;
+            }
+            real += big_r64(&bound.value.real) * c;
+            delta += big_r64(&bound.value.delta) * c;
+            reasons.extend(bound.all_reasons());
+        }
+        Some((real, delta, reasons))
+    }
+
+    /// Direction-2 exact derivation: solve the row `basic = Σ cⱼxⱼ + k` for
+    /// ONE non-basic `target` and derive ITS bound from the basic's bound
+    /// and the other variables' bounds: `xᵢ = (basic − k − Σ_{j≠i} cⱼxⱼ)/cᵢ`.
+    /// Without this, a row whose basic is a slack never constrains the
+    /// variables it references (the atom-bound encoding hides pins behind
+    /// `s = var` rows). Endpoints by LEX comparison (see
+    /// [`Self::derive_bound_big_parts`]).
+    fn derive_var_bound_big_parts(
+        &self,
+        basic: VarId,
+        wexpr: &BigLinExpr,
+        target: VarId,
+        lower: bool,
+    ) -> Option<(
+        num_rational::BigRational,
+        num_rational::BigRational,
+        SmallVec<[u32; 4]>,
+    )> {
+        let num_vars = self.assignment.len();
+        let bi = basic as usize;
+        if bi >= num_vars {
+            return None;
+        }
+        let coef_i = wexpr
+            .terms
+            .iter()
+            .find(|(v, _)| *v == target)
+            .map(|(_, c)| c)?;
+        if coef_i.is_zero() {
+            return None;
+        }
+        let positive = *coef_i > num_rational::BigRational::zero();
+        let want_inf = lower == positive;
+        // The endpoint that MINIMIZES a term `s·x`: the pair's lex-min when
+        // `s > 0`, its lex-max when `s < 0` (the opposite for the supremum).
+        let endpoint = |s_positive: bool, vi: usize| -> Option<&Bound> {
+            let lo = self.lower.get(vi).and_then(Option::as_ref);
+            let hi = self.upper.get(vi).and_then(Option::as_ref);
+            let want_min = if want_inf { s_positive } else { !s_positive };
+            match (lo, hi) {
+                (Some(a), Some(b)) => {
+                    let a_first = a.value < b.value;
+                    Some(if want_min == a_first { a } else { b })
+                }
+                // One-sided pairs serve their own direction only (see the
+                // direction-1 `bound` selection): a lone lower is never a
+                // supremum endpoint.
+                (Some(a), None) if want_min => Some(a),
+                (None, Some(b)) if !want_min => Some(b),
+                _ => None,
+            }
+        };
+        let mut real = -&wexpr.constant;
+        let mut delta = num_rational::BigRational::zero();
+        let mut reasons: SmallVec<[u32; 4]> = SmallVec::new();
+        let b = endpoint(true, bi)?;
+        if bound_is_branch_local(b) {
+            return None;
+        }
+        real += big_r64(&b.value.real);
+        delta += big_r64(&b.value.delta);
+        reasons.extend(b.all_reasons());
+        for (var, c) in &wexpr.terms {
+            if *var == target {
+                continue;
+            }
+            let vi = *var as usize;
+            if vi >= num_vars {
+                return None;
+            }
+            let s_positive = *c < num_rational::BigRational::zero(); // term is −c·x
+            let b = endpoint(s_positive, vi)?;
+            if bound_is_branch_local(b) {
+                return None;
+            }
+            let neg_c = -c;
+            real += big_r64(&b.value.real) * &neg_c;
+            delta += big_r64(&b.value.delta) * &neg_c;
+            reasons.extend(b.all_reasons());
+        }
+        real /= coef_i;
+        delta /= coef_i;
+        Some((real, delta, reasons))
+    }
+
+    /// Weaken an exact bound for STORAGE on an integer basic (the two
+    /// `narrow_pair` lessons): `ceil` for lower, `floor` for upper (an
+    /// integral real part shifts by the infinitesimal's sign), `delta = 0`,
+    /// and the result must fit `Rational64`. CROSSING and tightness tests
+    /// always run on the EXACT value; only STORAGE is weakened.
+    fn weaken_int_bound(
+        &self,
+        real: &num_rational::BigRational,
+        delta: &num_rational::BigRational,
+        lower: bool,
+    ) -> Option<DeltaRational> {
+        use num_traits::ToPrimitive as _;
+        let integral = real.fract().is_zero();
+        let n: num_bigint::BigInt = if lower {
+            let mut c = real.ceil().to_integer();
+            if integral && delta > &num_rational::BigRational::zero() {
+                c += 1;
+            }
+            c
+        } else {
+            let mut f = real.floor().to_integer();
+            if integral && delta < &num_rational::BigRational::zero() {
+                f -= 1;
+            }
+            f
+        };
+        Some(DeltaRational::from_rational(Rational64::from_integer(
+            n.to_i64()?,
+        )))
+    }
+
+    /// Lexicographic `(real, delta)` comparison of an exact big bound
+    /// against a stored [`DeltaRational`] — crossing/tightness tests use
+    /// this so a widened representation never erases a unit-interval
+    /// crossing.
+    fn cmp_bound_big(
+        &self,
+        real: &num_rational::BigRational,
+        delta: &num_rational::BigRational,
+        stored: &DeltaRational,
+    ) -> core::cmp::Ordering {
+        use core::cmp::Ordering;
+        let r = real.cmp(&big_r64(&stored.real));
+        if r != Ordering::Equal {
+            return r;
+        }
+        delta.cmp(&big_r64(&stored.delta))
+    }
+
+    /// Corner-enumeration auditor for one derivation (debug, env-gated by
+    /// the caller): a linear function's extrema over a box are at its
+    /// corners, so recomputing the directional bound by full corner
+    /// enumeration is an INDEPENDENT check of the endpoint arithmetic.
+    /// Compares against the corner EXTREMUM of the derived values directly
+    /// (min for lower, max for upper — no divisor-sign flip: the corner
+    /// values are already the target's achievable values).
+    #[cfg(all(debug_assertions, feature = "std"))]
+    fn audit_by_corners(
+        &self,
+        basic: VarId,
+        wexpr: &BigLinExpr,
+        target: Option<VarId>,
+        lower: bool,
+        got: &num_rational::BigRational,
+        got_delta: &num_rational::BigRational,
+    ) {
+        use num_rational::BigRational as BR;
+        const MAX_CORNER_VARS: usize = 8;
+        let num_vars = self.assignment.len();
+        let bi = basic as usize;
+        if bi >= num_vars {
+            return;
+        }
+        // The operands whose corners matter: the basic's pair and each
+        // non-target term's pair; every one must be two-sided.
+        let mut others: Vec<(VarId, &Bound, &Bound)> = Vec::new();
+        for (v, _) in &wexpr.terms {
+            if Some(*v) == target {
+                continue;
+            }
+            let vi = *v as usize;
+            if vi >= num_vars {
+                return;
+            }
+            match (
+                self.lower.get(vi).and_then(Option::as_ref),
+                self.upper.get(vi).and_then(Option::as_ref),
+            ) {
+                (Some(lo), Some(hi)) => others.push((*v, lo, hi)),
+                _ => return,
+            }
+        }
+        let (Some(b_lo), Some(b_hi)) = (
+            self.lower.get(bi).and_then(Option::as_ref),
+            self.upper.get(bi).and_then(Option::as_ref),
+        ) else {
+            return;
+        };
+        if others.len() > MAX_CORNER_VARS {
+            return;
+        }
+        let coef_i = wexpr
+            .terms
+            .iter()
+            .find(|(v, _)| Some(*v) == target)
+            .map(|(_, c)| c.clone())
+            .unwrap_or_else(BR::one);
+        if coef_i.is_zero() {
+            return;
+        }
+        let lex_cmp = |(r1, d1): &(BR, BR), (r2, d2): &(BR, BR)| -> core::cmp::Ordering {
+            use core::cmp::Ordering;
+            match r1.cmp(r2) {
+                Ordering::Equal => d1.cmp(d2),
+                o => o,
+            }
+        };
+        let mut extreme: Option<(BR, BR)> = None;
+        let mut choose = vec![0u8; others.len()];
+        loop {
+            for b_bnd in [b_lo, b_hi] {
+                let mut r = big_r64(&b_bnd.value.real);
+                let mut d = big_r64(&b_bnd.value.delta);
+                if target.is_none() {
+                    // Direction 1: the basic's own bound from the terms.
+                    r = wexpr.constant.clone();
+                    d = BR::zero();
+                    for (i, (_, lo, hi)) in others.iter().enumerate() {
+                        let x = if choose[i] == 0 { lo } else { hi };
+                        let c = wexpr
+                            .terms
+                            .iter()
+                            .find(|(v, _)| v == &others[i].0)
+                            .map(|(_, c)| c.clone())
+                            .unwrap_or_default();
+                        r += big_r64(&x.value.real) * &c;
+                        d += big_r64(&x.value.delta) * &c;
+                    }
+                } else {
+                    // Direction 2: x = (b − k − Σ cⱼxⱼ)/cᵢ.
+                    r -= &wexpr.constant;
+                    for (i, (_, lo, hi)) in others.iter().enumerate() {
+                        let x = if choose[i] == 0 { lo } else { hi };
+                        let c = wexpr
+                            .terms
+                            .iter()
+                            .find(|(v, _)| v == &others[i].0)
+                            .map(|(_, c)| c.clone())
+                            .unwrap_or_default();
+                        r -= big_r64(&x.value.real) * &c;
+                        d -= big_r64(&x.value.delta) * &c;
+                    }
+                    r /= &coef_i;
+                    d /= &coef_i;
+                }
+                let take = match extreme.as_ref() {
+                    None => true,
+                    Some(w) if lower => {
+                        lex_cmp(&(r.clone(), d.clone()), w) == core::cmp::Ordering::Less
+                    }
+                    Some(w) => lex_cmp(&(r.clone(), d.clone()), w) == core::cmp::Ordering::Greater,
+                };
+                if take {
+                    extreme = Some((r, d));
+                }
+            }
+            let mut i = 0;
+            while i < others.len() && choose[i] == 1 {
+                choose[i] = 0;
+                i += 1;
+            }
+            if i == others.len() {
+                break;
+            }
+            choose[i] = 1;
+        }
+        let Some((want_r, want_d)) = extreme else {
+            return;
+        };
+        if got != &want_r || got_delta != &want_d {
+            eprintln!(
+                "S6AUDIT MISMATCH basic={basic} target={target:?} lower={lower}: got=({got:?},{got_delta:?}) corners=({want_r:?},{want_d:?})"
+            );
+        }
+        debug_assert!(
+            got == &want_r && got_delta == &want_d,
+            "derivation disagrees with corner enumeration"
+        );
     }
 
     /// Checked accumulate `sum += value * coef` for the delta-propagation
