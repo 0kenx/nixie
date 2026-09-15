@@ -973,3 +973,30 @@ recycling, branch-local bounds, endpoint orientation), and the next
 entry points are recorded in
 [`2026-09-15-wide-row-bound-propagation-negative-result.md`](2026-09-15-wide-row-bound-propagation-negative-result.md).
 Slice 6 remains open, exactly as the handoff left it.
+
+## Continuation 17 (2026-09-16): the slice-6 blocker was a pre-existing propagation bug — found by the auditors, fixed, landed (item 46)
+
+46. **`derive_basic_bound`'s exact-retry double-count** (found by the
+    corner-enumeration auditor built per the negative-result study's
+    corrected entry points): the mid-walk retry recomputes the WHOLE
+    directional sum, but the walk continued adding the post-overflow
+    terms on top of the full result — a corrupted bound with SOUND
+    reasons, i.e. an unjustified refutation wearing a justified one's
+    clothes. This single defect produced BOTH of slice-6's recorded
+    false `unsat`s (the chain-sat twin and, via narrow direction-2's
+    enriched bound graph, the cancellation sat-twin) and had been live
+    on `main` behind an overflow trigger the ordinary corpus never
+    reached. Fix: after the retry the walk is reasons-only
+    (`lower_done`/`upper_done`); regression
+    `basic_bound_exact_retry_does_not_double_count`. The wide-row
+    propagation itself stays unlanded (three NEW false-`unsat` shapes
+    on fresh differential seeds — see the negative-result study's
+    resolution section); its rebuild now stands on a sound narrow base,
+    with the corner auditors and the model audit as the standing
+    instruments.
+
+Verification: theories+solver suites green except the genuine
+`[corpus-missing]` set (the returned corpus lacks QF_BV/sage and three
+other families); wide differential 5×300 (fresh seeds included) clean;
+mixed fuzz 2×400 clean; Z3 parity 176/177, 0 disagreements (z3 4.16.0);
+fmt/clippy/rustdoc clean for the touched crate.

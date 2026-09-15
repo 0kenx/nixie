@@ -119,3 +119,48 @@ description first; this session followed it exactly.
    probably the same defect; instrument both with the auditor.
 3. Keep the BRANCH_REASON filter and the discard-first consumption from
    the start; they are soundness requirements, not optimizations.
+
+## Resolution (2026-09-16): the blocker was a PRE-EXISTING double-count, not the propagation's arithmetic
+
+Re-built per the corrected entry points (derivation auditors first:
+corner-enumeration for both directions, plus the model audit). The
+auditors found BOTH prior false `unsat`s' real root cause — and it was
+not the wide propagation's own arithmetic:
+
+**`derive_basic_bound`'s mid-walk exact retry double-counted the
+post-overflow terms.** The retry (`derive_bound_exact`) recomputes the
+WHOLE directional sum, but the walk CONTINUED from the next term, adding
+the remaining contributions ON TOP of the full recomputation. On the
+chain the retry returned the correct full sum and the walk re-added the
+last term (`+9.26·10¹⁶`), storing a bound that violated the model by
+exactly that term; the corrupted bound's "reasons" were sound, so the
+refutation looked justified. The same defect explained the cancellation
+twin's failure with narrow direction-2 on (its enriched bound graph
+pushed sums through the overflow path). The fix (LANDED): after the
+retry the arithmetic is complete — the walk keeps iterating only to
+collect the remaining terms' bound REASONS. Pinned by
+`basic_bound_exact_retry_does_not_double_count` (a row engineered so the
+checked add overflows at the second of four terms; the unfixed walk
+reports `−2^63+3`, the fixed one `3`).
+
+The wide propagation itself was rebuilt clean on top of the fix
+(lex-order endpoint selection — mid-search states can carry genuinely
+contradictory atom sets whose bounds are INVERTED, and a slot-name
+endpoint choice picks the wrong end; the corner auditor caught that
+too), and it closed the mixed-magnitude LRA unsat twin decidably — but
+FRESH wide-differential seeds then produced three NEW false `unsat`
+shapes (QF_LIA, `>` strict atoms with 2^61–2^63-scale multi-term
+coefficients, e.g. `(> (+ (* 2305843009213693952 v2) (* 4611686018427387904
+v2)) -3)` with `v2 = 3`). The propagation remains unlanded; those
+reproducers (in `/tmp/wf2_*.log` of the session, regenerable with seeds
+20260971/73/78/79 over any rebuild) are the next root-cause round's
+entry point — suspect the strict-bound delta interactions with the
+weakened/exact storage once more.
+
+**Methodology that worked (keep for the next round):** the corner
+enumeration auditors (a linear function's extrema over a box are at its
+corners — an independent check of every endpoint/delta computation, two
+real bugs caught), and the model audit (every stored bound must hold at
+a known-feasible point — localizes an unsound store in one run). The
+auditor itself needed a fix: min/max over the corner x-values directly,
+never flipped by the divisor's sign.
