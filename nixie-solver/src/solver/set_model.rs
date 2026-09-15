@@ -252,6 +252,22 @@ impl<'a> SetView<'a> {
                             frames.push(Frame::Combine(ElemFrame { term: t, base }));
                             frames.push(Frame::Open(inner));
                         }
+                        // A relation compound's value is whatever the
+                        // cross-sort synthesis pass installed (its operands
+                        // live in other element sorts, so it cannot be
+                        // folded here); without an entry it is
+                        // undetermined, never guessed.
+                        TermKind::SetRelJoin(_, _)
+                        | TermKind::SetRelProduct(_, _)
+                        | TermKind::SetRelTranspose(_)
+                        | TermKind::SetRelIden(_) => {
+                            let v = self
+                                .model
+                                .get(t)
+                                .and_then(|entry| self.parse_value_elements(entry));
+                            self.memo_elements.insert(t, v.clone());
+                            vals.push(v);
+                        }
                         _ => {
                             self.memo_elements.insert(t, None);
                             vals.push(None);
@@ -691,6 +707,11 @@ impl Solver {
         for (elem_sort, sets) in ordered {
             self.synthesize_sort(&survey, elem_sort, &sets, model, manager);
         }
+        // Relation compounds: their operands live in *other* element sorts
+        // (the transposed, paired, joined or diagonalized tuple sorts), so
+        // their values are computed once every sort's opaque values are
+        // installed, in a fixpoint over nesting.
+        self.synthesize_rel_values(&survey, model, manager);
     }
 
     /// Synthesize values for one element sort's sets, verifying before
@@ -764,6 +785,75 @@ impl Solver {
             return;
         }
 
+        // ---- tuple-element component resolution ----
+        //
+        // A tuple constructor element may spell unresolvable terms inside
+        // (a join skolem, an unconstrained variable): `(1, k)`. The
+        // model's value for `k` exists (minted or pinned above), so the
+        // tuple's *value* is the constructor over the resolved
+        // components. Install it as the element's entry — the read-only
+        // evaluator then compares values with values, and without this a
+        // committed membership over such a tuple compared its spelling
+        // against the synthesized value and verification rolled the whole
+        // sort back (found on `(1,3) ∈ r ⨝ s`: the split `(1, k)` is a
+        // committed member of `r` whose spelling is not in `r`'s value).
+        // Nested tuples resolve innermost-first by element order; one
+        // sweep per nesting level.
+        for _sweep in 0..4 {
+            let mut changed = false;
+            for &e in elements {
+                let Some(TermKind::DtConstructor { args, .. }) =
+                    manager.get(e).map(|d| d.kind.clone())
+                else {
+                    continue;
+                };
+                if model.get(e).is_some() {
+                    continue;
+                }
+                let mut resolved: Vec<TermId> = Vec::with_capacity(args.len());
+                let mut all = true;
+                for &arg in &args {
+                    let value = match model.get(arg) {
+                        Some(v) if is_value_term(v, manager) => v,
+                        _ if is_value_term(arg, manager) => arg,
+                        // An unvalued component (the join skolem, an
+                        // unconstrained variable *inside* a committed
+                        // member): mint a fresh witness for it, exactly as
+                        // for a member-true element. Both splits of a
+                        // join resolve through the one entry, so the
+                        // middles meet.
+                        _ => match manager
+                            .get(arg)
+                            .map(|d| d.sort)
+                            .and_then(|sort| self.mint_component_value(sort, &used, manager))
+                        {
+                            Some(v) => {
+                                used.insert(v);
+                                model.set(arg, v);
+                                v
+                            }
+                            None => {
+                                all = false;
+                                break;
+                            }
+                        },
+                    };
+                    resolved.push(value);
+                }
+                if all {
+                    let value = manager.mk_tuple(&resolved);
+                    model.set(e, value);
+                    if let Some(v) = elem_values.insert(e, Some(value)) {
+                        let _ = v;
+                    }
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
         // ---- value-collision repair ----
         // The arithmetic pass defaults every unconstrained integer variable
         // to 0, so two element terms the formula never related can carry the
@@ -800,11 +890,16 @@ impl Solver {
                 if group.len() < 2 {
                     continue;
                 }
-                // Keep the first element's vector as the reference; any
-                // other member that disagrees must be re-minted.
                 group.sort_unstable();
+                // The anchor is the first **pinned** member — its value is
+                // the one a committed equality fixes, so every other
+                // member of the group conforms to it, not the reverse.
+                // Without a pinned member the first is the anchor and all
+                // dissenters (it excluded) re-mint.
+                group.sort_by_key(|&e| !self.element_value_is_pinned(e));
+                let anchor = group[0];
                 let reference = membership
-                    .get(&group[0])
+                    .get(&anchor)
                     .cloned()
                     .unwrap_or_else(|| vec![None; sets.len()]);
                 for &e in group.iter().skip(1) {
@@ -812,24 +907,20 @@ impl Solver {
                         .get(&e)
                         .cloned()
                         .unwrap_or_else(|| vec![None; sets.len()]);
-                    let disagrees = vector != reference
-                        && reference
-                            .iter()
-                            .zip(vector.iter())
-                            .any(|(a, b)| a.is_some() && a != b);
+                    // A disagreement is two *decided* atoms that differ.
+                    // An undecided atom (`None`) is not a conflict: the
+                    // encoder never gave it a variable, so nothing pins
+                    // it.
+                    let disagrees = reference
+                        .iter()
+                        .zip(vector.iter())
+                        .any(|(a, b)| matches!((a, b), (Some(x), Some(y)) if x != y));
                     if !disagrees {
                         continue;
                     }
-                    let constrained = self.var_to_constraint.values().any(|c| match c {
-                        super::types::Constraint::Eq(l, r)
-                        | super::types::Constraint::Diseq(l, r)
-                        | super::types::Constraint::Lt(l, r)
-                        | super::types::Constraint::Le(l, r)
-                        | super::types::Constraint::Gt(l, r)
-                        | super::types::Constraint::Ge(l, r) => *l == e || *r == e,
-                        super::types::Constraint::BoolApp(t) => *t == e,
-                    });
-                    if constrained {
+                    if self.element_value_is_pinned(e) {
+                        // Two pinned members disagreeing is a genuine
+                        // contradiction the model cannot repair.
                         return;
                     }
                     match self.mint_element_value(elem_sort, &used, manager) {
@@ -1024,7 +1115,9 @@ impl Solver {
                         pool.push(v);
                         minted_total += 1;
                     }
-                    None => return,
+                    None => {
+                        return;
+                    }
                 }
             }
             pool.sort_unstable();
@@ -1065,12 +1158,21 @@ impl Solver {
                     elem_values.insert(choose, Some(v));
                     model.set(choose, v);
                 }
-                None => return,
+                None => {
+                    return;
+                }
             }
         }
 
         // ---- the term DAG, operands first ----
-        let mut order: Vec<TermId> = sets.to_vec();
+        // Relation compounds are skipped here: their operands live in
+        // other element sorts, so their values come from the cross-sort
+        // pass in [`Self::extract_set_model`] instead.
+        let mut order: Vec<TermId> = sets
+            .iter()
+            .copied()
+            .filter(|&t| !is_rel_shaped(t, manager))
+            .collect();
         order.sort_by_key(|&t| term_depth(t, manager));
         for &t in &order {
             structural_value(t, &mut values, &peers_of(t, &peers), &elem_values, manager);
@@ -1242,6 +1344,7 @@ impl Solver {
         subset_checks.retain(|(a, b)| sets.contains(a) && sets.contains(b));
         let target_checks: Vec<(TermId, i64)> = sets
             .iter()
+            .filter(|&&t| !is_rel_shaped(t, manager))
             .filter_map(|t| target.get(t).map(|c| (*t, *c)))
             .collect();
 
@@ -1296,6 +1399,223 @@ impl Solver {
         }
     }
 
+    /// Synthesize values for the relation compounds, cross-sort.
+    ///
+    /// Operands and compound live in different element sorts (the
+    /// transposed, paired, joined or diagonalized tuple sorts), so these
+    /// run after every sort's opaque values are installed, reading the
+    /// operands through [`SetView`] (which resolves installed entries,
+    /// including rel entries from earlier fixpoint rounds — nesting) and
+    /// building the compound's canonical value with the tuple builders.
+    /// Every installed entry is verified against its arithmetic
+    /// cardinality target and its committed membership atoms; a definite
+    /// mismatch rolls the rel entries back (the per-sort values stay).
+    fn synthesize_rel_values(
+        &mut self,
+        survey: &ModelSurvey,
+        model: &mut Model,
+        manager: &mut TermManager,
+    ) {
+        // The rel terms of the survey, outermost-last is unnecessary — a
+        // bounded fixpoint handles any nesting order.
+        let rel_terms: Vec<TermId> = survey
+            .sets
+            .iter()
+            .copied()
+            .filter(|&t| is_rel_shaped(t, manager))
+            .collect();
+        if rel_terms.is_empty() {
+            return;
+        }
+
+        let mut installed: Vec<TermId> = Vec::new();
+        // Fixpoint: nested rel compounds read rel entries from earlier
+        // rounds; the round count is bounded by the nesting depth.
+        for _round in 0..4 {
+            let mut changed = false;
+            for &t in &rel_terms {
+                if model.get(t).is_some() {
+                    continue;
+                }
+                let value: Option<Vec<TermId>> = {
+                    let mut view = SetView::new(model, manager);
+                    match manager.get(t).map(|d| d.kind.clone()) {
+                        Some(TermKind::SetRelTranspose(r)) => view.elements(r).map(|elems| {
+                            elems
+                                .iter()
+                                .map(|&v| reverse_tuple_value(v, manager))
+                                .collect()
+                        }),
+                        Some(TermKind::SetRelIden(x)) => view.elements(x).map(|elems| {
+                            elems
+                                .iter()
+                                .map(|&v| duplicate_tuple_value(v, manager))
+                                .collect()
+                        }),
+                        Some(TermKind::SetRelProduct(a, b)) => {
+                            match (view.elements(a), view.elements(b)) {
+                                (Some(xs), Some(ys)) => {
+                                    const MAX_REL_PRODUCT: usize = 4096;
+                                    if xs.len().saturating_mul(ys.len()) > MAX_REL_PRODUCT {
+                                        None
+                                    } else {
+                                        let mut out = Vec::with_capacity(xs.len() * ys.len());
+                                        let mut ok = true;
+                                        'outer: for &u in &xs {
+                                            for &v in &ys {
+                                                match concat_values(u, v, manager) {
+                                                    Some(glued) => out.push(glued),
+                                                    None => {
+                                                        ok = false;
+                                                        break 'outer;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if ok { Some(out) } else { None }
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        Some(TermKind::SetRelJoin(r1, r2)) => {
+                            match (view.elements(r1), view.elements(r2)) {
+                                (Some(us), Some(vs)) => {
+                                    let mut out = Vec::new();
+                                    let mut ok = true;
+                                    'join: for &u in &us {
+                                        for &v in &vs {
+                                            match join_glue_values(u, v, manager) {
+                                                Some(Some(glued)) => out.push(glued),
+                                                Some(None) => {}
+                                                None => {
+                                                    ok = false;
+                                                    break 'join;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if ok { Some(out) } else { None }
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(mut elems) = value {
+                    elems.sort_unstable();
+                    elems.dedup();
+                    let set_sort = manager.get(t).map(|d| d.sort);
+                    if let Some(set_sort) = set_sort {
+                        let mut acc = manager.mk_set_empty_at(set_sort);
+                        for &e in &elems {
+                            let singleton = manager.mk_set_singleton(e);
+                            acc = manager.mk_set_union(acc, singleton);
+                        }
+                        model.set(t, acc);
+                        installed.push(t);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // ---- verify the installed rel entries ----
+        // Targets: the arithmetic solver's word for the compound's size.
+        let int_entry = |t: TermId, manager: &TermManager| -> Option<i64> {
+            match manager.get(t).map(|d| &d.kind) {
+                Some(TermKind::IntConst(n)) => num_traits::ToPrimitive::to_i64(n),
+                _ => None,
+            }
+        };
+        let mut ok = true;
+        for &t in &installed {
+            let card = manager.mk_set_card(t);
+            let want: Option<i64> = self.arith.value(card).map_or_else(
+                || model.get(card).and_then(|v| int_entry(v, manager)),
+                |r| Some(r.to_integer()),
+            );
+            let Some(want) = want else {
+                continue;
+            };
+            let got = {
+                let mut view = SetView::new(model, manager);
+                view.card(t)
+            };
+            if got != Some(want) {
+                ok = false;
+                break;
+            }
+        }
+        // Committed membership atoms over the rel compounds.
+        if ok {
+            'checks: for &t in &installed {
+                let Some(es) = set_element_sort(t, manager) else {
+                    continue;
+                };
+                let empty: Vec<TermId> = Vec::new();
+                let elems = survey.elements.get(&es).unwrap_or(&empty);
+                for &e in elems {
+                    let atom = manager.mk_set_member(e, t);
+                    let Some(committed) = self.committed_bool_model(atom, model, manager) else {
+                        continue;
+                    };
+                    let got = {
+                        let mut view = SetView::new(model, manager);
+                        view.member(e, t)
+                    };
+                    if got == Some(!committed) {
+                        ok = false;
+                        break 'checks;
+                    }
+                }
+            }
+        }
+        if !ok {
+            for t in &installed {
+                model.remove(*t);
+            }
+        }
+    }
+
+    /// Whether an element's *value* is genuinely pinned by a constraint:
+    ///
+    /// * a **committed-true equality** mentioning it — an asserted or
+    ///   derived `e = v` fixes the value (a *refuted* equality fixes
+    ///   nothing; the counting guards are exactly this shape, and every
+    ///   derived tuple element sits in one, so treating guards as pins
+    ///   made the collision repair decline the whole sort);
+    /// * any **order/disequality constraint** mentioning it — those bound
+    ///   arithmetic values and only exist for numeric elements.
+    fn element_value_is_pinned(&self, e: TermId) -> bool {
+        for (&var, constraint) in &self.var_to_constraint {
+            match constraint {
+                super::types::Constraint::Eq(l, r) => {
+                    if (*l == e || *r == e) && self.sat.model_value(var) == nixie_sat::LBool::True {
+                        return true;
+                    }
+                }
+                super::types::Constraint::Diseq(l, r)
+                | super::types::Constraint::Lt(l, r)
+                | super::types::Constraint::Le(l, r)
+                | super::types::Constraint::Gt(l, r)
+                | super::types::Constraint::Ge(l, r) => {
+                    if *l == e || *r == e {
+                        return true;
+                    }
+                }
+                super::types::Constraint::BoolApp(t) => {
+                    let _ = t;
+                }
+            }
+        }
+        false
+    }
+
     /// The committed truth of a Boolean atom: the model entry first, then
     /// the SAT assignment.
     fn committed_bool_model(
@@ -1319,6 +1639,35 @@ impl Solver {
         }
     }
 
+    /// Mint a fresh **scalar** component value (no set nesting: a
+    /// component of a tuple, not an element of a set-of-tuples).
+    fn mint_component_value(
+        &mut self,
+        sort: SortId,
+        used: &FxHashSet<TermId>,
+        manager: &mut TermManager,
+    ) -> Option<TermId> {
+        let kind = manager.sorts.get(sort).map(|s| s.kind.clone());
+        let mut candidate: i64 = 0;
+        loop {
+            let term = match &kind {
+                Some(SortKind::Int) => manager.mk_int(num_bigint::BigInt::from(candidate)),
+                Some(SortKind::Real) => manager.mk_real(Rational64::from_integer(candidate)),
+                Some(SortKind::BitVec(w)) => {
+                    manager.mk_bitvec(num_bigint::BigInt::from(candidate), *w)
+                }
+                Some(SortKind::String) => {
+                    manager.mk_string_lit(&format!("__nixie_set_elem_{candidate}"))
+                }
+                _ => return None,
+            };
+            if !used.contains(&term) {
+                return Some(term);
+            }
+            candidate += 1;
+        }
+    }
+
     /// Mint a fresh element value of `sort`, distinct from every value in
     /// `used`. `None` for sorts with no mintable witness.
     fn mint_element_value(
@@ -1339,6 +1688,26 @@ impl Solver {
         }
         let base = *chain.last()?;
         let base_kind = manager.sorts.get(base).map(|s| s.kind.clone());
+        // A tuple base (a relation's witnesses and join skolems are
+        // exactly this shape): a fresh component per field.
+        if matches!(&base_kind, Some(SortKind::Datatype(_))) {
+            let fields = manager.tuple_field_sorts_of(base)?;
+            if fields.is_empty() || fields.len() > 8 {
+                return None;
+            }
+            let mut parts: Vec<TermId> = Vec::with_capacity(fields.len());
+            for &field in &fields {
+                parts.push(self.mint_component_value(field, used, manager)?);
+            }
+            let mut term = manager.mk_tuple(&parts);
+            for _level in chain[..chain.len() - 1].iter().rev() {
+                term = manager.mk_set_singleton(term);
+            }
+            if used.contains(&term) {
+                return None;
+            }
+            return Some(term);
+        }
         let mut candidate: i64 = 0;
         let base_term = loop {
             let term = match &base_kind {
@@ -1576,6 +1945,92 @@ fn set_element_sort(t: TermId, manager: &TermManager) -> Option<SortId> {
         Some(SortKind::Set(e)) => Some(*e),
         _ => None,
     }
+}
+
+/// The components of a *value* term: a tuple constructor's arguments, or
+/// the value itself as a one-field tuple (plain-set elements in products).
+fn value_components(v: TermId, manager: &mut TermManager) -> Vec<TermId> {
+    match manager.get(v).map(|d| d.kind.clone()) {
+        Some(TermKind::DtConstructor { args, .. }) if !args.is_empty() => args.to_vec(),
+        _ => vec![v],
+    }
+}
+
+/// The component-reversed tuple of a value.
+fn reverse_tuple_value(v: TermId, manager: &mut TermManager) -> TermId {
+    let mut parts = value_components(v, manager);
+    parts.reverse();
+    manager.mk_tuple(&parts)
+}
+
+/// The diagonal pair of a value.
+fn duplicate_tuple_value(v: TermId, manager: &mut TermManager) -> TermId {
+    manager.mk_tuple(&[v, v])
+}
+
+/// The full concatenation of two values (the product's pairing).
+fn concat_values(u: TermId, v: TermId, manager: &mut TermManager) -> Option<TermId> {
+    let mut parts = value_components(u, manager);
+    parts.extend(value_components(v, manager));
+    Some(manager.mk_tuple(&parts))
+}
+
+/// The join glue of two values: `u`'s components except the last, then
+/// `v`'s except the first — when the boundary components match. The outer
+/// `None` marks a malformed value; the inner `None` a non-matching pair.
+fn join_glue_values(u: TermId, v: TermId, manager: &mut TermManager) -> Option<Option<TermId>> {
+    let us = value_components(u, manager);
+    let vs = value_components(v, manager);
+    let (Some(last_u), Some(first_v)) = (us.last().copied(), vs.first().copied()) else {
+        return None;
+    };
+    if last_u != first_v {
+        return Some(None);
+    }
+    let mut parts: Vec<TermId> = us[..us.len().saturating_sub(1)].to_vec();
+    parts.extend(vs[1..].to_vec());
+    Some(Some(manager.mk_tuple(&parts)))
+}
+
+/// Whether a set term is one of the four relation operators.
+fn is_rel_shaped(t: TermId, manager: &TermManager) -> bool {
+    matches!(
+        manager.get(t).map(|d| &d.kind),
+        Some(
+            TermKind::SetRelJoin(_, _)
+                | TermKind::SetRelProduct(_, _)
+                | TermKind::SetRelTranspose(_)
+                | TermKind::SetRelIden(_)
+        )
+    )
+}
+
+/// Whether `t` can serve directly as a *value*: a ground constant, or a
+/// tuple constructor (whose own components are resolved recursively by
+/// the callers' sweeps).
+fn is_value_term(t: TermId, manager: &TermManager) -> bool {
+    matches!(
+        manager.get(t).map(|d| &d.kind),
+        Some(
+            TermKind::True
+                | TermKind::False
+                | TermKind::IntConst(_)
+                | TermKind::RealConst(_)
+                | TermKind::BitVecConst { .. }
+                | TermKind::StringLit(_)
+                | TermKind::FfConst { .. }
+                | TermKind::FpLit { .. }
+                | TermKind::FpPlusInfinity { .. }
+                | TermKind::FpMinusInfinity { .. }
+                | TermKind::FpPlusZero { .. }
+                | TermKind::FpMinusZero { .. }
+                | TermKind::FpNaN { .. }
+                | TermKind::DtConstructor { .. }
+                | TermKind::SetEmpty(_)
+                | TermKind::SetSingleton(_)
+                | TermKind::SetUnion(_, _)
+        )
+    )
 }
 
 /// Whether a term is an opaque set (its membership atoms are free, its

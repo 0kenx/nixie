@@ -355,3 +355,142 @@ fn non_joinable_relations_are_rejected() {
     );
     assert!(out.is_err(), "boundary mismatch must be rejected");
 }
+
+// ===== rel compounds in the model =====
+
+/// A transpose's value prints (reversed tuples) and its queries fold.
+#[test]
+fn transpose_value_prints_reversed() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const r (Relation Int Int))\n\
+             (assert (set.member (tuple 1 2) r))\n\
+             (assert (set.member (tuple 3 4) r))\n\
+             (assert (set.member (tuple 2 1) (rel.transpose r)))\n\
+             (check-sat)\n\
+             (get-value ((rel.transpose r) (set.card (rel.transpose r))\n\
+                           (set.member (tuple 4 3) (rel.transpose r))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("((rel.transpose r) (set.union")
+            && joined.contains("(set.singleton (tuple 4 3))"),
+        "the converse must print the reversed members: {joined}"
+    );
+    assert!(
+        joined.contains("((set.card (rel.transpose r)) 3)"),
+        "the converse's cardinality must fold to |r|: {joined}"
+    );
+    assert!(
+        joined.contains("((set.member (tuple 4 3) (rel.transpose r)) true)"),
+        "membership over the converse must fold: {joined}"
+    );
+}
+
+/// A product's value prints the pairs and its cardinality folds to the
+/// product of the operand sizes.
+#[test]
+fn product_value_prints_pairs() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const a (Set Int))\n\
+             (declare-const b (Set Int))\n\
+             (assert (set.member 1 a))\n\
+             (assert (set.member 2 b))\n\
+             (assert (set.member (tuple 1 2) (rel.product a b)))\n\
+             (check-sat)\n\
+             (get-value ((rel.product a b) (set.card (rel.product a b))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("((rel.product a b) (set.union")
+            && joined.contains("(set.singleton (tuple 1 2))"),
+        "the product must print its pairs: {joined}"
+    );
+    assert!(
+        joined.contains("((set.card (rel.product a b)) "),
+        "the product's cardinality must fold: {joined}"
+    );
+}
+
+/// An iden's value prints the diagonal.
+#[test]
+fn iden_value_prints_the_diagonal() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const a (Set Int))\n\
+             (assert (set.member 3 a))\n\
+             (assert (set.member (tuple 3 3) (rel.iden a)))\n\
+             (check-sat)\n\
+             (get-value ((rel.iden a) (set.member (tuple 3 3) (rel.iden a))))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("((rel.iden a) (set.singleton (tuple 3 3)))"),
+        "the diagonal must print: {joined}"
+    );
+}
+
+/// A cardinality target on a rel compound no longer rolls the operand's
+/// model back: `|transpose r| = 1` with `(1,2) ∈ r` keeps `r` printed.
+#[test]
+fn rel_card_target_keeps_the_operand_model() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const r (Relation Int Int))\n\
+             (assert (set.member (tuple 1 2) r))\n\
+             (assert (= (set.card (rel.transpose r)) 1))\n\
+             (check-sat)\n\
+             (get-model)\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("(define-fun r ()") && joined.contains("(set.singleton (tuple 1 2))"),
+        "the operand's model must survive the rel card target: {joined}"
+    );
+}
+
+/// A join's value honestly echoes until the split-collision repair learns
+/// to separate join skolems (the verdict is unaffected); this pins the
+/// current honest non-answer so the improvement flips it loudly.
+#[test]
+fn join_value_declines_honestly_today() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const r (Relation Int Int))\n\
+             (declare-const s (Relation Int Int))\n\
+             (assert (set.member (tuple 1 2) r))\n\
+             (assert (set.member (tuple 2 3) s))\n\
+             (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+             (check-sat)\n\
+             (get-value ((rel.join r s)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(
+        joined.contains("sat"),
+        "the verdict must stay sat: {joined}"
+    );
+    assert!(
+        joined.contains("((rel.join r s) (rel.join r s))"),
+        "the join value must echo (or, once fixed, print - update me): {joined}"
+    );
+}
