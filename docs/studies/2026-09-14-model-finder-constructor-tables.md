@@ -6,6 +6,17 @@ remaining project is Z3 `smt_model_finder`'s entry-table search … a
 bounded finite-model-finder project of its own".  Landed as `d49c8936`
 (base `5f495e55`); binaries at `precompile/d49c8936/`.
 **Comparator:** z3 4.16.0.
+**Landing state:** the unit is on branch `mfinder` (code `d49c8936`,
+this study `47888de7`, then `--no-ff`-ready merges of the concurrently
+moving `main`, tip `1a828838`); binaries cached at
+`precompile/d49c8936/` (the exact-SHA build) and
+`precompile/1a828838/`.  The primary checkout stayed continuously
+dirty with other agents' in-flight work, so the ref move was left to
+the next clean window: from any clean checkout,
+`git merge --ff-only mfinder` (or `git push . mfinder:main` from this
+worktree).  Do NOT `update-ref` over a dirty primary checkout: the new
+files would be missing on disk and a careless `git add -A` would commit
+their deletion.
 **Verdict:** the prescribed entry-table search is built, sound, and it
 kills the compound-closure chase outright — the set-family rounds decay
 from 300+ instantiations per round to single digits and freeze at the
