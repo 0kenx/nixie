@@ -1308,11 +1308,32 @@ impl Parser<'_> {
                         })?;
                 return Ok(Opened::Value(term));
             }
+            // The nullary finite-set constants, in their standalone spelling:
+            // `(as set.empty (Set X))` / `(as set.universe (Set X))` (Z3 also
+            // accepts `emptyset` / `univset`). Applied spellings
+            // `((as set.empty (Set X)))` route through `Head::Qualified`.
+            if matches!(name.as_str(), "set.empty" | "emptyset")
+                && matches!(
+                    self.manager.sorts.get(sort).map(|s| &s.kind),
+                    Some(crate::sort::SortKind::Set(_))
+                )
+            {
+                return Ok(Opened::Value(self.manager.mk_set_empty_at(sort)));
+            }
+            if matches!(name.as_str(), "set.universe" | "univset" | "set.univ")
+                && matches!(
+                    self.manager.sorts.get(sort).map(|s| &s.kind),
+                    Some(crate::sort::SortKind::Set(_))
+                )
+            {
+                return Ok(Opened::Value(self.manager.mk_set_univ_at(sort)));
+            }
             return Err(NixieError::ParseError {
                 position: self.lexer.position(),
                 message: format!(
                     "(as {name} ...) as a standalone term is supported only for \
-                     finite-field numerals (as ff<value> (_ FiniteField <order>))"
+                     finite-field numerals (as ff<value> (_ FiniteField <order>)) and the \
+                     finite-set constants (as set.empty (Set X)) / (as set.universe (Set X))"
                 ),
             });
         }

@@ -170,6 +170,65 @@ fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermI
     }
 }
 
+/// Whether a term is *plausible as an element* for the purposes of
+/// membership-congruence traversal.
+///
+/// The congruence block ties `member(x, s)` to `member(y, s)` across
+/// equalities `x = y`. Traversing through **arithmetic composites** —
+/// `set.card` terms, the counting sums, the slack variables inside them —
+/// used to make each pass's own axioms seed the next pass's element list
+/// with those composites (12 → 19 → 59 elements in four asserts), which
+/// both quadratically grew the de-duplication guards and eventually tripped
+/// the element cap. The composites the *reduction* introduces never appear
+/// in a user membership atom, so refusing to traverse them keeps the
+/// element list stable across passes at no cost to user inputs: an element
+/// term the user actually wrote (`x`, `x + 1`, `f x`) still enters the
+/// element list directly from the survey of their membership atoms, and
+/// its equalities to other plausible terms still tie.
+fn element_plausible(t: TermId, manager: &TermManager) -> bool {
+    let Some(data) = manager.get(t) else {
+        return false;
+    };
+    match &data.kind {
+        // Encoder-internal variables (`__nixie_*`, `$p*`) are never user
+        // elements; their defining equalities (`$p = ite …`) are the ite/
+        // purification rewrites, and traversing them only mints membership
+        // atoms for proxies — which then grow the element list every pass.
+        TermKind::Var(name) => {
+            let n = manager.resolve_str(*name);
+            !(n.starts_with("__nixie") || n.starts_with("$p"))
+        }
+        TermKind::IntConst(_)
+        | TermKind::RealConst(_)
+        | TermKind::BitVecConst { .. }
+        | TermKind::FfConst { .. }
+        | TermKind::StringLit(_)
+        | TermKind::FpLit { .. }
+        | TermKind::FpPlusInfinity { .. }
+        | TermKind::FpMinusInfinity { .. }
+        | TermKind::FpPlusZero { .. }
+        | TermKind::FpMinusZero { .. }
+        | TermKind::FpNaN { .. }
+        | TermKind::Apply { .. }
+        | TermKind::DtConstructor { .. }
+        | TermKind::Select(_, _)
+        // Set-valued terms are elements of nested `Set (Set …)` sorts.
+        | TermKind::SetEmpty(_)
+        | TermKind::SetUniv(_)
+        | TermKind::SetSingleton(_)
+        | TermKind::SetUnion(_, _)
+        | TermKind::SetInter(_, _)
+        | TermKind::SetMinus(_, _)
+        | TermKind::SetComplement(_)
+        | TermKind::SetChoose(_) => true,
+        // Arithmetic composites (`set.card`, sums, `ite`, the linear
+        // operators), Booleans, and string projections do not participate
+        // in congruence *traversal*. A user membership over such a term
+        // still counts it — via the survey — as an element.
+        _ => false,
+    }
+}
+
 /// Whether a term is set-sorted.
 fn is_set_sorted(t: TermId, manager: &TermManager) -> bool {
     manager
@@ -408,11 +467,32 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 by_sort.entry(es).or_default().push(set);
             }
         }
+        // Pair-eligibility: opaque terms pair with opaque terms and with
+        // the *constructors* (`∅`, `{x}`, `U`) — never with compound
+        // `∪`/`∩`/`\`/`ite` terms. Constructors are stable under
+        // hash-consing, so the pair set — and with it the witness element
+        // list — is stable across the per-assert re-runs of `reduce`; the
+        // compound terms the reduction itself creates (twins, chain
+        // unions) would otherwise mint fresh pairs every pass and grow the
+        // element list without bound. A compound term's memberships are
+        // *defined* from its operands, and the operands are already
+        // paired, so the insurance this loop buys for them is negligible —
+        // and the one documented case it exists for (`select`-over-`store`
+        // merged with `(as set.empty …)`) is a constructor pair, kept.
+        let pair_eligible = |t: TermId| {
+            matches!(
+                shape_of(t, manager),
+                Shape::Opaque | Shape::Empty | Shape::Singleton(_) | Shape::Univ
+            )
+        };
         'pairs: for group in by_sort.values() {
             for (i, a) in group.iter().enumerate() {
                 let a_opaque = shape_of(*a, manager) == Shape::Opaque;
                 for b in group.iter().skip(i + 1) {
                     if !a_opaque && shape_of(*b, manager) != Shape::Opaque {
+                        continue;
+                    }
+                    if !pair_eligible(*a) || !pair_eligible(*b) {
                         continue;
                     }
                     if relations.len() >= MAX_PAIRS {
@@ -435,7 +515,15 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         let ka = manager.mk_set_member(k, a);
         let kb = manager.mk_set_member(k, b);
         witnesses.push((a, b, ka, kb));
-        elements.entry(es).or_default().push(k);
+        // The witness may already be an element: prior passes' conjoined
+        // axioms contain its membership atoms, so the fresh survey lists it
+        // again. Pushing duplicates made the element list grow by every
+        // witness on every pass, tripping the counting cap on the most
+        // ordinary multi-set inputs.
+        let list = elements.entry(es).or_default();
+        if !list.contains(&k) {
+            list.push(k);
+        }
     }
 
     // Cardinality comes *before* the membership definitions below, because
@@ -584,6 +672,14 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             // minutes.
             let mut adjacent: FxHashMap<TermId, Vec<TermId>> = FxHashMap::default();
             for &(x, y) in &s.element_equalities {
+                // Only plausible-element edges are traversable; see
+                // [`element_plausible`]. Without this filter the reduction's
+                // own counting equations (`|s| = Σ + slack`) enter as element
+                // equalities and each pass seeds the next with fresh
+                // composites.
+                if !element_plausible(x, manager) || !element_plausible(y, manager) {
+                    continue;
+                }
                 adjacent.entry(x).or_default().push(y);
                 adjacent.entry(y).or_default().push(x);
             }
@@ -605,6 +701,9 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             }
         }
         for &(x, y) in &s.element_equalities {
+            if !element_plausible(x, manager) || !element_plausible(y, manager) {
+                continue;
+            }
             let Some(es) = manager.get(x).map(|d| d.sort) else {
                 continue;
             };

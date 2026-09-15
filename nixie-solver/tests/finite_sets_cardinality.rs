@@ -155,14 +155,6 @@ fn equal_terms_with_card_two_is_sat() {
 /// (`a = {1,2}`, `b = {1,7}`; `|a ∩ b| = 1`) — the twin `a ∩ b` exists so
 /// the identity is statable.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn union_of_two_singles_identity_sat() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -184,14 +176,6 @@ fn union_of_two_singles_identity_sat() {
 /// forces `a ∩ b` to hold the one element of each, so `a = b`.
 /// With `a ≠ b` asserted the problem is unsatisfiable.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn union_cardinality_one_forces_equality() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -203,8 +187,9 @@ fn union_cardinality_one_forces_equality() {
         let ca = tm.mk_set_card(a);
         let cb = tm.mk_set_card(b);
         let cu = tm.mk_set_card(u);
-        let _hoist = tm.mk_eq(a, b);
-        vec![tm.mk_eq(ca, one), tm.mk_eq(cb, one), tm.mk_eq(cu, one)]
+        let ab = tm.mk_eq(a, b);
+        let ne = tm.mk_not(ab);
+        vec![tm.mk_eq(ca, one), tm.mk_eq(cb, one), tm.mk_eq(cu, one), ne]
     });
     assert_eq!(got, SolverResult::Unsat);
 }
@@ -214,14 +199,6 @@ fn union_cardinality_one_forces_equality() {
 /// element of `a ∩ b` must live in `a` and in `b`, so `slack(a ∩ b) ≤
 /// slack(a)` has to be stated for the region algebra to close.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn distinct_members_of_small_union_are_unsat() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -245,14 +222,6 @@ fn distinct_members_of_small_union_are_unsat() {
 /// `a ⊆ b`, `|a| = |b|`, `a ≠ b` is unsatisfiable: a subset of the same
 /// size is the whole set (the completeness half of subset + cardinality).
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn subset_of_equal_size_is_the_whole_set() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -262,8 +231,14 @@ fn subset_of_equal_size_is_the_whole_set() {
         let two = tm.mk_int(2);
         let ca = tm.mk_set_card(a);
         let cb = tm.mk_set_card(b);
-        let _hoist = tm.mk_eq(a, b);
-        vec![tm.mk_set_subset(a, b), tm.mk_eq(ca, two), tm.mk_eq(cb, two)]
+        let ab = tm.mk_eq(a, b);
+        let ne = tm.mk_not(ab);
+        vec![
+            tm.mk_set_subset(a, b),
+            tm.mk_eq(ca, two),
+            tm.mk_eq(cb, two),
+            ne,
+        ]
     });
     assert_eq!(got, SolverResult::Unsat);
 }
@@ -307,14 +282,6 @@ fn support_known_cardinality_is_exact() {
 
 /// …and `|{x} ∪ {y}| = 2` with `x ≠ y` is satisfiable.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn support_known_two_elements_fits() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -325,8 +292,9 @@ fn support_known_two_elements_fits() {
         let u = tm.mk_set_union(sx, sy);
         let two = tm.mk_int(2);
         let cu = tm.mk_set_card(u);
-        let _hoist = tm.mk_eq(x, y);
-        vec![tm.mk_eq(cu, two)]
+        let xy = tm.mk_eq(x, y);
+        let ne = tm.mk_not(xy);
+        vec![tm.mk_eq(cu, two), ne]
     });
     assert_eq!(got, SolverResult::Sat);
 }
@@ -334,14 +302,6 @@ fn support_known_two_elements_fits() {
 /// `|{x} ∪ {y}| = 1` with `x ≠ y` is unsatisfiable: two distinct values
 /// cannot collapse into one member.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn support_known_one_slot_two_values_is_unsat() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -352,8 +312,9 @@ fn support_known_one_slot_two_values_is_unsat() {
         let u = tm.mk_set_union(sx, sy);
         let one = tm.mk_int(1);
         let cu = tm.mk_set_card(u);
-        let _hoist = tm.mk_eq(x, y);
-        vec![tm.mk_eq(cu, one)]
+        let xy = tm.mk_eq(x, y);
+        let ne = tm.mk_not(xy);
+        vec![tm.mk_eq(cu, one), ne]
     });
     assert_eq!(got, SolverResult::Unsat);
 }
@@ -361,14 +322,6 @@ fn support_known_one_slot_two_values_is_unsat() {
 /// `|a \ b| = 0 ∧ |a| = 1 ∧ x ∈ a ∧ x ∉ b` is unsatisfiable: the member of
 /// `a` is not in `b`, so it survives the difference.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn difference_cannot_hide_a_member() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -395,14 +348,6 @@ fn difference_cannot_hide_a_member() {
 
 /// `choose`: `|s| = 1 ∧ s = {5}` forces `choose(s) = 5`.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn choose_picks_the_only_member() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -411,8 +356,9 @@ fn choose_picks_the_only_member() {
         let five = tm.mk_int(5);
         let singleton = tm.mk_set_singleton(five);
         let chosen = tm.mk_set_choose(s);
-        let _hoist = tm.mk_eq(chosen, five);
-        vec![tm.mk_eq(s, singleton)]
+        let cf = tm.mk_eq(chosen, five);
+        let ne = tm.mk_not(cf);
+        vec![tm.mk_eq(s, singleton), ne]
     });
     assert_eq!(got, SolverResult::Unsat);
 }
@@ -626,10 +572,7 @@ fn smtlib_surface_end_to_end() {
 /// The wider operator surface (`set.insert`, `set.choose`, `set.minus`,
 /// `set.is_empty` in one problem).
 ///
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`.
 #[test]
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn smtlib_surface_rich_operators() {
     let rich = solve_smt(
         "(set-logic ALL)\n\
@@ -674,14 +617,6 @@ fn user_declared_union_is_not_the_alias() {
 
 /// `(as emptyset (Set Int))` and `univset` — Z3's spellings.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn z3_classic_emptyset_and_univset() {
     let got = solve_smt(
         "(set-logic ALL)\n\
@@ -696,14 +631,6 @@ fn z3_classic_emptyset_and_univset() {
 /// Nested sets: `Set (Set Int)` — the universe is infinite, cardinality
 /// works over ground elements, and `s ⊆ t` with equal cards forces `s = t`.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn nested_set_sorts() {
     let got = solve(|tm| {
         let int = tm.sorts.int_sort;
@@ -714,8 +641,14 @@ fn nested_set_sorts() {
         let two = tm.mk_int(2);
         let cs = tm.mk_set_card(s);
         let ct = tm.mk_set_card(t);
-        let _hoist = tm.mk_eq(s, t);
-        vec![tm.mk_set_subset(s, t), tm.mk_eq(cs, two), tm.mk_eq(ct, two)]
+        let st = tm.mk_eq(s, t);
+        let ne = tm.mk_not(st);
+        vec![
+            tm.mk_set_subset(s, t),
+            tm.mk_eq(cs, two),
+            tm.mk_eq(ct, two),
+            ne,
+        ]
     });
     assert_eq!(got, SolverResult::Unsat);
 }
@@ -724,14 +657,6 @@ fn nested_set_sorts() {
 /// pushed scope must vanish with the pop — the axioms are conjoined onto
 /// the scoped assertion, so the bookkeeping rides the existing trail.
 #[test]
-/// IGNORED: blocked by the pre-existing incremental-SAT watch-list defect —
-/// see `docs/studies/2026-09-14-incremental-sat-watch-corruption.md`. The
-/// reduction's axiom set for each of these is verified sufficient by hand and
-/// by Z3 4.16.0; the debug build's watch invariant (`check_binary_registration`)
-/// or the `trail_falsifies_live_clause` guard fires on the clause mix instead
-/// of a verdict. Re-enable when the SAT layer fixes mid-search watch
-/// registration; the same inputs are recorded in the study.
-#[ignore = "SAT-layer watch corruption (see docs/studies/2026-09-14-incremental-sat-watch-corruption.md)"]
 fn cardinality_is_scope_consistent() {
     let mut tm = TermManager::new();
     let int = tm.sorts.int_sort;
@@ -755,8 +680,3 @@ fn cardinality_is_scope_consistent() {
     solver.assert(tm.mk_eq(cs2, two), &mut tm);
     assert_eq!(solver.check(&mut tm), SolverResult::Sat);
 }
-
-/// Unused import silencer for `TermId` (kept for symmetry with the sibling
-/// test files' helper signatures).
-#[allow(dead_code)]
-fn _term_id_witness(_: TermId) {}
