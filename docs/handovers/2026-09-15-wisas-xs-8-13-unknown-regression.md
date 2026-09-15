@@ -82,3 +82,32 @@ Search signatures at the merge build:
   and `recfun_e2e::symbolic_argument_solves_for_the_variable` timed out at
   the 180 s nextest cap under load ~19 — not yet re-examined on a quiet
   machine; may be environmental.
+
+## Addendum (2026-09-15 late, FF-arc agent): the recfun timeout is NOT environmental — and it is layout-correlated, not monotone
+
+Re-examined `recfun_e2e::symbolic_argument_solves_for_the_variable` in
+isolation on a quiet machine (load ~8): it HANGS past 300 s (no verdict),
+reproducing across builds. Binary-cache probe of the exact goal
+(`(define-fun-rec sum …) (assert (>= k 0) (= (sum k) 6))`, expects `sat`):
+
+| binary | verdict |
+|---|---|
+| `d1dc7f0d` (main-side parent) | `sat`, instant |
+| `d49c8936` (mfinder content) | `sat`, instant |
+| `2fa7d9a2` (first-bad for wisas) | hang |
+| `da17552c` (FF split-GB merge, CONTAINS 2fa7d9a2) | **`sat`, instant** |
+| `3de754d4` (FF case-tree merge) | hang |
+| `ac215cc6` (FF budget-honesty merge) | hang |
+
+`da17552c` contains `2fa7d9a2` yet answers `sat` — so for THIS goal the
+breakage is not a monotone commit regression either: it flips across
+merges whose `nixie-sat` content is identical, exactly the
+term/clause-layout sensitivity this handover implicates for wisas (the
+FF-arc landings in the flip set are FF-only — no recfun/Int code path
+executes for this goal; they shift binary/data layout). Both goals look
+like the same underlying sensitivity expressing as different symptoms
+(wisas: honest `unknown`; recfun: refinement loop never converges).
+Pinning these tests' verdicts may stay fragile until the layout
+sensitivity itself is understood; the recfun one at minimum needs a
+nextest slow-timeout carve-out like the cxs-bp canary if it is to stay
+in the default suite.
