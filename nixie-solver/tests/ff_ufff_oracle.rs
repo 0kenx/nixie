@@ -187,7 +187,7 @@ fn script(inst: &Instance) -> String {
     let mut s = String::new();
     s.push_str("(set-logic QF_UFFF)\n");
     for (i, &a) in inst.arities.iter().enumerate() {
-        let args = vec!["(_ FiniteField ".to_string() + &inst.p.to_string() + ")"; a].join(" ");
+        let args = vec![format!("(_ FiniteField {})", inst.p); a].join(" ");
         s.push_str(&format!(
             "(declare-fun f{i} ({args}) (_ FiniteField {}))\n",
             inst.p
