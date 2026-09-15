@@ -1396,6 +1396,11 @@ impl ArithSolver {
     /// LP-implied integer range `[lo, hi]` for `term` over the simplex's
     /// current feasible region, by minimizing then maximizing the term with the
     /// primal simplex (`optimize_linexpr`).  Returns `None` if `term` is not a
+    /// TEMP DIAG (item 51 hunt).
+    pub fn debug_peek_crossing_lit(&self) -> Option<&Vec<u32>> {
+        self.simplex.debug_peek_crossing()
+    }
+
     /// Cheap eager conflict probe for literal-assertion time: reports the
     /// bound-crossing conflicts only (see
     /// [`Simplex::bound_crossing_conflict`]).  O(variables), no pivoting, no

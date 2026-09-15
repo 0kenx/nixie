@@ -1848,6 +1848,11 @@ impl Simplex {
         self.pending_crossing.take()
     }
 
+    /// TEMP DIAG (item 51 hunt): peek the pending crossing without consuming.
+    pub fn debug_peek_crossing(&self) -> Option<&Vec<u32>> {
+        self.pending_crossing.as_ref()
+    }
+
     /// O(variables) scan for any crossed bound pair; the pre-pending version
     /// of [`Self::bound_crossing_conflict`], kept for callers that want a
     /// full sweep (debug assertions, scratch scopes with no probe cadence).
@@ -2023,6 +2028,21 @@ impl Simplex {
         let mut left_basis_count: FxHashMap<VarId, u32> = FxHashMap::default();
         let mut bland_mode = false;
         for _ in 0..self.max_pivots {
+            // A pivot can invalidate the assignment vector MID-LOOP (the
+            // wide-updates commit and the narrow-back recompute deferral
+            // both clear `assignment_current`); the next `find_violating`
+            // must not consume the stale entries — a bogus violation here
+            // drives `explain_conflict` to an invalid clause (the item-51
+            // false `unsat`: a stale `0` on a row evaluating to `1`
+            // refuted the division axiom alone). Same guard as every
+            // other consumer; `crash_basis` re-derives and the loop
+            // continues on a trustworthy vector.
+            if !self.assignment_current {
+                self.crash_basis();
+                if self.resource_limit {
+                    return Ok(());
+                }
+            }
             let violating = self.find_violating();
             if violating.is_none() {
                 return Ok(());

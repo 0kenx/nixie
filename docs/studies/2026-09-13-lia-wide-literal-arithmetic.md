@@ -1087,3 +1087,44 @@ pre-existing `wisas` pair (fixture-level `Unknown`, verified on earlier
 parents); wide differential 4×300 clean; parity 176/177, 0
 disagreements (z3 4.16.0); fmt/clippy/rustdoc clean; the mixed fuzz's
 single failure is item 51's pre-existing find.
+
+## Continuation 20 (2026-09-16): item 51's first layer closed — the mid-`make_feasible` staleness (item 52); the second layer mapped
+
+52. **`make_feasible`'s loop consumed stale assignments mid-search** (a
+    pivot can invalidate the vector BETWEEN iterations — the wide-updates
+    commit and the narrow-back recompute deferral both clear
+    `assignment_current`; the loop's next `find_violating` read the stale
+    entries, and a bogus violation drove `explain_conflict` to an invalid
+    clause). Probed live on the item-51 reproducer: **19 stale reads**
+    before the fix, 0 after. The loop now re-derives when the flag goes
+    down between iterations (the same guard as every other consumer;
+    `crash_basis` is O(tableau) but fires only on actual wide
+    transitions). LANDED. This class is independent of item 51 (it was
+    reachable from any wide-transition pivot) and is now closed.
+53. **Item 51's second layer, mapped but open**: with the staleness
+    closed, the false `unsat` persists through a DIFFERENT path — the
+    final conflict exports the core `[division-axiom]` ALONE (claiming
+    the axiom `(= 3yi (+ (div 3yi 1) (mod 3yi 1)))` is self-
+    contradictory — it is a theorem). The chain at the conflict:
+    var 219's row `1 − s22` with var 219 ∈ [0,0] (axiom-reasoned) and
+    `assignment[s22] = 0` while var 22's OWN row evaluates to `1` (the
+    entry disagrees with its row UNDER `cur=true` — the re-derivation
+    did not update it; the `has_stale_ref` skip was probed and is NOT
+    the path). The exported core drops the row-term determining bounds
+    (s22's upper carried the axiom's own reason at that moment, so the
+    walk legitimately produced `[axiom]`). The remaining question:
+    whether var 22's row `1 − 52·s135` is a sound consequence of the
+    axiom (its coefficient −52 arose through chained substitutions; if
+    the row is unsound, the defect is in the div/mod AXIOM FEED's row
+    construction over wide products), or whether the s22 entry's
+    missed update is a third staleness path. Probes that answered:
+    XCONF/XROW (row+bounds+assignment at the conflict), XCONF-RET (the
+    built core), the walk's per-term decisions, the BNB-ERR/ENTRYSCAN/
+    GCD-VICTIM/HERMITE eliminations. Reproducer: `/tmp/fi1.smt2`
+    bytes in item 51; attribution: introduced by `0d3d2378` (round-3
+    propagation landing), absent on `d1dc7f0d`.
+
+Verification for the landing: suites green except the pre-existing
+`wisas` pair; wide differential 3×300 clean; parity 176/177, 0
+disagreements (z3 4.16.0); fmt/clippy clean; chain-sat, f1-sat, and
+the wcancel shape all preserved.
