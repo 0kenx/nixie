@@ -758,7 +758,8 @@ impl ModelCompleter {
     /// element (`not subset => exists x. member(x,s1) /\ not
     /// member(x,s2)` with no such `x` in the domain) — is thawed so the
     /// next completion re-freezes at the *current* (grown) universe.
-    /// Bounded by [`MAX_TABLE_THAWS`].
+    /// Bounded by `MAX_TABLE_THAWS` (the private constant below).
+    ///
     /// The *targeted* cardinality escalation: thaw only the axis sorts
     /// (the observer's row-point domains — `Elem` in the set family),
     /// keeping every constructor range sort frozen.  This is the shape

@@ -49,8 +49,8 @@ use nixie_core::sort::SortKind;
 use nixie_core::sort::field::FieldId;
 use nixie_math::ff::field::{FieldCtx, Limbs};
 use nixie_math::ff::grobner::{
-    DEGREVLEX, GrobnerBasis, GrobnerBudget, GrobnerError, grobner_basis, minimal_polynomial,
-    normal_form, normal_form_traced,
+    DEGREVLEX, GrobnerBasis, GrobnerBudget, GrobnerError, grobner_basis, grobner_basis_untraced,
+    minimal_polynomial, normal_form, normal_form_traced,
 };
 use nixie_math::ff::poly::MPoly;
 use nixie_math::ff::roots::{RootBudget, RootError, roots as uni_roots};
@@ -797,7 +797,9 @@ fn split_grobner_basis(
                 |b| b.basis.iter().map(|t| t.poly.clone()).collect(),
             );
             gens.append(&mut new_l);
-            l_basis = Some(grobner_basis(f, &gens, budget)?);
+            // The split never mints certificates (its merged inputs are
+            // not replayable) — the rows are pure overhead here.
+            l_basis = Some(grobner_basis_untraced(f, &gens, budget)?);
         }
         if !new_nl.is_empty() || (nl_basis.is_none() && !nl_inputs.is_empty()) {
             let mut gens: Vec<MPoly> = nl_basis.as_ref().map_or_else(
@@ -805,7 +807,7 @@ fn split_grobner_basis(
                 |b| b.basis.iter().map(|t| t.poly.clone()).collect(),
             );
             gens.append(&mut new_nl);
-            nl_basis = Some(grobner_basis(f, &gens, budget)?);
+            nl_basis = Some(grobner_basis_untraced(f, &gens, budget)?);
         }
         // The exchange: offer every basis element to every ideal that
         // admits it (cvc5's `admit`), skipping ideal membership. Only
@@ -946,8 +948,49 @@ fn grobner_path(
     for component in &components {
         let input_polys: Vec<MPoly> = component.iter().map(|g| g.poly.clone()).collect();
         let mut gbudget = GrobnerBudget::new(budget_steps);
-        let (basis, root_is_gb, is_split) = match grobner_basis(f, &input_polys, &mut gbudget) {
-            Ok(basis) => (basis, true, false),
+        // The untraced fast path for WIDE components: the certificate
+        // tracer's cofactor-row maintenance costs ~n_inputs× per
+        // operation (the measured ~1 s-per-S-pair blocker on the chain
+        // corpus). Below the threshold the tracer runs as always —
+        // small components are where certificates are minted and the
+        // row cost is negligible. Above it, the cascade runs untraced
+        // (identical trajectory — rows never influence reductions); a
+        // basis constant (the traced-UNSAT witness) triggers ONE traced
+        // re-run, so UNSAT costs what it costs today and SAT — the
+        // capacity frontier — gets the speed.
+        const UNTRACED_MIN_INPUTS: usize = 40;
+        let use_fast_path = input_polys.len() >= UNTRACED_MIN_INPUTS;
+        let run_traced = |budget: &mut GrobnerBudget| -> Result<GrobnerBasis, GrobnerError> {
+            if use_fast_path {
+                grobner_basis_untraced(f, &input_polys, budget)
+            } else {
+                grobner_basis(f, &input_polys, budget)
+            }
+        };
+        let mut basis_traced_rewind = false;
+        let (basis, root_is_gb, is_split) = match run_traced(&mut gbudget) {
+            Ok(basis) => {
+                if use_fast_path && basis.contains_nonzero_constant() {
+                    // The refutation needs the traced witness: re-run
+                    // with rows (the trajectory is identical; the cost
+                    // matches what a traced-only world would have paid
+                    // to get here).
+                    let mut retrace = GrobnerBudget::new(budget_steps);
+                    match grobner_basis(f, &input_polys, &mut retrace) {
+                        Ok(traced_basis) => {
+                            basis_traced_rewind = true;
+                            (traced_basis, true, false)
+                        }
+                        Err(GrobnerError::Budget) => {
+                            return FfOutcome::OutOfBudget {
+                                where_: "Gröbner basis (component)",
+                            };
+                        }
+                    }
+                } else {
+                    (basis, true, false)
+                }
+            }
             Err(GrobnerError::Budget) => {
                 // The fallback: the split (a fresh budget — the
                 // monolithic attempt's burn is sunk cost, and the
@@ -1017,7 +1060,11 @@ fn grobner_path(
         // The case-tree tracking composes through the rewriting: the
         // root's input expressions are the component generators'
         // expressions over the replayable originals.
-        let component_exprs: Option<Vec<Vec<MPoly>>> = if root_is_gb {
+        // Case-tree tracking requires a TRACED root (the per-element
+        // expressions read the tracer rows; an untraced basis's empty
+        // rows would compose to silently-zero memberships).
+        let basis_is_traced = root_is_gb && (!use_fast_path || basis_traced_rewind);
+        let component_exprs: Option<Vec<Vec<MPoly>>> = if basis_is_traced {
             Some(
                 component
                     .iter()
@@ -2036,7 +2083,12 @@ fn find_zero(
             let new_gen = poly.sub(f, &const_poly);
             let mut inputs = elements.clone();
             inputs.push(new_gen);
-            match grobner_basis(f, &inputs, &mut gbudget) {
+            let child_gb = if tracking {
+                grobner_basis(f, &inputs, &mut gbudget)
+            } else {
+                grobner_basis_untraced(f, &inputs, &mut gbudget)
+            };
+            match child_gb {
                 Err(GrobnerError::Budget) => {
                     return FfOutcome::OutOfBudget {
                         where_: "Gröbner basis",
