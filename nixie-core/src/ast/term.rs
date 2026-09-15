@@ -542,6 +542,27 @@ pub enum TermKind {
     /// `choose(s) ∈ s ↔ s ≠ ∅`, and `s = t → choose(s) = choose(t)` by
     /// congruence.
     SetChoose(TermId),
+    /// `(rel.join r s)` — relation composition (CVC5 `RELATION_JOIN`).
+    ///
+    /// Both operands are relations (sets of tuples) whose boundary sorts
+    /// agree; the result relates `r`'s front to `s`'s back through the
+    /// shared middle: `(a, b) ∈ r ⨝ s  ⇔  ∃x. (a, x) ∈ r ∧ (x, b) ∈ s`.
+    /// The eager reduction skolemizes `x` per (element, join-term), exactly
+    /// like the disequality witnesses.
+    SetRelJoin(TermId, TermId),
+    /// `(rel.product r s)` — cartesian product (CVC5 `RELATION_PRODUCT`).
+    ///
+    /// Operands are sets (of tuples or plain); the result pairs them:
+    /// `(t, u) ∈ r × s  ⇔  t ∈ r ∧ u ∈ s`.
+    SetRelProduct(TermId, TermId),
+    /// `(rel.transpose r)` — the converse relation (CVC5
+    /// `RELATION_TRANSPOSE`): `t ∈ ~r  ⇔  rev(t) ∈ r`, with `rev` the
+    /// component-reversed tuple.
+    SetRelTranspose(TermId),
+    /// `(rel.iden s)` — the identity relation *over* the set `s` (CVC5
+    /// `RELATION_IDEN`): `(a, b) ∈ iden(s)  ⇔  a = b ∧ a ∈ s`. Note the
+    /// operand is a plain set, not a relation.
+    SetRelIden(TermId),
 }
 
 /// A case in a match expression.

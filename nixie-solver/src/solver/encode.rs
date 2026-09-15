@@ -3348,6 +3348,19 @@ impl Solver {
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
             }
+            // A relation compound in atom position: the reduction defines
+            // its memberships, but if it reached here *before* that (or a
+            // construct the reduction declines), the honesty gate keeps the
+            // verdict honest — the same rule as the set constructor arm in
+            // the main encoder.
+            TermKind::SetRelJoin(_, _)
+            | TermKind::SetRelProduct(_, _)
+            | TermKind::SetRelTranspose(_)
+            | TermKind::SetRelIden(_) => {
+                self.set_terms_unconstrained = true;
+                let var = self.get_or_create_var(term);
+                Lit::pos(var)
+            }
             TermKind::True => {
                 let var = self.get_or_create_var(manager.mk_true());
                 self.sat.add_clause([Lit::pos(var)]);

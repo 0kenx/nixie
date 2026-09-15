@@ -384,6 +384,30 @@ impl<'a> Printer<'a> {
                 self.write_term(w, *b);
                 let _ = write!(w, ")");
             }
+            TermKind::SetRelJoin(a, b) => {
+                let _ = write!(w, "(rel.join ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetRelProduct(a, b) => {
+                let _ = write!(w, "(rel.product ");
+                self.write_term(w, *a);
+                let _ = write!(w, " ");
+                self.write_term(w, *b);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetRelTranspose(a) => {
+                let _ = write!(w, "(rel.transpose ");
+                self.write_term(w, *a);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetRelIden(a) => {
+                let _ = write!(w, "(rel.iden ");
+                self.write_term(w, *a);
+                let _ = write!(w, ")");
+            }
             TermKind::SetCard(s) => {
                 let _ = write!(w, "(set.card ");
                 self.write_term(w, *s);
@@ -999,6 +1023,17 @@ impl<'a> Printer<'a> {
             // not be fed back to a solver.
             TermKind::DtConstructor { constructor, args } => {
                 let name = self.manager.resolve_str(*constructor);
+                // A tuple datatype's constructor prints in the SMT-LIB
+                // tuple surface, so a printed model re-reads as itself.
+                if name.starts_with("@tuple{") {
+                    let _ = write!(w, "(tuple");
+                    for arg in args {
+                        let _ = write!(w, " ");
+                        self.write_term(w, *arg);
+                    }
+                    let _ = write!(w, ")");
+                    return;
+                }
                 if args.is_empty() {
                     let _ = write!(w, "{name}");
                 } else {
@@ -1018,6 +1053,18 @@ impl<'a> Printer<'a> {
             }
             TermKind::DtSelector { selector, arg } => {
                 let name = self.manager.resolve_str(*selector);
+                // A tuple component selector prints in the SMT-LIB tuple
+                // surface (`@t3` is `(_ tuple.select 2)`), so a printed
+                // term re-reads as itself.
+                if let Some(index) = name
+                    .strip_prefix("@t")
+                    .and_then(|n| n.parse::<usize>().ok())
+                {
+                    let _ = write!(w, "((_ tuple.select {index}) ");
+                    self.write_term(w, *arg);
+                    let _ = write!(w, ")");
+                    return;
+                }
                 let _ = write!(w, "({name} ");
                 self.write_term(w, *arg);
                 let _ = write!(w, ")");

@@ -1023,6 +1023,323 @@ impl TermManager {
         self.intern(TermKind::SetUniv(set_sort), set_sort)
     }
 
+    /// `(rel.join r s)` — relation composition.
+    ///
+    /// Normalized: joining with the empty relation is the empty relation.
+    /// Sorts are the operands' shared structure; the operands themselves are
+    /// type-checked by the parser, and a malformed application falls back to
+    /// `r`'s sort the way the other set builders do.
+    pub fn mk_rel_join(&mut self, r: TermId, s: TermId) -> TermId {
+        let sort = self.rel_join_sort(r, s);
+        if self.is_set_empty(r) || self.is_set_empty(s) {
+            return self.intern(TermKind::SetEmpty(sort), sort);
+        }
+        self.intern(TermKind::SetRelJoin(r, s), sort)
+    }
+
+    /// `Set (r1[0..n₁-1) ++ r2[1..n₂))`: the join **drops** the shared
+    /// middle column (CVC5's `RelBinaryOperatorTypeRule` — `(A,B) ⨝ (B,C)`
+    /// is the classic composition over `(A,C)`).
+    fn rel_join_sort(&mut self, r1: TermId, r2: TermId) -> SortId {
+        let (Some(e1), Some(e2)) = (self.set_element_sort_of(r1), self.set_element_sort_of(r2))
+        else {
+            return self.set_result_sort(r1);
+        };
+        let (Some(f1), Some(f2)) = (self.tuple_field_sorts_of(e1), self.tuple_field_sorts_of(e2))
+        else {
+            return self.set_result_sort(r1);
+        };
+        if f1.len() < 2 || f2.len() < 2 || f1.last() != f2.first() {
+            // Unary operands are not joinable (CVC5 rejects the type); a
+            // malformed pair falls back to the operand's sort, which the
+            // parser's checks keep unreachable for user input.
+            return self.set_result_sort(r1);
+        }
+        let mut fields: Vec<_> = f1.iter().take(f1.len() - 1).copied().collect();
+        fields.extend(f2.iter().skip(1).copied());
+        let tuple = self.tuple_sort(&fields);
+        self.sorts.set(tuple)
+    }
+
+    /// `(rel.product r s)` — cartesian product. Normalized: a product with
+    /// the empty set is empty.
+    pub fn mk_rel_product(&mut self, r: TermId, s: TermId) -> TermId {
+        let sort = self.rel_product_sort(r, s);
+        if self.is_set_empty(r) || self.is_set_empty(s) {
+            return self.intern(TermKind::SetEmpty(sort), sort);
+        }
+        self.intern(TermKind::SetRelProduct(r, s), sort)
+    }
+
+    /// `(rel.transpose r)` — the converse relation. The result's tuple sort
+    /// is the operand's reversed, so no fold applies (except through the
+    /// empty set).
+    pub fn mk_rel_transpose(&mut self, r: TermId) -> TermId {
+        if self.is_set_empty(r) {
+            // The empty relation's converse: the empty set at the reversed
+            // tuple sort.
+            if let Some(rev_sort) = self.reversed_relation_sort(r) {
+                return self.intern(TermKind::SetEmpty(rev_sort), rev_sort);
+            }
+        }
+        let sort = self.set_result_sort(r);
+        self.intern(TermKind::SetRelTranspose(r), sort)
+    }
+
+    /// `(rel.iden s)` — the identity relation over the set `s`.
+    ///
+    /// The operand is a plain set; the result pairs its elements. The
+    /// result's sort is `Set (Tuple A A)` where `A` is the operand's
+    /// element sort.
+    pub fn mk_rel_iden(&mut self, s: TermId) -> TermId {
+        if self.is_set_empty(s)
+            && let Some(sort) = self.iden_sort(s)
+        {
+            return self.intern(TermKind::SetEmpty(sort), sort);
+        }
+        let sort = self.iden_sort(s).unwrap_or_else(|| self.set_result_sort(s));
+        self.intern(TermKind::SetRelIden(s), sort)
+    }
+
+    /// The sort of `a × b`: tuples of `a`'s element sort followed by `b`'s.
+    fn rel_product_sort(&mut self, a: TermId, b: TermId) -> SortId {
+        let (ea, eb) = (self.set_element_sort_of(a), self.set_element_sort_of(b));
+        match (ea, eb) {
+            (Some(ea), Some(eb)) => {
+                let fields = self.tuple_field_sorts(ea);
+                let mut all = fields;
+                all.extend(self.tuple_field_sorts(eb));
+                let tuple = self.tuple_sort(&all);
+                self.sorts.set(tuple)
+            }
+            _ => self.set_result_sort(a),
+        }
+    }
+
+    /// `Set (Tuple B A)` for an operand of sort `Set (Tuple A B)`.
+    fn reversed_relation_sort(&mut self, r: TermId) -> Option<SortId> {
+        let elem = self.set_element_sort_of(r)?;
+        let mut fields = self.tuple_field_sorts(elem);
+        fields.reverse();
+        let tuple = self.tuple_sort(&fields);
+        Some(self.sorts.set(tuple))
+    }
+
+    /// `Set (Tuple A A)` for an operand of element sort `A`.
+    fn iden_sort(&mut self, s: TermId) -> Option<SortId> {
+        let elem = self.set_element_sort_of(s)?;
+        let tuple = self.tuple_sort(&[elem, elem]);
+        Some(self.sorts.set(tuple))
+    }
+
+    fn set_element_sort_of(&self, t: TermId) -> Option<SortId> {
+        let d = self.get(t)?;
+        match self.sorts.get(d.sort).map(|s| &s.kind) {
+            Some(SortKind::Set(e)) => Some(*e),
+            _ => None,
+        }
+    }
+
+    /// The field sorts of a tuple datatype, in order; `None` when the
+    /// sort is not a tuple datatype. Read-only, for the parser's relation
+    /// type checks.
+    pub fn tuple_field_sorts_of(&self, elem: SortId) -> Option<Vec<SortId>> {
+        if matches!(
+            self.sorts.get(elem).map(|s| &s.kind),
+            Some(SortKind::Datatype(_))
+        ) && let Some(name) = self.sorts.datatype_name(elem)
+            && let Some(def) = self.sorts.get_datatype(name)
+            && def.constructors.len() == 1
+            && let Some(ctor) = def.constructors.first()
+            && ctor
+                .selectors
+                .iter()
+                .enumerate()
+                .all(|(i, &(sel, _))| self.resolve_str(sel) == format!("@t{}", i + 1))
+        {
+            return Some(ctor.selectors.iter().map(|&(_, s)| s).collect());
+        }
+        None
+    }
+
+    /// The field sorts of a tuple datatype, in order; non-tuple sorts are
+    /// their own one-field "tuple".
+    fn tuple_field_sorts(&mut self, elem: SortId) -> Vec<SortId> {
+        if matches!(
+            self.sorts.get(elem).map(|s| &s.kind),
+            Some(SortKind::Datatype(_))
+        ) && let Some(name) = self.sorts.datatype_name(elem)
+            && let Some(def) = self.sorts.get_datatype(name)
+            && def.constructors.len() == 1
+            && let Some(ctor) = def.constructors.first()
+            && ctor
+                .selectors
+                .iter()
+                .enumerate()
+                .all(|(i, &(sel, _))| self.resolve_str(sel) == format!("@t{}", i + 1))
+        {
+            return ctor.selectors.iter().map(|&(_, s)| s).collect();
+        }
+        vec![elem]
+    }
+
+    /// Declare (once) the tuple datatype over `fields` and return its sort.
+    ///
+    /// Structural like the TLA+ encoder's `declare_struct`: the name is a
+    /// function of the field sorts, two tuples over the same sorts are the
+    /// same datatype, and declaring is idempotent. Selectors are `@t1..`,
+    /// matching the TLA+ encoding so a mixed pipeline sees one shape.
+    pub fn tuple_sort(&mut self, fields: &[SortId]) -> SortId {
+        let name = self.tuple_sort_name(fields);
+        if let Some(def) = self.sorts.get_datatype(&name) {
+            return def.sort_id;
+        }
+        let sort = self.sorts.mk_datatype_sort(&name);
+        let ctor = crate::sort::DataTypeConstructor {
+            name: self.intern_str(&name),
+            selectors: fields
+                .iter()
+                .enumerate()
+                .map(|(i, &f)| (self.intern_str(&format!("@t{}", i + 1)), f))
+                .collect(),
+        };
+        self.sorts.declare_datatype(&name, vec![ctor]);
+        sort
+    }
+
+    /// The structural name of a tuple sort.
+    fn tuple_sort_name(&mut self, fields: &[SortId]) -> String {
+        let mut out = String::from("@tuple{");
+        for (i, &f) in fields.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&self.render_sort_structural(f));
+        }
+        out.push('}');
+        out
+    }
+
+    /// Render a sort structurally (bounded, iterative).
+    fn render_sort_structural(&mut self, sort: SortId) -> String {
+        enum Step {
+            Emit(SortId),
+            Text(&'static str),
+        }
+        let mut out = String::new();
+        let mut stack = vec![Step::Emit(sort)];
+        let mut budget = 10_000usize;
+        while let Some(step) = stack.pop() {
+            budget = match budget.checked_sub(1) {
+                Some(b) => b,
+                None => return format!("sort{}", sort.raw()),
+            };
+            match step {
+                Step::Text(t) => out.push_str(t),
+                Step::Emit(id) => {
+                    let Some(s) = self.sorts.get(id) else {
+                        out.push_str(&format!("sort{}", id.raw()));
+                        continue;
+                    };
+                    match &s.kind {
+                        SortKind::Bool => out.push_str("Bool"),
+                        SortKind::Int => out.push_str("Int"),
+                        SortKind::Real => out.push_str("Real"),
+                        SortKind::String => out.push_str("String"),
+                        SortKind::RoundingMode => out.push_str("RoundingMode"),
+                        SortKind::BitVec(w) => out.push_str(&format!("BitVec({w})")),
+                        SortKind::FloatingPoint { eb, sb } => {
+                            out.push_str(&format!("FP({eb},{sb})"))
+                        }
+                        SortKind::FiniteField(id) => out.push_str(&format!(
+                            "FF({})",
+                            self.sorts
+                                .field_desc(*id)
+                                .map(|d| d.modulus().to_string())
+                                .unwrap_or_else(|| format!("{}", id.raw()))
+                        )),
+                        SortKind::Set(e) => {
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Emit(*e));
+                            out.push_str("Set(");
+                        }
+                        SortKind::Array { domain, range } => {
+                            stack.push(Step::Text(")"));
+                            stack.push(Step::Emit(*range));
+                            stack.push(Step::Text("->"));
+                            stack.push(Step::Emit(*domain));
+                            out.push_str("Arr(");
+                        }
+                        SortKind::Datatype(_) => {
+                            if let Some(name) = self.sorts.datatype_name(id) {
+                                out.push_str(name);
+                            } else {
+                                out.push_str(&format!("dt{}", id.raw()));
+                            }
+                        }
+                        SortKind::Uninterpreted(spur) => {
+                            out.push_str(self.resolve_str(*spur));
+                        }
+                        SortKind::Parameter(spur) => {
+                            out.push_str(self.resolve_str(*spur));
+                        }
+                        SortKind::Parametric { name, .. } => {
+                            out.push_str(self.resolve_str(*name));
+                        }
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Build a tuple value: the datatype constructor applied to `fields`.
+    pub fn mk_tuple(&mut self, fields: &[TermId]) -> TermId {
+        let sorts: Vec<SortId> = fields
+            .iter()
+            .map(|&f| self.get(f).map(|d| d.sort).unwrap_or(self.sorts.int_sort))
+            .collect();
+        let tuple_sort = self.tuple_sort(&sorts);
+        let name = self
+            .sorts
+            .datatype_name(tuple_sort)
+            .map(|n| n.to_string())
+            .unwrap_or_default();
+        self.mk_dt_constructor(&name, fields.iter().copied(), tuple_sort)
+    }
+
+    /// `(_ tuple.select i t)`: the `i`-th component (zero-based).
+    ///
+    /// Folds over a constructor argument — `sel_i(mk_tuple(..))` **is**
+    /// the component — which is what makes the relation operators'
+    /// derived tuples normalize: `rev((1, 2))` becomes the literal
+    /// `(2, 1)`, its membership atom hash-consed with the user's.
+    pub fn mk_tuple_select(&mut self, index: usize, tuple: TermId) -> TermId {
+        if let Some(TermKind::DtConstructor { args, .. }) = self.get(tuple).map(|d| d.kind.clone())
+            && let Some(&component) = args.get(index)
+        {
+            return component;
+        }
+        let elem_sort = self
+            .get(tuple)
+            .map(|d| d.sort)
+            .unwrap_or(self.sorts.int_sort);
+        let selector = format!("@t{}", index + 1);
+        let result_sort = self
+            .tuple_field_sorts(elem_sort)
+            .get(index)
+            .copied()
+            .unwrap_or(self.sorts.int_sort);
+        self.mk_dt_selector(&selector, tuple, result_sort)
+    }
+
+    /// `(as set.empty (Set T))` at the element sort, for the normalizing
+    /// relation builders.
+    #[must_use]
+    pub fn set_sort_of_element(&mut self, element: SortId) -> SortId {
+        self.sorts.set(element)
+    }
+
     /// `(set.choose s)` — some element of `s`.
     ///
     /// The result sort is the set's element sort; a non-set operand is a

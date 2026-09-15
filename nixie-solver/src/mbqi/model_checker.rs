@@ -1521,11 +1521,15 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
         TermKind::SetSingleton(a)
         | TermKind::SetCard(a)
         | TermKind::SetComplement(a)
-        | TermKind::SetChoose(a) => out.push(*a),
+        | TermKind::SetChoose(a)
+        | TermKind::SetRelTranspose(a)
+        | TermKind::SetRelIden(a) => out.push(*a),
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
         | TermKind::SetMember(a, b)
+        | TermKind::SetRelJoin(a, b)
+        | TermKind::SetRelProduct(a, b)
         | TermKind::SetSubset(a, b) => {
             out.push(*a);
             out.push(*b);
@@ -2785,6 +2789,16 @@ fn rebuild_with(
         TermKind::SetChoose(..) => {
             return Err("set.choose has no theory to evaluate it");
         }
+        TermKind::SetRelJoin(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_rel_join(a, b)
+        }
+        TermKind::SetRelProduct(..) => {
+            let (a, b) = two_at(0)?;
+            manager.mk_rel_product(a, b)
+        }
+        TermKind::SetRelTranspose(..) => manager.mk_rel_transpose(one(0)?),
+        TermKind::SetRelIden(..) => manager.mk_rel_iden(one(0)?),
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;
             manager.mk_str_concat(a, b)

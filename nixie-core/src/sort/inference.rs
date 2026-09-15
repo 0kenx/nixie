@@ -176,6 +176,15 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
             }
         }
         TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => Ok(manager.sorts.bool_sort),
+        // The relation operators' result sorts are functions of the operand
+        // tuple sorts (composed, paired, reversed, diagonalized); the
+        // builder computes them at construction, and a term built any other
+        // way has no well-defined result sort to infer — the recorded sort
+        // is the builder's answer.
+        TermKind::SetRelJoin(..)
+        | TermKind::SetRelProduct(..)
+        | TermKind::SetRelTranspose(..)
+        | TermKind::SetRelIden(..) => Ok(term.sort),
         // Cardinality is where sets meet arithmetic.
         TermKind::SetCard(_) => Ok(manager.sorts.int_sort),
         // The complement of a set is a set of the same sort.

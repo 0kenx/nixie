@@ -331,6 +331,22 @@ impl<'a> PrettyPrinter<'a> {
             TermKind::SetSubset(a, b) => {
                 self.write_binary_term(w, "set.subset", *a, *b, indent, depth, break_here);
             }
+            TermKind::SetRelJoin(a, b) => {
+                self.write_binary_term(w, "rel.join", *a, *b, indent, depth, break_here);
+            }
+            TermKind::SetRelProduct(a, b) => {
+                self.write_binary_term(w, "rel.product", *a, *b, indent, depth, break_here);
+            }
+            TermKind::SetRelTranspose(a) => {
+                let _ = write!(w, "(rel.transpose ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetRelIden(a) => {
+                let _ = write!(w, "(rel.iden ");
+                self.write_term(w, *a, indent, depth + 1);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 self.write_binary_term(w, "select", *array, *index, indent, depth, break_here);
             }
@@ -921,6 +937,18 @@ impl<'a> PrettyPrinter<'a> {
             }
             TermKind::DtSelector { selector, arg } => {
                 let name = self.manager.resolve_str(*selector);
+                // A tuple component selector prints in the SMT-LIB tuple
+                // surface (`@t3` is `(_ tuple.select 2)`), so a printed
+                // term re-reads as itself.
+                if let Some(index) = name
+                    .strip_prefix("@t")
+                    .and_then(|n| n.parse::<usize>().ok())
+                {
+                    let _ = write!(w, "((_ tuple.select {index}) ");
+                    self.write_term(w, *arg, indent, depth + 1);
+                    let _ = write!(w, ")");
+                    return;
+                }
                 let _ = write!(w, "({name} ");
                 self.write_term(w, *arg, indent, depth + 1);
                 let _ = write!(w, ")");

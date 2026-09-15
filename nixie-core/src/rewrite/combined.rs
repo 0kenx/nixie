@@ -300,6 +300,10 @@ impl CombinedRewriter {
             | TermKind::SetCard(_)
             | TermKind::SetComplement(_)
             | TermKind::SetChoose(_)
+            | TermKind::SetRelJoin(_, _)
+            | TermKind::SetRelProduct(_, _)
+            | TermKind::SetRelTranspose(_)
+            | TermKind::SetRelIden(_)
             // Finite-field terms are already in normal form at construction
             // (`mk_ff_*` folds), so no rewriter pass applies. Sound for the
             // same reason as the sets arm: a missing simplification costs

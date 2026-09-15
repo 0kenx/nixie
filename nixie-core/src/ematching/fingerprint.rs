@@ -237,7 +237,10 @@ impl FingerprintCache {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
             }
-            TermKind::SetComplement(a) | TermKind::SetChoose(a) => {
+            TermKind::SetComplement(a)
+            | TermKind::SetChoose(a)
+            | TermKind::SetRelTranspose(a)
+            | TermKind::SetRelIden(a) => {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
             }
@@ -245,6 +248,8 @@ impl FingerprintCache {
             | TermKind::SetInter(a, b)
             | TermKind::SetMinus(a, b)
             | TermKind::SetMember(a, b)
+            | TermKind::SetRelJoin(a, b)
+            | TermKind::SetRelProduct(a, b)
             | TermKind::SetSubset(a, b) => {
                 let a_fp = self.compute(*a, manager);
                 let b_fp = self.compute(*b, manager);

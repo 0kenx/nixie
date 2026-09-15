@@ -442,6 +442,16 @@ impl<'a> Parser<'a> {
 
     /// Inner sort parser; callers must go through [`Parser::parse_sort`] so
     /// the recursion-depth guard stays in effect.
+    /// Whether the next token closes the current form (EOF reads as
+    /// "no", so a truncated sort errors at `parse_sort` instead of
+    /// looping).
+    fn peek_is_rparen(&mut self) -> bool {
+        matches!(
+            self.lexer.peek().map(|t| t.kind.clone()),
+            Some(TokenKind::RParen)
+        )
+    }
+
     fn parse_sort_inner(&mut self) -> Result<SortId> {
         if let Some(token) = self.lexer.peek() {
             match &token.kind {
@@ -479,6 +489,26 @@ impl<'a> Parser<'a> {
                         let head = self.expect_symbol()?;
                         if head == "FiniteField" {
                             return self.finish_finite_field_sort();
+                        }
+                        // `(_ Tuple A B ...)`: the tuple sort's indices are
+                        // SORTS, not numerals (CVC5's `mkTupleSort`), so it
+                        // cannot go through the numeral-index path below.
+                        if head == "Tuple" {
+                            let mut fields = Vec::new();
+                            loop {
+                                if self.peek_is_rparen() {
+                                    break;
+                                }
+                                fields.push(self.parse_sort()?);
+                            }
+                            self.expect_rparen()?;
+                            if fields.is_empty() {
+                                return Err(NixieError::ParseError {
+                                    position: self.lexer.position(),
+                                    message: "(_ Tuple ...) requires at least one sort".to_string(),
+                                });
+                            }
+                            return Ok(self.manager.tuple_sort(&fields));
                         }
                         let (name, indices) = self.finish_indexed_identifier(head)?;
 
@@ -555,6 +585,46 @@ impl<'a> Parser<'a> {
                                     "a set element sort",
                                 )?;
                                 Ok(self.manager.sorts.set(element))
+                            }
+                            // `(Tuple A B)`: CVC5's non-strict parametric
+                            // spelling of `(_ Tuple A B)`.
+                            "Tuple" => {
+                                let mut fields = Vec::new();
+                                loop {
+                                    if self.peek_is_rparen() {
+                                        break;
+                                    }
+                                    fields.push(self.parse_sort()?);
+                                }
+                                self.expect_rparen()?;
+                                if fields.is_empty() {
+                                    return Err(NixieError::ParseError {
+                                        position: self.lexer.position(),
+                                        message: "Tuple requires at least one sort".to_string(),
+                                    });
+                                }
+                                Ok(self.manager.tuple_sort(&fields))
+                            }
+                            // `(Relation A B)`: sugar for
+                            // `(Set (Tuple A B))` (CVC5's non-strict
+                            // spelling).
+                            "Relation" => {
+                                let mut fields = Vec::new();
+                                loop {
+                                    if self.peek_is_rparen() {
+                                        break;
+                                    }
+                                    fields.push(self.parse_sort()?);
+                                }
+                                self.expect_rparen()?;
+                                if fields.is_empty() {
+                                    return Err(NixieError::ParseError {
+                                        position: self.lexer.position(),
+                                        message: "Relation requires at least one sort".to_string(),
+                                    });
+                                }
+                                let tuple = self.manager.tuple_sort(&fields);
+                                Ok(self.manager.sorts.set(tuple))
                             }
                             _ => Err(NixieError::ParseError {
                                 position: self.lexer.position(),

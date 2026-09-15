@@ -284,7 +284,11 @@ impl NelsonOppenCombiner {
             | TermKind::SetSubset(_, _)
             | TermKind::SetCard(_)
             | TermKind::SetComplement(_)
-            | TermKind::SetChoose(_) => TermTheory::Set,
+            | TermKind::SetChoose(_)
+            | TermKind::SetRelJoin(_, _)
+            | TermKind::SetRelProduct(_, _)
+            | TermKind::SetRelTranspose(_)
+            | TermKind::SetRelIden(_) => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

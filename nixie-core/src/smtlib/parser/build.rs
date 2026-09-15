@@ -42,7 +42,10 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
             | "re.opt" | "re.comp" | "ff.neg"
             | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
-            | "set.is_singleton" | "set.singleton" => Plan::Fixed(1),
+            | "set.is_singleton" | "set.singleton"
+            // Relations (CVC5's `rel.*` surface): transpose takes a
+            // relation, `rel.iden` takes the plain set it diagonalizes.
+            | "rel.transpose" | "rel.iden" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -56,7 +59,10 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "fp.eq" | "fp.lt" | "fp.gt" | "fp.leq" | "fp.geq" | "fp.min" | "fp.max"
             | "str.at" | "str.contains" | "str.prefixof" | "str.suffixof" | "str.in_re"
             | "str.in.re" | "re.diff" | "re.range"
-            | "set.minus" | "set.member" | "set.subset" => Plan::Fixed(2),
+            | "set.minus" | "set.member" | "set.subset"
+            // Relations: `rel.join` composes two relations whose boundary
+            // sorts agree; `rel.product` is the cartesian product.
+            | "rel.join" | "rel.product" => Plan::Fixed(2),
 
             // ======== three operands ========
             "ite" | "store" | "fp" | "str.substr" | "str.indexof" | "str.replace"
@@ -98,7 +104,10 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             // the base set, as in the SMT-LIB draft.
             | "set.union"
             | "set.inter"
-            | "set.insert" => Plan::Variadic,
+            | "set.insert"
+            // The tuple constructor is variadic: `(tuple e1 .. en)`, with
+            // `(tuple)` the empty tuple (CVC5's `tuple.unit`).
+            | "tuple" => Plan::Variadic,
 
             _ => return None,
         };
@@ -185,6 +194,14 @@ impl Parser<'_> {
     }
 
     /// The element sort of a term if it is set-sorted, else `None`.
+    /// The field sorts of a set-of-tuples operand's element sort, when the
+    /// element sort is a tuple datatype (or degenerally any sort, which
+    /// reads as a one-field tuple for `rel.product` on plain sets).
+    fn tuple_fields_of_set(&self, t: TermId) -> Option<Vec<crate::sort::SortId>> {
+        let elem = self.set_element_sort(t)?;
+        self.manager.tuple_field_sorts_of(elem)
+    }
+
     fn set_element_sort(&self, t: TermId) -> Option<crate::sort::SortId> {
         let node = self.manager.get(t)?;
         match self.manager.sorts.get(node.sort).map(|s| &s.kind) {
@@ -555,6 +572,20 @@ impl Parser<'_> {
             // is a sort error the standard mandates reporting, and accepting
             // it would intern a term with a meaningless fallback sort.
             "set.singleton" => self.manager.mk_set_singleton(x),
+            "rel.transpose" => {
+                self.check_set_operand(op, x)?;
+                if self.tuple_fields_of_set(x).is_none() {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("operand of {op} must be a relation (a set of tuples)"),
+                    });
+                }
+                self.manager.mk_rel_transpose(x)
+            }
+            "rel.iden" => {
+                self.check_set_operand(op, x)?;
+                self.manager.mk_rel_iden(x)
+            }
             "set.card" => {
                 self.check_set_operand(op, x)?;
                 self.manager.mk_set_card(x)
@@ -644,6 +675,38 @@ impl Parser<'_> {
             "set.member" => {
                 self.check_set_member(op, x, y)?;
                 self.manager.mk_set_member(x, y)
+            }
+            // ======== relations ========
+            // `rel.join r s`: the relations must be sets of tuples whose
+            // boundary sorts agree (r's last component, s's first).
+            "rel.join" => {
+                self.check_set_operand(op, x)?;
+                self.check_set_operand(op, y)?;
+                let fields_x = self.tuple_fields_of_set(x);
+                let fields_y = self.tuple_fields_of_set(y);
+                if let (Some(fx), Some(fy)) = (&fields_x, &fields_y) {
+                    if fx.last() != fy.first() {
+                        return Err(NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: format!(
+                                "rel.join: boundary sorts disagree ({} vs {})",
+                                self.sort_display(fx.last().copied()),
+                                self.sort_display(fy.first().copied())
+                            ),
+                        });
+                    }
+                } else if fields_x.is_none() || fields_y.is_none() {
+                    return Err(NixieError::ParseError {
+                        position: self.lexer.position(),
+                        message: format!("operands of {op} must be relations (sets of tuples)"),
+                    });
+                }
+                self.manager.mk_rel_join(x, y)
+            }
+            "rel.product" => {
+                self.check_set_operand(op, x)?;
+                self.check_set_operand(op, y)?;
+                self.manager.mk_rel_product(x, y)
             }
             "set.subset" => {
                 self.check_set_binary(op, x, y)?;
@@ -866,6 +929,11 @@ impl Parser<'_> {
                 result
             }
             "and" => self.manager.mk_and(args.iter().copied()),
+            // ======== tuples ========
+            "tuple" => {
+                self.charge_fold_depth(chain_depth(args.len(), 1))?;
+                self.manager.mk_tuple(args)
+            }
             "or" => self.manager.mk_or(args.iter().copied()),
             // ======== Finite sets ========
             // `(set.union)` / `(set.inter)` fold pairwise over their operands

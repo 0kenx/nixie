@@ -828,6 +828,22 @@ impl TermManager {
                 let s = sub(s);
                 self.mk_set_choose(s)
             }
+            TermKind::SetRelJoin(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_rel_join(a, b)
+            }
+            TermKind::SetRelProduct(a, b) => {
+                let (a, b) = (sub(a), sub(b));
+                self.mk_rel_product(a, b)
+            }
+            TermKind::SetRelTranspose(a) => {
+                let a = sub(a);
+                self.mk_rel_transpose(a)
+            }
+            TermKind::SetRelIden(a) => {
+                let a = sub(a);
+                self.mk_rel_iden(a)
+            }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);
                 let idx = sub(idx);

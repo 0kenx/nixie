@@ -281,6 +281,15 @@ pub(super) fn reduce(
                 break;
             }
             match shape_of(t, manager) {
+                // The relation operators: leaves of the cone. Their
+                // operands live in *other element sorts* (the joined,
+                // paired or transposed tuple sorts), so same-sort
+                // inclusion-exclusion does not cross them; each sort's
+                // counting equations cover the ground elements the
+                // reduction derives, and `iden`'s diagonal count is
+                // stated directly below.
+                Shape::Join(_, _) | Shape::Product(_, _) | Shape::Transpose(_) | Shape::Iden(_) => {
+                }
                 Shape::Union(a, b) | Shape::Inter(a, b) => {
                     worklist.push(a);
                     worklist.push(b);
@@ -537,6 +546,48 @@ pub(super) fn reduce(
                 }
                 Shape::Opaque => {
                     counting_equation(&cone, set, card, ground_elements, manager, axioms);
+                }
+                // `|transpose r| = |r|`: the converse is a bijection.
+                Shape::Transpose(r) => {
+                    let r_card = manager.mk_set_card(r);
+                    axioms.push(manager.mk_eq(card, r_card));
+                    counting_equation(&cone, set, card, ground_elements, manager, axioms);
+                }
+                // `|a × b| = |a| · |b|`: the product pairs members exactly.
+                // Emitted only when the product's own support is not exact
+                // — an exact support's counting equation already pins the
+                // count, and the (nonlinear) multiplication would route the
+                // constraint through the arithmetic honesty gate for
+                // nothing. Where it IS emitted, that gate is the honest
+                // price of the rule (a wrong bound would be worse).
+                Shape::Product(a, b) => {
+                    if support(set, manager, 0).is_none() {
+                        let ca = manager.mk_set_card(a);
+                        let cb = manager.mk_set_card(b);
+                        let prod = manager.mk_mul([ca, cb]);
+                        axioms.push(manager.mk_eq(card, prod));
+                    }
+                    counting_equation(&cone, set, card, ground_elements, manager, axioms);
+                }
+                // `|r ⨝ s| ≤ |r| · |s|`: every joined member consumes a
+                // connecting pair. Without this bound the join's slack was
+                // unconstrained above and `|J| = 2` with `|r| = |s| = 1`
+                // answered `sat` — a false `sat`, since `J` is determined
+                // by its operands.
+                Shape::Join(r1, r2) => {
+                    let c1 = manager.mk_set_card(r1);
+                    let c2 = manager.mk_set_card(r2);
+                    let prod = manager.mk_mul([c1, c2]);
+                    axioms.push(manager.mk_le(card, prod));
+                    counting_equation(&cone, set, card, ground_elements, manager, axioms);
+                }
+                // `|iden s| = |s|`: the diagonal is in bijection with the
+                // operand. The operand lives in another element sort, so
+                // its card term is minted here (hash-consed: a formula that
+                // constrains it shares the term).
+                Shape::Iden(x) => {
+                    let x_card = manager.mk_set_card(x);
+                    axioms.push(manager.mk_eq(card, x_card));
                 }
             }
         }

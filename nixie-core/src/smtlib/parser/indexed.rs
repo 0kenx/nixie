@@ -241,6 +241,76 @@ impl Parser<'_> {
                 let zero = self.manager.mk_int(0);
                 Ok(Some(self.manager.mk_eq(modulo, zero)))
             }
+            // ((_ tuple.select i) t): the i-th component of a tuple
+            // (zero-based). The operand must be a tuple datatype long
+            // enough; CVC5 reports both errors at parse time.
+            "tuple.select" => {
+                let index = single_index(index_parts)? as usize;
+                let arg = single_arg(args)?;
+                let arg_sort = self.manager.get(arg).map(|d| d.sort);
+                let fields = arg_sort.and_then(|s| self.manager.tuple_field_sorts_of(s));
+                match fields {
+                    Some(fields) if index < fields.len() => {
+                        Ok(Some(self.manager.mk_tuple_select(index, arg)))
+                    }
+                    Some(fields) => Err(NixieError::ParseError {
+                        position: 0,
+                        message: format!(
+                            "tuple is of length {}; cannot access index {index}",
+                            fields.len()
+                        ),
+                    }),
+                    None => Err(NixieError::ParseError {
+                        position: 0,
+                        message: "tuple.select applied to non-tuple".to_string(),
+                    }),
+                }
+            }
+            // ((_ tuple.update i) v t): the tuple with component i replaced
+            // by `v`. Argument order follows CVC5 (value first, tuple
+            // second? — CVC5's `mkTerm(APPLY_SELECTOR, ...)` rebuild path
+            // takes (tuple, value); both spellings appear in the wild, and
+            // the SMT-LIB draft's `tuple.update` example is
+            // `((_ tuple.update 1) t 5)`: tuple first, value second).
+            "tuple.update" => {
+                let index = single_index(index_parts)? as usize;
+                if args.len() != 2 {
+                    return Err(NixieError::ParseError {
+                        position: 0,
+                        message: format!(
+                            "(_ tuple.update i) requires exactly 2 arguments, got {}",
+                            args.len()
+                        ),
+                    });
+                }
+                let (tuple, value) = (args[0], args[1]);
+                let tuple_sort = self.manager.get(tuple).map(|d| d.sort);
+                let fields = tuple_sort.and_then(|s| self.manager.tuple_field_sorts_of(s));
+                let Some(fields) = fields else {
+                    return Err(NixieError::ParseError {
+                        position: 0,
+                        message: "tuple.update applied to non-tuple".to_string(),
+                    });
+                };
+                if index >= fields.len() {
+                    return Err(NixieError::ParseError {
+                        position: 0,
+                        message: format!(
+                            "tuple is of length {}; cannot access index {index}",
+                            fields.len()
+                        ),
+                    });
+                }
+                let mut components = Vec::with_capacity(fields.len());
+                for (i, _) in fields.iter().enumerate() {
+                    if i == index {
+                        components.push(value);
+                    } else {
+                        components.push(self.manager.mk_tuple_select(i, tuple));
+                    }
+                }
+                Ok(Some(self.manager.mk_tuple(&components)))
+            }
             // ((_ re.^ n) R): R repeated exactly n times.
             "re.^" => {
                 let n = single_index(index_parts)?;

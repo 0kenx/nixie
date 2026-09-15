@@ -2333,6 +2333,34 @@ fn dt_fragment_value(term: TermId, model: &Model, manager: &TermManager) -> Opti
                         .is_some_and(|node| manager.sorts.is_datatype(node.sort)) =>
                 {
                     let (left, right) = (*left, *right);
+                    // Only when the datatype is *pure* — every constructor
+                    // field itself datatype-sorted. A tuple over Int/Bool
+                    // (the `(_ Tuple ...)` sort) has components this
+                    // fragment does not own: its entries are constructor
+                    // terms whose equality turns on arithmetic values, and
+                    // comparing the entry terms directly reports a
+                    // violation the arithmetic model does not have (found
+                    // while landing relations: `(= (tuple x y) (tuple 3 4))`
+                    // with `x = 3 ∧ y = 4` tripped this check).
+                    let pure_datatype = manager
+                        .get(left)
+                        .and_then(|node| {
+                            manager
+                                .sorts
+                                .datatype_name(node.sort)
+                                .map(|n| n.to_string())
+                        })
+                        .and_then(|name| manager.sorts.get_datatype(&name))
+                        .is_some_and(|def| {
+                            def.constructors.iter().all(|ctor| {
+                                ctor.selectors
+                                    .iter()
+                                    .all(|&(_, fs)| manager.sorts.is_datatype(fs))
+                            })
+                        });
+                    if !pure_datatype {
+                        break None;
+                    }
                     break match (model.get(left), model.get(right)) {
                         (Some(left_value), Some(right_value)) => {
                             (left_value != right_value).then_some(false)

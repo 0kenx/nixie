@@ -1,0 +1,357 @@
+//! Relations: the `rel.*` operators over tuple sorts, end to end.
+//!
+//! Tuples are single-constructor datatypes (`(_ Tuple A B)` — structural,
+//! declared once per field-sort list), and the operators reduce through
+//! the same eager membership scheme as the rest of the finite-set theory
+//! (CVC5's `theory_sets_rels.cpp` is the reference):
+//!
+//! ```text
+//! t ∈ transpose(r)  ⇔  rev(t) ∈ r                (rev = components reversed)
+//! (t,u) ∈ a × b     ⇔  t ∈ a ∧ u ∈ b             (projections)
+//! (a,b) ∈ iden(s)   ⇔  a ∈ s ∧ a = b             (the diagonal)
+//! (a,c) ∈ r ⨝ s     ⇒  ∃x. (a,x) ∈ r ∧ (x,c) ∈ s   (split, skolemized)
+//! u ∈ r ∧ v ∈ s ∧ last(u) = first(v) ⇒ glue(u,v) ∈ r ⨝ s  (compose)
+//! ```
+//!
+//! The join keeps CVC5's column arithmetic: `(A,B) ⨝ (B,C) : (A,C)` — the
+//! shared middle column is dropped. Cardinality rules: `|transpose r| =
+//! |r|`, `|iden s| = |s|`, `|a×b| = |a|·|b|` and `|r⨝s| ≤ |r|·|s|` (the
+//! bound is what keeps a join's slack from being unconstrained above — a
+//! false-`sat` class caught while landing this).
+//!
+//! Each case's status was cross-checked against CVC5's semantics while
+//! writing.
+
+use nixie_core::{TermId, TermManager};
+use nixie_solver::{Solver, SolverResult};
+
+/// Assert `build`'s formulas one by one and report the verdict.
+fn solve(build: impl FnOnce(&mut TermManager) -> Vec<TermId>) -> SolverResult {
+    let mut tm = TermManager::new();
+    let asserts = build(&mut tm);
+    let mut solver = Solver::new();
+    for a in asserts {
+        solver.assert(a, &mut tm);
+    }
+    solver.check(&mut tm)
+}
+
+/// Solve an SMT-LIB snippet through the parser, end to end.
+fn solve_smt(script: &str) -> SolverResult {
+    let mut context = nixie_solver::Context::new();
+    match context.execute_script(script) {
+        Ok(lines) => lines
+            .first()
+            .and_then(|l| match l.as_str() {
+                "sat" => Some(SolverResult::Sat),
+                "unsat" => Some(SolverResult::Unsat),
+                "unknown" => Some(SolverResult::Unknown),
+                _ => None,
+            })
+            .unwrap_or(SolverResult::Unknown),
+        Err(_) => SolverResult::Unknown,
+    }
+}
+
+// ===== the tuple surface =====
+
+/// `(_ tuple.select i)` reads components, `(_ tuple.update i)` writes them,
+/// and `tuple.unit` is the empty tuple.
+#[test]
+fn tuple_select_and_update() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const t (Tuple Int Bool))\n\
+         (assert (= t (tuple 7 true)))\n\
+         (assert (= ((_ tuple.select 0) t) 7))\n\
+         (assert (= ((_ tuple.select 1) t) true))\n\
+         (check-sat)\n\
+         (get-value (((_ tuple.update 0) t 9)))\n",
+    );
+    assert_eq!(got, SolverResult::Sat);
+}
+
+/// A tuple's constructor is injective: equal tuples have equal components
+/// and vice versa.
+#[test]
+fn tuple_equality_is_componentwise() {
+    let unsat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (assert (= (tuple 1 x) (tuple 1 2)))\n\
+         (assert (distinct x 2))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(unsat, SolverResult::Unsat);
+    let sat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (declare-const y Int)\n\
+         (assert (= x 3))\n\
+         (assert (= y 4))\n\
+         (assert (= (tuple x y) (tuple 3 4)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat, SolverResult::Sat);
+}
+
+// ===== transpose =====
+
+/// `(1,2) ∈ transpose(r)` forces `(2,1) ∈ r`.
+#[test]
+fn transpose_swaps_components() {
+    let got = solve(|tm| {
+        let tuple = tm.tuple_sort(&[tm.sorts.int_sort, tm.sorts.int_sort]);
+        let rel = tm.sorts.set(tuple);
+        let r = tm.mk_var("r", rel);
+        let one = tm.mk_int(1);
+        let two = tm.mk_int(2);
+        let t12 = tm.mk_tuple(&[one, two]);
+        let t21 = tm.mk_tuple(&[two, one]);
+        let tr = tm.mk_rel_transpose(r);
+        let in_tr = tm.mk_set_member(t12, tr);
+        let in_r = tm.mk_set_member(t21, r);
+        vec![in_tr, tm.mk_not(in_r)]
+    });
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// Double transpose is the identity on members.
+#[test]
+fn double_transpose_round_trips() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 2 1) (rel.transpose (rel.transpose r))))\n\
+         (assert (not (set.member (tuple 1 2) r)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+// ===== product =====
+
+/// `t ∈ a ∧ u ∈ b` puts `(t, u)` in the product; denying it is unsat.
+#[test]
+fn product_pairs_members() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (declare-const b (Set Int))\n\
+         (assert (set.member 1 a))\n\
+         (assert (set.member 2 b))\n\
+         (assert (not (set.member (tuple 1 2) (rel.product a b))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `|a×b| = |a|·|b|` with exact ground counts: `5` is unsat, and the
+/// model-side count over the six pairs refutes it.
+#[test]
+fn product_cardinality_is_the_product() {
+    let unsat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (declare-const b (Set Int))\n\
+         (assert (set.member 1 a))\n\
+         (assert (set.member 2 a))\n\
+         (assert (= (set.card a) 2))\n\
+         (assert (set.member 5 b))\n\
+         (assert (set.member 6 b))\n\
+         (assert (set.member 7 b))\n\
+         (assert (= (set.card b) 3))\n\
+         (assert (= (set.card (rel.product a b)) 5))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(unsat, SolverResult::Unsat);
+}
+
+/// Pure product cardinality over unconfined operands routes through the
+/// nonlinear rule and answers honestly `unknown` (never a guess).
+#[test]
+fn unconfined_product_cardinality_declines_honestly() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (declare-const b (Set Int))\n\
+         (assert (= (set.card a) 2))\n\
+         (assert (= (set.card b) 3))\n\
+         (assert (= (set.card (rel.product a b)) 6))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unknown);
+}
+
+// ===== iden =====
+
+/// The diagonal is over equal components: `(3,4) ∈ iden(a)` is unsat.
+#[test]
+fn iden_requires_equal_components() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (assert (set.member (tuple 3 4) (rel.iden a)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `x ∈ a` puts `(x,x)` on the diagonal; denying it is unsat.
+#[test]
+fn iden_carries_membership() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (assert (set.member 3 a))\n\
+         (assert (not (set.member (tuple 3 3) (rel.iden a))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `|iden a| = |a|`: three is unsat when `|a| = 2`.
+#[test]
+fn iden_cardinality_is_the_operands() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const a (Set Int))\n\
+         (assert (= (set.card a) 2))\n\
+         (assert (= (set.card (rel.iden a)) 3))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+// ===== join =====
+
+/// The compose rule: connecting members force the joined member.
+/// `(1,2) ∈ r ∧ (2,3) ∈ s` puts `(1,3)` in `r ⨝ s` (the middle column is
+/// dropped).
+#[test]
+fn join_composes_members() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 2 3) s))\n\
+         (assert (not (set.member (tuple 1 3) (rel.join r s))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The split rule: a joined member needs a witness in both operands, so
+/// an empty left operand refutes it.
+#[test]
+fn join_splits_through_a_witness() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (assert (= (set.card r) 0))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// `|r ⨝ s| ≤ |r|·|s|`: a join of two singletons cannot have two members.
+/// (The bound is what keeps the join's slack from being unconstrained
+/// above — without it this answered `sat`.)
+#[test]
+fn join_cardinality_is_bounded() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 2 3) s))\n\
+         (assert (= (set.card r) 1))\n\
+         (assert (= (set.card s) 1))\n\
+         (assert (= (set.card (rel.join r s)) 2))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The satisfiable side: connecting members witness the join, and a free
+/// left relation can always supply the split's front.
+#[test]
+fn join_witnesses_freely() {
+    let sat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 2 3) s))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat, SolverResult::Sat);
+    // s pinned to its one non-connecting member: the join needs (1,x) ∈ r
+    // with (x,3) ∈ s — only (5,3) ∈ s, so r must hold (1,5), which a free
+    // r can.
+    let sat2 = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 5 3) s))\n\
+         (assert (= (set.card s) 1))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat2, SolverResult::Sat);
+}
+
+// ===== the model side =====
+
+/// A relation variable's members print as tuples, and the queries fold.
+#[test]
+fn relation_models_print_tuples() {
+    let mut context = nixie_solver::Context::new();
+    let out = context
+        .execute_script(
+            "(set-logic ALL)\n\
+             (declare-const r (Relation Int Int))\n\
+             (assert (set.member (tuple 1 2) r))\n\
+             (assert (set.member (tuple 3 4) r))\n\
+             (check-sat)\n\
+             (get-model)\n\
+             (get-value ((set.member (tuple 1 2) r) (set.member (tuple 9 9) r)\n\
+                           (set.card r)))\n",
+        )
+        .expect("script executes");
+    let joined = out.join("\n");
+    assert!(joined.contains("sat"), "{joined}");
+    assert!(
+        joined.contains("(set.singleton (tuple 1 2))")
+            && joined.contains("(set.singleton (tuple 3 4))"),
+        "the members must print as tuples: {joined}"
+    );
+    assert!(
+        joined.contains("((set.member (tuple 1 2) r) true)")
+            && joined.contains("((set.member (tuple 9 9) r) false)")
+            && joined.contains("((set.card r) 2)"),
+        "the queries must fold: {joined}"
+    );
+}
+
+// ===== the surface's error side =====
+
+/// Non-joinable relations are a parse error, as in CVC5.
+#[test]
+fn non_joinable_relations_are_rejected() {
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Bool Int))\n\
+         (assert (= (set.card (rel.join r s)) 0))\n\
+         (check-sat)\n",
+    );
+    assert!(out.is_err(), "boundary mismatch must be rejected");
+}

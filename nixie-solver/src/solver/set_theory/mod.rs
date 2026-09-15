@@ -82,6 +82,14 @@ enum Shape {
     Ite(TermId, TermId, TermId),
     /// `(set.complement s)`.
     Complement(TermId),
+    /// `(rel.join r s)`.
+    Join(TermId, TermId),
+    /// `(rel.product r s)`.
+    Product(TermId, TermId),
+    /// `(rel.transpose r)`.
+    Transpose(TermId),
+    /// `(rel.iden s)` — the operand is a plain set.
+    Iden(TermId),
     /// `(as set.universe (Set T))`.
     Univ,
     /// A set-sorted variable or other opaque term: it has no structure, so its
@@ -108,6 +116,10 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
         Some(TermKind::SetComplement(a)) => Shape::Complement(*a),
         Some(TermKind::SetUniv(_)) => Shape::Univ,
         Some(TermKind::Ite(c, a, b)) => Shape::Ite(*c, *a, *b),
+        Some(TermKind::SetRelJoin(a, b)) => Shape::Join(*a, *b),
+        Some(TermKind::SetRelProduct(a, b)) => Shape::Product(*a, *b),
+        Some(TermKind::SetRelTranspose(a)) => Shape::Transpose(*a),
+        Some(TermKind::SetRelIden(a)) => Shape::Iden(*a),
         _ => Shape::Opaque,
     }
 }
@@ -134,7 +146,7 @@ fn shape_of(set: TermId, manager: &TermManager) -> Shape {
 /// The returned list may contain duplicates and terms that are only
 /// *candidates* — membership still decides which are really in. That is what
 /// makes the de-duplication in [`cardinality_axiom`] necessary.
-fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermId>> {
+fn support(set: TermId, manager: &mut TermManager, depth: usize) -> Option<Vec<TermId>> {
     // Bounded: the walk follows a term the user wrote.
     const MAX_SUPPORT_DEPTH: usize = 64;
     if depth > MAX_SUPPORT_DEPTH {
@@ -166,8 +178,127 @@ fn support(set: TermId, manager: &TermManager, depth: usize) -> Option<Vec<TermI
         // only when that sort is finite, whose inhabitants are not
         // term-enumerable here. `cardinality` states |U| directly instead.
         Shape::Univ => None,
+        // The converse's members are the operand's reversed, so a confined
+        // operand confines it — each reversed once, bounded by the same
+        // list.
+        Shape::Transpose(r) => support(r, manager, depth + 1)
+            .map(|xs| xs.iter().map(|&e| reverse_tuple(e, manager)).collect()),
+        // The diagonal of a confined set is confined: one pair per member.
+        Shape::Iden(x) => support(x, manager, depth + 1)
+            .map(|xs| xs.iter().map(|&e| duplicate_tuple(e, manager)).collect()),
+        // A product's members are the pairs of the operands': confined
+        // when both are, with the pair count the product of the two —
+        // bounded, because a support list is already bounded by the caps
+        // upstream.
+        Shape::Product(a, b) => {
+            let xs = support(a, manager, depth + 1)?;
+            let ys = support(b, manager, depth + 1)?;
+            const MAX_PRODUCT_SUPPORT: usize = 256;
+            if xs.len().saturating_mul(ys.len()) > MAX_PRODUCT_SUPPORT {
+                return None;
+            }
+            let mut out = Vec::with_capacity(xs.len() * ys.len());
+            for &x in &xs {
+                for &y in &ys {
+                    out.push(full_concat_tuple(x, y, manager));
+                }
+            }
+            Some(out)
+        }
+        // A join's members pair through an existentially witnessed middle:
+        // not statically confined (which middles connect is what the search
+        // decides).
+        Shape::Join(_, _) => None,
         Shape::Opaque => None,
     }
+}
+
+// ===== tuple helpers (the relation operators' term algebra) =====
+//
+// Tuples are single-constructor datatypes (`TermManager::tuple_sort`), so
+// these are thin structural builders; every one is hash-consed and
+// therefore stable across the per-assert re-runs of `reduce`.
+
+/// The number of components of a tuple-sorted term's sort.
+fn tuple_arity(t: TermId, manager: &TermManager) -> Option<usize> {
+    let sort = manager.get(t)?.sort;
+    manager.tuple_field_sorts_of(sort).map(|f| f.len())
+}
+
+/// The shared-boundary sorts of a join: `(n₁ - 1, middle, n₂ - 1)` from
+/// the two operand tuple arities, when they are relations whose boundary
+/// sorts agree.
+fn join_arities(
+    r1: TermId,
+    r2: TermId,
+    manager: &TermManager,
+) -> Option<(usize, nixie_core::SortId, usize)> {
+    let e1 = element_sort(r1, manager)?;
+    let e2 = element_sort(r2, manager)?;
+    let f1 = manager.tuple_field_sorts_of(e1)?;
+    let f2 = manager.tuple_field_sorts_of(e2)?;
+    let (n1, n2) = (f1.len(), f2.len());
+    if n1 == 0 || n2 == 0 {
+        return None;
+    }
+    let middle = *f1.last()?;
+    if *f2.first()? != middle {
+        return None;
+    }
+    Some((n1 - 1, middle, n2 - 1))
+}
+
+/// `sel_i(t)`: the i-th component as a selector term. Uniform for any
+/// tuple term — constructor or variable — because EUF and the datatype
+/// axioms own selector semantics (a selector of a constructor folds at
+/// encode time; of a variable it is the accessor the theory decides).
+fn select_i(t: TermId, i: usize, manager: &mut TermManager) -> TermId {
+    manager.mk_tuple_select(i, t)
+}
+
+/// The tuple arity of a set's element sort (non-tuple elements read as 1).
+fn tuple_arity_of_set(set: TermId, manager: &TermManager) -> Option<usize> {
+    element_sort(set, manager)
+        .and_then(|e| manager.tuple_field_sorts_of(e))
+        .map(|f| f.len())
+}
+
+/// The component-reversed tuple of `t` (`(a, b) -> (b, a)`).
+fn reverse_tuple(t: TermId, manager: &mut TermManager) -> TermId {
+    let arity = tuple_arity(t, manager).unwrap_or(0);
+    if arity == 0 {
+        return t;
+    }
+    let mut parts: Vec<TermId> = (0..arity).map(|i| select_i(t, i, manager)).collect();
+    parts.reverse();
+    manager.mk_tuple(&parts)
+}
+
+/// The diagonal pair `(e, e)`.
+fn duplicate_tuple(e: TermId, manager: &mut TermManager) -> TermId {
+    manager.mk_tuple(&[e, e])
+}
+
+/// The **product** concatenation: all of `u`'s columns then all of `v`'s.
+fn full_concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
+    let nu = tuple_arity(u, manager).unwrap_or(1).max(1);
+    let nv = tuple_arity(v, manager).unwrap_or(1).max(1);
+    let mut parts: Vec<TermId> = (0..nu).map(|i| select_i(u, i, manager)).collect();
+    parts.extend((0..nv).map(|i| select_i(v, i, manager)));
+    manager.mk_tuple(&parts)
+}
+
+/// The **join** concatenation: `u`'s columns except its last, then `v`'s
+/// except its first — the shared middle column is dropped (CVC5's
+/// `computeMembersForBinOpRel` glue; `(a,b) ⨝ (b,c) = (a,c)`).
+fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
+    let nu = tuple_arity(u, manager).unwrap_or(1).max(1);
+    let nv = tuple_arity(v, manager).unwrap_or(1).max(1);
+    let mut parts: Vec<TermId> = (0..nu.saturating_sub(1))
+        .map(|i| select_i(u, i, manager))
+        .collect();
+    parts.extend((1..nv).map(|i| select_i(v, i, manager)));
+    manager.mk_tuple(&parts)
 }
 
 /// Whether a term is *plausible as an element* for the purposes of
@@ -211,6 +342,7 @@ fn element_plausible(t: TermId, manager: &TermManager) -> bool {
         | TermKind::FpNaN { .. }
         | TermKind::Apply { .. }
         | TermKind::DtConstructor { .. }
+        | TermKind::DtSelector { .. }
         | TermKind::Select(_, _)
         // Set-valued terms are elements of nested `Set (Set …)` sorts.
         | TermKind::SetEmpty(_)
@@ -532,6 +664,83 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
         }
     }
+    // Relation constructs the reduction cannot faithfully relate raise
+    // this (a malformed join, or a compose-pair budget overflow below).
+    let mut rel_incomplete = false;
+
+    // ---- derived elements: the relation operators' projections ----
+    //
+    // `transpose`, `product` and `iden` define their memberships through
+    // tuples built from *their element list's* selectors — reversed
+    // tuples, projections and diagonals that live in the OPERANDS' sorts.
+    // Adding them to those sorts' lists before the definition loop runs
+    // means a compound operand's own definition covers them in this same
+    // pass, not the next.
+    {
+        let mut derived: Vec<(nixie_core::SortId, TermId)> = Vec::new();
+        for &set in &s.sets {
+            match shape_of(set, manager) {
+                Shape::Transpose(r) => {
+                    if let (Some(es_t), Some(es_r)) =
+                        (element_sort(set, manager), element_sort(r, manager))
+                        && let Some(elems) = elements.get(&es_t).cloned()
+                    {
+                        for e in elems {
+                            derived.push((es_r, reverse_tuple(e, manager)));
+                        }
+                    }
+                }
+                Shape::Product(a, b) => {
+                    let (Some(es_p), Some(es_a), Some(es_b)) = (
+                        element_sort(set, manager),
+                        element_sort(a, manager),
+                        element_sort(b, manager),
+                    ) else {
+                        continue;
+                    };
+                    let na = tuple_arity_of_set(a, manager).unwrap_or(1);
+                    let elems = elements.get(&es_p).cloned().unwrap_or_default();
+                    for e in elems {
+                        let left: Vec<TermId> = (0..na).map(|i| select_i(e, i, manager)).collect();
+                        let proj_a = if na == 1 {
+                            left.first().copied().unwrap_or(e)
+                        } else {
+                            manager.mk_tuple(&left)
+                        };
+                        let arity = tuple_arity(e, manager).unwrap_or(na);
+                        let right: Vec<TermId> =
+                            (na..arity).map(|i| select_i(e, i, manager)).collect();
+                        let proj_b = if right.len() == 1 {
+                            right[0]
+                        } else {
+                            manager.mk_tuple(&right)
+                        };
+                        derived.push((es_a, proj_a));
+                        derived.push((es_b, proj_b));
+                    }
+                }
+                Shape::Iden(x) => {
+                    if let (Some(es_i), Some(es_x)) =
+                        (element_sort(set, manager), element_sort(x, manager))
+                        && let Some(elems) = elements.get(&es_i).cloned()
+                    {
+                        for e in elems {
+                            derived.push((es_x, select_i(e, 0, manager)));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (sort, term) in derived {
+            if let Some(list) = elements.get_mut(&sort)
+                && !list.contains(&term)
+            {
+                list.push(term);
+            }
+        }
+    }
+
     let mut definition_sets: Vec<TermId> = s.sets.clone();
     definition_sets.extend(card.extra_sets.iter().copied());
 
@@ -599,6 +808,100 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                 Shape::Univ => {
                     axioms.push(atom);
                 }
+                // ===== relations (CVC5 `theory_sets_rels` rules, eager) =====
+                //
+                // `e \in transpose(r)  <=>  rev(e) \in r`: the converse's
+                // members are the operand's, reversed. `rev(e)` is built
+                // from selectors, so it works for any tuple term.
+                Shape::Transpose(r) => {
+                    let rev = reverse_tuple(e, manager);
+                    let in_r = manager.mk_set_member(rev, r);
+                    axioms.push(manager.mk_eq(atom, in_r));
+                }
+                // `(t, u) \in a × b  <=>  t \in a ∧ u \in b`: the pair's
+                // projections. A non-tuple operand reads as a one-field
+                // tuple, so plain sets pair too.
+                Shape::Product(a, b) => {
+                    let na = tuple_arity_of_set(a, manager)
+                        .or_else(|| element_sort(a, manager).map(|_| 1))
+                        .unwrap_or(1);
+                    let nb = tuple_arity_of_set(b, manager)
+                        .or_else(|| element_sort(b, manager).map(|_| 1))
+                        .unwrap_or(1);
+                    let total = na + nb;
+                    let left: Vec<TermId> = (0..na).map(|i| select_i(e, i, manager)).collect();
+                    let right: Vec<TermId> = (na..total).map(|i| select_i(e, i, manager)).collect();
+                    let proj_a = if na == 1 {
+                        left[0]
+                    } else {
+                        manager.mk_tuple(&left)
+                    };
+                    let proj_b = if nb == 1 {
+                        right[0]
+                    } else {
+                        manager.mk_tuple(&right)
+                    };
+                    let ia = manager.mk_set_member(proj_a, a);
+                    let ib = manager.mk_set_member(proj_b, b);
+                    let both = manager.mk_and([ia, ib]);
+                    axioms.push(manager.mk_eq(atom, both));
+                }
+                // `(a, b) \in iden(s)  <=>  a \in s ∧ a = b`: the diagonal.
+                Shape::Iden(x) => {
+                    let f0 = select_i(e, 0, manager);
+                    let f1 = select_i(e, 1, manager);
+                    let same = manager.mk_eq(f0, f1);
+                    let in_s = manager.mk_set_member(f0, x);
+                    let both = manager.mk_and([same, in_s]);
+                    axioms.push(manager.mk_eq(atom, both));
+                }
+                // `e \in r ⨝ s  =>  ∃x. split₁ \in r ∧ split₂ \in s`, with
+                // the witness skolemized per (element, join) exactly like
+                // the disequality witnesses. The converse is the compose
+                // rule below, over ground pairs.
+                Shape::Join(r1, r2) => {
+                    let Some((n1, middle_sort, _n2)) = join_arities(r1, r2, manager) else {
+                        // Malformed (the parser checks this; a
+                        // builder-made term may still slip through) —
+                        // decline honestly.
+                        rel_incomplete = true;
+                        continue;
+                    };
+                    // The result tuple's columns are `e[0..n1-1] ++ (the
+                    // middle) ++ e[n1-1..]`: the forward split recovers an
+                    // `r1` member (e's front plus the witness) and an `r2`
+                    // member (the witness plus e's back).
+                    let total = tuple_arity(e, manager).unwrap_or(n1.max(1));
+                    let k = manager.mk_var(&format!("@set_join_{}_{}", set.0, e.0), middle_sort);
+                    let mut left: Vec<TermId> = (0..n1.saturating_sub(1))
+                        .map(|i| select_i(e, i, manager))
+                        .collect();
+                    left.push(k);
+                    let mut r2_parts = vec![k];
+                    r2_parts.extend((n1.saturating_sub(1)..total).map(|i| select_i(e, i, manager)));
+                    let u = manager.mk_tuple(&left);
+                    let v = manager.mk_tuple(&r2_parts);
+                    let iu = manager.mk_set_member(u, r1);
+                    let iv = manager.mk_set_member(v, r2);
+                    let both = manager.mk_and([iu, iv]);
+                    axioms.push(manager.mk_implies(atom, both));
+                    // The witness and its splits are elements: the next
+                    // pass's survey sees their atoms and the counting
+                    // equations account for them.
+                    for derived in [u, v] {
+                        if let Some(ds) = element_sort(derived, manager)
+                            && let Some(list) = elements.get_mut(&ds)
+                            && !list.contains(&derived)
+                        {
+                            list.push(derived);
+                        }
+                    }
+                    if let Some(list) = elements.get_mut(&middle_sort)
+                        && !list.contains(&k)
+                    {
+                        list.push(k);
+                    }
+                }
                 // An opaque set's members are free *of a definition*. They
                 // are not free of each other; see the congruence axioms
                 // below.
@@ -639,6 +942,69 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // sets are overwhelmingly literals, ranges and unions of those, whose
     // membership is *defined* above. Checking first is what keeps the cost on
     // the specifications that actually have an opaque set in them.
+    // ---- the join compose rule (CVC5's `computeMembersForBinOpRel`) ----
+    //
+    // `u \in r1 ∧ v \in r2 ∧ last(u) = first(v)  =>  concat(u, v) \in J`:
+    // the backward half of the join's membership definition, over ground
+    // pairs. The equality guard makes it conditional, so it is stated for
+    // every pair rather than only the matching ones; the pair count is
+    // quadratic in the element lists, so it is capped and an overflow
+    // raises the honesty gate.
+    const MAX_JOIN_PAIRS: usize = 512;
+    let mut join_pairs = 0usize;
+    for &set in &s.sets {
+        let Shape::Join(r1, r2) = shape_of(set, manager) else {
+            continue;
+        };
+        let Some((n1, _middle, _n2)) = join_arities(r1, r2, manager) else {
+            rel_incomplete = true;
+            continue;
+        };
+        let (Some(es_j), Some(es1), Some(es2)) = (
+            element_sort(set, manager),
+            element_sort(r1, manager),
+            element_sort(r2, manager),
+        ) else {
+            continue;
+        };
+        let empty: Vec<TermId> = Vec::new();
+        let us = elements.get(&es1).unwrap_or(&empty).clone();
+        let vs = elements.get(&es2).unwrap_or(&empty).clone();
+        for &u in &us {
+            let arity_u = tuple_arity(u, manager).unwrap_or(n1 + 1);
+            let Some(last_u) = (0..arity_u).map(|i| select_i(u, i, manager)).last() else {
+                continue;
+            };
+            for &v in &vs {
+                let arity_v = tuple_arity(v, manager).unwrap_or(1);
+                let Some(first_v) = (arity_v > 0).then(|| select_i(v, 0, manager)) else {
+                    continue;
+                };
+                if join_pairs >= MAX_JOIN_PAIRS {
+                    rel_incomplete = true;
+                    break;
+                }
+                join_pairs += 1;
+                let glued = concat_tuple(u, v, manager);
+                let _ = es_j;
+                let in_u = manager.mk_set_member(u, r1);
+                let in_v = manager.mk_set_member(v, r2);
+                let boundary = manager.mk_eq(last_u, first_v);
+                let prem = manager.mk_and([in_u, in_v, boundary]);
+                let conc = manager.mk_set_member(glued, set);
+                axioms.push(manager.mk_implies(prem, conc));
+                // The glued tuple is an element of the join's sort: the
+                // next pass's survey (and this pass's counting, via the
+                // elements map) account for it.
+                if let Some(list) = elements.get_mut(&es_j)
+                    && !list.contains(&glued)
+                {
+                    list.push(glued);
+                }
+            }
+        }
+    }
+
     let any_opaque = s
         .sets
         .iter()
@@ -838,7 +1204,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // `set.card`, exact where the members are confined to a known list and
     // *declined* otherwise: an under-constrained cardinality is a free
     // integer, and a model that picks one arbitrarily is not a model.
-    let incomplete = pair_budget_exceeded || card.incomplete;
+    let incomplete = pair_budget_exceeded || rel_incomplete || card.incomplete;
 
     Reduction { axioms, incomplete }
 }

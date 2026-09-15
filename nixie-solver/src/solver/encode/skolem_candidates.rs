@@ -229,6 +229,8 @@ impl Solver {
                 | TermKind::SetInter(a, b)
                 | TermKind::SetMinus(a, b)
                 | TermKind::SetMember(a, b)
+                | TermKind::SetRelJoin(a, b)
+                | TermKind::SetRelProduct(a, b)
                 | TermKind::SetSubset(a, b) => {
                     stack.push(*b);
                     stack.push(*a);
@@ -236,7 +238,9 @@ impl Solver {
                 TermKind::SetSingleton(a)
                 | TermKind::SetCard(a)
                 | TermKind::SetComplement(a)
-                | TermKind::SetChoose(a) => stack.push(*a),
+                | TermKind::SetChoose(a)
+                | TermKind::SetRelTranspose(a)
+                | TermKind::SetRelIden(a) => stack.push(*a),
                 TermKind::SetUniv(_) => {}
 
                 // Finite fields: ordinary traversal, no candidates of their

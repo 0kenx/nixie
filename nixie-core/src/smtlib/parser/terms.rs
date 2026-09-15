@@ -1467,6 +1467,9 @@ impl Parser<'_> {
             // be recognised here, ahead of the strict "unknown symbol" reject
             // in the `_` arm below.
             "re.none" => Ok(self.manager.mk_re_none()),
+            // The empty tuple (CVC5 defines `tuple.unit` as a constant of
+            // the nullary tuple sort).
+            "tuple.unit" => Ok(self.manager.mk_tuple(&[])),
             "re.all" => Ok(self.manager.mk_re_all()),
             "re.allchar" => Ok(self.manager.mk_re_all_char()),
             // The five rounding modes of the SMT-LIB `FloatingPoint` theory,

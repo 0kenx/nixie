@@ -679,6 +679,22 @@ fn rebuild(
             let s = sub(s);
             manager.mk_set_choose(s)
         }
+        TermKind::SetRelJoin(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_rel_join(a, b)
+        }
+        TermKind::SetRelProduct(a, b) => {
+            let (a, b) = (sub(a), sub(b));
+            manager.mk_rel_product(a, b)
+        }
+        TermKind::SetRelTranspose(a) => {
+            let a = sub(a);
+            manager.mk_rel_transpose(a)
+        }
+        TermKind::SetRelIden(a) => {
+            let a = sub(a);
+            manager.mk_rel_iden(a)
+        }
         TermKind::SetSingleton(e) => {
             let e = sub(e);
             manager.mk_set_singleton(e)

@@ -472,11 +472,15 @@ impl Solver {
             | TermKind::SetCard(a)
             | TermKind::SetComplement(a)
             | TermKind::SetChoose(a)
+            | TermKind::SetRelTranspose(a)
+            | TermKind::SetRelIden(a)
             | TermKind::BvNot(a) => push(*a),
             TermKind::SetUnion(a, b)
             | TermKind::SetInter(a, b)
             | TermKind::SetMinus(a, b)
             | TermKind::SetMember(a, b)
+            | TermKind::SetRelJoin(a, b)
+            | TermKind::SetRelProduct(a, b)
             | TermKind::SetSubset(a, b) => {
                 push(*a);
                 push(*b);

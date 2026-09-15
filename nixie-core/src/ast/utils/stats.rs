@@ -256,6 +256,8 @@ fn combine_complexity(
             | TermKind::SetCard(a)
             | TermKind::SetComplement(a)
             | TermKind::SetChoose(a)
+            | TermKind::SetRelTranspose(a)
+            | TermKind::SetRelIden(a)
             | TermKind::StrFromCode(a)
             | TermKind::FfNeg(a),
         ) => 2 + get(*a),
@@ -288,6 +290,8 @@ fn combine_complexity(
             | TermKind::SetInter(a, b)
             | TermKind::SetMinus(a, b)
             | TermKind::SetMember(a, b)
+            | TermKind::SetRelJoin(a, b)
+            | TermKind::SetRelProduct(a, b)
             | TermKind::SetSubset(a, b)
             | TermKind::Select(a, b)
             | TermKind::BvConcat(a, b)

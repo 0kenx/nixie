@@ -119,6 +119,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::SetCard(a)
         | TermKind::SetComplement(a)
         | TermKind::SetChoose(a)
+        | TermKind::SetRelTranspose(a)
+        | TermKind::SetRelIden(a)
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }
@@ -142,6 +144,7 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
         | TermKind::SetMember(a, b)
+        | TermKind::SetRelJoin(a, b)        | TermKind::SetRelProduct(a, b)
         | TermKind::SetSubset(a, b)
         | TermKind::Select(a, b)
         | TermKind::StrConcat(a, b)
