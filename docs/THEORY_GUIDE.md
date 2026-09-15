@@ -13,12 +13,13 @@ characteristics, formulation tips, and common pitfalls.
 4. [Bit-Vectors (BV)](#bit-vectors-bv)
 5. [Arrays](#arrays)
 6. [Strings](#strings)
-7. [Floating-Point (FP)](#floating-point-fp)
-8. [Algebraic Datatypes (DT)](#algebraic-datatypes-dt)
-9. [Nonlinear Arithmetic (NIA/NRA)](#nonlinear-arithmetic-nianra)
-10. [Difference Logic (IDL/RDL)](#difference-logic-idlrdl)
-11. [Uninterpreted Functions (UF)](#uninterpreted-functions-uf)
-12. [Theory Combination](#theory-combination)
+7. [Finite Sets](#finite-sets)
+8. [Floating-Point (FP)](#floating-point-fp)
+9. [Algebraic Datatypes (DT)](#algebraic-datatypes-dt)
+10. [Nonlinear Arithmetic (NIA/NRA)](#nonlinear-arithmetic-nianra)
+11. [Difference Logic (IDL/RDL)](#difference-logic-idlrdl)
+12. [Uninterpreted Functions (UF)](#uninterpreted-functions-uf)
+13. [Theory Combination](#theory-combination)
 
 ---
 
@@ -304,6 +305,55 @@ with shared term detection for overlapping signatures.
   in derivative computation
 - String-integer conversion (`str.to.int`, `int.to.str`) introduces arithmetic
   coupling
+
+---
+
+## Finite Sets
+
+**Logic:** use `ALL` or no logic declaration (the SMT-LIB sets theory has
+no standardized logic string yet; cvc5 accepts `ALL`)
+
+### Solver Components
+
+- **Ground reduction** (`nixie-solver/src/solver/set_theory`): every
+  membership atom gets its defining axioms at assert time — `x ∈ a ∪ b
+  ⇔ x ∈ a ∨ x ∈ b`, extensionality witnesses for disequalities, congruence
+  of membership over equal elements
+- **Cardinality** (`set_theory/cardinality.rs`): the Venn-region/slack
+  encoding — counting equations with equivalence-class de-duplication,
+  inclusion–exclusion over twin terms (`a ∪ b`'s missing `a ∩ b` is
+  created), slack monotonicity, subset↔size rules, and finite-universe
+  bounds for Bool/bit-vector/float/finite-field/datatype element sorts
+
+### Supported Surface
+
+```smt2
+(set-logic ALL)
+(declare-const s (Set Int))
+(declare-const t (Set Int))
+
+(assert (set.member 1 s))                  ; x ∈ s
+(assert (set.subset s t))                  ; s ⊆ t
+(assert (= (set.card s) 2))                ; |s| = n
+(assert (= (set.card (set.union s t)) 3))  ; inclusion–exclusion
+(assert (set.member (set.choose s) s))     ; choose(s) ∈ s ↔ s ≠ ∅
+(assert (set.is_empty (set.minus s s)))    ; |x| = 0
+```
+
+Also: `(as set.empty (Set X))`, `(as set.universe (Set X))`,
+`set.singleton`, `set.insert`, `set.inter`, `set.complement`, and Z3's
+bare spellings (`union`, `member`, `card`, `subset`, `singleton`,
+`insert`, `emptyset`, `univset`, …) when not shadowed by user declarations.
+
+### Formulation Tips
+
+- Ground cardinality is decided exactly; quantified set formulas rely on
+  MBQI and may answer `unknown`
+- Cardinality over `set.complement`/`set.universe` requires a **finite**
+  element sort (`Bool`, `(_ BitVec w)`, finite fields, enums); over `Int`
+  it degrades to `unknown` honestly
+- Very wide cones (>40 sets under cardinality constraints) or element
+  lists (>24 ground elements) raise the honesty gate rather than blow up
 
 ---
 
