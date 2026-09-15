@@ -31,6 +31,18 @@
 //! fall back to **complete enumeration** over the term semantics — the
 //! design's "brute enumeration is viable and complete at tiny fields",
 //! on the same code path, not a second architecture.
+//!
+//! **`QF_UFFF` (FF ⊕ EUF).** An uninterpreted application with an FF
+//! result sort (`f : 𝔽pⁿ → 𝔽p`) is an **opaque ring variable** to every
+//! walk here: the encoder mints it a variable like a `Var`, the
+//! enumerator assigns it like one, and the exact evaluator looks it up
+//! in the assignment. Application *arguments* are never descended into
+//! (they may belong to other fields, whose slices own them). Everything
+//! EUF knows about these variables — asserted equalities and
+//! disequalities, and the congruences `x = y ⟹ f(x) = f(y)` — arrives as
+//! ordinary literals from the combination layer
+//! (`nixie-solver/src/solver/check_ff.rs`'s `dpll_ufff`), so this module
+//! needs no e-graph of its own.
 
 use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
@@ -785,6 +797,21 @@ impl<'a> Encoder<'a> {
                 self.var_index.insert(t, self.next_var);
                 self.next_var += 1;
             }
+            // A `QF_UFFF` application with an FF result sort of THIS field
+            // is an opaque variable (see the module doc): mint it, and do
+            // NOT descend into the arguments — they may belong to other
+            // fields whose slices own them, and nothing this field's
+            // polynomials can say about them is sound.
+            if let TermKind::Apply { .. } = &term.kind
+                && self.is_field_sort(manager, term.sort)
+                && !self.var_index.contains_key(&t)
+            {
+                self.var_index.insert(t, self.next_var);
+                self.next_var += 1;
+            }
+            if let TermKind::Apply { .. } = &term.kind {
+                continue;
+            }
             stack.extend(nixie_core::ast::get_children(&term.kind));
         }
         Ok(())
@@ -864,6 +891,15 @@ impl<'a> Encoder<'a> {
                         TermKind::Var(_) => {
                             // FF-sorted variables were registered in pass 1;
                             // anything else here is a shape violation.
+                            let var = self.var_index.get(&t).copied()?;
+                            let mut p = MPoly::zero();
+                            p.add_term(self.f, Monomial::from_var(var), &self.f.one());
+                            results.push(p);
+                        }
+                        TermKind::Apply { .. } => {
+                            // A `QF_UFFF` opaque application (registered in
+                            // pass 1 when its result sort is this field).
+                            // Atomic: the arguments are never encoded here.
                             let var = self.var_index.get(&t).copied()?;
                             let mut p = MPoly::zero();
                             p.add_term(self.f, Monomial::from_var(var), &self.f.one());
@@ -1222,6 +1258,21 @@ fn collect_field_variables(
                     vars.push(t);
                 }
             }
+            // A `QF_UFFF` application whose result sort is this field is an
+            // opaque variable the enumerator must assign (see the module
+            // doc). Arguments are not walked: same-field subterms reach
+            // `vars` through the literals that mention them directly, and
+            // foreign-field arguments belong to other slices — walking
+            // them here would both over-collect and mis-route.
+            TermKind::Apply { .. } => {
+                if matches!(
+                    manager.sorts.get(term.sort).map(|s| &s.kind),
+                    Some(SortKind::FiniteField(id)) if *id == field
+                ) && !vars.contains(&t)
+                {
+                    vars.push(t);
+                }
+            }
             TermKind::FfConst { field: id, .. } => {
                 if *id != field {
                     return Err("mixed fields in one check".to_string());
@@ -1255,7 +1306,13 @@ fn enumerate(
     assertions: &[TermId],
     budget: u64,
 ) -> FfOutcome {
-    // Mixed-radix enumeration over p^n points.
+    // Mixed-radix enumeration over p^n points. The caller's cap
+    // (p^n ≤ 2^22, checked in [`check_conjunction`]) guarantees the
+    // point count fits u64, and any modulus with n ≥ 1 under that cap
+    // is far below 2^64 — so the counter and its digits run in u64
+    // (the first version did BigUint div/mod per digit per point, which
+    // made a 2^15-point enumeration cost ~a second; the combination
+    // loop runs thousands of those).
     let n = vars.len();
     let total: BigUint = num_traits::Pow::pow(modulus.clone(), n);
     let total_u64: Option<u64> = (&total).try_into().ok();
@@ -1264,24 +1321,23 @@ fn enumerate(
             where_: "enumeration space",
         };
     };
+    // Out of budget up front: enumerating `budget` points only to
+    // abandon the search at the same verdict is pure waste.
+    if total_u64 > budget {
+        return FfOutcome::OutOfBudget {
+            where_: "enumeration space",
+        };
+    }
+    let modulus_u64: u64 = modulus.try_into().unwrap_or(u64::MAX);
 
     let mut assignment: FxHashMap<TermId, BigUint> = FxHashMap::default();
-    let mut counter = BigUint::zero();
-    for _ in 0..total_u64 {
+    for counter in 0..total_u64 {
         // Decode the counter into digits base p.
-        let mut rest = counter.clone();
+        let mut rest = counter;
         for var in vars {
-            let digit = &rest % modulus;
-            rest = &rest / modulus;
-            assignment.insert(*var, digit);
-        }
-        // Budget: one unit per candidate point — enumeration is complete
-        // only when it finishes, and finishing must be distinguishable
-        // from stopping.
-        if u64::from(counter.to_string().parse::<u32>().unwrap_or(u32::MAX)) > budget {
-            return FfOutcome::OutOfBudget {
-                where_: "enumeration space",
-            };
+            let digit = rest % modulus_u64;
+            rest /= modulus_u64;
+            assignment.insert(*var, BigUint::from(digit));
         }
         let all_satisfied = assertions.iter().all(|&a| {
             matches!(
@@ -1298,7 +1354,6 @@ fn enumerate(
             }
             return FfOutcome::Model(model);
         }
-        counter += 1u8;
     }
     FfOutcome::Exhausted
 }
@@ -1362,6 +1417,14 @@ fn eval_term(
                         results.push(num_bigint::BigInt::to_biguint(value)? % modulus);
                     }
                     TermKind::Var(_) => {
+                        results.push(assignment.get(&t).cloned()?);
+                    }
+                    // `QF_UFFF` opaque application: its value is whatever the
+                    // assignment gives the term (the combination layer
+                    // guarantees those values satisfy congruence; this fold
+                    // deliberately knows nothing about it). Atomic — the
+                    // arguments are not evaluated here.
+                    TermKind::Apply { .. } => {
                         results.push(assignment.get(&t).cloned()?);
                     }
                     TermKind::FfAdd(children) => {
@@ -1445,6 +1508,24 @@ impl MapNot for Option<bool> {
     fn map_not(self) -> Self {
         self.map(|b| !b)
     }
+}
+
+/// Exact evaluation of an FF term of `field` under a term→residue map —
+/// the public face of the [`validate_model`] fold, for callers outside
+/// this crate (the `QF_UFFF` combination layer's function-hood scan:
+/// given candidate values for the opaque applications and variables, a
+/// congruence check needs the *argument* values, and arguments are
+/// arbitrary FF terms). Returns `None` on an unassigned leaf, a foreign
+/// constant, or a non-FF shape — never a guess.
+#[must_use]
+pub fn evaluate_term_exact(
+    manager: &TermManager,
+    field: FieldId,
+    root: TermId,
+    assignment: &FxHashMap<TermId, BigUint>,
+) -> Option<BigUint> {
+    let modulus = manager.sorts.field_table().modulus(field)?.clone();
+    eval_term(manager, field, &modulus, root, assignment)
 }
 
 // ================= Step 5: validation =================

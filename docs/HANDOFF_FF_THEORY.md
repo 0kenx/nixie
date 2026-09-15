@@ -121,6 +121,16 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 - **T7 — git protocol.** Land on `main` via fast-forward from a clean
   worktree; never force-push; stage only your files; delete your
   worktrees; copy release binaries to `precompile/<sha>/`.
+- **T8 — folded equalities are not atoms.** `mk_eq(#f1m2, (ff.add x0 x0))`
+  folds to `true` at construction (the cvc5-exact normal form), so no
+  Boolean model ever asserts its negation. A guard that treats "the
+  negation is absent from the model" as "the pair is asserted distinct"
+  counts such pairs toward `distinct`'s k and refutes perfectly
+  satisfying assignments — a false `unsat` found by the `QF_UFFF` oracle.
+  Pair literals must be classified at construction: folded-`true` kills
+  the family (it is refutable outright, not by pigeonhole),
+  folded-`false` is vacuously distinct, anything else is an atom.
+  Pinned by `oracle_f2_unary` (instance 11 of seed 0xFF00_0001).
 
 ## 5. Open work, in recommended order
 
@@ -134,13 +144,17 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
    these are selection/algorithm changes inside a chaotic search —
    matched nulls and ≥10 seeds per cell where applicable; the
    deterministic front-end items need only step counts.
-2. **`QF_UFFF` (Phase 6 remainder)**: FF ⊕ EUF via polite combination
-   (EUF is smooth/finitely witnessable); needs the arrangement
-   machinery over shared FF-sorted terms and the cardinality guard at
-   the interface (k pairwise-distinct shared terms satisfiable only if
-   k ≤ p — vacuous at ZK primes, a false-`sat` at 𝔽₂/𝔽₃). The pure-QF_FF
-   spine guard in `check_ff.rs` is the pattern; the toy-field
-   regression (`distinct` over 𝔽₂) is the pin.
+2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
+   EUF via model-guided arrangement search over opaque applications;
+   see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
+   `nixie-theories/src/ff_euf.rs` (batch congruence closure),
+   `check_ff.rs`'s `dpll_ufff` (the combination loop), and the oracles
+   (`nixie-solver/tests/ff_ufff_oracle.rs` — brute force over every
+   model; `ff_ufff_regression.rs` — the 𝔽₂ `distinct` pin and
+   certified-mode behavior). Follow-ups if capacity demands:
+   congruence explanations for multi-field core-directed blocking, and
+   a case-tree certificate so FF-arithmetic combination UNSATs can
+   certify.
 3. **Branch-exhaustion certificates (§8 hard half)**: when UNSAT comes
    from FindZero closing the tree, the proof is a case tree; each
    branch step is checkable (`f = ∏(x−rᵢ)·q` with `gcd(q, x^p−x)=1`).

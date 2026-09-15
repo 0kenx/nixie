@@ -1,21 +1,27 @@
 # Finite Fields (`QF_FF`) — theory design
 
-**Status:** Phases 0–6 (certifiable half) implemented (2026-09-14); 7 and
-the QF_UFFF combination open. See `nixie-core/src/sort/field.rs`,
+**Status:** Phases 0–6 implemented (2026-09-14); `QF_UFFF` (the
+Phase-6 combination remainder) landed 2026-09-16 — see §7.1 for the
+as-built arrangement architecture. Still open: §6.5 split GB, §8's
+branch-exhaustion case-tree proofs, §7-style incremental trail,
+F4/NTT. See `nixie-core/src/sort/field.rs`,
 `nixie-math/src/ff/`, `nixie-theories/src/ff_theory.rs` (the [OKTB23]
 procedure + Phase-5 front end + `FfCertificate` with its replay
-verifier), `nixie-solver/src/solver/check_ff.rs` (eager dispatch +
-Phase-4 lazy DPLL(T) + the §7 cardinality guard on the asserted spine),
-the oracles in `nixie-theories/tests/ff_oracle.rs` (exhaustive at tiny
-primes; certificate-corruption rejections) and `ff_planted_fuzz.rs`
-(planted witnesses at Goldilocks/BN254/BLS12-381), and `bench/ff/`.
+verifier), `nixie-theories/src/ff_euf.rs` (the batch congruence
+closure), `nixie-solver/src/solver/check_ff.rs` (eager dispatch +
+Phase-4 lazy DPLL(T) + the §7 cardinality guard + the `QF_UFFF`
+combination loop), the oracles in `nixie-theories/tests/ff_oracle.rs`
+(exhaustive at tiny primes; certificate-corruption rejections),
+`ff_planted_fuzz.rs` (planted witnesses at Goldilocks/BN254/BLS12-381),
+`nixie-solver/tests/ff_ufff_oracle.rs` (brute-force over every model:
+variable assignments × function tables) and
+`nixie-solver/tests/ff_ufff_regression.rs`, and `bench/ff/`.
 Certified mode: FF `sat` is model-certified (exact modular evaluation in
 the independent AST evaluator); FF `unsat` is accepted only with a
-verified `FfCertificate` (ideal-membership or pigeonhole) —
-branch-exhaustion UNSATs degrade to `unknown` by design. Remaining:
-§6.5 split GB, §8's branch-exhaustion case-tree proofs, `QF_UFFF` (the
-arrangement machinery; the pure-FF cardinality guard exists), §7-style
-incremental trail, F4/NTT.
+verified `FfCertificate` (ideal-membership or pigeonhole) or through
+the checker's independently-verified EUF blocking loop (pure-congruence
+refutations); FF-arithmetic-involved combination UNSATs degrade to
+`unknown` by design.
 **Date:** 2026-09-13 (design), 2026-09-14 (implementation status).
 **Reference implementation consulted:** cvc5 `src/theory/ff/` (read-only, at
 `../temp/cvc5`), which implements [OKTB23] "Satisfiability Modulo Finite Fields"
@@ -483,6 +489,60 @@ Phase 1–5 scope is `QF_FF` alone, with mixed FF/UF inputs rejected by the logi
 contract. `QF_UFFF` comes only after the arrangement machinery and that guard exist.
 
 ---
+
+### 7.1 `QF_UFFF` as built (2026-09-16)
+
+The polite combination landed with the architecture the §7 discussion
+sketches, in the shape the dispatch layer could carry honestly:
+
+- **Opaque applications.** An application with an FF result sort is an
+  *opaque ring variable* to the whole `QF_FF` procedure: the encoder
+  mints it a variable, the enumerator assigns it, the exact evaluator
+  looks it up. Application arguments are never descended into by any
+  FF walk (an application contributes exactly its result field to
+  slice routing — a foreign-field argument belongs to its own field's
+  slice).
+- **Batch congruence closure** (`nixie-theories/src/ff_euf.rs`) over
+  the FF-sorted subterms of the goal's atoms: merges from the asserted
+  equalities of the current Boolean model, closed under congruence by
+  a fresh-signature-table fixpoint (no incremental signature
+  maintenance to get wrong — a stale entry is structurally impossible
+  when every round rebuilds).
+- **Model-guided arrangement search.** Per Boolean model, the closure's
+  merge classes become extra literals for the FF slices; the FF
+  procedure's model induces an arrangement over the shared terms; a
+  function-hood violation (equal argument values, different results)
+  splits on the *valid* disjunction `f(a) = f(b) ∨ ⋁ᵢ aᵢ ≠ bᵢ`, driven
+  by an explicit stack. This is the arrangement guessing of polite
+  combination without an `O(n²)`-literal upfront case split: the FF
+  model proposes, the disjunction discharges.
+- **Completion.** Unconstrained FF terms (those no literal mentions)
+  get defaults, repaired to preserve function-hood; a completion the
+  pass cannot build is an `unknown`, never a broken model.
+- **Cardinality at both ends.** The spine guard (top-level `distinct`
+  over k > p terms, pigeonhole certificate) and, per Boolean model, the
+  interface guard over `distinct` families the model asserts in full —
+  built from pair literals *after* construction-time folding, so a pair
+  whose equality folds to `true` (the family is refutable outright)
+  never inflates the count. That folding interaction was a real false
+  `unsat`: "absent from the model" is not "asserted negative".
+- **Honesty.** One shared tick budget (case nodes) and a bounded
+  per-node FF budget; both exhaust to `unknown`. Refutations block the
+  Boolean model with a **destructively minimized** conflict subset
+  (each shrink re-runs the root check, so the surviving subset really
+  refutes) or the traced FF core when it names only assignment literals.
+
+Verified by `nixie-solver/tests/ff_ufff_oracle.rs` — brute force over
+*every* model (variable assignments × function tables) at `p ∈
+{2,3,5,7}` — plus the congruence/cardinality/certified-mode
+regressions in `ff_ufff_regression.rs`.
+
+Known gaps, deliberately honest: multi-field congruence-dependence
+disables core-directed blocking (those block on the whole assignment);
+compound unconstrained arguments the completion cannot separate
+decline to `unknown`; combination UNSATs that need field arithmetic
+have no certificate (certified mode downgrades; pure-congruence
+refutations certify through the checker's independent EUF loop).
 
 ## 8. Models, proofs, certificates
 

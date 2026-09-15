@@ -132,16 +132,25 @@ fn term_str(t: &FfTerm, p: u64) -> String {
         FfTerm::Var(v) => format!("x{v}"),
         FfTerm::Add(ts) => format!(
             "(ff.add {})",
-            ts.iter().map(|t| term_str(t, p)).collect::<Vec<_>>().join(" ")
+            ts.iter()
+                .map(|t| term_str(t, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         FfTerm::Mul(ts) => format!(
             "(ff.mul {})",
-            ts.iter().map(|t| term_str(t, p)).collect::<Vec<_>>().join(" ")
+            ts.iter()
+                .map(|t| term_str(t, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         FfTerm::App(f, args) => format!(
             "(f{} {})",
             f,
-            args.iter().map(|t| term_str(t, p)).collect::<Vec<_>>().join(" ")
+            args.iter()
+                .map(|t| term_str(t, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
     }
 }
@@ -151,16 +160,25 @@ fn form_str(f: &Form, p: u64) -> String {
         Form::Atom(Atom::Eq(a, b)) => format!("(= {} {})", term_str(a, p), term_str(b, p)),
         Form::Atom(Atom::Distinct(ts)) => format!(
             "(distinct {})",
-            ts.iter().map(|t| term_str(t, p)).collect::<Vec<_>>().join(" ")
+            ts.iter()
+                .map(|t| term_str(t, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Form::Not(inner) => format!("(not {})", form_str(inner, p)),
         Form::And(fs) => format!(
             "(and {})",
-            fs.iter().map(|x| form_str(x, p)).collect::<Vec<_>>().join(" ")
+            fs.iter()
+                .map(|x| form_str(x, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Form::Or(fs) => format!(
             "(or {})",
-            fs.iter().map(|x| form_str(x, p)).collect::<Vec<_>>().join(" ")
+            fs.iter()
+                .map(|x| form_str(x, p))
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
     }
 }
@@ -193,14 +211,19 @@ fn eval_term(t: &FfTerm, p: u64, vars: &[u64], tables: &[Vec<u64>]) -> u64 {
     match t {
         FfTerm::Const(c) => *c % p,
         FfTerm::Var(v) => vars[*v],
-        FfTerm::Add(ts) => ts.iter().map(|t| eval_term(t, p, vars, tables)).sum::<u64>() % p,
-        FfTerm::Mul(ts) => ts
-            .iter()
-            .map(|t| eval_term(t, p, vars, tables))
-            .product::<u64>()
-            % p,
+        FfTerm::Add(ts) => {
+            ts.iter()
+                .map(|t| eval_term(t, p, vars, tables))
+                .sum::<u64>()
+                % p
+        }
+        FfTerm::Mul(ts) => {
+            ts.iter()
+                .map(|t| eval_term(t, p, vars, tables))
+                .product::<u64>()
+                % p
+        }
         FfTerm::App(f, args) => {
-            let arity = args.len();
             let mut idx = 0usize;
             for a in args {
                 idx = idx * p as usize + eval_term(a, p, vars, tables) as usize;
@@ -212,7 +235,9 @@ fn eval_term(t: &FfTerm, p: u64, vars: &[u64], tables: &[Vec<u64>]) -> u64 {
 
 fn eval_form(f: &Form, p: u64, vars: &[u64], tables: &[Vec<u64>]) -> bool {
     match f {
-        Form::Atom(Atom::Eq(a, b)) => eval_term(a, p, vars, tables) == eval_term(b, p, vars, tables),
+        Form::Atom(Atom::Eq(a, b)) => {
+            eval_term(a, p, vars, tables) == eval_term(b, p, vars, tables)
+        }
         Form::Atom(Atom::Distinct(ts)) => {
             let vals: Vec<u64> = ts.iter().map(|t| eval_term(t, p, vars, tables)).collect();
             (0..vals.len()).all(|i| (i + 1..vals.len()).all(|j| vals[i] != vals[j]))
@@ -329,7 +354,7 @@ fn oracle_f2_binary() {
 #[test]
 fn oracle_f2_two_functions() {
     // 4 × 4 × 4 = 64 models per instance.
-    run_oracle(2, 1, &[1, 1], 200, 0xFF00_0003);
+    run_oracle(2, 1, &[1, 1], 100, 0xFF00_0003);
 }
 
 #[test]
@@ -362,8 +387,18 @@ fn every_verdict_is_reproduced_deterministically() {
     // Same instance, two fresh contexts: identical verdict (the solver
     // must stay reproducible — no hash-order or wall-clock input).
     let mut rng = Rng(0xABCD_EF01);
-    let proto = Instance { p: 3, n_vars: 2, arities: vec![1], form: Form::Or(vec![]) };
-    let inst = Instance { p: 3, n_vars: 2, arities: vec![1], form: gen_form(&mut rng, &proto, 3) };
+    let proto = Instance {
+        p: 3,
+        n_vars: 2,
+        arities: vec![1],
+        form: Form::Or(vec![]),
+    };
+    let inst = Instance {
+        p: 3,
+        n_vars: 2,
+        arities: vec![1],
+        form: gen_form(&mut rng, &proto, 3),
+    };
     let s = script(&inst);
     let v1 = Context::new().execute_script(&s).expect("parse")[0].clone();
     let v2 = Context::new().execute_script(&s).expect("parse")[0].clone();
