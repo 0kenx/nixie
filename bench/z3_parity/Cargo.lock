@@ -636,6 +636,7 @@ dependencies = [
  "nixie-sat",
  "nixie-time",
  "num-bigint",
+ "num-integer",
  "num-rational",
  "num-traits",
  "portable-atomic-util",
