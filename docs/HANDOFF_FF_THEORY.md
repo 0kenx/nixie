@@ -50,9 +50,12 @@ cardinality guard on the asserted conjunct spine only.
 exact modular evaluation; FF `unsat` accepted only with a verified
 certificate; exhaustion fails closed.
 
-**Current capacity** (BN254, bench/ff/): sparse R1CS 128×192 `sat` in
-38 s (16×24/32×48 < 100 ms); dense 12×20 `sat` 337 ms; chain 16×24/32×48
-`sat`; chain 64×96+ exceeds 120 s — genuine MQ hardness, answered
+**Current capacity** (BN254, bench/ff/, after the Phase-7 split-GB
+landing, 2026-09-16 — see
+`docs/studies/2026-09-16-ff-split-gb-chain-capacity.md`): sparse R1CS
+solves at every size (8×12…64×96 in ≤0.3 s, 128×192 in 8 s); dense 12×20
+`sat` 0.1 s; chain 16×24 `sat` 0.06 s, 32×48 `sat` 67 s; chain 64×96+
+exceeds 120 s — genuine MQ hardness at the remaining frontier, answered
 honestly.
 
 ## 3. Verification bar (run before declaring anything done)
@@ -121,6 +124,17 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 - **T7 — git protocol.** Land on `main` via fast-forward from a clean
   worktree; never force-push; stage only your files; delete your
   worktrees; copy release binaries to `precompile/<sha>/`.
+- **T9 — lazy enumeration must carry its truncation flag to the verdict.**
+  The lazy round-robin's first version enumerated 256 of p values, let
+  the stack empty, and reported `Exhausted` — a false `unsat` on a
+  planted-BN254 goal. The tiny-prime oracle CANNOT catch this class (p ≤
+  256 never truncates); the planted-at-real-primes corpus can, and did.
+  Pinned by `planted_bn254_sparse_8x12_is_never_unsat` and
+  `all_big_solutions_stay_honest`. Any bounded-search change must
+  propagate its truncation into the outcome type, and a related note for
+  the editing process: python `str.replace` silently no-ops on a
+  non-matching block — the missing gate was an edit that "applied"
+  without applying; assert replacement counts when patching this file.
 - **T8 — folded equalities are not atoms.** `mk_eq(#f1m2, (ff.add x0 x0))`
   folds to `true` at construction (the cvc5-exact normal form), so no
   Boolean model ever asserts its negation. A guard that treats "the
@@ -134,16 +148,17 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 
 ## 5. Open work, in recommended order
 
-1. **Chain ≥64×96 capacity (Phase 7)**: genuine MQ hardness now —
-   plain Buchberger hits degree-7 bases with 253-term elements at 8×6.
-   The pre-registered experiments: split-GB (maintain bases over
-   variable subsets in the ORIGINAL space, exchange only
-   support-fitting consequences — gets binomial cleanliness AND
-   decomposition; both flattening studies converge here), then F4-style
-   batched reduction. NTT untested. Follow `docs/BENCHMARKING.md`:
-   these are selection/algorithm changes inside a chaotic search —
-   matched nulls and ≥10 seeds per cell where applicable; the
-   deterministic front-end items need only step counts.
+1. **Chain ≥64×96 capacity (Phase 7, remainder)**: split-GB **landed
+   2026-09-16** as the monolithic-first fallback (`ff_theory.rs`'s
+   `split_grobner_basis`, cvc5's admit discipline) with lazy honest
+   round-robin and element-bootstrapped branching — chain 16×24/32×48
+   and sparse 128×192 now solve; the study records the three negative
+   variants measured on the way (operand flattening under the split
+   destroys the variable sharing the chain's S-pairs need; split-first
+   starves monolithic-completable goals; a fractional completion slice
+   likewise). REMAINING: chain ≥64×96, F4-style batched reduction, NTT,
+   and round-robin branch-variable selection (a heuristic inside a
+   chaotic search — matched nulls per `docs/BENCHMARKING.md`).
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

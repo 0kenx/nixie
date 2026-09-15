@@ -48,7 +48,10 @@ use nixie_core::ast::{TermId, TermKind, TermManager};
 use nixie_core::sort::SortKind;
 use nixie_core::sort::field::FieldId;
 use nixie_math::ff::field::{FieldCtx, Limbs};
-use nixie_math::ff::grobner::{GrobnerBudget, GrobnerError, grobner_basis, minimal_polynomial};
+use nixie_math::ff::grobner::{
+    DEGREVLEX, GrobnerBasis, GrobnerBudget, GrobnerError, grobner_basis, minimal_polynomial,
+    normal_form,
+};
 use nixie_math::ff::poly::MPoly;
 use nixie_math::ff::roots::{RootBudget, RootError, roots as uni_roots};
 use nixie_math::ff::uni_poly::UniPoly;
@@ -396,8 +399,143 @@ fn encode_generators<'f>(
             origin,
         });
     }
-
     Ok((enc, generators))
+}
+
+/// A two-way split Gröbner basis (Phase 7; cvc5 `split_gb.cpp`, the
+/// [split-GB] paper's SplitGb): a LINEAR ideal and a NONLINEAR ideal,
+/// exchanged under cvc5's `admit` discipline —
+///
+/// * the linear ideal accepts every linear consequence of either
+///   basis (it stays linear under Buchberger: S-pairs of linear
+///   polynomials are linear, so it can never re-inflate);
+/// * the nonlinear ideal accepts only **linear binomials** (`x − c`,
+///   `x − y`), so the dense linear content (definitions, RREF rows)
+///   never enters the cascade — the exact re-expansion failure the two
+///   flattening studies root-caused (a pivot row substituted into a
+///   product rebuilds the expansion inside the S-pairs).
+///
+/// With the encoder's operand flattening, a circuit-shaped generator
+/// `⟨a,z⟩·⟨b,z⟩ − c` reaches the nonlinear ideal as the binomial
+/// `t·u − k` plus two linear definitions in the linear ideal — binomial
+/// cleanliness AND decomposition, the property both studies converged
+/// on.
+///
+/// Sound by construction: every polynomial exchanged is a member of the
+/// ideal its basis generates, and every basis input is (inductively) a
+/// member of the component's ideal, so `1` in either basis refutes the
+/// component. Termination by Noetherianity (each round either strictly
+/// grows one of the two ideals or the fixpoint stops); in practice the
+/// shared budget bounds the work.
+struct SplitBasis {
+    /// The merged basis for FindZero (NOT itself inter-reduced — a
+    /// union of two Gröbner bases; every element is in the component's
+    /// ideal, which is all FindZero's branchers need).
+    merged: GrobnerBasis,
+}
+
+/// Compute the split basis of one component's generators. `Err` on
+/// budget exhaustion (the caller answers `Unknown`).
+fn split_grobner_basis(
+    f: &FieldCtx,
+    component: &[&FrontGen],
+    budget: &mut GrobnerBudget,
+) -> Result<SplitBasis, GrobnerError> {
+    let deg_of = |p: &MPoly| p.lm(DEGREVLEX).map_or(0, |m| m.total_degree());
+    let mut l_inputs: Vec<MPoly> = Vec::new();
+    let mut nl_inputs: Vec<MPoly> = Vec::new();
+    for g in component {
+        if deg_of(&g.poly) <= 1 {
+            l_inputs.push(g.poly.clone());
+        } else {
+            nl_inputs.push(g.poly.clone());
+        }
+    }
+    let mut l_basis: Option<GrobnerBasis> = None;
+    let mut nl_basis: Option<GrobnerBasis> = None;
+    // Polys pending insertion into each ideal (cvc5's newPolys): a
+    // basis is recomputed only when its pending set is nonempty, from
+    // its current elements plus the pending polys.
+    let mut new_l: Vec<MPoly> = Vec::new();
+    let mut new_nl: Vec<MPoly> = Vec::new();
+    let mut round = 0u32;
+    loop {
+        round += 1;
+        if round > 64 {
+            // Noetherian in principle; bounded in practice. A long
+            // exchange chain is a capacity limit, not an answer.
+            return Err(GrobnerError::Budget);
+        }
+        if !new_l.is_empty() || (l_basis.is_none() && !l_inputs.is_empty()) {
+            let mut gens: Vec<MPoly> = l_basis.as_ref().map_or_else(
+                || l_inputs.clone(),
+                |b| b.basis.iter().map(|t| t.poly.clone()).collect(),
+            );
+            gens.append(&mut new_l);
+            l_basis = Some(grobner_basis(f, &gens, budget)?);
+        }
+        if !new_nl.is_empty() || (nl_basis.is_none() && !nl_inputs.is_empty()) {
+            let mut gens: Vec<MPoly> = nl_basis.as_ref().map_or_else(
+                || nl_inputs.clone(),
+                |b| b.basis.iter().map(|t| t.poly.clone()).collect(),
+            );
+            gens.append(&mut new_nl);
+            nl_basis = Some(grobner_basis(f, &gens, budget)?);
+        }
+        // The exchange: offer every basis element to every ideal that
+        // admits it (cvc5's `admit`), skipping ideal membership. Only
+        // linear polys are ever exchanged; the nonlinear ideal admits
+        // only binomials.
+        let mut member = |p: &MPoly, b: &Option<GrobnerBasis>| -> Option<bool> {
+            b.as_ref()
+                .map(|b| normal_form(f, p, b, budget).is_some_and(|nf| nf.is_zero()))
+        };
+        let mut offered_l: Vec<MPoly> = Vec::new();
+        let mut offered_nl: Vec<MPoly> = Vec::new();
+        for basis in [&l_basis, &nl_basis] {
+            let Some(b) = basis else {
+                continue;
+            };
+            for t in &b.basis {
+                let p = &t.poly;
+                if p.lm(DEGREVLEX).is_none_or(|m| m.total_degree() > 1) {
+                    continue;
+                }
+                if member(p, &l_basis) != Some(true) {
+                    offered_l.push(p.clone());
+                }
+                if p.n_terms() <= 2 && member(p, &nl_basis) != Some(true) {
+                    offered_nl.push(p.clone());
+                }
+            }
+        }
+        if offered_l.is_empty() && offered_nl.is_empty() {
+            break;
+        }
+        new_l = offered_l;
+        new_nl = offered_nl;
+    }
+    let mut merged = GrobnerBasis {
+        basis: Vec::new(),
+        inputs: Vec::new(),
+    };
+    if let Some(b) = &l_basis {
+        merged.basis.extend(b.basis.iter().cloned());
+        merged.inputs.extend(b.inputs.iter().cloned());
+    }
+    if let Some(b) = &nl_basis {
+        merged.basis.extend(b.basis.iter().cloned());
+        merged.inputs.extend(b.inputs.iter().cloned());
+    }
+    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        eprintln!(
+            "[ff-stats] split: {} rounds, linear {}, nonlinear {}",
+            round,
+            l_basis.as_ref().map_or(0, |b| b.basis.len()),
+            nl_basis.as_ref().map_or(0, |b| b.basis.len()),
+        );
+    }
+    Ok(SplitBasis { merged })
 }
 
 /// The GB + FindZero path (odd primes).
@@ -464,74 +602,95 @@ fn grobner_path(
             budget_steps.ilog2()
         );
     }
-    if components.len() <= 1 {
-        // The common case: one component (or none) — the monolithic path.
-        let input_polys: Vec<MPoly> = generators.iter().map(|g| g.poly.clone()).collect();
-        let mut gbudget = GrobnerBudget::new(budget_steps);
-        return match grobner_basis(f, &input_polys, &mut gbudget) {
-            Err(GrobnerError::Budget) => FfOutcome::OutOfBudget {
-                where_: "Gröbner basis",
-            },
-            Ok(basis) => {
-                if basis.contains_nonzero_constant() {
-                    return traced_unsat(f, field, &generators, &basis);
-                }
-                let vars: Vec<Var> = (0..enc.next_var).collect();
-                find_zero(f, &basis, &enc, &vars, budget_steps)
-            }
-        };
-    }
-
-    // Multi-component: solve each; UNSAT of any refutes the whole (core
-    // = that component's origins); SAT needs a point of every component.
+    // Per component: the MONOLITHIC basis first — the proven path,
+    // exactly the pre-split behavior and budget semantics — and the
+    // split basis as the FALLBACK for components whose monolithic
+    // cascade is the blowup: separated linear/nonlinear ideals under
+    // cvc5's admit discipline, then FindZero over the merged union.
+    // UNSAT of any component refutes the whole; SAT needs a point of
+    // every component. Each component gets its own budget (component
+    // counts are small; a shared cap would starve late components).
     let mut combined = FfModel {
         values: FxHashMap::default(),
     };
     for component in &components {
         let input_polys: Vec<MPoly> = component.iter().map(|g| g.poly.clone()).collect();
         let mut gbudget = GrobnerBudget::new(budget_steps);
-        match grobner_basis(f, &input_polys, &mut gbudget) {
+        let (basis, root_is_gb, is_split) = match grobner_basis(f, &input_polys, &mut gbudget) {
+            Ok(basis) => (basis, true, false),
             Err(GrobnerError::Budget) => {
-                return FfOutcome::OutOfBudget {
-                    where_: "Gröbner basis (component)",
-                };
-            }
-            Ok(basis) => {
-                if std::env::var_os("NIXIE_FF_STATS").is_some() {
-                    eprintln!(
-                        "[ff-stats] component: {} generators -> basis of {}, GB steps left 2^{}",
-                        component.len(),
-                        basis.basis.len(),
-                        gbudget_remaining(&gbudget).map_or(0, |r| r.ilog2())
-                    );
-                }
-                if basis.contains_nonzero_constant() {
-                    let owned: Vec<FrontGen> = component.iter().map(|g| (*g).clone()).collect();
-                    return traced_unsat(f, field, &owned, &basis);
-                }
-                let vars = component_variables(component);
-                match find_zero(f, &basis, &enc, &vars, budget_steps) {
-                    FfOutcome::Model(model) => {
-                        for (var, value) in model.assignments() {
-                            combined.insert(*var, value.clone());
-                        }
+                // The fallback: the split (a fresh budget — the
+                // monolithic attempt's burn is sunk cost, and the
+                // separated ideals' work is disjoint from it).
+                let mut split_budget = GrobnerBudget::new(budget_steps);
+                match split_grobner_basis(f, component, &mut split_budget) {
+                    Ok(split) => (split.merged, false, true),
+                    Err(GrobnerError::Budget) => {
+                        return FfOutcome::OutOfBudget {
+                            where_: "Gröbner basis (component)",
+                        };
                     }
-                    FfOutcome::Exhausted => {
-                        // This component has no point: the whole goal is
-                        // UNSAT, with this component's origins as the
-                        // core (no certificate — exhaustion).
-                        let core: Vec<usize> = component
-                            .iter()
-                            .flat_map(|g| g.origin.iter().copied())
-                            .collect();
-                        return FfOutcome::Unsat(FfCore {
-                            fact_indices: core,
-                            certificate: None,
-                        });
-                    }
-                    other => return other,
                 }
             }
+        };
+        if std::env::var_os("NIXIE_FF_STATS").is_some() {
+            eprintln!(
+                "[ff-stats] component: {} generators -> {} basis of {}{}",
+                component.len(),
+                if is_split {
+                    "split-merged"
+                } else {
+                    "monolithic"
+                },
+                basis.basis.len(),
+                gbudget_remaining(&gbudget)
+                    .map_or_else(String::new, |r| format!(", GB steps left 2^{}", r.ilog2()))
+            );
+        }
+        if basis.contains_nonzero_constant() {
+            if !is_split {
+                // The monolithic refutation: the tracer is aligned with
+                // the component's generators — the traced core and the
+                // replayable certificate, exactly as before.
+                let owned: Vec<FrontGen> = component.iter().map(|g| (*g).clone()).collect();
+                return traced_unsat(f, field, &owned, &basis);
+            }
+            // A split-path refutation: the derivation runs through both
+            // ideals (or the exchanged polys detach the tracer from the
+            // component's generators), so the core is the component's
+            // origins and no certificate is claimed — certified mode
+            // honestly downgrades.
+            let core: Vec<usize> = component
+                .iter()
+                .flat_map(|g| g.origin.iter().copied())
+                .collect();
+            return FfOutcome::Unsat(FfCore {
+                fact_indices: core,
+                certificate: None,
+            });
+        }
+        let vars = component_variables(component);
+        let fz_outcome = find_zero(f, &basis, &enc, &vars, budget_steps, root_is_gb);
+        match fz_outcome {
+            FfOutcome::Model(model) => {
+                for (var, value) in model.assignments() {
+                    combined.insert(*var, value.clone());
+                }
+            }
+            FfOutcome::Exhausted => {
+                // This component has no point: the whole goal is
+                // UNSAT, with this component's origins as the
+                // core (no certificate — exhaustion).
+                let core: Vec<usize> = component
+                    .iter()
+                    .flat_map(|g| g.origin.iter().copied())
+                    .collect();
+                return FfOutcome::Unsat(FfCore {
+                    fact_indices: core,
+                    certificate: None,
+                });
+            }
+            other => return other,
         }
     }
     FfOutcome::Model(combined)
@@ -1011,16 +1170,28 @@ fn find_zero(
     enc: &Encoder<'_>,
     variables: &[Var],
     budget_steps: u64,
+    root_is_gb: bool,
 ) -> FfOutcome {
     struct Node {
         basis: nixie_math::ff::grobner::GrobnerBasis,
-        inputs: Vec<MPoly>,
+        /// Whether `basis` is an inter-reduced Gröbner basis of
+        /// `inputs`' ideal. The split path's root is a UNION of two
+        /// Gröbner bases — sound for every rule that only consumes
+        /// ideal members (univariate branching, linear univariates,
+        /// whole-ring detection), but NOT for the minimal-polynomial
+        /// rule, whose quotient-basis arithmetic is valid only for a
+        /// true basis.
+        is_gb: bool,
     }
 
     let mut stack: Vec<Node> = vec![Node {
         basis: basis.clone(),
-        inputs: basis.inputs.clone(),
+        is_gb: root_is_gb,
     }];
+    // Whether any round-robin enumerated fewer than p values: an
+    // exhausted stack over truncated branches is an OutOfBudget, never
+    // an Exhausted.
+    let mut truncated_any = false;
     let mut steps = 0u64;
     // ONE budget across the whole search: a fresh per-node budget made
     // the total work unbounded (a deep tree of cheap nodes never hit the
@@ -1133,7 +1304,7 @@ fn find_zero(
             else {
                 return FfOutcome::InvalidModel("no variables to branch on".to_string());
             };
-            if node.basis.is_zero_dimensional(&variables) {
+            if node.is_gb && node.basis.is_zero_dimensional(&variables) {
                 match minimal_polynomial(f, &node.basis, free_var, &variables, &mut gbudget) {
                     Some(minpoly) => {
                         match uni_roots(f, &minpoly, &mut rbudget) {
@@ -1153,33 +1324,48 @@ fn find_zero(
                     }
                 }
             } else {
-                // Positive-dimensional: enumerate the residues of the
-                // free variable. Complete — any solution assigns it some
-                // value — but p-sized; the budget fires honestly at a
-                // large prime.
+                // Positive-dimensional: enumerate the free variable's
+                // residues LAZILY, in value order 0, 1, 2, …, up to a
+                // small horizon. Complete for p ≤ horizon; beyond it,
+                // a truncated enumeration is recorded and the exhausted
+                // stack reports OutOfBudget, never Exhausted — the
+                // honest form of "this will not finish at a big prime".
+                // Structured systems tolerate the horizon well: a wrong
+                // guess on a product chain dies in one node (the branch
+                // literal contradicts or pins the propagation), so the
+                // effective branch factor is tiny even though the
+                // theoretical one is p.
+                const RR_HORIZON: u64 = 256;
                 let p = f.modulus();
-                if *p > BigUint::from(1_000_000u64) {
-                    return FfOutcome::OutOfBudget {
-                        where_: "positive-dimensional enumeration",
-                    };
-                }
-                let count: u64 = p.to_string().parse().unwrap_or(u64::MAX);
-                let vals: Vec<Limbs> = (0..count)
+                let cap: u64 = p.try_into().unwrap_or(u64::MAX);
+                let horizon = RR_HORIZON.min(cap);
+                let truncated = horizon < cap;
+                let vals: Vec<Limbs> = (0..horizon)
                     .map(|v| f.from_biguint(&BigUint::from(v)))
                     .collect();
+                if truncated {
+                    truncated_any = true;
+                }
                 (free_var, vals)
             }
         };
 
         // Branch: add x − value, recompute the basis (recompute, never
         // incrementally roll back — the design's scoping discipline).
+        // The child's generators are the node's BASIS ELEMENTS plus the
+        // branch literal — the same ideal as the raw inputs (a basis
+        // generates its ideal; the split root's union generates the
+        // component ideal), but already reduced, so each branch
+        // bootstraps from the reduced basis instead of re-running the
+        // original cascade.
+        let elements: Vec<MPoly> = node.basis.basis.iter().map(|t| t.poly.clone()).collect();
         for value in values {
             let mut poly = MPoly::zero();
             poly.add_term(f, Monomial::from_var(var), &f.one());
             let mut const_poly = MPoly::zero();
             const_poly.add_term(f, Monomial::unit(), &value.clone());
             let new_gen = poly.sub(f, &const_poly);
-            let mut inputs = node.inputs.clone();
+            let mut inputs = elements.clone();
             inputs.push(new_gen);
             match grobner_basis(f, &inputs, &mut gbudget) {
                 Err(GrobnerError::Budget) => {
@@ -1189,14 +1375,25 @@ fn find_zero(
                 }
                 Ok(child) => stack.push(Node {
                     basis: child,
-                    inputs,
+                    is_gb: true,
                 }),
             }
         }
     }
     // The stack emptied without a model: the branching was exhaustive —
     // UNSAT is genuine (Step 4's honesty gate: this is *not* a budget
-    // outcome).
+    // outcome) — UNLESS a round-robin branch enumerated fewer than p
+    // values: then unexplored assignments remain, the empty stack proves
+    // nothing, and the verdict is Unknown. (The first version of the
+    // lazy round-robin dropped exactly this gate — a planted BN254 goal
+    // whose satisfying values all exceeded the horizon came back
+    // `unsat`; the planted corpus caught it, the tiny-prime oracle
+    // could not, because p ≤ 256 never truncates there.)
+    if truncated_any {
+        return FfOutcome::OutOfBudget {
+            where_: "positive-dimensional enumeration",
+        };
+    }
     FfOutcome::Exhausted
 }
 
