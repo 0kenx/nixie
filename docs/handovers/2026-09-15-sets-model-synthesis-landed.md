@@ -132,6 +132,26 @@ cardinality over unconfined operands (nonlinear gate), rel compounds in
 A debug-only false alarm in the datatype model verifier was fixed
 (tuples over Int/Bool are outside the pure-datatype fragment).
 
+## Update 2026-09-15 (evening): rel compounds synthesize (`1d46dfef`)
+
+The synthesis-reach item's rel half is done: transpose/product/iden
+values now print and fold (`SetView` reads rel compounds through their
+installed entries — one source of truth for `get-value`, the gate, and
+nested reads); a cross-sort pass computes them after every sort's
+opaque values land, verified against their cardinality targets with
+rel-only rollback. Tuple-element component resolution makes committed
+members like the join split `(1, k)` read as the constructor over
+resolved (or freshly minted) components — both splits resolve through
+the one skolem entry, so the middles meet. A card target on a rel
+compound no longer rolls the operand's model back. The collision repair
+learned that an undecided atom is not a conflict and that a *refuted*
+counting guard pins nothing.
+
+Still declining, pinned by a test: a **join's own value** echoes when
+its split elements collide pinned-against-pinned through a shared
+skolem (verdicts and operand models unaffected). Parity re-run:
+176/1/0, z3 4.16.0, byte-identical. `precompile/1d46dfef/` cached.
+
 ## Roadmap (updated, value order)
 
 1. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
@@ -142,11 +162,11 @@ A debug-only false alarm in the datatype model verifier was fixed
    shapes beyond binary unions of opaque classes (nested compounds with
    overlap targets), sets over uninterpreted element sorts (no mintable
    witness), complements over large finite sorts (> 1024 elements,
-   `MAX_UNIVERSE_ENUM`), rel compounds in `get-value` (transpose/product/
-   iden values are computable from operand values; join needs
-   middle-matching), and pure product cardinality (a linear encoding of
-   `|a×b|` via pairwise guards, or Z3-style unique values). Each extends
-   naturally from the class/swap machinery in `set_model.rs`.
+   `MAX_UNIVERSE_ENUM`), the join's own value (split-collision repair:
+   separate join skolems per split, or Z3-style unique values), and pure
+   product cardinality (a linear encoding of `|a×b|` via pairwise
+   guards). Each extends naturally from the class/swap machinery in
+   `set_model.rs`.
 3. **Remaining rel surface**: `rel.tclosure` (needs a fixpoint or a
    bounded-unrolling scheme), `rel.join_image`, `rel.group`,
    `rel.project`, `rel.table_join` — all currently honest parse-level
