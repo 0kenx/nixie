@@ -460,6 +460,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
         .chain(s.subsets.iter())
         .map(|&(_, a, b)| (a, b))
         .collect();
+    // The equality-shaped subset of `relations`: the pairs whose atom, when
+    // committed true, makes the two sets *one* set. Cardinality needs these
+    // separately from the subsets (an equality forces the card terms equal;
+    // a subset only bounds them) — see [`cardinality::reduce`].
+    let mut eq_pairs: Vec<(TermId, TermId)> =
+        s.set_equalities.iter().map(|&(_, a, b)| (a, b)).collect();
     {
         let mut by_sort: FxHashMap<nixie_core::SortId, Vec<TermId>> = FxHashMap::default();
         for &set in &s.sets {
@@ -500,11 +506,12 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                         break 'pairs;
                     }
                     relations.push((*a, *b));
+                    eq_pairs.push((*a, *b));
                 }
             }
         }
     }
-    for (a, b) in relations {
+    for &(a, b) in &relations {
         let Some(es) = element_sort(a, manager) else {
             continue;
         };
@@ -531,7 +538,7 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // twins of every `a ∪ b` whose size the problem constrains — and those
     // twins need membership definitions of their own from the loop that
     // follows. See [`cardinality`].
-    let card = cardinality::reduce(&s, &elements, manager, &mut axioms);
+    let card = cardinality::reduce(&s, &elements, &relations, &eq_pairs, manager, &mut axioms);
     let mut definition_sets: Vec<TermId> = s.sets.clone();
     definition_sets.extend(card.extra_sets.iter().copied());
 
@@ -783,6 +790,55 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             let escapes = manager.mk_and([ka, not_kb]);
             let neg = manager.mk_not(atom);
             axioms.push(manager.mk_implies(neg, escapes));
+        }
+    }
+
+    // **`choose` is a function symbol: equal arguments give equal results.**
+    // Z3 and CVC5 get this from the equality engine (`choose` is an ordinary
+    // congruence-tracked application); here a set-sorted equality atom is a
+    // SAT variable the reduction itself relates, so the congruence has to be
+    // stated over the pairs of choose terms the survey found. Without it,
+    // `S = T ∧ |S| ≥ 1 ∧ choose(S) ≠ choose(T)` answered `Sat` — the member
+    // axioms let both chooses sit in the (equal) sets as two distinct
+    // elements, and nothing forced the two applications to agree.
+    //
+    // The antecedent is the equality atom of the two *arguments*; for an
+    // opaque pair that is exactly the atom the pair machinery above relates
+    // (and EUF commits when a derivation exists), and for an asserted
+    // equality it is the assertion itself, hash-consed to the same term.
+    const MAX_CHOOSE_PAIRS: usize = 128;
+    let mut choose_pairs = 0usize;
+    for (i, &(ua, ta)) in s.chooses.iter().enumerate() {
+        for &(ub, tb) in s.chooses.iter().skip(i + 1) {
+            if ta == tb || element_sort(ta, manager) != element_sort(tb, manager) {
+                continue;
+            }
+            if choose_pairs >= MAX_CHOOSE_PAIRS {
+                pair_budget_exceeded = true;
+                break;
+            }
+            choose_pairs += 1;
+            let same = manager.mk_eq(ta, tb);
+            let agree = manager.mk_eq(ua, ub);
+            axioms.push(manager.mk_implies(same, agree));
+        }
+    }
+    // `choose(ite c a b) = ite c (choose a) (choose b)`: with `c` the ite
+    // *is* `a`, so the two chooses must agree — but the equality atom the
+    // pair rule above conditions on (`ite c a b = a`) is never asserted by
+    // anyone, so without this the valid identity went unstated and
+    // `c ∧ choose(ite c A B) ≠ choose(A)` answered `Sat`. The cardinality
+    // analogue (`|ite c a b| = ite c |a| |b|`) is already exact in
+    // [`cardinality`]; this is the same shape for the element the ite
+    // yields. Minting `choose a`/`choose b` is sound — the SET_CHOOSE axiom
+    // the next survey emits for a minted term is valid for every set — and
+    // hash-consing keeps it stable across the per-assert re-runs.
+    for &(u, t) in &s.chooses {
+        if let Shape::Ite(c, a, b) = shape_of(t, manager) {
+            let ca = manager.mk_set_choose(a);
+            let cb = manager.mk_set_choose(b);
+            let picked = manager.mk_ite(c, ca, cb);
+            axioms.push(manager.mk_eq(u, picked));
         }
     }
 
