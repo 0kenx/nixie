@@ -897,6 +897,19 @@ impl EnumerativeInstantiator {
             // the universe back down.
             if let Some(semantic) = model.semantic_domains.get(&(quantifier_term, i)) {
                 domain.extend(semantic.iter().copied());
+            } else if !model.constructor_sources.is_empty()
+                && let Some(domain_frozen) = model.table_domain(sort, manager)
+            {
+                // Table mode: the completed structure's domain governs the
+                // whole problem (the aux restrictions, the tables, the
+                // certification semantics) — every engine enumerates the
+                // frozen domain, not only the table-owned axioms' axes.
+                // Enumerating raw pairs on the *other* axioms of a table
+                // problem bloats the observer tables past every chain cap
+                // (the set family: one 98-instance enum burst at raw pairs
+                // permanently fattened `member` and every later nested
+                // check paid for it until the global budget died).
+                domain.extend(domain_frozen);
             } else if let Some(universe) = model.table_domain(sort, manager) {
                 let mut seen_values: FxHashSet<TermId> = FxHashSet::default();
                 for element in universe {

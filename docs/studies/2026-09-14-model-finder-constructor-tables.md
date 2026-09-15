@@ -357,3 +357,46 @@ completed-body variant first); parity 176 Correct / 1 Inconclusive /
 0 wrong (z3 4.16.0); nixie-solver + nixie-core 4724/4728 (timeouts =
 the parallel-load pins; the heaviest passes standalone at 279 s, inside
 its terminate-after budget); fmt/clippy clean.
+
+
+## Table mode owns the whole problem (2026-09-15, fourth follow-up)
+
+The fresh-pin churn was two engines certifying one problem against two
+different semantics:
+
+- `sat_certify` (the Ge & de Moura fragment certifier) runs against the
+  *raw ground model* — and its relevant-set harvest grows with the
+  model's own entries.  Each emitted instance mints the next compound
+  level; the tuples never stop being fresh.  After the table-owned
+  quantifiers were declined, the churn simply moved to the *other*
+  axioms' relevant sets (~6 "fresh" instances per round, minter of the
+  permanent `member` bloat that later priced every nested check past
+  the global budget).
+- The table machinery certifies against the *completed structure*
+  (frozen domains, tables, aux restrictions).
+
+**The fix is a semantics separation**: when `constructor_sources` is
+non-empty (table mode), `sat_certify` declines the whole problem, and
+every engine domain — the enumerative seeder, the counterexample
+generator's candidate lists, the falsifier-mining odometer — reads the
+frozen `table_domain` for *every* axis of *every* quantifier, not only
+the table-owned ones.  One problem, one interpretation, one
+certification path.
+
+**Measured**: set16 62 s (session start) -> **0 s**; set9 22 s -> 0 s;
+set19 timeout -> 8 s — all still `unknown`, but the rounds now run
+barren within ~5 iterations and the whole search is instant.  The
+final blocker, for the next cycle: the main-level checks are
+cap-starved by round 5 ("per-quantifier check budget exhausted") — the
+dividend refunds fire but the caps re-exhaust; the cap accounting in
+table mode (which quantifier burns what) is the remaining
+instrumentation target.  The aux's own bodies fold to literal `false`
+for the residual quantifiers (`q57`, `q20` under the aux's completed
+model), so the certification content is there — the loop just cannot
+pay for it.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
+nixie-core 4736/4740; the heaviest convergence pin passes standalone
+at 271 s (in band; one flaked FAIL under concurrent load, clean on
+rerun); fmt/clippy clean.
