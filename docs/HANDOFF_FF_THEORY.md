@@ -1,19 +1,31 @@
-# Handover: QF_FF finite-field theory — continue from Phases 0–6 landed
+# Handover: QF_FF finite-field theory — the 2026-09-16 arc landed; the cascade frontier remains
 
 You are continuing the finite-field (`QF_FF`) solver work in this repo.
-Everything through Phase 6 (certifiable half) is **landed on main and
-verified**; the remaining items are at the bottom. Read this top to
-bottom before touching anything.
+Through Phase 6 AND the 2026-09-16 arc (`QF_UFFF`, split-GB, §8 case-tree
+certificates, budget honesty, the untraced fast path) everything is
+**landed on main and verified**; the remaining items are at the bottom.
+Read this top to bottom before touching anything.
 
 ## 1. Read first (in order)
 
-1. `docs/FF_THEORY_DESIGN.md` — the design (status header maps code).
-2. The three studies, in order — each records a negative result with its
-   root cause, and the third explains why they were all wrong:
+1. `docs/FF_THEORY_DESIGN.md` — the design (status header maps code;
+   §7.1 is the as-built `QF_UFFF` architecture).
+2. The 2026-09-14/15 flattening studies — each records a negative result
+   with its root cause, and the third explains why they were all wrong
+   (all three converge on the split-GB architecture):
    - `docs/studies/2026-09-14-ff-front-end-components-and-work-budgets.md`
-   `docs/studies/2026-09-14-ff-flattening-without-split-gb.md`
+   - `docs/studies/2026-09-14-ff-flattening-without-split-gb.md`
    - `docs/studies/2026-09-15-ff-kernel-projection.md`
-3. `AGENTS.md` (the repo's rules — soundness bar, git protocol).
+3. The 2026-09-16 arc studies, in order — what each landing measured,
+   which negative variants were discarded on the way, and what the next
+   lever is:
+   - `docs/studies/2026-09-16-ff-split-gb-chain-capacity.md`
+   - `docs/studies/2026-09-16-ff-chain-frontier-budget-honesty.md`
+   - `docs/studies/2026-09-16-ff-untraced-fast-path.md`
+   - `docs/studies/2026-09-16-ff-branch-selection-inapplicable.md`
+4. `AGENTS.md` (the repo's rules — soundness bar, git protocol) and, for
+   any heuristic experiment, `docs/BENCHMARKING.md` (matched nulls,
+   ≥10 seeds, tick counters only).
 
 ## 2. What exists and works (all on main, all tested)
 
@@ -43,20 +55,44 @@ Cardinality), tiny-field enumeration fallback (p^n ≤ 2^22).
 **Dispatch** (`nixie-solver/src/solver/check_ff.rs`): eager
 conjunctive dispatch + lazy DPLL(T) for Boolean structure (Tseitin
 over atom abstractions into nixie-sat, blocking clauses), §7
-cardinality guard on the asserted conjunct spine only.
+cardinality guard on the asserted conjunct spine only. **`QF_UFFF`**
+(2026-09-16): `dpll_ufff` — FF ⊕ EUF by model-guided arrangement
+search over OPAQUE applications (`nixie-theories/src/ff_euf.rs` batch
+congruence closure; see design §7.1), with the interface cardinality
+guard (k ≤ p) and destructive-conflict blocking.
+
+**Split-GB + fast path** (`nixie-theories/src/ff_theory.rs`,
+`nixie-math/src/ff/grobner.rs`): per component, the monolithic cascade
+first — UNTRACED for ≥40 inputs (empty cofactor rows gate every row op;
+a constant basis triggers one traced re-run for the witness; trajectory
+identity pinned by `nixie-math/tests/ff_gb_traced_untraced_identity.rs`)
+— then cvc5's 2-way split fallback (linear ideal / binomial-admitting
+nonlinear ideal, admit discipline, untraced). lm caching, selection-scan
+and cofactor-row budget charging, bloat circuit breaker. FindZero
+branches over the merged basis with lazy honest round-robin (256-value
+horizon; truncation ⇒ `OutOfBudget`, never `Exhausted`) and
+element-bootstrapped children.
+
+**§8 case-tree certificates** (`FfCertificate::CaseTree`): FindZero's
+exhaustions carry branch steps with root-completeness witnesses
+(`f = ∏(x−rᵢ)·q`, `gcd(q, x^p−x)=1`) and leaf memberships as composed
+cofactor expressions over the replayable encoding — composed through
+the linear core's rewriting (which now tracks each rewritten
+generator's expression; the substitution identity `g' = g − h·(x−repl)`
+in closed form). Certified mode accepts branch-exhaustion UNSATs.
 
 **Certified mode** (`nixie-solver/src/solver/certification.rs` +
 `nixie-core/src/ast/validation.rs`): FF `sat` model-certified with
 exact modular evaluation; FF `unsat` accepted only with a verified
 certificate; exhaustion fails closed.
 
-**Current capacity** (BN254, bench/ff/, after the Phase-7 split-GB
-landing, 2026-09-16 — see
-`docs/studies/2026-09-16-ff-split-gb-chain-capacity.md`): sparse R1CS
-solves at every size (8×12…64×96 in ≤0.3 s, 128×192 in 8 s); dense 12×20
-`sat` 0.1 s; chain 16×24 `sat` 0.06 s, 32×48 `sat` 67 s; chain 64×96+
-exceeds 120 s — genuine MQ hardness at the remaining frontier, answered
-honestly.
+**Current capacity** (BN254, bench/ff/, after the untraced fast path,
+2026-09-16 — see `docs/studies/2026-09-16-ff-untraced-fast-path.md`):
+sparse R1CS solves at every size (8×12…64×96 in ≤0.1 s, 128×192 in
+0.2 s); dense 12×20 `sat` 0.1 s; chain 16×24 `sat` 0.07 s, 32×48
+`sat` 0.13 s, **64×96 `sat` 1.2 s**; chain 128×192/256×384 honest
+`unknown` in ~3 s (the 128-constraint nonlinear cascade budget-outs
+even at 16× budget — measured, see the inapplicability study).
 
 ## 3. Verification bar (run before declaring anything done)
 
@@ -74,8 +110,18 @@ FF, these replace it):
 - `nixie-theories/tests/ff_planted_fuzz.rs` — planted witnesses at
   Goldilocks/BN254/BLS12-381; any `unsat` on a planted system is a hard
   failure; runs in ~0.25 s, run it constantly.
-- `nixie-solver/tests/ff_solver_regression.rs` — 24 end-to-end +
-  certified-mode regressions.
+- `nixie-solver/tests/ff_solver_regression.rs` — end-to-end +
+  certified-mode regressions (incl. the four §8 case-tree acceptances,
+  the planted-8×12 false-unsat pin, and the truncation-honesty pins).
+- `nixie-solver/tests/ff_ufff_oracle.rs` — brute-force over EVERY
+  model (variable assignments × function tables) at p ∈ {2,3,5,7}; any
+  verdict disagreement vs brute force is a hard failure.
+- `nixie-solver/tests/ff_ufff_regression.rs` — congruence, 𝔽₂
+  cardinality pin, mixed fields, certified-mode QF_UFFF behavior.
+- `nixie-math/tests/ff_gb_traced_untraced_identity.rs` — the untraced
+  fast path's trajectory identity (element-for-element identical
+  bases); divergence means rows influence the search — soundness-
+  relevant, hard failure.
 - `bench/ff/` — three families (sparse = realistic R1CS, dense =
   capacity marker, chain = single-component marker); measure with
   `NIXIE_FF_STATS=1` (deterministic step counts, never wall-clock as
@@ -159,29 +205,21 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
 
 ## 5. Open work, in recommended order
 
-1. **Chain ≥64×96 capacity (Phase 7, remainder)**: split-GB **landed
-   2026-09-16** as the monolithic-first fallback (`ff_theory.rs`'s
-   `split_grobner_basis`, cvc5's admit discipline) with lazy honest
-   round-robin and element-bootstrapped branching — chain 16×24/32×48
-   and sparse 128×192 now solve; the study records the three negative
-   variants measured on the way (operand flattening under the split
-   destroys the variable sharing the chain's S-pairs need; split-first
-   starves monolithic-completable goals; a fractional completion slice
-   likewise). The 2026-09-16 follow-up
-   (`docs/studies/2026-09-16-ff-chain-frontier-budget-honesty.md`)
-   shipped three T5 budget-honesty fixes (selection-scan charging,
-   cofactor-row charging, a bloat circuit breaker) and lm caching
-   (sparse 128×192 8 s → 4.6 s), and MEASURED the ≥64×96 blocker: the
-   certificate tracer's cofactor-row maintenance costs ~1 s per S-pair
-   on 96-input cascades. That lever then LANDED
-   (`docs/studies/2026-09-16-ff-untraced-fast-path.md`): the untraced
-   fast path (empty cofactor rows gate every row op; wide components
-   run rows-free, UNSAT re-runs traced once for the witness;
-   trajectory-identity pinned by a property test) — **chain 64×96
-   `sat` in 1.2 s**, 32×48 0.13 s, 128×192/256×384 honest `unknown` in
-   seconds, sparse 128×192 0.21 s. REMAINING frontier: chain ≥128×192
-   via round-robin branch-variable selection (now measurable — matched
-   nulls per `docs/BENCHMARKING.md`), F4, NTT untested.
+1. **Chain ≥128×192 capacity (the cascade frontier)**: everything
+   through the untraced fast path is landed (split-GB → budget honesty
+   → fast path; four studies under `docs/studies/2026-09-16-ff-*`
+   carry the measurements and the negative variants — read them before
+   designing). Current state: chain ≤64×96 `sat` (64×96 in 1.2 s),
+   ≥128×192 honest `unknown` in ~3 s — the 128-constraint nonlinear
+   cascade budget-outs even at 16× budget, and FindZero's round-robin
+   never runs (branch-variable selection is inapplicable as
+   pre-registered; re-issue only if a round-robin ever binds). THE
+   NEXT LEVER is the design's actual §6.5: the variable-SUBSET split —
+   window decomposition into overlapping variable clusters, each with a
+   small basis, exchanging only support-fitting consequences (the
+   landed 2-way linear/nonlinear split does NOT decompose the chain;
+   one component). Then F4. Both are deterministic front-end items —
+   step counts, no matched null needed; NTT untested.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

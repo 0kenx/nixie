@@ -313,6 +313,13 @@ fn grobner_basis_inner(
             break;
         }
         if basis.len() > 8 * inputs_len + 64 || max_terms_seen > 512 {
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] bloat breaker: basis {} (cap {}), max terms {max_terms_seen}",
+                    basis.len(),
+                    8 * inputs_len + 64
+                );
+            }
             return Err(GrobnerError::Budget);
         }
         // Normal selection strategy: the pair minimizing the total degree
