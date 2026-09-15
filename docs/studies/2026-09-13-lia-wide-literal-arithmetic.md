@@ -1128,3 +1128,44 @@ Verification for the landing: suites green except the pre-existing
 `wisas` pair; wide differential 3×300 clean; parity 176/177, 0
 disagreements (z3 4.16.0); fmt/clippy clean; chain-sat, f1-sat, and
 the wcancel shape all preserved.
+
+## Continuation 21 (2026-09-17): item 53 pinned to a wrong row SUBSTITUTION — the full mechanism decoded (item 54)
+
+54. **Item 51/53's false `unsat`, end to end** (docs-only this round;
+    every layer verified by probes, all stripped):
+    * The final conflict's `[division-axiom]`-only core is *formally*
+      correct given the bound set — the wrongness is one layer deeper.
+    * `s22` (the axiom `(= 3·yi (+ (div 3·yi 1) (mod 3·yi 1)))`'s row
+      slack) is bound `[0,0]` (reason 12 ✓ sound). Through two sound
+      pivots it becomes `1 − 52·s135` (verified EXACTLY: the wide
+      substitution relabels the axiom row; at the z3 model it evaluates
+      to 0 ✓).
+    * `s135` is the row slack of atom 72 (`1 < mod(8−xi,3)`) — its
+      row, as INTERNED by `assert_lt` for atom 72, is
+      `(3·var1 − s20 − s21 + 3·2^62 + 1)/52` — **which equals
+      `(1 − s22_axiom)/52`, NOT `1 − mod(8−xi,3)`**: at the z3 model
+      they differ (1/52 vs 1). `intern_row`'s basic-substitution
+      produced a WRONG FORM for atom 72's row (`1 − s7`): the
+      substituted content coincides with a rescaling of the AXIOM row
+      instead of the mod row. From there everything follows: atom 72
+      asserts `s135 ≤ 0` (sound FOR ITS ACTUAL ROW) → with
+      `s22 = 1 − 52·s135 ∈ [0,0]` this forces `s135 = 1/52` →
+      contradiction → and the core folds to `[12]` because s135's
+      determining bound carries only `[72]` while the ROW equivalence
+      itself is the (invisible) lie.
+    * Attribution unchanged: introduced by `0d3d2378` (the propagation
+      landing enriched the bound state so the wrong-form row's bound
+      became load-bearing); the substitution defect itself is older.
+    * **The next session's entry point**: dump, at s135's intern
+      (backtrace `assert_lt → cached_row_slack → intern_row`), the
+      PRE-substitution expr (`1 − s7`) and every tableau row the
+      substitution consumed (s7's row and the xi-rows it chains
+      through). One of them is already corrupted — the probe set that
+      answered here (INTERN/WIDE-UPD/SUB-BIG/SET-UPPER-with-backtrace/
+      CACHE-HIT, plus the exact-arithmetic row validation at the z3
+      model) localizes it in one run. The honest quick check for any
+      candidate fix: `{12, 72}` is satisfiable (z3), so no sound
+      derivation may refute it.
+
+Verification: no code change this round (diagnosis only; probes
+stripped, tree pristine, `fi1` still reproduces — the open item).
