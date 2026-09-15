@@ -153,6 +153,10 @@ pub struct MBQIIntegration {
     /// anywhere) — the static-model signal that arms the convergence
     /// dividend (see `ModelChecker::refund_on_barren_round`).
     last_round_barren: bool,
+    /// Consecutive barren rounds without a verdict — two arms the
+    /// targeted cardinality escalation (see
+    /// `ModelCompleter::thaw_axes_only`).
+    barren_streak: u32,
 }
 
 impl MBQIIntegration {
@@ -176,6 +180,7 @@ impl MBQIIntegration {
             conflict_scores: ConflictScores::new(0.95),
             active_table_quantifiers: FxHashSet::default(),
             last_round_barren: false,
+            barren_streak: 0,
             max_rounds: 100,
             #[cfg(feature = "std")]
             time_limit: Some(Duration::from_secs(60)),
@@ -629,20 +634,28 @@ impl MBQIIntegration {
             .set_table_mode(!self.active_table_quantifiers.is_empty());
         if core::mem::take(&mut self.last_round_barren) {
             self.model_checker.refund_on_barren_round();
-            // NOTE: the cardinality escalation (`thaw_table_domains`)
-            // fires here in principle — two barren rounds without a
-            // verdict mean the frozen structure cannot carry the model
-            // (a witness axiom falsified for want of an element the
-            // freeze never saw).  Wired up (2026-09-15) it *fires* but
-            // does not close: each thaw re-freezes at the grown
-            // universe, the bigger structure re-pins stale rows, and
-            // the loop re-stalls at a higher cardinality — set16 went
-            // 0 s -> 35 s without a verdict.  The escalation needs its
-            // own design (thaw *only the sorts whose witness axioms
-            // falsify*, not everything; re-derive the rows rather than
-            // re-freezing the stale pins).  The hook is
-            // `ModelCompleter::thaw_table_domains`, bounded by
-            // `MAX_TABLE_THAWS`; see the study.
+            // The *targeted* cardinality escalation: two barren rounds
+            // without a verdict mean the frozen structure cannot carry
+            // the model — a witness axiom falsified for want of an
+            // element the freeze never saw (the ground solver has
+            // already minted the distinguishing `skf!0` witnesses; they
+            // are outside the frozen axis domain).  Thaw only the axis
+            // sorts — the constructor *range* sorts stay frozen, so the
+            // tuple space, the tables and every already-landed
+            // certification stay stable while the axes re-freeze at the
+            // grown universe and the rows refine.  (The full thaw
+            // re-freezes the range sorts over their stale pins too and
+            // re-stalls at a higher cardinality — measured: set16
+            // 0 s -> 35 s, no verdict.  See the study.)
+            self.barren_streak += 1;
+            if self.barren_streak >= 2 && self.model_completer.thaw_axes_only() {
+                if std::env::var_os("NIXIE_DEBUG_MC").is_some() {
+                    eprintln!("[mc] barren x{}: thawing axis domains", self.barren_streak);
+                }
+                self.barren_streak = 0;
+            }
+        } else {
+            self.barren_streak = 0;
         }
         let quantifier_ids: Vec<QuantifierId> = self.quantifiers.iter().map(|q| q.term).collect();
         self.budget
