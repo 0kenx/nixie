@@ -99,22 +99,58 @@ and `(get-value ((set.card S)))` folds to `3`.
   general (not set-specific); a cheap constant-folding arm would fix it
   for everyone.
 
+## Update 2026-09-15 (later): relations landed (`2540544a`)
+
+Roadmap item 1 of the list below is **done**. Tuples are structural
+single-constructor datatypes (`(_ Tuple A B)`, `(Tuple A B)`,
+`(Relation A B)` sugar; `(tuple ...)`, `tuple.unit`,
+`(_ tuple.select i)`, `(_ tuple.update i t v)`), and the four
+`rel.*` operators reduce through the eager membership scheme
+(`set_theory/mod.rs`; reference CVC5 `theory_sets_rels.cpp`):
+
+- `t ∈ transpose(r) ⇔ rev(t) ∈ r` — `mk_tuple_select` folds over
+  constructors, so `rev((1,2))` is the literal `(2,1)`.
+- `(t,u) ∈ a×b ⇔ t ∈ a ∧ u ∈ b` — projections join the operands'
+  element lists in the same pass (a pre-pass feeds derived elements
+  before the definition loop).
+- `(a,b) ∈ iden(s) ⇔ a ∈ s ∧ a = b`.
+- Join: split (skolem per (element, join), like the disequality
+  witnesses) + compose over ground pairs, capped at 512 with the
+  honesty gate. Column arithmetic per CVC5's type rule:
+  `(A,B) ⨝ (B,C) : (A,C)` — the middle column is dropped.
+- Cardinality: `|transpose r| = |r|`, `|iden s| = |s|`,
+  `|a×b| = |a|·|b|` (only when the product's support is not exact),
+  and **`|r⨝s| ≤ |r|·|s|`** — the bound closed a false-`sat` class
+  (`|J| = 2` with `|r| = |s| = 1` answered `sat`; `J` is determined).
+
+Parity re-run after the change: z3 4.16.0, 176 correct / 1
+inconclusive / 0 mismatch — byte-identical to the record (the corpus
+has no relation problems). Known honest declines: pure product
+cardinality over unconfined operands (nonlinear gate), rel compounds in
+`get-value` echo (opaque relation variables synthesize fully —
+`r = {(1,2), (3,4)}` prints as tuples). `precompile/2540544a/` cached.
+A debug-only false alarm in the datatype model verifier was fixed
+(tuples over Int/Bool are outside the pure-datatype fragment).
+
 ## Roadmap (updated, value order)
 
-1. **Relations** (`rel.join`, `rel.transpose`, `rel.product`, `rel.iden`):
-   tuples ride the datatype machinery; CVC5's `theory_sets_rels`
-   membership rules reduce to this same eager scheme — join's existential
-   witness skolemizes per (element, join-term) exactly like the
-   disequality witnesses already do.
-2. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
+1. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
    carries over with region *multiplicities*. Surface names: cvc5
    `smt2_state.cpp`. AST needs `SortKind::Bag(SortId)` plus ~10
    TermKinds.
-3. **Synthesis reach**: the remaining honest declines are intersection
+2. **Synthesis reach**: the remaining honest declines are intersection
    shapes beyond binary unions of opaque classes (nested compounds with
    overlap targets), sets over uninterpreted element sorts (no mintable
-   witness), and complements over large finite sorts (> 1024 elements,
-   `MAX_UNIVERSE_ENUM`). Each extends naturally from the class/swap
-   machinery in `set_model.rs`.
-4. **Caps re-measurement** (`MAX_CONE_SETS=40`, `MAX_COUNT_ELEMENTS=24`):
-   once the TLA+ corpus runs green end-to-end, measure and tune.
+   witness), complements over large finite sorts (> 1024 elements,
+   `MAX_UNIVERSE_ENUM`), rel compounds in `get-value` (transpose/product/
+   iden values are computable from operand values; join needs
+   middle-matching), and pure product cardinality (a linear encoding of
+   `|a×b|` via pairwise guards, or Z3-style unique values). Each extends
+   naturally from the class/swap machinery in `set_model.rs`.
+3. **Remaining rel surface**: `rel.tclosure` (needs a fixpoint or a
+   bounded-unrolling scheme), `rel.join_image`, `rel.group`,
+   `rel.project`, `rel.table_join` — all currently honest parse-level
+   unknowns/rejections.
+4. **Caps re-measurement** (`MAX_CONE_SETS=40`, `MAX_COUNT_ELEMENTS=24`,
+   `MAX_JOIN_PAIRS=512`): once the TLA+ corpus runs green end-to-end,
+   measure and tune.
