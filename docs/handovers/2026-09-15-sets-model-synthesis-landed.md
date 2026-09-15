@@ -152,6 +152,33 @@ its split elements collide pinned-against-pinned through a shared
 skolem (verdicts and operand models unaffected). Parity re-run:
 176/1/0, z3 4.16.0, byte-identical. `precompile/1d46dfef/` cached.
 
+## Update 2026-09-15 (night): witness canonicity + tuple surjectivity (`6ee0a8d8`)
+
+Chasing the join's model decline three defects deep, each fixed at its
+layer:
+
+- **One witness per disequality**: the implicit opaque pairs are
+  canonically ordered — the survey's discovery order flips as assertions
+  accumulate, and a flipped pass minted a *second* witness
+  (`@set_ext_a_b` beside `@set_ext_b_a`) with the opposite xor
+  orientation. One unordered pair, one witness, stable across re-runs.
+- **Tuple surjectivity**: every tuple-sorted element equals its selector
+  rebuild — the constructor-surjectivity axiom the internally-declared
+  tuple sorts never get from `declare-datatype`.
+- **Skolem-faithful values**: the reduction's own existentials override
+  their defaults (arith's zero, the datatype canonical tuple — which
+  sometimes carries the wrong arity, now caught by sort-sanity gates
+  that decline instead of printing an ill-sorted value) with fresh
+  distinct witnesses, unless a committed-true equality pins them.
+
+The join's own value still declines (the datatype default machinery's
+wrong-arity constructors for tuple sorts are the next layer — see the
+`tuple 7` in a binary relation from the debug trail); verdicts and all
+other rel values unaffected. Two model tests were pinned against
+witness-side drift (the xor satisfies on either side freely). Parity
+re-run: 176/1/0, z3 4.16.0, byte-identical. `precompile/6ee0a8d8/`
+cached.
+
 ## Roadmap (updated, value order)
 
 1. **Bags**: `bag.count` pointwise identities; the cone/slack skeleton
@@ -162,11 +189,12 @@ skolem (verdicts and operand models unaffected). Parity re-run:
    shapes beyond binary unions of opaque classes (nested compounds with
    overlap targets), sets over uninterpreted element sorts (no mintable
    witness), complements over large finite sorts (> 1024 elements,
-   `MAX_UNIVERSE_ENUM`), the join's own value (split-collision repair:
-   separate join skolems per split, or Z3-style unique values), and pure
-   product cardinality (a linear encoding of `|a×b|` via pairwise
-   guards). Each extends naturally from the class/swap machinery in
-   `set_model.rs`.
+   `MAX_UNIVERSE_ENUM`), the join's own value (next layer: the datatype
+   reconstruction defaults tuple-sorted vars with wrong-arity
+   constructors — fix the default to respect the sort's own constructor),
+   and pure product cardinality (a linear encoding of `|a×b|` via
+   pairwise guards). Each extends naturally from the class/swap
+   machinery in `set_model.rs`.
 3. **Remaining rel surface**: `rel.tclosure` (needs a fixpoint or a
    bounded-unrolling scheme), `rel.join_image`, `rel.group`,
    `rel.project`, `rel.table_join` — all currently honest parse-level
