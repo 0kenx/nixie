@@ -167,9 +167,16 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
    variants measured on the way (operand flattening under the split
    destroys the variable sharing the chain's S-pairs need; split-first
    starves monolithic-completable goals; a fractional completion slice
-   likewise). REMAINING: chain ≥64×96, F4-style batched reduction, NTT,
-   and round-robin branch-variable selection (a heuristic inside a
-   chaotic search — matched nulls per `docs/BENCHMARKING.md`).
+   likewise). The 2026-09-16 follow-up
+   (`docs/studies/2026-09-16-ff-chain-frontier-budget-honesty.md`)
+   shipped three T5 budget-honesty fixes (selection-scan charging,
+   cofactor-row charging, a bloat circuit breaker) and lm caching
+   (sparse 128×192 8 s → 4.6 s), and MEASURED the ≥64×96 blocker: the
+   certificate tracer's cofactor-row maintenance costs ~1 s per S-pair
+   on 96-input cascades — fix that FIRST (sparse cofactor rows, or an
+   untraced fast path with traced replay), then F4, then round-robin
+   branch-variable selection (a heuristic inside a chaotic search —
+   matched nulls per `docs/BENCHMARKING.md`). NTT untested.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

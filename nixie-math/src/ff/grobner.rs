@@ -252,16 +252,38 @@ pub fn grobner_basis(
     }
 
     let mut next_pair = 0usize;
+    // The bloat circuit breaker: a cascade whose basis has far outgrown
+    // its inputs, or whose elements have exploded in term count, is the
+    // pathological shape the caller's fallback engines (the split basis)
+    // exist for. Aborting early hands them the remaining time INSTEAD of
+    // burning it all on a hopeless monolithic run — deterministic and
+    // purely a capacity decision (Err(Budget) → the caller's honest
+    // Unknown-or-fallback, never a verdict).
+    let inputs_len = inputs.len();
+    let mut max_terms_seen = 0usize;
+    let mut lms = lm_cache(&basis);
     loop {
         if next_pair >= pairs.len() {
             break;
         }
+        if basis.len() > 8 * inputs_len + 64 || max_terms_seen > 512 {
+            return Err(GrobnerError::Budget);
+        }
         // Normal selection strategy: the pair minimizing the total degree
         // of the lcm of leading monomials (then the lcm itself).
         let mut best = next_pair;
-        let mut best_key = pair_key(&basis, pairs[next_pair]);
+        let mut best_key = pair_key_lms(&lms, pairs[next_pair]);
         for (cand, pair) in pairs.iter().enumerate().skip(next_pair + 1) {
-            let key = pair_key(&basis, *pair);
+            // Selection scans are WORK: each candidate costs one LCM,
+            // and the scan is O(#pairs) per selection — quadratic over
+            // the cascade. Uncharged, a blowup's pair bookkeeping alone
+            // outran the budget by an order of magnitude (the chain
+            // 64×96 profile: the monolithic attempt spent 700 s in
+            // scan-side LCM/monomial churn before ever exhausting its
+            // tick budget — T5's "charge what runs" violated at the
+            // selection layer).
+            budget.charge(1)?;
+            let key = pair_key_lms(&lms, *pair);
             let better = best_key.0 > key.0
                 || (best_key.0 == key.0
                     && cmp_monomials(DEGREVLEX, &best_key.1, &key.1)
@@ -279,7 +301,7 @@ pub fn grobner_basis(
             .unwrap_or(u64::MAX / 2);
         budget.charge(cost.saturating_add(1))?;
         let spoly = s_polynomial(f, &basis[i], &basis[j]);
-        let (reduced, _) = reduce_traced(f, &spoly, &basis, budget)?;
+        let (reduced, _) = reduce_traced(f, &spoly, &basis, &lms, budget)?;
         if reduced.poly.is_zero() {
             continue;
         }
@@ -295,7 +317,7 @@ pub fn grobner_basis(
             if guard > 10_000 {
                 break;
             }
-            let (again, changed) = reduce_traced(f, &reduced, &basis, budget)?;
+            let (again, changed) = reduce_traced(f, &reduced, &basis, &lms, budget)?;
             if !changed {
                 break;
             }
@@ -311,10 +333,12 @@ pub fn grobner_basis(
         if reduced.poly.is_zero() {
             continue;
         }
+        max_terms_seen = max_terms_seen.max(reduced.poly.n_terms());
+        lms.push(reduced.poly.lm(DEGREVLEX).unwrap_or_else(Monomial::unit));
         basis.push(reduced);
         let n = basis.len() - 1;
         for k in 0..n {
-            if !criterion_applies(&basis, k, n) {
+            if !criterion_applies_lms(&lms, k, n) {
                 pairs.push((k, n));
             }
         }
@@ -333,15 +357,21 @@ pub fn grobner_basis(
 
 /// The selection key of a pair: (deg lcm(lm_i, lm_j), lcm) — the normal
 /// strategy.
-fn pair_key(basis: &[TracedPoly], pair: (usize, usize)) -> (u32, Monomial) {
-    let (a, b) = (&basis[pair.0].poly, &basis[pair.1].poly);
-    match (a.lm(DEGREVLEX), b.lm(DEGREVLEX)) {
-        (Some(x), Some(y)) => {
-            let l = monomial_lcm(&x, &y);
-            (l.total_degree(), l)
-        }
-        _ => (u32::MAX, Monomial::unit()),
-    }
+/// The leading monomials of a basis slice, computed once (an `lm()` is
+/// a full terms-map scan; the pair-selection scan and the reduction
+/// scans consult them O(pairs) and O(basis) times respectively —
+/// recomputing made the chain 64×96 cascade spend minutes in `lm`
+/// alone, ~1000× the per-unit budget charge).
+fn lm_cache(basis: &[TracedPoly]) -> Vec<Monomial> {
+    basis
+        .iter()
+        .map(|t| t.poly.lm(DEGREVLEX).unwrap_or_else(Monomial::unit))
+        .collect()
+}
+
+fn pair_key_lms(lms: &[Monomial], pair: (usize, usize)) -> (u32, Monomial) {
+    let l = monomial_lcm(&lms[pair.0], &lms[pair.1]);
+    (l.total_degree(), l)
 }
 
 /// Gebauer–Möller discard test for the pair (i, j):
@@ -349,6 +379,23 @@ fn pair_key(basis: &[TracedPoly], pair: (usize, usize)) -> (u32, Monomial) {
 ///    the S-polynomial reduces to zero.
 /// 2. The third-element criterion — some other leading monomial strictly
 ///    divides the pair's lcm.
+fn criterion_applies_lms(lms: &[Monomial], i: usize, j: usize) -> bool {
+    let (lmi, lmj) = (&lms[i], &lms[j]);
+    // 1. Relatively prime: no shared variable.
+    let coprime = lmi.vars().iter().all(|vp| lmj.degree(vp.var) == 0);
+    if coprime {
+        return true;
+    }
+    // 2. Third element.
+    let lcm = monomial_lcm(lmi, lmj);
+    lms.iter().enumerate().any(|(k, lmk)| {
+        if k == i || k == j {
+            return false;
+        }
+        lcm.div(lmk).is_some() && *lmk != lcm
+    })
+}
+
 fn criterion_applies(basis: &[TracedPoly], i: usize, j: usize) -> bool {
     let (Some(lmi), Some(lmj)) = (basis[i].poly.lm(DEGREVLEX), basis[j].poly.lm(DEGREVLEX)) else {
         return false;
@@ -396,6 +443,7 @@ fn reduce_traced(
     f: &FieldCtx,
     p: &TracedPoly,
     basis: &[TracedPoly],
+    lms: &[Monomial],
     budget: &mut GrobnerBudget,
 ) -> Result<(TracedPoly, bool), GrobnerError> {
     let mut current = p.clone();
@@ -405,11 +453,9 @@ fn reduce_traced(
             break;
         };
         let mut cancelled = false;
-        for g in basis {
-            let Some(lmg) = g.poly.lm(DEGREVLEX) else {
-                continue;
-            };
-            let Some(q) = monomial_div(&lt, &lmg) else {
+        for (gi, g) in basis.iter().enumerate() {
+            let lmg = &lms[gi];
+            let Some(q) = monomial_div(&lt, lmg) else {
                 continue;
             };
             let Some(lc_cur) = current.poly.lc(DEGREVLEX).cloned() else {
@@ -423,8 +469,23 @@ fn reduce_traced(
             };
             let factor = f.mul(&lc_cur, &inv_g);
             let sub = g.mul_monomial(f, &q).scale(f, &factor);
-            let cost =
+            // The step's true cost: the polynomial subtraction PLUS the
+            // cofactor-row maintenance — `TracedPoly::sub` updates every
+            // input's cofactor (n_inputs polynomial subtractions), and
+            // `mul_monomial`/`scale` rebuilt them on the way in. The
+            // first version charged only the poly side: with dozens of
+            // inputs and growing elements the cascade did ~n_inputs× the
+            // charged work, and a 2^24 budget meant minutes of grinding
+            // instead of seconds (the chain-64×96 wall-vs-budget gap,
+            // profiled to FieldCtx::add/SmallVec churn in the cofactor
+            // rows — T5's charge-what-runs, at the tracer layer).
+            let n_inputs = current.cofactors.len() as u64;
+            let sub_terms = sub.poly.n_terms() as u64;
+            let poly_cost =
                 u64::try_from(sub.poly.n_terms() + current.poly.n_terms()).unwrap_or(u64::MAX / 2);
+            let cost = poly_cost
+                .saturating_mul(1)
+                .saturating_add(n_inputs.saturating_mul(sub_terms.max(1)));
             current = current.sub(f, &sub);
             budget.charge(cost.saturating_add(1))?;
             cancelled = true;
@@ -457,7 +518,8 @@ fn reduce_all(
             .map(|(_, g)| g.clone())
             .collect();
         let g = basis[i].clone();
-        let (reduced, _changed) = reduce_traced(f, &g, &others, budget)?;
+        let others_lms = lm_cache(&others);
+        let (reduced, _changed) = reduce_traced(f, &g, &others, &others_lms, budget)?;
         // Tail reduction: cancel any remaining reducible non-leading term.
         let reduced = tail_reduce_traced(f, reduced, &others, budget)?;
         // The monic re-normalization applies whether or not the leading-
