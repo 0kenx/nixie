@@ -14,15 +14,15 @@ use nixie_core::sort::{SortId, SortKind};
 
 use super::Context;
 
-/// One suspended `(Array dom rng)` node during the iterative resolution in
+/// One suspended compound-sort node during the iterative resolution in
 /// [`Context::parse_sort_name`].
 ///
-/// `parse_sort_name` used to recurse natively on the two child expressions
-/// of an `(Array dom rng)` string.  The nesting depth of that string is
-/// input-controlled (and, through chained `define-sort`, not usefully
-/// bounded by any single parse), so the walk now carries its own heap stack
-/// of these frames instead of native stack frames.
-enum ArrayPending {
+/// `parse_sort_name` used to recurse natively on the child expressions of
+/// an `(Array dom rng)` or `(Set elem)` string. The nesting depth of that
+/// string is input-controlled (and, through chained `define-sort`, not
+/// usefully bounded by any single parse), so the walk now carries its own
+/// heap stack of these frames instead of native stack frames.
+enum SortPending {
     /// The domain expression is being resolved; the range expression is
     /// still waiting its turn.
     DomainOf {
@@ -35,11 +35,14 @@ enum ArrayPending {
         /// The resolved domain sort.
         domain: SortId,
     },
+    /// The element expression of a `(Set elem)` is being resolved.
+    ElemOf,
 }
 
 /// The classification of a single sort-expression string: either a sort
-/// that resolves without looking at any sub-expression, or an
-/// `(Array dom rng)` node whose two children still need resolving.
+/// that resolves without looking at any sub-expression, or a compound
+/// node (`(Array dom rng)`, `(Set elem)`) whose children still need
+/// resolving.
 enum SortExprStep {
     /// The expression is fully resolved.
     Resolved(SortId),
@@ -49,6 +52,11 @@ enum SortExprStep {
         domain_expr: String,
         /// The range sub-expression.
         range_expr: String,
+    },
+    /// A `(Set elem)` compound; its one child remains to be resolved.
+    Set {
+        /// The element sub-expression.
+        elem_expr: String,
     },
 }
 
@@ -131,11 +139,11 @@ impl Context {
     /// ([`ArrayPending`]) rather than native recursion, so the resolvable
     /// depth is bounded by memory, not by thread stack size.
     pub(super) fn parse_sort_name(&mut self, name: &str) -> Result<SortId> {
-        let mut pending: Vec<ArrayPending> = Vec::new();
+        let mut pending: Vec<SortPending> = Vec::new();
         let mut current: String = name.to_string();
         loop {
-            // Resolve `current`, descending through `Array` domains until a
-            // directly-resolvable expression is reached.
+            // Resolve `current`, descending through compound-sort children
+            // until a directly-resolvable expression is reached.
             let mut resolved: SortId = loop {
                 match self.classify_sort_expr(&current)? {
                     SortExprStep::Resolved(id) => break id,
@@ -143,24 +151,32 @@ impl Context {
                         domain_expr,
                         range_expr,
                     } => {
-                        pending.push(ArrayPending::DomainOf { range_expr });
+                        pending.push(SortPending::DomainOf { range_expr });
                         current = domain_expr;
+                    }
+                    SortExprStep::Set { elem_expr } => {
+                        pending.push(SortPending::ElemOf);
+                        current = elem_expr;
                     }
                 }
             };
             // Feed the resolved sort upward through the pending frames:
             // a finished domain schedules its partner range; a finished
-            // range completes its `Array` node, which continues upward.
+            // range completes its `Array` node; a finished element completes
+            // its `Set` node — each continuing upward.
             loop {
                 match pending.pop() {
                     None => return Ok(resolved),
-                    Some(ArrayPending::DomainOf { range_expr }) => {
-                        pending.push(ArrayPending::RangeOf { domain: resolved });
+                    Some(SortPending::DomainOf { range_expr }) => {
+                        pending.push(SortPending::RangeOf { domain: resolved });
                         current = range_expr;
                         break;
                     }
-                    Some(ArrayPending::RangeOf { domain }) => {
+                    Some(SortPending::RangeOf { domain }) => {
                         resolved = self.terms.sorts.array(domain, resolved);
+                    }
+                    Some(SortPending::ElemOf) => {
+                        resolved = self.terms.sorts.set(resolved);
                     }
                 }
             }
@@ -231,6 +247,10 @@ impl Context {
                 [head, domain, range] if head.as_str() == "Array" => Ok(SortExprStep::Array {
                     domain_expr: std::mem::take(domain),
                     range_expr: std::mem::take(range),
+                }),
+                // `(Set elem)`, the finite-sets theory's sort constructor.
+                [head, elem] if head.as_str() == "Set" => Ok(SortExprStep::Set {
+                    elem_expr: std::mem::take(elem),
                 }),
                 // A compound form the sort printer never emits.  This used
                 // to fall back to `Bool` silently – a silently wrong sort

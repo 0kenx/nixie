@@ -846,3 +846,114 @@ suites green except standing `[corpus-missing]`; wide differential 1,100
 instances across 4 seeds (z3-error-aware): 0 disagreements, 0 refuted
 models; mixed fuzz, debug-panic sweep, Z3 parity 176/177 correct / 0
 disagreements (z3 4.16.0); fmt/clippy clean.
+
+## Continuation 15 (2026-09-15): executing the continuation handoff — and the fresh-seed re-run that found two more live wrong verdicts
+
+The handoff's open item 1 (the last unchecked release-wrap site in the
+simplex) landed first, exactly as prescribed — but the wide differential's
+**fresh seeds** (the generator shipped in-repo with `db97824c`; seeds
+`20260971`/`20260973`) found a wrong verdict in **each direction** on
+clean main within 300 instances. Both are root-caused and closed below,
+with the layer analysis and the per-layer regressions. Items 41–45.
+
+41. **`on_nonbasic_bound_change`'s two unchecked sites closed** (the
+    handoff's item 1): the snap delta `new − old` (a non-basic jumping
+    between deep opposite bounds overflows `i64`) and the delta
+    propagation `Δ·c` + `+=` (`mul_r64_fast`'s fallback wraps in
+    release). Fix shape: item-14 — checked ops, an exact `BigRational`
+    retry of that one row (`eval_expr`) with a narrowed final, and a
+    staleness-flag defer when the final does not fit (`crash_basis`
+    alone owns the honest `resource_limit`). Both sites panicked in
+    debug pre-fix (regressions
+    `nonbasic_bound_change_delta_overflow_recovers_exact_and_never_wraps`,
+    `nonbasic_bound_change_snap_delta_overflow_defers_instead_of_wrapping`).
+42. **The false `sat` — a wide-basic integer variable's FABRICATED
+    value** (`(= (+ (* 27670116100584327436 v2) (* 9223372036854775808
+    v1)) -5)` with `v2 = 3`; z3: `unsat`, nixie: `sat` with the INVALID
+    witness `v1 = 0`). Layers: (a) the parse retry rescales the row
+    exactly (scale `1/88`) — sound; (b) the mixed-magnitude pivot sends
+    v1's defining row to the WIDE store with exact content — sound;
+    (c) v1's exact value `−9 − 41/2⁶³` does not narrow, so its
+    `assignment` entry is stale-by-design (item 29's `wide_pending`
+    contract) — but `Simplex::value`/`find_fractional_int_var` read the
+    RAW entry, which fabricated the INTEGRAL `0`; (d) branch-and-bound
+    accepted it and `snapshot_lia_model` published it. Root fix:
+    `delta_value_exact` (wide-aware exact read, `None` = no honest
+    value), tri-state `find_fractional_int_var` (`Branch` with exact
+    bounds / `Underivable` → honest `Unknown`), **branch bounds derived
+    from the exact UN-NARROWED value** (`wide_floor_ceil_big`: floor/ceil
+    of a 2⁶³-scale rational are small integers, so the search stays
+    DECIDABLE — both branch directions are refuted by the wide-row
+    interval argument and the goal answers `unsat`, matching z3), a Sat
+    gate requiring every term-backed variable to have a derivable value
+    (`wide_underivable_blocks_sat` — covers pure-real acceptance too),
+    and an honest `None` in `ArithSolver::value` (no fabricated model
+    entries). Regressions:
+    `wide_basic_int_var_fabricated_value_never_drives_false_sat`
+    (pinned DECIDABLY unsat),
+    `wide_coefficient_eq_row_with_pins_is_decidably_unsat`,
+    simplex unit `wide_basic_reads_and_branch_bounds_are_exact`.
+43. **The false `unsat` — a wide row's narrow-back kept its frozen
+    entry** (the wrong1 shape; z3: `sat`, nixie: `unsat`; the f1-class
+    delta-vs-reeval canary fired with a 2-variable reproducer).
+    Layers: (a) the row's exact value is unrepresentable mid-search, so
+    a pivot captures it in the wide store — its `assignment` entry is
+    then NEVER updated (the wide pass only stores narrowing values);
+    (b) a bound change on a dependent non-basic SKIPPED the wide row
+    silently (`tableau.get` → `None` → `continue`, no flag) in BOTH
+    `on_nonbasic_bound_change` and `soi_bound_flip`; (c) a later
+    pivot's substitution NARROWED the row back into the tableau and the
+    commit inserted it WITHOUT recomputing the entry (the substitution
+    preserves the row's FUNCTION, not the entry's value); (d) the snap
+    deltas then propagated from the stale base — debug: the canary;
+    release: a phony violation drove an invalid conflict. Root fixes:
+    wide dependents flag staleness (`assignment_current = false`) or
+    decline the flip; `row_updates` entries carry `was_wide`, are
+    EXCLUDED from the delta loop, and their entry is RECOMPUTED exactly
+    at commit (deferring on a non-narrowing recomputation).
+    Regressions: `wide_row_narrow_back_recomputes_its_assignment_entry`
+    (pinned never-`unsat`), simplex unit
+    `wide_dependent_bound_change_flags_staleness`.
+44. **Two unchecked cut sites** (found by the corpus-return panic sweep,
+    not by the wrong verdicts): `gomory_cut`'s `fj / f0` (and siblings,
+    plus the `γ_j·bound` accumulation) and the old-LiaSolver
+    `tableau_row_cut`'s identical shape — debug PANIC (QF_LIA/dillig
+    `45-23.smt2`, QF_NIA/VeryMax
+    `From_T2__streamserver.bug.t2_fixed__terminationS_1_0.smt2`) and a
+    release WRAP that would publish a cut NOT implied by its row — an
+    unsound lemma, not just a bad heuristic. Both now run checked and
+    decline the cut on overflow (branch-and-bound stays complete).
+    Also `static_features`' `vars` accumulation (the same file's own
+    `const_term`/`const_prod` saturating discipline): two same-variable
+    `Mul` terms at `i64::MAX`-scale overflowed the coefficient map — a
+    debug abort that MASKED items 42/43 (removing it is what let the
+    canaries fire). Regression:
+    `static_features_wide_mul_accumulation_does_not_panic`.
+45. **Process debts recorded**: (a) the handoff's "wrong-verdict debt is
+    paid" claim did not survive FRESH SEEDS on the same generator —
+    parity-of-coverage claims must be dated to the seed set that
+    produced them, and re-running the differential after ANY landing on
+    the same surface is not optional (the false `sat` and false `unsat`
+    were both one `python3 wide_fuzz.py <bin> 300 <new-seed>` away for
+    the whole six-landing window). (b) The debug-panic oracle found a
+    THIRD bug (the masked static_features abort) that had to be fixed
+    before the canaries could even fire — layer isolation includes
+    ABORT layers, not just verdict layers. (c) Attribution discipline
+    held: clean-main binaries (`precompile/db97824c/`, built and cached
+    same-session) pinned both wrong verdicts as pre-existing before any
+    fix was written.
+
+Verification: 11,671/11,671 workspace tests (the standing slow five are
+wall-clock gates that pass in isolation); fmt/clippy/rustdoc clean
+(whole tree — including the slice-4 clippy debt in `encode.rs`, fixed
+here); Z3 parity 176/177 correct, 0 disagreements (z3 4.16.0); wide
+differential 9 seeds × 300 (both finder seeds included): 0 verdict
+disagreements, 0 refuted models; mixed fuzz 3 × 400 clean; debug-panic
+sweep over the parity corpus (177: 0 panics) and the returned
+`smt-lib/non-incremental` stratified sample (434 files, seed 20260915:
+0 panics after item 44); `bench_diff --validate-models` on the returned
+corpora: TRUSTED_TOTAL=173, 0 disagreements, **0 invalid models** (the
+owed item-17 rerun); the VeryMax canary family panic-free and honest.
+The corpora are PARTIALLY back (`smt-lib/non-incremental` restored;
+`satlib` and most of `satcomp2024/2025` still absent — the `[corpus-missing]`
+class persists for those files).

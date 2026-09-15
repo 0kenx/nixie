@@ -1,7 +1,10 @@
 //! Arithmetic Theory Solver
 
 use super::delta::DeltaRational;
-use super::simplex::{LinExpr, Simplex, SimplexOptStatus, VarId};
+use super::simplex::{
+    LinExpr, Simplex, SimplexOptStatus, VarId, checked_add_r64, checked_div_r64, checked_mul_r64,
+    checked_sub_r64,
+};
 #[allow(unused_imports)]
 use crate::prelude::*;
 use crate::theory::{EqualityNotification, Theory, TheoryCombination, TheoryId, TheoryResult};
@@ -296,6 +299,21 @@ impl Default for ArithSolver {
     fn default() -> Self {
         Self::new(false)
     }
+}
+
+/// What branch-and-bound may do with one integer variable (see
+/// `ArithSolver::find_fractional_int_var`): exact branch bounds, or a value
+/// that is neither readable nor branch-bounded (decline).
+#[derive(Debug)]
+enum FracVar {
+    /// A fractional variable with exact, representable branch bounds
+    /// (floor/ceil of the exact value — from the narrow `DeltaRational`,
+    /// or from the wide store's un-narrowed exact value when the narrowed
+    /// read does not exist).
+    Branch { var: VarId, floor: i64, ceil: i64 },
+    /// No sound acceptance and no sound branch exist — the search must
+    /// decline to `Unknown`.
+    Underivable,
 }
 
 impl ArithSolver {
@@ -1308,6 +1326,15 @@ impl ArithSolver {
     #[must_use]
     pub fn value(&self, term: TermId) -> Option<Rational64> {
         let &var = self.term_to_var.get(&term)?;
+        // No fabricated values for wide basics whose exact value does not
+        // narrow: the raw `assignment` entry is stale there, and returning
+        // it would publish a witness that violates the variable's own
+        // defining row (the Sat gates upstream make this unreachable in
+        // practice; this read stays honest regardless — `None` is "no
+        // value", never a guess).
+        if self.simplex.is_wide_basic(var) && self.simplex.delta_value_exact(var).is_none() {
+            return None;
+        }
         // Per-VARIABLE integrality, not per-mode: in mixed mode a
         // `Real`-sorted term sitting at a strict bound keeps its
         // delta-rational value, while an `Int`-sorted term rounds.
@@ -1629,14 +1656,38 @@ impl ArithSolver {
     /// problems like `rings` it is the difference between closing the tree
     /// and never finishing), falling back to the first fractional variable
     /// when no fractional variable is bounded.
-    fn find_fractional_int_var(&self, int_vars: &[VarId]) -> Option<(VarId, Rational64)> {
-        let mut best: Option<(VarId, Rational64)> = None;
+    fn find_fractional_int_var(&self, int_vars: &[VarId]) -> Option<FracVar> {
+        let mut underivable: Option<VarId> = None;
+        let mut best: Option<FracVar> = None;
         let mut best_range: Option<Rational64> = None;
         for &var in int_vars {
-            let val = self.simplex.value(var);
-            if val.is_integer() {
-                continue;
-            }
+            // The value read must be WIDE-AWARE: a wide-basic integer
+            // variable's raw `assignment` entry is exactly its exact value
+            // only while that value narrows; otherwise it is stale and
+            // reading it fabricates integrality (the false-`sat` class:
+            // `(= (+ (* 27670116100584327436 v2) (* 9223372036854775808 v1))
+            // -5)` with `v2 = 3` read `v1 = 0` and answered `sat` with an
+            // invalid witness).  The exact un-narrowed value still yields
+            // branch bounds when they fit `i64`.
+            let branch = match self.simplex.delta_value_exact(var) {
+                Some(val) => {
+                    if val.real.is_integer() {
+                        continue;
+                    }
+                    FracVar::Branch {
+                        var,
+                        floor: val.floor(),
+                        ceil: val.ceil(),
+                    }
+                }
+                None => match self.simplex.wide_floor_ceil_big(var) {
+                    Some((floor, ceil)) => FracVar::Branch { var, floor, ceil },
+                    None => {
+                        underivable = underivable.or(Some(var));
+                        continue;
+                    }
+                },
+            };
             let idx = var as usize;
             let lo = self.simplex.lower_real_at(idx);
             let hi = self.simplex.upper_real_at(idx);
@@ -1645,17 +1696,21 @@ impl ArithSolver {
                     let range = hi - lo;
                     if best_range.is_none_or(|r| range < r) {
                         best_range = Some(range);
-                        best = Some((var, val));
+                        best = Some(branch);
                     }
                 }
                 _ => {
                     if best.is_none() {
-                        best = Some((var, val));
+                        best = Some(branch);
                     }
                 }
             }
         }
-        best
+        best.or(if underivable.is_some() {
+            Some(FracVar::Underivable)
+        } else {
+            None
+        })
     }
 
     /// Record the real-atom reasons of one LP conflict from the search tree
@@ -1954,7 +2009,11 @@ impl ArithSolver {
             }
             let int_vars = self.interned_int_vars();
             if self.find_fractional_int_var(&int_vars).is_none() {
-                // Cuts closed the integrality gap outright.
+                // Cuts closed the integrality gap outright — every integer
+                // variable's value is derivably integral (the tri-state
+                // read treats an underivable wide-basic value as NOT
+                // integral, so this acceptance never rests on a fabricated
+                // entry).
                 self.snapshot_lia_model(&int_vars);
                 return Ok(TheoryResult::Sat);
             }
@@ -2231,15 +2290,22 @@ impl ArithSolver {
             let bar_a = -hat_a;
 
             let is_int_here = self.int_vars.contains(&xj) && bound.value.real.is_integer();
+            // CHECKED GMI coefficient arithmetic: `fj / f0` (and the
+            // siblings below) PANICKED in debug and silently WRAPPED in
+            // release on the dillig wide-bound family — and a wrapped
+            // coefficient is not merely a bad cut, it is an UNSOUND LEMMA
+            // asserted into the tableau. Declining the cut is always sound
+            // (cuts are an optimization; branch-and-bound remains
+            // complete).
             let gamma = if is_int_here {
                 let fj = bar_a - bar_a.floor();
                 if fj.is_zero() {
                     continue; // γ_j = 0: the term drops out of the cut
                 }
                 if fj <= f0 {
-                    fj / f0
+                    checked_div_r64(fj, f0)?
                 } else {
-                    (one - fj) / one_minus_f0
+                    checked_div_r64(one - fj, one_minus_f0)?
                 }
             // GMI continuous-variable coefficient for `ā_j ≥ 0` (with the
             // `x_B = b̄ − Σ ā_j y_j` textbook orientation `bar_a` carries):
@@ -2251,9 +2317,9 @@ impl ArithSolver {
             // continuous cut slacks; caught by the arith incremental-vs-
             // replay differential fuzzer).
             } else if bar_a >= Rational64::zero() {
-                bar_a / f0
+                checked_div_r64(bar_a, f0)?
             } else {
-                hat_a / one_minus_f0
+                checked_div_r64(hat_a, one_minus_f0)?
             };
             if gamma.is_zero() {
                 continue;
@@ -2266,12 +2332,16 @@ impl ArithSolver {
                 return None;
             }
 
+            // The `γ_j·bound` accumulation is checked for the same reason:
+            // a wrapped `rhs` publishes a cut that is not implied by its
+            // reasons.
+            let contrib = checked_mul_r64(gamma, bound.value.real)?;
             if at_lower {
                 cut.add_term(xj, -gamma);
-                rhs += gamma * bound.value.real;
+                rhs = checked_add_r64(rhs, contrib)?;
             } else {
                 cut.add_term(xj, gamma);
-                rhs -= gamma * bound.value.real;
+                rhs = checked_sub_r64(rhs, contrib)?;
             }
         }
 
@@ -2333,22 +2403,30 @@ impl ArithSolver {
         }
         *nodes += 1;
 
-        let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
-            // Fully integral — and FEASIBLE: the dive's base case can run
-            // right after a failed sibling's scope pop, whose persisted
-            // pivots left basic values outside their (restored, wider)
-            // windows.  Snapshotting that state publishes a model that
-            // violates asserted atoms, so gate on a fresh feasibility
-            // probe (re-derives the stale assignment first); an infeasible
-            // state declines the dive and lets the ordinary branch-and-
-            // bound — whose every node re-solves — handle it.
-            if !self.simplex.state_feasible() {
-                return false;
+        let (var, floor, ceil) = match self.find_fractional_int_var(int_vars) {
+            Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
+            // No honest value and no representable branch bounds: the dive
+            // cannot proceed soundly — decline (the ordinary search will
+            // surface the decline as `Unknown`).
+            Some(FracVar::Underivable) => return false,
+            None => {
+                // Fully integral — and FEASIBLE: the dive's base case can run
+                // right after a failed sibling's scope pop, whose persisted
+                // pivots left basic values outside their (restored, wider)
+                // windows.  Snapshotting that state publishes a model that
+                // violates asserted atoms, so gate on a fresh feasibility
+                // probe (re-derives the stale assignment first); an infeasible
+                // state declines the dive and lets the ordinary branch-and-
+                // bound — whose every node re-solves — handle it.
+                if !self.simplex.state_feasible() {
+                    return false;
+                }
+                self.snapshot_lia_model(int_vars);
+                return true;
             }
-            self.snapshot_lia_model(int_vars);
-            return true;
         };
-        for k in [value.floor(), value.ceil()] {
+        for k in [floor, ceil] {
+            let k = Rational64::from_integer(k);
             self.simplex.push();
             self.simplex.set_lower(var, k, BRANCH_REASON);
             self.simplex.set_upper(var, k, BRANCH_REASON);
@@ -2367,6 +2445,10 @@ impl ArithSolver {
     fn bnb_search(&mut self, int_vars: &[VarId], nodes: &mut usize) -> Result<TheoryResult> {
         struct Node {
             var: VarId,
+            /// The node's exact up-branch bound (`ceil` of the exact
+            /// fractional value, captured at node creation — see the
+            /// unwind loop for why it is not re-read from the assignment).
+            ceil: i64,
             up_done: bool,
             saw_unknown: bool,
         }
@@ -2377,10 +2459,11 @@ impl ArithSolver {
         fn take_branch(
             s: &mut ArithSolver,
             var: VarId,
-            bound: Rational64,
+            bound: i64,
             upper: bool,
             unknown: &mut bool,
         ) -> bool {
+            let bound = Rational64::from_integer(bound);
             s.simplex.push();
             if upper {
                 s.simplex.set_upper(var, bound, BRANCH_REASON);
@@ -2435,31 +2518,46 @@ impl ArithSolver {
                 return Ok(TheoryResult::Unknown);
             }
             *nodes += 1;
-            let Some((var, value)) = self.find_fractional_int_var(int_vars) else {
-                // Fully integral leaf — and feasible: see the dive's base
-                // case for why a fresh probe is required before a snapshot
-                // is trusted.  Infeasible here is not a leaf: unwinding to
-                // `Unknown` keeps the verdict honest.
-                if !self.simplex.state_feasible() {
+            let (var, floor_v, ceil_v) = match self.find_fractional_int_var(int_vars) {
+                Some(FracVar::Branch { var, floor, ceil }) => (var, floor, ceil),
+                Some(FracVar::Underivable) => {
+                    // An integer variable whose exact value is neither readable
+                    // nor branch-bounded (a wide-basic whose floor/ceil leave
+                    // `i64`): no sound acceptance and no sound branch exist —
+                    // the search declines honestly rather than snapshot a
+                    // fabricated value.
                     for _ in 0..stack.len() {
                         self.simplex.pop();
                     }
                     return Ok(TheoryResult::Unknown);
                 }
-                self.snapshot_lia_model(int_vars);
-                for _ in 0..stack.len() {
-                    self.simplex.pop();
+                None => {
+                    // A fully integral, feasible leaf — see the dive's base
+                    // case for why a fresh probe is required before a snapshot
+                    // is trusted.  Infeasible here is not a leaf: unwinding to
+                    // `Unknown` keeps the verdict honest.  (An underivable
+                    // wide-basic integer value reports as `Underivable` above,
+                    // so this acceptance never rests on a fabricated entry.)
+                    if !self.simplex.state_feasible() {
+                        for _ in 0..stack.len() {
+                            self.simplex.pop();
+                        }
+                        return Ok(TheoryResult::Unknown);
+                    }
+                    self.snapshot_lia_model(int_vars);
+                    for _ in 0..stack.len() {
+                        self.simplex.pop();
+                    }
+                    return Ok(TheoryResult::Sat);
                 }
-                return Ok(TheoryResult::Sat);
             };
-            let floor_v = value.floor();
-            let ceil_v = value.ceil();
             let mut saw_unknown = false;
 
             // Branch down: var <= floor(value).
             if take_branch(self, var, floor_v, true, &mut saw_unknown) {
                 stack.push(Node {
                     var,
+                    ceil: ceil_v,
                     up_done: false,
                     saw_unknown,
                 });
@@ -2469,6 +2567,7 @@ impl ArithSolver {
             if take_branch(self, var, ceil_v, false, &mut saw_unknown) {
                 stack.push(Node {
                     var,
+                    ceil: ceil_v,
                     up_done: true,
                     saw_unknown,
                 });
@@ -2491,10 +2590,13 @@ impl ArithSolver {
                 frame.saw_unknown |= matches!(outcome, TheoryResult::Unknown);
                 if !frame.up_done {
                     // Try this node's up branch.  Its down-branch scope was
-                    // just popped, so the LP state is the node's own again
-                    // and `value(var)` re-reads the original fractional
-                    // optimum.
-                    let ceil_v = self.simplex.value(frame.var).ceil();
+                    // just popped, so the LP state is the node's own again.
+                    // The branch bound is the EXACT ceil captured when the
+                    // node was created (re-reading `value(var)` here would
+                    // consult the raw assignment entry, which for a
+                    // wide-basic variable is only its exact value while
+                    // that value narrows — a fabricated re-read otherwise).
+                    let ceil_v = frame.ceil;
                     let mut saw = frame.saw_unknown;
                     if take_branch(self, frame.var, ceil_v, false, &mut saw) {
                         frame.up_done = true;
@@ -2614,6 +2716,16 @@ impl Theory for ArithSolver {
         // set, so a formula with no integer variables pays one scan that
         // finds nothing and returns Sat.
         if !self.is_integer() {
+            // Model-value availability gate: a TERM-BACKED variable whose
+            // defining row is wide and whose exact value does not narrow
+            // has NO honest witness value — the model layer would print the
+            // stale `assignment` entry (a fabricated value violating the
+            // very row that defines it).  Integer variables are covered by
+            // the branch-and-bound path below (its value reads are
+            // wide-aware); this gate closes the pure-real acceptance.
+            if self.wide_underivable_blocks_sat() {
+                return Ok(TheoryResult::Unknown);
+            }
             return Ok(TheoryResult::Sat);
         }
 
@@ -2622,7 +2734,13 @@ impl Theory for ArithSolver {
         // branch-and-bound before we may answer Sat.  Otherwise integer-
         // infeasible-but-LP-feasible systems (e.g. y = 2x ∧ y = 2z+1) would be
         // wrongly reported Sat with fractional values for Int terms.
-        self.lia_branch_and_bound()
+        let verdict = self.lia_branch_and_bound()?;
+        if matches!(verdict, TheoryResult::Sat) && self.wide_underivable_blocks_sat() {
+            // Same availability gate as Step 2, for the mixed-mode Real
+            // variables the integer search does not scan.
+            return Ok(TheoryResult::Unknown);
+        }
+        Ok(verdict)
     }
 
     fn push(&mut self) {
@@ -2784,6 +2902,31 @@ impl TheoryCombination for ArithSolver {
 }
 
 impl ArithSolver {
+    /// Whether some TERM-BACKED variable's exact value is unavailable: its
+    /// defining row lives in the wide store and its exact value does not
+    /// narrow.  Such a variable has no honest witness value — the model
+    /// layer would print the stale `assignment` entry (a fabricated value
+    /// violating the row that defines the variable: the wide-coefficient
+    /// false-`sat` class of 2026-09-15, where `v1` printed `0` against a row
+    /// forcing `v1 = −9 − 41/2⁶³`).  Purely internal slacks are exempt
+    /// (their values are never printed), which keeps otherwise-decidable
+    /// wide formulas decidable.
+    fn wide_underivable_blocks_sat(&self) -> bool {
+        let mut any_wide = false;
+        for (var, wexpr) in self.simplex.wide_rows_iter() {
+            any_wide = true;
+            let _ = wexpr;
+            // Derivable (narrowing) values do not block.
+            if self.simplex.delta_value_exact(var).is_some() {
+                continue;
+            }
+            if self.term_to_var.values().any(|&v| v == var) {
+                return true;
+            }
+        }
+        let _ = any_wide;
+        false
+    }
     /// Sound Nelson-Oppen equality propagation.
     ///
     /// Returns entailed equalities between interface terms that are shared between

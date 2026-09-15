@@ -297,8 +297,11 @@ impl Solver {
                     stack.push(*b);
                     stack.push(*a);
                 }
-                TermKind::SetSingleton(a) | TermKind::SetCard(a) => stack.push(*a),
-                TermKind::SetEmpty(_) => {}
+                TermKind::SetSingleton(a)
+                | TermKind::SetCard(a)
+                | TermKind::SetComplement(a)
+                | TermKind::SetChoose(a) => stack.push(*a),
+                TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
                 // Finite fields: children are walked so nested structure is
                 // seen, but nothing is interned — the FF procedure is an
                 // eager whole-problem dispatch (see `check_ff.rs`), and a

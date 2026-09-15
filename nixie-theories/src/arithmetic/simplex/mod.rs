@@ -438,7 +438,7 @@ pub(crate) fn checked_mul_r64(a: Rational64, b: Rational64) -> Option<Rational64
 }
 /// Checked rational division: `a / b`. Returns `None` if `b` is zero or the
 /// result overflows `i64` after reduction.
-fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+pub(crate) fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     if b.numer() == &0 {
         return None;
     }
@@ -449,7 +449,7 @@ fn checked_div_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
 /// Checked rational addition: `a + b`. Returns `None` on overflow.
 /// Checked `Rational64` subtraction, `None` on overflow (num-rational has
 /// no `checked_sub`; subtract via `a + (−b)` with both steps checked).
-fn checked_sub_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
+pub(crate) fn checked_sub_r64(a: Rational64, b: Rational64) -> Option<Rational64> {
     let nb = checked_neg_r64(b)?;
     checked_add_r64(a, nb)
 }
@@ -1112,7 +1112,19 @@ impl Simplex {
             return;
         }
         self.assignment[idx] = new;
-        let delta = new - old;
+        // Checked snap delta: the subtraction itself can leave `i64` width
+        // (a non-basic jumping from a deep negative bound to a deep
+        // positive one), and a wrapped delta would corrupt every dependent
+        // it propagates to — the same contract as the pivot's snap delta.
+        // Defer to the full re-derivation instead of guessing.
+        let Some(delta) = checked_sub_delta(new, old) else {
+            // The snapped non-basic value itself is exact (it is a bound
+            // value); only the dependents' updates are skipped, so the
+            // staleness flag — never `resource_limit`, which `crash_basis`
+            // alone may set through a failed full derivation.
+            self.assignment_current = false;
+            return;
+        };
         // Deep-copy the column list: updating assignments mutates nothing in
         // `columns`, but the borrow checker needs the split.
         let dependents: SmallVec<[VarId; 4]> = self
@@ -1125,17 +1137,50 @@ impl Simplex {
             if bi >= self.assignment.len() {
                 continue;
             }
-            let coef = self
-                .tableau
-                .get(&b)
-                .and_then(|row| row.terms.iter().find(|(v, _)| *v == var).map(|(_, c)| *c));
-            if let Some(c) = coef {
-                self.assignment[bi] += delta * c;
+            // Checked delta propagation with an exact (`BigRational`) retry
+            // and a narrowed final — the item-14 pattern: `Δ · c` and the
+            // accumulating sum legitimately leave `i64` width on
+            // wide-coefficient rows while the row's final value fits
+            // (magnitudes cancel), so the retry keeps the incremental
+            // update sound AND complete everywhere the final narrows.
+            // Only a final that does not fit defers, through the staleness
+            // flag (`crash_basis` owns the honest `resource_limit`
+            // verdict). Unchecked, the multiply PANICKED in debug and
+            // silently WRAPPED in release — a corrupted dependent every
+            // later decision trusted (the debug-panic sweep fired exactly
+            // here via `note_bound_change` once bound derivation reached
+            // wide-coefficient rows).
+            //
+            // A dependent whose row lives in the WIDE store (or a stale
+            // column entry pointing at no row) must NOT be silently
+            // skipped: its basic's value moves with this non-basic's snap
+            // just the same, and the wide store's value is only re-derived
+            // by `update_assignment`'s wide pass. Skipping without the
+            // staleness flag left the entry stale by exactly `Δ · coef`
+            // (the 2026-09-15 wide-coefficient false-`unsat`: the stale
+            // entry survived the row's later narrow-back into the tableau
+            // — the substitution preserves the row's function, not the
+            // entry's value — and the phony violation drove an invalid
+            // conflict). Flag the vector and let the next guard re-derive.
+            let updated = self.tableau.get(&b).map(|row| {
+                row.terms
+                    .iter()
+                    .find(|(v, _)| *v == var)
+                    .map(|(_, c)| *c)
+                    .and_then(|coef| {
+                        checked_mul_delta(delta, coef)
+                            .and_then(|d| checked_add_delta(self.assignment[bi], d))
+                            .or_else(|| self.eval_expr(row))
+                    })
+            });
+            match updated {
+                Some(Some(v)) => self.assignment[bi] = v,
+                Some(None) => self.assignment_current = false,
+                None => self.assignment_current = false,
             }
         }
     }
 
-    /// TEMP debug: dump the tableau rows.
     /// TEMP DIAG helper reused by tests.
     pub fn dbg_tableau(&self) -> String {
         use std::fmt::Write;
@@ -1250,6 +1295,60 @@ impl Simplex {
             .get(var as usize)
             .copied()
             .unwrap_or_default()
+    }
+    /// The HONEST delta-rational value of `var`, wide-store aware.
+    ///
+    /// A variable whose defining row lives in the wide store (the
+    /// dual-width pivot) has a trustworthy `assignment` entry only while
+    /// its exact value NARROWS: `update_assignment` stores exactly what
+    /// fits and leaves a stale entry otherwise (the `wide_pending`
+    /// classification's input).  Reading the raw entry then FABRICATES a
+    /// value — the false-`sat` class of 2026-09-15: an `Int` variable
+    /// wide-basic at an unrepresentable fractional optimum read as
+    /// integral `0`, and branch-and-bound accepted it as a model.  This
+    /// read re-derives wide basics EXACTLY from their row; `None` = no
+    /// honest narrow value exists (the caller must decline, never guess).
+    #[must_use]
+    pub fn delta_value_exact(&self, var: VarId) -> Option<DeltaRational> {
+        if let Some(wexpr) = self.wide_rows.get(&var) {
+            return self.eval_big_expr(wexpr);
+        }
+        Some(self.delta_value(var))
+    }
+    /// Branch bounds `(floor, ceil)` for a WIDE-basic variable, derived
+    /// from its exact UN-NARROWED value: intermediates beyond `i64` still
+    /// have small integer floors/ceils (`−9 − 41/2⁶³` branches at
+    /// `−10 / −9`), so the search stays decidable where the narrowed
+    /// value alone would force an honest decline.  `None` when the
+    /// variable is not wide-basic, its row is not evaluable, or even the
+    /// floor/ceil leave `i64` (no representable branch bound exists —
+    /// the caller declines).
+    #[must_use]
+    pub fn wide_floor_ceil_big(&self, var: VarId) -> Option<(i64, i64)> {
+        use num_rational::BigRational as BR;
+        use num_traits::ToPrimitive as _;
+        let wexpr = self.wide_rows.get(&var)?;
+        let (real, delta) = self.eval_big_raw(wexpr)?;
+        // Mirror `DeltaRational::floor`/`ceil`: an integral real part
+        // shifts by the infinitesimal's sign.
+        let (mut floor, mut ceil) = (real.floor(), real.ceil());
+        if real.fract().is_zero() {
+            if delta < BR::zero() {
+                floor -= BR::one();
+            } else if delta > BR::zero() {
+                ceil += BR::one();
+            }
+        }
+        Some((floor.to_i64()?, ceil.to_i64()?))
+    }
+    /// Iterate the wide store: `(basic variable, exact row)`.
+    pub fn wide_rows_iter(&self) -> impl Iterator<Item = (VarId, &BigLinExpr)> {
+        self.wide_rows.iter().map(|(v, e)| (*v, e))
+    }
+    /// Whether `var`'s defining row lives in the wide store.
+    #[must_use]
+    pub fn is_wide_basic(&self, var: VarId) -> bool {
+        self.wide_rows.contains_key(&var)
     }
     /// Concrete positive rational to substitute for the infinitesimal `δ` when
     /// turning the delta-rational assignment into an ordinary rational model.
@@ -2164,7 +2263,13 @@ impl Simplex {
                     .and_then(|r| r.terms.iter().find(|(v, _)| *v == col))
                 {
                     Some((_, c)) => *c,
-                    None => continue,
+                    // A dependent whose row lives in the WIDE store moves
+                    // with this flip just the same; skipping it silently
+                    // would leave the entry stale (see
+                    // `on_nonbasic_bound_change`'s flag discipline). Decline
+                    // the whole flip — the staged updates are discarded and
+                    // the driver falls back.
+                    None => return false,
                 };
                 let d = match checked_mul_delta(delta, a) {
                     Some(d) => d,
@@ -2616,7 +2721,7 @@ impl Simplex {
         // helpers, and an overflow anywhere aborts the pivot with NO partial
         // mutation (the transactional validate-then-commit contract callers
         // and the overflow regression test rely on).
-        let mut row_updates: Vec<(VarId, LinExpr)> = Vec::new();
+        let mut row_updates: Vec<(VarId, LinExpr, bool)> = Vec::new();
         let mut wide_updates: Vec<(VarId, BigLinExpr)> = Vec::new();
         if let Some(col) = self.columns.get(&nonbasic_var).cloned() {
             for &var in col.iter() {
@@ -2628,6 +2733,17 @@ impl Simplex {
                 // track the substitution). Their coefficient of the entering
                 // variable is exact, so the substitution runs exactly and
                 // the result lands wherever representability allows.
+                //
+                // A wide-origin row's ASSIGNMENT entry is not maintained by
+                // delta propagation (the wide store's value is only
+                // re-derived by `update_assignment`'s wide pass, and an
+                // unrepresentable value leaves the entry stale on purpose) —
+                // so when the substitution NARROWS the row back into the
+                // tableau, the commit must recompute the entry from the new
+                // row instead of trusting it (`was_wide` below). Trusting it
+                // was the wide-coefficient false-`unsat` of 2026-09-15: the
+                // stale entry then received the snap deltas and drove a
+                // phony violation through `explain_conflict`.
                 if !self.tableau.contains_key(&var)
                     && let Some(wrow) = self.wide_rows.get(&var).cloned()
                     && let Some((_, sc_b)) = wrow
@@ -2639,7 +2755,7 @@ impl Simplex {
                     let updated =
                         Self::substitute_big_row(&wrow, &sc_b, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&updated) {
-                        Some(narrow) => row_updates.push((var, narrow)),
+                        Some(narrow) => row_updates.push((var, narrow, true)),
                         None => wide_updates.push((var, updated)),
                     }
                     continue;
@@ -2670,11 +2786,11 @@ impl Simplex {
                     _ => None, // wide entering row: no narrow fast path
                 };
                 if let Some(fast) = fast {
-                    row_updates.push((var, fast));
+                    row_updates.push((var, fast, false));
                 } else {
                     let exact = Self::substitute_row_big(&row, sc, &entering_big, nonbasic_var);
                     match Self::narrow_big_lin(&exact) {
-                        Some(new_row) => row_updates.push((var, new_row)),
+                        Some(new_row) => row_updates.push((var, new_row, false)),
                         None => {
                             wide_updates.push((var, exact));
                         }
@@ -2746,9 +2862,19 @@ impl Simplex {
         // (the full re-evaluation was the top arithmetic consumer on dense
         // CAV/QF_LIA rows).
         if let Some(delta) = snap_delta {
-            for (var, new_row) in &row_updates {
+            for (var, new_row, was_wide) in &row_updates {
                 let vi = *var as usize;
                 if vi >= self.assignment.len() {
+                    continue;
+                }
+                if *was_wide {
+                    // The entry this delta would update is NOT maintained
+                    // for a wide-origin row (its value was only ever
+                    // re-derived by the wide pass, and an unrepresentable
+                    // one left it stale on purpose): the commit recomputes
+                    // it from the new row instead. Propagating a delta from
+                    // an untrusted base is how the wide-coefficient
+                    // false-`unsat` fabricated its violation.
                     continue;
                 }
                 if let Some(coef) = new_row
@@ -2828,7 +2954,7 @@ impl Simplex {
         // column removed (a stale `columns[v]` entry for a cancelled term made
         // `on_nonbasic_bound_change` skip real dependents and let later edits
         // miss rows entirely: corrupted tableau, wrong answers).
-        for (var, new_row) in row_updates {
+        for (var, new_row, was_wide) in row_updates {
             // Diff-based column maintenance: the column index is exact, so a
             // term present in both rows needs no touch, a dropped term needs
             // removal, and an added term is guaranteed absent from the column
@@ -2871,7 +2997,25 @@ impl Simplex {
             }
             self.tableau.insert(var, Arc::new(new_row));
             // A row that narrowed back from the wide store leaves it (the
-            // tableau entry is now authoritative).
+            // tableau entry is now authoritative) — and its ASSIGNMENT
+            // entry is recomputed from the new row: the wide store never
+            // maintained it through delta propagation (an unrepresentable
+            // value leaves it stale on purpose), so the narrow store must
+            // not inherit it. An unrepresentable recomputation defers
+            // through the staleness flag (`crash_basis` owns the honest
+            // decline).
+            if was_wide {
+                let vi = var as usize;
+                let row = self.tableau.get(&var).expect("row just inserted");
+                if vi < self.assignment.len() {
+                    match self.eval_expr(row) {
+                        Some(v) => {
+                            self.assignment[vi] = v;
+                        }
+                        None => self.assignment_current = false,
+                    }
+                }
+            }
             self.wide_rows.remove(&var);
         }
         // Commit wide updates: same diff-based column maintenance against

@@ -1434,7 +1434,10 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
         TermKind::Not(a) => out.push(*a),
         // Finite sets: ordinary children. Whether MBQI can *rebuild* them is
         // decided separately, in `rebuild`.
-        TermKind::SetSingleton(a) | TermKind::SetCard(a) => out.push(*a),
+        TermKind::SetSingleton(a)
+        | TermKind::SetCard(a)
+        | TermKind::SetComplement(a)
+        | TermKind::SetChoose(a) => out.push(*a),
         TermKind::SetUnion(a, b)
         | TermKind::SetInter(a, b)
         | TermKind::SetMinus(a, b)
@@ -1443,7 +1446,7 @@ pub(crate) fn push_children(kind: &TermKind, out: &mut ChildList) {
             out.push(*a);
             out.push(*b);
         }
-        TermKind::SetEmpty(_) => {}
+        TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
         TermKind::FfConst { .. } => {}
         TermKind::FfAdd(args) | TermKind::FfMul(args) | TermKind::FfBitsum(args) => {
             out.extend(args.iter().copied());
@@ -2537,6 +2540,7 @@ fn rebuild_with(
         // the ones whose *truth* needs a theory, and there is none yet, so the
         // model checker declines rather than evaluating them to a guess.
         TermKind::SetEmpty(sort) => manager.mk_set_empty_at(*sort),
+        TermKind::SetUniv(sort) => manager.mk_set_univ_at(*sort),
         TermKind::SetSingleton(_) => manager.mk_set_singleton(one(0)?),
         TermKind::SetUnion(..) => {
             let (a, b) = two_at(0)?;
@@ -2552,6 +2556,10 @@ fn rebuild_with(
         }
         TermKind::SetMember(..) | TermKind::SetSubset(..) | TermKind::SetCard(_) => {
             return Err("set predicate has no theory to evaluate it");
+        }
+        TermKind::SetComplement(_) => manager.mk_set_complement(one(0)?),
+        TermKind::SetChoose(..) => {
+            return Err("set.choose has no theory to evaluate it");
         }
         TermKind::StrConcat(..) => {
             let (a, b) = two_at(0)?;

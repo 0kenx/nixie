@@ -100,8 +100,10 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::BitVecConst { .. }
         | TermKind::FfConst { .. }
         | TermKind::StringLit(_)
-        // The empty set's only payload is its sort, which is not a child.
+        // The empty set's only payload is its sort, which is not a child;
+        // the same holds for the universe set.
         | TermKind::SetEmpty(_)
+        | TermKind::SetUniv(_)
         | TermKind::Var(_) => {}
 
         // Unary
@@ -115,6 +117,8 @@ pub fn get_children(kind: &TermKind) -> SmallVec<[TermId; 4]> {
         | TermKind::StrToCode(a)
         | TermKind::SetSingleton(a)
         | TermKind::SetCard(a)
+        | TermKind::SetComplement(a)
+        | TermKind::SetChoose(a)
         | TermKind::StrFromCode(a) => {
             children.push(*a);
         }

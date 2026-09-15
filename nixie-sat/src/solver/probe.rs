@@ -95,6 +95,22 @@ impl Solver {
 
         // Schedule binary roots, ranked by negated-occurrence count.
         let queue = self.generate_probes();
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_PROBE_QUEUE_TRACE").is_ok() {
+            use std::fmt::Write as _;
+            let mut qs = String::new();
+            for l in queue.iter().take(24) {
+                let _ = write!(qs, "{} ", l.code());
+            }
+            eprintln!(
+                "[pqueue] conflicts={} len={} first24={} tstable={} tfocused={}",
+                self.stats.conflicts,
+                queue.len(),
+                qs,
+                self.ticks_stable,
+                self.ticks_focused
+            );
+        }
         let (mut probed, mut failed, mut hyper) = (0usize, 0usize, 0usize);
 
         for probe in queue {
@@ -115,6 +131,15 @@ impl Solver {
             }
 
             probed += 1;
+            #[cfg(feature = "std")]
+            if std::env::var("NIXIE_PROBE_QUEUE_TRACE").is_ok() {
+                eprintln!(
+                    "[pdo] lit={} pf={} tsize={}",
+                    probe.code(),
+                    self.probe_propfixed[probe.code() as usize],
+                    self.trail.size()
+                );
+            }
             self.trail.new_decision_level();
             self.trail.assign_decision(probe);
             let (conflict, aborted) = self.propagate_bounded(20_000);

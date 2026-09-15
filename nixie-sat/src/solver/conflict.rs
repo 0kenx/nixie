@@ -1399,6 +1399,22 @@ impl Solver {
     /// or `shrink_literal` before its flags or level can justify an early exit.
     /// This retains the original learned literal when a proof is unavailable.
     fn minimize_reason_lits(&self, head: Lit, cid: ClauseId) -> Option<&[Lit]> {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_AWALK_TRACE").is_ok() {
+            use std::fmt::Write as _;
+            let mut ls = String::new();
+            if let Some(c) = self.clauses.get(cid) {
+                for &l in c.lits {
+                    let _ = write!(ls, "{}@{},", l.code(), self.trail.level(l.var()));
+                }
+            }
+            eprintln!(
+                "[bstep] cid={} head={} lits={}",
+                cid.index(),
+                head.code(),
+                ls
+            );
+        }
         let clause = self.clauses.get(cid)?;
         if clause.deleted || !clause.lits.contains(&head) {
             return None;

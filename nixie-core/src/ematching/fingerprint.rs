@@ -229,10 +229,15 @@ impl FingerprintCache {
                 t_fp.0.hash(&mut hasher);
                 e_fp.0.hash(&mut hasher);
             }
-            // The empty set's identity is its sort; everything else
-            // fingerprints its children, exactly as the array kinds do.
-            TermKind::SetEmpty(sort) => sort.0.hash(&mut hasher),
+            // The empty set's (and universe set's) identity is its sort;
+            // everything else fingerprints its children, exactly as the array
+            // kinds do.
+            TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => sort.0.hash(&mut hasher),
             TermKind::SetSingleton(a) | TermKind::SetCard(a) => {
+                let fp = self.compute(*a, manager);
+                fp.0.hash(&mut hasher);
+            }
+            TermKind::SetComplement(a) | TermKind::SetChoose(a) => {
                 let fp = self.compute(*a, manager);
                 fp.0.hash(&mut hasher);
             }

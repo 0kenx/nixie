@@ -527,6 +527,21 @@ pub enum TermKind {
     /// set reasoning to interact with arithmetic, and CVC5 gives it a whole
     /// module (`cardinality_extension.cpp`) for that reason.
     SetCard(TermId),
+    /// `(set.complement s)` — the complement relative to the element sort's
+    /// universe.
+    ///
+    /// Membership is decidable pointwise (`x ∈ ~s ↔ x ∉ s`); cardinality is
+    /// only meaningful when the universe is finite, which the reduction
+    /// checks before emitting any arithmetic.
+    SetComplement(TermId),
+    /// `(as set.universe (Set T))` — the universe set of an element sort.
+    ///
+    /// Carries its **set** sort, like [`TermKind::SetEmpty`].
+    SetUniv(SortId),
+    /// `(set.choose s)` — some element of `s`, as CVC5's `SET_CHOOSE`:
+    /// `choose(s) ∈ s ↔ s ≠ ∅`, and `s = t → choose(s) = choose(t)` by
+    /// congruence.
+    SetChoose(TermId),
 }
 
 /// A case in a match expression.

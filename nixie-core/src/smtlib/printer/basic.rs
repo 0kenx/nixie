@@ -389,6 +389,21 @@ impl<'a> Printer<'a> {
                 self.write_term(w, *s);
                 let _ = write!(w, ")");
             }
+            TermKind::SetComplement(s) => {
+                let _ = write!(w, "(set.complement ");
+                self.write_term(w, *s);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetUniv(sort) => {
+                let _ = write!(w, "(as set.universe ");
+                self.write_sort(w, *sort);
+                let _ = write!(w, ")");
+            }
+            TermKind::SetChoose(s) => {
+                let _ = write!(w, "(set.choose ");
+                self.write_term(w, *s);
+                let _ = write!(w, ")");
+            }
             TermKind::Select(array, index) => {
                 let _ = write!(w, "(select ");
                 self.write_term(w, *array);

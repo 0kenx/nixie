@@ -326,13 +326,9 @@ impl Solver {
                 // gating — the wide-coefficient classes (`2^63·v` and
                 // friends) become decidable rows instead of free Booleans
                 // gated to `Unknown`.
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -354,13 +350,9 @@ impl Solver {
         );
         if rhs_ok.is_none() {
             if overflow {
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -952,6 +944,7 @@ impl Solver {
     ///  * the caller rescales the whole result into width
     ///    (`scale_exact_row`), which is sound because a POSITIVE multiple
     ///    of the row preserves its zero bound.
+    ///
     /// Faithfully mirrors the narrow walk's structure (iterative, same
     /// frame discipline) so the two cannot drift semantically.
     fn extract_linear_terms_exact(
@@ -4017,11 +4010,14 @@ impl Solver {
             // honesty gate degrades any resulting `Sat` to `Unknown` — see
             // `Solver::set_terms_unconstrained`.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
             | TermKind::SetMinus(_, _)
-            | TermKind::SetCard(_) => {
+            | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)
