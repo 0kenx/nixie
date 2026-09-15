@@ -752,7 +752,7 @@ impl ModelCompleter {
     /// element (`not subset => exists x. member(x,s1) /\ not
     /// member(x,s2)` with no such `x` in the domain) — is thawed so the
     /// next completion re-freezes at the *current* (grown) universe.
-    /// Bounded by [`MAX_TABLE_THAWS`].
+    /// Bounded by `MAX_TABLE_THAWS` (the private constant below).
     #[allow(dead_code)]
     pub fn thaw_table_domains(&mut self) -> bool {
         if self.thaws_used >= MAX_TABLE_THAWS {
