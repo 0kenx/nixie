@@ -107,15 +107,22 @@ impl TracedPoly {
         }
     }
 
-    /// Monomial-multiply both the polynomial and every cofactor.
+    /// Monomial-multiply both the polynomial and every cofactor. An
+    /// UNTRACED element (empty cofactor row — see
+    /// [`grobner_basis_untraced`]) stays untraced: the row work is the
+    /// measured ~n_inputs× cost on wide cascades, and it is skipped
+    /// entirely when no certificate will be minted from this run.
     fn mul_monomial(&self, f: &FieldCtx, m: &Monomial) -> Self {
         Self {
             poly: mul_by_monomial(f, &self.poly, m),
-            cofactors: self
-                .cofactors
-                .iter()
-                .map(|c| mul_by_monomial(f, c, m))
-                .collect(),
+            cofactors: if self.cofactors.is_empty() {
+                Vec::new()
+            } else {
+                self.cofactors
+                    .iter()
+                    .map(|c| mul_by_monomial(f, c, m))
+                    .collect()
+            },
         }
     }
 
@@ -123,12 +130,15 @@ impl TracedPoly {
     fn add(&self, f: &FieldCtx, other: &Self) -> Self {
         Self {
             poly: self.poly.add(f, &other.poly),
-            cofactors: self
-                .cofactors
-                .iter()
-                .zip(other.cofactors.iter())
-                .map(|(a, b)| a.add(f, b))
-                .collect(),
+            cofactors: if self.cofactors.is_empty() && other.cofactors.is_empty() {
+                Vec::new()
+            } else {
+                self.cofactors
+                    .iter()
+                    .zip(other.cofactors.iter())
+                    .map(|(a, b)| a.add(f, b))
+                    .collect()
+            },
         }
     }
 
@@ -141,7 +151,11 @@ impl TracedPoly {
     fn neg(&self, f: &FieldCtx) -> Self {
         Self {
             poly: self.poly.neg(f),
-            cofactors: self.cofactors.iter().map(|c| c.neg(f)).collect(),
+            cofactors: if self.cofactors.is_empty() {
+                Vec::new()
+            } else {
+                self.cofactors.iter().map(|c| c.neg(f)).collect()
+            },
         }
     }
 
@@ -149,7 +163,11 @@ impl TracedPoly {
     fn scale(&self, f: &FieldCtx, s: &Limbs) -> Self {
         Self {
             poly: self.poly.scale(f, s),
-            cofactors: self.cofactors.iter().map(|c| c.scale(f, s)).collect(),
+            cofactors: if self.cofactors.is_empty() {
+                Vec::new()
+            } else {
+                self.cofactors.iter().map(|c| c.scale(f, s)).collect()
+            },
         }
     }
 
@@ -210,6 +228,29 @@ pub fn grobner_basis(
     inputs: &[MPoly],
     budget: &mut GrobnerBudget,
 ) -> Result<GrobnerBasis, GrobnerError> {
+    grobner_basis_inner(f, inputs, budget, true)
+}
+
+/// The UNTRACED fast path: the same deterministic cascade with NO cofactor
+/// rows (empty `cofactors` propagates through every traced op — the row
+/// maintenance was the measured ~1 s-per-S-pair cost on 96-input cascades).
+/// Use when the caller will not mint a certificate from this run's basis;
+/// reductions, pair selection, and the resulting basis are IDENTICAL (rows
+/// never influence the trajectory), so a traced re-run reproduces it.
+pub fn grobner_basis_untraced(
+    f: &FieldCtx,
+    inputs: &[MPoly],
+    budget: &mut GrobnerBudget,
+) -> Result<GrobnerBasis, GrobnerError> {
+    grobner_basis_inner(f, inputs, budget, false)
+}
+
+fn grobner_basis_inner(
+    f: &FieldCtx,
+    inputs: &[MPoly],
+    budget: &mut GrobnerBudget,
+    track: bool,
+) -> Result<GrobnerBasis, GrobnerError> {
     // Deterministic generator order: sort by leading-monomial degree, then
     // term count, then input index (index-stable for ties).
     let mut order: Vec<usize> = (0..inputs.len()).collect();
@@ -225,8 +266,13 @@ pub fn grobner_basis(
     // permutes construction, not indices.
     let mut basis: Vec<TracedPoly> = Vec::with_capacity(inputs.len());
     for &i in &order {
-        let mut cofactors = vec![MPoly::zero(); inputs.len()];
-        cofactors[i] = MPoly::constant(f, &f.one());
+        let cofactors = if track {
+            let mut rows = vec![MPoly::zero(); inputs.len()];
+            rows[i] = MPoly::constant(f, &f.one());
+            rows
+        } else {
+            Vec::new()
+        };
         basis.push(
             TracedPoly {
                 poly: inputs[i].clone(),
@@ -479,6 +525,8 @@ fn reduce_traced(
             // instead of seconds (the chain-64×96 wall-vs-budget gap,
             // profiled to FieldCtx::add/SmallVec churn in the cofactor
             // rows — T5's charge-what-runs, at the tracer layer).
+            // The actual row length (0 when untraced): the charge
+            // follows the work really done.
             let n_inputs = current.cofactors.len() as u64;
             let sub_terms = sub.poly.n_terms() as u64;
             let poly_cost =

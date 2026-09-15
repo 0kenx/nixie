@@ -173,10 +173,15 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
    cofactor-row charging, a bloat circuit breaker) and lm caching
    (sparse 128×192 8 s → 4.6 s), and MEASURED the ≥64×96 blocker: the
    certificate tracer's cofactor-row maintenance costs ~1 s per S-pair
-   on 96-input cascades — fix that FIRST (sparse cofactor rows, or an
-   untraced fast path with traced replay), then F4, then round-robin
-   branch-variable selection (a heuristic inside a chaotic search —
-   matched nulls per `docs/BENCHMARKING.md`). NTT untested.
+   on 96-input cascades. That lever then LANDED
+   (`docs/studies/2026-09-16-ff-untraced-fast-path.md`): the untraced
+   fast path (empty cofactor rows gate every row op; wide components
+   run rows-free, UNSAT re-runs traced once for the witness;
+   trajectory-identity pinned by a property test) — **chain 64×96
+   `sat` in 1.2 s**, 32×48 0.13 s, 128×192/256×384 honest `unknown` in
+   seconds, sparse 128×192 0.21 s. REMAINING frontier: chain ≥128×192
+   via round-robin branch-variable selection (now measurable — matched
+   nulls per `docs/BENCHMARKING.md`), F4, NTT untested.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,
