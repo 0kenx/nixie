@@ -55,23 +55,48 @@ The 60 s-cap losses are the known standing-gap profile (studies/
 2026-08-satcomp-standing-gap.md): uniform search-power deficit, no
 mismatch anywhere — every solved verdict agrees with kissat.
 
-## Two nixie CLI defects found while setting this up (unfixed, follow-ups)
+## Two nixie CLI defects found while setting this up — FIXED in `cd544511`
 
-1. **`--preset` silently ignores unknown names.** `apply_preset`
-   (nixie-cli/src/main.rs) has `_ => { // Unknown preset, ignore }` —
-   `nixie --dimacs --preset bogus` runs happily. AGENTS.md silent-fallthrough
-   rule violation; should error.
-2. **`--preset` is not wired into the CNF fast path at all.** The DIMACS
-   path (processor.rs) builds `nixie_sat::Solver` with
-   `SolverConfig::default() + enable_inprocessing` and never consults the
-   preset — so `--preset cadical` is a no-op on CNF input, and the CLI's
-   CNF configuration is *not* the CaDiCaL preset used by the standing table
-   (which goes through `examples/cnf_bench.rs` with `PRESET=cadical`). The
-   nixie column above therefore measures the shipped-CLI default config.
+1. **`--preset` silently ignored unknown names.** `apply_preset`
+   (nixie-cli/src/main.rs) had `_ => { // Unknown preset, ignore }` —
+   `nixie --dimacs --preset bogus` ran happily. Now rejected at startup
+   with the valid names listed.
+2. **`--preset` was not wired into the CNF fast path at all.** The DIMACS
+   path (processor.rs) built `SolverConfig::default() + inprocessing`
+   regardless of `--preset`, so `--preset cadical` was a no-op on CNF
+   input. `cd544511` wires SAT-core preset names to their `ConfigPreset`
+   config verbatim, rejects cross-domain presets per-file (no silent
+   no-ops), and makes per-file errors visible on stderr. The stale
+   "BVE disabled in every preset" comment was corrected (BVE is on in the
+   CaDiCaL preset since `0ed8543`, after the 2026-08-17 fix); the
+   `summle_X4044` false-UNSAT reproducer is guarded through the CLI path
+   (`sat` in 46 s under `--preset cadical`).
+
+## Follow-up: nixie `--preset cadical` arm (post-fix, `cd544511`)
+
+Same 30 instances, same protocol (sequential, P-cores, 60 s cap, perf
+stat), nixie now actually running the CaDiCaL preset — the configuration
+the standing table measures. Result store:
+`precompile/cd544511/benchmark/satcomp2025-cadical-arm/`.
+
+| | nixie default (`5bf4d1a1`) | nixie `--preset cadical` (`cd544511`) |
+|---|---|---|
+| solved / 30 (60 s) | 16 | **17** (strict superset) |
+| solved / 30 (30 s) | 14 | 14 |
+| verdict mismatches | 0 | **0** |
+| Σ cycles, 16 common-solved | 568.0 G | **489.3 G** (0.86×) |
+| geomean wall, 16 common-solved | 0.74 s | 0.90 s (load-19 wall; cycles preferred) |
+
+`--preset cadical` gains `Break_12_30.xml` (56.9 s, default TOs) and loses
+nothing; on the commonly solved set it burns ~14 % fewer cycles. The 30 s
+bar is unchanged — the win is tail-side, consistent with the preset's
+inprocessing schedule paying off on longer runs.
 
 ## Verdict
 
 kissat ≫ z3 > nixie on SATCOMP 2025 main-track easy/mid slice; nixie is
-~3× z3 in cycles on the common set and solves 16/30 vs kissat's 30/30.
+~3× z3 in cycles on the common set and solves 16/30 (default) / 17/30
+(`--preset cadical`, now reachable from the CLI) vs kissat's 30/30.
 Result store: `precompile/5bf4d1a1/benchmark/satcomp2025-3way/`
-(results.tsv, prescreen.tsv, per-run logs, harness scripts).
+(results.tsv, prescreen.tsv, per-run logs, harness scripts); cadical arm:
+`precompile/cd544511/benchmark/satcomp2025-cadical-arm/`.
