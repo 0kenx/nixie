@@ -695,6 +695,15 @@ impl Parser<'_> {
                             ),
                         });
                     }
+                    // CVC5's type rule: two *unary* relations join to the
+                    // nullary tuple and are rejected (`Join operates on two
+                    // unary relations`); a unary with a wider one is fine.
+                    if fx.len() == 1 && fy.len() == 1 {
+                        return Err(NixieError::ParseError {
+                            position: self.lexer.position(),
+                            message: "rel.join: join operates on two unary relations".to_string(),
+                        });
+                    }
                 } else if fields_x.is_none() || fields_y.is_none() {
                     return Err(NixieError::ParseError {
                         position: self.lexer.position(),

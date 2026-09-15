@@ -245,7 +245,12 @@ fn join_arities(
     if *f2.first()? != middle {
         return None;
     }
-    Some((n1 - 1, middle, n2 - 1))
+    // The FULL operand arities. (This once returned the decremented front
+    // and back lengths while the join definition arm indexed with it as
+    // the full arity — a binary ⨝ binary built the splits `(k)` and
+    // `(k, 1, 3)` instead of `(1, k)` and `(k, 3)`, cross-sort elements
+    // that no faithful model could value.)
+    Some((n1, middle, n2))
 }
 
 /// `sel_i(t)`: the i-th component as a selector term. Uniform for any
@@ -316,6 +321,29 @@ fn concat_tuple(u: TermId, v: TermId, manager: &mut TermManager) -> TermId {
 /// term the user actually wrote (`x`, `x + 1`, `f x`) still enters the
 /// element list directly from the survey of their membership atoms, and
 /// its equalities to other plausible terms still tie.
+/// Whether a term's spelling contains one of the join skolem variables
+/// (`@set_join_*`) — i.e. it is itself split-derived.
+fn spells_join_skolem(t: TermId, manager: &TermManager) -> bool {
+    let mut stack = vec![t];
+    let mut seen: FxHashSet<TermId> = FxHashSet::default();
+    while let Some(cur) = stack.pop() {
+        if !seen.insert(cur) {
+            continue;
+        }
+        let Some(data) = manager.get(cur) else {
+            continue;
+        };
+        if let TermKind::Var(name) = &data.kind {
+            let n = manager.resolve_str(*name);
+            if n.starts_with("@set_join_") {
+                return true;
+            }
+        }
+        stack.extend(nixie_core::ast::traversal::get_children(&data.kind));
+    }
+    false
+}
+
 fn element_plausible(t: TermId, manager: &TermManager) -> bool {
     let Some(data) = manager.get(t) else {
         return false;
@@ -634,6 +662,79 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
     // twins of every `a ∪ b` whose size the problem constrains — and those
     // twins need membership definitions of their own from the loop that
     // follows. See [`cardinality`].
+    // ---- the join's derived elements, BEFORE cardinality ----
+    //
+    // The join definition mints its splits (`u = (front, k)`, `v = (k,
+    // back)`) and the middle skolem `k` — and those are *elements*: the
+    // counting equations must see them in the same pass, or a final
+    // assert's split is never counted and `(a,c) ∈ r ⨝ s` with `r` pinned
+    // exactly to a non-matching pair answers `sat` (a false `sat`: `J` is
+    // determined by its operands). Deriving them here — ahead of
+    // [`cardinality::reduce`] — keeps the axiom emission in the definition
+    // loop below (the terms are hash-consed, so the second build is the
+    // same term).
+    for &set in &s.sets {
+        let Shape::Join(r1, r2) = shape_of(set, manager) else {
+            continue;
+        };
+        let Some((n1, middle_sort, _n2)) = join_arities(r1, r2, manager) else {
+            continue;
+        };
+        let Some(es) = element_sort(set, manager) else {
+            continue;
+        };
+        let elems = match elements.get(&es) {
+            Some(list) => list.clone(),
+            None => continue,
+        };
+        // Only *user-reachable* elements get splits. A split of a
+        // split-derived element re-derives memberships the original's split
+        // and the compose rule already force, and minting them feeds the
+        // axioms back into the next pass's survey — the element lists then
+        // grow without bound across asserts (measured: the join-pairs cap
+        // overflowed on a three-assert script). A split-derived element is
+        // recognizable by its `@set_join_*` skolem component.
+        let mut user_elems: Vec<TermId> = Vec::with_capacity(elems.len());
+        for e in elems {
+            if !spells_join_skolem(e, manager) {
+                user_elems.push(e);
+            }
+        }
+        for e in user_elems {
+            let total = tuple_arity(e, manager).unwrap_or(n1.max(1));
+            let k = manager.mk_var(&format!("@set_join_{}_{}", set.0, e.0), middle_sort);
+            let mut left: Vec<TermId> = (0..n1.saturating_sub(1))
+                .map(|i| select_i(e, i, manager))
+                .collect();
+            left.push(k);
+            let mut r2_parts = vec![k];
+            r2_parts.extend((n1.saturating_sub(1)..total).map(|i| select_i(e, i, manager)));
+            let u = manager.mk_tuple(&left);
+            let v = manager.mk_tuple(&r2_parts);
+            // The splits are *elements*: they join the bucket keyed by
+            // their OWN sort (the operand's tuple sort). `element_sort`
+            // would read it as a set's element sort — `None` for a tuple —
+            // and the push silently never happened, leaving the counting
+            // equations blind to the splits (a final assert's join split
+            // was never counted).
+            for derived in [u, v] {
+                let Some(ds) = manager.get(derived).map(|d| d.sort) else {
+                    continue;
+                };
+                if let Some(list) = elements.get_mut(&ds)
+                    && !list.contains(&derived)
+                {
+                    list.push(derived);
+                }
+            }
+            if let Some(list) = elements.get_mut(&middle_sort)
+                && !list.contains(&k)
+            {
+                list.push(k);
+            }
+        }
+    }
+
     let pre_card_len = axioms.len();
     let card = cardinality::reduce(&s, &elements, &relations, &eq_pairs, manager, &mut axioms);
     // The counting equations mint de-duplication guards — equality atoms
@@ -918,12 +1019,13 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
                     let iv = manager.mk_set_member(v, r2);
                     let both = manager.mk_and([iu, iv]);
                     axioms.push(manager.mk_implies(atom, both));
-                    // The witness and its splits are elements: the next
-                    // pass's survey sees their atoms and the counting
-                    // equations account for them.
+                    // The witness and its splits are elements (keyed by
+                    // their own sort; see the pre-pass above).
                     for derived in [u, v] {
-                        if let Some(ds) = element_sort(derived, manager)
-                            && let Some(list) = elements.get_mut(&ds)
+                        let Some(ds) = manager.get(derived).map(|d| d.sort) else {
+                            continue;
+                        };
+                        if let Some(list) = elements.get_mut(&ds)
                             && !list.contains(&derived)
                         {
                             list.push(derived);
@@ -1001,10 +1103,26 @@ pub(crate) fn reduce(roots: &[TermId], manager: &mut TermManager) -> Reduction {
             continue;
         };
         let empty: Vec<TermId> = Vec::new();
-        let us = elements.get(&es1).unwrap_or(&empty).clone();
-        let vs = elements.get(&es2).unwrap_or(&empty).clone();
+        // Split-derived elements are skipped as compose operands: pairing
+        // them re-derives conclusions the user-reachable pairs already
+        // force (glue((1,k),(k,3)) is glue((1,·),(·,3)) again), while the
+        // pair product they add is what overflows the cap.
+        let us: Vec<TermId> = elements
+            .get(&es1)
+            .unwrap_or(&empty)
+            .iter()
+            .copied()
+            .filter(|&u| !spells_join_skolem(u, manager))
+            .collect();
+        let vs: Vec<TermId> = elements
+            .get(&es2)
+            .unwrap_or(&empty)
+            .iter()
+            .copied()
+            .filter(|&v| !spells_join_skolem(v, manager))
+            .collect();
         for &u in &us {
-            let arity_u = tuple_arity(u, manager).unwrap_or(n1 + 1);
+            let arity_u = tuple_arity(u, manager).unwrap_or(n1);
             let Some(last_u) = (0..arity_u).map(|i| select_i(u, i, manager)).last() else {
                 continue;
             };

@@ -494,3 +494,126 @@ fn join_value_declines_honestly_today() {
         "the join value must echo (or, once fixed, print - update me): {joined}"
     );
 }
+
+// ===== the join split's counting (a closed false-`sat` class) =====
+
+/// `(a,c) ∈ r ⨝ s` with both operands pinned exactly to a non-connecting
+/// pair is unsatisfiable: the split's witness `(a,k) ∈ r` forces a second
+/// member past `r`'s exact size. This was a **false `sat`** — the split
+/// terms were pushed into the element lists under a key read as a *set's*
+/// element sort (`None` for a tuple), so the push silently never happened
+/// and the counting equations never saw them.
+#[test]
+fn join_split_is_counted() {
+    let got = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 5 9) r))\n\
+         (assert (= (set.card r) 1))\n\
+         (assert (set.member (tuple 9 3) s))\n\
+         (assert (= (set.card s) 1))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(got, SolverResult::Unsat);
+}
+
+/// The mirror: the one connectable pair makes the joined member hold, and
+/// a non-connecting exact left operand does not.
+#[test]
+fn join_split_counting_is_not_overconstrained() {
+    let sat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 2 3) s))\n\
+         (assert (set.member (tuple 1 3) (rel.join r s)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat, SolverResult::Sat);
+    // The bound side: an exact one-member left operand with an exact
+    // one-member right bounds the join by one member. (The *slack* of a
+    // join is only bounded by |r|·|s|, so richer shapes answer honestly
+    // `unknown` rather than guess; this shape stays inside the bound.)
+    let unsat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (declare-const s (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (= (set.card r) 1))\n\
+         (assert (set.member (tuple 2 3) s))\n\
+         (assert (= (set.card s) 1))\n\
+         (assert (= (set.card (rel.join r s)) 2))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(unsat, SolverResult::Unsat);
+}
+
+/// Tuple constructor equality unfolds componentwise (the datatype
+/// injectivity axiom, as a builder rewrite): distinct components refute
+/// the equality, and the reduction's counting guards see it.
+#[test]
+fn tuple_constructor_equality_unfolds() {
+    // Distinct tuples are distinct (and the disequality holds trivially).
+    let sat = solve_smt(
+        "(set-logic ALL)\n\
+         (assert (not (= (tuple 1 2) (tuple 5 2))))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat, SolverResult::Sat);
+    // Two distinct-constant tuples in a one-member relation: the count
+    // cannot be one.
+    let unsat = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const r (Relation Int Int))\n\
+         (assert (set.member (tuple 1 2) r))\n\
+         (assert (set.member (tuple 5 2) r))\n\
+         (assert (= (set.card r) 1))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(unsat, SolverResult::Unsat);
+    // Equal components make equal tuples.
+    let sat2 = solve_smt(
+        "(set-logic ALL)\n\
+         (declare-const x Int)\n\
+         (assert (= x 5))\n\
+         (assert (= (tuple x 2) (tuple 5 2)))\n\
+         (check-sat)\n",
+    );
+    assert_eq!(sat2, SolverResult::Sat);
+}
+
+/// A join of relations joined with *unary* operands is a parse error, as
+/// in CVC5; unary with wider is fine.
+#[test]
+fn unary_join_typing_follows_cvc5() {
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const a (Relation Int))\n\
+         (declare-const b (Relation Int))\n\
+         (assert (= (set.card (rel.join a b)) 0))\n\
+         (check-sat)\n",
+    );
+    assert!(out.is_err(), "two unary operands must be rejected");
+    // Unary with a wider relation is fine (the front contributes no
+    // columns): a unary joined with a binary is binary.
+    let mut context = nixie_solver::Context::new();
+    let out = context.execute_script(
+        "(set-logic ALL)\n\
+         (declare-const a (Relation Int))\n\
+         (declare-const b (Relation Int Int))\n\
+         (assert (set.member (tuple 7) a))\n\
+         (assert (set.member (tuple 7 9) b))\n\
+         (assert (set.member (tuple 9) (rel.join a b)))\n\
+         (check-sat)\n",
+    );
+    assert!(out.is_ok(), "unary with wider must parse: {out:?}");
+    assert_eq!(
+        out.unwrap().first().map(String::as_str),
+        Some("sat"),
+        "the connectable pair witnesses the joined member"
+    );
+}

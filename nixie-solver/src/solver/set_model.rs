@@ -787,7 +787,7 @@ impl Solver {
             if let Some(Some(old)) = elem_values.get(&e).copied() {
                 used.remove(&old);
             }
-            match self.mint_element_value(elem_sort, &used, manager) {
+            match self.mint_element_value(elem_sort, &mut used, manager) {
                 Some(v) => {
                     used.insert(v);
                     elem_values.insert(e, Some(v));
@@ -819,6 +819,12 @@ impl Solver {
         // committed member of `r` whose spelling is not in `r`'s value).
         // Nested tuples resolve innermost-first by element order; one
         // sweep per nesting level.
+        // Elements whose values the sweep derives (below) are
+        // commitment-loaded — a selector read off a witness, a component
+        // resolved through a pin — and the collision repair must treat
+        // them as fixed: re-minting one trades the membership it was
+        // derived to satisfy for a fresh violation.
+        let mut sweep_derived: FxHashSet<TermId> = FxHashSet::default();
         for _sweep in 0..4 {
             let mut changed = false;
             for &e in elements {
@@ -827,12 +833,50 @@ impl Solver {
                 else {
                     continue;
                 };
-                if model.get(e).is_some() {
+                // Skip only when an existing entry is already fully
+                // resolved. A constructor term's *self-entry* (its own
+                // spelling, which the datatype reconstruction installs)
+                // still carries unresolved components — a selector of a
+                // witness, a skolem — and must be re-resolved, not
+                // trusted: the join's verification compared exactly such
+                // a spelling against the synthesized values and failed.
+                if let Some(existing) = model.get(e)
+                    && is_value_term(existing, manager)
+                    && match manager.get(existing).map(|d| d.kind.clone()) {
+                        Some(TermKind::DtConstructor { args: cargs, .. }) => {
+                            cargs.iter().all(|&c| is_value_term(c, manager))
+                        }
+                        _ => true,
+                    }
+                {
                     continue;
                 }
                 let mut resolved: Vec<TermId> = Vec::with_capacity(args.len());
                 let mut all = true;
                 for &arg in &args {
+                    // A tuple-selector component folds over its argument's
+                    // value: `sel_i(v)` reads component `i` directly when
+                    // `v`'s entry is a constructor value. Without this the
+                    // component minted a fresh witness instead of the
+                    // committed one, and the join's verification saw a
+                    // member it could not reproduce.
+                    if let Some(TermKind::DtSelector {
+                        selector,
+                        arg: sel_arg,
+                    }) = manager.get(arg).map(|d| d.kind.clone())
+                        && let Some(index) = manager
+                            .resolve_str(selector)
+                            .strip_prefix("@t")
+                            .and_then(|n| n.parse::<usize>().ok())
+                            .and_then(|n| n.checked_sub(1))
+                        && let Some(value) = model.get(sel_arg)
+                        && let Some(TermKind::DtConstructor { args: cargs, .. }) =
+                            manager.get(value).map(|d| d.kind.clone())
+                        && let Some(&component) = cargs.get(index)
+                    {
+                        resolved.push(component);
+                        continue;
+                    }
                     // A **join skolem** is our own existential witness: its
                     // value is ours to choose, and the arithmetic pass has
                     // already defaulted every unconstrained integer to 0 —
@@ -897,6 +941,7 @@ impl Solver {
                 if all {
                     let value = manager.mk_tuple(&resolved);
                     model.set(e, value);
+                    sweep_derived.insert(e);
                     if let Some(v) = elem_values.insert(e, Some(value)) {
                         let _ = v;
                     }
@@ -972,12 +1017,13 @@ impl Solver {
                     if !disagrees {
                         continue;
                     }
-                    if self.element_value_is_pinned(e) {
-                        // Two pinned members disagreeing is a genuine
+                    if self.element_value_is_pinned(e) || sweep_derived.contains(&e) {
+                        // Two pinned members (or a pinned and a
+                        // sweep-derived one) disagreeing is a genuine
                         // contradiction the model cannot repair.
                         return;
                     }
-                    match self.mint_element_value(elem_sort, &used, manager) {
+                    match self.mint_element_value(elem_sort, &mut used, manager) {
                         Some(fresh) => {
                             used.insert(fresh);
                             elem_values.insert(e, Some(fresh));
@@ -1165,7 +1211,7 @@ impl Solver {
             }
             let mut pool = inherited;
             for _ in 0..private {
-                match self.mint_element_value(elem_sort, &used, manager) {
+                match self.mint_element_value(elem_sort, &mut used, manager) {
                     Some(v) => {
                         used.insert(v);
                         pool.push(v);
@@ -1206,7 +1252,7 @@ impl Solver {
                 // element of the sort — `choose` of an empty set is
                 // underspecified, and an unset set makes the query
                 // undetermined anyway.
-                _ => self.mint_element_value(elem_sort, &used, manager),
+                _ => self.mint_element_value(elem_sort, &mut used, manager),
             };
             match value {
                 Some(v) => {
@@ -1768,7 +1814,7 @@ impl Solver {
     fn mint_element_value(
         &mut self,
         sort: SortId,
-        used: &FxHashSet<TermId>,
+        used: &mut FxHashSet<TermId>,
         manager: &mut TermManager,
     ) -> Option<TermId> {
         // Walk down through Set nesting to a directly mintable base sort
@@ -1786,13 +1832,20 @@ impl Solver {
         // A tuple base (a relation's witnesses and join skolems are
         // exactly this shape): a fresh component per field.
         if matches!(&base_kind, Some(SortKind::Datatype(_))) {
-            let fields = manager.tuple_field_sorts_of(base)?;
-            if fields.is_empty() || fields.len() > 8 {
-                return None;
-            }
+            let fields = match manager.tuple_field_sorts_of(base) {
+                Some(f) if !f.is_empty() && f.len() <= 8 => f,
+                _ => return None,
+            };
             let mut parts: Vec<TermId> = Vec::with_capacity(fields.len());
             for &field in &fields {
-                parts.push(self.mint_component_value(field, used, manager)?);
+                // Each minted component enters `used` before the next, so
+                // consecutive mints differ componentwise — without this
+                // every minted tuple was `(0, 0)` and the second collision
+                // repair mint failed outright (found as the join model's
+                // `repair mint fail`).
+                let component = self.mint_component_value(field, used, manager)?;
+                used.insert(component);
+                parts.push(component);
             }
             let mut term = manager.mk_tuple(&parts);
             for _level in chain[..chain.len() - 1].iter().rev() {
