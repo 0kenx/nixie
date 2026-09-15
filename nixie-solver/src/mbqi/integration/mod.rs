@@ -322,7 +322,7 @@ impl MBQIIntegration {
                     let MinedFalsifier {
                         substitution,
                         commitments,
-                        ..
+                        fully_pinned,
                     } = falsifier;
                     if let Some(ground_body) =
                         self.apply_substitution(quantifier, substitution, manager)
@@ -345,28 +345,55 @@ impl MBQIIntegration {
                             // (the check paid for itself).
                             self.model_checker.mark_productive(quantifier.term);
                             veto = false;
-                        } else if !commitments.is_empty() {
-                            // NOTE: a blocking clause over the falsifier's
-                            // recorded commitments was emitted here and is
-                            // REMOVED: the mining pass evaluates the
-                            // *substituted completed body*, whose ite-chains
-                            // already bake in completion choices (else
-                            // leaves, entry conditions), and those choices
-                            // are not flagged in that pass — while
-                            // chain-condition atoms that ARE asserted
-                            // constraints (`(not (= c1 c0))`) get recorded
-                            // as "commitments".  Blocking such an
-                            // arrangement asserts `c1 = c0` and refutes the
-                            // goal outright (the quant_fuzz false-`unsat`,
-                            // pinned by
-                            // `tautological_axiom_over_disequal_constants_is_sat`).
-                            // Z3's `add_blocking_clause` blocks on the AUX
-                            // context's *Skolem values* — a context where
-                            // blocking only diversifies the falsifier
-                            // search — never on main-solver commitments.
-                            // The commitment recording stays (diagnostics;
-                            // a future aux-side port may use it), but no
-                            // clause is ever emitted from it.
+                        } else if *fully_pinned
+                            && !commitments.is_empty()
+                            && self.active_table_quantifiers.contains(&quantifier.term)
+                        {
+                            // The stale-pin repair: a *duplicate* falsifier
+                            // whose evaluation consumed no free completion
+                            // choice (`fully_pinned`) is a function of its
+                            // recorded ground-model commitments alone, so
+                            // every model of the assertions that agrees
+                            // with all of them falsifies this asserted
+                            // quantifier at this point — no such model
+                            // exists, and the blocking disjunction
+                            // `or_i (atom_i != value_i)` the caller emits
+                            // excludes only non-solutions.
+                            //
+                            // Soundness rests on the recording being
+                            // *complete*: every ground-model fact the
+                            // evaluation walk consults must become a
+                            // commitment.  The classes: ground assignment
+                            // hits and entry hits (recorded), the entry
+                            // normalizations the chains bake in (recorded
+                            // since 2026-09-15), and structural constant
+                            // folds (rigid — transfer for free).  Every
+                            // completion *choice* — else fallthroughs,
+                            // macro unfoldings, computed tables, universe
+                            // distinctness — sets `free_choice`, and a
+                            // falsifier that consumed any is not
+                            // `fully_pinned`.  This closes the removed
+                            // emission's failure mode (its recording
+                            // missed the normalization consults, its
+                            // chains baked unflagged choices, and blocking
+                            // refuted satisfiable goals — the quant_fuzz
+                            // false-`unsat`); the `fully_pinned` gate plus
+                            // the complete recording is what the old
+                            // emission lacked.
+                            //
+                            // Table-owned quantifiers only (soundness is
+                            // the `fully_pinned` gate; this is the cost
+                            // gate): the repair exists for the table arc's
+                            // stale-pin stall, and on unrelated goals the
+                            // clauses only churned re-checked searches —
+                            // the scope-rebase convergence pin regressed
+                            // past 400 s without this gate (219-251 s
+                            // with it).
+                            self.model_repair_clauses.push(commitments.clone());
+                        } else {
+                            // Duplicate falsifier with free choices or
+                            // outside the table arc: no clause (see the
+                            // repair branch above for the conditions).
                         }
                     }
                 }

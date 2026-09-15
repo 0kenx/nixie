@@ -307,3 +307,53 @@ Verification: quant_fuzz {41..46} x 150 CLEAN; parity 176 Correct /
 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver + nixie-core
 4725/4728 (the 3 timeouts are the convergence pins under full-suite
 parallel load); fmt/clippy clean.
+
+
+## The stale-pin repair: sound at last, via the raw-body walk (2026-09-15, third follow-up)
+
+The blocking-clause repair is re-landed, sound.  Two findings on the way:
+
+1. **The completed-body walk is the documented trap, re-derived the hard
+   way.**  Emitting the clause from falsifiers recorded over the
+   *substituted completed body* produced six false-`unsat`s in one
+   quant_fuzz sweep (seeds 41-46): the completed body's syntax bakes
+   the completion's choices (macro unfoldings, ite-chain shapes, else
+   leaves) in positions the recording walk never visits — a macro that
+   unfolded `seteq(a,b)` to `(= a b)` during the *construction* of
+   body' leaves no macro application for the walk to flag, so
+   "fully pinned" counted the choice as a pin.  The original removal
+   note said exactly this; the transfer argument (every model of the
+   assertions agreeing with all recorded commitments falsifies the
+   asserted quantifier, so the blocking disjunction is valid) is only
+   as good as the recording, and the recording can only see what the
+   *walk* consults.  **The walk now runs on the raw substituted body**
+   (`q.body` under the falsifier's substitution): every completion
+   choice passes through `fold_apply`'s macro/computed/else arms, which
+   flag it; the recording is then complete and the transfer argument
+   closes.  The entry-normalization consults the chain construction
+   bakes in (`entry_arg` read through its model value) are recorded too
+   — the one consult class the old audit missed.
+
+2. **The cost gate is load-bearing.**  Ungated, the clauses churn
+   re-checked searches: the scope-rebase convergence pin regressed past
+   400 s (219-279 s in band).  Emission is gated on the quantifier
+   being table-owned — the repair exists for the table arc's stale-pin
+   stall, and the falsifier that matters (axiom-3's at the unmerged
+   pair, whose walk is pure ground pins: the member rows plus the
+   dodged `subset(w,a)` pin) is table-owned by construction (it is the
+   hint's defining axiom).
+
+**State of the family**: the repair fires (one clause on set16) and the
+whole family got faster (set16 18 s -> 5 s; set9/set19 ~25 s) — but all
+three still answer `unknown`.  The next blocker, precisely: rounds
+6-11 each mint ~6 fresh defining pins against the caps ("per-quantifier
+check budget exhausted") — the pin tuples stay *fresh* because the
+mining domains churn slightly per round.  That churn is the next
+instrumentation target (NIXIE_DEBUG_MC's pin lines plus the domain
+dump).
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN (it killed the
+completed-body variant first); parity 176 Correct / 1 Inconclusive /
+0 wrong (z3 4.16.0); nixie-solver + nixie-core 4724/4728 (timeouts =
+the parallel-load pins; the heaviest passes standalone at 279 s, inside
+its terminate-after budget); fmt/clippy clean.
