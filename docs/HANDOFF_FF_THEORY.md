@@ -179,9 +179,16 @@ need it); delete when done. Never `git stash`/`restore` in the primary.
    run rows-free, UNSAT re-runs traced once for the witness;
    trajectory-identity pinned by a property test) — **chain 64×96
    `sat` in 1.2 s**, 32×48 0.13 s, 128×192/256×384 honest `unknown` in
-   seconds, sparse 128×192 0.21 s. REMAINING frontier: chain ≥128×192
-   via round-robin branch-variable selection (now measurable — matched
-   nulls per `docs/BENCHMARKING.md`), F4, NTT untested.
+   seconds, sparse 128×192 0.21 s. The follow-up study
+   (`docs/studies/2026-09-16-ff-branch-selection-inapplicable.md`)
+   measured the branch-selection lever's precondition and it FAILS: no
+   corpus goal reaches FindZero's round-robin (≤64×96 solve via the
+   univariate brancher after a completing monolithic cascade; ≥128×192
+   die in the split's nl-GB, which budget-outs even at 16× budget).
+   REMAINING frontier: the design's actual §6.5 — the variable-SUBSET
+   split (window decomposition, attacking the cascade itself), then F4,
+   then branch-variable selection IF a round-robin ever binds (re-issue
+   the pre-registered matched-null experiment then). NTT untested.
 2. ~~**`QF_UFFF` (Phase 6 remainder)**~~ — **landed 2026-09-16**. FF ⊕
    EUF via model-guided arrangement search over opaque applications;
    see `docs/FF_THEORY_DESIGN.md` §7.1 for the as-built architecture,

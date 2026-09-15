@@ -778,6 +778,13 @@ fn split_grobner_basis(
     }
     let mut l_basis: Option<GrobnerBasis> = None;
     let mut nl_basis: Option<GrobnerBasis> = None;
+    if std::env::var_os("NIXIE_FF_STATS").is_some() {
+        eprintln!(
+            "[ff-stats] split partition: {} linear, {} nonlinear",
+            l_inputs.len(),
+            nl_inputs.len()
+        );
+    }
     // Polys pending insertion into each ideal (cvc5's newPolys): a
     // basis is recomputed only when its pending set is nonempty, from
     // its current elements plus the pending polys.
@@ -799,7 +806,17 @@ fn split_grobner_basis(
             gens.append(&mut new_l);
             // The split never mints certificates (its merged inputs are
             // not replayable) — the rows are pure overhead here.
-            l_basis = Some(grobner_basis_untraced(f, &gens, budget)?);
+            let r = grobner_basis_untraced(f, &gens, budget);
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] split l-GB ({} gens) -> {}",
+                    gens.len(),
+                    r.as_ref()
+                        .map(|b| b.basis.len().to_string())
+                        .unwrap_or_else(|_| "budget-out".to_string())
+                );
+            }
+            l_basis = Some(r?);
         }
         if !new_nl.is_empty() || (nl_basis.is_none() && !nl_inputs.is_empty()) {
             let mut gens: Vec<MPoly> = nl_basis.as_ref().map_or_else(
@@ -807,7 +824,17 @@ fn split_grobner_basis(
                 |b| b.basis.iter().map(|t| t.poly.clone()).collect(),
             );
             gens.append(&mut new_nl);
-            nl_basis = Some(grobner_basis_untraced(f, &gens, budget)?);
+            let r = grobner_basis_untraced(f, &gens, budget);
+            if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                eprintln!(
+                    "[ff-stats] split nl-GB ({} gens) -> {}",
+                    gens.len(),
+                    r.as_ref()
+                        .map(|b| b.basis.len().to_string())
+                        .unwrap_or_else(|_| "budget-out".to_string())
+                );
+            }
+            nl_basis = Some(r?);
         }
         // The exchange: offer every basis element to every ideal that
         // admits it (cvc5's `admit`), skipping ideal membership. Only
@@ -2015,6 +2042,9 @@ fn find_zero(
                     }
                 }
             } else {
+                if std::env::var_os("NIXIE_FF_STATS").is_some() {
+                    eprintln!("[fz] round-robin on var {free_var:?} at node {steps}");
+                }
                 // Positive-dimensional: enumerate the free variable's
                 // residues LAZILY, in value order 0, 1, 2, …, up to a
                 // small horizon. Complete for p ≤ horizon; beyond it,
