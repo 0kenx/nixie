@@ -1076,6 +1076,121 @@ impl Solver {
             structural_value(t, &mut values, &peers_of(t, &peers), &elem_values, manager);
         }
 
+        // ---- intersection-sharing repair ----
+        // A compound whose target is smaller than its operands' combined
+        // values needs the operands to SHARE elements (inclusion–
+        // exclusion). Private pools swap: an element of `a`'s pool replaces
+        // an element of `b`'s pool in `b`'s value, shrinking `a ∪ b` (and
+        // growing `a ∩ b`) by one per swap while every class target stays
+        // met. The twin targets are the same arithmetic, so consistency
+        // holds by construction; the final verification re-checks
+        // everything regardless.
+        for _round in 0..4 {
+            let mut swapped = false;
+            for &t in &order {
+                let Some(&want) = target.get(&t) else {
+                    continue;
+                };
+                let Some(TermKind::SetUnion(a, b)) = manager.get(t).map(|d| d.kind.clone()) else {
+                    continue;
+                };
+                let Some(Some(value)) = values.get(&t).cloned() else {
+                    continue;
+                };
+                let size = i64::try_from(value.len()).unwrap_or(i64::MAX);
+                if size <= want {
+                    continue;
+                }
+                let deficit = usize::try_from(size - want).unwrap_or(usize::MAX);
+                let (ra, rb) = (classes.find(a), classes.find(b));
+                if ra == rb {
+                    continue;
+                }
+                let (pool_a, pool_b) = match (fresh.get(&ra), fresh.get(&rb)) {
+                    (Some(pa), Some(pb)) => (pa.clone(), pb.clone()),
+                    _ => continue,
+                };
+                let val_a = values.get(&a).cloned().flatten().unwrap_or_default();
+                let mut val_b = values.get(&b).cloned().flatten().unwrap_or_default();
+                // Candidates: `a`-private pool elements outside `b`, and
+                // `b`-private pool elements outside `a`.
+                let sharable: Vec<TermId> = pool_a
+                    .iter()
+                    .copied()
+                    .filter(|e| val_a.contains(e) && !val_b.contains(e))
+                    .collect();
+                let replaceable: Vec<TermId> = pool_b
+                    .iter()
+                    .copied()
+                    .filter(|e| val_b.contains(e) && !val_a.contains(e))
+                    .collect();
+                let count = deficit.min(sharable.len()).min(replaceable.len());
+                if count == 0 {
+                    continue;
+                }
+                for i in 0..count {
+                    let e = sharable[i];
+                    let f = replaceable[i];
+                    val_b.retain(|x| *x != f);
+                    if !val_b.contains(&e) {
+                        val_b.push(e);
+                    }
+                    val_b.sort_unstable();
+                    val_b.dedup();
+                    used.insert(f); // retired from every value; not re-minted
+                }
+                let mut new_pool_b = pool_b.clone();
+                for i in 0..count {
+                    new_pool_b.retain(|x| *x != replaceable[i]);
+                    if !new_pool_b.contains(&sharable[i]) {
+                        new_pool_b.push(sharable[i]);
+                    }
+                }
+                new_pool_b.sort_unstable();
+                new_pool_b.dedup();
+                fresh.insert(rb, new_pool_b);
+                // Every member of `b`'s class takes the repaired value.
+                let members_b: Vec<TermId> = peers.get(&rb).cloned().unwrap_or_else(|| vec![b]);
+                for m in members_b {
+                    values.insert(m, Some(val_b.clone()));
+                }
+                swapped = true;
+            }
+            if !swapped {
+                break;
+            }
+            // Recompute every compound from the repaired class values.
+            let compounds: Vec<TermId> = order
+                .iter()
+                .copied()
+                .filter(|t| !is_opaque_set(*t, manager))
+                .collect();
+            for t in compounds {
+                values.remove(&t);
+            }
+            for &t in &order {
+                structural_value(t, &mut values, &peers_of(t, &peers), &elem_values, manager);
+            }
+        }
+
+        // Propagate within classes: a committed-equal class shares one
+        // value, whichever member computed it (a class holding both a
+        // variable and its asserted compound definition takes the
+        // compound's value, which the depth-ordered DAG pass may have
+        // computed only after visiting the variable).
+        for members in peers.values() {
+            let Some(shared) = members
+                .iter()
+                .filter_map(|m| values.get(m).cloned())
+                .find(Option::is_some)
+            else {
+                continue;
+            };
+            for &m in members {
+                values.insert(m, shared.clone());
+            }
+        }
+
         // ---- publish: opaque terms only (compounds fold structurally) ----
         let mut installed: Vec<TermId> = Vec::new();
         for &t in sets {
