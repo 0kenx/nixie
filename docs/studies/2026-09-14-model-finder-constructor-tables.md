@@ -484,3 +484,40 @@ nixie-core 4763/4767 (the two wisas failures pre-existing on base;
 qlock_11 flaked once under full-suite load, passes standalone); the
 heaviest convergence pin passes standalone at 180 s — the fastest it
 has been all arc; fmt/clippy clean.
+
+
+## The merge exploit closed; the ite-abstraction route remains (2026-09-15, seventh follow-up)
+
+Dumping the aux's falsifying assignment found the *merge exploit*: the
+aux satisfied its Skolem restriction `(or (= sk a) (= sk b))` by merging
+`a` and `b` (both disjuncts true under the merge — nothing in the aux
+goal forbade it), then the `(b, a)` ite-branch fired at the merged
+point with `member(x, s1)` and `member(x, s2)` collapsed to the same
+term — `p ∧ ¬p` — and every witness axiom falsified at a point that is
+not an element of the structure.
+
+**Fix**: `aux_refute` now asserts pairwise `distinct` over the
+restriction universe.  The domain elements are pairwise distinct *by
+construction* (the universe is the set of the model's distinguished
+values); Z3's model values carry exactly this semantics — this is
+that, told to the aux.  The stale-pin repair's cost gate also relaxed
+from table-*ownership* to table-*mode*: the witness axioms (axiom 2)
+are not table-owned, but their `(b, a)` falsifier — the
+asserted-antecedent point with the stale subset diagonal — is exactly
+the fully-pinned shape the repair exists for.  Goals without tables
+keep the old behaviour entirely (the convergence pin passes at 212 s
+standalone).
+
+**Remaining blocker** (the next cycle, precisely): with the merge
+closed, the aux still falsifies q57/q42/q20 through a different route
+— the dumped assignment reasons over equalities between compound terms
+and *ite abstraction variables* (`(= (intersection a a) __nixie_ite_N)
+= false`): the aux exploits the chain construction's abstraction
+boundaries rather than value merges.  The caps still starve the loop
+before the repair compounds ("per-quantifier check budget exhausted"
+at round 5; the signature gate then alternates with empty mining).
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); 4761/4767 (the two
+wisas failures pre-existing); the heaviest convergence pin 212 s
+standalone (in band); fmt/clippy clean.

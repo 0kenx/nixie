@@ -1025,6 +1025,22 @@ impl ModelChecker {
                 let restriction: Vec<TermId> =
                     universe.iter().map(|&u| manager.mk_eq(sk, u)).collect();
                 aux.assert(manager.mk_or(restriction), manager);
+                // The domain elements are pairwise distinct *by
+                // construction* — the universe is the set of the model's
+                // distinguished values — and without telling the aux, a
+                // Skolem restricted to `{a, b}` may satisfy its restriction
+                // by *merging* `a` and `b` (both disjuncts true under the
+                // merge): a degenerate point that is not an element of the
+                // structure, where the ite-chain branch of `(b, a)` fires
+                // with `member(x, s1)` and `member(x, s2)` collapsed to the
+                // same term — `p ∧ ¬p` — and every witness axiom falsifies
+                // at it.  Z3's model values are distinct by the same
+                // construction; this is that, told to the aux.
+                let distinct = manager.intern_term(
+                    TermKind::Distinct(universe.iter().copied().collect()),
+                    manager.sorts.bool_sort,
+                );
+                aux.assert(distinct, manager);
             }
         }
 

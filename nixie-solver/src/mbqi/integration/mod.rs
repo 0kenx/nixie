@@ -352,7 +352,7 @@ impl MBQIIntegration {
                             veto = false;
                         } else if *fully_pinned
                             && !commitments.is_empty()
-                            && self.active_table_quantifiers.contains(&quantifier.term)
+                            && !self.active_table_quantifiers.is_empty()
                         {
                             // The stale-pin repair: a *duplicate* falsifier
                             // whose evaluation consumed no free completion
@@ -386,14 +386,16 @@ impl MBQIIntegration {
                             // the complete recording is what the old
                             // emission lacked.
                             //
-                            // Table-owned quantifiers only (soundness is
-                            // the `fully_pinned` gate; this is the cost
-                            // gate): the repair exists for the table arc's
-                            // stale-pin stall, and on unrelated goals the
-                            // clauses only churned re-checked searches —
-                            // the scope-rebase convergence pin regressed
-                            // past 400 s without this gate (219-251 s
-                            // with it).
+                            // Table *mode* only (soundness is the
+                            // `fully_pinned` gate; this is the cost gate):
+                            // goals with no tables keep the old behaviour
+                            // entirely (the scope-rebase convergence pin
+                            // regressed past 400 s when the repair was
+                            // ungated), while within a table problem every
+                            // quantifier's stale pins are repairable — the
+                            // witness axioms are not table-owned but their
+                            // falsifiers are exactly the fully-pinned
+                            // shape this exists for.
                             self.model_repair_clauses.push(commitments.clone());
                         } else {
                             // Duplicate falsifier with free choices or
