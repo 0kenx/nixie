@@ -1169,3 +1169,114 @@ the wcancel shape all preserved.
 
 Verification: no code change this round (diagnosis only; probes
 stripped, tree pristine, `fi1` still reproduces — the open item).
+
+## Continuation 22 (2026-09-17): item 54 closed at the root — the integer mark on a RESCALED row's slack (items 55–57)
+
+55. **The item-54 false `unsat`, end to end** (the reproducer's exact bytes
+    preserved at
+    `docs/studies/assets/2026-09-17/false-unsat-fi1.smt2`; z3: `sat` at
+    `xi=5, yi=2^62`; found by the mixed differential, seed 41, instance 16).
+    Item 54's diagnosis was one layer off: the `/52` row form is NOT the
+    defect — it is `intern_row`'s positive width rescale doing exactly its
+    designed job, and every equation it produced was verified sound at z3's
+    model. The chain, as the probes decoded it live (INTERN/CONSUME dumps,
+    SET-BOUND backtraces, ECONF row+bounds dumps, REASON registrations):
+    * the trichotomy machinery (sound: a tautologous clause over the axiom
+      equality `(= 3yi (+ (div 3yi 1) (mod 3yi 1)))`) lets the SAT core
+      pick the arm `3yi < div(3yi,1) + mod(3yi,1)`;
+    * that arm interns its row `3yi − div − mod + 1` (an INTEGRAL form);
+      the pin `yi = 2^62` makes the substituted constant `3·2^62 + 1`
+      overflow `i64`, so `intern_row` rescaled by `1/52` into width —
+      the slack then means `(3yi−div−mod+1)/52`, NOT the requested form;
+    * `cached_row_slack` marked the slack INTEGER from the UNSCALED form's
+      integrality (`is_integral_form` on the pre-intern expr);
+    * `gomory_cut` sourced a cut from that integer-marked slack: over the
+      row `slack = (1 − s_axiom)/52`, the GMI lemma with `slack ∈ ℤ`
+      fabricates `52 | (1 − s_axiom)` — a divisibility constraint implied
+      by NOTHING — and asserts the cut `1 − s_axiom ≤ 0` (i.e.
+      `s_axiom ≥ 1`) with the axiom's own reason set (the cut's
+      antecedents are the row's nonbasics' bounds: `s_axiom ∈ [0,0]`);
+    * with `s_axiom ∈ [0,0]` (the axiom's equality bounds) the cut is
+      violated, `explain_conflict` exports the core `[division-axiom]`
+      ALONE, and the SAT core refutes a theorem: `unsat` for a `sat` goal.
+    **The fix**: `intern_row_reported` returns a `RowInternMode`
+    (`Exact`/`Rescaled`); `cached_row_slack`/`cached_row_slack_strict`
+    mark a rescaled slack integer only when the RESCALED row is itself an
+    integral form (`is_integral_form` on the actual row) — the exact
+    condition under which the slack is integer-valued. Cuts and
+    branch-and-bound then never reason from a fabricated integrality; the
+    GCD canonicalization stays `Exact` (dividing an integral form by its
+    GCD keeps it integral). fi1 now answers honest `unknown` (the 2^62
+    width wall; the pre-propagation control `d1dc7f0d` also said
+    `unknown`); regressions `rescaled_row_slack_never_drives_false_unsat`
+    (end-to-end, pinned never-`unsat`) and
+    `intern_row_reports_rescaled_for_width_rescale` (simplex unit).
+56. **The `i64::MIN`-bound corner, closed with honest declines** (found by
+    the debug-panic sweep on `QF_ANIA/…/diskperf…_2.smt2`, stratified
+    sample seed 20260919): `x < i64::MIN + 1` tightens to `x ≤ i64::MIN`,
+    whose row `lhs − rhs` needs the constant `+2^63` — and the unchecked
+    `-rhs` in the assert path PANICKED in debug and silently WRAPPED in
+    release, building a row for a different constraint. The parse layer
+    gates its own overflow but the assert-time negation was uncovered.
+    Fix (the item-9/12 pattern): every `assert_*` entry verifies
+    `checked_neg_r64(rhs)` and, on overflow, declines through the sticky
+    `unrepresentable_row_assert` flag — the atom stays unconstrained and
+    `check()` answers `Unknown` for the solver instance's lifetime
+    (sticky across `reset()` like `int_terms`, because the replay
+    re-asserts the same atom); the equality sign-flips in `row_key` and
+    `normalize_expr` skip on an unrepresentable negation through the
+    shared `try_flip_terms` (same predicate in both, so key and row stay
+    consistent — only canonical-form sharing is lost); the
+    `fixed_to_const_reason` probe declines with `None`. diskperf and the
+    `< x MIN+1` shape now answer honest `unknown` (z3: `sat` at
+    `x = i64::MIN`); regression
+    `i64_min_bound_rows_decline_instead_of_wrapping`. The DECIDABILITY
+    follow-up (not taken: the corner is measure-zero in the corpora) is a
+    non-strict row built as `rhs − lhs ≥ 0` — representable at the
+    corner — but it moves the overflow into the coefficient negations and
+    cannot serve the strict/δ encodings; recorded so the next agent does
+    not rediscover the flip design.
+57. **The optimizer's wrap class closed — the wisas handover's open
+    soundness question answered** (`docs/handovers/
+    2026-09-15-wisas-layer2-simplex-24cb0567.md` asked: is the
+    `[ceil(min), floor(max)]` superset guarantee intact under the
+    wide-store derivations?). Answer: the wide store itself can only
+    WIDEN the range — wide rows are invisible to the optimizer's pivots,
+    so the optimized problem is a relaxation, min ≤ true min and max ≥
+    true max (the sound direction); `compute_int_bounds` uses only direct
+    single-variable level-0 facts with checked tightening (no wide
+    derivations feed it); `lp_int_bounds` optimizes over `pop_to_base`
+    state (propagated bounds are scope-trailed and pop). The one real
+    NARROWING vector was the optimizer's unchecked fixed-width
+    arithmetic: `eval_linexpr`/`reduced_obj_coef` (wrapped objective and
+    reduced costs), the ratio-test gaps (`hi − bv_val`, `gap / −eff`),
+    the ignored declined `pivot()` return, and `-neg_max` in
+    `lp_int_bounds` — any wrap fabricates an "optimum", the case-split
+    range narrows, and the emitted `(or (= t lo) … (= t hi))` clause
+    permanently excludes reachable values: the false-`unsat` direction.
+    All are now checked with `SimplexOptStatus::Unknown` declines, plus
+    `resource_limit` consults after every re-derivation. The wisas
+    COMPLETENESS regression (unknown-since-`24cb0567`, the cadence/
+    lemma-starvation signature) is untouched by this — it stays the open
+    heuristic item, to be measured per `docs/BENCHMARKING.md`.
+
+Verification for the landing: full workspace suite (11 810 tests; the
+pre-existing non-corpus failures only: the wisas pair, the TLA sets
+cardinality test — verified failing on clean `28426243` too, the sets
+front's — and the two documented slow-but-correct 180 s-cap timeouts);
+fmt/clippy/rustdoc clean; Z3 parity 176/177 correct, 0 disagreements
+(z3 4.16.0); wide differential 6×300 + mixed differential 6×400 across
+fresh seeds (20260918–20260935, both finder-adjacent surfaces): 0
+verdict disagreements, 0 refuted models; debug-panic sweep over the
+parity corpus (177) and a 345-file stratified `smt-lib/non-incremental`
+sample (seed 20260919, 30 per family): 0 panics after item 56 (the
+`diskperf_…_2` panic was the finder; `…_1` was a stale-shared-target
+binary trap, clean on rebuild).
+
+Infrastructure notes for the next session: the shared `target/` was
+deleted TWICE mid-session (recreate it — every worktree symlinks it);
+after a deletion, a sweep or differential may run ANOTHER agent's stale
+binary (the `diskperf_…_1` false alarm) — rebuild before believing a
+surprise; disk hit 100% mid-verification (repoint the worktree's target
+symlink to a private dir on the root disk and `rm -rf
+target/debug/incremental`).

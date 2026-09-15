@@ -4,9 +4,41 @@
 //! current feasible region using the primal simplex method with Bland's rule.
 
 use super::delta::DeltaRational;
-use super::simplex::{LinExpr, Simplex, VarId};
+use super::simplex::{
+    LinExpr, Simplex, VarId, checked_add_r64, checked_div_r64, checked_mul_r64, checked_sub_r64,
+};
 use num_rational::Rational64;
 use num_traits::Zero;
+
+/// Checked `(a - b) / eff` ratio computation (the ratio test's gap):
+/// `None` when the difference or the division does not fit `Rational64` —
+/// the caller must abandon the optimization rather than wrap (a wrapped
+/// ratio walks the search off the feasible region and can report a
+/// bogus "optimum", which narrows `lp_int_bounds`'s case-split range —
+/// the false-`unsat` direction).  `neg` flips the divisor's sign first
+/// (`gap / -eff`), also checked.
+fn ratio_gap(a: Rational64, b: Rational64, eff: &Rational64, neg: bool) -> Option<Rational64> {
+    let gap = checked_sub_r64(a, b)?;
+    let divisor = if neg { checked_neg(*eff)? } else { *eff };
+    if gap >= Rational64::zero() {
+        checked_div_r64(gap, divisor)
+    } else {
+        Some(Rational64::zero())
+    }
+}
+
+fn one_r() -> Rational64 {
+    use num_traits::One as _;
+    Rational64::one()
+}
+
+fn checked_neg(r: Rational64) -> Option<Rational64> {
+    let n = (*r.numer() as i128).checked_neg()?;
+    if !(i64::MIN as i128..=i64::MAX as i128).contains(&n) {
+        return None;
+    }
+    Some(Rational64::new_raw(n as i64, *r.denom()))
+}
 
 /// Status of a simplex optimization call.
 #[derive(Debug, Clone, PartialEq)]
@@ -22,16 +54,21 @@ pub enum SimplexOptStatus {
 }
 
 impl Simplex {
-    /// Evaluate a linear expression at the current assignment.
-    pub(super) fn eval_linexpr(&self, obj: &LinExpr) -> Rational64 {
+    /// Evaluate a linear expression at the current assignment, CHECKED:
+    /// a wrapped objective value would masquerade as an optimum (the
+    /// `lp_int_bounds` case-split range narrows → a permanent clause that
+    /// excludes reachable values → a false `unsat`), so the honest answer
+    /// for an unrepresentable sum is `None`.
+    pub(super) fn eval_linexpr(&self, obj: &LinExpr) -> Option<Rational64> {
         let mut val = obj.constant;
         for (var, coef) in &obj.terms {
             let idx = *var as usize;
             if idx < self.assignment_len() {
-                val += self.assignment_at(idx) * *coef;
+                let term = checked_mul_r64(self.assignment_at(idx), *coef)?;
+                val = checked_add_r64(val, term)?;
             }
         }
-        val
+        Some(val)
     }
 
     /// Compute the reduced objective coefficient for a non-basic variable.
@@ -44,7 +81,9 @@ impl Simplex {
     ///
     ///   reduced_coef(v) = obj_coef(v)
     ///                   + Σ over basic b of (obj_coef(b) · tableau_coef(b, v))
-    pub(super) fn reduced_obj_coef(&self, obj: &LinExpr, nonbasic_var: VarId) -> Rational64 {
+    /// CHECKED like [`Self::eval_linexpr`]: a wrapped reduced cost chooses
+    /// phantom entering variables and mis-terminates the search.
+    pub(super) fn reduced_obj_coef(&self, obj: &LinExpr, nonbasic_var: VarId) -> Option<Rational64> {
         // Direct coefficient of this variable in obj.
         let direct = obj
             .terms
@@ -71,10 +110,10 @@ impl Simplex {
                 .find(|(v, _)| *v == nonbasic_var)
                 .map(|(_, c)| *c)
                 .unwrap_or_else(Rational64::zero);
-            indirect += obj_coef * row_coef;
+            indirect = checked_add_r64(indirect, checked_mul_r64(obj_coef, row_coef)?)?;
         }
 
-        direct + indirect
+        checked_add_r64(direct, indirect)
     }
 
     /// Minimize a linear expression over the current feasible region.
@@ -111,6 +150,12 @@ impl Simplex {
 
         'outer: for _ in 0..self.max_pivots() {
             self.update_assignment();
+            // The re-derivation may itself hit the honest width limit
+            // (`resource_limit`): the vector is then stale, and every
+            // downstream read would be a guess.
+            if self.resource_limit_reached() {
+                return SimplexOptStatus::Unknown;
+            }
 
             let num_vars = self.assignment_len();
 
@@ -124,7 +169,11 @@ impl Simplex {
                     continue;
                 }
 
-                let rc = self.reduced_obj_coef(obj, v_id);
+                let Some(rc) = self.reduced_obj_coef(obj, v_id) else {
+                    // An unrepresentable reduced cost cannot be reasoned
+                    // over: abandon with Unknown (the honest decline).
+                    return SimplexOptStatus::Unknown;
+                };
                 let can_inc = self.can_increase(v_id);
                 let can_dec = self.can_decrease(v_id);
 
@@ -140,7 +189,12 @@ impl Simplex {
 
             let (enter, decrease_it) = match enter_var {
                 None => {
-                    result = SimplexOptStatus::Optimal(self.eval_linexpr(obj));
+                    // An objective value that cannot be represented is not
+                    // an optimum: report Unknown, never a wrapped value.
+                    result = match self.eval_linexpr(obj) {
+                        Some(v) => SimplexOptStatus::Optimal(v),
+                        None => SimplexOptStatus::Unknown,
+                    };
                     break 'outer;
                 }
                 Some(v) => (v, enter_decrease),
@@ -164,25 +218,22 @@ impl Simplex {
 
                 let ratio = if eff > Rational64::zero() {
                     self.upper_real_at(bv_idx).map(|hi| {
-                        let gap = hi - bv_val;
-                        if gap >= Rational64::zero() {
-                            gap / eff
-                        } else {
-                            Rational64::zero()
-                        }
+                        ratio_gap(hi, bv_val, &eff, false)
                     })
                 } else if eff < Rational64::zero() {
                     self.lower_real_at(bv_idx).map(|lo| {
-                        let gap = bv_val - lo;
-                        if gap >= Rational64::zero() {
-                            gap / (-eff)
-                        } else {
-                            Rational64::zero()
-                        }
+                        ratio_gap(bv_val, lo, &eff, true)
                     })
                 } else {
                     continue;
                 };
+                // A ratio that cannot be represented abandons the search:
+                // a wrapped ratio picks a wrong leaving variable and walks
+                // the search off the feasible region.
+                if matches!(ratio, Some(None)) {
+                    return SimplexOptStatus::Unknown;
+                }
+                let ratio = ratio.flatten();
 
                 if let Some(r) = ratio {
                     let is_better = match best_ratio {
@@ -202,24 +253,16 @@ impl Simplex {
             let enter_idx = enter as usize;
             let enter_val = self.assignment_real_at(enter_idx);
             let enter_own_limit = if decrease_it {
-                self.lower_real_at(enter_idx).map(|lo| {
-                    let gap = enter_val - lo;
-                    if gap >= Rational64::zero() {
-                        gap
-                    } else {
-                        Rational64::zero()
-                    }
-                })
+                self.lower_real_at(enter_idx)
+                    .map(|lo| ratio_gap(enter_val, lo, &one_r(), false))
             } else {
-                self.upper_real_at(enter_idx).map(|hi| {
-                    let gap = hi - enter_val;
-                    if gap >= Rational64::zero() {
-                        gap
-                    } else {
-                        Rational64::zero()
-                    }
-                })
+                self.upper_real_at(enter_idx)
+                    .map(|hi| ratio_gap(hi, enter_val, &one_r(), false))
             };
+            if matches!(enter_own_limit, Some(None)) {
+                return SimplexOptStatus::Unknown;
+            }
+            let enter_own_limit = enter_own_limit.flatten();
 
             if let Some(limit) = enter_own_limit {
                 let is_better = match best_ratio {
@@ -244,13 +287,22 @@ impl Simplex {
                     };
                     self.set_assignment_at(enter_idx, new_val);
                     self.update_assignment();
+                    if self.resource_limit_reached() {
+                        return SimplexOptStatus::Unknown;
+                    }
                 }
                 None => {
                     result = SimplexOptStatus::Unbounded;
                     break 'outer;
                 }
                 Some(lv) => {
-                    self.pivot(lv, enter);
+                    // A declined pivot (width, resource limit) leaves the
+                    // state un-advanced: continuing would reason over a
+                    // stale assignment.  Abandon honestly.
+                    if !self.pivot(lv, enter) {
+                        result = SimplexOptStatus::Unknown;
+                        break 'outer;
+                    }
                 }
             }
         }

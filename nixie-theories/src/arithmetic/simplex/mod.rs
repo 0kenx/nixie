@@ -550,6 +550,43 @@ pub struct BigLinExpr {
     pub constant: num_rational::BigRational,
 }
 
+/// How the slack interned by [`Simplex::intern_row_reported`] relates to
+/// the linear form the caller requested — the datum every
+/// integrality-sensitive consumer of a row slack needs.
+///
+/// Every constraint this encoding asserts on a row slack is a ZERO bound
+/// (`slack <= 0`, `slack >= 0`, `slack = 0`), and a positive rescale
+/// preserves zero bounds, so both modes carry identical CONSTRAINT
+/// semantics. The difference is what the slack's VALUE means:
+///
+/// * [`RowInternMode::Exact`] — the slack *is* the requested form (up to
+///   the integrality-preserving GCD canonicalization and the
+///   function-preserving basic-variable substitution). An integer-valued
+///   requested form makes the slack integer-valued, so Gomory cuts and
+///   branch-and-bound may treat it as an integer variable.
+/// * [`RowInternMode::Rescaled`] — the requested form did not fit
+///   `Rational64` in any orientation, and the slack is defined as
+///   `form / λ` for a positive width factor `λ` ([the wide-LP rescale]
+///   [`Simplex::scale_big_to_narrow`]). Dividing an integer-valued form
+///   by `λ` does NOT stay integer-valued in general (`3·2^62 + 1` scaled
+///   by `1/52` takes value `1/52`), so integrality transfers ONLY when
+///   the rescaled row is itself an integral form — the caller must check
+///   the actual row before integer-marking the slack. Treating such a
+///   slack as integer let a Gomory cut fabricate `52 | (1 - s_axiom)` —
+///   a constraint implied by nothing — and refute a division axiom alone
+///   (a false `unsat` on a `sat` QF_LIA goal; the arithmetic arc's
+///   item 54).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RowInternMode {
+    /// The slack is defined by the requested form (GCD-canonicalized,
+    /// substituted): the same linear function.
+    Exact,
+    /// The slack is defined by the requested form divided by a positive
+    /// width factor: the same zero-bound constraints, a DIFFERENT linear
+    /// function whose integrality must be re-derived from the row.
+    Rescaled,
+}
+
 /// A linear expression: sum of (coefficient, variable) pairs + constant
 #[derive(Debug, Clone, Default)]
 pub struct LinExpr {
@@ -1614,7 +1651,14 @@ impl Simplex {
     /// non-basic variables, and the slack's assignment is computed
     /// incrementally from its row (Dutertre–de-Ma) instead of forcing the
     /// next `check()` into a full `crash_basis` re-derivation.
-    pub fn intern_row(&mut self, mut expr: LinExpr) -> VarId {
+    pub fn intern_row(&mut self, expr: LinExpr) -> VarId {
+        self.intern_row_reported(expr).0
+    }
+
+    /// [`Self::intern_row`] reporting HOW the interned row's slack relates
+    /// to the requested form — the datum every integrality-sensitive caller
+    /// needs (see [`RowInternMode`]).
+    pub(crate) fn intern_row_reported(&mut self, mut expr: LinExpr) -> (VarId, RowInternMode) {
         // Canonical integer rescaling at the single choke point every row
         // passes through (content-addressed callers pre-normalize for the
         // key; direct callers land here) – see `canonicalize_lin_form`.
@@ -1630,6 +1674,7 @@ impl Simplex {
         // intern is idempotent, so a declined row simply never lands).
         let mut substituted_expr = LinExpr::constant(expr.constant);
         let mut overflowed = false;
+        let mut rescaled = false;
         'subst: for (var, coef) in &expr.terms {
             // A WIDE basic variable must be substituted exactly like a
             // narrow one — treating it as nonbasic (the tableau lookup
@@ -1688,9 +1733,17 @@ impl Simplex {
                     // `Rational64` and the FULL narrow machinery (pivots,
                     // propagation, conflicts) applies. Only a row beyond
                     // any representable scaling lands in the wide store.
+                    // The rescale changes the slack's DEFINING FORM (the
+                    // slack is `form / λ`, not `form`): bound semantics are
+                    // preserved, integrality is NOT — reported as
+                    // [`RowInternMode::Rescaled`] for the integer-marking
+                    // callers.
                     match Self::scale_big_to_narrow(&self.intern_substitute_big(&expr)) {
-                        Some(scaled) => substituted_expr = scaled,
-                        None => return self.intern_wide_row(expr),
+                        Some(scaled) => {
+                            substituted_expr = scaled;
+                            rescaled = true;
+                        }
+                        None => return (self.intern_wide_row(expr), RowInternMode::Exact),
                     }
                 }
             }
@@ -1741,7 +1794,14 @@ impl Simplex {
                 self.assignment_current = false;
             }
         }
-        slack
+        (
+            slack,
+            if rescaled {
+                RowInternMode::Rescaled
+            } else {
+                RowInternMode::Exact
+            },
+        )
     }
 
     /// Intern a row whose exact substituted content does not fit
@@ -4918,6 +4978,14 @@ impl Simplex {
     #[must_use]
     pub fn row_defines_var(&self, var: VarId) -> bool {
         self.tableau.contains_key(&var)
+    }
+
+    /// The tableau row defining `var` (its right-hand side), for callers
+    /// that must reason about the slack's actual defining form — e.g. the
+    /// integrality re-check after a *rescaled* intern (see the private
+    /// `RowInternMode`). A wide-store basic has no narrow row; `None` then.
+    pub fn defining_row(&self, var: VarId) -> Option<&LinExpr> {
+        self.tableau.get(&var).map(|arc| arc.as_ref())
     }
     /// A bound changed.  Basic variables' assignments are tableau-derived, so
     /// nothing moves; a non-basic variable's assignment snaps into its new

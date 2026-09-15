@@ -1460,3 +1460,89 @@ fn basic_bound_exact_retry_does_not_double_count() {
     // (`derive_basic_bound` returns at most one direction per call —
     // the lower; the upper derives on the next fixpoint pass.)
 }
+
+// Regression (2026-09-17, the item-54 false `unsat`): a row whose
+// SUBSTITUTED constant exceeds `i64` — here `3·yi − md − dv + 1` with the
+// pinned basic `yi = pin + 2^62`, whose substitution yields the constant
+// `3·2^62 + 1` — is interned through the positive width rescale
+// (`scale_big_to_narrow`).  The rescale preserves the zero-bound
+// CONSTRAINT semantics but changes the slack's DEFINING FORM to
+// `form / λ`, so integrality of the requested form must not transfer to
+// the slack: treating it as integer let a Gomory cut fabricate
+// `52 | (1 − s_axiom)` and refute a division axiom alone (a false
+// `unsat` on a `sat` goal).  `intern_row_reported` exposes exactly this
+// distinction.
+#[test]
+fn intern_row_reports_rescaled_for_width_rescale() {
+    let mut s = Simplex::new();
+    let yi = s.new_var();
+    let pin = s.new_var();
+    let md = s.new_var();
+    let dv = s.new_var();
+    // `yi` is basic with the post-pivot pin row `yi = pin + 2^62`
+    // (mirrors the fi1 trajectory, where the pinned variable's row
+    // carries the 2^62 constant).
+    s.tableau.insert(
+        yi,
+        std::sync::Arc::new(LinExpr {
+            terms: smallvec::smallvec![(pin, Rational64::one())],
+            constant: Rational64::from_integer(4611686018427387904),
+        }),
+    );
+    s.basic.resize(yi as usize + 1, false);
+    s.basic[yi as usize] = true;
+    s.column_push_known(pin, yi);
+
+    // The requested row is an INTEGRAL form (GCD 1): `3·yi − md − dv + 1`.
+    let mut row = LinExpr::new();
+    row.add_term(yi, Rational64::from_integer(3));
+    row.add_term(md, Rational64::from_integer(-1));
+    row.add_term(dv, Rational64::from_integer(-1));
+    row.add_constant(Rational64::one());
+    let (slack, mode) = s.intern_row_reported(row);
+    assert_eq!(
+        mode,
+        RowInternMode::Rescaled,
+        "the substituted constant 3·2^62+1 fits only under a width rescale"
+    );
+    // The slack's defining row is the RESCALED form: at least one
+    // coefficient is fractional (the requested form's were all integral),
+    // which is precisely why integrality does not transfer.
+    let r = s
+        .defining_row(slack)
+        .expect("a rescaled row lands in the tableau");
+    assert!(
+        r.terms.iter().any(|(_, c)| *c.denom() != 1) || *r.constant.denom() != 1,
+        "the rescaled row must actually be a non-integral multiple of the form: {r:?}"
+    );
+
+    // Control: the same shape with a small pin constant interns `Exact`
+    // (the plain substitution path), and its row keeps integral
+    // coefficients — the property Gomory cuts and branch-and-bound rely
+    // on for integer-marked slacks.
+    let mut s2 = Simplex::new();
+    let yi2 = s2.new_var();
+    let pin2 = s2.new_var();
+    let md2 = s2.new_var();
+    s2.tableau.insert(
+        yi2,
+        std::sync::Arc::new(LinExpr {
+            terms: smallvec::smallvec![(pin2, Rational64::one())],
+            constant: Rational64::from_integer(4),
+        }),
+    );
+    s2.basic.resize(yi2 as usize + 1, false);
+    s2.basic[yi2 as usize] = true;
+    s2.column_push_known(pin2, yi2);
+    let mut row2 = LinExpr::new();
+    row2.add_term(yi2, Rational64::from_integer(3));
+    row2.add_term(md2, Rational64::from_integer(-1));
+    row2.add_constant(Rational64::one());
+    let (slack2, mode2) = s2.intern_row_reported(row2);
+    assert_eq!(mode2, RowInternMode::Exact);
+    let r2 = s2.defining_row(slack2).expect("plain intern keeps a row");
+    assert!(
+        r2.terms.iter().all(|(_, c)| *c.denom() == 1) && *r2.constant.denom() == 1,
+        "an Exact intern of an integral form stays integral: {r2:?}"
+    );
+}

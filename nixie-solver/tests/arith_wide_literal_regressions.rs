@@ -790,3 +790,80 @@ fn strict_multi_term_wide_row_never_drives_false_unsat() {
     let last = out.last().map(String::as_str).unwrap_or("");
     assert_ne!(last, "unsat", "3·2^61·3 + 2^62·3 > -3 holds; z3: sat");
 }
+
+/// The item-54 false `unsat` (2026-09-17, found by the mixed differential,
+/// seed 41): a QF_LIA three-disjunct `not(or …)` over `div`/`mod` with
+/// `yi = 2^62` pinned.  The mechanism, decoded end to end: the atom
+/// `3·yi < div(3·yi,1) + mod(3·yi,1)` (one trichotomy arm of the division
+/// axiom's equality) interns its row `3yi − div − mod + 1`; the pin makes
+/// the substituted constant `3·2^62 + 1` overflow `i64`, so `intern_row`
+/// rescaled the row by `1/52` into width — sound for the zero BOUND
+/// (`slack ≤ 0`), but the slack was still integer-marked from the
+/// UNSCALED form.  A Gomory cut over that rescaled slack then fabricated
+/// `52 | (1 − s_axiom)` — a divisibility constraint implied by nothing —
+/// and refuted the division axiom ALONE (a conflict whose single reason
+/// is the axiom, a theorem): `unsat` for a `sat` goal.  The fix
+/// (`RowInternMode::Rescaled`) refuses the integer mark unless the
+/// rescaled row is itself an integral form, so cuts and branch-and-bound
+/// never reason from a fabricated integrality.
+///
+/// z3: `sat` (model `xi = 5, yi = 2^62`).  The current honest verdict is
+/// `unknown` (the 2^62-scale width wall); the pin is the soundness
+/// property: this goal may never answer `unsat`.
+#[test]
+fn rescaled_row_slack_never_drives_false_unsat() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(include_str!(
+            "../../docs/studies/assets/2026-09-17/false-unsat-fi1.smt2"
+        ))
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(
+        last, "unsat",
+        "the goal is satisfiable (z3: sat at xi=5, yi=2^62); `unsat` is a fabricated refutation"
+    );
+}
+
+/// The `i64::MIN`-bound corner (2026-09-17, found by the debug-panic sweep
+/// on `QF_ANIA/diskperf`): `x < i64::MIN + 1` tightens to `x <= i64::MIN`,
+/// whose row `x - rhs` needs the constant `+2^63` — the negation of
+/// `i64::MIN` does not fit `Rational64`.  The unchecked `-rhs` PANICKED in
+/// debug and silently WRAPPED in release, building a row for a DIFFERENT
+/// constraint (`x + i64::MIN <= 0`).  The fix declines the assertion
+/// through the sticky `unrepresentable_row_assert` flag: the goal answers
+/// honest `unknown` (z3: `sat` at `x = i64::MIN`), never a wrapped
+/// verdict.  The unsatisfiable twin is equally honest.
+#[test]
+fn i64_min_bound_rows_decline_instead_of_wrapping() {
+    use nixie_solver::Context;
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const x Int)\n\
+             (assert (< x -9223372036854775807))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(
+        last, "unsat",
+        "x = i64::MIN satisfies the bound (z3: sat); `unsat` is a wrapped-row refutation"
+    );
+    let mut ctx = Context::new();
+    let out = ctx
+        .execute_script(
+            "(set-logic QF_LIA)\n\
+             (declare-const x Int)\n\
+             (assert (and (< x -9223372036854775807) (> x -9223372036854775807)))\n\
+             (check-sat)\n",
+        )
+        .expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_eq!(
+        last, "unknown",
+        "the declined side blocks the refutation: honest `unknown`, never a guess"
+    );
+}

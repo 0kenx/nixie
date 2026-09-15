@@ -1,9 +1,10 @@
 //! Arithmetic Theory Solver
 
 use super::delta::DeltaRational;
+use super::nla::checked_neg_r64;
 use super::simplex::{
-    LinExpr, Simplex, SimplexOptStatus, VarId, checked_add_r64, checked_div_r64, checked_mul_r64,
-    checked_sub_r64,
+    LinExpr, RowInternMode, Simplex, SimplexOptStatus, VarId, checked_add_r64, checked_div_r64,
+    checked_mul_r64, checked_sub_r64,
 };
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -131,6 +132,18 @@ pub struct ArithSolver {
     /// theory-layer `reset()`/replay, but a term's sort is a structural fact,
     /// so this registry lets `intern` re-mark the fresh variable without the
     /// replay having to know anything about sorts.
+    /// Sticky honesty flag: an assertion whose row could not be represented
+    /// in `Rational64` was DECLINED instead of wrapped — the `x <= i64::MIN`
+    /// corner, where the row `lhs - rhs` needs the constant `+2^63` (the
+    /// negation of `i64::MIN` does not fit; found by the debug-panic sweep
+    /// on `QF_ANIA/diskperf`, where the release build silently wrapped the
+    /// row's constant to a DIFFERENT constraint).  While set, `check()`
+    /// answers `Unknown`: the declined atom is unconstrained in the
+    /// tableau, so neither `Sat` nor `Unsat` may be trusted.  Sticky for
+    /// the solver instance's lifetime (like a parse-overflow atom): a
+    /// re-asserted atom re-declines, and `reset()` keeps the flag for the
+    /// same reason it keeps `int_terms`.
+    unrepresentable_row_assert: bool,
     int_terms: FxHashSet<TermId>,
     /// Per-ATOM tableau-row cache: `(linear form, assertion term) -> slack`.
     ///
@@ -346,6 +359,7 @@ impl ArithSolver {
             prop_undo: Vec::new(),
             int_vars: FxHashSet::default(),
             int_terms: FxHashSet::default(),
+            unrepresentable_row_assert: false,
             bnb_used_reasons: FxHashSet::default(),
             cuts_in_split_scope: false,
             atom_rows: FxHashMap::default(),
@@ -418,6 +432,31 @@ impl ArithSolver {
     /// first coefficient is positive (matching [`Self::normalize_expr`]).
     /// Comparison keys skip the sign step so the inequality direction is
     /// preserved (matching [`Self::normalize_ineq_expr`]).
+    /// Negate every coefficient and the constant in place, returning
+    /// `false` (with `terms` untouched) when any negation does not fit —
+    /// the `i64::MIN`-numerator corner.  The un-flipped form is the SAME
+    /// linear function, so skipping the flip loses only canonical-form
+    /// sharing, never semantics; `row_key`'s sign normalization and
+    /// `normalize_expr`'s use the same predicate so the key and the
+    /// interned row stay consistent.
+    fn try_flip_terms<T: Copy>(terms: &mut [(T, Rational64)], constant: &mut Rational64) -> bool {
+        let mut flipped: Vec<Rational64> = Vec::with_capacity(terms.len());
+        for (_, c) in terms.iter() {
+            match checked_neg_r64(*c) {
+                Some(n) => flipped.push(n),
+                None => return false,
+            }
+        }
+        let Some(nc) = checked_neg_r64(*constant) else {
+            return false;
+        };
+        for ((_, c), n) in terms.iter_mut().zip(flipped) {
+            *c = n;
+        }
+        *constant = nc;
+        true
+    }
+
     fn row_key(&self, lhs: &[(TermId, Rational64)], rhs: Rational64, equality: bool) -> RowKey {
         let mut terms: Vec<(TermId, Rational64)> = Vec::with_capacity(lhs.len());
         for &(term, coef) in lhs {
@@ -452,15 +491,15 @@ impl ArithSolver {
         }
 
         // Sign normalization for equalities only (inequalities keep their
-        // direction; see `normalize_ineq_expr`).
+        // direction; see `normalize_ineq_expr`).  CHECKED: a coefficient or
+        // constant at `i64::MIN` cannot be negated — skip the flip (the
+        // key then matches the equally-unflipped row `normalize_expr`
+        // builds; only canonical-form sharing is lost).
         if equality
             && let Some((_, c)) = terms.first()
             && c.is_negative()
         {
-            for (_, c) in &mut terms {
-                *c = -*c;
-            }
-            constant = -constant;
+            Self::try_flip_terms(&mut terms, &mut constant);
         }
 
         RowKey { terms, constant }
@@ -538,8 +577,8 @@ impl ArithSolver {
         {
             return slack;
         }
-        let slack = self.simplex.intern_row(expr);
-        if integral {
+        let (slack, mode) = self.simplex.intern_row_reported(expr);
+        if integral && self.intern_keeps_integrality(mode, slack) {
             self.int_vars.insert(slack);
         }
         self.slack_forms
@@ -662,8 +701,8 @@ impl ArithSolver {
         {
             return slack;
         }
-        let slack = self.simplex.intern_row(expr);
-        if integral {
+        let (slack, mode) = self.simplex.intern_row_reported(expr);
+        if integral && self.intern_keeps_integrality(mode, slack) {
             self.int_vars.insert(slack);
         }
         self.atom_rows.insert(cache_key, slack);
@@ -750,6 +789,36 @@ impl ArithSolver {
                 .all(|(v, c)| c.denom() == &1 && self.int_vars.contains(v))
     }
 
+    /// Whether an interned row's slack may be integer-marked given HOW the
+    /// intern produced it.  [`RowInternMode::Exact`] keeps the requested
+    /// linear function (GCD canonicalization and basic-variable
+    /// substitution are function-preserving, and the GCD division of an
+    /// integral form stays integral), so an integral requested form makes
+    /// the slack integer-valued.  [`RowInternMode::Rescaled`] defines the
+    /// slack as `form / λ` for a positive width factor: the zero-bound
+    /// constraints are unchanged, but integrality is NOT transferred —
+    /// `3·2^62 + 1` rescaled by `1/52` takes value `1/52`.  The slack is
+    /// integer-valued exactly when the RESCALED row is itself an integral
+    /// form, which is checked directly here (the row is fresh: nothing
+    /// pivots between the intern and this call).
+    ///
+    /// Why this matters: `gomory_cut` sources cuts from integer-marked
+    /// tableau basics and `lia_branch_and_bound` splits
+    /// `x ≤ ⌊x̄⌋ ∨ x ≥ ⌈x̄⌉` on them — both reason from `slack ∈ ℤ`, so a
+    /// rescaled slack wrongly marked integer fabricates divisibility
+    /// constraints (a Gomory cut over `(1 - s)/52` asserted `1 - s ≡ 0
+    /// (mod 52)` with the axiom's own reason and refuted a `sat` goal:
+    /// the arithmetic arc's item-54 false `unsat`).
+    fn intern_keeps_integrality(&self, mode: RowInternMode, slack: VarId) -> bool {
+        match mode {
+            RowInternMode::Exact => true,
+            RowInternMode::Rescaled => match self.simplex.defining_row(slack) {
+                Some(row) => self.is_integral_form(row),
+                None => false,
+            },
+        }
+    }
+
     /// Add a reason and return its ID
     fn add_reason(&mut self, term: TermId) -> u32 {
         let id = self.reason_counter;
@@ -781,11 +850,14 @@ impl ArithSolver {
         // finding 5; see `canonicalize_lin_form` for the soundness notes).
         super::simplex::canonicalize_lin_form(&mut expr.terms, &mut expr.constant);
 
-        // Ensure first coefficient is positive
+        // Ensure first coefficient is positive — CHECKED: at an `i64::MIN`
+        // coefficient or constant the negation does not fit; skipping the
+        // flip keeps the same linear function (only the canonical form is
+        // lost) and matches `row_key`'s identically-guarded flip.
         if let Some((_, c)) = expr.terms.first()
             && c.is_negative()
         {
-            expr.negate();
+            Self::try_flip_terms(&mut expr.terms, &mut expr.constant);
         }
 
         // Sort terms by variable ID for canonical form
@@ -957,6 +1029,16 @@ impl ArithSolver {
 
     /// Assert: lhs <= rhs
     pub fn assert_le(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
+        // `rhs = i64::MIN` that negation does not fit, and the unchecked
+        // form panicked in debug and WRAPPED to a different row in release
+        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
+        // the honest move: the atom stays unconstrained in the tableau and
+        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        if checked_neg_r64(rhs).is_none() {
+            self.unrepresentable_row_assert = true;
+            return;
+        }
         let mut expr = LinExpr::new();
         let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
@@ -982,6 +1064,16 @@ impl ArithSolver {
 
     /// Assert: lhs >= rhs
     pub fn assert_ge(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
+        // `rhs = i64::MIN` that negation does not fit, and the unchecked
+        // form panicked in debug and WRAPPED to a different row in release
+        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
+        // the honest move: the atom stays unconstrained in the tableau and
+        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        if checked_neg_r64(rhs).is_none() {
+            self.unrepresentable_row_assert = true;
+            return;
+        }
         let mut expr = LinExpr::new();
         let mut single: Option<(VarId, Rational64)> = None;
         for (term, coef) in lhs {
@@ -1011,6 +1103,16 @@ impl ArithSolver {
     ///
     /// Example: 2x + 2y = 7 is infeasible because gcd(2,2) = 2 doesn't divide 7.
     pub fn assert_eq(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
+        // `rhs = i64::MIN` that negation does not fit, and the unchecked
+        // form panicked in debug and WRAPPED to a different row in release
+        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
+        // the honest move: the atom stays unconstrained in the tableau and
+        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        if checked_neg_r64(rhs).is_none() {
+            self.unrepresentable_row_assert = true;
+            return;
+        }
         // Compute the row key up front: the LIA Diophantine bookkeeping below
         // is only performed for the FIRST assertion of this linear form at
         // the current scope (re-assertions set the same bounds again and
@@ -1228,6 +1330,16 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs <= rhs - δ
     /// For LIA, transforms to: lhs <= rhs - 1 (since no integer exists between k and k+1)
     pub fn assert_lt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
+        // `rhs = i64::MIN` that negation does not fit, and the unchecked
+        // form panicked in debug and WRAPPED to a different row in release
+        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
+        // the honest move: the atom stays unconstrained in the tableau and
+        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        if checked_neg_r64(rhs).is_none() {
+            self.unrepresentable_row_assert = true;
+            return;
+        }
         // For an INTEGRAL row, x < k is equivalent to x <= k - 1
         // because there is no integer strictly between k-1 and k.
         //
@@ -1282,6 +1394,16 @@ impl ArithSolver {
     /// For LRA, uses infinitesimals: lhs >= rhs + δ
     /// For LIA, transforms to: lhs >= rhs + 1 (since no integer exists between k and k+1)
     pub fn assert_gt(&mut self, lhs: &[(TermId, Rational64)], rhs: Rational64, reason: TermId) {
+        // Representability guard: the row `lhs - rhs` needs `-rhs`; at
+        // `rhs = i64::MIN` that negation does not fit, and the unchecked
+        // form panicked in debug and WRAPPED to a different row in release
+        // (the QF_ANIA diskperf sweep finding).  Declining the assertion is
+        // the honest move: the atom stays unconstrained in the tableau and
+        // `unrepresentable_row_assert` forces `check()` to answer Unknown.
+        if checked_neg_r64(rhs).is_none() {
+            self.unrepresentable_row_assert = true;
+            return;
+        }
         // For an INTEGRAL row, x > k is equivalent to x >= k + 1 (same
         // per-row conditions and CHECKED shift as `assert_lt`; see the
         // soundness note there — at `k = i64::MAX` the unchecked `k+1`
@@ -1473,7 +1595,11 @@ impl ArithSolver {
             SimplexOptStatus::Optimal(v) => v,
             _ => return None,
         };
-        let hi_real = -neg_max;
+        // `-neg_max` is CHECKED: at `neg_max = i64::MIN` the negation does
+        // not fit, and a wrapped value would narrow the case-split range
+        // (the false-`unsat` direction this helper's soundness note
+        // exists for).
+        let hi_real = checked_neg_r64(neg_max)?;
         Some((lo_real.ceil().to_integer(), hi_real.floor().to_integer()))
     }
 
@@ -1518,6 +1644,9 @@ impl ArithSolver {
     pub fn fixed_to_const_reason(&mut self, term: TermId, const_value: i64) -> Option<Vec<TermId>> {
         let &var = self.term_to_var.get(&term)?;
         let cv = Rational64::from_integer(const_value);
+        // `x < cv` probe row needs `-cv`: at `cv = i64::MIN` the negation
+        // does not fit — decline (None = no reason derived, always sound).
+        checked_neg_r64(cv)?;
         let base = self.reasons.len();
         let mut collected: Vec<TermId> = Vec::new();
         // term < const_value infeasible  ⟺  term >= const_value entailed.
@@ -2677,6 +2806,11 @@ impl Theory for ArithSolver {
     }
 
     fn check(&mut self) -> Result<TheoryResult> {
+        // A declined (unrepresentable) assertion leaves its atom
+        // unconstrained in the tableau: no verdict may rest on it.
+        if self.unrepresentable_row_assert {
+            return Ok(TheoryResult::Unknown);
+        }
         self.lia_model.clear();
         // Slice 6 cadence: the tighten runs at every final-check round (the
         // only place wide rows from earlier rounds exist). A pending
@@ -2840,6 +2974,10 @@ impl Theory for ArithSolver {
         // structural fact (its sort), not search state, and the replay that
         // follows this reset re-interns terms through the sort-blind
         // `assert_*` paths – `intern` consults this registry to re-mark.
+        // `unrepresentable_row_assert` is deliberately KEPT too: the replay
+        // re-asserts the same wide-bound atom and would re-decline, so a
+        // cleared flag would let a later round answer over a tableau that
+        // silently dropped the atom.
         self.var_to_term.clear();
         self.reason_counter = 0;
         self.reasons.clear();
