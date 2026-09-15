@@ -50,7 +50,7 @@ use nixie_core::sort::field::FieldId;
 use nixie_math::ff::field::{FieldCtx, Limbs};
 use nixie_math::ff::grobner::{
     DEGREVLEX, GrobnerBasis, GrobnerBudget, GrobnerError, grobner_basis, minimal_polynomial,
-    normal_form,
+    normal_form, normal_form_traced,
 };
 use nixie_math::ff::poly::MPoly;
 use nixie_math::ff::roots::{RootBudget, RootError, roots as uni_roots};
@@ -71,8 +71,16 @@ pub enum FfOutcome {
     /// of asserted facts whose generators appear with nonzero cofactor in
     /// the `1 ∈ I` certificate.
     Unsat(FfCore),
-    /// The branching was exhaustive and empty: UNSAT is genuine.
-    Exhausted,
+    /// The branching was exhaustive and empty: UNSAT is genuine. The
+    /// payload is the §8 case-tree certificate when the search could
+    /// record one (the monolithic root, budget permitting) — `None`
+    /// for the enumeration path and aborted tracking, where certified
+    /// mode keeps downgrading honestly.
+    Exhausted {
+        /// The §8 case-tree certificate when the search recorded one;
+        /// `None` for the enumeration path and aborted tracking.
+        certificate: Option<FfCertificate>,
+    },
     /// The budget ran out at `where_` → `Unknown`, never `Unsat`.
     OutOfBudget {
         /// Where the budget ran out.
@@ -140,6 +148,24 @@ pub enum FfCertificate {
         /// The cofactors: `Σ cofactors[i] · generators[i].1 = 1`.
         cofactors: Vec<MPoly>,
     },
+    /// Branch exhaustion (§8's hard half): FindZero closed the case
+    /// tree. Verification replays the encoding, then checks every
+    /// entry's membership combination and every branch step's root
+    /// completeness (`f = ∏(x − rᵢ)·q` with `gcd(q, x^p − x) = 1`, or
+    /// an exact cover of 𝔽p for the full-enumeration steps), and that
+    /// the entries form a tree covering the root whose leaves all
+    /// refute.
+    CaseTree {
+        /// The field.
+        field: FieldId,
+        /// The branch literals minted by the search, first-mint order;
+        /// atom `n_gens + i` is the monic `x − literals[i].1`.
+        literals: Vec<(Var, BigUint)>,
+        /// One entry per processed search node: its path (indices into
+        /// `literals`) and the fact established there. Cofactor
+        /// vectors are atom-indexed (the replayed generators first).
+        entries: Vec<(Vec<usize>, CaseEntry)>,
+    },
     /// Pigeonhole: a `distinct` over `k` terms of a field with order `p`
     /// and `k > p`. Verification re-reads the literal and the field's
     /// order from the sort table.
@@ -153,7 +179,133 @@ pub enum FfCertificate {
     },
 }
 
+/// The index (into `basis.basis`) of the first nonzero-constant
+/// element — the refutation witness for a dead node.
+fn witness_index(basis: &nixie_math::ff::grobner::GrobnerBasis) -> Option<usize> {
+    basis
+        .basis
+        .iter()
+        .position(|t| t.poly.is_nonzero_constant())
+}
+
+/// The current atom count: the generator slots plus the minted literals.
+fn n_atoms_current(lit_reg: &[(Var, BigUint)], n_atoms_base: usize) -> usize {
+    n_atoms_base + lit_reg.len()
+}
+
+/// A [`UniPoly`] in `var` back to an [`MPoly`].
+fn univariate_to_mpoly(f: &FieldCtx, u: &UniPoly, var: Var) -> MPoly {
+    let mut p = MPoly::zero();
+    for (d, c) in u.coeffs().iter().enumerate() {
+        if *c == f.zero() {
+            continue;
+        }
+        if d == 0 {
+            p.add_term(f, Monomial::unit(), c);
+        } else {
+            let mut m = Monomial::from_var(var);
+            m = m.pow(d as u32);
+            p.add_term(f, m, c);
+        }
+    }
+    p
+}
+
+/// The monic linear polynomial `x − value` (a branch-literal atom).
+fn monic_linear(f: &FieldCtx, var: Var, value: &BigUint) -> MPoly {
+    let mut p = MPoly::zero();
+    p.add_term(f, Monomial::from_var(var), &f.one());
+    let neg = f.neg(&f.from_biguint(value));
+    p.add_term(f, Monomial::unit(), &neg);
+    p
+}
+
+/// Extract a [`UniPoly`] from an MPoly univariate in `var` (`None` on
+/// any other shape).
+fn mpoly_to_univariate(f: &FieldCtx, p: &MPoly, var: Var) -> Option<UniPoly> {
+    let mut deg = 0usize;
+    for (m, _) in p.terms_iter() {
+        for vp in m.vars() {
+            if vp.var != var {
+                return None;
+            }
+            deg = deg.max(vp.power as usize);
+        }
+    }
+    let mut coeffs: Vec<Limbs> = vec![f.zero(); deg + 1];
+    for (m, c) in p.terms_iter() {
+        let d = if m.is_unit() {
+            0
+        } else {
+            m.vars().first().map_or(0, |vp| vp.power as usize)
+        };
+        coeffs[d] = c.clone();
+    }
+    Some(UniPoly::from_coeffs(coeffs))
+}
+
+/// `x^p − x` reduced modulo `m` (the root-existence probe of the
+/// branch-completeness check).
+fn x_pow_p_minus_x(f: &FieldCtx, p: &BigUint, m: &UniPoly) -> UniPoly {
+    // x^p mod m by the existing modular exponentiation, minus x.
+    let x_poly = UniPoly::from_coeffs(vec![f.zero(), f.one()]);
+    let xp = x_poly.pow_mod(f, p, m);
+    xp.sub(f, &x_poly)
+}
+
+/// The registry index of a branch literal, if it exists.
+fn literal_index(literals: &[(Var, BigUint)], var: Var, value: &BigUint) -> Option<usize> {
+    literals
+        .iter()
+        .position(|&(v, ref r)| v == var && r == value)
+}
+
+/// One node's fact in a FindZero case tree (see
+/// [`FfCertificate::CaseTree`]).
+#[derive(Debug, Clone)]
+pub enum CaseEntry {
+    /// `1 ∈ ⟨atoms⟩` at this node's path (a nonzero constant suffices —
+    /// rescaleable, exactly like the ideal-membership rule): the node's
+    /// basis hit a constant. `cofactors` are atom-indexed.
+    Refuted {
+        /// `Σ cofactors[i] · atom_i` must be a nonzero constant.
+        cofactors: Vec<MPoly>,
+    },
+    /// The node branched on the univariate `poly ∈ ⟨atoms⟩`
+    /// (membership by `cofactors`): every 𝔽p-root of `poly` is listed
+    /// in `roots` (checker: exact division by `∏(x − rᵢ)` and the
+    /// quotient coprime to `x^p − x`), and each root extends the path.
+    Branch {
+        /// The branch variable.
+        var: Var,
+        /// The univariate branch polynomial.
+        poly: MPoly,
+        /// Its claimed complete root set.
+        roots: Vec<BigUint>,
+        /// `Σ cofactors[i] · atom_i = poly`.
+        cofactors: Vec<MPoly>,
+    },
+    /// The node enumerated ALL of 𝔽p for `var` (round-robin at full
+    /// width — only reachable when p ≤ the horizon). A semantic axiom:
+    /// every variable ranges over the field; the checker confirms the
+    /// children cover every residue.
+    FullEnum {
+        /// The enumerated variable.
+        var: Var,
+    },
+}
+
 impl FfCertificate {
+    /// The variant tag (diagnostics).
+    #[must_use]
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            FfCertificate::IdealMembership { .. } => "IdealMembership",
+            FfCertificate::CaseTree { .. } => "CaseTree",
+            FfCertificate::Cardinality { .. } => "Cardinality",
+        }
+    }
+
     /// Re-verify the certificate against the original assertions:
     /// re-encode the named literals and re-multiply (IdealMembership), or
     /// re-read the distinct count and the field order (Cardinality).
@@ -199,6 +351,173 @@ impl FfCertificate {
                 // Σ cᵢ fᵢ must equal a NONZERO constant (rescaleable to
                 // 1; any nonzero constant is a valid refutation).
                 acc.is_nonzero_constant()
+            }
+            FfCertificate::CaseTree {
+                field,
+                literals,
+                entries,
+            } => {
+                let Some(modulus) = manager.sorts.field_table().modulus(*field).cloned() else {
+                    return false;
+                };
+                let Ok(fctx) = FieldCtx::new(modulus.clone()) else {
+                    return false;
+                };
+                let f = &fctx;
+                // Replay the deterministic encoding: the atom base is
+                // the replayed generator list (the certificate's
+                // cofactor vectors are indexed over it) followed by the
+                // branch literals' monic polynomials.
+                let Ok((_enc, replay)) =
+                    encode_generators(manager, *field, &fctx, assertions, 1 << 24)
+                else {
+                    return false;
+                };
+                let mut atoms: Vec<MPoly> = replay.iter().map(|g| g.poly.clone()).collect();
+                for &(var, ref value) in literals {
+                    atoms.push(monic_linear(f, var, value));
+                }
+                let n_atoms = atoms.len();
+                let eval_combo = |cofactors: &[MPoly]| -> MPoly {
+                    let mut acc = MPoly::zero();
+                    for (c, a) in cofactors.iter().zip(&atoms) {
+                        if !c.is_zero() {
+                            acc = acc.add(f, &c.mul(f, a));
+                        }
+                    }
+                    acc
+                };
+                // The entries must form a tree over the paths: every
+                // path is unique, the root (empty path) is present, and
+                // every branch's children all exist.
+                let mut by_path: FxHashMap<Vec<usize>, &CaseEntry> = FxHashMap::default();
+                for (path, entry) in entries {
+                    if by_path.insert(path.clone(), entry).is_some() {
+                        return false; // duplicate path: not a tree
+                    }
+                }
+                if !by_path.contains_key(&Vec::<usize>::new()) {
+                    return false;
+                }
+                // Iterative DFS with a step cap (deep trees must not
+                // overflow the checker's stack either).
+                let mut stack: Vec<Vec<usize>> = vec![Vec::new()];
+                let mut visits = 0u64;
+                while let Some(path) = stack.pop() {
+                    visits += 1;
+                    if visits > 1 << 22 {
+                        return false;
+                    }
+                    let Some(entry) = by_path.get(&path) else {
+                        // A child the branch promised is missing: the
+                        // tree does not cover the search.
+                        return false;
+                    };
+                    match entry {
+                        CaseEntry::Refuted { cofactors } => {
+                            if cofactors.len() > n_atoms {
+                                return false;
+                            }
+                            if !eval_combo(cofactors).is_nonzero_constant() {
+                                return false;
+                            }
+                        }
+                        CaseEntry::Branch {
+                            var,
+                            poly,
+                            roots,
+                            cofactors,
+                        } => {
+                            if cofactors.len() > n_atoms {
+                                return false;
+                            }
+                            if eval_combo(cofactors) != *poly {
+                                return false;
+                            }
+                            // Univariate in `var`, as claimed.
+                            if !poly
+                                .terms_iter()
+                                .all(|(m, _)| m.vars().iter().all(|vp| vp.var == *var))
+                            {
+                                return false;
+                            }
+                            let Some(uni) = mpoly_to_univariate(f, poly, *var) else {
+                                return false;
+                            };
+                            // Root completeness: f = ∏(x − rᵢ)·q with
+                            // gcd(q, x^p − x) = 1 — the listed roots are
+                            // exactly the 𝔽p-roots. Dividing by every
+                            // claimed root must be exact, each claimed
+                            // root must annihilate f, and the leftover
+                            // quotient must be coprime to x^p − x (no
+                            // remaining roots).
+                            // Divide f itself by every claimed root's
+                            // linear factor: f = ∏(x − rᵢ)·q.
+                            let mut split = uni.clone();
+                            let mut all_roots = true;
+                            for r in roots {
+                                if uni.eval(f, &f.from_biguint(r)) != f.zero() {
+                                    all_roots = false;
+                                    break;
+                                }
+                                // x − r: little-endian [−r, 1].
+                                let lin =
+                                    UniPoly::from_coeffs(vec![f.neg(&f.from_biguint(r)), f.one()]);
+                                let Some((q, rem)) = split.divrem(f, &lin) else {
+                                    all_roots = false;
+                                    break;
+                                };
+                                if !rem.is_zero() {
+                                    all_roots = false;
+                                    break;
+                                }
+                                split = q;
+                            }
+                            if !all_roots {
+                                return false;
+                            }
+                            let split_is_one = split.coeffs() == [f.one()];
+                            if !split.is_zero() && !split_is_one {
+                                // x^p − x reduced mod the quotient, then
+                                // gcd: a nontrivial common factor is an
+                                // unlisted root.
+                                let xp_x = x_pow_p_minus_x(f, &modulus, &split);
+                                let g = xp_x.gcd(f, &split);
+                                if g.coeffs() != [f.one()] {
+                                    return false;
+                                }
+                            }
+                            if split.is_zero() && !roots.is_empty() {
+                                return false;
+                            }
+                            for r in roots {
+                                let Some(idx) = literal_index(literals, *var, r) else {
+                                    return false;
+                                };
+                                let mut child = path.clone();
+                                child.push(idx);
+                                stack.push(child);
+                            }
+                        }
+                        CaseEntry::FullEnum { var } => {
+                            // All p residues: only feasible when p is
+                            // small; every child must exist.
+                            let Some(p_u64): Option<u64> = (&modulus).try_into().ok() else {
+                                return false;
+                            };
+                            for v in 0..p_u64 {
+                                let value = BigUint::from(v);
+                                let Some(idx) = literal_index(literals, *var, &value) else {
+                                    return false;
+                                };
+                                let mut child = path.clone();
+                                child.push(idx);
+                                stack.push(child);
+                            }
+                        }
+                    }
+                }
+                true
             }
             FfCertificate::Cardinality { field, literal, k } => {
                 let Some(&assertion) = assertions.get(*literal) else {
@@ -298,12 +617,18 @@ pub fn check_conjunction(
                                     certificate,
                                 });
                             }
-                            FrontResult::Rewritten(_) => {}
+                            FrontResult::Rewritten(..) => {}
                         },
                         Err(outcome) => return outcome,
                     }
                 }
-                enumerate(manager, field, &modulus, &vars, assertions, budget_steps)
+                match enumerate(manager, field, &modulus, &vars, assertions, budget_steps) {
+                    outcome @ (FfOutcome::Model(_)
+                    | FfOutcome::Unsat(_)
+                    | FfOutcome::OutOfBudget { .. }
+                    | FfOutcome::InvalidModel(_)) => outcome,
+                    FfOutcome::Exhausted { .. } => FfOutcome::Exhausted { certificate: None },
+                }
             } else {
                 let Ok(f) = FieldCtx::new(modulus) else {
                     return FfOutcome::InvalidModel(
@@ -571,15 +896,20 @@ fn grobner_path(
     // is the LRA tableau discipline with every hard part removed (no
     // bounds, no ordering, no anti-cycling rule) — the design's "do not
     // make Gröbner the front line".
-    let generators = match linear_core(f, field, generators) {
+    // The rewriting carries each generator's expression over the
+    // ORIGINAL (replayable) encoding — certificates compose through it.
+    // `originals` is what the certificate replay reproduces.
+    let originals = generators.clone();
+    let generators_and_exprs = match linear_core(f, field, generators) {
         FrontResult::Inconsistent(core, certificate) => {
             return FfOutcome::Unsat(FfCore {
                 fact_indices: core.into_iter().collect(),
                 certificate,
             });
         }
-        FrontResult::Rewritten(gens) => gens,
+        FrontResult::Rewritten(gens, exprs) => (gens, exprs),
     };
+    let (generators, generator_exprs) = generators_and_exprs;
     // ---- Step 2/3: connected components (§6.4), then per-component
     // Gröbner + FindZero ----
     // The variable-sharing graph's connected components are independent
@@ -649,11 +979,21 @@ fn grobner_path(
         }
         if basis.contains_nonzero_constant() {
             if !is_split {
-                // The monolithic refutation: the tracer is aligned with
-                // the component's generators — the traced core and the
-                // replayable certificate, exactly as before.
-                let owned: Vec<FrontGen> = component.iter().map(|g| (*g).clone()).collect();
-                return traced_unsat(f, field, &owned, &basis);
+                // The monolithic refutation: compose the witness through
+                // the component generators' expressions over the
+                // originals — the traced core and the replayable
+                // certificate.
+                let comp_exprs: Vec<Vec<MPoly>> = component
+                    .iter()
+                    .map(|cg| {
+                        let idx = generators
+                            .iter()
+                            .position(|g| std::ptr::eq(g, *cg))
+                            .unwrap_or(0);
+                        generator_exprs.get(idx).cloned().unwrap_or_default()
+                    })
+                    .collect();
+                return traced_unsat(f, field, &comp_exprs, &originals, &basis);
             }
             // A split-path refutation: the derivation runs through both
             // ideals (or the exchanged polys detach the tracer from the
@@ -670,24 +1010,62 @@ fn grobner_path(
             });
         }
         let vars = component_variables(component);
-        let fz_outcome = find_zero(f, &basis, &enc, &vars, budget_steps, root_is_gb);
+        // The case-tree atom map: the component's generators at their
+        // global slots (only meaningful for the monolithic root, whose
+        // inputs ARE those generators in component order — the split
+        // root's merged inputs are not replayable and track nothing).
+        // The case-tree tracking composes through the rewriting: the
+        // root's input expressions are the component generators'
+        // expressions over the replayable originals.
+        let component_exprs: Option<Vec<Vec<MPoly>>> = if root_is_gb {
+            Some(
+                component
+                    .iter()
+                    .map(|cg| {
+                        let idx = generators
+                            .iter()
+                            .position(|g| std::ptr::eq(g, *cg))
+                            .unwrap_or(0);
+                        generator_exprs.get(idx).cloned().unwrap_or_default()
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let fz_outcome = find_zero(
+            f,
+            &basis,
+            &enc,
+            &vars,
+            budget_steps,
+            FindZeroCert {
+                field,
+                root_is_gb,
+                root_input_exprs: component_exprs.as_deref(),
+            },
+        );
         match fz_outcome {
             FfOutcome::Model(model) => {
                 for (var, value) in model.assignments() {
                     combined.insert(*var, value.clone());
                 }
             }
-            FfOutcome::Exhausted => {
-                // This component has no point: the whole goal is
-                // UNSAT, with this component's origins as the
-                // core (no certificate — exhaustion).
+            FfOutcome::Exhausted { certificate } => {
+                // This component has no point: the whole goal is UNSAT,
+                // with this component's origins as the core. The
+                // §8 case-tree certificate rides along when the search
+                // recorded one (the monolithic root, composition budget
+                // permitting); the enumeration path and aborted
+                // tracking carry `None`, and certified mode keeps
+                // downgrading those honestly.
                 let core: Vec<usize> = component
                     .iter()
                     .flat_map(|g| g.origin.iter().copied())
                     .collect();
                 return FfOutcome::Unsat(FfCore {
                     fact_indices: core,
-                    certificate: None,
+                    certificate,
                 });
             }
             other => return other,
@@ -808,7 +1186,12 @@ struct FrontGen {
 fn traced_unsat(
     f: &FieldCtx,
     field: FieldId,
-    generators: &[FrontGen],
+    // `input_exprs`: the refuting basis's inputs' expressions over the
+    // ORIGINAL (replayable) encoding, aligned with `basis.inputs`;
+    // `originals`: the encoding's own output — the certificate's
+    // generator list.
+    input_exprs: &[Vec<MPoly>],
+    originals: &[FrontGen],
     basis: &nixie_math::ff::grobner::GrobnerBasis,
 ) -> FfOutcome {
     let Some(witness) = basis.constant_witness() else {
@@ -832,9 +1215,36 @@ fn traced_unsat(
                 .to_string(),
         );
     }
+    // Compose the witness through the rewriting: the basis certifies
+    // `1 = Σᵢ cofᵢ · componentᵢ` and each component generator is
+    // `Σⱼ expr[i][j] · originalⱼ`, so the replayable certificate is
+    // `1 = Σⱼ (Σᵢ cofᵢ·expr[i][j]) · originalⱼ`. (Certifying the
+    // REWRITTEN list instead handed the verifier a list its replay
+    // cannot reproduce — a length mismatch that silently downgraded
+    // every substituted refutation; found by the case-tree probe,
+    // 2026-09-16.)
+    let n_orig = originals.len();
+    let mut composed: Vec<MPoly> = vec![MPoly::zero(); n_orig];
+    for (i, cof) in witness.cofactors.iter().enumerate() {
+        if cof.is_zero() {
+            continue;
+        }
+        let expr = input_exprs.get(i);
+        let identity_at = expr.is_none().then_some(i);
+        if let Some(expr) = expr {
+            for (j, e) in expr.iter().enumerate() {
+                if e.is_zero() || j >= n_orig {
+                    continue;
+                }
+                composed[j] = composed[j].add(f, &cof.mul(f, e));
+            }
+        } else if let Some(at) = identity_at.filter(|&x| x < n_orig) {
+            composed[at] = composed[at].add(f, cof);
+        }
+    }
     let mut core: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-    for (gen_idx, generator) in generators.iter().enumerate() {
-        if witness.cofactors.get(gen_idx).is_some_and(|c| !c.is_zero()) {
+    for (gen_idx, generator) in originals.iter().enumerate() {
+        if composed.get(gen_idx).is_some_and(|c| !c.is_zero()) {
             core.extend(generator.origin.iter().copied());
         }
     }
@@ -842,29 +1252,20 @@ fn traced_unsat(
         // The certificate rests only on definitions — not reachable with
         // a sound encoder, but an empty core must never be returned as
         // "UNSAT by nothing": fall back to naming every fact.
-        core = generators
+        core = originals
             .iter()
             .flat_map(|g| g.origin.iter().copied())
             .collect();
     }
-    // The certificate: the FULL generator list (facts, witnesses, bitsum
-    // definitions — index-aligned with the cofactors) plus the cofactors.
-    // Verification replays `encode_generators` over the same assertions,
-    // which deterministically reproduces the list, and re-multiplies —
-    // so the certificate is exactly the cofactors, and everything else
-    // is re-derived by the checker.
+    // The certificate: the FULL original generator list (facts,
+    // witnesses, bitsum definitions — index-aligned with the composed
+    // cofactors). Verification replays `encode_generators` over the
+    // same assertions, which deterministically reproduces this list.
     let mut cert_generators: Vec<(Option<usize>, MPoly)> = Vec::new();
-    let mut cert_cofactors: Vec<MPoly> = Vec::new();
-    for (gen_idx, generator) in generators.iter().enumerate() {
+    for generator in originals.iter() {
         cert_generators.push((generator.literal, generator.poly.clone()));
-        cert_cofactors.push(
-            witness
-                .cofactors
-                .get(gen_idx)
-                .cloned()
-                .unwrap_or_else(MPoly::zero),
-        );
     }
+    let cert_cofactors: Vec<MPoly> = composed;
     let certificate = Some(FfCertificate::IdealMembership {
         field,
         generators: cert_generators,
@@ -1164,13 +1565,24 @@ impl<'a> Encoder<'a> {
 
 /// The branching search for a rational point: one explicit heap stack of
 /// nodes (basis + partial assignment), never native recursion.
+/// The certificate-tracking inputs to FindZero (§8's case trees).
+struct FindZeroCert<'a> {
+    field: FieldId,
+    /// Whether the root basis is a true Gröbner basis (see `Node::is_gb`).
+    root_is_gb: bool,
+    /// The root's input expressions over the replayable originals
+    /// (`None` disables tracking — the split root's merged inputs are
+    /// not replayable).
+    root_input_exprs: Option<&'a [Vec<MPoly>]>,
+}
+
 fn find_zero(
     f: &FieldCtx,
     basis: &nixie_math::ff::grobner::GrobnerBasis,
     enc: &Encoder<'_>,
     variables: &[Var],
     budget_steps: u64,
-    root_is_gb: bool,
+    cert: FindZeroCert<'_>,
 ) -> FfOutcome {
     struct Node {
         basis: nixie_math::ff::grobner::GrobnerBasis,
@@ -1179,14 +1591,118 @@ fn find_zero(
         /// Gröbner bases — sound for every rule that only consumes
         /// ideal members (univariate branching, linear univariates,
         /// whole-ring detection), but NOT for the minimal-polynomial
-        /// rule, whose quotient-basis arithmetic is valid only for a
-        /// true basis.
+        /// rule, whose quotient arithmetic is valid only for a true
+        /// basis.
         is_gb: bool,
+        /// The branch-literal path (indices into the search's literal
+        /// registry).
+        path: Vec<usize>,
+        /// Certificate tracking: the expressions of the node's INPUT
+        /// basis elements over the atom list (shared with siblings),
+        /// and the atom of the branch literal that created this node.
+        input_base: Option<std::rc::Rc<Vec<Vec<MPoly>>>>,
+        extra_atom: Option<usize>,
+    }
+
+    // ---- §8 case-tree tracking (advisory: never affects the verdict).
+    // The atoms are the component's generators (mapped to global
+    // generator indices by `atom_map` — the replay re-encodes the full
+    // slice, so the component's atoms must sit at their global slots)
+    // plus one monic `x − r` per minted branch literal. Expressions
+    // compose through the per-node tracer rows; composition runs on its
+    // OWN budget so a big case tree can only lose its certificate, not
+    // its verdict.
+    let tracking_possible = cert.root_input_exprs.is_some();
+    let mut tracking = tracking_possible;
+    let mut tbudget = GrobnerBudget::new(1 << 20);
+    let n_atoms_base = cert
+        .root_input_exprs
+        .map_or(0, |e| e.first().map_or(0, |v| v.len()));
+    let mut lit_reg: Vec<(Var, BigUint)> = Vec::new();
+    let mut entries: Vec<(Vec<usize>, CaseEntry)> = Vec::new();
+
+    impl Node {
+        /// The expression of basis element `i` over the atom list: its
+        /// tracer row over the node's inputs (parent basis elements,
+        /// then the branch literal that created the node), each input
+        /// replaced by its own expression. Charged to the TRACKING
+        /// budget — a failure returns `None` and the caller disables
+        /// tracking (the verdict is never at stake).
+        fn expr_of(
+            &self,
+            i: usize,
+            n_now: usize,
+            n_base: usize,
+            f: &FieldCtx,
+            tbudget: &mut GrobnerBudget,
+        ) -> Option<Vec<MPoly>> {
+            let row = &self.basis.basis.get(i)?.cofactors;
+            let base = self.input_base.as_ref()?;
+            let mut acc = vec![MPoly::zero(); n_now];
+            for (j, c) in row.iter().enumerate() {
+                if c.is_zero() {
+                    continue;
+                }
+                let is_literal_input = self.extra_atom.is_some() && j + 1 == row.len();
+                if is_literal_input {
+                    // The atom slot is base + registry index (the
+                    // registry index alone addresses a GENERATOR slot —
+                    // the first version wrote the literal's term into
+                    // the wrong atom and the membership identity came
+                    // out silently wrong).
+                    let atom = n_base + self.extra_atom.unwrap_or(0);
+                    if atom >= n_now {
+                        continue;
+                    }
+                    let mut one_at = MPoly::zero();
+                    one_at.add_term(f, Monomial::unit(), &f.one());
+                    tbudget
+                        .charge(u64::try_from(c.n_terms() + 1).unwrap_or(1 << 20))
+                        .ok()?;
+                    acc[atom] = acc[atom].add(f, &c.mul(f, &one_at));
+                } else {
+                    let ek = base.get(j)?;
+                    for (k, e) in ek.iter().enumerate() {
+                        if e.is_zero() || k >= n_now {
+                            continue;
+                        }
+                        tbudget
+                            .charge(
+                                u64::try_from(c.n_terms().saturating_mul(e.n_terms().max(1)))
+                                    .unwrap_or(1 << 20),
+                            )
+                            .ok()?;
+                        acc[k] = acc[k].add(f, &c.mul(f, e));
+                    }
+                }
+            }
+            Some(acc)
+        }
+
+        /// All element expressions (shared `Rc` for the children).
+        fn all_elem_exprs(
+            &self,
+            n_now: usize,
+            n_base: usize,
+            f: &FieldCtx,
+            tbudget: &mut GrobnerBudget,
+        ) -> Option<std::rc::Rc<Vec<Vec<MPoly>>>> {
+            let mut all = Vec::with_capacity(self.basis.basis.len());
+            for i in 0..self.basis.basis.len() {
+                all.push(self.expr_of(i, n_now, n_base, f, tbudget)?);
+            }
+            Some(std::rc::Rc::new(all))
+        }
     }
 
     let mut stack: Vec<Node> = vec![Node {
         basis: basis.clone(),
-        is_gb: root_is_gb,
+        is_gb: cert.root_is_gb,
+        path: Vec::new(),
+        input_base: cert
+            .root_input_exprs
+            .map(|exprs| std::rc::Rc::new(exprs.to_vec())),
+        extra_atom: None,
     }];
     // Whether any round-robin enumerated fewer than p values: an
     // exhausted stack over truncated branches is an OutOfBudget, never
@@ -1218,6 +1734,22 @@ fn find_zero(
         }
         // 1 ∈ I → dead branch.
         if node.basis.contains_nonzero_constant() {
+            if tracking {
+                match witness_index(&node.basis).and_then(|wi| {
+                    node.expr_of(
+                        wi,
+                        n_atoms_current(&lit_reg, n_atoms_base),
+                        n_atoms_base,
+                        f,
+                        &mut tbudget,
+                    )
+                }) {
+                    Some(cofactors) => {
+                        entries.push((node.path.clone(), CaseEntry::Refuted { cofactors }));
+                    }
+                    None => tracking = false,
+                }
+            }
             continue;
         }
 
@@ -1247,8 +1779,8 @@ fn find_zero(
         // and a 16-constraint sparse goal ground for minutes on the
         // 8-way tree (a 64-constraint goal with no such element solved
         // in seconds — the chaos is the selection, not the size).
-        let mut candidates: Vec<(usize, Var, UniPoly)> = Vec::new();
-        for g in &node.basis.basis {
+        let mut candidates: Vec<(usize, Var, UniPoly, usize)> = Vec::new();
+        for (g_idx, g) in node.basis.basis.iter().enumerate() {
             let Some(lm) = g.poly.lm(nixie_math::ff::grobner::DEGREVLEX) else {
                 continue;
             };
@@ -1269,29 +1801,71 @@ fn find_zero(
                 let d = if m.is_unit() { 0 } else { m.vars()[0].power };
                 coeffs[d as usize] = c.clone();
             }
-            candidates.push((deg, x, UniPoly::from_coeffs(coeffs)));
+            candidates.push((deg, x, UniPoly::from_coeffs(coeffs), g_idx));
         }
         // Deterministic order: degree, then variable index.
-        candidates.sort_by_key(|(deg, x, _)| (*deg, *x));
+        candidates.sort_by_key(|(deg, x, _, _)| (*deg, *x));
 
         // The min-degree candidate decides: root finding either yields
         // its roots or exhausts the budget (there is no "no roots"
         // outcome for a squarefree product the basis admits), so the
         // first candidate is also the last one consulted.
         let brancher = match candidates.first() {
-            Some(&(_, x, ref uni)) => match uni_roots(f, uni, &mut rbudget) {
+            Some(&(_, x, ref uni, g_idx)) => match uni_roots(f, uni, &mut rbudget) {
                 Err(RootError::Budget) | Ok(None) => {
                     return FfOutcome::OutOfBudget {
                         where_: "root finding",
                     };
                 }
-                Ok(Some(roots)) => Some((x, roots)),
+                Ok(Some(roots)) => Some((x, roots, g_idx)),
             },
             None => None,
         };
 
-        let (var, values) = if let Some(b) = brancher {
-            b
+        // The branch decision, with its certificate entry (the
+        // univariate rule's polynomial is a basis element — membership
+        // comes from the tracer; the minpoly rule's polynomial is
+        // certified by a traced normal form).
+        let mut branch_entry: Option<CaseEntry> = None;
+        let (var, values) = if let Some((x, roots, g_idx)) = brancher {
+            if tracking {
+                match node.expr_of(
+                    g_idx,
+                    n_atoms_current(&lit_reg, n_atoms_base),
+                    n_atoms_base,
+                    f,
+                    &mut tbudget,
+                ) {
+                    Some(cofactors) => {
+                        // The branch polynomial is the RECONSTRUCTED
+                        // combination Σ row_j·input_j — not the basis
+                        // element itself: the basis's normalization can
+                        // scale an element without scaling its tracer
+                        // row, and the checker demands exact membership.
+                        // The combination has the same roots (a scalar
+                        // multiple of the element), so root completeness
+                        // is unaffected.
+                        let mut combo = MPoly::zero();
+                        for (c, input) in node.basis.basis[g_idx]
+                            .cofactors
+                            .iter()
+                            .zip(&node.basis.inputs)
+                        {
+                            if !c.is_zero() {
+                                combo = combo.add(f, &c.mul(f, input));
+                            }
+                        }
+                        branch_entry = Some(CaseEntry::Branch {
+                            var: x,
+                            poly: combo,
+                            roots: roots.iter().map(|r| f.to_biguint(r)).collect(),
+                            cofactors,
+                        });
+                    }
+                    None => tracking = false,
+                }
+            }
+            (x, roots)
         } else {
             // Brancher 2: zero-dimensional → minimal polynomial of an
             // unassigned variable. Brancher 3: positive-dimensional →
@@ -1314,7 +1888,77 @@ fn find_zero(
                                 };
                             }
                             Ok(Some(roots)) if roots.is_empty() => continue, // dead branch
-                            Ok(Some(roots)) => (free_var, roots),
+                            Ok(Some(roots)) => {
+                                if tracking {
+                                    // minpoly ∈ I: certify by a traced
+                                    // normal form against this node's
+                                    // basis, then compose through the
+                                    // element expressions.
+                                    let minpoly_mp = univariate_to_mpoly(f, &minpoly, free_var);
+                                    match normal_form_traced(
+                                        f,
+                                        &minpoly_mp,
+                                        &node.basis,
+                                        &mut tbudget,
+                                    )
+                                    .and_then(
+                                        |(res, coefs)| {
+                                            if res.is_zero() {
+                                                Some((res, coefs))
+                                            } else {
+                                                None
+                                            }
+                                        },
+                                    ) {
+                                        Some((_res, coefs)) => {
+                                            let n_now = n_atoms_current(&lit_reg, n_atoms_base);
+                                            let mut cofactors = vec![MPoly::zero(); n_now];
+                                            let mut ok = true;
+                                            for (i, c) in coefs.iter().enumerate() {
+                                                if c.is_zero() {
+                                                    continue;
+                                                }
+                                                match node.expr_of(
+                                                    i,
+                                                    n_now,
+                                                    n_atoms_base,
+                                                    f,
+                                                    &mut tbudget,
+                                                ) {
+                                                    Some(e) => {
+                                                        for (k, ek) in e.iter().enumerate() {
+                                                            if ek.is_zero() {
+                                                                continue;
+                                                            }
+                                                            cofactors[k] =
+                                                                cofactors[k].add(f, &c.mul(f, ek));
+                                                        }
+                                                    }
+                                                    None => {
+                                                        ok = false;
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if ok {
+                                                branch_entry = Some(CaseEntry::Branch {
+                                                    var: free_var,
+                                                    poly: minpoly_mp,
+                                                    roots: roots
+                                                        .iter()
+                                                        .map(|r| f.to_biguint(r))
+                                                        .collect(),
+                                                    cofactors,
+                                                });
+                                            } else {
+                                                tracking = false;
+                                            }
+                                        }
+                                        None => tracking = false,
+                                    }
+                                }
+                                (free_var, roots)
+                            }
                         }
                     }
                     None => {
@@ -1345,10 +1989,17 @@ fn find_zero(
                     .collect();
                 if truncated {
                     truncated_any = true;
+                } else if tracking {
+                    // Full width: the enumeration is the semantic axiom
+                    // "the variable ranges over 𝔽p".
+                    branch_entry = Some(CaseEntry::FullEnum { var: free_var });
                 }
                 (free_var, vals)
             }
         };
+        if let Some(entry) = branch_entry {
+            entries.push((node.path.clone(), entry));
+        }
 
         // Branch: add x − value, recompute the basis (recompute, never
         // incrementally roll back — the design's scoping discipline).
@@ -1359,6 +2010,24 @@ fn find_zero(
         // bootstraps from the reduced basis instead of re-running the
         // original cascade.
         let elements: Vec<MPoly> = node.basis.basis.iter().map(|t| t.poly.clone()).collect();
+        // The parent's element expressions, materialized once for all
+        // children (shared `Rc`).
+        let child_base: Option<std::rc::Rc<Vec<Vec<MPoly>>>> = if tracking {
+            match node.all_elem_exprs(
+                n_atoms_current(&lit_reg, n_atoms_base),
+                n_atoms_base,
+                f,
+                &mut tbudget,
+            ) {
+                Some(x) => Some(x),
+                None => {
+                    tracking = false;
+                    None
+                }
+            }
+        } else {
+            None
+        };
         for value in values {
             let mut poly = MPoly::zero();
             poly.add_term(f, Monomial::from_var(var), &f.one());
@@ -1373,10 +2042,23 @@ fn find_zero(
                         where_: "Gröbner basis",
                     };
                 }
-                Ok(child) => stack.push(Node {
-                    basis: child,
-                    is_gb: true,
-                }),
+                Ok(child) => {
+                    // The branch literal's atom slot (minted even when
+                    // not tracking, keeping the registry aligned with
+                    // the search).
+                    lit_reg.push((var, f.to_biguint(&value)));
+                    let mut path = node.path.clone();
+                    if tracking {
+                        path.push(lit_reg.len() - 1);
+                    }
+                    stack.push(Node {
+                        basis: child,
+                        is_gb: true,
+                        path,
+                        input_base: child_base.clone(),
+                        extra_atom: tracking.then_some(lit_reg.len() - 1),
+                    });
+                }
             }
         }
     }
@@ -1394,7 +2076,41 @@ fn find_zero(
             where_: "positive-dimensional enumeration",
         };
     }
-    FfOutcome::Exhausted
+    let certificate = tracking.then(|| {
+        let n_final = n_atoms_base + lit_reg.len();
+        let pad = |mut v: Vec<MPoly>| -> Vec<MPoly> {
+            v.resize(n_final, MPoly::zero());
+            v
+        };
+        FfCertificate::CaseTree {
+            field: cert.field,
+            literals: std::mem::take(&mut lit_reg),
+            entries: std::mem::take(&mut entries)
+                .into_iter()
+                .map(|(path, entry)| {
+                    let entry = match entry {
+                        CaseEntry::Refuted { cofactors } => CaseEntry::Refuted {
+                            cofactors: pad(cofactors),
+                        },
+                        CaseEntry::Branch {
+                            var,
+                            poly,
+                            roots,
+                            cofactors,
+                        } => CaseEntry::Branch {
+                            var,
+                            poly,
+                            roots,
+                            cofactors: pad(cofactors),
+                        },
+                        CaseEntry::FullEnum { var } => CaseEntry::FullEnum { var },
+                    };
+                    (path, entry)
+                })
+                .collect(),
+        }
+    });
+    FfOutcome::Exhausted { certificate }
 }
 
 // ================= Enumeration path (tiny fields) =================
@@ -1552,7 +2268,7 @@ fn enumerate(
             return FfOutcome::Model(model);
         }
     }
-    FfOutcome::Exhausted
+    FfOutcome::Exhausted { certificate: None }
 }
 
 /// Exact literal evaluation under an assignment (the term-language
@@ -1770,9 +2486,11 @@ pub fn validate_model(
 /// The linear core's verdict.
 enum FrontResult {
     /// The generator list, rewritten: pivots eliminated, linear rows in
-    /// reduced form, origins merged. Every asserted constraint survives
-    /// (a `0 = 0` row is the only thing dropped).
-    Rewritten(Vec<FrontGen>),
+    /// reduced form, origins merged — plus each rewritten generator's
+    /// expression over the INPUT list (aligned with the generators;
+    /// identity vectors for untouched ones), so certificates compose
+    /// through the rewriting to the replayable originals.
+    Rewritten(Vec<FrontGen>, Vec<Vec<MPoly>>),
     /// An inconsistent linear row; the payloads are the literal indices
     /// of its origin and (when tracked) the ideal-membership certificate
     /// — the row's own combination IS one: `Σ combo_i · gᵢ = c ≠ 0`.
@@ -1813,9 +2531,16 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
     // combination indexes these).
     let mut linear_gens: Vec<FrontGen> = Vec::new();
     let n_combo = gens.len();
-    for g in gens {
+    // The nonlinear generators pass through with identity expressions
+    // over the input list (the certificate composes through them when
+    // the substitution leaves them untouched).
+    let mut nonlinear_exprs: Vec<Vec<MPoly>> = Vec::new();
+    for (gen_idx, g) in gens.into_iter().enumerate() {
         let linear = g.poly.terms_iter().all(|(m, _)| m.total_degree() <= 1);
         if !linear {
+            let mut e = vec![MPoly::zero(); n_combo];
+            e[gen_idx] = MPoly::constant(f, &f.one());
+            nonlinear_exprs.push(e);
             nonlinear.push(g);
             continue;
         }
@@ -1833,8 +2558,14 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
                 coeffs.insert(m.vars()[0].var, c.clone());
             }
         }
+        // The combination's unit sits at the generator's TRUE index in
+        // the input list (the first version used `linear_gens.len()`,
+        // the linear-subsequence position — every certificate on a goal
+        // whose linear generators follow a nonlinear one certified the
+        // wrong generator, and the replay's cofactor identity came out
+        // wrong; caught by the deep-tree probe, 2026-09-16).
         let mut combo = vec![f.zero(); n_combo];
-        combo[linear_gens.len()] = f.one();
+        combo[gen_idx] = f.one();
         linear_gens.push(FrontGen {
             literal,
             poly,
@@ -1936,7 +2667,7 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
             let cofactors: Vec<MPoly> = row.combo.iter().map(|c| MPoly::constant(f, c)).collect();
             let certificate = Some(FfCertificate::IdealMembership {
                 field,
-                generators: snapshot,
+                generators: snapshot.clone(),
                 cofactors,
             });
             return FrontResult::Inconsistent(row.origin.clone(), certificate);
@@ -1945,7 +2676,18 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
 
     // Substitute each pivot into the nonlinear generators. The pivot row
     // reads `x + Σ c_v·v + c₀ = 0`, i.e. `x = −c₀ − Σ c_v·v`.
+    //
+    // Certificate provenance: the substitution is the identity
+    // `g_next = g_prev − h·(x − repl)` with h = (g_prev − g_next)/(x −
+    // repl) in closed form (Σₖ cₖ·Σ_{j<k} xʲ·repl^{k−1−j} over the
+    // x-degree decomposition), and the row itself is Σ combo[i]·gᵢ over
+    // the INPUT generators — so each rewritten generator's expression
+    // over the inputs is `expr − h·combo`, and the UNSAT certificate
+    // composes through the rewriting instead of certifying the
+    // rewritten list (which the replay cannot reproduce — the length
+    // mismatch that silently downgraded every substituted refutation).
     let mut result: Vec<FrontGen> = Vec::new();
+    let mut result_exprs: Vec<Vec<MPoly>> = Vec::new();
     for (pivot_var, ri) in &pivots {
         let row = &rows[*ri];
         let mut repl = MPoly::constant(f, &f.neg(&row.constant));
@@ -1957,9 +2699,25 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
             term.add_term(f, Monomial::from_var(*v), c);
             repl = repl.sub(f, &term);
         }
+        // The row's expression over the inputs, as constant polys.
+        let row_expr: Vec<MPoly> = row.combo.iter().map(|c| MPoly::constant(f, c)).collect();
         let mut next: Vec<FrontGen> = Vec::with_capacity(nonlinear.len());
-        for g in nonlinear {
+        let mut next_exprs: Vec<Vec<MPoly>> = Vec::with_capacity(nonlinear_exprs.len());
+        for (g_idx, g) in nonlinear.into_iter().enumerate() {
             let poly = substitute_var(f, &g.poly, *pivot_var, &repl);
+            let expr = {
+                let h = quotient_by_monic_linear(f, &g.poly, &poly, *pivot_var, &repl);
+                let prev = &nonlinear_exprs[g_idx];
+                match h {
+                    Some(h) => prev
+                        .iter()
+                        .zip(&row_expr)
+                        .map(|(ej, rj)| ej.sub(f, &h.mul(f, rj)))
+                        .collect(),
+                    None => prev.clone(),
+                }
+            };
+            next_exprs.push(expr);
             next.push(FrontGen {
                 literal: g.literal,
                 poly,
@@ -1971,8 +2729,10 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
             });
         }
         nonlinear = next;
+        nonlinear_exprs = next_exprs;
     }
     result.extend(nonlinear);
+    result_exprs.extend(nonlinear_exprs);
     // The pivot rows themselves survive as generators (they carry the
     // linear constraints; FindZero's linear-univariate detection reads
     // them). Dependent rows reduced to 0 = 0 are dropped — no
@@ -1993,12 +2753,74 @@ fn linear_core(f: &FieldCtx, field: FieldId, gens: Vec<FrontGen>) -> FrontResult
             poly,
             origin: row.origin.clone(),
         });
+        result_exprs.push(row.combo.iter().map(|c| MPoly::constant(f, c)).collect());
     }
-    FrontResult::Rewritten(result)
+    FrontResult::Rewritten(result, result_exprs)
 }
 
 /// Substitute `var := repl` in a polynomial (ideal-preserving when the
 /// substitution comes from an ideal member defining var).
+/// The quotient h in `g_prev − g_next = h·(x − repl)`, in closed form
+/// over the x-degree decomposition (`None` when the delta is zero —
+/// nothing was substituted). `g_next` must be `g_prev` with `x`
+/// replaced by `repl`.
+fn quotient_by_monic_linear(
+    f: &FieldCtx,
+    g_prev: &MPoly,
+    g_next: &MPoly,
+    var: nixie_math::polynomial::Var,
+    repl: &MPoly,
+) -> Option<MPoly> {
+    let delta = g_prev.sub(f, g_next);
+    if delta.is_zero() {
+        return None;
+    }
+    // h = Σₖ cₖ · Σ_{j<k} xʲ·repl^{k−1−j}, where cₖ is the coefficient
+    // of xᵏ in g_prev (the terms without x contribute nothing: their
+    // difference is zero).
+    let max_deg = delta
+        .terms_iter()
+        .map(|(m, _)| m.degree(var))
+        .max()
+        .unwrap_or(0);
+    let mut h = MPoly::zero();
+    for k in 1..=max_deg {
+        // cₖ·xᵏ terms of g_prev
+        let mut ck = MPoly::zero();
+        for (m, c) in g_prev.terms_iter() {
+            if m.degree(var) == k {
+                let mut rest = Monomial::unit();
+                for vp in m.vars() {
+                    if vp.var != var {
+                        rest = rest.mul(&Monomial::from_var_power(vp.var, vp.power));
+                    }
+                }
+                ck.add_term(f, rest, c);
+            }
+        }
+        if ck.is_zero() {
+            continue;
+        }
+        // Σ_{j=0}^{k-1} xʲ·repl^{k−1−j}
+        let mut series = MPoly::zero();
+        for j in 0..k {
+            let mut xj = MPoly::zero();
+            if j == 0 {
+                xj.add_term(f, Monomial::unit(), &f.one());
+            } else {
+                xj.add_term(f, Monomial::from_var_power(var, j), &f.one());
+            }
+            let mut rp = MPoly::constant(f, &f.one());
+            for _ in 0..(k - 1 - j) {
+                rp = rp.mul(f, repl);
+            }
+            series = series.add(f, &xj.mul(f, &rp));
+        }
+        h = h.add(f, &ck.mul(f, &series));
+    }
+    Some(h)
+}
+
 fn substitute_var(
     f: &FieldCtx,
     p: &MPoly,

@@ -782,12 +782,14 @@ impl ModelChecker {
                         if let Some(domain) = model.semantic_domains.get(&(q.term, i)) {
                             return domain.clone();
                         }
-                        // A table-owned axiom's other axes range over the
-                        // frozen table domain: the raw universe grows with
-                        // every witness the ground solver mints (nested
-                        // Skolem applications among them), and mining the
-                        // fresh points re-moves the model every round.
-                        if model.constructor_sources.contains_key(&q.term)
+                        // Table mode: every axis of every quantifier
+                        // ranges over the frozen table domain (see the
+                        // seeder's twin note) — the raw universe grows
+                        // with every witness the ground solver mints
+                        // (nested Skolem applications among them), and
+                        // mining the fresh points re-moves the model
+                        // every round.
+                        if !model.constructor_sources.is_empty()
                             && let Some(domain) = model.table_domain(sort, manager)
                         {
                             return domain;

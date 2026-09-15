@@ -246,6 +246,13 @@ impl Solver {
                                     k: *k,
                                 }
                             }
+                            // The case tree's atoms are the replayed
+                            // generator list of the SLICE — the slice
+                            // itself is carried as the certificate's
+                            // literal list, so no remapping is needed.
+                            tree @ nixie_theories::ff_theory::FfCertificate::CaseTree { .. } => {
+                                tree.clone()
+                            }
                         };
                         (remapped, literals.clone())
                     });
@@ -260,12 +267,16 @@ impl Solver {
                     }
                     return None;
                 }
-                FfOutcome::Exhausted => {
-                    // The branching closed the search space: genuine UNSAT
-                    // with NO certificate (§8's branch-exhaustion case) —
-                    // certified mode must decline it, so nothing is stored.
+                FfOutcome::Exhausted { certificate } => {
+                    // The branching closed the search space: genuine
+                    // UNSAT with the §8 case-tree certificate when the
+                    // search recorded one (the literals list stays the
+                    // slice the certificate replays against). Certified
+                    // mode accepts it after replay verification; the
+                    // certificate-less cases (enumeration paths, aborted
+                    // tracking) still decline honestly.
                     self.install_ff_core(&literals, &[]);
-                    self.ff_certificate = None;
+                    self.ff_certificate = certificate.map(|cert| (cert, literals.clone()));
                     return Some(SolverResult::Unsat);
                 }
                 FfOutcome::OutOfBudget { where_ } => {
@@ -597,7 +608,7 @@ impl Solver {
                                     model.set(*var_term, value_term);
                                 }
                             }
-                            FfOutcome::Unsat(_) | FfOutcome::Exhausted => {
+                            FfOutcome::Unsat(_) | FfOutcome::Exhausted { .. } => {
                                 any_refuted = true;
                                 break;
                             }
@@ -1601,7 +1612,7 @@ fn ufff_solve_node(
                 };
                 return UfffNode::Refuted { hint };
             }
-            FfOutcome::Exhausted => return UfffNode::Refuted { hint: None },
+            FfOutcome::Exhausted { .. } => return UfffNode::Refuted { hint: None },
             FfOutcome::OutOfBudget { .. } | FfOutcome::InvalidModel(_) => {
                 return UfffNode::Unknown;
             }

@@ -375,15 +375,17 @@ impl CounterExampleGenerator {
         for (i, list) in candidates.iter_mut().enumerate() {
             if let Some(domain) = model.semantic_domains.get(&(quantifier.term, i)) {
                 *list = domain.clone();
-            } else if model.constructor_sources.contains_key(&quantifier.term)
+            } else if !model.constructor_sources.is_empty()
                 && let Some(&(_, sort)) = quantifier.bound_vars.get(i)
                 && let Some(domain) = model.table_domain(sort, manager)
             {
-                // A table-owned axiom's other axes (the row-point `x`)
-                // range over the frozen table domain too: the raw universe
-                // grows with every witness the ground solver mints, and
+                // Table mode: the completed structure's domain governs the
+                // whole problem, so every axis of every quantifier ranges
+                // over the frozen domain — the raw universe grows with
+                // every witness and compound the ground solver mints, and
                 // enumerating the fresh points re-moves the model every
-                // round -- the loop that never converges.
+                // round (the loop that never converges) while bloating the
+                // observer tables past every chain cap.
                 *list = domain;
             }
         }
