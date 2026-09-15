@@ -466,7 +466,7 @@ impl Solver {
 
         let mut reason_clause = conflict;
         #[cfg(feature = "std")]
-        let awalk = std::env::var("NIXIE_AWALK_TRACE").is_ok();
+        let awalk = crate::env_flags::awalk_trace();
         #[cfg(feature = "std")]
         if awalk {
             eprintln!(
@@ -1400,7 +1400,7 @@ impl Solver {
     /// This retains the original learned literal when a proof is unavailable.
     fn minimize_reason_lits(&self, head: Lit, cid: ClauseId) -> Option<&[Lit]> {
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_AWALK_TRACE").is_ok() {
+        if crate::env_flags::awalk_trace() {
             use std::fmt::Write as _;
             let mut ls = String::new();
             if let Some(c) = self.clauses.get(cid) {

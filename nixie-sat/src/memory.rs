@@ -972,8 +972,7 @@ impl ClauseArena {
     /// Rewrite a live clause with a shorter or equal literal array.
     pub fn shrink(&mut self, r: ClauseRef, new_lits: &[Lit]) -> bool {
         #[cfg(feature = "std")]
-        if let Ok(want) = std::env::var("NIXIE_CWRITE")
-            && let Ok(want) = want.parse::<u32>()
+        if let Some(want) = crate::env_flags::cwrite_target()
             && self.live_identity(r).index() == want as usize
         {
             use std::fmt::Write as _;
@@ -1032,8 +1031,7 @@ impl ClauseArena {
     /// Swap literals `i` and `j` of the clause at `r`.
     pub fn swap_lits(&mut self, r: ClauseRef, i: usize, j: usize) {
         #[cfg(feature = "std")]
-        if let Ok(want) = std::env::var("NIXIE_CWRITE")
-            && let Ok(want) = want.parse::<u32>()
+        if let Some(want) = crate::env_flags::cwrite_target()
             && self.live_identity(r).index() == want as usize
         {
             eprintln!(

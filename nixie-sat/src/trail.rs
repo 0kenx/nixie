@@ -244,7 +244,7 @@ impl Trail {
         let idx = var.index();
         let code = lit.code() as usize;
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_ENQ_TRACE").is_ok() {
+        if crate::env_flags::enq_trace() {
             use std::sync::atomic::{AtomicU64, Ordering};
             static ENQ: AtomicU64 = AtomicU64::new(0);
             let _ = ENQ.fetch_add(1, Ordering::Relaxed);
@@ -434,7 +434,7 @@ impl Trail {
         }
         self.assignments.truncate(write);
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_BT_TRACE").is_ok() {
+        if crate::env_flags::bt_trace() {
             use std::sync::atomic::{AtomicU64, Ordering};
             static BTN: AtomicU64 = AtomicU64::new(0);
             let n = BTN.fetch_add(1, Ordering::Relaxed);

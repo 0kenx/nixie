@@ -34,7 +34,17 @@ fn traced_code() -> Option<usize> {
 /// must compute arguments only when logging).
 #[allow(dead_code)]
 pub(crate) fn armed() -> bool {
-    traced_code().is_some() || std::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all")
+    static ARMED: OnceLock<bool> = OnceLock::new();
+    // Cached: this is the pre-check of every `mut_trace!` probe, so an
+    // uncached "all" fallback re-read the env on every watch mutation
+    // (66 M getenv calls on a 16 s s38584 solve).
+    *ARMED.get_or_init(|| all_mode() || traced_code().is_some())
+}
+
+/// The `NIXIE_CSR_MUT_TRACE=all` global-stream mode, read once.
+fn all_mode() -> bool {
+    static ALL: OnceLock<bool> = OnceLock::new();
+    *ALL.get_or_init(|| std::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all"))
 }
 
 /// The global mutation-op counter (strictly increasing per logged event;
@@ -64,7 +74,7 @@ pub(crate) fn code_matches(code: usize) -> bool {
     match traced_code() {
         Some(c) => c == code,
         // "all" mode: trace every literal (the global stream diff).
-        None => std::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all"),
+        None => all_mode(),
     }
 }
 

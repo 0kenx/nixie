@@ -125,7 +125,7 @@ impl VMTF {
         self.bumped = self.bumped.saturating_add(1);
         self.btab[v as usize] = self.bumped;
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_BUMP_TRACE").is_ok() {
+        if crate::env_flags::bump_trace() {
             eprintln!("[bump] n={} var={}", self.bumped, v);
         }
         if !is_assigned(var) {
@@ -164,7 +164,7 @@ impl VMTF {
             steps += 1;
         }
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+        if crate::env_flags::pick_trace() {
             eprintln!(
                 "[pick] search={} walked={:?} res={} btab[res]={}",
                 self.search,

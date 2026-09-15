@@ -152,6 +152,7 @@ mod hyper_binary;
 // release *lib* build has no callers and the module would be pure dead code
 // there. Test builds keep it in both profiles – the invariant tests and the
 // solver tests call the checkers directly.
+mod env_flags;
 #[cfg(any(debug_assertions, test))]
 mod invariants;
 /// The embedded sub-solver behind SAT sweeping (kissat `kitten.c`

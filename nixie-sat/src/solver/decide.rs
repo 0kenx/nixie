@@ -120,7 +120,7 @@ impl Solver {
                         && !rementioned.contains(&v)
                 };
                 #[cfg(feature = "std")]
-                let skip_log = std::env::var("NIXIE_PICK_TRACE").is_ok();
+                let skip_log = crate::env_flags::pick_trace();
                 if let Some(var) = self.vmtf.next_decision(|v| {
                     let assigned = trail.is_assigned(v);
                     #[cfg(feature = "std")]
@@ -140,7 +140,7 @@ impl Solver {
             }
             while let Some(var) = self.vsids.pop_max() {
                 #[cfg(feature = "std")]
-                if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+                if crate::env_flags::pick_trace() {
                     eprintln!(
                         "[vsids-pick] var={} act={:x}",
                         var.index(),

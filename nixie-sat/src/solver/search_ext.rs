@@ -129,8 +129,7 @@ impl Solver {
             if let Some(conflict) = self.propagate().or_else(|| self.xor_search_step()) {
                 self.stats.conflicts += 1;
                 #[cfg(feature = "std")]
-                if let Ok(step) = std::env::var("NIXIE_DB_DIGEST")
-                    && let Ok(step) = step.parse::<u64>()
+                if let Some(step) = crate::env_flags::db_digest_step()
                     && self.stats.conflicts.is_multiple_of(step)
                 {
                     let mut h = 1469598103934665603u64;
@@ -502,7 +501,7 @@ impl Solver {
             // env check when unset; was the first tool reached for when
             // auditing the shallow-cascade anomaly (it came back clean).
             #[cfg(all(feature = "std", debug_assertions))]
-            if std::env::var("NIXIE_CHECK_FIXPOINT").is_ok()
+            if crate::env_flags::check_fixpoint()
                 && self.stats.decisions.is_multiple_of(100)
                 && let Err(msg) = crate::invariants::check_unit_propagation_complete(self)
             {
@@ -513,7 +512,7 @@ impl Solver {
             }
             if let Some(var) = self.pick_branch_var() {
                 #[cfg(feature = "std")]
-                if std::env::var("NIXIE_PICK_TRACE").is_ok() {
+                if crate::env_flags::pick_trace() {
                     eprintln!(
                         "[decide] var={} src={:?} polar_conf={:x}",
                         var.index(),

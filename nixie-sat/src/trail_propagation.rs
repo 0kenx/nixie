@@ -112,7 +112,7 @@ impl PropagationQueue<'_> {
         // borrow prevents reallocation or aliased element references.
         let lit = unsafe { self.queue.add(self.head).read() };
         #[cfg(feature = "std")]
-        if std::env::var("NIXIE_HEAD_TRACE").is_ok() {
+        if crate::env_flags::head_trace() {
             eprintln!("[deq] head={} lit={}", self.head, lit.code());
         }
         self.head += 1;

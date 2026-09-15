@@ -85,7 +85,7 @@ impl Solver {
                             self.stats.propagation_work.binary_conflicts += 1;
                         }
                         #[cfg(feature = "std")]
-                        if std::env::var("NIXIE_CONFLICT_TRACE").is_ok() {
+                        if crate::env_flags::conflict_trace() {
                             eprintln!("[bconf] code={} cid={}", code, reason.index());
                         }
                         queue.requeue();
@@ -276,7 +276,7 @@ impl Solver {
             }
             if !result.conflict.is_null() {
                 #[cfg(feature = "std")]
-                if std::env::var("NIXIE_CONFLICT_TRACE").is_ok() {
+                if crate::env_flags::conflict_trace() {
                     eprintln!("[conf] code={} cid={}", code, result.conflict.index());
                 }
                 queue.requeue();
