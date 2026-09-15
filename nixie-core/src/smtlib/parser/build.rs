@@ -42,7 +42,7 @@ pub(super) fn operand_plan(op: &str) -> Option<Plan> {
             | "int.to.str" | "str.from_int" | "str.to_re" | "str.to.re" | "re.*" | "re.+"
             | "re.opt" | "re.comp" | "ff.neg"
             | "set.card" | "set.complement" | "set.choose" | "set.is_empty"
-            | "set.is_singleton" => Plan::Fixed(1),
+            | "set.is_singleton" | "set.singleton" => Plan::Fixed(1),
 
             // ======== two operands ========
             // (Bit-vector operators marked `:left-associative` by the
@@ -241,9 +241,7 @@ impl Parser<'_> {
         if xs.is_some_and(|sx| sx != es) {
             return Err(NixieError::ParseError {
                 position: self.lexer.position(),
-                message: format!(
-                    "element operand of {op} must have the set's element sort"
-                ),
+                message: format!("element operand of {op} must have the set's element sort"),
             });
         }
         Ok(())
@@ -556,6 +554,7 @@ impl Parser<'_> {
             // Every operator here type-checks its operand: a non-set operand
             // is a sort error the standard mandates reporting, and accepting
             // it would intern a term with a meaningless fallback sort.
+            "set.singleton" => self.manager.mk_set_singleton(x),
             "set.card" => {
                 self.check_set_operand(op, x)?;
                 self.manager.mk_set_card(x)
