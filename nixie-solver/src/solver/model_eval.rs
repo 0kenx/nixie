@@ -1291,7 +1291,25 @@ impl Solver {
                 let b_bv = manager
                     .get(*b)
                     .is_some_and(|t| manager.sorts.get(t.sort).is_some_and(|s| s.is_bitvec()));
-                if a_bv || b_bv {
+                // Set-sorted equality, dually, is decided by the shared set
+                // evaluator: the main frames have no set values, and the
+                // extensional equality of two synthesized set values is
+                // exactly what the gate must be able to contradict.
+                let set_sorted = |t: TermId| {
+                    manager.get(t).is_some_and(|d| {
+                        matches!(
+                            manager.sorts.get(d.sort).map(|s| &s.kind),
+                            Some(nixie_core::SortKind::Set(_))
+                        )
+                    })
+                };
+                if set_sorted(*a) || set_sorted(*b) {
+                    let mut view = super::set_model::SetView::new(model, manager);
+                    Opened::Done(match view.set_eq(*a, *b) {
+                        Some(v) => EvalOutcome::boolean(v),
+                        None => EvalOutcome::UNDETERMINED,
+                    })
+                } else if a_bv || b_bv {
                     Opened::Done(
                         match (
                             eval_bv_value(self, *a, model, manager),
@@ -1305,6 +1323,42 @@ impl Solver {
                     Opened::Frame(Frame::binary(*a, *b, EagerKind::Eq, depth))
                 }
             }
+            // The finite-set predicates: decided by the shared set evaluator
+            // against the built model (`set_model`).  `Undetermined` is the
+            // honest answer whenever the model does not pin the operands,
+            // which is exactly the pre-synthesis behavior — the gate fails
+            // open, never guesses.
+            TermKind::SetMember(element, set) => {
+                let mut view = super::set_model::SetView::new(model, manager);
+                Opened::Done(match view.member(*element, *set) {
+                    Some(v) => EvalOutcome::boolean(v),
+                    None => EvalOutcome::UNDETERMINED,
+                })
+            }
+            TermKind::SetSubset(a, b) => {
+                let mut view = super::set_model::SetView::new(model, manager);
+                Opened::Done(match view.subset(*a, *b) {
+                    Some(v) => EvalOutcome::boolean(v),
+                    None => EvalOutcome::UNDETERMINED,
+                })
+            }
+            TermKind::SetCard(set) => {
+                let mut view = super::set_model::SetView::new(model, manager);
+                Opened::Done(match view.card(*set) {
+                    Some(n) => EvalOutcome::number(Rational64::from_integer(n)),
+                    None => EvalOutcome::UNDETERMINED,
+                })
+            }
+            // `set.choose(s)` as an ELEMENT: the choose term is an element
+            // like any other; its value is the model entry (synthesis pins
+            // one for member-true chooses). Without an entry the gate
+            // cannot decide — undetermined, never a guess.
+            TermKind::SetChoose(_) => match model.get(term).map(|v| parse_value_term(v, manager)) {
+                Some(parsed) if !matches!(parsed, EvalOutcome::UNDETERMINED) => {
+                    Opened::Done(parsed)
+                }
+                _ => Opened::Done(EvalOutcome::UNDETERMINED),
+            },
             // Bit-vector comparison atoms (`bvult`/`bvule`/`bvslt`/`bvsle`):
             // evaluate both operands concretely and fold, for the same reason
             // as the BV equality arm above.  These are Bool-sorted terms whose

@@ -32,6 +32,7 @@ pub(super) mod nla_relax;
 pub(super) mod parity_lemma;
 pub(super) mod pigeonhole;
 pub(super) mod purify_arith;
+mod set_model;
 pub(super) mod set_theory;
 pub(super) mod static_features;
 pub(super) mod term_walk;
