@@ -424,9 +424,20 @@ impl Solver {
                     n += 1;
                 }
             }
-            {
+            #[cfg(feature = "std")]
+            if self.watches.csr_read_active() {
                 let (p, x) = self.watches.get_combined(l);
                 for w in p.iter().chain(x.iter()) {
+                    if self
+                        .clauses
+                        .get_by_ref(w.r)
+                        .is_some_and(|c| !c.deleted && !c.learned)
+                    {
+                        n += 1;
+                    }
+                }
+            } else {
+                for w in self.watches.get(l) {
                     if self
                         .clauses
                         .get_by_ref(w.r)
