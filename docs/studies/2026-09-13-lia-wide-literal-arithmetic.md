@@ -957,3 +957,19 @@ owed item-17 rerun); the VeryMax canary family panic-free and honest.
 The corpora are PARTIALLY back (`smt-lib/non-incremental` restored;
 `satlib` and most of `satcomp2024/2025` still absent — the `[corpus-missing]`
 class persists for those files).
+
+## Continuation 16 (2026-09-15): slice 6 attempted and NOT landed — see the negative-result study
+
+The unlanded slice-6 (wide-row bound propagation) was rebuilt per
+Continuation 13's description: exact both-direction derivations through
+wide rows, exact crossing tests, weakened-integer storage, bounded
+fixpoint, per-final-check cadence. It closed the mixed-magnitude LRA
+unsat twin decidably (matching z3) — and produced TWO false `unsat`s on
+the wide regressions (the slice-1 cancellation sat twin via narrow
+direction-2; the c7 chain-sat twin via the wide propagation, with a
+stored bound wrong by exactly 10^9 — the fingerprint for the rebuild).
+The code was REVERTED in full; the design, the traps (reason-id
+recycling, branch-local bounds, endpoint orientation), and the next
+entry points are recorded in
+[`2026-09-15-wide-row-bound-propagation-negative-result.md`](2026-09-15-wide-row-bound-propagation-negative-result.md).
+Slice 6 remains open, exactly as the handoff left it.

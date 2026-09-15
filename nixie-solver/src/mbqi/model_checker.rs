@@ -1134,6 +1134,74 @@ impl ModelChecker {
 /// [`TermManager::substitute`].  Hash-consing makes this the very same
 /// `TermId` as the free occurrences in the evaluated body (the quantifier
 /// machinery builds bound-variable occurrences the same way).
+/// The bounded-quantifier expansion's substitution tuples: one per point
+/// of the product of the bound variables' finite domains, or `None` when
+/// any bound variable's sort is not finitely restrictable (not an
+/// uninterpreted sort, no non-empty domain, over the restriction bound, or
+/// the product over the expansion cap) — the binder then stays symbolic
+/// and the nested check decides it, exactly as before.
+///
+/// The domain source is [`CompletedModel::table_domain`] — the *same*
+/// source the nested check's Skolem restriction reads — so the expansion
+/// and the restriction always agree on what the binder ranges over.
+fn quantifier_tuples(
+    vars: &SmallVec<[(Spur, SortId); 2]>,
+    model: &CompletedModel,
+    manager: &mut TermManager,
+) -> Option<Vec<FxHashMap<TermId, TermId>>> {
+    /// Cap on the expanded product per binder (matches the hint
+    /// machinery's bounded-quantifier evaluation).
+    const MAX_EXPANSION_PRODUCT: usize = 64;
+    let mut domains: Vec<Vec<TermId>> = Vec::with_capacity(vars.len());
+    for &(_, sort) in vars {
+        let uninterpreted = manager
+            .sorts
+            .get(sort)
+            .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)));
+        if !uninterpreted {
+            return None;
+        }
+        let domain = model.table_domain(sort, manager)?;
+        if domain.is_empty() || domain.len() > MAX_UNIVERSE_FOR_RESTRICTION {
+            return None;
+        }
+        domains.push(domain);
+    }
+    let product: usize = domains.iter().map(|d| d.len()).product();
+    if product > MAX_EXPANSION_PRODUCT {
+        return None;
+    }
+    let mut tuples: Vec<FxHashMap<TermId, TermId>> = Vec::with_capacity(product);
+    let mut odometer = vec![0usize; vars.len()];
+    loop {
+        let mut subst: FxHashMap<TermId, TermId> = FxHashMap::default();
+        for (i, &(name, sort)) in vars.iter().enumerate() {
+            let name_str = manager.resolve_str(name).to_string();
+            let var = manager.mk_var(&name_str, sort);
+            subst.insert(var, domains[i][odometer[i]]);
+        }
+        tuples.push(subst);
+        if vars.is_empty() {
+            break;
+        }
+        let mut carry = true;
+        for (i, idx) in odometer.iter_mut().enumerate() {
+            if carry {
+                *idx += 1;
+                if *idx >= domains[i].len() {
+                    *idx = 0;
+                } else {
+                    carry = false;
+                }
+            }
+        }
+        if carry {
+            break;
+        }
+    }
+    Some(tuples)
+}
+
 fn skolem_var_map(
     skolem_terms: &[(Spur, SortId, TermId)],
     manager: &mut TermManager,
@@ -1778,6 +1846,19 @@ impl<'a> CompletionEval<'a> {
         enum Frame {
             Enter(TermId),
             Fold(TermId),
+            /// A bounded-quantifier expansion in flight (see the binder arm
+            /// of `Enter`): the tuples are precomputed substitutions over
+            /// the bound variables' finite domains, `next` indexes the one
+            /// whose substituted body was most recently pushed as an
+            /// `Enter`, and `done` collects their evaluated truths.
+            Quant {
+                node: TermId,
+                body: TermId,
+                tuples: Vec<FxHashMap<TermId, TermId>>,
+                next: usize,
+                done: Vec<TermId>,
+                is_forall: bool,
+            },
         }
         let mut stack: Vec<Frame> = vec![Frame::Enter(root)];
         // Values of already-folded children, innermost last.
@@ -1834,6 +1915,7 @@ impl<'a> CompletionEval<'a> {
                             continue;
                         }
                     }
+                    let kind_pre = node.kind.clone();
                     match node.kind {
                         TermKind::Var(_) => {
                             // Unpinned free constant: kept as itself (its
@@ -1856,9 +1938,53 @@ impl<'a> CompletionEval<'a> {
                             self.cache.insert(term, term);
                             values.push(term);
                         }
-                        TermKind::Forall { body, .. } | TermKind::Exists { body, .. } => {
-                            stack.push(Frame::Fold(term));
-                            stack.push(Frame::Enter(body));
+                        TermKind::Forall { vars, body, .. }
+                        | TermKind::Exists { vars, body, .. } => {
+                            // Bounded-quantifier expansion (Z3's model
+                            // evaluator does exactly this over its finite
+                            // model universes): when every bound variable
+                            // ranges over a finite *restrictable* domain —
+                            // the very domains the nested check's Skolem
+                            // restriction confines that variable to — the
+                            // binder is replaced by the pointwise fold
+                            // (`forall x. phi` -> `and(phi[d])`), making
+                            // the completed body quantifier-free.  This is
+                            // not an approximation: the restricted nested
+                            // solve decides exactly the expanded reading,
+                            // and doing it at completion time turns a
+                            // nested full-solve (whose own quantifier loop
+                            // burns budgets per check — the set family's
+                            // certification stall) into a plain chain
+                            // solve.  Binders over sampled/infinite sorts
+                            // (Int, Real, ...) stay symbolic, as before.
+                            let is_forall = matches!(kind_pre, TermKind::Forall { .. });
+                            match quantifier_tuples(&vars, self.model, manager) {
+                                Some(tuples) => {
+                                    if tuples.is_empty() {
+                                        // An empty domain cannot happen for
+                                        // a restrictable sort (the aux
+                                        // restriction skips those too); if
+                                        // it somehow does, stay symbolic.
+                                        stack.push(Frame::Fold(term));
+                                        stack.push(Frame::Enter(body));
+                                        continue;
+                                    }
+                                    let first = manager.substitute(body, &tuples[0]);
+                                    stack.push(Frame::Quant {
+                                        node: term,
+                                        body,
+                                        tuples,
+                                        next: 0,
+                                        done: Vec::new(),
+                                        is_forall,
+                                    });
+                                    stack.push(Frame::Enter(first));
+                                }
+                                None => {
+                                    stack.push(Frame::Fold(term));
+                                    stack.push(Frame::Enter(body));
+                                }
+                            }
                         }
                         TermKind::Apply { args, .. } => {
                             stack.push(Frame::Fold(term));
@@ -1877,6 +2003,64 @@ impl<'a> CompletionEval<'a> {
                             }
                         }
                     }
+                }
+                Frame::Quant {
+                    node,
+                    body,
+                    tuples,
+                    next,
+                    mut done,
+                    is_forall,
+                } => {
+                    // The most recent value is this tuple's truth.
+                    let Some(value) = values.pop() else {
+                        return Err("quantifier expansion lost a value");
+                    };
+                    let decided = if is_forall {
+                        manager
+                            .get(value)
+                            .is_some_and(|t| matches!(t.kind, TermKind::False))
+                    } else {
+                        manager
+                            .get(value)
+                            .is_some_and(|t| matches!(t.kind, TermKind::True))
+                    };
+                    done.push(value);
+                    let result = if decided {
+                        // Short-circuit: `forall` found a false point /
+                        // `exists` found a witness — no further tuple can
+                        // change the fold.
+                        value
+                    } else if next + 1 < tuples.len() {
+                        let upcoming = manager.substitute(body, &tuples[next + 1]);
+                        stack.push(Frame::Quant {
+                            node,
+                            body,
+                            tuples,
+                            next: next + 1,
+                            done,
+                            is_forall,
+                        });
+                        stack.push(Frame::Enter(upcoming));
+                        continue;
+                    } else {
+                        // Fold the collected truths.
+                        if is_forall {
+                            if done.iter().all(|&t| {
+                                manager
+                                    .get(t)
+                                    .is_some_and(|n| matches!(n.kind, TermKind::True))
+                            }) {
+                                manager.mk_true()
+                            } else {
+                                manager.mk_and(done.iter().copied())
+                            }
+                        } else {
+                            manager.mk_or(done.iter().copied())
+                        }
+                    };
+                    self.cache.insert(node, result);
+                    values.push(result);
                 }
                 Frame::Fold(term) => {
                     let Some(node) = manager.get(term).cloned() else {

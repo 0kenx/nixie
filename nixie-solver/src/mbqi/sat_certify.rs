@@ -164,6 +164,27 @@ fn universal_instances(
     cap: usize,
     generation: u32,
 ) -> Option<Vec<Instantiation>> {
+    // A body that itself contains a quantifier has no complete
+    // instantiation set here, however EU its variable occurrences are:
+    // the instance lemmas would still carry the nested binder, the
+    // encoder gives that subformula a free wrapper Boolean, and the
+    // ground solver can satisfy the *encoding* while violating the
+    // instance's semantics (the committed-Boolean dodge).  Saturation
+    // then observes "every relevant instance already emitted + a ground
+    // model" and concludes `Satisfied` over a goal the model refutes --
+    // the contradictory-definitional-twins false-`sat`
+    // (docs/studies/2026-09-14-model-finder-constructor-tables.md,
+    // quant_fuzz seed 46): `(=> (forall ((z S)) true) (P x))` with
+    // `(= (P x) (not (=> (P x) (P x))))`.  The premise's collapsed body
+    // `(forall z. true)` mentions no *bound* variable, so the EU walk's
+    // catch-all admitted it as "ground"; it is not -- a quantifier is
+    // never ground, whatever variables it does or does not mention.
+    // Rejecting the whole body is conservative (a nested binder that
+    // other engines eliminate first could, in principle, be certified
+    // later); soundness first.
+    if nixie_core::tactic::contains_quantifier(quantifier.body, manager) {
+        return None;
+    }
     // Prefer the exhaustive bounded-box domain (needs no model-extension
     // argument); otherwise fall back to the essentially-/almost-uninterpreted
     // relevant-term domain.

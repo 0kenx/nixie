@@ -239,6 +239,8 @@ impl Cone {
 pub(super) fn reduce(
     s: &Survey,
     elements: &FxHashMap<SortId, Vec<TermId>>,
+    relations: &[(TermId, TermId)],
+    eq_pairs: &[(TermId, TermId)],
     manager: &mut TermManager,
     axioms: &mut Vec<TermId>,
 ) -> CardOutcome {
@@ -310,10 +312,16 @@ pub(super) fn reduce(
                 Shape::Empty | Shape::Univ | Shape::Singleton(_) | Shape::Opaque => {}
             }
             // Relation neighbours: a set joined to the cone by an asserted
-            // equality or subset carries cardinality information across the
-            // relation, so it joins the cone (Z3's `collect_subexpressions`
-            // walks eq/diseq watch lists for the same reason).
-            for &(_, a, b) in s.set_equalities.iter().chain(s.subsets.iter()) {
+            // equality or subset — or by one of the implicit opaque pairs
+            // [`super::reduce`] relates — carries cardinality information
+            // across the relation, so it joins the cone (Z3's
+            // `collect_subexpressions` walks eq/diseq watch lists for the
+            // same reason). The implicit pairs matter as much as the
+            // asserted ones: a *derived* equality (`x = y` merging
+            // `f x`/`f y`, an array `select` collapsing onto a stored set)
+            // constrains the two sizes just as hard, and the equality⇒card
+            // rule below needs both sides in the cone to state it.
+            for &(a, b) in relations {
                 if a == t {
                     worklist.push(b);
                 } else if b == t {
@@ -338,6 +346,35 @@ pub(super) fn reduce(
                 None => manager.mk_set_card(set),
             };
             cone.card_of.insert(set, card);
+        }
+
+        // ---- equality ⇒ equal cardinality ----
+        //
+        // Z3's `theory_finite_set_size::add_eq_axioms` ties the Boolean
+        // abstractions of every asserted-equal pair together, which
+        // equalizes their sizes through the sub-solver. The eager analogue
+        // is one implication per equality relation with both sides in the
+        // cone. Without it the two card terms of one set were unrelated
+        // Booleans-and-integers, and each of these answered `Sat`:
+        //
+        // ```text
+        // S = T  ∧  |S| = 5  ∧  |T| = 3          (equal sets, unequal sizes)
+        // S = ∅  ∧  |S| ≥ 1                    (the empty set is not empty)
+        // x = y  ∧  |f x| = 5  ∧  |f y| = 3      (EUF-derived, implicit pair)
+        // S = {1} ∪ {2}  ∧  |S| = 5              (compound operand, asserted)
+        // ```
+        //
+        // `subset` needs no analogue here: `atom → |a| ≤ |b|` below is the
+        // one-directional rule, and the same-size forcing goes through this
+        // rule once `|a| = |b|` yields `a = b` (also below).
+        for &(a, b) in eq_pairs {
+            if let (Some(ca), Some(cb)) =
+                (cone.card_of.get(&a).copied(), cone.card_of.get(&b).copied())
+            {
+                let atom = manager.mk_eq(a, b);
+                let same = manager.mk_eq(ca, cb);
+                axioms.push(manager.mk_implies(atom, same));
+            }
         }
 
         // ---- the ground elements the sums run over ----

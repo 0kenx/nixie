@@ -722,8 +722,8 @@ impl MBQIIntegration {
                     // spurious "bounded integer variable" shape (the substituted
                     // constants still parse as `(>= c 0) (<= c 10)` conjuncts),
                     // which over-constrains the ground problem and can flip a
-                    // satisfiable goal to a spurious `unsat`.  This mirrors the
-                    // enumerative path, which simplifies for the same reason.
+                    // satisfiable goal to a spurious `unsat`.  This mirrors
+                    // the enumerative path, which simplifies for the same reason.
                     inst.result = self.deep_simplify(inst.result, manager);
 
                     // A tautology instance (body ≡ ⊤) constrains nothing.  It is

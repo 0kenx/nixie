@@ -204,3 +204,106 @@ reproducer that the hint containment produced (`twins` shape answering
 `unsat` like z3 where base said `unknown`) is pinned inline in the
 held-back note; promote it to a named regression when the hint
 re-lands.
+
+
+## The saturation root cause and fix (2026-09-15, follow-up)
+
+The held-back hint's false-`sat` is root-caused, fixed, and the hint is
+**un-held**.  The defect was never the hint — it was (and is now closed
+in) `sat_certify`'s fragment eligibility:
+
+**The mechanism, instrumented end to end.**  The twins goal
+(`P(x) = not(P(x) => P(x))` plus tautological-antecedent forcing) has
+its forcing axiom registered with a *simplified* body
+`(=> (forall ((z S)) true) (P x))`.  The EU walk's catch-all admits a
+subterm that "mentions no bound variable" — and the collapsed premise
+`(forall z. true)` mentions none, so the nested quantifier passed as
+"ground".  The round-0 enumerative instances were then asserted with
+their **raw** bodies: the encoder wraps `(forall z. true)` in a free
+Boolean, the SAT core commits it FALSE (the committed-Boolean dodge),
+and the implication clauses are satisfied *vacuously* — the ground
+model never sees the forcing.  Round 1 asserts the twin's clean units
+(`P(u!k) = false`); round 2's `sat_certify` observes "every relevant
+instance already recorded + a ground solver model" and concludes
+`Satisfied` — over an instance set the model satisfies only in its
+Tseitin encoding, not in its semantics.  The audit that pinned it: at
+saturation, the model's values for the recorded twin instances read
+`false`/unassigned (violated), and the SAT model showed
+`P(u!k) = false` for every `k` while the forcing instances' wrapper
+premises read FALSE.
+
+**The fix** (`sat_certify::universal_instances`): a body containing
+*any* quantifier is outside the certifiable fragment, however EU its
+variable occurrences — the instance lemmas would carry the nested
+binder, and the ground solver's model of their encoding is not a model
+of their semantics.  One guard:
+`contains_quantifier(body) => NotEligible`.  Conservative (a nested
+binder that other engines eliminate first could, in principle, be
+certified later); soundness first.
+
+**Pre-existing, not hint-caused.**  Nothing in the mechanism depends on
+the hint — it only created the trajectory.  The exposure needed: an
+axiom whose tracked body has a bound-var-free nested quantifier (any
+`forall z. <no-x>` premise — the tautological-antecedent family
+`contradictory_definitional_twins_*` generates them), a stabilised
+relevant set, and round-0 emissions that dodge.  The bug has been on
+`main` since the fragment certifier landed.
+
+**Verification.**  With the hint re-enabled *and* the fix in:
+the twins reproducer answers `unsat` (z3 agrees; pinned as
+`nested_quantifier_premise_never_saturates_a_false_sat`); quant_fuzz
+seeds {41..46} x 150 CLEAN; parity 176 Correct / 1 Inconclusive /
+0 wrong (z3 4.16.0); nixie-solver + nixie-core 4719/4720 (the one
+timeout is the heaviest convergence pin under full-suite parallel
+load — passes standalone); fmt/clippy clean.
+
+**The hint is live**: subset-class predicates complete as their
+defining implication's truth (the set family's `subset` as
+row-containment).  The two remaining legs of that arc — the merge pump
+and the frozen-row repair — are unchanged from the study above.
+
+
+## Bounded-quantifier expansion in the completed body (2026-09-15, second follow-up)
+
+With the hint live, the set family's stall moved to the *nested
+quantifiers in the completed body*: the aux check of an axiom whose
+body' carries a nested `forall`/`exists` (axiom-2's witness, axiom-3's
+containment antecedent) spawned the nested solver's *own* full MBQI
+loop per check — thirteen budgeted iterations per round — and timed
+out to `Unknown` exactly on the quantifiers the hint should have
+certified.
+
+**The fix** (`CompletionEval`, the binder arm): a binder whose every
+bound variable ranges over a *finitely restrictable* domain — read
+from `CompletedModel::table_domain`, the same source the nested
+check's Skolem restriction uses — is expanded at completion time into
+its pointwise fold (`forall x. phi` -> `and(phi[d])`, with
+short-circuit), under a 64-point product cap.  This is not an
+approximation: the restricted nested solve decides exactly the
+expanded reading, and doing it deterministically at completion makes
+the completed body quantifier-free, so the nested solve becomes a
+plain ite-chain solve and the aux's own quantifier loop disappears.
+Binders over sampled/infinite sorts (Int, Real, ...) stay symbolic,
+as before.  This is Z3's model evaluator's own behaviour (it evaluates
+ground quantifiers over its finite model universes).
+
+**Measured**: set16 62 s -> 18 s to its (unchanged) `unknown`; the
+round flow now dies within ~13 rounds.  The residual stall is the
+*stale pin* shape isolated above: a dodged ground pin (e.g.
+`subset(w, a) = true` from an era whose rows differed) permanently
+contradicts the current rows; the falsifier at that pair is permanent,
+its instance a duplicate, and nothing moves the pin.  Notably, the
+expansion also kills the dodge *for future instances* — an axiom-3
+instance asserted now has its antecedent pointwise-concrete, so the
+ground solver can no longer satisfy it vacuously.  Old pins from
+pre-expansion rounds remain; the repair for those is the next
+mechanism: blocking the demonstrated-incompatible pin arrangement
+(Z3's `add_blocking_clause` semantics on *ground-model pin*
+commitments only — never on asserted-constraint atoms; the
+false-`unsat` lesson of the removed emission stands, so the
+atom-classification needs its own careful design).
+
+Verification: quant_fuzz {41..46} x 150 CLEAN; parity 176 Correct /
+1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver + nixie-core
+4725/4728 (the 3 timeouts are the convergence pins under full-suite
+parallel load); fmt/clippy clean.
