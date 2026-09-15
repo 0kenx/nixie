@@ -365,8 +365,10 @@ impl TermManager {
         // extensionality witnesses). Without it `(tuple 1 2) = (tuple 5 2)`
         // stayed an opaque equality SAT could satisfy, and a wrong-`sat`
         // followed through the join's counting guards.
-        if let (Some(TermKind::DtConstructor { args: xs, .. }), Some(TermKind::DtConstructor { args: ys, .. })) =
-            (&lhs_kind, &rhs_kind)
+        if let (
+            Some(TermKind::DtConstructor { args: xs, .. }),
+            Some(TermKind::DtConstructor { args: ys, .. }),
+        ) = (&lhs_kind, &rhs_kind)
             && xs.len() == ys.len()
             && let Some(ls) = self.get(lhs).map(|d| d.sort)
             && let Some(rs) = self.get(rhs).map(|d| d.sort)

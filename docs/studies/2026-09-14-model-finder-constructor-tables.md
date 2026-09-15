@@ -521,3 +521,27 @@ Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
 Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); 4761/4767 (the two
 wisas failures pre-existing); the heaviest convergence pin 212 s
 standalone (in band); fmt/clippy clean.
+
+
+## The `p => p` collapse (2026-09-16, eighth follow-up)
+
+The walk-vs-aux divergence's simplest instance, closed: when the
+member atoms of an antecedent fall through to the else, the walk
+produces hash-consed *identical* symbolic terms — `(=> (member u!0 a)
+(member u!0 a))` — and the fold machine rebuilt them unchanged, so a
+diagonal antecedent stayed a non-constant and-chain the walk read as
+"not false" while every solver reads `true`.  `CompletionEval`'s
+`Implies` arm now collapses `p => p` (and short-circuits decided
+sides: `true => b` is `b`, `false => _` and `_ => true` are `true`).
+The first cut of this fix was itself wrong (`true => b` folded to a
+constant — the twins canary caught it within seconds: a false `sat`).
+
+The family's verdicts are unchanged by this alone (the persistent
+q57/q20/q42 falsifiers sit elsewhere), but the mining can now reach
+else-heavy diagonals it could not before, and the rule is generally
+sound.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN (the canary fired
+*within* the battery's development loop); parity 176 Correct / 1
+Inconclusive / 0 wrong (z3 4.16.0); 4767/4771 (wisas pre-existing);
+fmt/clippy clean.

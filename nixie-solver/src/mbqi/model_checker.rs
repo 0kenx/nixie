@@ -2681,7 +2681,35 @@ fn rebuild_with(
         }
         TermKind::Implies(..) => {
             let (a, b) = two_at(0)?;
-            manager.mk_implies(a, b)
+            // `p => p` collapses to `true` (and a decided side
+            // short-circuits): without the collapse, an antecedent whose
+            // atoms fell through to the else — leaving hash-consed
+            // identical symbolic terms like `(member u!0 a)` — stays a
+            // non-constant and-chain of trivial implications, the walk
+            // reports "not false" where every solver reads `true`, and
+            // the falsifier the aux found at that point is never mined
+            // (the walk-vs-aux divergence of the set family's axiom-3
+            // diagonal).
+            if a == b {
+                manager.mk_true()
+            } else {
+                let a_true = manager
+                    .get(a)
+                    .is_some_and(|t| matches!(t.kind, TermKind::True));
+                let b_true = manager
+                    .get(b)
+                    .is_some_and(|t| matches!(t.kind, TermKind::True));
+                let a_false = manager
+                    .get(a)
+                    .is_some_and(|t| matches!(t.kind, TermKind::False));
+                if b_true || a_false {
+                    manager.mk_true()
+                } else if a_true {
+                    b
+                } else {
+                    manager.mk_implies(a, b)
+                }
+            }
         }
         TermKind::Ite(..) => manager.mk_ite(one(0)?, one(1)?, one(2)?),
         TermKind::Distinct(args) => manager.mk_distinct(nary(args.len())?),
