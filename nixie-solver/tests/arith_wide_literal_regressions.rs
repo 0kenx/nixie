@@ -744,3 +744,45 @@ fn static_features_wide_mul_accumulation_does_not_panic() {
     let last = out.last().map(String::as_str).unwrap_or("");
     assert_ne!(last, "", "a verdict must be produced, not an abort");
 }
+
+/// The strict-atom one-sided-endpoint false `unsat` (2026-09-16, round
+/// three of the wide-row propagation): deriving a bound's SUPREMUM through
+/// a variable with only a LOWER bound used the lone lower as the sup
+/// endpoint — fabricating the tightest possible "upper". On the strict
+/// `>` shape the atom slack's lone `(0, +1)` lower became a phony `−3−ε`
+/// upper on the row's variable, crossed the real bounds, and refuted a
+/// satisfiable goal. A one-sided pair now serves its own direction only
+/// (a lone lower is an infimum; the supremum is +∞ — decline). Pinned
+/// never-`unsat` (z3: `sat` at `v2 = 3`; the honest verdict without the
+/// full propagation closure is `unknown`).
+#[test]
+fn strict_wide_row_one_sided_endpoint_never_drives_false_unsat() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v2 Int)
+        (assert (> (* 6927366777083328576 v2) -3))
+        (assert (= v2 3))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(last, "unsat", "6927366777083328576·3 > -3 holds; z3: sat");
+}
+
+/// The multi-term variant of the same class (the fuzz-original shape:
+/// same-variable wide coefficients collected past `i64`, strict atom).
+#[test]
+fn strict_multi_term_wide_row_never_drives_false_unsat() {
+    use nixie_solver::Context;
+    let goal = r#"
+        (set-logic QF_LIA)
+        (declare-const v2 Int)
+        (assert (> (+ (* 2305843009213693952 v2) (* 4611686018427387904 v2)) -3))
+        (assert (= v2 3))
+        (check-sat)"#;
+    let mut ctx = Context::new();
+    let out = ctx.execute_script(goal).expect("script executes");
+    let last = out.last().map(String::as_str).unwrap_or("");
+    assert_ne!(last, "unsat", "3·2^61·3 + 2^62·3 > -3 holds; z3: sat");
+}
