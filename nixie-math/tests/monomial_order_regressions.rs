@@ -42,7 +42,7 @@ fn mk(next: &mut u64) -> Vec<(u32, u32)> {
     let nv = 6u32;
     let mut v: Vec<(u32, u32)> = Vec::new();
     for var in 0..nv {
-        if advance(next) % 3u64 == 0 {
+        if advance(next).is_multiple_of(3u64) {
             let power = (advance(next) % 3u64) as u32 + 1;
             v.push((var, power));
         }
@@ -56,13 +56,6 @@ fn mk(next: &mut u64) -> Vec<(u32, u32)> {
 
 #[test]
 fn grevlex_matches_reference_and_is_multiplicative() {
-    let mut rng: u64 = 7;
-    let mut next = move || {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        rng
-    };
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut mismatches = 0;
     let mut mult_violations = 0;
