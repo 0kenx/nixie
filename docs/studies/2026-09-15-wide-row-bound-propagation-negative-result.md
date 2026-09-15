@@ -60,14 +60,19 @@ description first; this session followed it exactly.
    a derivation path, not only the consumption.
 2. **`wide_chain_is_decidable_sat_after_scaling`** (the c7 chain-sat
    twin, 40-deep `2·v + i64::MAX` recurrence): `unsat` with **only the
-   wide propagation on** (narrow-dir2 removed). The smoking gun, worth
-   its weight for the next attempt: a STORED derived bound was wrong by
-   **exactly 10^9** — var pinned to `−8070450532247928831` where the
-   true chain value is `−8070450533247928831` (v3's exact value
-   `(1 − 7·i64::MAX)/8`). 10^9 is neither a power of two (the 2-power
-   rescaler) nor obviously a stripped-odd-prime product — the error
-   enters through the derivation/rescaled-row interaction; find that
-   delta and the slice is saveable.
+   wide propagation on** (narrow-dir2 removed). **CORRECTION
+   (2026-09-16): the originally recorded "off by exactly 10^9 stored
+   bound" fingerprint was FALSE** — the probed store
+   `−8070450532247928831` is v3's exact true value; the "true value"
+   it was compared against was a hand-arithmetic typo in this study's
+   own session. The wide propagation's stores on the chain were
+   correct as far as probed; the false `unsat`'s actual source was
+   never identified (only the first ten stores were inspected). The
+   decisive instrument the next attempt needs from the start: a
+   DERIVATION AUDITOR — the chain has a known feasible model, so every
+   sound stored bound must hold at it (`lower ≤ model(v)` /
+   `model(v) ≤ upper`); any violating store printed with its full
+   derivation chain localizes the unsoundness in one run.
 
 ## Traps recorded (each cost real time)
 
@@ -105,10 +110,12 @@ description first; this session followed it exactly.
 
 ## The next attempt's entry points
 
-1. Find the 10^9 (fingerprint above) in the wide derivation path —
-   suspect the interaction of `derive_bound_big_parts`' accumulated
-   sums with rescaled wide-row content.
-2. Re-add narrow direction 2 only after (1) and the wcancel root cause
-   (the disequality-half slack bounds' liveness through the crossing).
+1. Build the derivation auditor FIRST (see the correction above): a
+   known-model instance (the chain; the cancellation twin) plus a check
+   that every stored bound holds at the model — the false `unsat`'s
+   source localizes in one instrumented run instead of ten probes.
+2. The wcancel root cause (the disequality-half slack bounds' liveness
+   through the crossing) and the chain's unidentified source are
+   probably the same defect; instrument both with the auditor.
 3. Keep the BRANCH_REASON filter and the discard-first consumption from
    the start; they are soundness requirements, not optimizations.
