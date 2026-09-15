@@ -3899,43 +3899,48 @@ impl Simplex {
     /// - Lower bound: sum of (a_j * lower(x_j) if a_j > 0, a_j * upper(x_j) if a_j < 0)
     /// - Upper bound: sum of (a_j * upper(x_j) if a_j > 0, a_j * lower(x_j) if a_j < 0)
     fn derive_basic_bound(&self, basic_var: VarId, expr: &LinExpr) -> Option<PropagatedBound> {
-        // Overflow in a propagation sum (delta_acc's `None`) retries the
-        // whole directional sum EXACTLY (`BigRational`, cold path): the
-        // operands are given `Rational64` bounds and the reasons are IDs,
-        // not arithmetic, so an exact final that fits is a sound bound —
-        // only a final that still overflows declines (the honest bound).
+        // Both directional walks share one discipline: checked accumulation,
+        // and on overflow ONE exact (`BigRational`) retry of the WHOLE
+        // directional sum. After that retry the arithmetic is COMPLETE —
+        // the walk keeps iterating only to collect every term's bound
+        // REASONS (an incomplete reason set would surface as an unsound
+        // conflict explanation one derivation later); adding further
+        // per-term contributions on top of the full recomputation would
+        // DOUBLE-COUNT the post-overflow terms. That double-count was the
+        // wide-chain false `unsat` of 2026-09-15/16: the exact retry
+        // returned the correct full sum, the walk then re-added the
+        // remaining terms, and the corrupted bound refuted a satisfiable
+        // chain (caught by the model audit — every stored bound must hold
+        // at a known-feasible point; see the slice-6 study).
         let idx = basic_var as usize;
         let mut lower_sum = DeltaRational::from_rational(expr.constant);
         let mut lower_reasons: SmallVec<[u32; 4]> = SmallVec::new();
         let mut can_derive_lower = true;
+        let mut lower_done = false;
         for (var, coef) in &expr.terms {
             let var_idx = *var as usize;
-            if *coef > Rational64::zero() {
-                if let Some(lo) = &self.lower[var_idx] {
-                    if Self::delta_acc(&mut lower_sum, &lo.value, coef).is_none() {
-                        lower_sum = self.derive_bound_exact(expr, true)?;
-                    }
-                    // Carry EVERY antecedent of this bound (primary + auxiliary),
-                    // not just its primary reason: when `lo` is itself a
-                    // propagated bound derived from several reasons, dropping its
-                    // `aux_reasons` here would yield an incomplete conflict
-                    // explanation one derivation step later. `split_reasons`
-                    // deduplicates downstream.
-                    lower_reasons.extend(lo.all_reasons());
-                } else {
-                    can_derive_lower = false;
-                    break;
-                }
+            let bound = if *coef > Rational64::zero() {
+                self.lower.get(var_idx).and_then(Option::as_ref)
             } else {
-                if let Some(hi) = &self.upper[var_idx] {
-                    if Self::delta_acc(&mut lower_sum, &hi.value, coef).is_none() {
-                        lower_sum = self.derive_bound_exact(expr, true)?;
-                    }
-                    lower_reasons.extend(hi.all_reasons());
-                } else {
-                    can_derive_lower = false;
-                    break;
-                }
+                self.upper.get(var_idx).and_then(Option::as_ref)
+            };
+            let Some(b) = bound else {
+                can_derive_lower = false;
+                break;
+            };
+            // Carry EVERY antecedent of this bound (primary + auxiliary),
+            // not just its primary reason: when `b` is itself a propagated
+            // bound derived from several reasons, dropping its
+            // `aux_reasons` here would yield an incomplete conflict
+            // explanation one derivation step later. `split_reasons`
+            // deduplicates downstream.
+            lower_reasons.extend(b.all_reasons());
+            if lower_done {
+                continue;
+            }
+            if Self::delta_acc(&mut lower_sum, &b.value, coef).is_none() {
+                lower_sum = self.derive_bound_exact(expr, true)?;
+                lower_done = true;
             }
         }
         if can_derive_lower {
@@ -3955,28 +3960,25 @@ impl Simplex {
         let mut upper_sum = DeltaRational::from_rational(expr.constant);
         let mut upper_reasons: SmallVec<[u32; 4]> = SmallVec::new();
         let mut can_derive_upper = true;
+        let mut upper_done = false;
         for (var, coef) in &expr.terms {
             let var_idx = *var as usize;
-            if *coef > Rational64::zero() {
-                if let Some(hi) = &self.upper[var_idx] {
-                    if Self::delta_acc(&mut upper_sum, &hi.value, coef).is_none() {
-                        upper_sum = self.derive_bound_exact(expr, false)?;
-                    }
-                    upper_reasons.extend(hi.all_reasons());
-                } else {
-                    can_derive_upper = false;
-                    break;
-                }
+            let bound = if *coef > Rational64::zero() {
+                self.upper.get(var_idx).and_then(Option::as_ref)
             } else {
-                if let Some(lo) = &self.lower[var_idx] {
-                    if Self::delta_acc(&mut upper_sum, &lo.value, coef).is_none() {
-                        upper_sum = self.derive_bound_exact(expr, false)?;
-                    }
-                    upper_reasons.extend(lo.all_reasons());
-                } else {
-                    can_derive_upper = false;
-                    break;
-                }
+                self.lower.get(var_idx).and_then(Option::as_ref)
+            };
+            let Some(b) = bound else {
+                can_derive_upper = false;
+                break;
+            };
+            upper_reasons.extend(b.all_reasons());
+            if upper_done {
+                continue;
+            }
+            if Self::delta_acc(&mut upper_sum, &b.value, coef).is_none() {
+                upper_sum = self.derive_bound_exact(expr, false)?;
+                upper_done = true;
             }
         }
         if can_derive_upper {
