@@ -445,3 +445,42 @@ nixie-core 4738/4742 — the two failures (`wisas_xs_8_13_*`) are
 pre-existing on the base (`6eec76dd` verified in a throwaway
 worktree), another agent's in-flight arc; the heaviest convergence pin
 passes standalone in band; fmt/clippy clean.
+
+
+## The targeted cardinality escalation, landed (2026-09-15, sixth follow-up)
+
+`ModelCompleter::thaw_axes_only` — the targeted escalation — is landed
+and wired: after two barren uncertified rounds, the *axis* sorts (the
+observer's row-point domains — `Elem`) thaw and re-freeze at the grown
+universe; the constructor *range* sorts stay frozen, so the tuple
+space, the tables and every already-landed certification stay stable.
+`frozen_range_sorts` records which frozen sorts are ranges during the
+freeze.  It fires on set16 (four escalations, the cap).
+
+**The diagnosis it confirmed**: the ground solver has already minted
+the witnesses the axiom demands — `skf!0(b,a)` with its forcing pins
+(`member(skf!0(b,a), b) = true`, `member(skf!0(b,a), a) = false`,
+visible in the completion's entry tables) — and the post-thaw
+expansion domain admits them (the body' carries 24 skf mentions).
+The pre-thaw falsifier's evidence told the whole story: the walk
+consulted `member(u!i, ·)` for the eight synthetic seeds only — rows
+(a) = rows(b) = {u!0} under that reading — with `subset(b,a) = false`
+asserted, so axiom 3's containment antecedent held while its pin said
+false and axiom 2's witness ∃ was unsatisfiable *at the points the
+domain offered*.  After the thaw, the witnesses are in.
+
+**What still blocks `sat`** (the next cycle's target, precisely): the
+late-round q57 aux verdicts remain `Sat` while the walk over the same
+body' at every odometer tuple does not fold to false — an aux-vs-walk
+disagreement over the expanded body (the aux exploits freedom in the
+ite-chain conditions that the walk resolves through pins; the aux's
+falsifying assignment is the thing to dump next).  Rounds oscillate
+between "model unchanged" (the signature gate) and "no relevant
+falsifier" — the escalation cap then ends the search honestly.
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN; parity 176
+Correct / 1 Inconclusive / 0 wrong (z3 4.16.0); nixie-solver +
+nixie-core 4763/4767 (the two wisas failures pre-existing on base;
+qlock_11 flaked once under full-suite load, passes standalone); the
+heaviest convergence pin passes standalone at 180 s — the fastest it
+has been all arc; fmt/clippy clean.

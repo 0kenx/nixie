@@ -466,6 +466,7 @@ pub(crate) fn compute_constructor_tables(
     model: &mut CompletedModel,
     quantifiers: &[QuantifiedFormula],
     frozen: &mut FxHashMap<SortId, Vec<TermId>>,
+    range_sorts: &mut FxHashSet<SortId>,
     manager: &mut TermManager,
 ) {
     let qms = extract_quasi_macros(quantifiers, manager);
@@ -580,6 +581,7 @@ pub(crate) fn compute_constructor_tables(
         for qm in &qms {
             if model.computed_entries.contains_key(&qm.func) {
                 touched.push(qm.func_range);
+                range_sorts.insert(qm.func_range);
                 for arg in &qm.observer_args {
                     if let ObserverArg::Axis(vi) = arg
                         && let Some(q) = quantifiers.iter().find(|q| q.term == qm.quantifier)

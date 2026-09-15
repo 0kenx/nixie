@@ -727,6 +727,11 @@ pub struct ModelCompleter {
     /// freeze-then-fail-then-refreeze loop is Z3's model finder's own
     /// search shape, and the cap bounds it.
     thaws_used: u32,
+    /// The constructor *range* sorts among the frozen domains (see
+    /// `thaw_axes_only`): escalating these re-opens the tuple space the
+    /// tables are computed over, so the targeted escalation leaves them
+    /// alone.
+    frozen_range_sorts: FxHashSet<SortId>,
 }
 
 /// Bound on cardinality escalations per solve.
@@ -742,6 +747,7 @@ impl ModelCompleter {
             cache: FxHashMap::default(),
             frozen_table_domains: FxHashMap::default(),
             thaws_used: 0,
+            frozen_range_sorts: FxHashSet::default(),
             stats: CompletionStats::default(),
         }
     }
@@ -753,6 +759,32 @@ impl ModelCompleter {
     /// member(x,s2)` with no such `x` in the domain) — is thawed so the
     /// next completion re-freezes at the *current* (grown) universe.
     /// Bounded by [`MAX_TABLE_THAWS`].
+    /// The *targeted* cardinality escalation: thaw only the axis sorts
+    /// (the observer's row-point domains — `Elem` in the set family),
+    /// keeping every constructor range sort frozen.  This is the shape
+    /// the witness axioms need: the ground solver has already minted the
+    /// distinguishing elements (`skf!0(s1,s2)` with its member pins, from
+    /// the axiom's own instances) — they are simply outside the frozen
+    /// axis domain, so the rows cannot express the distinction the axiom
+    /// demands and its check falsifies forever.  Re-freezing the axes at
+    /// the grown universe admits exactly those elements, the rows refine,
+    /// and the witness axiom's existential becomes satisfiable — while
+    /// the *range* domain (the sets themselves) staying frozen keeps the
+    /// tuple space, the tables and every already-landed certification
+    /// stable.  The full thaw (`thaw_table_domains`) re-freezes the range
+    /// sorts over their stale pins too and re-stalls at a higher
+    /// cardinality (measured: set16 0 s -> 35 s, no verdict).
+    pub fn thaw_axes_only(&mut self) -> bool {
+        if self.thaws_used >= MAX_TABLE_THAWS {
+            return false;
+        }
+        self.thaws_used += 1;
+        let before = self.frozen_table_domains.len();
+        self.frozen_table_domains
+            .retain(|sort, _| self.frozen_range_sorts.contains(sort));
+        before != self.frozen_table_domains.len()
+    }
+
     #[allow(dead_code)]
     pub fn thaw_table_domains(&mut self) -> bool {
         if self.thaws_used >= MAX_TABLE_THAWS {
@@ -886,12 +918,15 @@ impl ModelCompleter {
         // one globally-consistent interpretation every later consumer
         // (the nested checker, the mining odometer, the enumerative
         // seeder, the defining pins) reads unchanged.
+        let mut range_sorts = core::mem::take(&mut self.frozen_range_sorts);
         super::constructor_tables::compute_constructor_tables(
             &mut completed,
             quantifiers,
             &mut self.frozen_table_domains,
+            &mut range_sorts,
             manager,
         );
+        self.frozen_range_sorts = range_sorts;
 
         Ok(completed)
     }
