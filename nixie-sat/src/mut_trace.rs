@@ -67,3 +67,15 @@ pub(crate) fn code_matches(code: usize) -> bool {
         None => std::env::var("NIXIE_CSR_MUT_TRACE").as_deref() == Ok("all"),
     }
 }
+
+/// The `NIXIE_CWRITE=<id>` clause-watch target (cached; `None` when unset).
+#[cfg(feature = "std")]
+pub fn cwrite_target() -> Option<usize> {
+    use std::sync::OnceLock;
+    static T: OnceLock<Option<usize>> = OnceLock::new();
+    *T.get_or_init(|| {
+        std::env::var("NIXIE_CWRITE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+    })
+}

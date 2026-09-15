@@ -465,6 +465,16 @@ impl Solver {
         let mut vars_to_bump: SmallVec<[Var; 32]> = SmallVec::new();
 
         let mut reason_clause = conflict;
+        #[cfg(feature = "std")]
+        let awalk = std::env::var("NIXIE_AWALK_TRACE").is_ok();
+        #[cfg(feature = "std")]
+        if awalk {
+            eprintln!(
+                "[awalk] conflict={} lvl={}",
+                conflict.index(),
+                current_level
+            );
+        }
 
         'resolve: while let Some(clause) = self.clauses.get(reason_clause) {
             #[cfg(feature = "clause-traffic")]
@@ -523,6 +533,20 @@ impl Solver {
             let Some(clause) = self.clauses.get(reason_clause) else {
                 break;
             };
+            #[cfg(feature = "std")]
+            if awalk {
+                use std::fmt::Write as _;
+                let mut ls = String::new();
+                for &lit in clause.lits.iter() {
+                    let _ = write!(ls, "{}@{},", lit.code(), self.trail.level(lit.var()));
+                }
+                eprintln!(
+                    "[astep] r={} p={} lits={}",
+                    reason_clause.index(),
+                    p.map(|x: Lit| x.code() as i64).unwrap_or(-1),
+                    ls
+                );
+            }
             // Iterate the reason clause's literals IN THE ARENA (no snapshot
             // copy): the marking tables are split-borrowed through
             // [`AnalysisMark`], so the immutable clause-arena borrow lives
@@ -888,6 +912,15 @@ impl Solver {
         // recursive minimization as fallback / under LRAT) BEFORE bumping:
         // shrinking adds each block-UIP variable to the bump set, exactly
         // where cadical adds it to `analyzed` ahead of `bump_variables`.
+        #[cfg(feature = "std")]
+        if awalk {
+            use std::fmt::Write as _;
+            let mut ls = String::new();
+            for &l in &self.learnt {
+                let _ = write!(ls, "{}@{},", l.code(), self.trail.level(l.var()));
+            }
+            eprintln!("[learnt] n={} {}", self.learnt.len(), ls);
+        }
         self.improve_learnt_clause(&mut vars_to_bump);
 
         // Which decision structure receives the analysis signal this conflict?
@@ -1366,6 +1399,22 @@ impl Solver {
     /// or `shrink_literal` before its flags or level can justify an early exit.
     /// This retains the original learned literal when a proof is unavailable.
     fn minimize_reason_lits(&self, head: Lit, cid: ClauseId) -> Option<&[Lit]> {
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_AWALK_TRACE").is_ok() {
+            use std::fmt::Write as _;
+            let mut ls = String::new();
+            if let Some(c) = self.clauses.get(cid) {
+                for &l in c.lits {
+                    let _ = write!(ls, "{}@{},", l.code(), self.trail.level(l.var()));
+                }
+            }
+            eprintln!(
+                "[bstep] cid={} head={} lits={}",
+                cid.index(),
+                head.code(),
+                ls
+            );
+        }
         let clause = self.clauses.get(cid)?;
         if clause.deleted || !clause.lits.contains(&head) {
             return None;

@@ -791,6 +791,7 @@ impl TermManager {
             // itself; everything else rebuilds through the builder so the
             // result is interned and sorted exactly as if freshly constructed.
             TermKind::SetEmpty(sort) => self.intern(TermKind::SetEmpty(sort), sort),
+            TermKind::SetUniv(sort) => self.intern(TermKind::SetUniv(sort), sort),
             TermKind::SetSingleton(e) => {
                 let e = sub(e);
                 self.mk_set_singleton(e)
@@ -818,6 +819,14 @@ impl TermManager {
             TermKind::SetCard(s) => {
                 let s = sub(s);
                 self.mk_set_card(s)
+            }
+            TermKind::SetComplement(s) => {
+                let s = sub(s);
+                self.mk_set_complement(s)
+            }
+            TermKind::SetChoose(s) => {
+                let s = sub(s);
+                self.mk_set_choose(s)
             }
             TermKind::Select(arr, idx) => {
                 let arr = sub(arr);

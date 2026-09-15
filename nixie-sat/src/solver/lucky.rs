@@ -125,6 +125,13 @@ impl Solver {
         // (worker-class: 97% binaries -- the ~190 MB transient was almost
         // entirely no-op restore data).
         let snap_watches = self.watches.packed_snapshot();
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_LUCKY_TRACE").is_ok() {
+            eprintln!(
+                "[lucky] enter conflicts={} ts={} tf={}",
+                self.stats.conflicts, self.ticks_stable, self.ticks_focused
+            );
+        }
         let mut snap_ids: Vec<ClauseId> = Vec::new();
         let mut snap_ends: Vec<u32> = Vec::new();
         let mut snap_buf: Vec<Lit> = Vec::new();
@@ -169,6 +176,16 @@ impl Solver {
             res = self.lucky_horn(true);
         }
 
+        #[cfg(feature = "std")]
+        if std::env::var("NIXIE_LUCKY_TRACE").is_ok() {
+            eprintln!(
+                "[lucky] exit sat={} conflicts={} ts={} tf={}",
+                matches!(res, LuckyOutcome::Sat),
+                self.stats.conflicts,
+                self.ticks_stable,
+                self.ticks_focused
+            );
+        }
         match res {
             LuckyOutcome::Sat => {
                 self.stats.lucky_succeeded += 1;

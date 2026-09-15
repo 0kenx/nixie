@@ -326,13 +326,9 @@ impl Solver {
                 // gating — the wide-coefficient classes (`2^63·v` and
                 // friends) become decidable rows instead of free Booleans
                 // gated to `Unknown`.
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -354,13 +350,9 @@ impl Solver {
         );
         if rhs_ok.is_none() {
             if overflow {
-                if let Some(parsed) = self.parse_arith_comparison_exact(
-                    lhs,
-                    rhs,
-                    constraint_type.clone(),
-                    reason,
-                    manager,
-                ) {
+                if let Some(parsed) =
+                    self.parse_arith_comparison_exact(lhs, rhs, constraint_type, reason, manager)
+                {
                     self.arith_parse_cache.insert(reason, Some(parsed.clone()));
                     return Some(parsed);
                 }
@@ -952,6 +944,7 @@ impl Solver {
     ///  * the caller rescales the whole result into width
     ///    (`scale_exact_row`), which is sound because a POSITIVE multiple
     ///    of the row preserves its zero bound.
+    ///
     /// Faithfully mirrors the narrow walk's structure (iterative, same
     /// frame discipline) so the two cannot drift semantically.
     fn extract_linear_terms_exact(
@@ -3022,9 +3015,8 @@ impl Solver {
                     && (it.sort == int_sort || it.sort == real_sort)
                     && matches!(it.kind, TermKind::IntConst(_) | TermKind::RealConst(_))
                 {
-                    self.pin_quantified_uf_const_arg(idx, manager);
+                    self.pin_interface_const(idx, manager);
                 }
-                continue;
             }
             if let TermKind::Apply { func, args } = &t.kind {
                 // Per-function gate: never purify the numeric arguments of a
@@ -3051,7 +3043,7 @@ impl Solver {
                     // numeral proxied elsewhere covers this function too via
                     // the global substitution.
                     for &arg in args {
-                        self.pin_quantified_uf_const_arg(arg, manager);
+                        self.pin_interface_const(arg, manager);
                     }
                     continue;
                 }
@@ -3112,10 +3104,16 @@ impl Solver {
         manager.mk_and(parts)
     }
 
-    /// Pin a constant numeric argument of a quantified (un-purified) function
-    /// into arithmetic as an interface term fixed to its literal value.
-    /// Companion to the per-function gate in [`Self::purify_numeric_uf_args`]
-    /// – see the comment there for the false-`sat` class this closes.
+    /// Pin a numeric constant into arithmetic as an interface term fixed to
+    /// its literal value, so theory combination can pair it with an
+    /// equal-valued shared term.
+    ///
+    /// Called from [`Self::purify_numeric_uf_args`] for the two kinds of
+    /// constant that need it — arguments of an un-purified (quantified)
+    /// function, and `select`/`store` indices. See
+    /// [`Solver::interface_const_pins`] for why each one would otherwise be
+    /// invisible, and the comments at those call sites for the false-`sat`
+    /// each closes.
     ///
     /// SOUND: the asserted row is a tautology (`c = c`), so its bound can
     /// never be violated and the pin constrains nothing.  The reason tag
@@ -3128,8 +3126,8 @@ impl Solver {
     /// lockstep with the scope it was asserted at (re-encode re-pins).
     /// Constants that do not fit `Rational64` are skipped: the pre-fix gap
     /// remains for them (missed pairing only, never a wrong answer).
-    fn pin_quantified_uf_const_arg(&mut self, arg: TermId, manager: &TermManager) {
-        if self.quant_uf_const_pins.contains_key(&arg) {
+    fn pin_interface_const(&mut self, arg: TermId, manager: &TermManager) {
+        if self.interface_const_pins.contains_key(&arg) {
             return;
         }
         // CLOSED-FORM evaluation, three layers:
@@ -3258,7 +3256,7 @@ impl Solver {
                 constant
             }
         };
-        self.quant_uf_const_pins.insert(arg, value);
+        self.interface_const_pins.insert(arg, value);
     }
 
     /// literal for the sub-term.  The truncated encoding is deliberately
@@ -4012,11 +4010,14 @@ impl Solver {
             // honesty gate degrades any resulting `Sat` to `Unknown` — see
             // `Solver::set_terms_unconstrained`.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
             | TermKind::SetMinus(_, _)
-            | TermKind::SetCard(_) => {
+            | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_) => {
                 self.set_terms_unconstrained = true;
                 let var = self.get_or_create_var(term);
                 Lit::pos(var)

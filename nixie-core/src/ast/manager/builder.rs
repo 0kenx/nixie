@@ -3,7 +3,7 @@
 use super::super::term::{RoundingMode, TermId, TermKind};
 #[allow(unused_imports)]
 use crate::prelude::*;
-use crate::sort::SortId;
+use crate::sort::{SortId, SortKind};
 use num_bigint::BigInt;
 use num_rational::{BigRational, Rational64};
 use num_traits::{Euclid, One, ToPrimitive, Zero};
@@ -875,32 +875,104 @@ impl TermManager {
         self.intern(TermKind::SetSingleton(element), sort)
     }
 
-    /// `(set.union a b)`.
+    /// `(set.union a b)`, normalized: `s ∪ ∅ = s`, `s ∪ U = U`, `s ∪ s = s`.
+    ///
+    /// These are semantics-preserving rewrites (Z3's `theory_sets_rewriter`),
+    /// applied at construction so later passes see the normal form; without
+    /// the complement invololution among them, `~ ~ s ≠ s` stays
+    /// satisfiable in the ground encoding while the theory refutes it.
     pub fn mk_set_union(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            return a;
+        }
+        if self.is_set_empty(a) {
+            return b;
+        }
+        if self.is_set_empty(b) {
+            return a;
+        }
+        if self.is_set_univ(a) || self.is_set_univ(b) {
+            // `s ∪ U = U` at the shared sort: both operands are set-sorted
+            // and the union's sort is that of `a`.
+            return if self.is_set_univ(a) { a } else { b };
+        }
         let sort = self.set_result_sort(a);
         self.intern(TermKind::SetUnion(a, b), sort)
     }
 
-    /// `(set.inter a b)`.
+    /// `(set.inter a b)`, normalized: `s ∩ U = s`, `s ∩ ∅ = ∅`, `s ∩ s = s`.
     pub fn mk_set_inter(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b {
+            return a;
+        }
+        if self.is_set_univ(a) {
+            return b;
+        }
+        if self.is_set_univ(b) {
+            return a;
+        }
+        if self.is_set_empty(b) {
+            return b;
+        }
+        if self.is_set_empty(a) {
+            return a;
+        }
         let sort = self.set_result_sort(a);
         self.intern(TermKind::SetInter(a, b), sort)
     }
 
-    /// `(set.minus a b)`.
+    /// `(set.minus a b)`, normalized: `s \ s = ∅`, `s \ ∅ = s`, `∅ \ s = ∅`,
+    /// `s \ U = ∅`.
     pub fn mk_set_minus(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b || self.is_set_empty(a) || self.is_set_univ(b) {
+            let sort = self.set_result_sort(a);
+            return self.intern(TermKind::SetEmpty(sort), sort);
+        }
+        if self.is_set_empty(b) {
+            return a;
+        }
         let sort = self.set_result_sort(a);
         self.intern(TermKind::SetMinus(a, b), sort)
     }
 
-    /// `(set.member x s)`.
+    /// `(set.member x s)`, folded over the constant sets: nothing is in `∅`,
+    /// everything is in `U`, and `x ∈ {y}` is `x = y`.
     pub fn mk_set_member(&mut self, element: TermId, set: TermId) -> TermId {
+        if self.is_set_empty(set) {
+            return self.false_id;
+        }
+        if self.is_set_univ(set) {
+            return self.true_id;
+        }
+        if let Some(data) = self.get(set)
+            && matches!(data.kind, TermKind::SetSingleton(_))
+            && let TermKind::SetSingleton(y) = data.kind
+        {
+            return self.mk_eq(element, y);
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::SetMember(element, set), sort)
     }
 
-    /// `(set.subset a b)`.
+    /// `(set.subset a b)`, folded over the constant sets: `∅ ⊆ s` and
+    /// `s ⊆ U` and `s ⊆ s` always; `U ⊆ ∅` never (every element sort has at
+    /// least one inhabitant); `{x} ⊆ ∅` never.
+    ///
+    /// `U ⊆ b` for a non-`U` `b` is **not** folded: it is satisfiable exactly
+    /// when the model equates `b` with `U`, which is not a syntactic fact.
     pub fn mk_set_subset(&mut self, a: TermId, b: TermId) -> TermId {
+        if a == b || self.is_set_empty(a) || self.is_set_univ(b) {
+            return self.true_id;
+        }
+        if self.is_set_univ(a) && self.is_set_empty(b) {
+            return self.false_id;
+        }
+        if self.is_set_empty(b)
+            && let Some(data) = self.get(a)
+            && matches!(data.kind, TermKind::SetSingleton(_))
+        {
+            return self.false_id;
+        }
         let sort = self.sorts.bool_sort;
         self.intern(TermKind::SetSubset(a, b), sort)
     }
@@ -909,6 +981,60 @@ impl TermManager {
     pub fn mk_set_card(&mut self, set: TermId) -> TermId {
         let sort = self.sorts.int_sort;
         self.intern(TermKind::SetCard(set), sort)
+    }
+
+    /// `(set.complement s)`, normalized: `~∅ = U`, `~U = ∅`, `~ ~ s = s`.
+    pub fn mk_set_complement(&mut self, set: TermId) -> TermId {
+        let sort = self.set_result_sort(set);
+        if self.is_set_empty(set) {
+            return self.intern(TermKind::SetUniv(sort), sort);
+        }
+        if self.is_set_univ(set) {
+            return self.intern(TermKind::SetEmpty(sort), sort);
+        }
+        if let Some(data) = self.get(set)
+            && matches!(data.kind, TermKind::SetComplement(_))
+            && let TermKind::SetComplement(inner) = data.kind
+        {
+            return inner;
+        }
+        self.intern(TermKind::SetComplement(set), sort)
+    }
+
+    fn is_set_empty(&self, t: TermId) -> bool {
+        self.get(t).is_some_and(|d| matches!(d.kind, TermKind::SetEmpty(_)))
+    }
+
+    fn is_set_univ(&self, t: TermId) -> bool {
+        self.get(t).is_some_and(|d| matches!(d.kind, TermKind::SetUniv(_)))
+    }
+
+    /// The universe set at element sort `element`:
+    /// `(as set.universe (Set T))`.
+    pub fn mk_set_univ(&mut self, element: SortId) -> TermId {
+        let sort = self.sorts.set(element);
+        self.intern(TermKind::SetUniv(sort), sort)
+    }
+
+    /// The universe set, given its already-formed **set** sort.
+    pub fn mk_set_univ_at(&mut self, set_sort: SortId) -> TermId {
+        self.intern(TermKind::SetUniv(set_sort), set_sort)
+    }
+
+    /// `(set.choose s)` — some element of `s`.
+    ///
+    /// The result sort is the set's element sort; a non-set operand is a
+    /// caller error the type rules catch, and falls back to `Int` the same
+    /// way the other set builders do.
+    pub fn mk_set_choose(&mut self, set: TermId) -> TermId {
+        let sort = match self.get(set).map(|t| t.sort) {
+            Some(s) => match self.sorts.get(s).map(|s| &s.kind) {
+                Some(SortKind::Set(elem)) => *elem,
+                _ => self.sorts.int_sort,
+            },
+            None => self.sorts.int_sort,
+        };
+        self.intern(TermKind::SetChoose(set), sort)
     }
 
     /// The sort a homogeneous binary set operator returns: its first operand's.

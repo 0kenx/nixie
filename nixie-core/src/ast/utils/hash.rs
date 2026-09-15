@@ -134,8 +134,9 @@ fn hash_visit(
             field.raw().hash(hasher);
         }
         TermKind::StringLit(s) => s.hash(hasher),
-        // The sort *is* the payload: two empty sets differ only by it.
-        TermKind::SetEmpty(sort) => sort.0.hash(hasher),
+        // The sort *is* the payload: two empty sets (or two universe sets)
+        // differ only by it.
+        TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => sort.0.hash(hasher),
         TermKind::Var(spur) => spur.hash(hasher),
 
         TermKind::Not(a)
@@ -148,6 +149,8 @@ fn hash_visit(
         | TermKind::StrToCode(a)
         | TermKind::SetSingleton(a)
         | TermKind::SetCard(a)
+        | TermKind::SetComplement(a)
+        | TermKind::SetChoose(a)
         | TermKind::StrFromCode(a) => stack.push(HashTask::Visit(*a)),
 
         TermKind::BvExtract { high, low, arg } => {

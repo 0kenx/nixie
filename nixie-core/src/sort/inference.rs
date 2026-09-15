@@ -150,9 +150,9 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         | TermKind::BvSle(_, _) => Ok(manager.sorts.bool_sort),
 
         // Finite-set operations.
-        // `SetEmpty` carries its own set sort, because there are no elements
-        // to infer it from.
-        TermKind::SetEmpty(sort) => Ok(*sort),
+        // `SetEmpty` and `SetUniv` carry their own set sort, because there are
+        // no elements to infer it from.
+        TermKind::SetEmpty(sort) | TermKind::SetUniv(sort) => Ok(*sort),
         TermKind::SetSingleton(element) => {
             // Looked up, never interned: inference must not create a sort as a
             // side effect. The builder interns `(Set T)` when it makes the
@@ -178,6 +178,26 @@ pub fn infer_term_sort(term: &Term, manager: &TermManager) -> Result<SortId> {
         TermKind::SetMember(_, _) | TermKind::SetSubset(_, _) => Ok(manager.sorts.bool_sort),
         // Cardinality is where sets meet arithmetic.
         TermKind::SetCard(_) => Ok(manager.sorts.int_sort),
+        // The complement of a set is a set of the same sort.
+        TermKind::SetComplement(a) => {
+            if let Some(t) = manager.get(*a) {
+                Ok(t.sort)
+            } else {
+                Err(NixieError::Internal("Set operand not found".to_string()))
+            }
+        }
+        // `set.choose` returns an element of the set it chooses from.
+        TermKind::SetChoose(set) => {
+            if let Some(t) = manager.get(*set)
+                && let Some(sort) = manager.sorts.get(t.sort)
+                && let SortKind::Set(elem) = sort.kind
+            {
+                return Ok(elem);
+            }
+            Err(NixieError::Internal(
+                "Cannot infer sort for set.choose".to_string(),
+            ))
+        }
 
         // Array operations
         TermKind::Select(array, _) => {

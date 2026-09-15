@@ -625,6 +625,108 @@ mod tests_2 {
         }
     }
 
+    // Regression (2026-09-15, the last unchecked release-wrap site in the
+    // simplex): `on_nonbasic_bound_change`'s delta propagation multiplied and
+    // accumulated `DeltaRational`s with the bare `Ratio` operators — a
+    // `Δ · c` past `i64` on a wide-coefficient row PANICKED in debug (the
+    // debug-panic sweep's `mul_r64_fast` abort via `note_bound_change`) and
+    // silently WRAPPED in release, corrupting the dependent basic's
+    // assignment for every later decision. The fix is the item-14 pattern:
+    // checked multiply/add, exact `BigRational` retry of that one row with a
+    // narrowed final (the intermediates overflow while the row's final
+    // value fits — magnitudes cancel), and a staleness-flag defer only when
+    // the final itself does not fit.
+    #[test]
+    fn nonbasic_bound_change_delta_overflow_recovers_exact_and_never_wraps() {
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        let y = simplex.new_var();
+        let z = simplex.new_var();
+
+        // Row `s = MAX·x − MAX·y + z` (the `z` keeps the coefficient GCD at
+        // 1 so intern-time canonicalization cannot shrink the wide factors).
+        let max = Rational64::from_integer(i64::MAX);
+        let mut row = LinExpr::new();
+        row.terms.push((x, max));
+        row.terms.push((y, -max));
+        row.terms.push((z, Rational64::one()));
+        row.constant = Rational64::zero();
+        let s = simplex.intern_row(row);
+
+        // y: 0 → 1. The delta `1 · (−MAX)` FITS, so this step runs the
+        // ordinary fast path and lands `s = −MAX` — the pre-overflow state
+        // the wide propagation then departs from.
+        simplex.set_lower(y, Rational64::one(), 1);
+        assert_eq!(simplex.assignment[s as usize].real, -max);
+
+        // x: 0 → 2. The increment `Δ · c = 2·MAX` leaves `i64` — unchecked,
+        // this is the abort/wrap site — but the row's final value
+        // `MAX·2 − MAX·1 + 0 = MAX` fits, so the exact retry must recover it
+        // incrementally: `assignment[s] = MAX`, no staleness, no wrap.
+        simplex.set_lower(x, Rational64::from_integer(2), 2);
+        assert_eq!(
+            simplex.assignment[s as usize].real, max,
+            "the exact retry must narrow the row's final (intermediates overflow, finals cancel)"
+        );
+        assert!(
+            simplex.assignment_current,
+            "a recovered (exact-retried) update must not leave the vector stale"
+        );
+        assert!(!simplex.resource_limit_reached());
+        assert!(simplex.check().is_ok());
+    }
+
+    // Regression (same site, the snap delta): the `new − old` subtraction
+    // itself can leave `i64` width when a non-basic jumps between deep
+    // opposite bounds — a debug panic and a silent release wrap that would
+    // have propagated a fabricated delta to every dependent. The fix defers
+    // to the full re-derivation: the snapped value itself is committed (it
+    // is a bound value, exact), the dependents are left for `crash_basis`.
+    #[test]
+    fn nonbasic_bound_change_snap_delta_overflow_defers_instead_of_wrapping() {
+        let mut simplex = Simplex::new();
+        let x = simplex.new_var();
+        let y = simplex.new_var();
+
+        // Row `s = x + y` — an ordinary narrow row whose basic assignment
+        // would receive the (wrapped) snap delta.
+        let mut row = LinExpr::new();
+        row.terms.push((x, Rational64::one()));
+        row.terms.push((y, Rational64::one()));
+        row.constant = Rational64::zero();
+        let s = simplex.intern_row(row);
+
+        // x ∈ [−MAX, −MAX]: snaps x to −MAX (delta −MAX fits), s = −MAX.
+        let max = Rational64::from_integer(i64::MAX);
+        simplex.set_lower(x, -max, 1);
+        simplex.set_upper(x, -max, 2);
+        assert_eq!(simplex.assignment[s as usize].real, -max);
+
+        // Loosen the upper, then tighten the lower to +MAX: the window is
+        // [MAX, MAX] (not crossed) and the snap must move x from −MAX to
+        // MAX — a delta of 2·MAX that `i64` cannot hold.
+        simplex.set_upper(x, max, 3);
+        simplex.set_lower(x, max, 4);
+
+        // The snapped value is committed exactly (a bound value); the
+        // propagation is skipped and the vector flagged stale for the next
+        // consumer's `crash_basis` — never a wrapped delta.
+        assert_eq!(
+            simplex.assignment[x as usize].real, max,
+            "the snapped non-basic value must be committed exactly, not wrapped"
+        );
+        assert!(
+            !simplex.assignment_current,
+            "an unrepresentable snap delta must defer via the staleness flag"
+        );
+        assert!(!simplex.resource_limit_reached());
+
+        // The full re-derivation makes the state consistent again: s = MAX.
+        assert!(simplex.check().is_ok());
+        assert!(simplex.assignment_current);
+        assert_eq!(simplex.assignment[s as usize].real, max);
+    }
+
     // Audit regression (theories-honesty / arithmetic-simplex): a bound
     // derived by propagation from SEVERAL non-basic bounds is implied by ALL
     // of those bounds. Previously only `reasons.first()` was stored on the
@@ -1206,4 +1308,99 @@ mod canonical_form {
             "positively-proportional forms must share a row"
         );
     }
+}
+
+// Regression (2026-09-15, the wide-store value fabrication): the exact
+// value of a WIDE-basic variable must never be read from the raw
+// `assignment` entry — that entry is only maintained while the exact
+// value narrows, and an unrepresentable one leaves it stale on purpose
+// (the false-`sat` class read a fabricated integral `0` for a variable
+// whose true value was `−9 − 41/2⁶³`). `delta_value_exact` re-derives
+// from the wide row and declines when the value does not narrow;
+// `wide_floor_ceil_big` derives the branch bounds from the exact
+// UN-NARROWED value (small integers even at 2⁶³-scale magnitudes, which
+// is what keeps such searches decidable instead of honest-`unknown`).
+#[test]
+fn wide_basic_reads_and_branch_bounds_are_exact() {
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+    let big = |n: i128, d: i128| BigRational::new(BigInt::from(n), BigInt::from(d));
+
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let t = s.new_var();
+    // Pin t = 3 through the ordinary bound machinery (snaps the
+    // non-basic into its window).
+    s.set_lower(t, Rational64::from_integer(3), 1);
+
+    // Wide row: x = t/2⁶³ − 83010348301752982313/2⁶³. At t = 3 the
+    // exact value is −9 − 41/2⁶³·… (numerator ≈ 8.3·10¹⁹ — beyond i64).
+    s.wide_rows.insert(
+        x,
+        BigLinExpr {
+            terms: vec![(t, big(1, 9223372036854775808))],
+            constant: big(-83010348331692982313, 9223372036854775808),
+        },
+    );
+    assert!(s.is_wide_basic(x));
+    assert!(
+        s.delta_value_exact(x).is_none(),
+        "the exact value's numerator leaves i64: no honest narrow value exists"
+    );
+    // The branch bounds are small integers regardless: floor −10, ceil −9.
+    assert_eq!(s.wide_floor_ceil_big(x), Some((-10, -9)));
+
+    // A wide value that DOES narrow reads exactly (x = t/2 → 3/2), and
+    // its floor/ceil follow the ordinary delta-aware rules.
+    s.wide_rows.insert(
+        x,
+        BigLinExpr {
+            terms: vec![(t, big(1, 2))],
+            constant: big(0, 1),
+        },
+    );
+    assert_eq!(
+        s.delta_value_exact(x).map(|v| v.real),
+        Some(Rational64::new(3, 2))
+    );
+    assert_eq!(s.wide_floor_ceil_big(x), Some((1, 2)));
+
+    // A non-wide variable reads through the ordinary path (t itself).
+    assert_eq!(
+        s.delta_value_exact(t).map(|v| v.real),
+        Some(Rational64::from_integer(3))
+    );
+}
+
+// Regression (2026-09-15, the silent wide-dependent skip): a bound
+// change on a non-basic whose dependent row lives in the WIDE store
+// used to skip that dependent silently — no update, no staleness flag —
+// leaving the wide basic's entry stale by exactly Δ·coef. The skip now
+// flags the vector so the next guard re-derives everything.
+#[test]
+fn wide_dependent_bound_change_flags_staleness() {
+    use num_bigint::BigInt;
+    use num_rational::BigRational;
+    let mut s = Simplex::new();
+    let x = s.new_var();
+    let t = s.new_var();
+    // x is wide-basic over t (row x = 2·t), and t's column lists x as a
+    // dependent (the column index covers both stores).
+    s.wide_rows.insert(
+        x,
+        BigLinExpr {
+            terms: vec![(t, BigRational::from_integer(BigInt::from(2)))],
+            constant: BigRational::zero(),
+        },
+    );
+    s.column_push_known(t, x);
+    assert!(s.assignment_current);
+
+    // t: 0 → 5. The dependent is wide (not in `tableau`): the delta
+    // cannot land, so the vector must be flagged stale.
+    s.set_lower(t, Rational64::from_integer(5), 1);
+    assert!(
+        !s.assignment_current,
+        "a skipped wide dependent must flag staleness, not pass silently"
+    );
 }

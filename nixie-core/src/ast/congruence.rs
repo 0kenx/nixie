@@ -91,7 +91,9 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::FpNaN { .. }
         // Two empty sets at the same element sort are the *same* interned
         // term, so there is nothing for congruence to relate.
-        | TermKind::SetEmpty(_) => return None,
+        | TermKind::SetEmpty(_)
+        // Same for two universe sets at the same element sort.
+        | TermKind::SetUniv(_) => return None,
 
         // Binders: congruence below a binder is not sound.
         TermKind::Forall { .. }
@@ -144,6 +146,8 @@ fn congruence_signature(kind: &TermKind) -> Option<(OpKey, SmallVec<[TermId; 4]>
         | TermKind::SetMember(_, _)
         | TermKind::SetSubset(_, _)
         | TermKind::SetCard(_)
+        | TermKind::SetComplement(_)
+        | TermKind::SetChoose(_)
         | TermKind::Select(_, _)
         | TermKind::Store(_, _, _)
         | TermKind::StrConcat(_, _)

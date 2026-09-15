@@ -294,10 +294,15 @@ impl super::Solver {
             // asserted quantifiers; a stale entry after `pop` only makes
             // `purify_numeric_uf_args` over-conservatively skip a *sound*
             // purification, so it is left in place (cleared only by `reset`).
-            numarg_proxies: _,
-            quant_uf_const_pins: _, // accumulates arg->proxy entries; a stale entry
+            numarg_proxies: _, // accumulates arg->proxy entries; a stale entry
             // only makes `eval_in_model` try a proxy that is no longer asserted
             // (it falls back to the original term), so it is sound to leave.
+            // (This comment sat on the pin map below, which it never
+            // described; the pin map holds constant->value, not arg->proxy.)
+            interface_const_pins: _, // accumulates constant->value pins; a stale
+            // entry after `pop` only re-asserts a tautological `c = c` row,
+            // which constrains nothing and can widen no model, so it is sound
+            // to leave (cleared only by `reset`).
             table_index_terms: _, // accumulates equality-ite table indices across
             // `assert`s; a stale entry after `pop` only makes
             // `eager_table_index_case_split` re-emit a *valid* (redundant)

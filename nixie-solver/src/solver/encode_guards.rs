@@ -470,6 +470,8 @@ impl Solver {
             | TermKind::Neg(a)
             | TermKind::SetSingleton(a)
             | TermKind::SetCard(a)
+            | TermKind::SetComplement(a)
+            | TermKind::SetChoose(a)
             | TermKind::BvNot(a) => push(*a),
             TermKind::SetUnion(a, b)
             | TermKind::SetInter(a, b)
@@ -480,7 +482,7 @@ impl Solver {
                 push(*b);
             }
             // No children: the payload is a sort.
-            TermKind::SetEmpty(_) => {}
+            TermKind::SetEmpty(_) | TermKind::SetUniv(_) => {}
             TermKind::And(args)
             | TermKind::Or(args)
             | TermKind::Add(args)

@@ -201,6 +201,14 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                             return false;
                         }
                     }
+                    TermKind::SetUniv(a) => {
+                        let TermKind::SetUniv(b) = &rt.kind else {
+                            return false;
+                        };
+                        if a != b {
+                            return false;
+                        }
+                    }
                     TermKind::False => {
                         if !matches!(rt.kind, TermKind::False) {
                             return false;
@@ -284,6 +292,8 @@ pub fn alpha_equivalent(lhs: TermId, rhs: TermId, manager: &TermManager) -> bool
                     | TermKind::StrToCode(a)
                     | TermKind::SetSingleton(a)
                     | TermKind::SetCard(a)
+                    | TermKind::SetComplement(a)
+                    | TermKind::SetChoose(a)
                     | TermKind::StrFromCode(a)
                     | TermKind::FfNeg(a)
                     | TermKind::FpAbs(a)

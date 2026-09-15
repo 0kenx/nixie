@@ -670,6 +670,15 @@ fn rebuild(
 
         // ======== Arrays ========
         TermKind::SetEmpty(sort) => manager.mk_set_empty_at(sort),
+        TermKind::SetUniv(sort) => manager.mk_set_univ_at(sort),
+        TermKind::SetComplement(s) => {
+            let s = sub(s);
+            manager.mk_set_complement(s)
+        }
+        TermKind::SetChoose(s) => {
+            let s = sub(s);
+            manager.mk_set_choose(s)
+        }
         TermKind::SetSingleton(e) => {
             let e = sub(e);
             manager.mk_set_singleton(e)

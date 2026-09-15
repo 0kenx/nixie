@@ -275,13 +275,16 @@ impl NelsonOppenCombiner {
             // Int it produces becomes a shared interface term, which is
             // exactly the Set/Arithmetic boundary cardinality reasoning needs.
             TermKind::SetEmpty(_)
+            | TermKind::SetUniv(_)
             | TermKind::SetSingleton(_)
             | TermKind::SetUnion(_, _)
             | TermKind::SetInter(_, _)
             | TermKind::SetMinus(_, _)
             | TermKind::SetMember(_, _)
             | TermKind::SetSubset(_, _)
-            | TermKind::SetCard(_) => TermTheory::Set,
+            | TermKind::SetCard(_)
+            | TermKind::SetComplement(_)
+            | TermKind::SetChoose(_) => TermTheory::Set,
 
             TermKind::StrConcat(_, _)
             | TermKind::StrLen(_)

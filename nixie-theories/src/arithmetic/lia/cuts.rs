@@ -11,7 +11,9 @@
 //! sound and complete decision procedure for LIA, so a missing cut only forgoes
 //! an optional strengthening.
 
-use super::super::simplex::{LinExpr, VarId};
+use super::super::simplex::{
+    LinExpr, VarId, checked_add_r64, checked_div_r64, checked_mul_r64, checked_sub_r64,
+};
 use super::helpers::gcd;
 use super::types::LiaSolver;
 #[allow(unused_imports)]
@@ -145,6 +147,13 @@ impl LiaSolver {
             // GMI cut valid.
             let is_int = self.int_vars.contains_key(&xj) && bound_val.is_integer();
 
+            // CHECKED coefficient arithmetic throughout: the divisions and
+            // the `γ_j·bound` accumulation PANICKED in debug and silently
+            // WRAPPED in release on the QF_NIA/VeryMax family — and a
+            // wrapped coefficient or rhs publishes a cut that is NOT
+            // implied by its row (an unsound lemma). Declining the cut is
+            // always sound (see the module doc: branch-and-bound stays
+            // complete without cuts).
             let gamma = if pure_integer {
                 // The pure-integer Gomory fractional cut is only valid when
                 // every non-basic variable is integral.
@@ -155,14 +164,14 @@ impl LiaSolver {
             } else if is_int {
                 let fj = bar_a - bar_a.floor();
                 if fj <= f0 {
-                    fj / f0
+                    checked_div_r64(fj, f0)?
                 } else {
-                    (one - fj) / one_minus_f0
+                    checked_div_r64(one - fj, one_minus_f0)?
                 }
             } else if bar_a > zero {
-                bar_a / f0
+                checked_div_r64(bar_a, f0)?
             } else {
-                -bar_a / one_minus_f0
+                checked_div_r64(-bar_a, one_minus_f0)?
             };
 
             if gamma.is_zero() {
@@ -172,12 +181,13 @@ impl LiaSolver {
             // Translate `γ_j y_j` back to `x_j` and fold into `C = R − Σ c_j x_j`:
             //   lower: y_j = x_j − l_j  ⇒ c_j = +γ_j , R += γ_j·l_j
             //   upper: y_j = u_j − x_j  ⇒ c_j = −γ_j , R −= γ_j·u_j
+            let contrib = checked_mul_r64(gamma, bound_val)?;
             if at_lower {
                 cut.add_term(xj, -gamma);
-                rhs += gamma * bound_val;
+                rhs = checked_add_r64(rhs, contrib)?;
             } else {
                 cut.add_term(xj, gamma);
-                rhs -= gamma * bound_val;
+                rhs = checked_sub_r64(rhs, contrib)?;
             }
         }
 
