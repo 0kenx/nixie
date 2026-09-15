@@ -359,6 +359,27 @@ impl TermManager {
         let lhs_kind = self.get(lhs).map(|t| t.kind.clone());
         let rhs_kind = self.get(rhs).map(|t| t.kind.clone());
 
+        // **Tuple constructors unfold componentwise** — the datatype
+        // injectivity axiom, stated as a rewrite so it holds everywhere a
+        // tuple equality is built (user assertions, the counting guards,
+        // extensionality witnesses). Without it `(tuple 1 2) = (tuple 5 2)`
+        // stayed an opaque equality SAT could satisfy, and a wrong-`sat`
+        // followed through the join's counting guards.
+        if let (Some(TermKind::DtConstructor { args: xs, .. }), Some(TermKind::DtConstructor { args: ys, .. })) =
+            (&lhs_kind, &rhs_kind)
+            && xs.len() == ys.len()
+            && let Some(ls) = self.get(lhs).map(|d| d.sort)
+            && let Some(rs) = self.get(rhs).map(|d| d.sort)
+            && ls == rs
+            && self.tuple_field_sorts_of(ls).is_some()
+        {
+            let mut parts: Vec<TermId> = Vec::with_capacity(xs.len());
+            for (&a, &b) in xs.iter().zip(ys.iter()) {
+                parts.push(self.mk_eq(a, b));
+            }
+            return self.mk_and(parts);
+        }
+
         match (&lhs_kind, &rhs_kind) {
             // Integer constants
             (Some(TermKind::IntConst(a)), Some(TermKind::IntConst(b))) => {
@@ -1049,10 +1070,17 @@ impl TermManager {
         else {
             return self.set_result_sort(r1);
         };
-        if f1.len() < 2 || f2.len() < 2 || f1.last() != f2.first() {
-            // Unary operands are not joinable (CVC5 rejects the type); a
-            // malformed pair falls back to the operand's sort, which the
-            // parser's checks keep unreachable for user input.
+        if f1.is_empty()
+            || f2.is_empty()
+            || (f1.len() == 1 && f2.len() == 1)
+            || f1.last() != f2.first()
+        {
+            // Nullary operands are not joinable, and two *unary* ones
+            // would join to the nullary tuple (CVC5 rejects both cases at
+            // the type rule); a malformed pair falls back to the operand's
+            // sort, which the parser's checks keep unreachable for user
+            // input. A unary joined with a wider relation is fine: its
+            // front contributes no columns.
             return self.set_result_sort(r1);
         }
         let mut fields: Vec<_> = f1.iter().take(f1.len() - 1).copied().collect();
