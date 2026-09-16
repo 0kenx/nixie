@@ -663,3 +663,39 @@ whose row no longer matches post-escalation).  The revision loop for
 the ground solver re-solves the pin — is the design the study has
 carried since the first landing; the probe recipes for it are all
 proven.
+
+
+## The ite-abstraction holes, confined (2026-09-16, twelfth follow-up)
+
+With the choice-flagging landed, the walk-vs-aux picture sharpened to
+this: the walk evaluates the constructor axioms **true at every
+odometer tuple** (the `[nontrue]` probe shows falsifiers only for the
+observer axioms), yet the aux still returns `Sat` on them.  The aux's
+freedom is the encoder's **ite abstraction**: the chains become
+Tseitin variables (`__nixie_ite_*`), and a *nested* chain's condition
+`(= sk __nixie_ite_N)` mentions one — a Boolean the Skolem restriction
+does not decide, so the abstraction variable floats and the aux routes
+the outer chain through whatever branch its free choice prefers.
+
+**Fix (sound, principled)**: the aux now confines every
+uninterpreted-sorted ite-abstraction variable to the same frozen
+domain as the Skolems — every chain value IS a domain element (an
+entry result or the else, both drawn from the structure), so this is
+the chain's own semantics, told to the aux's encoding.  It does not by
+itself close the family (the aux retains legitimate freedom over
+*which* domain element an undecided abstraction takes), but it removes
+a whole class of off-structure falsifications.
+
+**The next probe, precisely**: minimize the aux goal at a q33 `Sat` —
+extract `not body'[sk]` with its restriction clauses and solve it
+standalone — the surviving falsifying assignment shows which chain
+branch the aux legitimately prefers that the completed model's tables
+do not justify (the stale constructor-table ground pins are the prime
+suspect: the ground solver's own `union(b,a) ↦ a` assignments,
+harvested as never-override pins whose rows no longer match
+post-escalation).
+
+Verification: quant_fuzz seeds {41..46} x 150 CLEAN (plus spot
+re-checks); parity 176 Correct / 1 Inconclusive / 0 wrong (z3 4.16.0);
+4796/4797 (the convergence pin 159 s standalone, in band); fmt/clippy
+clean.

@@ -1050,6 +1050,38 @@ impl ModelChecker {
         let goal = manager.mk_not(skolemized);
         aux.assert(goal, manager);
 
+        // The goal's Set-sorted ite chains are Tseitin-abstracted into
+        // fresh `__nixie_ite_*` variables by the encoder, and a *nested*
+        // chain's condition mentions them (`(= sk __nixie_ite_N)`) — a
+        // condition the Skolem restriction does not decide, so the aux
+        // could set the abstraction freely and falsify through the hole:
+        // every chain value IS a domain element (an entry result or the
+        // else — both drawn from the structure), so confining the ite
+        // variables to the same domain is exactly the chain's semantics,
+        // not an extra assumption.
+        {
+            let ite_vars: Vec<TermId> = aux.ite_result_terms.iter().copied().collect();
+            for v in ite_vars {
+                let Some(node) = manager.get(v) else { continue };
+                let uninterpreted = manager
+                    .sorts
+                    .get(node.sort)
+                    .is_some_and(|s| matches!(s.kind, SortKind::Uninterpreted(_)));
+                if !uninterpreted {
+                    continue;
+                }
+                let Some(domain) = model.table_domain(node.sort, manager) else {
+                    continue;
+                };
+                if domain.is_empty() || domain.len() > MAX_UNIVERSE_FOR_RESTRICTION {
+                    continue;
+                }
+                let restriction: Vec<TermId> =
+                    domain.iter().map(|&u| manager.mk_eq(v, u)).collect();
+                aux.assert(manager.mk_or(restriction), manager);
+            }
+        }
+
         self.checks_performed += 1;
         let conflicts_before = aux.stats().conflicts;
         let limits = ResourceLimits::new()
