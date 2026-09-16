@@ -79,6 +79,12 @@ impl Solver {
                            purify: &PurifyState,
                            manager: &TermManager|
          -> Option<i64> {
+            // A count over a closed base folds in the builder to a plain
+            // constant (`count(2, (2:5))` is `ite(2=2 ∧ 5≥1, 5, 0)` → `5`)
+            // — the constant IS the value.
+            if let Some(TermKind::IntConst(n)) = manager.get(c).map(|d| &d.kind) {
+                return num_traits::ToPrimitive::to_i64(n);
+            }
             let mut v: Option<i64> = arith.value(c).map_or_else(
                 || model.get(c).and_then(|t| int_entry(t, manager)),
                 |r| Some(r.to_integer()),
@@ -179,24 +185,42 @@ impl Solver {
             else {
                 continue;
             };
+            // The verified size is the *installed value's* — the sum of
+            // the cells actually published, which the assembly already
+            // de-duplicated by element value (the raw per-element sum
+            // would count a witness spelling twice — exactly the
+            // double-count the assembly's grouping exists to avoid).
             let Some(es) = bag_element_of(b, manager) else {
                 continue;
             };
-            let Some(elems) = by_sort.get(&es) else {
+            let mut assembled: i64 = 0;
+            let Some(value) = model.get(b) else {
                 continue;
             };
-            let assembled: i64 = elems
-                .iter()
-                .filter_map(|&e| {
-                    count_value(
-                        manager.mk_bag_count(e, b),
-                        model,
-                        &self.arith,
-                        &self.arith_purify,
-                        manager,
-                    )
-                })
-                .sum();
+            let mut cur = value;
+            loop {
+                match manager.get(cur).map(|d| d.kind.clone()) {
+                    Some(TermKind::BagEmpty(_)) => break,
+                    Some(TermKind::BagUnionDisjoint(a, make)) => {
+                        let Some(TermKind::BagMake(_, n)) =
+                            manager.get(make).map(|d| d.kind.clone())
+                        else {
+                            break;
+                        };
+                        if let Some(TermKind::IntConst(v)) = manager.get(n).map(|d| &d.kind) {
+                            assembled += num_traits::ToPrimitive::to_i64(v).unwrap_or(0);
+                        }
+                        cur = a;
+                    }
+                    Some(TermKind::BagMake(_, n)) => {
+                        if let Some(TermKind::IntConst(v)) = manager.get(n).map(|d| &d.kind) {
+                            assembled += num_traits::ToPrimitive::to_i64(v).unwrap_or(0);
+                        }
+                        break;
+                    }
+                    _ => break,
+                }
+            }
             if assembled != want {
                 for &t in &installed_bags {
                     let same_sort = bag_element_of(t, manager) == Some(es);

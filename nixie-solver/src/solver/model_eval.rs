@@ -43,6 +43,21 @@ use smallvec::SmallVec;
 ///
 /// The two non-value answers are deliberately *not* the same thing, and the
 /// gate treats them differently – see [`Solver::model_refutes_assertions`].
+/// Why a candidate model is being refuted, for the model-blocking verdict
+/// rule (see [`Solver::model_refutation_kind`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ModelRefutation {
+    /// The candidate satisfies no refutation condition.
+    No,
+    /// A concrete `false` from assigned values / committed polarities:
+    /// every assignment the projection block excludes violates the
+    /// assertions, so an `Unsat` over such blocks is a genuine `Unsat`.
+    Genuine,
+    /// The evaluator could not check (its own fixed-width limit): the
+    /// block is exploratory — an `Unsat` over it stays `Unknown`.
+    Unrepresentable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum EvalOutcome {
     /// A concrete value the model determines.
@@ -594,8 +609,27 @@ impl Solver {
     }
 
     pub(super) fn model_refutes_assertions(&self, manager: &TermManager) -> bool {
+        !matches!(self.model_refutation_kind(manager), ModelRefutation::No)
+    }
+
+    /// The classified form of [`Self::model_refutes_assertions`], for the
+    /// model-blocking verdict rule: a `Genuine` refutation is one whose
+    /// evaluation produced a concrete `false` from ASSIGNED model values
+    /// (the settled-atom arm reads the SAT core's committed polarity, the
+    /// value arm reads only terms the model pins — `Undetermined` fails
+    /// open), so the projection of the blocked assignment onto term
+    /// variables covers every variable the refutation depended on, and
+    /// every assignment the block excludes provably violates the
+    /// assertions.  An `Unrepresentable` outcome (the evaluator's own
+    /// fixed-width limit — e.g. arithmetic past `i64` in a comparison the
+    /// model would have to check) is NOT a genuine refutation: the blocked
+    /// candidate may have been perfectly fine, and a clause added for it
+    /// is a search restriction, never a consequence — an `Unsat` over
+    /// such blocks stays `Unknown` (upstream #40's rule, now scoped to
+    /// exactly the unsound half).
+    pub(super) fn model_refutation_kind(&self, manager: &TermManager) -> ModelRefutation {
         let Some(model) = self.model.as_ref() else {
-            return false;
+            return ModelRefutation::No;
         };
         for &assertion in &self.assertions {
             // An assertion that is (or unfolds at its top level to) a
@@ -617,8 +651,11 @@ impl Solver {
             // exists to catch), and every other conjunct shape keeps its
             // value-based evaluation.
             match self.eval_assertion_settled(assertion, model, manager) {
-                EvalOutcome::Value(EvalVal::Bool(false)) | EvalOutcome::Unrepresentable => {
-                    return true;
+                EvalOutcome::Value(EvalVal::Bool(false)) => {
+                    return ModelRefutation::Genuine;
+                }
+                EvalOutcome::Unrepresentable => {
+                    return ModelRefutation::Unrepresentable;
                 }
                 _ => {}
             }
@@ -635,7 +672,13 @@ impl Solver {
         // the same function point at `fmt1 = 6, fmt0 = 0` — reads 11).
         // Refuting such a model and blocking its projection is the same
         // pete-gate treatment the arrangement regressions converged under.
-        self.refuted_negated_equality(manager).is_some()
+        if self.refuted_negated_equality(manager).is_some() {
+            // The congruence-gap half is a GENUINE violation (a function
+            // cannot take two values at one argument tuple), and its
+            // argument values were read from assigned model entries.
+            return ModelRefutation::Genuine;
+        }
+        ModelRefutation::No
     }
 
     /// **Certificate** gate: every assertion evaluates to `true` under the
