@@ -46,6 +46,9 @@ pub(super) mod types;
 mod user_propagation;
 pub(super) mod verdict_cache;
 
+#[cfg(feature = "std")]
+pub use certification::cp_proof::{CpLemma, CpProof};
+
 pub use types::{
     CertificationMode, FpConstraintData, Model, NamedAssertion, Proof, ProofStep, SolverConfig,
     SolverResult, Statistics, TheoryMode, UnsatCore,
@@ -1441,18 +1444,28 @@ impl Solver {
             return cached;
         }
 
+        self.certification_failure = None;
+        #[cfg(feature = "std")]
+        {
+            self.user_state.cp_proof = None;
+        }
+        self.user_state.recording =
+            self.config.proof || self.config.certification_mode == CertificationMode::Certified;
         let mbqi_checkpoint = self.mbqi.search_checkpoint();
         let mut raw_result = self.check_with_arith_refinement(manager);
         if self.user_state.active() {
-            // Existing proof formats do not certify arbitrary client axioms.
-            if (raw_result == SolverResult::Sat && !self.validate_user_model(manager))
-                || self.config.certification_mode == CertificationMode::Certified
-                || self.config.proof
-            {
+            if raw_result == SolverResult::Sat && !self.validate_user_model(manager) {
+                raw_result = SolverResult::Unknown;
+            }
+            if self.config.certification_mode == CertificationMode::Certified || self.config.proof {
+                raw_result = self.certify_cp_result(raw_result, manager);
+            }
+            // CP exports have their own checked artifact; the generic proof
+            // object does not encode client declarations.
+            self.proof = None;
+            if raw_result == SolverResult::Unknown {
                 self.model = None;
                 self.unsat_core = None;
-                self.proof = None;
-                raw_result = SolverResult::Unknown;
             }
         }
         self.mbqi.restore_search_state(&mbqi_checkpoint);

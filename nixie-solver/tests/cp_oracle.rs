@@ -98,6 +98,7 @@ fn encode(case: &Case, tm: &mut TermManager) -> Encoding {
 
 struct Oracle<'a> {
     case: &'a Case,
+    original: nixie_theories::cp::proof::CpStatement,
     tables: Vec<nixie_theories::cp::table_proof::TableStatement>,
     domains: Vec<nixie_theories::cp::domain_proof::DomainStatement>,
     atoms: Vec<Vec<TermId>>,
@@ -206,6 +207,13 @@ impl Oracle<'_> {
                 );
             }
         }
+        self.original
+            .check_lemma(
+                consequence.term,
+                &consequence.justification,
+                &mut 10_000_000,
+            )
+            .unwrap();
     }
 }
 
@@ -296,6 +304,7 @@ fn generated_explanations_and_scope_replay_match_exhaustive_oracle() {
             .collect();
         let oracle = Oracle {
             case: &case,
+            original: cp.statement(),
             tables: cp.table_statements(),
             domains: cp.domain_statements(),
             atoms,
@@ -320,6 +329,13 @@ fn generated_explanations_and_scope_replay_match_exhaustive_oracle() {
         inspect(&mut manager, &oracle, &empty, &mut counts, false, false);
 
         for assignment in &assignments {
+            assert_eq!(
+                oracle
+                    .original
+                    .check_model(|atom| Some(oracle.truth(atom, assignment)), &mut 10_000_000)
+                    .is_ok(),
+                case.accepts(assignment)
+            );
             manager.push();
             let mut facts = Facts::new();
             for (v, row) in oracle.atoms.iter().enumerate() {
@@ -393,6 +409,14 @@ fn check_solver(solver: &mut Solver, tm: &mut TermManager, oracle: &Oracle<'_>, 
         "facts={facts:?}, case={:?}",
         oracle.case
     );
+    if expected == SolverResult::Unsat {
+        let (originals, assertions) = solver.cp_proof_inputs();
+        solver
+            .get_cp_proof()
+            .unwrap()
+            .check(&originals, &assertions, tm, 10_000_000)
+            .unwrap();
+    }
     if expected == SolverResult::Sat {
         let model = solver.model().unwrap();
         let mut selected = Vec::new();
@@ -449,6 +473,7 @@ fn generated_solver_verdicts_models_and_scopes_match_exhaustive_oracle() {
             .collect();
         let oracle = Oracle {
             case: &case,
+            original: cp.statement(),
             tables: cp.table_statements(),
             domains: cp.domain_statements(),
             atoms,
@@ -457,7 +482,7 @@ fn generated_solver_verdicts_models_and_scopes_match_exhaustive_oracle() {
             true_term: tm.mk_true(),
             false_term: tm.mk_false(),
         };
-        let mut solver = Solver::new();
+        let mut solver = Solver::with_config(nixie_solver::SolverConfig::default().certified());
         solver.register_cp(cp, &mut tm).unwrap();
         let empty = Facts::new();
         check_solver(&mut solver, &mut tm, &oracle, &empty);
@@ -509,6 +534,7 @@ fn oracle_rejects_an_omitted_reason_even_when_context_hides_it() {
         .collect();
     let oracle = Oracle {
         case: &case,
+        original: cp.statement(),
         tables: cp.table_statements(),
         domains: cp.domain_statements(),
         atoms,
@@ -522,4 +548,60 @@ fn oracle_rejects_an_omitted_reason_even_when_context_hides_it() {
     let facts = Facts::from([(oracle.atoms[0][0], true)]);
     let consequence = Consequence::new(tm.mk_not(oracle.atoms[1][0]), Vec::new());
     oracle.consequence(&consequence, &facts);
+}
+
+#[test]
+fn adversarial_finite_semantic_lemmas_match_concrete_solutions() {
+    let mut attempted = 0;
+    let mut accepted = 0;
+    for case in spec::cases() {
+        let mut tm = TermManager::new();
+        let Encoding {
+            cp,
+            atoms: _,
+            literals,
+        } = encode(&case, &mut tm);
+        let original = cp.statement();
+        let solutions: Vec<_> = case
+            .assignments()
+            .into_iter()
+            .filter(|a| case.accepts(a))
+            .collect();
+        let mut vocabulary: Vec<_> = literals.keys().copied().collect();
+        vocabulary.extend([tm.mk_true(), tm.mk_false()]);
+        let truth = |t, a: &[usize]| {
+            if t == tm.mk_true() {
+                true
+            } else if t == tm.mk_false() {
+                false
+            } else {
+                let &(v, i, sign) = literals.get(&t).unwrap();
+                (a[v] == i) == sign
+            }
+        };
+        let mut rng = Rng::new(case.seed ^ 0xcafe_1234);
+        for index in 0..500 {
+            let conclusion = vocabulary[rng.pick(vocabulary.len())];
+            let premises: Vec<_> = (0..index % 4)
+                .map(|_| vocabulary[rng.pick(vocabulary.len())])
+                .collect();
+            attempted += 1;
+            if original
+                .check_lemma(conclusion, &premises, &mut 1_000_000)
+                .is_ok()
+            {
+                accepted += 1;
+                assert!(
+                    solutions
+                        .iter()
+                        .all(|a| !premises.iter().all(|&p| truth(p, a)) || truth(conclusion, a)),
+                    "unsound semantic leaf: {:?}, {conclusion:?}, {premises:?}",
+                    case
+                );
+            }
+        }
+    }
+    assert_eq!(attempted, 122_000);
+    assert!(accepted > 1000 && accepted < attempted);
+    eprintln!("CP adversarial semantic leaves: {attempted} candidates, {accepted} accepted");
 }

@@ -106,9 +106,9 @@ complete assignments. Equality/disequality callbacks and decision hints in the
 older manager interface are not connected to the SMT adapter; use Boolean
 equality atoms for this interface.
 
-Arbitrary client axioms currently have no proof exporter/checker. Proof-producing
-or certified checks with registered propagators return `Unknown` and expose no
-proof. SMT unsat cores, when available, are relative to the permanently installed
+Arbitrary client axioms have no proof exporter/checker: proof-producing or
+certified checks with arbitrary user callbacks return `Unknown`. Built-in CP
+registrations support the complete checked proof chain described below. SMT unsat cores, when available, are relative to the permanently installed
 client constraints; they do not serialize those constraints.
 
 ## Reference and audit basis
@@ -153,7 +153,8 @@ checks 244 varied instances, including conjunctions of globals: 6,704 complete
 assignments, 37,810 callback states, 171,301 emitted consequences/conflicts,
 and 6,100 public solver verdict/model checks. The independent oracle checks
 explanations against all satisfying base assignments and exercises nested
-rollback. These are bounded tests; they do not supply formal proof certificates.
+rollback. The original campaign supplied bounded testing evidence. The complete
+proof path below now additionally checks generated UNSAT certificates.
 
 ## Checkable table lemmas
 
@@ -191,11 +192,10 @@ and their immutable statements survive callback queue snapshots; popping a
 scope restores the pending queue rather than replaying a stale branch.
 
 This is a certificate for a **conditional table lemma relative to the original
-CP domains and constraint**. Domain-only reductions/conflicts have the separate
-certificates described below; other globals do not yet have certificates. Arbitrary callbacks without certificates
-retain their documented trusted-client contract. There is no SAT-proof-chain
-export for these witnesses yet: proof-producing/certified CP checks still
-return `Unknown`. This does not enable certified UNSAT.
+CP domains and constraint**. Domain-only reductions/conflicts have the specialized certificates described
+below. Arbitrary callbacks without certificates retain their documented
+trusted-client contract. Complete CP proof export additionally checks the finite
+semantics of every admitted lemma and the final LRAT refutation.
 
 See the [table-certificate study](studies/2026-09-16-cp-table-certificates.md)
 for the soundness argument, adversarial checks, and verification record.
@@ -230,7 +230,77 @@ truth. The same checks run on direct final conflicts and model replay.
 
 These rules establish conditional lemmas relative to the declared exactly-one
 semantics. At least one value is also asserted to the SAT solver; at-most-one
-reasoning is lazy. The certificates do not yet export these axioms and lemmas
-into a complete SAT proof chain. Proof-producing/certified CP solving therefore
-still returns `Unknown`. See the [domain-certificate study](studies/2026-09-16-cp-domain-certificates.md)
+reasoning is lazy. These local certificates also remain usable separately from the complete proof
+chain below. See the [domain-certificate study](studies/2026-09-16-cp-domain-certificates.md)
 for the trust boundary and verification evidence.
+
+## Complete checked CP proofs
+
+On `std` builds, with `SolverConfig::default().certified()` or `.with_proof()`, built-in CP models
+can now return checked `Sat` and `Unsat`. Arbitrary user callbacks still fail
+closed, including when installed alongside a CP model.
+
+The chain is:
+
+1. Retain immutable original CP declarations separately from the proof,
+   including typed integer bindings. Validate the generated domain/link
+   assertions against those declarations. The main solver's generated CP
+   assertion entries are excluded from the original application-assertion inputs;
+   the proof reconstructs their meaning from the validated declarations.
+2. Check each explanation `premises => conclusion` against those declarations.
+   Exactly-one domain semantics restrict possible values. An independent finite
+   checker enumerates assignments of an original global and rejects a lemma if
+   any compatible assignment falsifies it. Aliased positions share one value.
+   The checker does not call the propagator, matching, partial-domain filtering,
+   or solver search. All five globals are covered, including empty/aliased
+   inputs, nondeterministic automata, exact large integers, and half-open tasks.
+3. Reconstruct a canonical Boolean encoding of the original active assertions,
+   domain/link assertions, and checked implication clauses. Additional EUF or
+   linear-arithmetic leaves must pass their existing independent verifiers.
+4. Generate an LRAT refutation in a fresh SAT solver. Require its entire input
+   clause list to equal the canonical list, then independently check derivation
+   of the empty clause. The search engine's verdict alone is never enough.
+
+A certified `Sat` additionally requires independent exact evaluation of every
+original global and exactly-one domain, and the existing assertion/model gate.
+
+```rust,ignore
+let mut solver = Solver::with_config(SolverConfig::default().certified());
+solver.register_cp(cp, &mut tm)?;
+// Add the application's assertions, then retain the original proof inputs.
+let (originals, assertions) = solver.cp_proof_inputs();
+if solver.check(&mut tm) == SolverResult::Unsat {
+    let proof = solver.get_cp_proof().ok_or("missing CP proof")?;
+    let text = proof.to_text();
+    let imported = nixie_solver::CpProof::from_text(&text)?;
+    imported.check(&originals, &assertions, &mut tm, 10_000_000)?;
+    let dimacs = imported.dimacs(&originals, &assertions, &mut tm, 10_000_000)?;
+    // `dimacs` and `imported.lrat` can also be given to an external LRAT checker.
+}
+```
+
+The versioned text envelope exports the explanation leaves and LRAT body.
+Original inputs are intentionally supplied independently: the proof cannot choose
+what problem it refutes. Term IDs belong to the retained original `TermManager`;
+this is a Rust API proof format, not an SMT-LIB/Alethe encoding of CP declarations.
+DIMACS plus LRAT alone establishes only the propositional refutation; `check`
+checks its connection to the original CP problem as well. `get_proof()` does not
+represent CP declarations; use `get_cp_proof()`.
+
+Proofs are invalidated by assert/push/pop/reset and settings changes. Saved proof
+values remain checkable against saved original inputs. `check_with_assumptions`
+pops its temporary scope and discards its proof, just like the existing proof
+API; use explicit push/assert/check and capture the proof before pop when an
+assumption-scoped artifact is needed. Conditional lemma records may survive pop:
+they are rechecked against permanent declarations, never treated as asserted facts.
+
+Finite lemma checking can be exponential. Production reconstruction allows ten
+million semantic work steps per checking pass, 100,000 SAT conflicts per
+reconstruction/replay solver, and 10,000 model-blocking iterations. Missing
+search leaves are reconstructed from independently checked CP/SMT model
+blockers. A required step that exceeds these limits, an unsupported SMT
+combination, or a failed refutation yields `Unknown`.
+Specialized polynomial witnesses for the remaining globals would improve proof
+checking cost; they are not required for the validity of this complete chain.
+No throughput or proof-size improvement is claimed. See the
+[complete-proof study](studies/2026-09-16-cp-complete-proof.md) for verification.
