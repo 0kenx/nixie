@@ -135,7 +135,11 @@ FF, these replace it):
 - `nixie-theories/src/ff_theory.rs` `window_tests` +
   `nixie-theories/tests/ff_window_split.rs` — the window path's
   mechanism pins (ideal membership of every merged element; partition
-  coverage; planted-never-unsat; starved-window refusal).
+  coverage) AND the ROUTING pin (48-var corpus-family chains at
+  budget 2^16: monolithic and the 2-way split budget out first, so a
+  `Model` verdict can only come through windows + exchange + union —
+  a per-run invariant now, not just a corpus measurement;
+  planted-never-unsat; starved-window refusal).
 - `bench/ff/` — three families (sparse = realistic R1CS, dense =
   capacity marker, chain = single-component marker); measure with
   `NIXIE_FF_STATS=1` (deterministic step counts, never wall-clock as

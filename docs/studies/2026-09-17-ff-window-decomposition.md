@@ -299,3 +299,29 @@ Corpus verdicts after the worklist landing: all 22 goals `sat`,
 including the two new files (`bn254_chain_planted_{512x768,1024x1536}`).
 FF oracle/fuzz/regression suites green; clippy/fmt clean. The full
 workspace + parity gate for this commit rides the combined pass below.
+
+## Addendum 2: the window path is now a standing per-run oracle
+
+The T11 caveat ("window routing cannot be forced at unit scale — the
+monolithic cascade is the cheapest strategy for small goals") is closed
+for the ROUTING axis: `nixie-theories/tests/ff_window_split.rs` was
+rewritten around the corpus-family generator (residue passes, exact
+density), and its 48-variable instances at budget 2^16 sit in the gap
+where the monolithic cascade AND the 2-way split's nl-GB budget out
+while the 8-variable windows + worklist exchange + union cascade
+complete — verified with NIXIE_FF_STATS (8 windows, 6 admissions,
+verdict via the union). A `Model` verdict at that budget can only have
+come through the window path, so `window_path_routes_solves_and_validates`
+pins routing + planted-never-unsat + exact model validation as a
+0.15 s per-run invariant; `corrupted_chain_never_answers_sat` and
+`starved_windows_refuse_never_guess` pin the honesty edges.
+
+Measured while doing it: the family is only RIGID from n ≈ 96 up at
+this generator's seam geometry (16- and 32-var systems are
+positive-dimensional — honest `unknown` after long round-robin walks),
+and small-prime brute force is structurally incompatible with window
+routing (routing needs the size, brute force needs p^n small) — the
+tiny-prime axis stays with `ff_oracle.rs`, noted in the test file.
+
+The in-crate `window_tests` (ideal-membership of every merged element,
+partition coverage) are unchanged and still green.
