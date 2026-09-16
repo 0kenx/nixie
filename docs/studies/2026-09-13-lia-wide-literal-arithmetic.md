@@ -1351,3 +1351,64 @@ fresh seeds: 0 verdict disagreements, 0 refuted models; debug-panic
 sweep over the parity corpus (177) and a 235-file stratified
 `smt-lib/non-incremental` sample (seed 20260920): 0 panics; wisas
 `unsat` deterministic ×3.
+
+## Continuation 24 (2026-09-17): the wide-driven repair step — the convergence wall is gone (item 59)
+
+59. **The site-1950 wall, closed** (open item 2's unblocker; the
+    negative-result study's named residual): a violated wide row whose
+    achievable value range OVERLAPS its bound window is repairable in
+    principle, but wide rows had no pivot — the convergence
+    classification declined the whole check (`resource_limit`, honest
+    `unknown`), the wall the `NIXIE_S6_PINNED` trade analysis measured.
+    * **The repair step**: `pivot`'s new wide-leaving branch.  When the
+      leaving basic's defining row lives in the wide store, the entering
+      row is solved EXACTLY from it
+      (`build_pivot_expr_big_wide`: `x_e = (x_B − Σ a_k x_k − c)/a_e`,
+      all `BigRational`), narrowed when it fits (a wide row solved for a
+      different variable can become narrow), and the ordinary pivot
+      machinery takes over — every row referencing the entering column
+      is substituted through the exact result (item 28's
+      `substitute_big_row` path), the leaving basic is snapped to the
+      bound its driver chose (item 58's `SnapBound`; the classification
+      passes `from_violated`), and the column index is diffed for the
+      wide leaving row exactly as for a narrow one.
+    * **The driver**: the convergence classification in `check` now runs
+      a bounded repair loop (≤ 32 per check): classify every bounded
+      wide row; a violated row with a DISJOINT range still refutes
+      through the interval argument (unchanged); a violated row with an
+      OVERLAPPING range attempts one wide pivot (entering column by
+      exact-sign eligibility, smallest index) and re-feasibilizes; an
+      undecidable row, an exhausted budget, or no eligible column still
+      declines honestly.
+    * **Measured**: the chain-sat twin under `NIXIE_S6_PINNED=1` — the
+      trade's documented blocker — now PASSES (`sat`, matching z3).  The
+      pinned gate's remaining cost is a different, non-wide shape (the
+      trivial mixed twin `2x+y=1 ∧ y=½` degrades to `unknown` under the
+      gate with the corner auditor silent — sound derivations, a
+      completeness loss local to pinned direction-2; the gate stays
+      env-gated OFF, and default-on still needs the matched-null
+      campaign per `docs/BENCHMARKING.md` since the gate re-paths the
+      search).  Default-mode canaries unchanged: f1 `sat`, fi1 honest
+      `unknown`, wisas `unsat`.
+    * Regression: `violated_wide_row_with_overlapping_range_is_repaired`
+      (the wall shape at the simplex level — FAILS pre-fix: the
+      overlapping-range decline; PASSES post-fix: the repair converges
+      and the entering variable lands inside its window).
+    * **The provenance question** (the structural gap that let item 54's
+      conflict core fold to a single atom) remains OPEN and is now the
+      main soundness-hardening item on this surface: rows built by
+      substitution carry no defining-reason provenance, so a conflict
+      explained through a substituted row can export an incomplete
+      core.  No wrong verdict is demonstrated (the differentials are
+      clean across a dozen fresh seeds this round); the design work is
+      scoped for the next session.
+
+Verification for the landing: workspace suite green except the standing
+non-arc set (the TLA sets cardinality test — pre-existing, the sets
+front's; two documented slow tests + the incremental-replay fuzz, which
+passes in isolation at 136 s and only hit the 180 s cap under machine
+load 34); clippy/fmt/rustdoc clean for the touched crates (also restored
+fmt for `simplex_opt.rs`, which had drifted on main); Z3 parity 176/177,
+0 disagreements (z3 4.16.0); wide 3×300 + mixed 3×400 fresh seeds
+(20260952–20260957): 0 verdict disagreements, 0 refuted models;
+debug-panic sweep over the parity corpus: 0 panics.
